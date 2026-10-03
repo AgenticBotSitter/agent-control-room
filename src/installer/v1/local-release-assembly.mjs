@@ -44,24 +44,67 @@ export const LOCAL_RELEASE_FILE_POLICY_V1 = Object.freeze({
     "package.json",
     "pnpm-lock.yaml",
     "scripts/prepare-local-installation.mjs",
+    "scripts/release-signing.mjs",
+    "scripts/verify-signed-release.mjs",
+    "scripts/generate-installation-release-key.mjs",
     "scripts/prepare-local-production-dependencies.mjs",
     "scripts/launch-local-setup.mjs",
     "scripts/initialize-local-installation-plan.mjs",
     "scripts/run-local-setup-host.mjs",
     "scripts/preflight-private-local-owner-host.mjs",
+    "scripts/ops/backup-database.mjs",
     "scripts/run-private-local-installation-operator.mjs",
     "scripts/run-private-vps.mjs",
     "scripts/activate-private-vps.mjs",
     "scripts/bootstrap-private-vps-owner.mjs",
     "scripts/check-private-vps-database.mjs",
+    "scripts/mac-local/executable-version.mjs",
+    "scripts/mac-local/stack.mjs",
+    "scripts/mac-local/start-task-host.mjs",
+    "scripts/mac-local/start-web-host.mjs",
+    "scripts/mac-local/task-host-supervisor.mjs",
     "deploy/FIRST_ACTIVATION.md",
     "src/installer/v1/local-clean-install-acceptance.mjs",
     "src/installer/v1/local-production-dependencies.mjs",
     "src/installer/v1/local-installation-release.d.mts",
     "src/installer/v1/local-installation-release.mjs",
+    "src/installer/v1/signed-release-verifier.mjs",
     "src/installer/v1/local-release-assembly.mjs",
     "src/installer/v1/local-release-stager.mjs",
   ]),
+  // The shared installer modules are a DIRECTORY in the release surface, not a
+  // hand-maintained list.
+  //
+  // MEASURED (m-rvint6 finding 1, on cook/9int6 d961f8f78): the hand list named
+  // `is-main-module`, `file-custody`, `private-process-lock` and
+  // `mac-local-runtime-directory`, but NOT `strict-json.mjs` — which
+  // `scripts/release-signing.mjs:11` imports. Four shipped signing programs
+  // (`release-signing`, `verify-signed-release`, `generate-installation-release-key`
+  // and `src/installer/v1/signed-release-verifier.mjs`) died with
+  // `ERR_MODULE_NOT_FOUND` the moment they were run off the assembled release.
+  // The sibling list in `src/updater/v1/attended-source.mjs:67-71` had five entries
+  // and the release policy had four, which is exactly how a hand-copied set drifts.
+  //
+  // A directory cannot drift the same way: every module in `src/installer/shared`
+  // ships, so a new one is shipped by construction. `src/installer/shared` holds
+  // reviewed, dependency-free helpers only, which is the same rule the file policy
+  // already applies to `db/migrations` and `third_party`.
+  //
+  // `scripts/mac-local/upgrade.mjs` was REMOVED from `files` above. It was shipped
+  // (installer commit 23b24c13d, which is NOT on cook/v1) and it cannot run from an
+  // extracted release, for three independent reasons:
+  //   1. it statically imports `../../src/web/v1/{private-postgres,
+  //      private-database-preflight,mac-local-protected-loader}` — EXTENSIONLESS
+  //      TypeScript sources, which the release does not ship and which a bare
+  //      `node` process cannot load;
+  //   2. `assertCleanMain` (scripts/mac-local/upgrade.mjs:140) refuses unless the
+  //      tree is a git work tree checked out on branch `main` with a clean
+  //      `git status --porcelain`, and an extracted release is none of those;
+  //   3. it runs `pnpm build` in that root, which needs devDependencies, while the
+  //      release is prepared with `pnpm install --prod --ignore-scripts`.
+  // `pnpm mac:upgrade` (package.json:169) is a REPOSITORY command run from a
+  // checkout, and nothing shipped in the release imports upgrade.mjs. Shipping it
+  // meant shipping a program that cannot start.
   directories: Object.freeze([
     "db/migrations",
     "db/roles",
@@ -69,6 +112,7 @@ export const LOCAL_RELEASE_FILE_POLICY_V1 = Object.freeze({
     "deploy/postgres",
     "dist-vps/client",
     "dist-vps/server",
+    "src/installer/shared",
     "third_party",
   ]),
   licenseEvidence: Object.freeze([
@@ -133,7 +177,9 @@ async function walkAllowedDirectory(root, releaseRoot, paths) {
 
 async function readPackageVersion(releaseRoot) {
   const bytes = await readFile(join(releaseRoot, "package.json"));
-  if (bytes.byteLength > 64 * 1024) refused();
+  // 256 KiB, the same bound as the attended release builder: the root manifest
+  // carries every test lane and passed 64 KiB in the int9 integration.
+  if (bytes.byteLength > 256 * 1024) refused();
   const value = JSON.parse(bytes.toString("utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value)
     || value.name !== "control-room" || !versionPattern.test(value.version)

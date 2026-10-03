@@ -56,6 +56,8 @@ const ROLE_PASSWORDS = Object.freeze({
   control_room_queue_worker: randomBytes(24).toString("base64url"),
   control_room_intake: randomBytes(24).toString("base64url"),
   control_room_news: randomBytes(24).toString("base64url"),
+  control_room_fleet: randomBytes(24).toString("base64url"),
+  control_room_fleet_owner: randomBytes(24).toString("base64url"),
 });
 
 /**
@@ -64,6 +66,23 @@ const ROLE_PASSWORDS = Object.freeze({
  * The queue role files raise when their pg-boss prerequisite is missing, so
  * the runner builds the two queues those files assert on before applying any
  * of them. Every other role file is independent of the queue.
+ *
+ * These are the PRODUCTION Mac-local grants and nothing more, which is what
+ * every preflight this kit exercises is written against. The coordinator
+ * preflight is an exact-equality check over the pg-boss queue schema, so a
+ * fixture that holds a privilege production never grants does not merely test
+ * more: it makes a correctly installed database fail its own startup preflight.
+ * That is exactly what `native_queue_recovery_roles.sql` did here — it grants
+ * the coordinator UPDATE on sixteen `job`/`job_common` columns, which
+ * `verifyPgBossApplicationPermissions` requires only for the recovery profile.
+ *
+ * No production path applies that file: the narrow-role installer
+ * (`scripts/mac-local/narrow-role-provision.mjs`), the live upgrade ACL
+ * comparison (`scripts/mac-local/database-upgrade-grants.mjs`),
+ * `scripts/mac-local/check-database.ts` and every Mac-local upgrade and
+ * lifecycle test omit it. It is not a fixture to widen but an authority an
+ * owner has to grant explicitly, so a test that needs it must ask for it by
+ * name through `extraRoleFiles` rather than have every test inherit it.
  */
 const ROLE_FILES = Object.freeze([
   "production_roles.sql",
@@ -76,9 +95,24 @@ const ROLE_FILES = Object.freeze([
   "news_coordinator_roles.sql",
   "native_queue_producer_roles.sql",
   "native_queue_worker_roles.sql",
-  "native_queue_recovery_roles.sql",
   "news_queue_producer_roles.sql",
+  "fleet_gateway_roles.sql",
+  // R5B-01. The nightly backup dumps as `control_room_migrator`, and `pg_dump`
+  // reads every schema — including `control_room_queue`, which this kit's
+  // `buildQueues` creates. The grant the dump needs is issued to
+  // `control_room_schema_owner`, the migrator's own group, and it is issued HERE
+  // because this file's actor (the kit's database admin) is the queue schema's
+  // owner — the migrator cannot grant on it at all (MEASURED). A lane that does
+  // not build the queue filters this file out on `/queue/`, which is why the
+  // name is kept rather than shortened: the filter is the guard, and the guard
+  // only works while the name says what it is about.
+  "queue_backup_read_roles.sql",
 ]);
+
+/** The role files the kit applies by default, for the ACL-equivalence guard.
+ * Exported read-only so a test can compare them against the production grant
+ * manifest without restating the list and letting the two drift apart. */
+export const DEFAULT_ROLE_FILES = ROLE_FILES;
 
 const QUEUES = Object.freeze(["native-task-delivery", "news-feed-collection"]);
 
@@ -98,6 +132,8 @@ export const ROLE_LOGINS = Object.freeze({
   app: Object.freeze({ login: "control_room_app", group: "control_room_application" }),
   scheduler: Object.freeze({ login: "control_room_scheduler", group: "control_room_schedule_admissions" }),
   migrator: Object.freeze({ login: "control_room_migrator", group: "control_room_schema_owner" }),
+  fleet: Object.freeze({ login: "control_room_fleet", group: "control_room_fleet_gateway" }),
+  fleetOwner: Object.freeze({ login: "control_room_fleet_owner", group: "control_room_fleet_owner_authority" }),
   owner: Object.freeze({ login: "control_room_web", group: "control_room_private_web" }),
 });
 
@@ -421,12 +457,13 @@ export async function socketClaimed(port: number, directory?: string): Promise<b
   return false;
 }
 
-/** Every `/tmp/ak*` socket directory the kit's own runner publishes into. */
+/** Every `<short socket root>/ak*` socket directory the kit's own runner publishes into. */
 export async function shortSocketDirectories(): Promise<string[]> {
-  const entries = await readdir(SHORT_SOCKET_ROOT, { withFileTypes: true }).catch(() => []);
+  const root = shortSocketRoot();
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   return entries
     .filter(entry => entry.isDirectory() && entry.name.startsWith("ak"))
-    .map(entry => join(SHORT_SOCKET_ROOT, entry.name));
+    .map(entry => join(root, entry.name));
 }
 
 /** First line of an error message, for a one-token teardown failure summary. */
@@ -578,13 +615,21 @@ async function buildQueues(admin: ConnectionOptions): Promise<void> {
  * stays where `disposableRunDirectories()` looks for it; only the SOCKET lives
  * in a short path, and it is removed with the run directory's teardown.
  */
-const SHORT_SOCKET_ROOT = "/tmp";
+const DEFAULT_SHORT_SOCKET_ROOT = "/tmp";
+
+/**
+ * Where the kit's short socket directories go. `/tmp` by default;
+ * `ATTACK_KIT_SOCKET_ROOT` lets a caller that already owns a short private
+ * directory (the local test runner's per-run `/tmp/acr-tr-*`) keep the sockets
+ * inside it, so its sandbox never has to open a shared `/tmp` pattern.
+ */
+export const shortSocketRoot = (): string => process.env.ATTACK_KIT_SOCKET_ROOT?.trim() || DEFAULT_SHORT_SOCKET_ROOT;
 
 /** Longest socket path this will create, including a 5-digit port. */
 const MAX_SOCKET_PATH_BYTES = 100;
 
 function shortSocketDirectory(run: string, port: number): string {
-  const candidate = join(SHORT_SOCKET_ROOT, `ak${process.pid}-${basename(run)}`);
+  const candidate = join(shortSocketRoot(), `ak${process.pid}-${basename(run)}`);
   // `.s.PGSQL.` plus the port is 13-14 bytes; leave headroom under the cap.
   if (Buffer.byteLength(candidate) + 16 > MAX_SOCKET_PATH_BYTES) {
     throw new Error(`attack_kit_socket_path_too_long:${candidate}`);

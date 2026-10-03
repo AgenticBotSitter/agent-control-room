@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from "zod";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { resultBytesHash } from "../../artifacts/v1/native-results";
@@ -44,10 +45,10 @@ const stagedSchema = z.object({
   retainedSession: retainedSessionSchema,
   // The durable publisher is the authoritative semantic validator. These fields
   // are retained verbatim so recovery cannot reconstruct or improve evidence.
-  disposition: z.object({}).passthrough(),
+  disposition: upstreamObjectV1({}),
   terminalFrameRawLine: z.string().min(1).max(262_144),
-  terminalFrame: z.object({}).passthrough(),
-  decoderState: z.object({}).passthrough(),
+  terminalFrame: upstreamObjectV1({}),
+  decoderState: upstreamObjectV1({}),
   acceptedConnectorProfileDigest: digestSchema,
   receivedAt: instant,
 }).strict();

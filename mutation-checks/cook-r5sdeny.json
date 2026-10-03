@@ -1,0 +1,387 @@
+[
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!fields) refuse(\"bot_check_output_refused\");",
+    "replace": "if (!fields) return [];",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "malformed process rows cannot become an empty PASS"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (![uid, pid, ppid].every(Number.isSafeInteger) || pid < 1)",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "unsafe numeric process identifiers refuse"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!comm || tail.length < COMM_COLUMN)",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "unpadded process rows refuse"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (command && !command.startsWith(comm) && !/^\\(.*\\)$/u.test(command))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "inconsistent process columns refuse"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (comm.length === COMM_COLUMN && !command)",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "truncated executable rows require their argument column"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!/^\\d+$/u.test(value) || !Number.isSafeInteger(Number(value)) || (line[0] === \"p\" && Number(value) < 1))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "kernel process fields must be numeric"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!path.startsWith(\"/\") || /[\\x00-\\x1f\\x7f]/u.test(path))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "kernel file names must be absolute and printable"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!/^\\d+$/u.test(line.slice(1)))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "mapped inode must be numeric"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "const path = files.realpath(fact.executable);",
+    "replace": "const path = fact.executable;",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "a symlink display path cannot stand in for canonical identity"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (fact.inode === undefined || String(mapped.ino) !== fact.inode)",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the signed file must match the mapped executable inode"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (before !== stamp(path, files))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "replacement during verification loses trust"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "const app = APPS.find(item => path.startsWith(`${item.bundle}/Contents/`));",
+    "replace": "const app = APPS[5];",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "only specifically reviewed product bundle paths are exempt"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "await verify(app.bundle, requirement);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the enclosing app signature must verify"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!root.split(\"\\n\").includes(`Identifier=${app.id}`))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the app identifier must match the reviewed product"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "await verify(path, requirement);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the actual app executable signature must verify"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (id !== app.id && !id?.startsWith(`${app.id}.`))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "a different product binary cannot inherit app trust"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!app.apple && (!root.split(\"\\n\").includes(`TeamIdentifier=${app.team}`) || !binary.split(\"\\n\").includes(`TeamIdentifier=${app.team}`)))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the reviewed signing team binds both app and executable"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (rootStamp !== stamp(`${app.bundle}/Contents/Info.plist`, files))",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "bundle changes during verification lose trust"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "SYSTEM_PREFIX.test(path) && !RUNTIME.test(basename(path)) && !SHELL.test(basename(path)) && !LAUNCHER.test(basename(path))",
+    "replace": "SYSTEM_PREFIX.test(path)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "platform interpreters and script launchers are not ordinary system daemons"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "kind = \"shell\";",
+    "replace": "kind = \"system\";",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "shell signatures alone cannot exempt scripts or independent shells"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "postgres && path === files.realpath(postgres.executable)",
+    "replace": "postgres && true",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "PostgreSQL exemption requires the configured exact real path"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (createHash(\"sha256\").update(files.read(path)).digest(\"hex\") !== postgres.sha256)",
+    "replace": "if (false)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "PostgreSQL exemption requires the configured complete file digest"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "await verify(path); // A pinned local distribution",
+    "replace": "await Promise.resolve(); // A pinned local distribution",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the pinned PostgreSQL executable still needs a valid code signature"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "safe.add(selfPid);",
+    "replace": "safe.add(-1);",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the check itself is a permitted member"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "facts.get(String(row.pid))?.ppid === row.ppid && safe.has(row.ppid)",
+    "replace": "safe.has(row.ppid)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "stale ps parentage cannot exempt a reused PID"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (identities.get(parent) === \"terminal\")",
+    "replace": "if (true)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "shell ancestors require a verified reviewed terminal"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "&& identities.get(parent) === \"shell\"",
+    "replace": "&& true",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "unverified ancestor runtimes cannot inherit the shell-chain exemption"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "matches.push({ pid: row.pid, ppid: row.ppid, family: folder ?? \"unidentified\",",
+    "replace": "continue; matches.push({ pid: row.pid, ppid: row.ppid, family: folder ?? \"unidentified\",",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "every process without positive identity must be listed"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "facts.clear();",
+    "replace": "void 0;",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "identity facts must be fresh on each scan"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "      let verifiedStamp;\n      try { verifiedStamp = stamp(fact.executable); } catch { /* no identity can be bound to an unreadable file */ }\n      const identity = await identify(fact, { run, postgres, sipEnabled });",
+    "replace": "      const identity = await identify(fact, { run, postgres, sipEnabled });\n      let verifiedStamp;\n      try { verifiedStamp = stamp(fact.executable); } catch { /* no identity can be bound to an unreadable file */ }",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the cache stamp must be taken before identity verification"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (verified?.verifiedStamp && stamp(fact.executable) === verified.verifiedStamp)",
+    "replace": "if (verified?.verifiedStamp)",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "changed executables cannot use cached signature evidence"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "  await snapshot();\n  const finalRows",
+    "replace": "  await Promise.resolve();\n  const finalRows",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD:' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "a final membership scan catches births during signature verification"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (options.handoff) delete process.env.CONTROL_ROOM_REHEARSAL_TESTING;",
+    "replace": "void 0;",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: CLI' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "password handoff cannot use test-only empty command snapshots"
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "  \"$NODE_BIN\" \"$KIT_ROOT/scripts/install/rehearsal/check-bots-stopped.mjs\" --password-handoff || {",
+    "replace": "  true || {",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: both generated password' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the password block must recheck before its first privileged command"
+  },
+  {
+    "file": "docs/install/E2E2_REHEARSAL.md",
+    "find": "  \"$NODE_BIN\" \"$KIT_ROOT/scripts/install/rehearsal/check-bots-stopped.mjs\" --password-handoff || {",
+    "replace": "  true || {",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: both generated password' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "the password block must recheck before its first privileged command"
+  },
+  {
+    "file": "scripts/install/make-owner-paste-file.mjs",
+    "find": "refuse('postgresql_identity_refused');",
+    "replace": "void 0;",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: reviewed PostgreSQL' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "invalid PostgreSQL install configuration refuses before paste publication"
+  },
+  {
+    "file": "scripts/install/make-owner-paste-file.mjs",
+    "find": "quote(input.postgresql.executable)",
+    "replace": "input.postgresql.executable",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: reviewed PostgreSQL' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "configured executable paths remain literal shell arguments"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "Promise.race([",
+    "replace": "Promise.all([",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: slow' tests/e2e2-rehearsal.mjs tests/owner-paste-file.test.mjs",
+    "why": "slow or dropped command reads obey the whole-check deadline"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "Library\\/Apple|bin|sbin",
+    "replace": "bin|sbin",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "native Apple directory images remain accepted"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "usr(?=\\/(?!local(?:\\/|$)))",
+    "replace": "usr",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "usr local is outside protected system paths"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "const details = await display(path);",
+    "replace": "await verify(path, \"=anchor apple\");\n      const details = await display(path);",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "obsolete resource envelopes cannot block protected Apple images"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "!/^CDHash=[a-fA-F0-9]{40}$/mu.test(details)",
+    "replace": "false",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "system images require a 40-hex CDHash"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "!/^Authority=(?:macOS )?Software Signing\\nAuthority=Apple Code Signing Certification Authority\\nAuthority=Apple Root CA$/u.test(authorities)",
+    "replace": "false",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "the displayed Apple authority chain must match exactly"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "(?:macOS )?Software Signing\\nAuthority=Apple Code Signing Certification Authority",
+    "replace": ".*\\nAuthority=Apple Code Signing Certification Authority",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "the leaf signing authority is exact"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "Authority=Apple Code Signing Certification Authority\\nAuthority=Apple Root CA$/u",
+    "replace": "Authority=.*\\nAuthority=Apple Root CA$/u",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "the intermediate signing authority is exact"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "Authority=Apple Root CA$/u",
+    "replace": "Authority=.*$/u",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "the root signing authority is exact"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (before !== stamp(path, files)) return undefined;",
+    "replace": "if (false) return undefined;",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: exemptions|R5SD: real Apple' tests/e2e2-rehearsal.mjs",
+    "why": "file changes during signing cannot retain trust"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "System(?!\\/Volumes\\/Data(?:\\/|$))",
+    "replace": "System",
+    "test": "node --test --test-concurrency=1 --test-timeout=30000 --test-name-pattern='R5SD: obsolete|R5SD: real ad-hoc' tests/e2e2-rehearsal.mjs",
+    "why": "the writable Data volume cannot inherit protected System trust"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "!result.stderr && ",
+    "replace": "",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "SIP status warnings cannot enable the exemption"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "^System Integrity Protection status: enabled\\.(?:\\r?\\n)?$",
+    "replace": "^[\\s\\S]*$",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "only the exact enabled SIP status enables the exemption"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "  } catch { return false; }",
+    "replace": "  } catch { return true; }",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "failed or missing SIP reads fail closed"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "if (!(sipEnabled ?? await readSipEnabledV1(run)) && !/^Platform identifier=\\d+$/mu.test(details)) return undefined;",
+    "replace": "if (false) return undefined;",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "SIP-off images need a Platform identifier"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "  if (!sipEnabled) warn(",
+    "replace": "  if (false) warn(",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "SIP uncertainty prints one owner warning"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "const sipEnabled = await readSipEnabledV1(run);",
+    "replace": "const sipEnabled = true;",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "each check must consult SIP status"
+  },
+  {
+    "file": "scripts/install/rehearsal/check-bots-stopped.mjs",
+    "find": "identify(fact, { run, postgres, sipEnabled })",
+    "replace": "identify(fact, { run, postgres })",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-name-pattern='R5SD: SIP' tests/e2e2-rehearsal.mjs",
+    "why": "the one SIP read is reused for every image"
+  }
+]

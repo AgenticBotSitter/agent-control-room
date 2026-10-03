@@ -59,7 +59,8 @@ The projection keeps them apart, because only one of them is about who a row bel
   of its own contributes nothing and is named in `excluded.unattributed`.
 - **Freshness** is the second, separate filter. A self-reported row whose
   `telemetryState` is `stale`, or whose `lastObservedAt` is more than
-  `CAPACITY_FRESHNESS_MINUTES_V1` (30) before the snapshot, or which has no observation
+  `CAPACITY_FRESHNESS_MINUTES_V1` (5, the fleet telemetry's own lifetime, and the
+  same constant the workers board and the workboard use) before the snapshot, or which has no observation
   at all, is left out of the totals and named in `excluded.notFresh`. The panel says in
   words that freshness is not an attribution failure.
 - The two reason codes are distinct and the panel prints the matching sentence: a

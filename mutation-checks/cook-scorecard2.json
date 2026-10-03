@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/web/v1/worker-scorecard-read.ts",
+    "find": "JOIN projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id AND p.workspace_id=$5",
+    "replace": "JOIN projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=59240 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-name-pattern='scoped to its own workspace' tests/mac-local-worker-scorecard-postgres.test.ts",
+    "why": "the Mac-local scorecard is scoped to its own workspace in SQL, so another workspace's build stages are never read into the process"
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-read.ts",
+    "find": "if (!safeId.test(input.tenantId) || !safeId.test(input.workspaceId) || Number.isNaN(Date.parse(input.now)))",
+    "replace": "if (!safeId.test(input.tenantId) || Number.isNaN(Date.parse(input.now)))",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='an invalid scope is rejected' tests/worker-scorecard-read.test.tsx",
+    "why": "a blank workspace is refused before any query, rather than matching no project and reading as a silent empty board"
+  },
+  {
+    "file": "src/web/v1/mac-local-worker-scorecard-service.ts",
+    "find": "      actor.require(\"projects.read\", undefined, true);\n      return actor;",
+    "replace": "      return actor;",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=59240 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-name-pattern='live non-owner identity' tests/mac-local-worker-scorecard-postgres.test.ts",
+    "why": "the scorecard is owner-only: a live session holding projects.read as an operator is still refused"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "        return Response.json(await workerScorecard.read(identity), { headers: privateResponseHeaders });",
+    "replace": "        return Response.json({ observedAt: new Date(clock()).toISOString(), groups: [], olderGroupsOmitted: 0 }, { headers: privateResponseHeaders });",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=59240 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-name-pattern='serves the worker scorecard with real data' tests/mac-local-worker-scorecard-postgres.test.ts",
+    "why": "the Mac-local route reaches the real grouped read rather than answering a fabricated empty board"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "      const identity = await sessions.verifyLive(request, clock());\n      // Only live sessions can spend the owner's shared authentication budget.\n      if (passkeyAttempt) sessions.admitAuthenticationAttempt(request, clock());\n      if (url.pathname === \"/api/v1/workers-scorecard\") {",
+    "replace": "      const identity = sessions.verify(request, clock());\n      // Only live sessions can spend the owner's shared authentication budget.\n      if (passkeyAttempt) sessions.admitAuthenticationAttempt(request, clock());\n      if (url.pathname === \"/api/v1/workers-scorecard\") {",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=59240 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-name-pattern='refuses a signed-out caller' tests/mac-local-worker-scorecard-postgres.test.ts",
+    "why": "the scorecard verifies the session live, so a revocation from another process stops it without a restart"
+  }
+]

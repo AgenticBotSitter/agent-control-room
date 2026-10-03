@@ -1,10 +1,12 @@
+import { acquireRecoverablePrivateProcessLockV1, readPrivateProcessLeaseV1 } from "../../src/installer/shared/private-process-lock.mjs";
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Owns one Mac-local task-host child, its bounded private log, and its durable stop reason.
 // launchd supervises this process; a child crash makes this exit unsuccessfully so launchd restarts it.
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { closeSync, constants, fstatSync, openSync, writeSync } from "node:fs";
 import { chmod, lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { alive, hostCommand, protectedRootFromArguments, repoRoot, runtimePaths, taskHostCommand } from "./stack.mjs";
+import { alive, hostCommand, protectedRootFromArguments, repoRoot, runtimePaths, supervisorLockPaths, taskHostCommand } from "./stack.mjs";
 
 export const HOST_LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const HOST_LOG_BACKUPS = 3;
@@ -31,14 +33,28 @@ async function regularPrivateFile(path) {
   }
 }
 
+async function discardUnsafeDiagnostic(path) {
+  const entry = await lstat(path).catch(error => error?.code === "ENOENT" ? undefined : Promise.reject(error));
+  if (entry?.isDirectory()) {
+    // Move the entry without opening or removing anything inside it.
+    await rename(path, `${path}.quarantine-${randomBytes(16).toString("hex")}`);
+  } else await rm(path, { force: true });
+}
+
 export async function rotateHostLog(path, maxBytes = HOST_LOG_MAX_BYTES, backups = HOST_LOG_BACKUPS) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(backups) || backups < 1)
     throw new Error("mac_local_host_log_policy_invalid");
   const current = await regularPrivateFile(path);
   if (!current || current.size < maxBytes) return false;
-  await rm(`${path}.${backups}`, { force: true });
+  await discardUnsafeDiagnostic(`${path}.${backups}`);
   for (let index = backups - 1; index >= 1; index -= 1) {
-    if (await regularPrivateFile(`${path}.${index}`)) await rename(`${path}.${index}`, `${path}.${index + 1}`);
+    const backup = `${path}.${index}`;
+    try { if (await regularPrivateFile(backup)) await rename(backup, `${path}.${index + 1}`); }
+    catch (error) {
+      if (error?.message !== "mac_local_host_log_invalid") throw error;
+      // Discard only the unsafe directory entry, without following links or recursing.
+      await discardUnsafeDiagnostic(backup);
+    }
   }
   await rename(path, `${path}.1`);
   return true;
@@ -88,28 +104,45 @@ export class RotatingHostLog {
     return log;
   }
 
+  /** Appends diagnostics, and NEVER rejects. A bounded log is not worth stopping the service
+   * over: on a full disk every write raises ENOSPC, and the old behaviour killed the running
+   * website host because of it — then could not restart it, because the pid and state writes
+   * failed too. A full disk is precisely when the owner most needs the site still serving.
+   * The first failure is remembered (and logged once, to stderr) so the condition is visible;
+   * after that the bytes are discarded. */
   write(value) {
     const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
     this.pending = this.pending.then(async () => {
-      let offset = 0;
-      while (offset < buffer.length) {
-        if (this.size >= this.maxBytes) {
-          closeSync(this.fd);
-          await rotateHostLog(this.path, this.maxBytes, this.backups);
-          this.fd = openHostLog(this.path);
-          this.size = 0;
+      if (this.failed) return;
+      try {
+        let offset = 0;
+        while (offset < buffer.length) {
+          if (this.size >= this.maxBytes) {
+            closeSync(this.fd);
+            await rotateHostLog(this.path, this.maxBytes, this.backups);
+            this.fd = openHostLog(this.path);
+            this.size = 0;
+          }
+          const length = Math.min(buffer.length - offset, this.maxBytes - this.size);
+          writeSync(this.fd, buffer, offset, length);
+          this.size += length;
+          offset += length;
         }
-        const length = Math.min(buffer.length - offset, this.maxBytes - this.size);
-        writeSync(this.fd, buffer, offset, length);
-        this.size += length;
-        offset += length;
+      } catch (error) {
+        this.failed ??= error;
+        // Losing the descriptor is the last resort: if it is still open, leaving it open would
+        // hold the file we can no longer write. closeSync is guarded so an already-closed
+        // descriptor cannot turn a diagnostic failure into an unhandled throw.
+        try { closeSync(this.fd); } catch {}
+        process.stderr.write(`${new Date().toISOString()} host log write failed (${cleanDetail(error?.message ?? "unknown")}); `
+          + "the host keeps serving without diagnostics\n");
       }
     });
     return this.pending;
   }
 
   line(value) { return this.write(`${new Date().toISOString()} ${value}\n`); }
-  async close() { await this.pending; closeSync(this.fd); }
+  async close() { await this.pending; if (!this.failed) try { closeSync(this.fd); } catch {} }
 }
 
 function cleanDetail(value) {
@@ -123,9 +156,17 @@ export function stoppedBecause(code, signal, requestedSignal) {
   return "unknown process exit";
 }
 
+// Diagnostic writes, not authority. A directory (or any other shape) where the pid or state file
+// belongs — a restored backup, a manual mistake — used to make every start fail with EISDIR, so
+// launchd could never bring the site back. Move the entry aside without opening or descending
+// into it, so anything inside it comes back out whole, then rename onto the path.
 async function writePrivateFile(path, content) {
   const temporary = `${path}.new-${process.pid}`;
   await rm(temporary, { force: true });
+  const occupied = await lstat(path).catch(error => error?.code === "ENOENT" ? undefined : Promise.reject(error));
+  if (occupied && (!occupied.isFile() || occupied.isSymbolicLink())) {
+    await rename(path, `${path}.quarantine-${randomBytes(16).toString("hex")}`);
+  }
   await writeFile(temporary, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
   await chmod(temporary, 0o600);
   await rename(temporary, path);
@@ -134,16 +175,22 @@ async function writePrivateFile(path, content) {
 const writeState = (path, state) => writePrivateFile(path, `${JSON.stringify(state)}\n`);
 
 async function stopStaleChild(previous, root, runtime = {}) {
-  if (previous?.state !== "running" || !Number.isSafeInteger(previous.pid)
+  const paths = supervisorLockPaths(root);
+  if (!runtime.alive) {
+    const lease = readPrivateProcessLeaseV1(paths.childLock);
+    previous = lease ? { childPid: lease.pid, childLease: lease.identity } : undefined;
+  } else if (previous?.state !== "running" || !Number.isSafeInteger(previous.pid)
     || !Number.isSafeInteger(previous.childPid)) return;
-  const exactAlive = runtime.alive ?? alive;
-  if (exactAlive(previous.pid, hostCommand(root)) || !exactAlive(previous.childPid, taskHostCommand(root))) return;
+  if (!previous) return;
+  const exactAlive = runtime.alive ?? ((pid, command) => alive(pid, command, { path: paths.childLock, identity: previous.childLease }));
+  const command = runtime.command ? [runtime.command, ...(runtime.args ?? [])] : taskHostCommand(root);
+  if ((runtime.alive && exactAlive(previous.pid, hostCommand(root))) || !exactAlive(previous.childPid, command)) return;
   const signal = runtime.signal ?? process.kill;
   try { signal(-previous.childPid, "SIGKILL"); }
   catch { try { signal(previous.childPid, "SIGKILL"); } catch {} }
-  for (let attempt = 0; attempt < 80 && exactAlive(previous.childPid, taskHostCommand(root)); attempt += 1)
+  for (let attempt = 0; attempt < 80 && exactAlive(previous.childPid, command); attempt += 1)
     await new Promise(resolve => setTimeout(resolve, 25));
-  if (exactAlive(previous.childPid, taskHostCommand(root))) throw new Error("mac_local_stale_task_host_would_not_stop");
+  if (exactAlive(previous.childPid, command)) throw new Error("mac_local_stale_task_host_would_not_stop");
 }
 
 export async function readHostState(path) {
@@ -172,12 +219,19 @@ export async function readRecoverableHostState(path, reader = readHostState) {
 }
 
 export async function superviseTaskHost(root, runtime = {}) {
-  const paths = runtimePaths(root);
+  const paths = { ...runtimePaths(root), ...supervisorLockPaths(root) };
+  // Own exclusion before any log/state write. A refused second start must have no effects. A
+    // wrong-mode, directory or dangling-symlink entry left in the private runtime is NOT "a
+    // supervisor is already running": it is damage the owner can clear, so one such entry is
+    // quarantined beside itself and the lock retried. Only a real holder gets the busy code, and
+    // only the busy code means "do not start".
+  const supervisorLock = acquireRecoverablePrivateProcessLockV1(paths.hostLock,
+    { busyCode: "mac_local_supervisor_busy", unusableCode: "mac_local_supervisor_lock_unusable" });
   const [defaultCommand, ...defaultArgs] = taskHostCommand(root);
   const command = runtime.command ?? defaultCommand;
   const args = runtime.args ?? defaultArgs;
   const signals = runtime.signals ?? process;
-  let shutdown, child, childClosed = false, escalation, streamError;
+  let shutdown, child, childClosed = false, escalation, streamError, childLock, completion;
   const signalChild = signal => {
     if (!child) return;
     try {
@@ -200,9 +254,9 @@ export async function superviseTaskHost(root, runtime = {}) {
   const onTerm = () => forward("SIGTERM", true), onInt = () => forward("SIGINT", true);
   // A hangup is session loss, not an owner request to leave the service stopped.
   const onHangup = () => forward("SIGHUP");
-  signals.once("SIGTERM", onTerm);
-  signals.once("SIGINT", onInt);
-  signals.once("SIGHUP", onHangup);
+  signals.on("SIGTERM", onTerm);
+  signals.on("SIGINT", onInt);
+  signals.on("SIGHUP", onHangup);
   let log;
   try {
     log = await RotatingHostLog.open(paths.hostLog, runtime.maxLogBytes, runtime.backups);
@@ -222,25 +276,56 @@ export async function superviseTaskHost(root, runtime = {}) {
         : previous?.lastStop;
     if (previous?.state === "running") await log.line(`host stopped because ${lastStop.reason}`);
     await stopStaleChild(previous, root, runtime);
+    // Same rule as the supervisor lock above: one unusable entry is quarantined, a real holder
+    // is still refused. Without this a directory left at the child lock path stopped the site
+    // from ever starting again.
+    childLock = acquireRecoverablePrivateProcessLockV1(paths.childLock,
+      { busyCode: "mac_local_task_host_busy", unusableCode: "mac_local_task_host_lock_unusable" });
     child = (runtime.spawn ?? spawn)(command, args, {
-      cwd: repoRoot, detached: true, stdio: ["pipe", "pipe", "pipe"],
+      cwd: repoRoot, detached: true, stdio: ["pipe", "pipe", "pipe", childLock.fd],
       env: { ...process.env, CONTROL_ROOM_TASK_HOST_SUPERVISED: "1" },
     });
-    const completion = new Promise(resolve => {
+    completion = new Promise(resolve => {
       child.once("error", error => resolve({ code: 1, signal: undefined, error }));
       child.once("close", (code, signal) => { childClosed = true; resolve({ code, signal, error: undefined }); });
     });
-    const capture = chunk => { void log.write(chunk).catch(error => {
-      streamError ??= error;
-      signalChild("SIGKILL");
-    }); };
+    childLock.writeOwner(child.pid, [command, ...args]);
+    // The log can no longer reject, so this only guards a future port that can. Diagnostics must
+    // never decide whether the site keeps serving: on a full disk this used to SIGKILL the
+    // running host, and then the pid and state writes below failed too, so it could not be
+    // restarted. The failure is remembered for the recorded stop reason and nothing else.
+    // `onChildOutput` observes the child's own output through the same pipe the log sees, so a
+    // test can prove the child kept working while the disk is full without writing anything.
+    const capture = chunk => {
+      runtime.onChildOutput?.(chunk);
+      void log.write(chunk).catch(error => { streamError ??= error; });
+    };
     child.stdout?.on("data", capture);
     child.stderr?.on("data", capture);
     if (shutdown) forward(shutdown.signal, shutdown.deliberate);
-    await writePrivateFile(paths.hostPid, `${process.pid}\n`);
-    await writeState(paths.hostState, { schema: "control-room.mac-local-host-state/v1", state: "running",
-      pid: process.pid, childPid: child.pid, at: new Date().toISOString(),
+    // The pid and state files are DIAGNOSTIC, like the log: they describe a host that is already
+    // running and are rebuilt on the next start. Making them a hard requirement meant that on a
+    // full disk the ENOSPC from these two writes took down a perfectly healthy site — and left
+    // the state file saying "running", so every later start was refused as busy. Recorded once,
+    // on stderr, and the host serves on.
+    const recordState = async state => {
+      try { await writeState(paths.hostState, state); return true; }
+      catch (error) {
+        process.stderr.write(`${new Date().toISOString()} host state could not be recorded (${cleanDetail(error?.message ?? "unknown")}); `
+          + "the host keeps serving\n");
+        return false;
+      }
+    };
+    try { await writePrivateFile(paths.hostPid, `${process.pid}\n`); }
+    catch (error) {
+      process.stderr.write(`${new Date().toISOString()} host pid file could not be written (${cleanDetail(error?.message ?? "unknown")}); `
+        + "the host keeps serving\n");
+    }
+    await recordState({ schema: "control-room.mac-local-host-state/v1", state: "running",
+      pid: process.pid, childPid: child.pid, childLease: childLock.identity, at: new Date().toISOString(),
       ...(lastStop ? { lastStop } : {}) });
+    // Only the child holds this descriptor now; its death releases the identity lease.
+    if (!runtime.spawn) childLock.close();
     runtime.onStarted?.();
     const result = await completion;
     if (escalation) clearTimeout(escalation);
@@ -248,9 +333,9 @@ export async function superviseTaskHost(root, runtime = {}) {
     const requestedSignal = shutdown?.deliberate ? shutdown.signal : undefined;
     const reason = streamError ? "supervisor log write failed" : stoppedBecause(result.code, result.signal, requestedSignal);
     if (!streamError) await log.line(`host stopped because ${reason}`);
-    await writeState(paths.hostState, { schema: "control-room.mac-local-host-state/v1", state: "stopped",
+    await recordState({ schema: "control-room.mac-local-host-state/v1", state: "stopped",
       reason, at: new Date().toISOString() });
-    await rm(paths.hostPid, { force: true });
+    await rm(paths.hostPid, { force: true }).catch(() => {});
     // Only a signal explicitly forwarded by the supervisor is deliberate. Any other
     // child exit, including code 0, leaves the service unavailable and must trigger launchd recovery.
     return requestedSignal ? 0 : 1;
@@ -259,8 +344,12 @@ export async function superviseTaskHost(root, runtime = {}) {
     signals.removeListener("SIGINT", onInt);
     signals.removeListener("SIGHUP", onHangup);
     if (escalation) clearTimeout(escalation);
-    if (child && !childClosed) signalChild("SIGKILL");
-    if (log) await log.close();
+    try {
+      if (child && !childClosed) { signalChild("SIGKILL"); await completion; }
+      if (log) await log.close();
+    } finally {
+      try { childLock?.release(); } finally { supervisorLock.release(); }
+    }
   }
 }
 
@@ -270,8 +359,11 @@ async function main() {
   process.exitCode = await superviseTaskHost(root);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void main().catch(async error => {
+    if (error?.message === "mac_local_supervisor_busy") {
+      console.error("mac_local_supervisor_busy"); process.exitCode = 1; return;
+    }
     const root = protectedRootFromArguments(process.argv.slice(2));
     const message = `${new Date().toISOString()} host stopped because supervisor error: ${cleanDetail(error?.message ?? "unknown")}`;
     if (root) {

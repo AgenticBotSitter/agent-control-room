@@ -441,3 +441,33 @@ test("a failed read arms a bounded backoff instead of retrying at the base inter
   assert.ok(delays[delays.length - 1]! <= 1_000 * 64, "backoff stays bounded");
   scheduler.stop();
 });
+
+// The phone QA resume-class probe: aborts are not outages, even after quiet polls.
+test("R7P-05: an abort-shaped read keeps the last result and recovers at base interval", async () => {
+  const time = harness(); let reads = 0, failures = 0; const accepted: number[] = [];
+  const scheduler = createPolledReadScheduler({ ...time.options, baseIntervalMs: 100,
+    read: async () => { if (++reads === 2) throw new DOMException("backgrounded", "AbortError"); return reads; },
+    accept: value => accepted.push(value), failed: () => failures++ });
+  try {
+    scheduler.start(); await time.advance(0); await time.advance(100);
+    assert.equal(failures, 0); assert.deepEqual(accepted, [1]);
+    assert.equal(time.intervals.at(-1)?.reason, "base");
+    await time.advance(100); assert.deepEqual(accepted, [1, 3]);
+  } finally { scheduler.stop(); }
+});
+
+test("R7P-05: 50 focus triggers coalesce; hide cancels; resume and stop discard late reads", async () => {
+  const time = harness(); let reads = 0, failures = 0, signal!: AbortSignal, resolve!: (value: number) => void;
+  const accepted: number[] = [];
+  const scheduler = createPolledReadScheduler({ ...time.options, baseIntervalMs: 100,
+    read: current => { reads++; signal = current; return new Promise<number>(done => { resolve = done; }); },
+    accept: value => accepted.push(value), failed: () => failures++ });
+  try {
+    scheduler.start(); for (let n = 0; n < 50; n++) scheduler.trigger(); assert.equal(reads, 1);
+    time.setHidden(true); scheduler.pause(); assert.equal(signal.aborted, true);
+    time.setHidden(false); scheduler.trigger(); resolve(1); await time.advance(0);
+    assert.deepEqual(accepted, []); assert.equal(reads, 2); assert.equal(signal.aborted, false);
+    scheduler.stop(); resolve(2); await time.advance(0);
+    assert.deepEqual(accepted, []); assert.equal(failures, 0); assert.equal(time.pending, 0);
+  } finally { scheduler.stop(); }
+});

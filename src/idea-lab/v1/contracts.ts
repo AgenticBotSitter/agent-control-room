@@ -134,9 +134,26 @@ export function buildIdeaLabSynthesisV1(sessionValue: unknown, contributionValue
   for (const contribution of contributions) if (capturedIdeaTimeMillisecondsV1(contribution.contributedAt)! > synthesizedAt) {
     futureContribution = true; break;
   }
+  // The round set must be COMPLETE here, exactly as the deterministic engine
+  // requires: every participant/round tuple, and nothing else. The previous
+  // check only asked that every participant appear AT LEAST ONCE, so a
+  // two-round session supplied with round 1 alone built a valid synthesis and a
+  // valid owner decision through this boundary - while the engine refused the
+  // same contributions. That made the completeness rule a property of one
+  // caller rather than of the contract, and left a restored or imported record
+  // able to carry a recap no ordinary run could have produced.
+  //
+  // Requiring the exact tuple set is the honest reading, and it is the same set
+  // `session.maxMessages` names. An intentionally incomplete legacy snapshot is
+  // no longer representable; if one is ever needed deliberately, it needs its
+  // own record type rather than a weaker check on this one.
+  const tuples = new Set(contributions.map((item) => `${item.participantId}:${item.round}`));
+  const completeRoundSet = contributions.length === session.maxMessages && tuples.size === session.maxMessages
+    && session.participants.every(participant => Array.from({ length: session.maxRounds }, (_, index) => index + 1)
+      .every(round => tuples.has(`${participant.participantId}:${round}`)));
   if (contributions.length > session.maxMessages
     || new Set(contributions.map((item) => item.contributionId)).size !== contributions.length
-    || session.participants.some((participant) => !contributions.some((item) => item.participantId === participant.participantId))
+    || !completeRoundSet
     || futureContribution) {
     throw new IdeaLabErrorV1("panel_incomplete");
   }

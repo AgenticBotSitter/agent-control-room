@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import { listTestFiles } from "../check-test-lane-coverage.mjs";
 
 const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
@@ -358,4 +358,4 @@ function main() {
   process.exitCode = runSelectedTests(result, tests, root);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

@@ -1,71 +1,17 @@
+import { z } from "zod";
+import { portableUtf8ByteLengthV1 } from "../../security/inert-portable-input";
 import {
   parseProjectPackV1,
   previewProjectPackV1,
   PROJECT_PACK_SCHEMA_V1,
+  PROJECT_PACK_MAX_BYTES_V1,
   type ProjectPackPreviewV1,
   type ProjectPackV1,
 } from "./project-pack";
 
-/**
- * Browser-safe entry point over the canonical project-pack parser.
- *
- * The canonical parser is shared, reviewed code that measures raw-input size
- * with Node's `Buffer.byteLength`. In a browser there is no `Buffer` global,
- * so a direct call would throw before any pack is previewed. This module
- * provides the missing UTF-8 byte measurement *for the duration of one call*,
- * then restores the previous global state — the parser itself is imported
- * unmodified and its byte ceiling (`project_pack_input_oversized` at 65536
- * bytes) and all guard semantics are preserved exactly.
- *
- * The same requirement holds for the schema/roundtrip tests, which always run
- * under Node. In a real browser without Node globals this fallback uses the
- * Web-standard `TextEncoder` to compute identical UTF-8 byte counts
- * (`TextEncoder().encode(s).length === Buffer.byteLength(s, "utf8")` for all
- * valid strings).
- */
-
-/** The exact runtime `Buffer` shape the parser needs. */
-type NodeBufferLike = { byteLength: (input: string, encoding?: string) => number };
-
-function utf8ByteLengthV1(text: string): number {
-  if (typeof TextEncoder !== "undefined") {
-    return new TextEncoder().encode(text).length;
-  }
-  // Parse-time fallback for pre-TextEncoder engines: UTF-16 code units ≥ UTF-8
-  // bytes, so this never accepts an input the canonical guard would refuse.
-  return text.length;
-}
-
-/**
- * Run `body` with a `Buffer`-shaped byteLength available, then restore the
- * prior global value (whether absent, undefined, a data property, or the
- * Node lazy accessor) in a `finally` block. Call-scoped and synchronous:
- * nothing is installed for the lifetime of the page and nothing is left
- * modified on any exit path. Exported so tests can prove the canonical
- * parser runs unmodified through the same bridge the panel uses.
- */
+/** Browser-safe entry point. Parsing never installs or depends on host globals. */
 export function withParserByteLengthV1<T>(body: () => T): T {
-  const prior = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
-  const needsBridge = typeof globalThis.Buffer !== "function";
-  if (!needsBridge) return body();
-  try {
-    const bridge: NodeBufferLike = {
-      byteLength: (input: string, encoding?: string): number => {
-        if (encoding !== undefined && encoding !== "utf8" && encoding !== "utf-8") {
-          throw new Error("project_pack_unsupported_encoding");
-        }
-        return utf8ByteLengthV1(input);
-      },
-    };
-    Object.defineProperty(globalThis, "Buffer", { configurable: true, value: bridge });
-    return body();
-  } finally {
-    if (prior === undefined) {
-      delete (globalThis as Record<string, unknown>).Buffer;
-    } else {
-      Object.defineProperty(globalThis, "Buffer", prior);
-    }
-  }
+  return body();
 }
 
 /** Raw text accepted from the local file/paste surface, before parsing. */
@@ -96,8 +42,23 @@ export function refusalTextV1(reason: string): string {
     project_pack_unknown_module: "The pack lists a module that is not part of this product configuration.",
     project_pack_empty: "No input was provided. Choose a file or paste pack text first.",
     project_pack_read_failed: "The input is not valid JSON.",
+    project_pack_unknown_field: "The pack contains an unknown field. Remove fields outside the project pack schema.",
   };
   if (known[reason] !== undefined) return known[reason];
+  const invalidField = /^project_pack_field_invalid:(title|summary|optionalModules|setupGuidance|attribution|license)$/.exec(reason);
+  if (invalidField) return `The ${invalidField[1]} field has the wrong shape. Check the pack schema.`;
+  const fieldIssue = /^project_pack_field_invalid:(title|summary|optionalModules|setupGuidance|attribution|license):(too_small|too_big|invalid_type|invalid_format|invalid_value)$/.exec(reason);
+  if (fieldIssue) {
+    const [,field,code] = fieldIssue;
+    const lengths:Record<string,number>={title:120,summary:2000,attribution:120,license:40,setupGuidance:1000};
+    if(code==="too_small")return `The ${field} field contains an empty value. Provide text for this field.`;
+    if(code==="too_big")return field==="optionalModules"||field==="setupGuidance"
+      ? `The ${field} field exceeds its allowed item or text length ceiling.`
+      : `The ${field} field exceeds its ${lengths[field!]}-character ceiling.`;
+    return `The ${field} field has the wrong shape or format. Check its type in the pack schema.`;
+  }
+  const unknownField = /^project_pack_unknown_field:([A-Za-z0-9_]{1,64})$/.exec(reason);
+  if(unknownField)return `The pack contains an unknown field: ${unknownField[1]}. Remove this field.`;
   const fieldMatch = /^project_pack_([a-z0-9]+)_(not_printable|credential_shaped|authority_shaped|executable_content)$/.exec(reason);
   if (fieldMatch) {
     const [, field, kind] = fieldMatch;
@@ -124,19 +85,45 @@ export function browseProjectPackV1(
   raw: RawPackInputV1 | null,
   localConfiguration: ProjectPackLocalConfigurationV1,
 ): ProjectPackBrowseOutcomeV1 {
-  if (raw === null || raw.rawText.length === 0) {
+  if (raw === null) {
+    return { status: "refused", reason: "project_pack_empty" };
+  }
+  if (portableUtf8ByteLengthV1(raw.rawText) > PROJECT_PACK_MAX_BYTES_V1) {
+    return { status: "refused", reason: "project_pack_input_oversized" };
+  }
+  if (raw.rawText.replace(/\0/gu, "").trim().length === 0) {
     return { status: "refused", reason: "project_pack_empty" };
   }
   let pack: Readonly<ProjectPackV1>;
   try {
     pack = withParserByteLengthV1(() => parseProjectPackV1(JSON.parse(raw.rawText)));
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return { status: "refused", reason: reason.startsWith("project_pack_") ? reason : "project_pack_read_failed" };
+    return { status: "refused", reason: projectPackRefusalReasonV1(error) };
   }
   const preview = withParserByteLengthV1(() => previewProjectPackV1(pack, localConfiguration));
   return { status: "ready", pack, preview };
 }
 
+function projectPackRefusalReasonV1(error: unknown): string {
+  if (error instanceof SyntaxError) return "project_pack_read_failed";
+  if (error instanceof z.ZodError) {
+    const canonical = error.issues.find(issue => /^project_pack_[a-z_]+$/.test(issue.message));
+    if (canonical) return canonical.message;
+    const issue = error.issues[0];
+    if (issue?.code === "unrecognized_keys") {
+      const key=issue.keys[0];
+      return key&&/^[A-Za-z0-9_]{1,64}$/.test(key)?`project_pack_unknown_field:${key}`:"project_pack_unknown_field";
+    }
+    if (issue?.path[0] === "optionalModules" && issue.code === "invalid_value") return "project_pack_unknown_module";
+    const field = issue?.path[0];
+    if (typeof field === "string" && ["title", "summary", "optionalModules", "setupGuidance", "attribution", "license"].includes(field)) {
+      return `project_pack_field_invalid:${field}:${issue!.code}`;
+    }
+    return "project_pack_malformed";
+  }
+  if (error instanceof Error && /^project_pack_[a-z_]+$/.test(error.message)) return error.message;
+  return "project_pack_malformed";
+}
+
 /** The schema literal, re-exported for the presentation component's helper text. */
-export { PROJECT_PACK_SCHEMA_V1 };
+export { PROJECT_PACK_SCHEMA_V1, PROJECT_PACK_MAX_BYTES_V1 };

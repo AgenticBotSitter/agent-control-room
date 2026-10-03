@@ -28,8 +28,11 @@ export interface CodexWorkspaceRootIdentitiesV1 {
 
 export interface CodexWorkspaceLeaseV1 {
   leaseId: string;
+  deliveryDigest: string;
   runId: string;
   repositoryRealPath: string;
+  repositoryDevice: string;
+  repositoryInode: string;
   checkoutPath: string;
   revision: string;
   device: string;
@@ -44,20 +47,22 @@ export class CodexWorkspaceManagerV1 {
 
   constructor(private readonly port: CodexWorkspacePortV1) {}
 
-  async prepare(input: { runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }): Promise<CodexWorkspaceLeaseV1> {
-    input = { ...input };
+  async prepare(input: { deliveryDigest?: string; runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }): Promise<CodexWorkspaceLeaseV1> {
+    input = { ...input, deliveryDigest: input.deliveryDigest
+      ?? sha256Digest({ purpose: "legacy-workspace-delivery/v1", runId: input.runId }) };
     if (this.uncertainCreates.has(input.runId)) throw new Error("Codex workspace creation requires reconciliation");
     if (this.busy.has(input.runId)) throw new Error("Codex workspace operation is already pending");
     this.busy.add(input.runId);
-    try { return await this.prepareExclusive(input, false); }
+    try { return await this.prepareExclusive(input as typeof input & { deliveryDigest: string }, false); }
     finally { this.busy.delete(input.runId); }
   }
 
   /** Coding tasks must use a repository source distinct from the owner's live
    * checkout. The canonical identity check happens before any create effect. */
-  async prepareCoding(input: { runId: string; repositoryRoot: string; workspaceRoot: string;
+  async prepareCoding(input: { deliveryDigest?: string; runId: string; repositoryRoot: string; workspaceRoot: string;
     ownerCheckoutRoot: string; revision: string }): Promise<CodexWorkspaceLeaseV1> {
-    input = { ...input };
+    input = { ...input, deliveryDigest: input.deliveryDigest
+      ?? sha256Digest({ purpose: "legacy-workspace-delivery/v1", runId: input.runId }) };
     if (!isAbsolute(input.ownerCheckoutRoot)) throw new Error("Codex owner checkout root must be absolute");
     if (resolve(input.repositoryRoot) === resolve(input.ownerCheckoutRoot))
       throw new Error("Codex owner live checkout cannot be a coding base");
@@ -69,12 +74,13 @@ export class CodexWorkspaceManagerV1 {
     if (this.uncertainCreates.has(input.runId)) throw new Error("Codex workspace creation requires reconciliation");
     if (this.busy.has(input.runId)) throw new Error("Codex workspace operation is already pending");
     this.busy.add(input.runId);
-    try { return await this.prepareExclusive(input, true); }
+    try { return await this.prepareExclusive(input as typeof input & { deliveryDigest: string }, true); }
     finally { this.busy.delete(input.runId); }
   }
 
-  private async prepareExclusive(input: { runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }, coding: boolean): Promise<CodexWorkspaceLeaseV1> {
+  private async prepareExclusive(input: { deliveryDigest: string; runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }, coding: boolean): Promise<CodexWorkspaceLeaseV1> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/.test(input.runId)) throw new Error("Codex workspace run id is invalid");
+    if (!/^sha256:[a-f0-9]{64}$/.test(input.deliveryDigest)) throw new Error("Codex workspace delivery digest is invalid");
     if (!/^[a-f0-9]{40}$/.test(input.revision)) throw new Error("Codex workspace revision must be a full Git commit");
     if (!isAbsolute(input.repositoryRoot) || !isAbsolute(input.workspaceRoot)) throw new Error("Codex workspace roots must be absolute");
     if (this.active.has(input.runId)) throw new Error("Codex workspace run is already active");
@@ -97,9 +103,15 @@ export class CodexWorkspaceManagerV1 {
     }
     requireIdentity(created);
     const lease: CodexWorkspaceLeaseV1 = {
-      leaseId: sha256Digest({ runId: input.runId, repositoryRealPath: repository.realPath, checkoutPath, revision: input.revision, device: created.device, inode: created.inode }),
+      leaseId: sha256Digest({ deliveryDigest: input.deliveryDigest, runId: input.runId,
+        repositoryRealPath: repository.realPath, repositoryDevice: repository.device,
+        repositoryInode: repository.inode, checkoutPath, revision: input.revision,
+        device: created.device, inode: created.inode }),
+      deliveryDigest: input.deliveryDigest,
       runId: input.runId,
       repositoryRealPath: repository.realPath,
+      repositoryDevice: repository.device,
+      repositoryInode: repository.inode,
       checkoutPath,
       revision: input.revision,
       device: created.device,
@@ -158,8 +170,12 @@ export class CodexWorkspaceManagerV1 {
 
 export function assertCodexWorkspaceLeaseV1(lease: CodexWorkspaceLeaseV1): void {
   requireIdentity({ realPath: lease.checkoutPath, device: lease.device, inode: lease.inode });
-  if (!isAbsolute(lease.repositoryRealPath) || !/^[a-f0-9]{40}$/.test(lease.revision)) throw new Error("Codex workspace lease is invalid");
-  const expected = sha256Digest({ runId: lease.runId, repositoryRealPath: lease.repositoryRealPath, checkoutPath: lease.checkoutPath, revision: lease.revision, device: lease.device, inode: lease.inode });
+  requireIdentity({ realPath: lease.repositoryRealPath, device: lease.repositoryDevice, inode: lease.repositoryInode });
+  if (!/^sha256:[a-f0-9]{64}$/.test(lease.deliveryDigest) || !/^[a-f0-9]{40}$/.test(lease.revision)) throw new Error("Codex workspace lease is invalid");
+  const expected = sha256Digest({ deliveryDigest: lease.deliveryDigest, runId: lease.runId,
+    repositoryRealPath: lease.repositoryRealPath, repositoryDevice: lease.repositoryDevice,
+    repositoryInode: lease.repositoryInode, checkoutPath: lease.checkoutPath,
+    revision: lease.revision, device: lease.device, inode: lease.inode });
   if (lease.leaseId !== expected) throw new Error("Codex workspace lease digest mismatch");
 }
 
@@ -182,7 +198,9 @@ function overlaps(left: string, right: string): boolean {
 }
 
 function sameLease(left: CodexWorkspaceLeaseV1, right: CodexWorkspaceLeaseV1): boolean {
-  return left.leaseId === right.leaseId && left.runId === right.runId && left.repositoryRealPath === right.repositoryRealPath
+  return left.leaseId === right.leaseId && left.deliveryDigest === right.deliveryDigest
+    && left.runId === right.runId && left.repositoryRealPath === right.repositoryRealPath
+    && left.repositoryDevice === right.repositoryDevice && left.repositoryInode === right.repositoryInode
     && left.checkoutPath === right.checkoutPath && left.revision === right.revision && left.device === right.device && left.inode === right.inode;
 }
 

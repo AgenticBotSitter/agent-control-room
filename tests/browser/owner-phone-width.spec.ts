@@ -43,7 +43,7 @@
 // response intercepted — no stubbed component, no injected state — so hosted
 // Home's focus order is measured rather than assumed. Hosted Home is where the
 // original defect was worse, and nothing in the rehearsal stack serves it.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { assertDisposableBrowserOrigin } from "../../private-app/app/browser-test-origin";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
@@ -61,7 +61,7 @@ const PHONE_HEIGHT = 812;
 
 /** The owner routes. The project/task routes need ids, so they are appended once
  * the fixture has created them. */
-const OWNER_ROUTES: readonly string[] = ["/", "/projects", "/workers", "/needs-me"];
+const OWNER_ROUTES: readonly string[] = ["/", "/projects", "/workers", "/workers/connect", "/needs-me"];
 
 type Measurement = {
   scrollWidth: number;
@@ -127,12 +127,25 @@ async function measure(page: Page): Promise<Measurement> {
       else undersized.push(record);
     }
 
+    // The visually-hidden (screen-reader-only) pattern, exactly: a box of at most
+    // 1px, absolutely positioned, with a zero clip rect. Its text is painted nowhere.
+    const visuallyHidden = (element: Element) => {
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return box.width <= 1 && box.height <= 1 && style.position === "absolute"
+        && style.clip === "rect(0px, 0px, 0px, 0px)";
+    };
+
     // Text that is painted wider than the box that contains it has lost meaning
     // rather than wrapped. `overflow-x: clip` on the shell hides this from a
     // scrollbar, so it is only visible to a measurement like this one.
     for (const element of document.querySelectorAll("h1, h2, h3, p, li, dd, span, a, button, label, td, th")) {
       if (!visible(element) || element.closest("script, style, noscript")) continue;
       const style = getComputedStyle(element);
+      // A visually-hidden (screen-reader-only) element is clipped ON PURPOSE: its
+      // text is for assistive technology and is painted nowhere. Only that exact
+      // pattern -- a box of at most 1px with a zero clip rect -- is exempt, so a
+      // real control or sentence that loses its text still fails here.
+      if (visuallyHidden(element)) continue;
       if (!["hidden", "clip"].includes(style.overflowX) && style.textOverflow !== "ellipsis") continue;
       if (element.clientWidth > 0 && element.scrollWidth > element.clientWidth + 1)
         clipped.push({ label: describe(element) });
@@ -152,6 +165,13 @@ async function measure(page: Page): Promise<Measurement> {
       if (!visible(element)) continue;
       const rect = element.getBoundingClientRect();
       if (rect.right <= clientWidth + 0.5) continue;
+      // Text inside a visually-hidden box (a polite live-region announcement, for
+      // one) is laid out at its natural width but clipped to nothing by that box,
+      // so it is not pushed off a screen it is never painted on. Only the exact
+      // pattern above exempts it; an ordinary `overflow: hidden` ancestor does not.
+      let hiddenBy: Element | null = element;
+      while (hiddenBy && !visuallyHidden(hiddenBy)) hiddenBy = hiddenBy.parentElement;
+      if (hiddenBy) continue;
       // An element inside a scrollable ancestor is reachable by scrolling that
       // ancestor, so it is not "pushed off the screen" — `clip` is not scrollable
       // and is deliberately not treated as one, because clipped content is lost.
@@ -245,15 +265,19 @@ async function tabWalkInMain(page: Page, tabBudget = 400): Promise<readonly Stop
       if (!(element instanceof HTMLElement)) return null;
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
+      const top = rect.top + window.scrollY, left = rect.left + window.scrollX;
       return {
         inMain: element.closest("main") !== null,
-        // A stable identity for cycle detection that survives re-layout.
-        key: `${element.tagName}#${element.id}.${element.className}|${(element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40)}`,
+        // A stable identity for cycle detection that survives re-layout. Includes the
+        // rounded document position: two distinct controls can legitimately share a
+        // tag, class and leading text (e.g. two "Open workers" links in different
+        // sections), and without position they collide to the same key, ending the
+        // walk at the second one as a false cycle rather than at the real repeat.
+        key: `${element.tagName}#${element.id}.${element.className}|${(element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40)}|${Math.round(top)},${Math.round(left)}`,
         label: `${element.tagName.toLowerCase()}${element.className ? `.${element.className.split(/\s+/).join(".")}` : ""} "${(element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40)}"`,
         tabIndex: element.getAttribute("tabindex"),
         // Document offset, so the comparison is unaffected by scroll position.
-        top: rect.top + window.scrollY,
-        left: rect.left + window.scrollX,
+        top, left,
         painted: style.display !== "none" && style.visibility !== "hidden"
           && (rect.width > 0 || rect.height > 0),
       };
@@ -265,6 +289,23 @@ async function tabWalkInMain(page: Page, tabBudget = 400): Promise<readonly Stop
   }
   return stops;
 }
+
+// Standalone: needs no running stack. Two distinct controls that happen to share a tag,
+// class and leading text (a real Home page has several "Open workers" links in different
+// sections) must not collide into one cycle-detection key and cut the walk short.
+test("tab walk does not stop early on two controls that share a tag, class and leading text", async ({ page }) => {
+  await page.setContent(`<main>
+    <section><a class="link" href="#a">Open workers</a></section>
+    <section><a class="link" href="#b">Open workers</a></section>
+    <button>Last control</button>
+  </main>`);
+  const stops = await tabWalkInMain(page);
+  expect(stops.map(stop => stop.label)).toEqual([
+    'a.link "Open workers"',
+    'a.link "Open workers"',
+    'button "Last control"',
+  ]);
+});
 
 /** One stop on the tab walk: a control, where it paints, and its tabindex. */
 type Stop = {
@@ -337,7 +378,7 @@ async function seedOwnerFixture(page: Page) {
   return { projectId, routes };
 }
 
-test("every owner page is usable at phone width", async ({ page }) => {
+test("every owner page is usable at phone width", async ({ page }, testInfo: TestInfo) => {
   await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
   await signIn(page);
   const { projectId, routes } = await seedOwnerFixture(page);
@@ -350,6 +391,10 @@ test("every owner page is usable at phone width", async ({ page }) => {
     // state rather than the page the owner would actually read.
     await expect(page.locator('[role="status"]').filter({ hasText: /Loading|Checking saved|Reading|Saving…/i }))
       .toHaveCount(0, { timeout: 30_000 });
+    if (route === "/workers/connect")
+      await page.screenshot({ path: testInfo.outputPath("workers-connect-375.png"), fullPage: true, animations: "disabled" });
+    if (route.endsWith("/files"))
+      await page.screenshot({ path: testInfo.outputPath("project-files-375.png"), fullPage: true, animations: "disabled" });
     const measured = await measure(page);
 
     if (measured.scrollWidth > measured.clientWidth) {
@@ -385,6 +430,46 @@ test("every owner page is usable at phone width", async ({ page }) => {
 
   expect(failures, failures.join("\n")).toEqual([]);
   expect(projectId).toBeTruthy();
+});
+
+/** A real 375px capture is retained with the browser test result. The status
+ * may honestly be either calm Off or the red attention state on a rehearsal
+ * without an updater, but it must be visible without a horizontal scroll. */
+test("Home updater status is captured at phone width", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+  await signIn(page); await page.goto("/");
+  await expect(page.getByText(/Self-update(?: needs your attention|: Off)/u)).toBeVisible();
+  const capture = await page.screenshot({ fullPage: false });
+  await testInfo.attach("home-updater-status-375", { body: capture, contentType: "image/png" });
+  expect(capture.byteLength).toBeGreaterThan(1_000);
+  const measured = await measure(page);
+  expect(measured.offscreen).toEqual([]);
+});
+
+/** The card is driven by the updater's own bounded projection, so this browser
+ * capture supplies that projection at the HTTP boundary rather than mounting a
+ * stubbed component. It catches the actual 375px layout of every phone button. */
+test("Install card is captured at 375px with updater facts", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+  await page.route("**/api/v1/updater-owner-ui", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+    schema: "control-room.updater-owner-ui/v1", observedAt: "2026-09-30T12:00:00.000Z", state: "ready_for_approval", selfUpdate: "On",
+    activeSubscriptions: 0, availableControls: ["pause", "backup_now", "check_now", "repair", "rollback"],
+    message: "The updater checked this update.", plan: { planId: "plan:phone", classes: ["database", "updater"], filesChanged: 4,
+      filesAdded: 2, filesDeleted: 1, changesDatabase: true, changesUpdater: true, downtimeEstimateSeconds: 30,
+      restoreMayLoseRecentWrites: true, macConfirmationRequired: true, botSays: { title: "A bot summary", changedAreas: ["one area"] } },
+  }) }));
+  await signIn(page); await page.goto("/");
+  // Exact: Playwright's default name match is a substring, and while the runtime
+  // check is still "checking" Home briefly shows "Installation setup" too, which
+  // strict mode refuses as a second match before the card has finished loading.
+  await expect(page.getByRole("heading", { name: "Install", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm with Face ID" })).toBeVisible();
+  await expect(page.getByText(/Phone alerts are off/u)).toBeVisible();
+  const capture = await page.screenshot({ fullPage: true });
+  await testInfo.attach("updater-install-card-375", { body: capture, contentType: "image/png" });
+  expect(capture.byteLength).toBeGreaterThan(1_000);
+  const measured = await measure(page);
+  expect(measured.offscreen).toEqual([]); expect(measured.undersized).toEqual([]);
 });
 
 for (const mode of ["mac-local", "hosted"] as const) {

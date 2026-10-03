@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ControlRoomWorkboardContent, ControlRoomWorkboardExpiryContent, workerAvailabilityForTaskV1 } from "../private-app/app/control-room-workboard";
 import { readControlRoomWorkboardV1, type ControlRoomWorkboardReadV1 } from "../src/web/v1/control-room-workboard-browser-client";
-import type { OperatorCapacityWorkerV1 } from "../src/web/v1/operator-capacity-browser-client";
+import { CAPACITY_FRESHNESS_MINUTES_V1, type OperatorCapacityWorkerV1 } from "../src/web/v1/operator-capacity-browser-client";
 import type { TaskProjectAgentOptions } from "../src/web/v1/task-project-agents-wire";
 import { JSDOM } from "jsdom";
 
@@ -60,9 +60,15 @@ test("the workboard never identifies a generic or other harness candidate as Her
 });
 
 test("the exact canonical capacity boundary remains fresh and one millisecond later is stale", () => {
-  const boundary = workerAvailabilityForTaskV1(eligibility, worker(), jobId, now + 30 * 60_000);
+  // The boundary is read from the named constant rather than written as 30 (the
+  // value it used to be) or 5 (the literal the workers board used to carry), so
+  // this test cannot pass while the number the screens use has quietly moved.
+  assert.equal(CAPACITY_FRESHNESS_MINUTES_V1, 5,
+    "the fleet telemetry lifetime is five minutes; one constant, one number");
+  const window_ = CAPACITY_FRESHNESS_MINUTES_V1 * 60_000;
+  const boundary = workerAvailabilityForTaskV1(eligibility, worker(), jobId, now + window_);
   assert.equal(boundary.state, "available");
-  const result = workerAvailabilityForTaskV1(eligibility, worker(), jobId, now + 30 * 60_000 + 1);
+  const result = workerAvailabilityForTaskV1(eligibility, worker(), jobId, now + window_ + 1);
   assert.deepEqual(result, { state: "unavailable", message: "Matching capacity observation is stale." });
 });
 
@@ -73,11 +79,17 @@ test("an open workboard redraws at canonical capacity expiry without polling or 
   const root = createRoot(dom.window.document.getElementById("root")!);
   let clockNow = now, cancelled = false;
   const timers: Array<{ delay: number; callback: () => void }> = [];
-  const staleOther = worker({ workerId: "node:stale", lastObservedAt: new Date(now - 31 * 60_000).toISOString() });
-  const laterFresh = worker({ workerId: "node:later", lastObservedAt: new Date(now - 10 * 60_000).toISOString() });
+  // Three rows in one window: one already expired, the eligible worker expiring
+  // first, and a second worker expiring later. Ages are inside the NAMED window
+  // rather than written as absolute minutes, so this fixture keeps its shape if
+  // the window itself moves — and asserts the exact instants below.
+  const window_ = CAPACITY_FRESHNESS_MINUTES_V1 * 60_000;
+  const matchingAge = 4 * 60_000, laterAge = 2 * 60_000;
+  const staleOther = worker({ workerId: "node:stale", lastObservedAt: new Date(now - 2 * window_).toISOString() });
+  const laterFresh = worker({ workerId: "node:later", lastObservedAt: new Date(now - laterAge).toISOString() });
   const data = {
     home: { state: "unavailable" },
-    capacity: { state: "ready", value: { workers: [staleOther, worker({ lastObservedAt: new Date(now - 20 * 60_000).toISOString() }), laterFresh], capacity: { evidence: "measured", value: { availableSlots: 1, totalSlots: 2, reportingWorkers: 2 } } } },
+    capacity: { state: "ready", value: { workers: [staleOther, worker({ lastObservedAt: new Date(now - matchingAge).toISOString() }), laterFresh], capacity: { evidence: "measured", value: { availableSlots: 1, totalSlots: 2, reportingWorkers: 2 } } } },
     project: { state: "ready", value: { projectId, current: [{ projectId, jobId, title: "Exact task", state: "ready" }], awaitingReview: [], recent: [], additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false, observedAt: new Date(now).toISOString(), startsWork: false } },
     eligibility: { state: "ready", value: eligibility }, inbox: { state: "unavailable" }, reviews: { state: "unavailable" },
   } as unknown as ControlRoomWorkboardReadV1;
@@ -88,12 +100,14 @@ test("an open workboard redraws at canonical capacity expiry without polling or 
     assert.match(dom.window.document.body.textContent ?? "", /Eligible worker: Available now/);
     // The stale unrelated row does not suppress the fresh matching row's
     // expiry; the +1 ms is required because the exact boundary remains fresh.
-    assert.equal(timers[0]?.delay, 10 * 60_000 + 1);
+    assert.equal(timers[0]?.delay, window_ - matchingAge + 1);
+    assert.ok(matchingAge < window_ && laterAge < matchingAge, "the fixture's rows sit inside one window, in order");
     clockNow += timers[0]!.delay;
     await act(async () => timers[0]!.callback());
     assert.match(dom.window.document.body.textContent ?? "", /Matching capacity observation is stale/);
-    // A later fresh row causes a second, bounded one-shot redraw to be armed.
-    assert.equal(timers[1]?.delay, 10 * 60_000);
+    // A later fresh row causes a second, bounded one-shot redraw to be armed:
+    // its own expiry, measured from the clock as it stands after the first.
+    assert.equal(timers[1]?.delay, (window_ - laterAge + 1) - (window_ - matchingAge + 1));
     clockNow += timers[1]!.delay;
     await act(async () => timers[1]!.callback());
     assert.equal(timers.length, 2);

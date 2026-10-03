@@ -1,5 +1,6 @@
 export * from "./cli";
 export * from "./client";
+export * from "./compare-combine-template";
 export * from "./credential";
 export * from "./errors";
 export * from "./schemas";
@@ -10,6 +11,8 @@ export * from "./owner-service";
 export * from "./owner-notification";
 export * from "./machine-auth";
 export * from "./installed-configuration";
+export * from "./intake-coordinator";
+export * from "./intake-coordinator-store";
 export * from "./node-handler";
 export * from "./private-service";
 export * from "./service";

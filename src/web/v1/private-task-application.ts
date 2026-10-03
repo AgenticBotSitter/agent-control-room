@@ -4,7 +4,12 @@ import { validateTaskQualityKeys } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseOperatorFleetReadSourceV1, OperatorSurfaceReadServiceV1, OperatorSurfaceStoreV1 } from "../../operator-surfaces/v1";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
+import { LinearPipelineServiceV1 } from "../../pipelines/v1";
+import { createInstalledPipelineCodexWorkerCompositionV1,
+  type InstalledPipelineCodexWorkerCompositionInputV1 } from "../../node-bridge/codex-worker-composition";
 import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1 } from "../../project-events/v1";
+import { DatabaseWorkerBoardReadSourceV1 } from "./worker-board-read";
+import { DatabaseWorkerScorecardReadSourceV1 } from "./worker-scorecard-read";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -33,6 +38,10 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   // Until construction succeeds, the caller retains both resources.
   if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
   const tasks = createTaskCoordinatorLifecycle(coordinator);
+  const pipelineController = web.workBatches?.pipelineRepositories && tasks.workBatchAuthority
+    ? new LinearPipelineServiceV1(coordinator.database.client, coordinator.scope,
+      web.workBatches.integrityKey, tasks.workBatchAuthority, web.clock, web.workBatches.pipelineRepositories)
+    : undefined;
   // The coordinator-side pool already owns the canonical task records. Give
   // the web process only a narrow read callback, never that pool or a worker
   // control handle. This uses the existing operator projection rather than a
@@ -49,6 +58,8 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }) => (await operatorSurfaceService.read({
     scope: { tenantId: input.tenantId, actorId: input.actorId, grantedAt: input.grantedAt }, now: input.now,
   })).snapshot });
+  const workerBoard = new DatabaseWorkerBoardReadSourceV1(coordinator.database.client);
+  const workerScorecard = new DatabaseWorkerScorecardReadSourceV1(coordinator.database.client);
   const actionInboxSource = Object.freeze({ read: async (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
   }) => {
@@ -67,9 +78,11 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, actionInboxSource,
-    ...(web.workBatches && tasks.workBatchAuthority ? { workBatches: { ...web.workBatches,
-      queueAdmissionAuthority: tasks.workBatchAuthority } } : {}),
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, workerBoard, workerScorecard, actionInboxSource,
+    // The web login gets only the coordinator snapshot; the transaction-bound
+    // authority stays with the controller-side pipeline service above.
+    ...(web.workBatches && tasks.workBatchView ? { workBatches: { ...web.workBatches,
+      queueAdmissionAuthority: tasks.workBatchView } } : {}),
     ...(web.projectEvents ? {} : web.tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
       deriveProjectEventIntegrityKeyV1(web.tasks.harnessIntegrityKey), () => new Date(web.clock?.() ?? Date.now()).toISOString()) } : {}),
     planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission,
@@ -82,10 +95,15 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }
   let closing = false, closePromise: Promise<void> | undefined;
   return Object.freeze({
+    ...(pipelineController ? { createPipelineCodexWorker:
+      (input: Omit<InstalledPipelineCodexWorkerCompositionInputV1, "controller">) =>
+        createInstalledPipelineCodexWorkerCompositionV1({ ...input, controller: pipelineController }) } : {}),
     ...(tasks.queueDelivery ? { queueDelivery: tasks.queueDelivery } : {}),
     // Narrow authenticated submission is shared with HTTP; recovery stays server-only.
     ...(tasks.submission ? { submission: tasks.submission } : {}),
     ...(tasks.queueRecovery ? { queueRecovery: tasks.queueRecovery } : {}),
+    ...(tasks.pipelineAdvance ? { advancePipeline: tasks.pipelineAdvance.advance,
+      sweepPipelineAdvances:tasks.pipelineAdvance.sweep } : {}),
     ...(tasks.quality ? { quality: tasks.quality } : {}),
     ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
     ...(tasks.results ? { results: tasks.results } : {}),

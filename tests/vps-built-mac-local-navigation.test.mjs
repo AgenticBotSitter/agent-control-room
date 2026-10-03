@@ -23,7 +23,7 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }),
       sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     workerReadiness: { read: () => [
       { kind: "hermes-021", state: "ready", proof: "not_proven" },
       { kind: "claude-code", state: "ready", proof: "not_proven" },
@@ -50,7 +50,7 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
   const { receipt } = await taskResponse.json();
   const taskId = encodeURIComponent(receipt.jobId);
 
-  for (const path of ["/", "/needs-me", "/projects", "/workers", `/projects/${projectId}`,
+  for (const path of ["/", "/morning", "/needs-me", "/projects", "/workers", `/projects/${projectId}`,
     `/projects/${projectId}/tasks`, `/projects/${projectId}/reviews`, `/projects/${projectId}/activity`,
     `/projects/${projectId}/tasks/${taskId}`]) {
     const signedOut = await send(path);
@@ -61,7 +61,7 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
   assert.equal(home.status, 200);
   assert.match(await home.text(), /Home/);
 
-  const pages = ["/", "/needs-me", "/projects", ...["active", "paused", "completed", "archived"].map(lifecycle =>
+  const pages = ["/", "/morning", "/needs-me", "/projects", ...["active", "paused", "completed", "archived"].map(lifecycle =>
     `/projects?lifecycle=${lifecycle}`), "/workers", `/projects/${projectId}`,
   `/projects/${projectId}/tasks`, `/projects/${projectId}/reviews`, `/projects/${projectId}/activity`,
   `/projects/${projectId}/tasks/${taskId}`];
@@ -84,6 +84,7 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
     }
   }
   assert.ok(visited.has("/workers"));
+  assert.ok(visited.has("/morning"));
   assert.ok(visited.has("/needs-me"));
   assert.ok(visited.has(`/projects/${projectId}/tasks`));
   assert.ok(visited.has(`/projects/${projectId}/reviews`));

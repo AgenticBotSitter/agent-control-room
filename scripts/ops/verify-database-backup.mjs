@@ -1,11 +1,11 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
+import { sha256BackupFileV1 as sha256File } from "../../src/installer/shared/backup-files.mjs";
 // Verifies one bound backup only by restoring it into a new temp PostgreSQL 17
 // cluster. The cluster is stopped and removed on every success or failure path.
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { restoreDatabase } from "../../deploy/postgres/restore-database.mjs";
 import { DISPOSABLE_POSTGRES_MARKER } from "../dev/cleanup-test-postgres.mjs";
@@ -15,15 +15,89 @@ import { createClusterTeardown } from "../dev/postgres-cluster-lifecycle.mjs";
 import { diffMacGrantsV1, readDesiredMacGrantsV1, readMacGrantCatalogV1 } from "../mac-local/database-upgrade-grants.mjs";
 import { MAC_BACKUP_REQUIRED_TABLES_V1, VERIFIED_BACKUP_MANIFEST_V1 } from "./backup-database.mjs";
 
-const sha256File = async path => `sha256:${createHash("sha256").update(await readFile(path)).digest("hex")}`;
 const identifier = value => typeof value === "string" && /^[a-z][a-z0-9_]{0,62}$/u.test(value);
 const quote = value => { if (!identifier(value)) throw new Error("database_backup_role_refused"); return `"${value}"`; };
+
+/** The disposable range the verifier accepts when nothing overrides it, and the
+ * range production and CI use. It is the DEFAULT, not a constant: a caller
+ * running under a different assigned range (a local helper, a rehearsal box) has
+ * to be able to say so without this module's answer changing for anyone else. */
+export const DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1 =
+  Object.freeze({ min: 15620, max: 15649 });
+/** How a caller narrows or moves the range. Unset, empty or whitespace-only
+ * means the default, the same reading `tests/helpers/disposable-postgres-cluster.ts`
+ * gives `CONTROL_ROOM_TEST_PG_PORT`; anything else must be `MIN-MAX`. */
+export const DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV =
+  "CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE";
+// A disposable PostgreSQL cluster never needs a privileged port, and never needs
+// the whole ephemeral space: a range this wide is a typo, not an assignment.
+const MIN_UNPRIVILEGED_PORT = 1024;
+const MAX_PORT = 65535;
+const MAX_PORT_RANGE_SPAN = 1024;
+const PORT_RANGE_REFUSED = "database_backup_verification_port_range_refused";
+const PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/u;
+
+/** One accepted port block. Exported through the two functions below; the
+ * bounds are `number`s here and are proved to be safe integers there, so a
+ * caller reading this type learns the shape, not that the values are valid. */
+/** @typedef {Readonly<{ min: number, max: number }>} DatabaseBackupVerificationPortRangeV1 */
+/** @typedef {Readonly<Record<string, string | undefined>>} DatabaseBackupVerificationEnvV1 */
+/** @typedef {(args: readonly string[]) => unknown} DatabaseBackupVerificationPgCtlV1 */
+/** The observation seams the tests need, on top of the keys the module decides
+ * for itself. The extra `Record` arm is why a caller MAY hand over
+ * `dataDirectory`/`port`/`pgBin`/... — they are still ignored at runtime, by the
+ * allowlist below, and the test asserts that handing them over changes nothing. */
+/** @typedef {Readonly<{ pgCtl?: DatabaseBackupVerificationPgCtlV1,
+ *   degradedLogger?: (line: string) => void }> & Readonly<Record<string, unknown>>}
+ *   DatabaseBackupVerificationTeardownOptionsV1 */
+
+/** @param {unknown} range
+ *  @returns {DatabaseBackupVerificationPortRangeV1} */
+function validatedDatabaseBackupVerificationPortRangeV1(range) {
+  if (range === null || typeof range !== "object" || Array.isArray(range)) throw new Error(PORT_RANGE_REFUSED);
+  const { min, max } = range;
+  if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < MIN_UNPRIVILEGED_PORT
+    || max > MAX_PORT || min > max || max - min + 1 > MAX_PORT_RANGE_SPAN) throw new Error(PORT_RANGE_REFUSED);
+  return Object.freeze({ min, max });
+}
+
+/** Parse one `MIN-MAX` range. Strict: two decimal integers in ascending order,
+ * both inside the unprivileged port space, and a span narrow enough to be an
+ * assignment rather than a mistyped `1-65535`. Everything else is refused, so a
+ * bad value in CI is a loud failure instead of a silently wider blast radius.
+ * @param {unknown} value
+ * @returns {DatabaseBackupVerificationPortRangeV1} */
+export function parseDatabaseBackupVerificationPortRangeV1(value) {
+  if (typeof value !== "string") throw new Error(PORT_RANGE_REFUSED);
+  const match = PORT_RANGE_PATTERN.exec(value.trim());
+  if (!match) throw new Error(PORT_RANGE_REFUSED);
+  return validatedDatabaseBackupVerificationPortRangeV1({ min: Number(match[1]), max: Number(match[2]) });
+}
+
+/** The range in force for a call: the caller's `portRange` when it gave one,
+ * otherwise the environment variable, otherwise the documented default.
+ * @param {DatabaseBackupVerificationPortRangeV1 | string | undefined} portRange
+ * @param {DatabaseBackupVerificationEnvV1} [env]
+ * @returns {DatabaseBackupVerificationPortRangeV1} */
+export function resolveDatabaseBackupVerificationPortRangeV1(
+  portRange, env = process.env) {
+  if (portRange !== undefined) {
+    return typeof portRange === "string" ? parseDatabaseBackupVerificationPortRangeV1(portRange)
+      : validatedDatabaseBackupVerificationPortRangeV1(portRange);
+  }
+  const raw = env[DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV];
+  if (raw === undefined || raw.trim() === "") return DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1;
+  return parseDatabaseBackupVerificationPortRangeV1(raw);
+}
 
 export function databaseBackupVerificationRootPrefixV1(platform = process.platform, temporaryDirectory = tmpdir()) {
   return platform === "darwin" ? "/tmp/crv-" : join(temporaryDirectory, "control-room-backup-verify-");
 }
 
-async function readBoundBackup(backup) {
+/** Read the immutable binding for one backup before a disposable restore. This
+ * deliberately proves only the on-disk binding; a caller must still restore it
+ * before describing the backup as verified. */
+export async function readBoundMacLocalDatabaseBackupV1(backup) {
   if (typeof backup !== "string" || !isAbsolute(backup) || resolve(backup) !== backup)
     throw new Error("database_backup_path_refused");
   const paths = { dump: join(backup, "database.dump"), metadata: join(backup, "metadata.json"), manifest: join(backup, "manifest.json") };
@@ -46,6 +120,68 @@ async function readBoundBackup(backup) {
   if (!Array.isArray(metadata.evidence?.roles) || metadata.evidence.roles.length < 1)
     throw new Error("database_backup_roles_refused");
   return { manifest, metadata };
+}
+
+/**
+ * R5B-08. THE GRANT COMPARISON IS A NOTE, NOT A VERDICT.
+ *
+ * MEASURED FAILURE THIS FIXES. This function compared the RESTORED database's
+ * grant catalogue with `readDesiredMacGrantsV1()` — TODAY's checkout's list — and
+ * threw `database_backup_mac_grants_refused` on any difference. So a database
+ * provisioned before the newest role file existed (`agent_reviewer_roles.sql`,
+ * added since `main`) backed up perfectly, and verification reported FAIL listing
+ * three grants "missing" that the restored copy had and the SOURCE also had,
+ * exactly. `docs/BACKUP_AND_RESTORE.md` tells the owner to treat FAIL as a
+ * recovery incident, so one added role file made every earlier backup look like a
+ * loss.
+ *
+ * WHAT ALREADY ANSWERS THE REAL QUESTION. By the time this runs, the restore has
+ * been verified field by field against the backup's OWN recorded identity:
+ * `restoreDatabase` recomputes `ownersDigest` from the restored catalogue and
+ * `verifyRestoredIdentity` refuses on any mismatch. `ownersDigest` is
+ * `digestOf(evidence.grants)` — the source's own grant rows, captured inside the
+ * backup's SERIALIZABLE snapshot. So "does this backup restore to what it
+ * recorded" is ALREADY PROVEN here, against itself. That is the comparison
+ * R5B-08 asks for, and it is the one that matters.
+ *
+ * WHAT IS LEFT IS NOT A VERDICT. The only remaining question is whether this
+ * backup predates the CURRENT release's grant list, which is a fact about
+ * release history and not a fault in the backup. So it is reported as a NAMED,
+ * NON-FAILING note and the verification result stays `verified: true`.
+ *
+ * The old behaviour is kept callable, and kept STRICT, as
+ * `macGrantsMatchCurrentReleaseV1` — so the strict question is still answerable
+ * by anyone who wants it, and so removing the refusal from this path cannot be
+ * confused with removing the check.
+ *
+ * @param {{ restored: ReadonlySet<string>, current: ReadonlySet<string> }} sets
+ * @returns {{ verified: boolean, notes: readonly string[] }}
+ */
+export function judgeRestoredMacGrantsV1({ restored, current }) {
+  if (!(restored instanceof Set) || !(current instanceof Set)) throw new Error("database_backup_grant_set_refused");
+  if (current.size === 0) return Object.freeze({ verified: true, notes: Object.freeze([]) });
+  const diff = diffMacGrantsV1(restored, current);
+  if (diff.extra.length === 0 && diff.missing.length === 0) return Object.freeze({ verified: true, notes: Object.freeze([]) });
+  return Object.freeze({
+    verified: true,
+    notes: Object.freeze([
+      "backup_predates_current_permissions",
+      `grants_differ_from_current_release:extra=${diff.extra.length}:missing=${diff.missing.length}`,
+    ]),
+  });
+}
+
+/**
+ * The strict comparison R5B-08 removed from the verification PATH, kept as a
+ * function so the check still exists and is still testable.
+ *
+ * @returns {{ matches: boolean, extra: readonly string[], missing: readonly string[] }}
+ */
+export function macGrantsMatchCurrentReleaseV1({ restored, current }) {
+  if (!(restored instanceof Set) || !(current instanceof Set)) throw new Error("database_backup_grant_set_refused");
+  const diff = diffMacGrantsV1(restored, current);
+  return Object.freeze({ matches: diff.extra.length === 0 && diff.missing.length === 0,
+    extra: Object.freeze(diff.extra), missing: Object.freeze(diff.missing) });
 }
 
 function native(pgBin, name, args, options = {}) {
@@ -118,12 +254,36 @@ export async function normalizeMacApplicationOwnershipV1(client) {
   }
 }
 
-export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin", teardown: teardownOptions = {} }) {
+/** Verify one bound backup by restoring it into a new disposable cluster, then
+ * proving the restored database's identity, ownership and grants. The cluster is
+ * always stopped and removed, and `PASS` is reported only for the backup's own
+ * observed facts.
+ *
+ * `portRange`/`portRangeEnv` are the seam a caller restricted to a different
+ * assigned range uses; with neither, the accepted port block is the documented
+ * default and nothing else.
+ * @param {{ backup: string, port: number, pgBin?: string,
+ *   teardown?: DatabaseBackupVerificationTeardownOptionsV1,
+ *   portRange?: DatabaseBackupVerificationPortRangeV1 | string,
+ *   portRangeEnv?: DatabaseBackupVerificationEnvV1,
+ *   afterRestore?: (context: Readonly<{ target: Readonly<{ host: string, port: number, database: string, user: string }>,
+ *     root: string }>) => Promise<void> }} options
+ * @returns {Promise<Readonly<{ verified: true, identityDigest: string,
+ *   ledgerHead: Readonly<{ order: number, file: string, digest: string }> }>>} */
+export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin",
+  teardown: teardownOptions = {}, portRange = undefined, portRangeEnv = process.env, afterRestore = undefined }) {
   if (teardownOptions === null || typeof teardownOptions !== "object" || Array.isArray(teardownOptions))
     throw new Error("database_backup_verification_arguments_refused");
-  if (!Number.isInteger(port) || port < 15620 || port > 15649 || typeof pgBin !== "string" || !isAbsolute(pgBin))
+  if (afterRestore !== undefined && typeof afterRestore !== "function")
     throw new Error("database_backup_verification_arguments_refused");
-  const bound = await readBoundBackup(backup);
+  // The range is read from the same input as the rest of the arguments, so a
+  // refused range is refused BEFORE a cluster is created — the same position the
+  // port itself has always been refused from, and the same `FAIL` for the caller.
+  const range = resolveDatabaseBackupVerificationPortRangeV1(portRange, portRangeEnv);
+  if (!Number.isInteger(port) || port < range.min || port > range.max
+    || typeof pgBin !== "string" || !isAbsolute(pgBin))
+    throw new Error("database_backup_verification_arguments_refused");
+  const bound = await readBoundMacLocalDatabaseBackupV1(backup);
   const root = await mkdtemp(databaseBackupVerificationRootPrefixV1());
   const data = join(root, "pg"), socket = join(root, "socket"), log = join(root, "postgres.log");
   // The shared teardown owns the signal handlers, the exit hook, the ordered
@@ -159,6 +319,11 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
     ...(pgCtlSeam === undefined ? {} : { pgCtl: pgCtlSeam }),
     ...(degradedLogger === undefined ? {} : { degradedLogger }) });
   let bodyFailure;
+  // R5B-08: the named, non-failing notes a verification produced. Collected here
+  // rather than inside the `try` because they are part of the RESULT the caller
+  // gets back, and a caller that only sees `verified: true` has not been told
+  // that the backup predates the current permissions.
+  const notes = [];
   try {
     await mkdir(socket, { mode: 0o700, recursive: true });
     native(pgBin, "initdb", ["-D", data, "-U", "postgres", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
@@ -187,11 +352,30 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
       // to the recorded schema owner before proving the owner invariant.
       await normalizeMacApplicationOwnershipV1(client);
       await verifyOwnership(client);
-      const diff = diffMacGrantsV1(await readMacGrantCatalogV1(client), await readDesiredMacGrantsV1());
-      if (diff.extra.length > 0 || diff.missing.length > 0) throw new Error("database_backup_mac_grants_refused");
+      // The one caller that continues after a restore is the VPS upgrade rehearsal.
+      // It receives only the fresh socket target and the disposable root, never a
+      // production target. Its work remains inside this try/finally so any failed
+      // rehearsal follows the same owned-cluster teardown as a failed verification.
+      if (afterRestore !== undefined) await afterRestore(Object.freeze({ target: Object.freeze({ ...target }), root }));
+      // R5B-08. This comparison used to THROW on any difference, which made one
+      // added role file turn every earlier backup into a reported FAIL — and
+      // `docs/BACKUP_AND_RESTORE.md` tells the owner to treat FAIL as a recovery
+      // incident. The backup's own correctness is already proven above by the
+      // restore identity's `ownersDigest`, which is computed from the source's
+      // recorded grants on both sides; what is left here is release history, so
+      // it is a note and the verification stays `verified: true`. The strict
+      // comparison is still available as `macGrantsMatchCurrentReleaseV1`.
+      const verdict = judgeRestoredMacGrantsV1({ restored: await readMacGrantCatalogV1(client),
+        current: await readDesiredMacGrantsV1() });
+      notes.push(...verdict.notes);
+      if (!verdict.verified) throw new Error("database_backup_mac_grants_refused");
     } finally { await client.end(); }
+    // The notes are part of the RESULT and not just a log line: an operator who
+    // gets `verified: true` and no note has been told the whole story, and this
+    // is exactly the information R5B-08 says was being lost.
     return Object.freeze({ verified: true, identityDigest: restored.identityDigest,
-      ledgerHead: Object.freeze({ ...bound.manifest.ledger.head }) });
+      ledgerHead: Object.freeze({ ...bound.manifest.ledger.head }),
+      notes: Object.freeze([...notes]) });
   } catch (error) {
     // The body's failure is kept, not replaced. A `throw` from a `finally`
     // REPLACES whatever was already propagating, so a teardown failure raised
@@ -230,15 +414,21 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
 }
 
 function flag(args, name) { const index = args.indexOf(name); return index === -1 ? undefined : args[index + 1]; }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const USAGE = `usage: verify-database-backup.mjs --backup ABSOLUTE_DIRECTORY --port ${DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1.min}..${DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1.max} [--pg-bin ABSOLUTE_DIRECTORY] [--port-range MIN-MAX]`
+  + ` (${DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV}=MIN-MAX overrides the range for one run)`;
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
-    const args = process.argv.slice(2), backup = flag(args, "--backup"), pgBin = flag(args, "--pg-bin"), port = Number(flag(args, "--port"));
-    if (!backup || !Number.isInteger(port) || args.some((value, index) => index % 2 === 0 && !["--backup", "--port", "--pg-bin"].includes(value)))
-      throw new Error("usage: verify-database-backup.mjs --backup ABSOLUTE_DIRECTORY --port 15620..15649 [--pg-bin ABSOLUTE_DIRECTORY]");
-    const result = await verifyMacLocalDatabaseBackupV1({ backup, port, ...(pgBin ? { pgBin } : {}) });
+    const args = process.argv.slice(2), backup = flag(args, "--backup"), pgBin = flag(args, "--pg-bin"),
+      portRange = flag(args, "--port-range"), port = Number(flag(args, "--port"));
+    if (!backup || !Number.isInteger(port)
+      || (args.includes("--port-range") && (typeof portRange !== "string" || portRange.startsWith("--")))
+      || args.some((value, index) => index % 2 === 0 && !["--backup", "--port", "--pg-bin", "--port-range"].includes(value)))
+      throw new Error(USAGE);
+    const result = await verifyMacLocalDatabaseBackupV1({ backup, port,
+      ...(pgBin ? { pgBin } : {}), ...(portRange === undefined ? {} : { portRange }) });
     console.log(`database backup verification PASS: ${result.identityDigest}`);
   } catch (error) {
-    console.error(`database backup verification FAIL: ${error instanceof Error ? error.message : "unknown"}`);
+    console.error(`database backup verification FAIL: ${error instanceof Error && error.message === USAGE ? USAGE : "database_backup_verification_failed"}`);
     process.exitCode = 1;
   }
 }

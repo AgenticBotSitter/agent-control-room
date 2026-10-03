@@ -34,6 +34,14 @@ REVOKE ALL ON control_room_schema_migrations
 -- references. No UPDATE/DELETE (the table is append-only), no DDL, and the
 -- read-only web role (control_room_reader) never gains this INSERT.
 GRANT SELECT, INSERT ON control_scheduled_task_admissions TO control_room_schedule_admissions;
+-- `control_manual_project_heads` joins the read set because admission now has to
+-- know whether the project is still active. It previously read only `projects`,
+-- which carries no lifecycle column, so an archived project admitted new work and
+-- the owner got a new proposal and approval after archive. The read is a SELECT on
+-- one lifecycle column, and this login holds no UPDATE on the table: PostgreSQL
+-- requires UPDATE for a row lock over it, which is exactly why admission fences on
+-- the `projects` row instead (see src/persistence/project-admissible-lifecycle.ts).
+GRANT SELECT ON control_manual_project_heads TO control_room_schedule_admissions;
 GRANT SELECT ON workspaces, projects, control_schedule_occurrences, control_schedules,
   control_requests, control_workflows, control_jobs TO control_room_schedule_admissions;
 
@@ -68,12 +76,76 @@ GRANT SELECT ON work_intake_tenant_binding TO control_room_application, control_
 REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items, work_batch_queue_admissions,
   work_batch_effective_queue_admissions, work_batch_agent_queue_heads FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
-REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs
+REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs,
+  pipeline_unattended_transitions, pipeline_advance_receipts,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations, pipeline_stage_loop_counts
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
+REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_room_reader,
+  control_room_schedule_admissions, control_room_github_broker, control_room_work_intake;
+REVOKE ALL ON control_pipeline_build_publications
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
+REVOKE ALL ON control_improvement_requests, control_update_candidates, control_update_candidate_decisions
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
+-- 0290: the per-job worker hand-off text. It belongs to the private web login
+-- (which authors a proposal's and a pipeline stage's instructions), to the
+-- and to the two roles that READ it --
+-- the fleet gateway, which delivers it to a worker, and the task coordinator.
+-- None of the shared ledgers, the reader, the backup or the schedule roles
+-- holds anything here: this is owner-authored task text, not a shared ledger
+-- row, and a reader login must not be able to read every project's instructions.
+REVOKE ALL ON control_task_handoffs
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_backup;
+-- MIG-A (0200-0202): the orchestrator's split suggestions and its durable run
+-- bookkeeping. The shared intake login may APPEND a suggestion and nothing else --
+-- no UPDATE, DELETE or TRUNCATE, and the table's own triggers refuse a mutation
+-- even for a role that had one. It reads the revision-scoped suggestion list
+-- through one SECURITY DEFINER function and never holds the planner's failure
+-- counter or the Needs-you ledger: those are the coordinator's, and the intake
+-- login has no planner of its own. Every other shared login holds nothing here.
+REVOKE ALL ON work_batch_split_suggestions, control_planner_failure_counters,
+  control_planner_needs_you_items
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker;
+-- Installation-wide operations mode (Pause / Drain / Stop). Read-only for the
+-- shared ledgers, the reader and the backup role; only the private owner web
+-- login may append a revision, and the guard trigger refuses anything but a
+-- live human owner's grant. The shared intake login reads nothing here.
+--
+-- The coordinator's SELECT is in task_coordinator_roles.sql, because that role
+-- does not exist yet when this file is applied: naming it here would fail the
+-- whole grant file on a fresh install.
+REVOKE ALL ON installation_operations_mode_revisions, installation_effective_operations_mode
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
+GRANT SELECT ON installation_operations_mode_revisions, installation_effective_operations_mode
+  TO control_room_application, control_room_reader, control_room_backup;
+-- Owner module install approvals (0195) belong to the private web login alone.
+REVOKE ALL ON control_module_install_approvals
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
+-- The result-file catalog and its download grants (0206-0208) are the private
+-- web login's and the native result publisher's. The shared application,
+-- reader, backup, intake and schedule roles reach none of them, so a shared
+-- login cannot read a project's result-file names, digests or storage keys,
+-- and cannot mint a download grant. The reader and backup revokes are what
+-- keep the grant ledger out of a backup role's blind SELECT-on-everything.
+REVOKE ALL ON control_result_file_sets, control_result_files, control_result_file_download_grants,
+  control_result_publications, control_task_declared_outputs, control_task_declared_inputs,
+  control_job_artifact_inputs, control_result_upload_sessions, control_result_upload_chunks
+  FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
   work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
   TO control_room_work_intake;
+-- Proposal admission must know the project's lifecycle, and the lifecycle lives in
+-- `control_manual_project_heads`, not in `projects`. SELECT only, on the same table the
+-- owner's web login already reads; no UPDATE, so a row lock over it stays impossible
+-- for this login and the fence deliberately locks `projects` instead.
+GRANT SELECT ON control_manual_project_heads TO control_room_work_intake;
 GRANT INSERT ON work_batches, work_batch_revisions, audit_events,
   control_audit_chain_heads TO control_room_work_intake;
 GRANT INSERT (tenant_id, operation_scope, idempotency_key, request_digest, status)
@@ -91,6 +163,12 @@ GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_wor
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_application,
   control_room_reader, control_room_backup, control_room_work_intake;
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
+-- MIG-A: the shared intake login is the proposer the orchestrator runs as, so it
+-- appends one split suggestion and reads back only the ones still bound to the
+-- batch's current revision. It is granted NO counter and NO Needs-you row.
+GRANT SELECT, INSERT ON work_batch_split_suggestions TO control_room_work_intake;
+GRANT SELECT ON work_batch_current_split_suggestions TO control_room_work_intake;
+REVOKE ALL ON control_planner_failure_counters, control_planner_needs_you_items FROM control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
@@ -102,3 +180,16 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_work_intake;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
+-- MIG-A 0203: EXECUTE on the split-suggestion visibility predicate, granted HERE
+-- rather than in the migration. This file runs after every migration and after
+-- the ALTER DEFAULT PRIVILEGES above, which is the only place a function grant
+-- survives a fresh install and an upgrade alike -- a grant inside 0203 is
+-- re-revoked by that line before anybody connects.
+--
+-- The intake login needs it because 0203 now calls the predicate from the view's
+-- WHERE clause, and a view's WHERE clause is privilege-checked against
+-- session_user, not against the view's owner. The predicate returns one boolean
+-- about three values the caller already supplied, so this is not a window onto
+-- work_batches or work_intake_tenant_binding.
+GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
+  TO control_room_work_intake;

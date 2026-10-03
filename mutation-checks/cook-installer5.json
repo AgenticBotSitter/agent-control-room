@@ -1,0 +1,149 @@
+[
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (Array.isArray(argv) && argv.length === 1 && argv[0] === \"--print-capabilities\") {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='capability probe' tests/control-room-installer.test.mjs",
+    "why": "the side-effect-free capability probe must remain reachable before root and port setup"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!rehearsal && (options.authenticator !== undefined || options.e2e2EvidenceLog !== undefined)) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal-only and exact' tests/control-room-installer.test.mjs",
+    "why": "real installs must refuse both rehearsal-only flags before mutation"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "|| value.tailscale.mode !== \"skip\" || value.tailscale.expectedStepOutcome !== \"skipped (rehearsal)\"\n    || value.tailscale.mutationAllowed !== false",
+    "replace": "|| false",
+    "test": "node --import tsx --test --test-name-pattern='colliding with a live default' tests/control-room-installer.test.mjs",
+    "why": "the authenticated rehearsal config must bind the exact skip-only Tailscale policy"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const livePort = rehearsal ? undefined : await ports.readLiveServePort({ identity: options.invokingUser });",
+    "replace": "const livePort = await ports.readLiveServePort({ identity: options.invokingUser });",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "rehearsal must not inspect live Tailscale Serve ports"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "let recorded;\n  if (options.rehearsalMode === true) {",
+    "replace": "let recorded;\n  if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "the rehearsal step table must stay on its structurally separate no-Tailscale path"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!rehearsal && capture && activate) await ports.restoreTailscaleServe({ snapshot: capture.data,",
+    "replace": "if (capture && activate) await ports.restoreTailscaleServe({ snapshot: capture.data,",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "recovery must never restore Tailscale for a rehearsal transaction"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!rehearsal && capture) await ports.restoreTailscaleServe({ snapshot: capture.data,",
+    "replace": "if (capture) await ports.restoreTailscaleServe({ snapshot: capture.data,",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "fresh rehearsal uninstall must never restore or otherwise invoke Tailscale"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "await options.writeEvidence(\"tailscale-step\", { step, outcome: data.outcome });",
+    "replace": "await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "each rehearsal Tailscale phase must emit exactly one collector-readable skip row"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const boundJournal = journal.map(row => ({ ...row, root, commit }));",
+    "replace": "const boundJournal = journal;",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "every owner-readable journal row must carry the same root and commit binding"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (basename(path) !== CONTROL_ROOM_E2E2_EVIDENCE_FILE_V1 || !invokingUser",
+    "replace": "if (false || !invokingUser",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal-only and exact' tests/control-room-installer.test.mjs",
+    "why": "the owner evidence destination must have the collector's fixed filename"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "...(rehearsal && options.authenticator === \"software\" ? { authenticator: \"software\" } : {}) });",
+    "replace": "...{} });",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "the software authenticator selection must reach the database-owned registration port"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "[ \"$fresh_database\" = yes ] && [ \"$authenticator\" = software ] && [ -n \"$e2e2_evidence_log\" ] \\",
+    "replace": "[ \"$fresh_database\" = yes ] \\",
+    "test": "node --import tsx --test --test-name-pattern='malformed or incomplete rehearsal-only arguments' tests/install-night-bootstrap.test.mjs",
+    "why": "Stage B must require all four rehearsal controls as one complete set"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "softwareAuthenticator: \"es256-fixed-v1\"",
+    "replace": "softwareAuthenticator: \"unsupported\"",
+    "test": "node --import tsx --test --test-name-pattern='capability probe' tests/control-room-installer.test.mjs",
+    "why": "the side-effect-free capability probe must advertise the exact E2E-2 software authenticator contract"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (flags[\"--authenticator\"] !== undefined && flags[\"--authenticator\"] !== \"software\")\n      throw updaterRefuseV1(\"arguments_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"arguments_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal-only and exact' tests/control-room-installer.test.mjs",
+    "why": "the CLI must refuse every authenticator selector other than software"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "&& !installerPathV1(value)) throw updaterRefuseV1(\"arguments_refused\");",
+    "replace": "&& false) throw updaterRefuseV1(\"arguments_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal-only and exact' tests/control-room-installer.test.mjs",
+    "why": "the evidence destination rejects control and format characters in the shared path parser; the later canonical-path-only check is redundant"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "(parentStat.mode & 0o077) !== 0",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal-only and exact' tests/control-room-installer.test.mjs",
+    "why": "root must refuse to publish evidence through a group-readable or world-readable owner directory"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (rehearsal && (planned.data?.authenticator !== \"software\"\n      || planned.data?.e2e2EvidenceLog !== rehearsalEvidence?.path)) refuse(\"rehearsal_identity_mismatch\");",
+    "replace": "if (false) refuse(\"rehearsal_identity_mismatch\");",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "recovery must remain bound to the original software authenticator and owner evidence destination"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "|| input.authenticator !== undefined && input.authenticator !== \"software\"",
+    "replace": "|| false",
+    "test": "node --import tsx --test --test-name-pattern='initial passkey wiring' tests/updater-stage-one-ports.test.mjs",
+    "why": "the passkey adapter must reject every non-software rehearsal authenticator"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "...(input.authenticator ? { authenticator: input.authenticator } : {})",
+    "replace": "...{}",
+    "test": "node --import tsx --test --test-name-pattern='initial passkey wiring' tests/updater-stage-one-ports.test.mjs",
+    "why": "the selected software authenticator must reach every registration attempt"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "[ -z \"$authenticator\" ] || [ \"$authenticator\" = software ] || refuse 'bootstrap_authenticator_refused'",
+    "replace": ": # mutant accepts a non-software authenticator",
+    "test": "node --import tsx --test --test-name-pattern='malformed or incomplete rehearsal-only arguments' tests/install-night-bootstrap.test.mjs",
+    "why": "Stage B must refuse every authenticator value other than software"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "[ -z \"$e2e2_evidence_log\" ] || { case \"$e2e2_evidence_log\" in /*/e2e2-evidence.jsonl) ;; *) refuse 'bootstrap_evidence_log_refused' ;; esac; refuse_dotdot \"$e2e2_evidence_log\" 'bootstrap_evidence_log_refused'; }",
+    "replace": ": # mutant accepts an arbitrary evidence filename",
+    "test": "node --import tsx --test --test-name-pattern='malformed or incomplete rehearsal-only arguments' tests/install-night-bootstrap.test.mjs",
+    "why": "Stage B must bind the evidence path to the collector's fixed filename"
+  }
+]

@@ -1,0 +1,30 @@
+[
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "signal => defaultReader.readLine(signal, { raw: true })",
+    "replace": "signal => defaultReader.readLine(undefined, { raw: true })",
+    "test": "node --test --test-timeout=10000 tests/updater-cli-flip.test.mjs",
+    "why": "the real CLI reader must receive abort and release its pending read"
+  },
+  {
+    "file": "src/updater/v1/terminal/read-code.mjs",
+    "find": "runtime.timeoutMs ?? 300000",
+    "replace": "runtime.timeoutMs ?? 300001",
+    "test": "node --test --test-timeout=10000 tests/updater-cli-flip.test.mjs",
+    "why": "the default code-entry backstop must abort at exactly 300 seconds"
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "\nlive_install_step || return 1\n",
+    "replace": "\nlive_install_step\n",
+    "test": "node --test --test-timeout=10000 tests/install-night-owner-guide.test.mjs",
+    "why": "the copied live-install invocation must stop on failure"
+  },
+  {
+    "file": "docs/install/E2E2_REHEARSAL.md",
+    "find": "\ninstall_step || return 1\n",
+    "replace": "\ninstall_step\n",
+    "test": "node --test --test-timeout=10000 tests/install-night-owner-guide.test.mjs",
+    "why": "the copied practice-install invocation must stop on failure"
+  }
+]

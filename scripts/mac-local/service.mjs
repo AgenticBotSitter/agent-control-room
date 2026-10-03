@@ -3,12 +3,21 @@
 // disables it so it does not return at the next login; mac:uninstall-service removes it. No data is touched.
 // The agent runs exactly hostCommand(root) from the repository, so the existing pid checks keep working.
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readFile, rename, rm, writeFile, chmod } from "node:fs/promises";
+import { constants } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { removeOwnedFileV1 } from "../../src/installer/shared/file-custody.mjs";
+import { acquireUpdaterLocalLockV1 } from "../../src/updater/v1/fs-safety.mjs";
 import { hostCommand, repoRoot } from "./stack.mjs";
 
 export const SERVICE_LABEL = "xyz.agentcontrolroom.mac-local-host";
+// COOK_DAEMONS_ITEM_5_HANDOFF: this launchd definition intentionally owns
+// only the task-host supervisor. cook/daemons item 5 must add the separate
+// start-fleet-gateway.mjs process, stop/status ownership, and restart policy
+// before production service mode can report the connector gateway healthy.
+export const FLEET_GATEWAY_LAUNCHD_HANDOFF = "cook/daemons item 5: add the separate Mac-local fleet gateway LaunchAgent";
 // The host drains its queue worker on SIGTERM for up to 45 s (see mac:down), so launchd waits as long.
 const EXIT_TIMEOUT_SECONDS = 45;
 const xmlEscape = value => value.replace(/[&<>"']/gu, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[char]);
@@ -117,8 +126,22 @@ async function must(runtime, args) {
   if (result.code !== 0) throw new Error(`mac_local_service_launchctl_failed: ${args[0]}`);
 }
 
+// All lifecycle mutations for this label share a kernel-held lock, including
+// callers in other processes. A killed holder releases it without stale PID recovery.
+async function withServiceLifecycle(runtime, action) {
+  const path = plistPath(runtime.home());
+  await inspectPlist(path, true);
+  const release = await acquireUpdaterLocalLockV1(dirname(path), `${SERVICE_LABEL}.lifecycle.lock`,
+    { busyCode: "mac_local_service_busy" });
+  try { return await action(); } finally { await release(); }
+}
+
 /** Writes the plist if it changed and (re)loads the agent. Returns what it did. */
-export async function installOrRefreshService({ protectedRoot, logPath, env }, runtime = production) {
+export async function installOrRefreshService(input, runtime = production) {
+  return withServiceLifecycle(runtime, () => installOrRefreshServiceUnlocked(input, runtime));
+}
+
+async function installOrRefreshServiceUnlocked({ protectedRoot, logPath, env }, runtime) {
   const path = plistPath(runtime.home());
   const body = servicePlist({ protectedRoot, logPath, env });
   const current = await inspectPlist(path, true);
@@ -132,10 +155,20 @@ export async function installOrRefreshService({ protectedRoot, logPath, env }, r
   }
   if (loaded) await must(runtime, ["bootout", target(uid)]);
   if (current !== body) {
-    const temporary = `${path}.new-${process.pid}`;
-    await writeFile(temporary, body, { encoding: "utf8", mode: 0o600, flag: "w" });
-    await chmod(temporary, 0o600);
-    await rename(temporary, path);
+    const temporary = `${path}.new-${randomBytes(12).toString("hex")}`;
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    let owned;
+    try {
+      const entry = owned = await handle.stat();
+      if (!entry.isFile() || entry.nlink !== 1 || entry.uid !== process.getuid() || (entry.mode & 0o077) !== 0)
+        throw new Error("mac_local_service_temporary_invalid");
+      await handle.writeFile(body, "utf8");
+      await handle.chmod(0o600); await handle.sync(); await handle.close();
+      await rename(temporary, path);
+    } finally {
+      try { await handle.close(); }
+      finally { if (owned) await removeOwnedFileV1(temporary, owned); }
+    }
   }
   // mac:down disables the agent so it skips the next login; a deliberate mac:up re-enables it.
   await must(runtime, ["enable", target(uid)]);
@@ -146,6 +179,10 @@ export async function installOrRefreshService({ protectedRoot, logPath, env }, r
 /** Stops the agent and keeps it from starting at the next login. The plist stays, so the
  * next mac:up still uses the service. */
 export async function stopService(runtime = production) {
+  return withServiceLifecycle(runtime, () => stopServiceUnlocked(runtime));
+}
+
+async function stopServiceUnlocked(runtime) {
   const uid = runtime.uid();
   const { loaded } = await servicePid(runtime);
   if (loaded) await must(runtime, ["bootout", target(uid)]);
@@ -154,7 +191,11 @@ export async function stopService(runtime = production) {
 }
 
 export async function uninstallService(runtime = production) {
-  const state = await stopService(runtime);
+  return withServiceLifecycle(runtime, () => uninstallServiceUnlocked(runtime));
+}
+
+async function uninstallServiceUnlocked(runtime) {
+  const state = await stopServiceUnlocked(runtime);
   const path = plistPath(runtime.home());
   if ((await inspectPlist(path)) !== undefined) await rm(path);
   await must(runtime, ["enable", target(runtime.uid())]);

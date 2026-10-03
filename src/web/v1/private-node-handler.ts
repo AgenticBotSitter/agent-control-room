@@ -1,3 +1,4 @@
+import { privateRequestBudgets, privateRequestBodyLimit } from "./private-request-budgets";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -23,8 +24,8 @@ function verifyInstallationPlanRestartCategoryV1(plan: ReturnType<typeof verifyI
 }
 
 export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCount: 64, urlBytes: 4096,
-  bodyBytes: 8192, responseBytes: 4 * 1024 * 1024, activeRequests: 64,
-  taskBodyBytes: 32_768,
+  bodyBytes: privateRequestBudgets.default, responseBytes: 4 * 1024 * 1024, activeRequests: 64,
+  taskBodyBytes: privateRequestBudgets.task,
   bodyMs: 5000, requestMs: 30_000, drainMs: 30_000 });
 export interface PrivateServingApplication { isReady(): boolean; close(): Promise<void> }
 export type PrivateBuiltHandler = (request: Request) => Promise<Response> | Response;
@@ -49,22 +50,27 @@ type NodeHandlerMode = Readonly<{
   validateSuppliedOrigin: boolean;
   injectSetupMarker: boolean;
   allowSecondaryOrigin: boolean;
+  /** A non-primary origin is reached only through a same-Mac TLS proxy
+   * (Tailscale Serve or cloudflared). Those proxies add exactly
+   * X-Forwarded-For/-Proto/-Host; they are admitted there, checked, and
+   * never relayed to the application. */
+  admitProxyHeadersOnSecondary: boolean;
 }>;
 
 const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, allowPost: true, allowDelete: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: false, rejectCredentialHeaders: false,
-  validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: true });
+  validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: true, admitProxyHeadersOnSecondary: false });
 const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true, allowDelete: false,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
-  validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: false });
+  validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: false, admitProxyHeadersOnSecondary: false });
 /** Selected by the Mac-local composition only. This accepts cookies strictly
  * on loopback; it does not select or replace application authentication. */
 const macLocalMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true, allowDelete: true,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
-  validateSuppliedOrigin: true, injectSetupMarker: false, allowSecondaryOrigin: true });
+  validateSuppliedOrigin: true, injectSetupMarker: false, allowSecondaryOrigin: true, admitProxyHeadersOnSecondary: true });
 const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false, allowDelete: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: true, rejectCredentialHeaders: true,
-  validateSuppliedOrigin: true, injectSetupMarker: true, allowSecondaryOrigin: false });
+  validateSuppliedOrigin: true, injectSetupMarker: true, allowSecondaryOrigin: false, admitProxyHeadersOnSecondary: false });
 
 function requestHead(input: IncomingMessage, origins: readonly string[], mode: NodeHandlerMode,
   forwardedHeaders: ReadonlySet<string>) {
@@ -72,7 +78,10 @@ function requestHead(input: IncomingMessage, origins: readonly string[], mode: N
   const method = input.method;
   const target = input.url;
   const allowedMethods = ["GET", "HEAD", ...(mode.allowPost ? ["POST"] : []), ...(mode.allowDelete ? ["DELETE"] : [])];
-  if (!method || !allowedMethods.includes(method))
+  // PUT is confined to the two existing-item edit routes; setup remains read-only.
+  const editPut = mode.allowPost && method === "PUT" && target !== undefined
+    && /^\/api\/v1\/projects\/[^/]+\/(?:skills|recurring-rules)\/[^/?]+$/.test(target);
+  if (!method || !allowedMethods.includes(method) && !editPut)
     throw new RequestFailure(405);
   if (!target || Buffer.byteLength(target) > privateHttpLimits.urlBytes || !target.startsWith("/")
     || target.startsWith("//") || /[\\\s#]/u.test(target)
@@ -98,8 +107,14 @@ function requestHead(input: IncomingMessage, origins: readonly string[], mode: N
   if (url.origin !== origin || `${url.pathname}${url.search}` !== target) throw new RequestFailure(400);
   if (mode.validateSuppliedOrigin && all.get("origin") !== undefined && all.get("origin") !== origin)
     throw new RequestFailure(403);
-  if (mode.rejectForwarded && [...all.keys()].some(name => name === "forwarded" || name.startsWith("x-forwarded-")))
-    throw new RequestFailure(403);
+  if (mode.rejectForwarded) {
+    const proxied = mode.admitProxyHeadersOnSecondary && origin !== origins[0];
+    if ([...all.keys()].some(name => name === "forwarded" || name.startsWith("x-forwarded-")
+      && !(proxied && ["x-forwarded-for", "x-forwarded-proto", "x-forwarded-host"].includes(name))))
+      throw new RequestFailure(403);
+    if (proxied && (all.has("x-forwarded-proto") && all.get("x-forwarded-proto") !== "https"
+      || all.has("x-forwarded-host") && all.get("x-forwarded-host") !== url.host)) throw new RequestFailure(403);
+  }
   if (mode.rejectCredentialHeaders && [...all.keys()].some(name => name === "cookie" || name === "authorization"
     || name === "proxy-authorization" || /(?:^|[-_])(token|secret|assertion|api[-_]?key)(?:$|[-_])/i.test(name)))
     throw new RequestFailure(403);
@@ -108,14 +123,40 @@ function requestHead(input: IncomingMessage, origins: readonly string[], mode: N
   if (length !== undefined && (!/^(0|[1-9][0-9]{0,8})$/.test(length) || transfer !== undefined)
     || transfer !== undefined && transfer !== "chunked") throw new RequestFailure(400);
   const expectedLength = length === undefined ? undefined : Number(length);
-  // Task endpoints have existing 16/24/32 KiB parsers. The outer transport must not
-  // truncate valid task input; endpoint-specific limits and authentication still apply.
-  const bodyLimit = method === "POST" && (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)
-    || mode.allowCookies && url.pathname === "/api/v1/local-pilot/workspace")
-    ? privateHttpLimits.taskBodyBytes : privateHttpLimits.bodyBytes;
+  const bodyLimit = privateRequestBodyLimit(url.pathname, method, mode.allowCookies);
   if (expectedLength !== undefined && expectedLength > bodyLimit) throw new RequestFailure(413);
-  if (method !== "POST" && (transfer || expectedLength && expectedLength > 0)) throw new RequestFailure(400);
-  return { url, method, headers, expectedLength, bodyLimit };
+  const bodyAllowed = method === "POST" || editPut || method === "DELETE"
+    && url.pathname === "/api/v1/owner-web-push" && !url.search;
+  if (!bodyAllowed && (transfer || expectedLength && expectedLength > 0)) throw new RequestFailure(400);
+  return { url, method, headers, expectedLength, bodyLimit, bodyAllowed, origin, all };
+}
+
+/** After a Cloudflare Access login the browser returns from the team domain,
+ * so the first page load on the app is a cross-site top-level navigation and
+ * the owner-session cookie (SameSite=Strict) is not sent. On a remote origin
+ * whose gate has already admitted the request, a plain page navigation (never
+ * a write, a subresource, an API call or a static file) gets this static page,
+ * which continues to the same path. That second navigation starts from this
+ * origin and passes every existing check. The application never runs here. */
+function isGatedDocumentNavigation(head: ReturnType<typeof requestHead>, gated: boolean): boolean {
+  return gated && (head.method === "GET" || head.method === "HEAD")
+    && head.all.get("sec-fetch-mode") === "navigate" && head.all.get("sec-fetch-dest") === "document"
+    && !/^\/(?:api|_next)\//u.test(head.url.pathname);
+}
+
+function continueToSameOriginPage(url: URL): Response {
+  // The target was validated as an exact same-origin path: no whitespace, `#`
+  // or control characters, and `"`, `<`, `>` are already percent-encoded.
+  const next = `${url.pathname}${url.search}`.replaceAll("'", "%27");
+  const html = next.replaceAll("&", "&amp;");
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url='${html}'">
+<title>Control Room</title></head>
+<body><main><p><a href="${html}">Continue to Control Room</a></p></main></body></html>`, { status: 200,
+    headers: { "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "x-frame-options": "DENY" } });
 }
 
 function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength: number | undefined, bodyMs: number, bodyLimit: number) {
@@ -181,6 +222,10 @@ async function deliver(output: ServerResponse, response: Response, method: strin
 interface NodeHandlerOptions {
   origin: string; application: PrivateServingApplication; handler: PrivateBuiltHandler; assets: PrivateClientAssets;
   secondaryOrigin?: string;
+  /** Mac-local only. Exact HTTPS origins of the configured remote-access
+   * paths, each with a gate that must admit the raw request headers before
+   * anything else runs for that origin, static files included. */
+  remoteOrigins?: readonly Readonly<{ origin: string; admit(headers: Headers): Promise<void> | void }>[];
   /** Server-selected only. The transport forwards exactly this one assertion header. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   /** Optional first-owner gate. It is constructed only by trusted bootstrap composition. */
@@ -223,6 +268,15 @@ export function createMacLocalNodeHandler(options: NodeHandlerOptions) {
       || secondary.pathname !== "/" || secondary.search || secondary.hash || secondary.username || secondary.password
       || secondary.hostname.includes("*")) throw new Error("mac_local_serving_config_invalid");
   }
+  const remote = options.remoteOrigins ?? [];
+  const every = [options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : []), ...remote.map(gate => gate?.origin)];
+  if (remote.length > 2 || new Set(every).size !== every.length || remote.some(gate => {
+    if (!gate || typeof gate.admit !== "function" || typeof gate.origin !== "string") return true;
+    try {
+      const url = new URL(gate.origin);
+      return url.protocol !== "https:" || url.origin !== gate.origin || url.username || url.password || url.hostname.includes("*");
+    } catch { return true; }
+  })) throw new Error("mac_local_serving_config_invalid");
   return createNodeHandler(options, macLocalMode);
 }
 
@@ -281,7 +335,9 @@ function createNodeHandler(options: NodeHandlerOptions, mode: NodeHandlerMode) {
   const origin = new URL(options.origin);
   if (origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
   if (!mode.allowSecondaryOrigin && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
-  const origins = Object.freeze([options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : [])]);
+  if (!mode.admitProxyHeadersOnSecondary && options.remoteOrigins !== undefined) throw new Error("private_serving_config_invalid");
+  const gates = new Map((options.remoteOrigins ?? []).map(gate => [gate.origin, gate.admit] as const));
+  const origins = Object.freeze([options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : []), ...gates.keys()]);
   const gatewayAssertionProfile = captureGatewayAssertionProviderProfileV1(
     options.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,
   );
@@ -304,20 +360,29 @@ function createNodeHandler(options: NodeHandlerOptions, mode: NodeHandlerMode) {
       try {
         if (!admitted) throw new RequestFailure(503);
         const head = requestHead(input, origins, mode, forwardedHeaders);
+        const gate = gates.get(head.origin);
+        if (gate) {
+          try { await gate(new Headers([...head.all])); } catch { throw new RequestFailure(403); }
+          if (signal.aborted) return;
+        }
         const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs, head.bodyLimit);
         if (signal.aborted) return;
-        if (head.method !== "POST" && body.length) throw new RequestFailure(400);
+        if (!head.bodyAllowed && body.length) throw new RequestFailure(400);
         const fetchSite = head.headers.get("sec-fetch-site");
+        if (fetchSite === "cross-site" && isGatedDocumentNavigation(head, gate !== undefined)) {
+          await deliver(output, continueToSameOriginPage(head.url), head.method, signal, mode);
+          return;
+        }
         if (fetchSite === "cross-site" || mode.injectSetupMarker
           && fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") throw new RequestFailure(403);
         const bootstrap = options.ownerBootstrapCeremony;
         if (mode.injectSetupMarker) head.headers.set("x-control-room-local-setup", "v1");
         const request = new Request(head.url, { method: head.method, headers: head.headers, signal,
-          ...(head.method === "POST" && body.length ? { body: new Uint8Array(body) } : {}) });
+          ...(head.bodyAllowed && body.length ? { body: new Uint8Array(body) } : {}) });
         const work = Promise.resolve().then(async () => {
           const gated = await bootstrap?.route(request);
           if (gated) return gated;
-          const staticPath = head.url.pathname.startsWith("/_next/") || head.url.pathname === "/favicon.svg";
+          const staticPath = head.url.pathname.startsWith("/_next/") || ["/favicon.svg", "/service-worker.js", "/manifest.webmanifest"].includes(head.url.pathname);
           if (!staticPath) return options.handler(request);
           if (head.url.search || head.method === "POST") throw new RequestFailure(404);
           return options.assets.respond(head.url.pathname, head.method) ?? new Response(null, { status: 404 });

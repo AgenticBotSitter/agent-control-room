@@ -3,9 +3,10 @@ import type { OwnerTrustedLocalModelPolicyV1 } from "../../harness/v1/owner-trus
 import { captureTaskModelCatalogV1, resolveTaskModelV1, type ResolvedTaskModelV1,
   type TaskModelWorkerKindV1 } from "../../web/v1/task-model-selection";
 
+import { modelIdentifierSchemaV1 } from "../../domain/v1/model-identifier";
+
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
-export const workBatchQueueModelIdSchemaV1 = z.string().min(1).max(180)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/u);
+export const workBatchQueueModelIdSchemaV1 = modelIdentifierSchemaV1;
 const effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const modelPolicy = z.union([
   z.object({ models: z.array(workBatchQueueModelIdSchemaV1).min(1).max(32), defaultModel: workBatchQueueModelIdSchemaV1,
@@ -58,7 +59,8 @@ export function captureWorkBatchQueueCatalogV1(value: readonly WorkBatchQueueWor
 }
 
 export function resolveWorkBatchQueueWorkerV1(catalog: WorkBatchQueueCatalogV1,
-  requested: { requestedWorkerId?: string; requestedWorkerKind?: string; requestedModelKey?: string }):
+  requested: { requestedWorkerId?: string; requestedWorkerKind?: string; requestedModelKey?: string;
+    requestedEffort?: string }):
   Readonly<{ worker: WorkBatchQueueWorkerV1; model: ResolvedTaskModelV1 }> | undefined {
   // A role-only preference is not an assignee. Keep it visible for owner
   // follow-up, but do not allocate a queue position until an exact registered
@@ -71,7 +73,8 @@ export function resolveWorkBatchQueueWorkerV1(catalog: WorkBatchQueueCatalogV1,
   if (!worker.modelPolicy) throw new Error("work_batch_queue_model_unavailable");
   const models = captureTaskModelCatalogV1([{ kind: worker.workerKind, policy: worker.modelPolicy }]);
   return Object.freeze({ worker, model: resolveTaskModelV1(models, worker.workerKind,
-    { ...(requested.requestedModelKey ? { model: requested.requestedModelKey } : {}) }) });
+    { ...(requested.requestedModelKey ? { model: requested.requestedModelKey } : {}),
+      ...(requested.requestedEffort ? { effort: requested.requestedEffort } : {}) }) });
 }
 
 /** One host-generation validator shared by owner admission and the later

@@ -23,6 +23,8 @@ export interface PolledReadState<T> {
   value: T | undefined;
   error: unknown;
   loading: boolean;
+  /** A refresh is outstanding; the last accepted value remains visible. */
+  checking: boolean;
   /** Immediately read again at the base interval, from a button or a caller. */
   refresh: () => void;
   /**
@@ -49,7 +51,7 @@ export interface UsePolledReadOptions<T> {
    * Drop the last accepted value after a failed read. Use this for reads whose
    * value exposes an authority to act; ordinary status views retain continuity.
    */
-  dropValueOnError?: boolean;
+  dropValueOnError?: boolean | ((reason: unknown) => boolean);
   onAccept?: (value: T) => void;
   onFailure?: (reason: unknown) => void;
   onInterval?: (delayMs: number, reason: PolledReadIntervalReason) => void;
@@ -60,28 +62,34 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
   const [value, setValue] = useState<T>();
   const [error, setError] = useState<unknown>();
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
   const scheduler = useRef<ReturnType<typeof createPolledReadScheduler<T>> | undefined>(undefined);
+  const identity = useRef<{ key: string; shareKey?: string } | undefined>(undefined);
   // Callers pass inline closures, so the latest ones are read through a ref.
   // The effect depends on the identity of the read, not of the callbacks.
   const latest = useRef({ read, unchanged, dropValueOnError, onAccept, onFailure, onInterval });
   latest.current = { read, unchanged, dropValueOnError, onAccept, onFailure, onInterval };
 
   useEffect(() => {
-    if (!enabled) { setLoading(false); return; }
+    if (!enabled) { setLoading(false); setChecking(false); return; }
     // The read and its callbacks are read through the ref at *call* time, not
     // snapshotted here: a caller whose inputs change (a new projectId, a new
     // filter) must have its next read built from the new values, not from the
     // values present when this effect last ran.
-    beginRead();
+    if (identity.current?.key !== key || identity.current?.shareKey !== shareKey) beginRead();
+    else setChecking(true);
+    identity.current = { key, shareKey };
     const transport = createPolledReadFetch();
     const instance = createPolledReadScheduler<T>({
       read: signal => sharePolledRequest(`${shareKey ?? key}`,
         signal2 => latest.current.read(signal2, transport), signal),
-      accept: next => { setValue(next); setError(undefined); setLoading(false); latest.current.onAccept?.(next); },
+      accept: next => { setValue(next); setError(undefined); setLoading(false); setChecking(false); latest.current.onAccept?.(next); },
       failed: reason => {
-        if (latest.current.dropValueOnError) setValue(undefined);
-        setError(reason); setLoading(false); latest.current.onFailure?.(reason);
+        const drop = latest.current.dropValueOnError;
+        if (typeof drop === "function" ? drop(reason) : drop) setValue(undefined);
+        setError(reason); setLoading(false); setChecking(false); latest.current.onFailure?.(reason);
       },
+      checking: () => { setChecking(true); },
       baseIntervalMs,
       hidden: () => typeof document === "undefined" ? false : document.hidden,
       schedule: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -94,11 +102,10 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
       observe: (delayMs, reason) => latest.current.onInterval?.(delayMs, reason),
     });
     scheduler.current = instance;
-    setLoading(true);
     instance.start();
     // A tab that was hidden when this effect ran still needs its first read
     // once it is shown, so a hidden mount does not wait for the first interval.
-    const visible = () => { if (!document.hidden) instance.trigger(); };
+    const visible = () => { if (document.hidden) instance.pause(); else instance.trigger(); };
     // A `focus` event only reaches a tab the owner is actually looking at, so
     // it is a visible-tab signal even where `document.hidden` is unreliable
     // (a test DOM, or a prerendered document that has never been shown).
@@ -113,12 +120,12 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
     };
   }, [key, shareKey, baseIntervalMs, enabled]);
 
-  // Initial load and an explicit refresh deliberately clear presentation.
+  // A new identity clears presentation; refreshing the same view keeps it.
   // Background polls retain the last accepted value until their replacement
   // arrives, matching the hand-written effects and avoiding periodic flicker.
-  const beginRead = useCallback(() => { setValue(undefined); setError(undefined); setLoading(true); }, []);
+  const beginRead = useCallback(() => { setValue(undefined); setError(undefined); setLoading(true); setChecking(true); }, []);
 
-  const refresh = useCallback(() => { beginRead(); scheduler.current?.trigger(); }, [beginRead]);
-  const clear = useCallback(() => { setValue(undefined); setError(undefined); setLoading(false); }, []);
-  return { value, error, loading, refresh, clear };
+  const refresh = useCallback(() => { setChecking(true); scheduler.current?.trigger(); }, []);
+  const clear = useCallback(() => { setValue(undefined); setError(undefined); setLoading(false); setChecking(false); }, []);
+  return { value, error, loading, checking, refresh, clear };
 }

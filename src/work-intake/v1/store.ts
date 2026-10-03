@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { appendAuditWith } from "../../audit/audit-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { admitsNewAutomaticWorkV1, readAdmissibleProjectLifecycleInSessionV1 } from "../../persistence/project-admissible-lifecycle";
 import { evaluatePolicy, hmacSha256Tag, sha256Digest, type AuthenticatedPrincipal, type RoleGrant } from "../../security";
 import { failWorkIntakeV1 } from "./errors";
 import { workBatchProposalSchemaV1, workBatchReceiptSchemaV1, type WorkBatchProposalV1,
@@ -8,7 +9,8 @@ import { workBatchProposalSchemaV1, workBatchReceiptSchemaV1, type WorkBatchProp
 import { workBatchOwnerNotificationV1 } from "./owner-notification";
 import { workBatchProposalDigestV1 } from "./digest";
 
-type Authorization = { allowed: true; workspaceId: string } | { allowed: false; safeReasonCode: "credential_inactive" | "no_matching_grant" };
+type Authorization = { allowed: true; workspaceId: string; lifecycle: string | undefined }
+  | { allowed: false; safeReasonCode: "credential_inactive" | "no_matching_grant" };
 type BatchRow = { id: string; tenant_id: string; project_id: string; proposed_by_identity_id: string;
   proposed_at: string | Date; state: string; approval_identity_id: string | null; approved_at: string | Date | null;
   decision_reason_code: string | null; decision_digest: string | null; decision_auth_tag: string | null;
@@ -44,8 +46,12 @@ export class WorkBatchStoreV1 {
     const identity = (await tx.query<{ actor_type: string; state: string }>(
       `SELECT actor_type,state FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
       [principal.tenantId, principal.identityId])).rows[0];
-    const project = (await tx.query<{ workspace_id: string }>(
-      `SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2 FOR SHARE`, [principal.tenantId, projectId])).rows[0];
+    // The shared admissible-lifecycle read, not a bare `FROM projects`. The lock it
+    // takes on `projects` is the same lock the owner's archive transition takes, and it
+    // reads the head in a second statement while holding it, so an archive committed
+    // while this row was waiting is seen as `archived` rather than raced past. See
+    // src/persistence/project-admissible-lifecycle.ts.
+    const project = await readAdmissibleProjectLifecycleInSessionV1(tx, principal.tenantId, projectId, "FOR SHARE");
     if (principal.actorType !== "agent" || !identity || identity.state !== "active"
       || identity.actor_type !== "agent" || !project)
       return { allowed: false, safeReasonCode: "credential_inactive" };
@@ -64,7 +70,7 @@ export class WorkBatchStoreV1 {
       revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : row.revoked_at }));
     const decision = evaluatePolicy(principal, grants, { tenantId: principal.tenantId, action,
       resourceType: "project", resourceId: projectId, projectId, risk: "low", externalEffect: false, occurredAt: now });
-    return decision.allowed ? { allowed: true, workspaceId: project.workspace_id }
+    return decision.allowed ? { allowed: true, workspaceId: project.workspaceId, lifecycle: project.lifecycle }
       : { allowed: false, safeReasonCode: "no_matching_grant" };
   }
 
@@ -124,6 +130,18 @@ export class WorkBatchStoreV1 {
           safeMetadata: { proposalDigest: input.proposalDigest }, occurredAt: input.now });
         return { ...receipt.data, replayed: true };
       }
+      // NEW work only. Everything above this line is a replay of work that was
+      // already committed, and an already-committed exact replay stays valid after
+      // an archive: the owner is not being asked to look at anything new, and
+      // refusing it would turn a completed proposal into a failure the caller would
+      // retry forever. From here the transaction inserts a batch, an open approval
+      // item and an owner notification, so the project's lifecycle is the thing that
+      // decides whether any of that may happen at all.
+      //
+      // The lifecycle was read and locked by #authority above, before the
+      // idempotency row was touched, so this test and the archive's transition are
+      // two transactions contending for one lock and this value cannot be stale.
+      if (!admitsNewAutomaticWorkV1(authority.lifecycle)) failWorkIntakeV1("project_inactive");
       const batchId = `batch:${randomUUID()}`;
       const material = { id: batchId, tenantId: input.principal.tenantId, projectId: input.proposal.projectId,
         proposedByIdentityId: input.principal.identityId, proposedAt: input.now, state: "proposed",

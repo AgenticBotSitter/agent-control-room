@@ -9,6 +9,47 @@ import { macRolePlan } from "./database-upgrade-grants.mjs";
 const expectedShapeDigest = "sha256:e7286b89b0c60f826438b2c49570897c9e3bdb90d534cc5acc5c9b2c0f09e25d";
 const hash = value => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 const macPrincipals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
+/**
+ * Grantees the queue SHAPE does not own, and why this list exists at all (R5B-01).
+ *
+ * The fingerprint's purpose is to catch a queue that was built or altered
+ * somewhere other than the pinned constructor — a hand-made schema, a rogue grant,
+ * a table with the wrong shape. It does that by listing every grantee that is
+ * NEITHER a Mac service principal NOR the role that built the queue, and folding
+ * that list into the digest.
+ *
+ * Two kinds of grantee therefore had to be excluded before the digest could be
+ * read as "the queue's shape, unchanged":
+ *
+ *   `postgres` — the queue's OWNER on a Mac install, because the constructor runs
+ *   as `postgres` (the release pins that owner so a migration cannot ALTER a queue
+ *   object). Its inherent rights are the owner's, not an extra grant, so they are
+ *   not evidence of an alteration.
+ *
+ *   `control_room_schema_owner` — the MIGRATOR's group, which R5B-01 grants a read
+ *   on this schema so `pg_dump` can back it up. Without this exclusion the grant
+ *   is a legitimate, reviewed, read-only privilege that appears in `nonMacGrants`,
+ *   changes the pinned digest, and every live upgrade then answers
+ *   `upgrade_queue_shape_refused` — measured, and it is how the fix for a nightly
+ *   backup first broke the Mac upgrade path.
+ *
+ * WHY EXCLUDE RATHER THAN RE-PIN. Re-pinning the digest would have been one line and
+ * would have been wrong: the pinned value is a RECEIPT OF A CONSTRUCTION, recorded
+ * "only after a fresh PostgreSQL 17 construction and negative tests", and folding a
+ * post-construction grant into it means the receipt no longer describes a
+ * construction at all — it describes a construction plus whatever grants an install
+ * happens to carry. A future change to the pg-boss construction would then produce
+ * a digest that differs from the pin for a reason nobody could read off the diff.
+ * Excluding the grantee keeps the receipt a receipt.
+ *
+ * It is a CLOSED list, deliberately: a grant to any OTHER non-Mac role still moves
+ * the digest, so the negative tests the constructor relies on keep their teeth. And
+ * the exclusion is only sound because R5B-01's grant is read-only — a WRITE grant to
+ * `control_room_schema_owner` over a queue table would now be invisible here, which
+ * is why `db/roles/queue_backup_read_roles.sql` grants SELECT and nothing else, and
+ * why that is asserted in its own lane.
+ */
+const queueShapeExcludedGrantees = Object.freeze(["postgres", "control_room_schema_owner"]);
 
 // pg-boss keeps one queue_stats partition per UTC day (created ahead of time and
 // pruned by retention), so the set of dated names changes with the calendar.
@@ -90,9 +131,9 @@ async function fixedQueueShape(client) {
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         CROSS JOIN LATERAL aclexplode(p.proacl) a LEFT JOIN pg_roles r ON r.oid=a.grantee
         WHERE n.nspname='control_room_queue'
-      ) grants WHERE grantee <> ALL($1::text[]) AND grantee <> 'postgres'
+      ) grants WHERE grantee <> ALL($1::text[]) AND grantee <> ALL($2::text[])
       ORDER BY kind,object,grantee,privilege,grantable`,
-      [macPrincipals])).rows,
+      [macPrincipals, queueShapeExcludedGrantees])).rows,
       queues: (await client.query(`SELECT name,policy,retry_limit,retry_delay,retry_backoff,
         retry_delay_max,expire_seconds,retention_seconds,deletion_seconds,dead_letter,
         partition,table_name,heartbeat_seconds,notify,singletons_active

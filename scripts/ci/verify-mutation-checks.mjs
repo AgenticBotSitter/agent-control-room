@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -19,10 +23,24 @@ const SOURCE_GUARD_PATTERN = /\b(?:authorize|refuse|forbid)\b|throw new \w*Refus
 const SQL_GUARD_PATTERN = /\b(?:GRANT|REVOKE|SECURITY\s+DEFINER|POLICY|TRIGGER)\b/u;
 let activeRestore;
 let activeChild;
+let activeAuditCleanup;
 let interrupted = false;
 
+class MutationProcessCleanupRefusal extends Error {
+  constructor(child, error) {
+    super(`could not retire test process group ${child.pid}: ${error.message}`);
+  }
+}
+
+function rethrowCleanupRefusal(error) {
+  if (error instanceof MutationProcessCleanupRefusal) throw error;
+}
+
 function git(root, args, options = {}) {
-  return spawnSync("git", args, { cwd: root, encoding: "utf8", ...options });
+  // spawnSync's 1 MiB default maxBuffer truncates `git diff` on a branch with a
+  // large changeset, which silently downgrades warnAboutMissingManifest() to
+  // its "could not inspect" fallback instead of scanning the real diff.
+  return spawnSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, ...options });
 }
 
 function repositoryRoot() {
@@ -123,6 +141,21 @@ function parseManifest(root, manifestPath) {
   });
 }
 
+function validateAllManifestAnchors(root) {
+  const manifestRoot = resolve(root, MANIFEST_DIRECTORY);
+  const manifests = readdirSync(manifestRoot).filter(name => name.endsWith(".json")).sort();
+  for (const name of manifests) {
+    const manifestPath = resolve(manifestRoot, name);
+    for (const entry of parseManifest(root, manifestPath)) {
+      const source = readFileSync(entry.filePath, "utf8");
+      const matches = source.split(entry.find).length - 1;
+      if (matches !== 1) {
+        throw new Error(`${relative(root, manifestPath)}: ${entry.label}: find matched ${matches} times; expected exactly once`);
+      }
+    }
+  }
+}
+
 function restoreFile(root, entry, original, mode) {
   if (lstatSync(entry.filePath).isSymbolicLink()) throw new Error(`could not restore ${entry.file}: target became a symbolic link`);
   writeFileSync(entry.filePath, original);
@@ -146,18 +179,24 @@ function runTest(command, root, timeoutMs, onSpawn) {
     let settled = false;
     const child = spawn(command, { cwd: root, detached: true, env: process.env, shell: true, stdio: "inherit" });
     activeChild = child;
+    console.log(`TEST PROCESS GROUP: ${child.pid}`);
     onSpawn?.();
     const finish = (result, killGroup) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (killGroup) stopTestProcess(child, "SIGKILL");
-      if (activeChild === child) activeChild = undefined;
-      resolveResult(result);
+      let cleanupError = result.cleanupError;
+      if (killGroup) {
+        try { stopTestProcess(child, "SIGKILL"); }
+        catch (error) { cleanupError = new MutationProcessCleanupRefusal(child, error); }
+      }
+      if (!cleanupError && activeChild === child) activeChild = undefined;
+      resolveResult({ ...result, cleanupError });
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      stopTestProcess(child, "SIGKILL");
+      try { stopTestProcess(child, "SIGKILL"); }
+      catch (error) { finish({ timedOut, cleanupError: new MutationProcessCleanupRefusal(child, error) }, false); }
     }, timeoutMs);
     child.once("error", error => {
       finish({ error, timedOut }, false);
@@ -169,6 +208,7 @@ function runTest(command, root, timeoutMs, onSpawn) {
 }
 
 function describeConfigurationError(entry, result) {
+  if (result.cleanupError) throw result.cleanupError;
   if (result.error) return `${entry.label}: test command could not start: ${result.error.message}`;
   if (result.status === 126 || result.status === 127) {
     return `${entry.label}: test command configuration error (exit ${result.status})`;
@@ -374,9 +414,18 @@ function restoreOnSignal(signal) {
   interrupted = true;
   try {
     if (activeChild && !activeChild.killed) stopTestProcess(activeChild, signal);
+  } catch (error) {
+    console.error(`Mutation checks could not stop the test group after ${signal}: ${error.message}`);
+  }
+  try {
     if (activeRestore) activeRestore();
   } catch (error) {
     console.error(`Mutation checks failed while restoring after ${signal}: ${error.message}`);
+  }
+  try {
+    activeAuditCleanup?.();
+  } catch (error) {
+    console.error(`Mutation checks failed while releasing the audit lock after ${signal}: ${error.message}`);
   }
   process.exit(1);
 }
@@ -384,8 +433,80 @@ function restoreOnSignal(signal) {
 process.on("SIGINT", () => restoreOnSignal("SIGINT"));
 process.on("SIGTERM", () => restoreOnSignal("SIGTERM"));
 
+// A maintenance audit preserves the caller's existing edits. The normal CI
+// path below still requires a clean checkout and refuses the whole manifest
+// when any baseline fails. Audit results distinguish that failure from a kill.
+async function auditAll(root) {
+  const timeout = mutationTimeoutMs();
+  const before = () => {
+    const status = git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
+    const diff = git(root, ["diff", "HEAD", "--binary"]);
+    if (status.status !== 0 || diff.status !== 0) throw new Error("could not snapshot the checkout");
+    return status.stdout + diff.stdout;
+  };
+  const snapshot = before();
+  const baselines = new Map();
+  let failures = 0;
+  for (const name of readdirSync(resolve(root, MANIFEST_DIRECTORY)).filter(name => name.endsWith(".json")).sort()) {
+    const manifestPath = selectedManifest(root, join(MANIFEST_DIRECTORY, name));
+    const entries = parseManifest(root, manifestPath);
+    for (const [index, entry] of entries.entries()) {
+      const record = { manifest: name, entry: index + 1, file: entry.file, why: entry.why };
+      try {
+        const matches = readFileSync(entry.filePath, "utf8").split(entry.find).length - 1;
+        if (matches !== 1) throw new Error(`find matched ${matches} times; expected exactly once`);
+        let baseline = baselines.get(entry.test);
+        if (baseline === undefined) {
+          try {
+            await verifyBaseline(root, entry, index + 1, timeout);
+            baseline = null;
+          } catch (error) { rethrowCleanupRefusal(error); baseline = error.message; }
+          baselines.set(entry.test, baseline);
+        }
+        if (baseline) {
+          record.status = "baseline-failed";
+          record.error = baseline;
+        } else {
+          await verifyWhitespaceInsensitive(root, entry, index + 1, timeout);
+          await verifyTextuallyDifferent(root, entry, index + 1, timeout);
+          await verifyEntry(root, entry, index + 1, timeout);
+          record.status = "caught";
+        }
+      } catch (error) {
+        rethrowCleanupRefusal(error);
+        record.status = "failed";
+        record.error = error.message;
+      }
+      // A reused baseline is valid only while every test restores the same tree.
+      // Stop on contamination instead of attributing later failures to guards.
+      if (before() !== snapshot) throw new Error(`audit test changed the checkout: ${name} entry ${index + 1}`);
+      if (record.status !== "caught") failures += 1;
+      console.log(`AUDIT: ${JSON.stringify(record)}`);
+      if (process.env.MUTATION_CHECK_AUDIT_OUTPUT) appendFileSync(process.env.MUTATION_CHECK_AUDIT_OUTPUT, `${JSON.stringify(record)}\n`);
+    }
+  }
+  if (failures) throw new Error(`${failures} audit entries were not proved caught`);
+}
+
 async function main() {
   const root = repositoryRoot();
+  if (process.argv[2] === "--audit-all") {
+    const lockRoot = join(root, ".test-tmp");
+    mkdirSync(lockRoot, { recursive: true });
+    const lock = join(lockRoot, "mutation-audit.lock");
+    try { mkdirSync(lock); } catch (error) {
+      if (error.code === "EEXIST") throw new Error("another maintenance audit owns this checkout (or left its lock after SIGKILL)");
+      throw error;
+    }
+    activeAuditCleanup = () => rmSync(lock, { recursive: true, force: true });
+    try { return await auditAll(root); }
+    finally { activeAuditCleanup(); activeAuditCleanup = undefined; }
+  }
+  if (process.argv[2] === "--anchors-only") {
+    validateAllManifestAnchors(repositoryRoot());
+    console.log("All declared mutation anchors match exactly once.");
+    return;
+  }
   if (process.argv[2] === "--warn-only") {
     warnAboutMissingManifest(root);
     return;
@@ -398,6 +519,7 @@ async function main() {
     return;
   }
   requireCleanCheckout(root);
+  validateAllManifestAnchors(root);
   const entries = parseManifest(root, manifestPath);
   const failures = [];
   const timeoutMs = mutationTimeoutMs();
@@ -408,6 +530,7 @@ async function main() {
       await verifyWhitespaceInsensitive(root, entry, index + 1, timeoutMs);
       await verifyTextuallyDifferent(root, entry, index + 1, timeoutMs);
     } catch (error) {
+      rethrowCleanupRefusal(error);
       failures.push(error.message);
       console.error(`FAIL: ${error.message}`);
     }
@@ -419,6 +542,7 @@ async function main() {
       await verifyEntry(root, entry, index + 1, timeoutMs);
       requireCleanAfterTest(root);
     } catch (error) {
+      rethrowCleanupRefusal(error);
       failures.push(error.message);
       console.error(`FAIL: ${error.message}`);
     }

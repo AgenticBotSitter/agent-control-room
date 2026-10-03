@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/web/v1/project-orchestration-postgres-store.ts",
+    "find": "const isUndefinedTable = (error: unknown) => databaseSqlStateIsAnyV1(error, [\"42P01\"]);",
+    "replace": "const isUndefinedTable = (error: unknown) => (error as { code?: string } | null)?.code === \"42P01\";",
+    "test": "node --import tsx --test --test-name-pattern='INSTALLED driver' tests/project-orchestration-owner.test.ts",
+    "why": "int7: a missing dismissal table through the installed driver's wrapped error (sqlState) is 'nothing dismissed', not a 503 on every batch suggestions page"
+  }
+]

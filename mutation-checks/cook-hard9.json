@@ -1,0 +1,240 @@
+[
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (candidate.identities.some(left =>",
+    "replace": "if (false && candidate.identities.some(left =>",
+    "test": "node --import tsx --test --test-name-pattern='R2F-01' tests/updater-round2-files.test.mjs",
+    "why": "a rehearsal root that is the live install, its parent or child under another spelling (/System/Volumes/Data) must be refused by directory identity (R2F-01)"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (bytesRead && owned.mtimeMs < Date.now() - uptime() * 1000 - STAMP_BOOT_MARGIN_MS_V1) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='R2F-02' tests/updater-round2-files.test.mjs",
+    "why": "a PID stamp from before this boot cannot strand the journal behind a reused PID (R2F-02)"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "try { if (attemptedWrite) { await handle.truncate(current.bytes); await handle.sync(); } }",
+    "replace": "try { }",
+    "test": "node --import tsx --test --test-name-pattern='R2F-10' tests/updater-round2-files.test.mjs",
+    "why": "a short or failed journal write is rolled back so the valid history is not poisoned (R2F-10)"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "let locked;\n          try { locked = platform.tryLock(handle.fd); }",
+    "replace": "let locked = true;\n          try { platform.tryLock(handle.fd); }",
+    "test": "node --import tsx --test --test-name-pattern='journal on the Linux branch' tests/updater-journal-linux.test.mjs",
+    "why": "on Linux a flock conflict must be retried, never treated as holding the lock"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "catch { throw journalErrorV1(\"updater_journal_lock_unsupported\"); }\n          const owned",
+    "replace": "catch { locked = true; }\n          const owned",
+    "test": "node --import tsx --test --test-name-pattern='journal on the Linux branch' tests/updater-journal-linux.test.mjs",
+    "why": "a missing, killed or failed flock helper never grants journal authority"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (result.status === 75 && !result.error && !result.signal) return false;",
+    "replace": "if (result.status === 75) return true;",
+    "test": "node --import tsx --test --test-name-pattern='journal lock platform: conflict' tests/updater-journal-linux.test.mjs",
+    "why": "a flock conflict exit is busy, not a lock"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "try { handle = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK | platform.openFlags, 0o600); }",
+    "replace": "try { handle = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600); }",
+    "test": "node --import tsx --test --test-name-pattern='R2F-04 and R2F-05' tests/updater-round2-files.test.mjs",
+    "why": "the release-trust lock is a kernel lock: concurrent floor raises never lose an acknowledged floor (R2F-05)"
+  },
+  {
+    "file": "src/updater/v1/pg/first-owner-state.mjs",
+    "find": "await removeOwnedFileV1(temporary, owned).catch(error => { if (error?.code !== \"ENOENT\") throw error; });",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='R2F-07: kill after exclusive link' tests/updater-round2-files.test.mjs",
+    "why": "a kill between link and unlink must not leave first-owner state permanently refused (R2F-07)"
+  },
+  {
+    "file": "src/updater/v1/pg/first-owner-state.mjs",
+    "find": "    if (!sameFileV1(before, stat) || !stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o7777) !== 0o600 || stat.size > 4096\n      || stat.uid !== runtime.ownerUid) refuse(\"first_owner_state_refused\");\n    let value;\n    try {\n      const bytes = await handle.readFile();\n      if (bytes.length !== stat.size || !sameFileV1(before, await handle.stat())\n        || !sameFileV1(before, await runtime.lstat(path))) refuse(\"first_owner_state_refused\");",
+    "replace": "    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o7777) !== 0o600 || stat.size > 4096\n      || stat.uid !== runtime.ownerUid) refuse(\"first_owner_state_refused\");\n    let value;\n    try {\n      const bytes = await handle.readFile();\n      if (bytes.length !== stat.size) refuse(\"first_owner_state_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='R2F-20b' tests/updater-round2-files.test.mjs",
+    "why": "first-owner state is read only from the inode checked before the open; both the pre-open and post-read identity checks removed together (each alone stops the swap) (R2F-20b)"
+  },
+  {
+    "file": "src/updater/v1/pg/first-owner-state.mjs",
+    "find": "value = parseStrictJsonV1(bytes.toString(\"utf8\"));",
+    "replace": "value = JSON.parse(bytes.toString(\"utf8\"));",
+    "test": "node --import tsx --test --test-name-pattern='R2F-15' tests/updater-round2-files.test.mjs",
+    "why": "duplicate JSON members in first-owner state are refused (R2F-15)"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "if (expected && !sameFileV1(expected, entry)) throw new Error(\"file_custody_refused\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='R2F-20:' tests/updater-round2-files.test.mjs",
+    "why": "the protected loader returns bytes only from the policy-checked file, even across a folder swap and swap-back (R2F-20)"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "      .some(items => items.some(item => typeof item !== \"string\"))",
+    "replace": "      .some(() => false)",
+    "test": "node --import tsx --test --test-name-pattern='R2F-11' tests/updater-round2-files.test.mjs",
+    "why": "rehearsal argument arrays hold only strings (R2F-11)"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "if (!isRehearsalHostnameV1(value.rehearsalHostname))",
+    "replace": "if (typeof value.rehearsalHostname !== \"string\")",
+    "test": "node --import tsx --test --test-name-pattern='R2F-12' tests/updater-round2-files.test.mjs",
+    "why": "the updater rehearsal uses the shared DNS hostname rule (R2F-12)"
+  },
+  {
+    "file": "scripts/install/make-owner-paste-file.mjs",
+    "find": "|| /[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]/u.test(input.stagingFolder)) refuse('staging_folder_refused');",
+    "replace": "|| /[\\p{Cc}]/u.test(input.stagingFolder)) refuse('staging_folder_refused');",
+    "test": "node --import tsx --test --test-name-pattern='R2F-13' tests/updater-round2-files.test.mjs",
+    "why": "the owner paste file refuses invisible and direction characters in the staging folder (R2F-13)"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "&& !installerPathV1(value)) throw updaterRefuseV1(\"arguments_refused\");",
+    "replace": "&& false) throw updaterRefuseV1(\"arguments_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='R2F-14' tests/updater-round2-files.test.mjs",
+    "why": "installer path flags are bounded canonical absolute paths (R2F-14)"
+  },
+  {
+    "file": "src/web/v1/private-postgres-endpoint.ts",
+    "find": "&& posix.normalize(installRoot) === installRoot && host === `${installRoot}${INSTALLED_SOCKET_SUFFIX_V1}`;",
+    "replace": "&& posix.normalize(installRoot) === installRoot;",
+    "test": "node --import tsx --test --test-name-pattern='R2F-17' tests/updater-round2-files.test.mjs",
+    "why": "with a known install root the socket folder is exactly <root>/pg/socket (R2F-17)"
+  },
+  {
+    "file": "scripts/mac-local/stack.mjs",
+    "find": "catch (error) { if (error?.code === \"ENOENT\") return undefined; throw new Error(\"recorded_pid_refused\"); }",
+    "replace": "catch { return undefined; }",
+    "test": "node --import tsx --test --test-name-pattern='R2F-18' tests/updater-round2-files.test.mjs",
+    "why": "a refused PID record is kept and reported, never deleted as not running (R2F-18)"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "|| !Number.isSafeInteger(buildManifest.fileCount) || buildManifest.fileCount !== buildManifest.files.length",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='R2F-19' tests/updater-round2-files.test.mjs",
+    "why": "connector signing refuses a nonsense file count instead of writing one (R2F-19)"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "|| typeof input.versionFloor !== \"string\" || !VERSION_PATTERN.test(input.versionFloor)",
+    "replace": "|| !VERSION_PATTERN.test(input.versionFloor)",
+    "test": "node --import tsx --test --test-name-pattern='R2F-21' tests/updater-round2-files.test.mjs",
+    "why": "release trust text fields must be strings, not coercible arrays (R2F-21)"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!plain(manifest) || Object.keys(manifest).sort().join(\",\") !== \"builtFrom,file,schema,sha256,size,version\"\n    || manifest.schema !== \"control-room.fleet-connector-release/v1\" || manifest.builtFrom !== commit\n    || !/^\\d+\\.\\d+\\.\\d+$/u.test(manifest.version ?? \"\") || manifest.file !== `connector-${manifest.version}.mjs`\n    || !Number.isSafeInteger(manifest.size) || manifest.size < 0 || !/^[a-f0-9]{64}$/u.test(manifest.sha256 ?? \"\")) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (Object.keys(manifest)"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!plain(buildManifest) || buildManifest.schema !== \"control-room.attended-build-manifest/v1\" || buildManifest.commit !== commit\n    || !Array.isArray(buildManifest.files) || buildManifest.files.some(item => !plain(item)\n      || typeof item.path !== \"string\" || !item.path || !/^sha256:[a-f0-9]{64}$/u.test(item.sha256 ?? \"\")\n      || !Number.isSafeInteger(item.bytes) || item.bytes < 0\n      || !Number.isInteger(item.mode) || item.mode < 0 || item.mode > 0o7777)\n    || !Number.isSafeInteger(buildManifest.fileCount) || buildManifest.fileCount !== buildManifest.files.length\n    || !Number.isSafeInteger(buildManifest.byteCount) || buildManifest.byteCount < 0\n    || buildManifest.byteCount !== buildManifest.files.reduce((sum, item) => sum + item.bytes, 0)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (buildManifest.schema"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \"object\"\n      || Array.isArray(record.web)) throw new Error();\n    return validatePrivatePostgresConfiguration(record.web as PrivatePostgresConfiguration, { installRoot: dirname(protectedRoot) });",
+    "replace": "    return validatePrivatePostgresConfiguration(record.web as PrivatePostgresConfiguration, { installRoot: dirname(protectedRoot) });",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13: the ledger head is read on the pre-upgrade' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "the narrow web-role reader must refuse a record of the wrong schema rather than read a login out of it"
+  },
+  {
+    "file": "src/updater/v1/pg/init-database.mjs",
+    "find": "(cause ?? lines.at(-1) ?? \"\").replace(/[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]/gu, \" \").slice(0, 200)",
+    "replace": "(cause ?? lines.at(-1) ?? \"\").slice(0, 200)",
+    "test": "node --import tsx --test --test-name-pattern='A2-11 PostgreSQL' tests/control-room-installer.test.mjs",
+    "why": "Selected process diagnostics must not preserve terminal controls."
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (publishing) await removeOwnedFileV1(path, owned);",
+    "replace": "if (false) await removeOwnedFileV1(path, owned);",
+    "test": "node --import tsx --test --test-name-pattern='A1-07' tests/updater-file-hardening.test.mjs",
+    "why": "a failed lock initialization must remove only its owned inode so later updates can retry"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (publishing) await removeOwnedFileV1(path, owned);",
+    "replace": "if (publishing) await import(\"node:fs/promises\").then(fs => fs.rm(path, { force: true }));",
+    "test": "node --import tsx --test --test-name-pattern='trust lock:' tests/updater-file-hardening.test.mjs",
+    "why": "failed initialization must not remove a replacement lock"
+  },
+  {
+    "file": "scripts/mac-local/stack.mjs",
+    "find": "if (!/^[0-9]{1,16}$/u.test(text)) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "node --import tsx --test --test-name-pattern='PID:' tests/updater-file-hardening.test.mjs",
+    "why": "PID input must be decimal text"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "&& item.length <= 512 && !/[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]/u.test(item)",
+    "replace": "&& true",
+    "test": "node --import tsx --test --test-name-pattern='A2-02' tests/updater-config-hardening.test.mjs",
+    "why": "owner identities must be bounded and free of controls"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const captured = await loadMacLocalProtectedConfigurationV1(path, runtime, { installRoot: dirname(protectedRoot) });\n    await owner.check();",
+    "replace": "    const captured = await loadMacLocalProtectedConfigurationV1(path, runtime, { installRoot: dirname(protectedRoot) });",
+    "test": "node --import tsx --test --test-name-pattern='web custody: parent' tests/updater-file-hardening.test.mjs",
+    "why": "a moved configuration parent must fail closed even if its leaf inode is unchanged"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 64 * 1024 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    return captureMacLocalProtectedConfigurationV1(parseStrictJsonV1(bytes), context);",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (false) throw new Error();\n    return captureMacLocalProtectedConfigurationV1(parseStrictJsonV1(bytes), context);",
+    "test": "node --import tsx --test --test-name-pattern='web custody: leaf' tests/updater-file-hardening.test.mjs",
+    "why": "a reader seam cannot bypass leaf identity or byte bounds"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 64 * 1024 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    await owner.check();\n    return captureWorkIntakeServerConfigurationV1(parseStrictJsonV1(bytes), { installRoot: dirname(protectedRoot) });",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    await owner.check();\n    return captureWorkIntakeServerConfigurationV1(parseStrictJsonV1(bytes), { installRoot: dirname(protectedRoot) });",
+    "test": "node --import tsx --test --test-name-pattern='optional installed' tests/updater-file-hardening.test.mjs",
+    "why": "optional installed files retain identity and byte bounds after reading"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 4096 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    await owner.check();\n    return captureOwnerWebPushConfigV1(parseStrictJsonV1(bytes));",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    await owner.check();\n    return captureOwnerWebPushConfigV1(parseStrictJsonV1(bytes));",
+    "test": "node --import tsx --test --test-name-pattern='optional installed' tests/updater-file-hardening.test.mjs",
+    "why": "optional installed files retain identity and byte bounds after reading"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 64 * 1024 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    await owner.check();\n    return parseStrictJsonV1(bytes) as Record<string, unknown>;",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    await owner.check();\n    return parseStrictJsonV1(bytes) as Record<string, unknown>;",
+    "test": "node --import tsx --test --test-name-pattern='optional installed' tests/updater-file-hardening.test.mjs",
+    "why": "optional installed files retain identity and byte bounds after reading"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "|| Object.values(value.launchdLabels).some(label => typeof label !== \"string\" || !labelPattern.test(label) || !label.includes(\".rehearsal.\"))",
+    "replace": "|| Object.values(value.launchdLabels).some(label => typeof label !== \"string\" || !labelPattern.test(label))",
+    "test": "node --import tsx --test --test-name-pattern='colliding with a live default' tests/control-room-installer.test.mjs",
+    "why": "all launchd labels must remain explicit rehearsal identities distinct from live defaults"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "              await handle.truncate(0); await handle.sync();\n            }\n            return { handle, owned, path };",
+    "replace": "            }\n            return { handle, owned, path };",
+    "test": "node --import tsx --test --test-name-pattern='reclaimed PID stamp' tests/updater-file-hardening.test.mjs",
+    "why": "a reclaimed PID stamp must be emptied under the kernel lock so a later kill cannot strand the journal behind a reused PID"
+  }
+]

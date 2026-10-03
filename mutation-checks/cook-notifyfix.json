@@ -1,0 +1,394 @@
+[
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "{ TTL: 86400, urgency: \"normal\", timeout: 5000 }",
+    "replace": "{ TTL: 86400, urgency: \"normal\", timeout: 5000, topic: payload.tag }",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N01: internal browser tags must not be passed as provider topics"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "{ TTL: 86400, urgency: \"normal\", timeout: UPDATER_PUSH_TIMEOUT_MS_V1 }",
+    "replace": "{ TTL: 86400, urgency: \"normal\", timeout: UPDATER_PUSH_TIMEOUT_MS_V1, topic: payload.tag }",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N01: every updater template reaches real-library HTTPS construction"
+  },
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "TTL: 86400",
+    "replace": "TTL: 3600",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N07: retain accepted pushes for at least one day"
+  },
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "timeout: 5000",
+    "replace": "timeout: 0",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "U02: real-library socket timeout is explicitly bounded"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "TTL: 86400",
+    "replace": "TTL: 3600",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N07: retain accepted pushes for at least one day"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "timeout: UPDATER_PUSH_TIMEOUT_MS_V1",
+    "replace": "timeout: 0",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "U02: real-library socket timeout is explicitly bounded"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (result.delivered === 0) throw new Error(\"owner_push_test_not_accepted\");",
+    "replace": "if (false) throw new Error(\"owner_push_test_not_accepted\");",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N02: nothing accepted must never be presented as a successful test"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (!body || typeof body !== \"object\" || Array.isArray(body) || Object.keys(body).join(\",\") !== \"endpoint\") throw new WebAccessError(\"invalid_request\");",
+    "replace": "if (false) throw new WebAccessError(\"invalid_request\");",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N02: the browser endpoint request has an exact shape"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (!ownerPushEndpointAllowedV1(endpoint)) throw new WebAccessError(\"invalid_request\");",
+    "replace": "if (false) throw new WebAccessError(\"invalid_request\");",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N02: off-list test endpoints are bad input before any database delivery"
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (input.subscriptionEndpoint !== undefined && subscription.endpoint !== input.subscriptionEndpoint) continue;",
+    "replace": "if (false) continue;",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N02: a test targets this browser and cannot silently broadcast"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "dedupeKey: `test:${randomUUID()}`",
+    "replace": "dedupeKey: `test:${clock().toString(36)}`",
+    "test": "node --import tsx --test tests/owner-notify-transports.test.ts",
+    "why": "N02: simultaneous tests get distinct events even under one deterministic clock"
+  },
+  {
+    "file": "private-app/app/shared-owner-push.ts",
+    "find": "    if (!response.ok) throw new Error();\n    const next",
+    "replace": "    if (false) throw new Error();\n    const next",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: a failed configuration read cannot enable notification controls"
+  },
+  {
+    "file": "private-app/app/shared-owner-push.ts",
+    "find": "      if (!saved.ok) throw new Error();",
+    "replace": "      if (false) throw new Error();",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: failed registration reconciliation cannot claim the browser is saved"
+  },
+  {
+    "file": "private-app/app/shared-owner-push.ts",
+    "find": "const existing = await phoneRead(worker.pushManager.getSubscription(), controller.signal);",
+    "replace": "const existing = null;",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: re-saving an existing local subscription must not recreate it"
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "      if (!response.ok) throw new Error();\n      signal.throwIfAborted();\n      remember(true);",
+    "replace": "      if (false) throw new Error();\n      signal.throwIfAborted();\n      remember(true);",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: failed save stays retryable and is never reported as subscribed"
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "created ? await created.unsubscribe().catch(() => false) : false",
+    "replace": "false",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: roll back a newly created browser subscription after a failed save"
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "if (!await subscription.unsubscribe()) {",
+    "replace": "if (false && !await subscription.unsubscribe()) {",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: false local removal is a visible partial failure with a retry"
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "if (!response.ok) throw new Error();\n        setStatus",
+    "replace": "if (false) throw new Error();\n        setStatus",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N03: failed server deletion must never remove the browser subscription"
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "if (!response.ok || (await response.json()).accepted !== true) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N02: UI requires explicit provider acceptance rather than any response"
+  },
+  {
+    "file": "private-app/app/pwa-registration.tsx",
+    "find": "const failed = registration?.then(() => new Promise<never>(() => {}));",
+    "replace": "const failed = undefined;",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N04: registration rejection settles a permanently pending serviceWorker.ready"
+  },
+  {
+    "file": "private-app/app/pwa-registration.tsx",
+    "find": "timer = setTimeout(() => reject(new Error(\"owner_push_worker_unavailable\")), timeoutMs);",
+    "replace": "timer = setTimeout(() => {}, timeoutMs);",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N04: ready has a bounded failure instead of leaving setup checking forever"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "[\"needs_attention\", \"error\", \"rolled_back\"].includes(this.lastOutcome.status)",
+    "replace": "[\"needs_attention\"].includes(this.lastOutcome.status)",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N06: error and rollback outcomes produce explicit warning conditions"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "|| [\"busy\", \"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\", \"rolled_back\"]",
+    "replace": "|| [\"busy\", \"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\"]",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N06: rollback status tells the owner a review is needed"
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "[\"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"rolled_back\"].includes(value.state)",
+    "replace": "[\"uncertain\", \"attended_upgrade_required\", \"needs_attention\"].includes(value.state)",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N06: ordinary rolled-back code updates get a red attention card"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (this.#dead.has(subscription.id)) return;",
+    "replace": "if (false) return;",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: a target removed during fan-out is not contacted by another template in the same tick"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (rows.every(row => (this.#deliveries[row.id] ?? []).includes(subscription.id)))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: accepted per-phone receipts prevent repeat sends after a partial failure or restart"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (error?.statusCode !== 404 && error?.statusCode !== 410) throw error;",
+    "replace": "if (true) throw error;",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: permanently dead targets are invalidated durably"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (response?.statusCode !== undefined && !(response.statusCode >= 200 && response.statusCode < 300))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: resolved non-2xx transports cannot create an accepted receipt"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (failed) throw failed.reason;",
+    "replace": "if (false) throw failed.reason;",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: a successful phone cannot mask another phone that needs retry"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (!accepted) throw updaterRefuseV1(\"updater_push_no_subscription\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_push_no_subscription\");",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: all permanently gone targets mean undelivered, not sent"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "deliveries: this.#deliveries, dead: [...this.#dead],",
+    "replace": "deliveries: {}, dead: [...this.#dead],",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: per-target acceptance survives a process restart and interrupted settlement"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (!this.#loaded) { await this.#readState(); this.#loaded = true; }",
+    "replace": "if (true) { await this.#readState(); this.#loaded = true; }",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: a failed checkpoint write cannot erase live accepted receipts on retry"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": ".filter(subscription => !this.#dead.has(subscription.id))",
+    "replace": ".filter(() => true)",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: later cached subscription reads exclude durably invalidated phones"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (!subscriptions.length) continue;",
+    "replace": "if (false) continue;",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N14: no subscription consumes no delivery attempt"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (!allowed) { summary.push(...batch); continue; }",
+    "replace": "if (false) { summary.push(...batch); continue; }",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N09: fresh warnings inside the hourly limit require covering summary acceptance"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "|| now - this.#rate.flood.sentAt >= UPDATER_PUSH_RATE_MS_V1",
+    "replace": "|| true",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N09: an exhausted summary budget retains fresh warnings without burning attempts"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "await this.#finish(claimed, false, safeErrorCode(error));",
+    "replace": "await this.#finish(claimed, true, safeErrorCode(error));",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N09: summary failure leaves every claimed warning retryable"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "      if (!deliveries || typeof deliveries !== \"object\" || Array.isArray(deliveries)\n        || Object.entries(deliveries).some(([id, targets]) => !/^push:[0-9a-f-]{36}$/u.test(id)\n          || !Array.isArray(targets) || targets.length > 100 || targets.some(target => typeof target !== \"string\" || target.length > 200))\n        || !Array.isArray(dead) || dead.some(id => typeof id !== \"string\" || id.length > 200))\n        throw updaterRefuseV1(\"updater_alert_state_refused\");\n",
+    "replace": "",
+    "test": "node --import tsx --test tests/updater-notify-recovery.test.ts",
+    "why": "N08: malformed per-target checkpoint state must fail closed before queue activity"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (!sendFailure || !failure.removed) sendFailure =",
+    "replace": "if (!sendFailure) sendFailure =",
+    "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
+    "why": "U01: one removed phone cannot cancel another phone temporary failure"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "(!sendFailure || sendFailure.removed) && deliveredCount > 0",
+    "replace": "!sendFailure && deliveredCount > 0",
+    "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
+    "why": "U01: a successful target plus a removed target is delivered"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "Math.max(ownerPushBackoffMsV1(spent), retryAfterMs)",
+    "replace": "ownerPushBackoffMsV1(spent)",
+    "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
+    "why": "U04: provider Retry-After participates in the durable retry deadline"
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "Math.min(delay, 86_400_000)",
+    "replace": "delay",
+    "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
+    "why": "U04: excessive provider backoff is capped at one day"
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "Number.isFinite(delay) && delay > 0",
+    "replace": "Number.isFinite(delay)",
+    "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
+    "why": "U04: past and zero retry deadlines are rejected"
+  },
+  {
+    "file": "private-app/app/service-worker.js",
+    "find": "if (event.request.mode !== \"navigate\") return;",
+    "replace": "if (false) return;",
+    "test": "node --import tsx --test tests/owner-notify-worker.test.mjs",
+    "why": "N10: private API requests are never intercepted or cached by the offline page"
+  },
+  {
+    "file": "private-app/app/service-worker.js",
+    "find": "if (event.data?.type === \"control-room.activate-update\")",
+    "replace": "if (true)",
+    "test": "node --import tsx --test tests/owner-notify-worker.test.mjs",
+    "why": "N10: only the explicit update message activates a waiting worker"
+  },
+  {
+    "file": "private-app/app/pwa-registration.tsx",
+    "find": "if (requested.current) { requested.current = false; clearTimeout(deadline.current); window.location.reload(); }",
+    "replace": "if (true) { requested.current = false; clearTimeout(deadline.current); window.location.reload(); }",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N10: controller changes reload only after the owner requests an update"
+  },
+  {
+    "file": "private-app/app/home-workspace.tsx",
+    "find": "const hasWarning = workerWarnings > 0 || data.connections.state === \"unavailable\";",
+    "replace": "const hasWarning = false;",
+    "test": "node --import tsx --test tests/owner-notify-settings.test.tsx",
+    "why": "N11: a worker warning participates in the red attention summary"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "|| [\"busy\", \"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\", \"rolled_back\"]",
+    "replace": "|| [\"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\", \"rolled_back\"]",
+    "test": "node --import tsx --test --test-name-pattern='a busy result with a live run' tests/updater-skeleton.test.mjs",
+    "why": "a busy live run explicitly tells the owner attention is needed"
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "if (inFlight.current || actionOwners.has(navigator.serviceWorker)) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='50 overlapping subscribe' tests/owner-notify-settings.test.tsx",
+    "why": "N03 self-test: a synchronous reservation admits only one of 50 overlapping browser actions"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        AND h.attempt_count>=${OWNER_PUSH_ATTEMPT_LIMIT_V1}\n      RETURNING h.action_inbox_id`",
+    "replace": "        AND h.attempt_count>${OWNER_PUSH_ATTEMPT_LIMIT_V1}\n      RETURNING h.action_inbox_id`",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "R6C-04: a stale reservation AT the attempt bound is settled, not left reserved for ever"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "SET state=CASE WHEN (SELECT count(*) FROM owner_web_push_deliveries d",
+    "replace": "SET state=CASE WHEN (SELECT count(*) FROM owner_web_push_deliveries d WHERE false",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "R6C-04: the 0174 ledger proving a delivered send settles the head as DELIVERED, not as failed"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "          WHEN i.state<>'open' THEN 'owner_push_item_no_longer_open'\n          ELSE 'owner_push_crashed_at_final_attempt' END",
+    "replace": "          ELSE 'owner_push_crashed_at_final_attempt' END",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "R6C-04: a closed item settles with its own reason, and a crash is never reported as an exhausted endpoint"
+  },
+  {
+    "file": "private-app/app/service-worker.js",
+    "find": "        if (event.target.result !== undefined) return;\n        claimed = true;",
+    "replace": "        claimed = true;",
+    "test": "node --test tests/owner-push-service-worker.test.mjs",
+    "why": "R6C-05: an already-surfaced event tag is not surfaced again, including after a dismissal -- the durable claim refuses it, which is the mechanism that actually holds (the in-memory readSeenTags test is a fast path, not the guard)"
+  },
+  {
+    "file": "private-app/app/service-worker.js",
+    "find": "    if (claimed) await releaseSeenTag(payload.tag).catch(() => {});",
+    "replace": "    // release removed",
+    "test": "node --test tests/owner-push-service-worker.test.mjs",
+    "why": "R6C-05: a notification the platform refuses releases its claim, so the event can still be alerted"
+  },
+  {
+    "file": "private-app/app/service-worker.js",
+    "find": "          if (overflow <= 0) return;",
+    "replace": "          if (overflow <= 0) overflow; return;",
+    "test": "node --test tests/owner-push-service-worker.test.mjs",
+    "why": "R6C-05: the durable receipt is trimmed to its bound rather than growing for ever"
+  },
+  {
+    "file": "private-app/app/service-worker.js",
+    "find": "  if (event.data?.type === \"control-room.deliver-push\")",
+    "replace": "  if (false)",
+    "test": "node --test tests/owner-push-service-worker.test.mjs",
+    "why": "R6C-05: the receiver test reaches the shipped deliverPushV1, so a dead message path fails the lane"
+  }
+]

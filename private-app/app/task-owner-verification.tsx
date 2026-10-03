@@ -76,17 +76,17 @@ function OwnerTaskVerificationController({ projectId, jobId, artifactId, targetI
   const { client } = session;
   const { scenarioId, outcome: result, note, pending, receipt, error: saveError } =
     useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
-  const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
+  const [error, setError] = useState<BrowserRequestError>();
   // The shared polling hook owns the schedule: it pauses while the tab is
   // hidden, refreshes on focus, never overlaps a read, and backs off when
   // nothing changes or the read fails. A pending save owns the client, so
   // polling suspends until the write settles rather than racing it.
   const held = client.hasPending();
   const verificationRead = usePolledRead<TaskVerificationOptions>({
-    key: `task-owner-verification-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
+    key: JSON.stringify(["task-owner-verification", projectId, jobId, artifactId, targetId, targetDigest, contentHash]),
     baseIntervalMs: 30_000,
+    dropValueOnError: reason => reason instanceof BrowserRequestError && ["authentication_required", "access_denied", "not_found"].includes(reason.code),
     enabled: !held,
-    dropValueOnError: true,
     read: (signal, transport) => client.options(projectId, jobId,
       { artifactId, targetId, targetDigest, contentHash }, signal, transport),
     onAccept: () => { setError(undefined); session.clearError(); },
@@ -94,16 +94,18 @@ function OwnerTaskVerificationController({ projectId, jobId, artifactId, targetI
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); },
   });
   const options = verificationRead.value;
+  const stale = verificationRead.checking || !!verificationRead.error;
   const save = async (scenario?: Scenario) => {
+    if (scenario && stale) return;
     setError(undefined);
     const saved = await session.save(scenario && { scenarioId: scenario.scenarioId, instructionsDigest: scenario.instructionsDigest });
-    if (saved) { setRefresh(value => value + 1); onSaved(); }
-    else verificationRead.clear();
+    if (saved) { verificationRead.refresh(); onSaved(); }
   };
   return <>
     {!options && !error && !saveError && !client.hasPending() && <p role="status">Loading human verification…</p>}
+    {options && stale && <p role="status">{verificationRead.checking ? "Checking… Last saved verification is shown." : "Couldn't refresh. Last saved verification is shown; check again before saving."}</p>}
     {options && <OwnerVerificationPanel options={options} scenarioId={scenarioId} result={result} note={note} pending={pending}
-      held={client.hasPending()} onScenario={session.selectScenario} onResult={session.setOutcome} onNote={session.setNote}
+      held={stale || client.hasPending()} onScenario={session.selectScenario} onResult={session.setOutcome} onNote={session.setNote}
       onRecord={scenario => { void save(scenario); }} />}
     {pending && <p role="status">Recording human verification…</p>}
     {options && receipt && <p role="status">Recorded human verification: {outcome[receipt.outcome]}. This does not complete the job.</p>}
@@ -111,7 +113,7 @@ function OwnerTaskVerificationController({ projectId, jobId, artifactId, targetI
     {saveError && <p role="alert">{verificationErrorMessage[saveError.code]}</p>}
     {client.hasPending() && <div className="private-notice"><p>An earlier human verification save is unresolved. Its exact check, result and note remain in this task page’s memory.</p>
       <button type="button" disabled={pending} onClick={() => { void save(); }}>Check this exact human verification save</button></div>}
-    {error && !client.hasPending() && <button type="button" disabled={pending} onClick={() => { setError(undefined); setRefresh(value => value + 1); }}>Refresh human verification</button>}
+    {error && !client.hasPending() && <button type="button" disabled={pending} onClick={() => { verificationRead.refresh(); }}>Refresh human verification</button>}
     <p className="private-note">Closing and reopening a result keeps unfinished human verification in this task page’s memory. Leaving or reloading the task page discards unsaved notes and unresolved checks, not saved records.</p>
   </>;
 }

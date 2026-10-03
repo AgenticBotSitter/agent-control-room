@@ -1,4 +1,5 @@
 "use client";
+import { OwnerName } from "./owner-ui";
 import { SessionObservations } from './session-observations';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ProjectCatalog } from "../../app/components/project-catalog";
@@ -13,12 +14,16 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { usePolledRead } from "./use-polled-read";
 import { useProductConfiguration, useProductModule } from "./product-configuration";
 import { ProjectScheduleStatusPanel } from "./schedule-status";
+import { RecurringRulesPanel } from "./recurring-rules";
+import { ReusableSkillsPanel } from "./reusable-skills";
 import { ProjectModuleAvailability } from "./project-module-availability";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { ProjectAgentWorkspace } from "./project-agent-workspace";
+import { ProjectSettingsPanel } from "./project-settings-panel";
 import { useLocalRuntime } from "./local-runtime";
 import { StateChip } from "./owner-ui";
+import { ProjectOrchestrationPanel, ProjectOrchestrationSettings } from "./project-orchestration";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -155,6 +160,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
+  const [createFormShown, setCreateFormShown] = useState(false);
   const [retainedProject, setProject] = useState<ProjectView>();
   // Route changes must hide the previous project's data and actions immediately.
   // Keep the client mounted so an uncertain save retains its original request key.
@@ -162,7 +168,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   const [state, setState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [error, setError] = useState<BrowserRequestError>();
   const [pending, setPending] = useState(false);
-  const [result, setResult] = useState<"idle" | "created" | "invalid" | "unavailable">("idle");
+  const [result, setResult] = useState<"idle" | "created" | "invalid" | "unavailable" | "not_sent" | "refused">("idle");
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const generation = useRef(0);
   const writeBusy = useRef(false);
@@ -185,7 +192,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   // second read while the first was still open. A pending write still suspends
   // polling, so a read can never race a command this page issued.
   const readKey = `project-workspace-${projectId ?? "catalog"}-${refresh}-${after ?? ""}-${lifecycleFilter ?? ""}`;
-  usePolledRead<true>({
+  const polled = usePolledRead<true>({
     key: readKey,
     baseIntervalMs: 30_000,
     read: async (signal, transport) => {
@@ -193,28 +200,38 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       const current = ++generation.current;
       if (projectId) {
         const value = await client.get(projectId, signal, transport);
-        if (generation.current === current) setProject(value);
+        if (!signal.aborted && generation.current === current) setProject(value);
       } else {
         const page = await client.list(after, lifecycleFilter, signal, transport);
-        if (generation.current === current) { setProjects(page.projects); setCatalog(page); }
+        if (!signal.aborted && generation.current === current) {
+          setProjects(page.projects); setCatalog(page); if (page.canCreate) setCreateFormShown(true);
+        }
       }
-      if (generation.current === current) { setState("ready"); setError(previous => previous?.code === "uncertain" ? previous : undefined); }
+      if (!signal.aborted && generation.current === current) {
+        setState("ready"); setRefreshFailed(false);
+        // A refresh never hides an uncertain OR conflicting save: both carry the
+        // exact-retry consent the owner still has to give (int9, R83).
+        setError(previous => previous?.code === "uncertain" || previous?.code === "conflict" ? previous : undefined);
+      }
       return true;
     },
     onFailure: (reason: unknown) => {
-      setProjects([]); setCatalog(undefined); setProject(undefined); setState("unavailable");
-      setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
+      setRefreshFailed(true);
+      if (!catalog && !project) setState("unavailable");
+      if (reason instanceof BrowserRequestError && ["authentication_required", "access_denied", "not_found"].includes(reason.code)) showError(reason);
     },
   });
 
   async function create(draft: { title: string; summary: string; templateSelection?: { templateId: string; configurationDigest: string } }) {
     if (writeBusy.current || client.hasPending()) return;
+    if (navigator.onLine === false) { setResult("not_sent"); setError(new BrowserRequestError("unavailable")); return; }
     writeBusy.current = true; generation.current++;
     setPending(true); setError(undefined);
     try {
       const created = await client.create(draft); setResult("created");
       window.location.assign(`/projects/${encodeURIComponent(created.projectId)}`);
-    } catch (reason) { showError(reason); setResult(reason instanceof BrowserRequestError && reason.code === "invalid_request" ? "invalid" : "unavailable"); }
+    } catch (reason) { showError(reason); setResult(reason instanceof BrowserRequestError && reason.code === "invalid_request" ? "invalid"
+      : client.hasPending() ? "unavailable" : "refused"); }
     finally { finishWrite(); }
   }
   async function transition(lifecycle: WebProject["lifecycle"]) {
@@ -245,13 +262,19 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   return <div className="private-shell">
     <PrivateHeader />
     <main id="private-main" tabIndex={-1}>
+      {polled.checking && (catalog || project) && <p role="status">Checking… Last saved value is shown.</p>}
+      {refreshFailed && <p role="status">{catalog || project
+        ? "Couldn't refresh. The last saved value and your draft are kept. Checking again when connected."
+        : "Couldn't read saved state. Reconnect and check again. Any typed draft is kept."}</p>}
+      {refreshFailed && !error && <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Check saved state again</button>}
       {state === "ready" && client.hasPending() && <ProjectSaveRecovery pending={pending} onRetry={() => { void retryOriginal(); }} />}
       {error && <div className="private-notice">
         {/* The live region covers only the message, not the recovery control.
           * A 30s poll re-renders this subtree, so an alert region that also
           * contained the button re-announced the button's label on every cycle
           * and the region was larger than the message it existed to convey. */}
-        <p role="alert">{browserErrorMessage[error.code]}</p>
+        <p role="alert">{result === "not_sent" && error.code === "unavailable"
+          ? "You are offline. Reconnect, then check saved state and retry your draft." : browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Check saved state again</button>}</div>}
       {!projectId ? <>
@@ -271,7 +294,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             {catalog.sources.ordinary === "not_authorized" && <p className="private-note">Ordinary projects are not included with your current access.</p>}
           </>}
           <p className="private-note">Each project has its own Tasks page for preparation, assignment, approval and results. That page shows which services are configured; opening a project does not start an agent.</p></div>
-          {catalog?.canCreate ? <ProjectCreateForm pending={pending || client.hasPending() || state !== "ready"} result={result} templates={templateOptions}
+          {createFormShown ? <ProjectCreateForm pending={pending} disabled={client.hasPending() || state !== "ready" || refreshFailed || !catalog?.canCreate} result={result} templates={templateOptions}
             onCreate={draft => { void create(draft); }} />
             : state === "ready" && <p className="private-note">Your current access does not allow creating ordinary projects.</p>}</div>
       </> : <>
@@ -282,7 +305,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
               journey asserts on the exact string /^paused ·/ and the middle dot
               and suffix are part of that match. */}
           <div className="private-heading"><span className="private-state"><StateChip state={project.lifecycle} />{" · "}
-            {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
+            {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1><OwnerName>{project.title}</OwnerName></h1></div>
           <ProjectIdeaOrigin project={project} />
           <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
@@ -299,7 +322,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} local={runtime.mode === "local"} />
             <ProjectAgentInstallationStatus topology={installationTopology} />
           {sessionObservations && <SessionObservations projectId={projectId} />}</>}
-          {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
+          {section === "automations" && <><RecurringRulesPanel projectId={projectId} /><ReusableSkillsPanel projectId={projectId} />
+            <ProjectScheduleStatusPanel projectId={projectId} /></>}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
             {project.lifecycleEditable && project.origin === "ordinary" ? <OrdinaryProjectStatusActions project={project}
@@ -311,6 +335,10 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
+          {section === "settings" && project.origin === "ordinary" && <ProjectSettingsPanel projectId={projectId} />}
+          {section === "settings" && project.origin === "ordinary" && <ProjectOrchestrationSettings projectId={projectId} />}
+          {section === "overview" && project.origin === "ordinary" && project.lifecycle === "active"
+            && <ProjectOrchestrationPanel projectId={projectId} />}
           {section === "overview" && <ProjectOverviewActivity key={projectId} projectId={projectId} />}
           {section === "overview" && runtime.mode === "hosted" && <>
             <section className="private-panel"><h2>Worker availability</h2>

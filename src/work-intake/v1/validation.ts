@@ -3,6 +3,7 @@ import { parseStrictJsonObjectV1 } from "../../project-coordination/v1/strict-js
 import { ProjectCoordinationErrorV1 } from "../../project-coordination/v1/errors";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
 import { workBatchProposalDigestV1 } from "./digest";
+import { isPostgresJsonTextV1 } from "../../persistence/postgres-text";
 
 export type WorkBatchRejectionCodeV1 = "content_invalid" | "content_duplicate_key" | "content_over_limit"
   | "proposal_schema_mismatch" | "proposal_limit_exceeded" | "proposal_cross_project"
@@ -20,6 +21,7 @@ export function validateWorkBatchProposalV1(raw: string, expectedProjectId: stri
       return { accepted: false, safeReasonCode: "content_over_limit" };
     return { accepted: false, safeReasonCode: "content_invalid" };
   }
+  if (!isPostgresJsonTextV1(value)) return { accepted: false, safeReasonCode: "content_invalid" };
   const parsed = workBatchProposalSchemaV1.safeParse(value);
   if (!parsed.success) {
     const limit = parsed.error.issues.some(issue => issue.code === "too_big"

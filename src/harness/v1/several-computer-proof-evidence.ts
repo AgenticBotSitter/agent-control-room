@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from "zod";
 import { isProxy } from "node:util/types";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
@@ -190,7 +191,7 @@ export function deriveSeveralComputerDeliveryEvidenceV1(reportValue: unknown): S
 
 function verifiedEvidence(value: unknown): SeveralComputerProofEvidenceV1 {
   const cloned = inertClone(value);
-  const selected = z.object({ proof: z.enum(["remote_enrollment", "two_computer_delivery"]) }).passthrough().parse(cloned);
+  const selected = upstreamObjectV1({ proof: z.enum(["remote_enrollment", "two_computer_delivery"]) }).parse(cloned);
   const reportSchema = selected.proof === "remote_enrollment"
     ? severalComputerEnrollmentProofReportSchemaV1 : severalComputerDeliveryProofReportSchemaV1;
   const parsed = evidenceBase.extend({ proof: z.literal(selected.proof), report: reportSchema }).strict().parse(cloned);

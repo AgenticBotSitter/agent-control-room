@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Production migration applier. Effect-free unless both connection flags are
 // supplied: without them it prints the planned file order and exits 0 without
 // connecting. A real run needs the two-phase connections:
@@ -7,14 +8,18 @@
 // Corresponding ledger: deploy/postgres/migration-ledger.json (immutable order/checksum).
 // Each migration file applies inside one transaction together with its ledger row.
 // Refuses: altered digest of an applied file, missing file, reordered files,
-// partially recorded rows, and gaps in the pending suffix. Optional logins come only
-// from protected CONTROL_ROOM_*_PASSWORD env values (never argv); without them the
-// operator receives the exact psql command for db/roles/production_provision.sql.
+// partially recorded rows, gaps in the pending suffix, and any migration that
+// left the canonical-payload data guard reading a column it renamed or dropped.
+// Optional logins come only from protected CONTROL_ROOM_*_PASSWORD env values
+// (never argv); without them the operator receives the exact psql command for
+// db/roles/production_provision.sql.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectTarget, parseKeywordValueTarget, readSchemaDigest } from "./evidence.mjs";
+import { guardColumnsForTableV1, guardColumnsV1, GUARD_FUNCTION_NAME, introducesPayloadGuard }
+  from "./canonical-payload-guard.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const sha256 = text => createHash("sha256").update(text).digest("hex");
@@ -26,10 +31,79 @@ const flag = (args, name, fallback) => {
 /**
  * @typedef {{ planned: boolean, files?: number, digest?: string, applied?: { file: string, order: number, preSchemaDigest: string, postSchemaDigest: string }[], noOp?: boolean, schemaDigest?: string, objects?: number, logins?: string, grants?: string, operatorProvisionCommand?: string }} ApplyResult
  * @param {{ target?: string, rootDir?: string, ledgerPath?: string, env?: NodeJS.ProcessEnv,
- *   bootstrapTarget?: string, migrateTarget?: string, migrateViaLocalPeer?: boolean }} options
+ *   bootstrapTarget?: string | { host?: string, port?: number, database?: string, user?: string, password?: string, application_name?: string },
+ *   migrateTarget?: string | { host?: string, port?: number, database?: string, user?: string, password?: string, application_name?: string },
+ *   migrateViaLocalPeer?: boolean }} options
  * @returns {Promise<ApplyResult>}
  */
 export { readSchemaDigest } from "./evidence.mjs";
+
+/**
+ * Every column `validate_control_payload_mirror` reads, per guarded table, as
+ * two queries and no state of our own.
+ *
+ * The guard's own body is the authority on which columns it reads
+ * (`canonical-payload-guard.mjs` explains why). The catalog supplies which
+ * tables actually carry the trigger, so a table that lost the trigger is not
+ * checked as though it still had the guard -- the two facts are read together.
+ */
+async function payloadGuardExpectations(client) {
+  const guard = (await client.query(
+    "SELECT p.prosrc AS prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+    + ` WHERE n.nspname = 'public' AND p.proname = $1`
+    + " ORDER BY p.oid LIMIT 1", [GUARD_FUNCTION_NAME])).rows[0]?.prosrc;
+  if (typeof guard !== "string") throw new Error("payload_guard_function_missing");
+  const tables = (await client.query(
+    "SELECT c.relname AS table FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid"
+    + " JOIN pg_proc p ON p.oid = t.tgfoid JOIN pg_namespace n ON n.oid = c.relnamespace"
+    + " WHERE NOT t.tgisinternal AND n.nspname = 'public' AND p.proname = $1"
+    + " ORDER BY 1", [GUARD_FUNCTION_NAME])).rows.map(row => row.table);
+  if (tables.length === 0) throw new Error("payload_guard_has_no_triggers");
+  const parsed = guardColumnsV1(guard);
+  return tables.map(table => ({ table, columns: guardColumnsForTableV1(parsed, table) }));
+}
+
+/**
+ * Refuse a migration that left the canonical-payload guard reading a column that
+ * no longer exists.
+ *
+ * Why this can only fail loudly and never pass vacuously, which is the whole
+ * requirement -- a guard that quietly checks nothing is the same defect one
+ * level up:
+ *   * the guard function must exist and have a readable body, or this throws;
+ *   * at least one table must still carry the trigger, or this throws;
+ *   * a guarded table with no branch in the guard body throws -- while the body
+ *     HAS branches. A body with none at all is the 0003 shape (the prelude is
+ *     the whole guard) and the prelude is applied to every table, which is what
+ *     such a guard does; see `canonical-payload-guard.mjs`;
+ *   * every column the guard reads for that table is looked up by name in
+ *     `pg_attribute` with `attisdropped` excluded, so a dropped column does not
+ *     count as present;
+ *   * a rename is caught because the OLD name is gone, whether or not the new
+ *     name exists. A migration that renames a column to another name is still a
+ *     rename the guard has not been updated for.
+ *
+ * The refusal names the table, the columns and the migration, and nothing else:
+ * no paths, no usernames, no values.
+ *
+ * @param {{ query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }} client
+ * @param {string} migrationFile the file just applied, named in the refusal
+ */
+export async function verifyPayloadGuard(client, migrationFile = "unknown") {
+  const missing = [];
+  for (const { table, columns } of await payloadGuardExpectations(client)) {
+    const present = new Set((await client.query(
+      "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = to_regclass($1)"
+      + " AND a.attnum > 0 AND NOT a.attisdropped AND a.attname = ANY($2::text[])", [table, columns])).rows
+      .map(row => row.attname));
+    for (const column of columns) if (!present.has(column)) missing.push(`${table}.${column}`);
+  }
+  if (missing.length > 0)
+    throw new Error(`migration_payload_guard_broken:${migrationFile}:${missing.join(",")}`
+      + " (the canonical-payload data guard reads a column this migration renamed or dropped;"
+      + " update the guard in the same migration, or the rollback is the safe default)");
+  return { checked: true };
+}
 
 export async function applyMigrations({ target, rootDir = root, ledgerPath, env = process.env,
     bootstrapTarget, migrateTarget, migrateViaLocalPeer = false }) {
@@ -108,12 +182,84 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
     // through its IN ROLE membership.
     await client.query(await readFile(join(rootDir, "db/setup/production_migration_ledger.sql"), "utf8"));
     const applied = (await client.query(
-      "SELECT filename, digest, ledger_order, post_schema_digest FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
+      "SELECT filename, digest, ledger_order, post_schema_digest FROM control_room_schema_migrations"
+      + " ORDER BY ledger_order, filename")).rows;
+    // A LEDGER THAT ALREADY HOLDS TWO ROWS AT ONE POSITION is refused before
+    // anything else is decided. It cannot happen on a database this applier has
+    // driven, because `ledger_order` is UNIQUE and every row is written by the
+    // INSERT below; it happens on a database that already took a half-applied
+    // migration from the pre-constraint applier (rv-mr5o Finding 1). The check
+    // reads the catalog rather than trusting the constraint to be there, because
+    // an installation that has not run 0291 does not have the constraint.
+    //
+    // REFUSED, NOT REPAIRED. Deleting or renumbering a row here would erase the
+    // record of what ran, and which of two rows is the real one is an operator
+    // decision with a restore in front of it, not something a tool may guess.
+    // So the run stops having changed nothing and says which position is shared.
+    for (const order of (await client.query(
+      "SELECT ledger_order, count(*)::int AS rows, array_agg(filename ORDER BY filename) AS filenames"
+      + " FROM control_room_schema_migrations GROUP BY ledger_order HAVING count(*) > 1 ORDER BY ledger_order")).rows)
+      throw new Error(`migration_ledger_duplicate_rows:${order.ledger_order}:${order.filenames.join(",")}`
+        + " (two migrations recorded the same ledger position; this ledger was half-applied before the"
+        + " position was unique, and which row is the real one is an operator decision -- restore the"
+        + " pre-upgrade backup or rename one migration and re-run, nothing has been changed here)");
     const appliedByName = new Map(applied.map(row => [row.filename, row]));
+    // Every applied row must name a migration THIS release still has, at the
+    // position this release gives it, with the digest this release pins. Three
+    // separate refusals, because they are three separate operator problems and
+    // collapsing them costs the operator the one fact they need:
+    //
+    //   * a filename this ledger does not have  -> `migration_unknown_row`: this
+    //     release does not know what the database recorded;
+    //   * the same file at a DIFFERENT ledger_order -> `migration_ledger_position_conflict`:
+    //     the ledger RENUMBERED an applied migration, which is rv-mr5o Finding 1.
+    //     This is the check `apply-migrations.mjs` did not have and the release
+    //     applier already made (`pendingMigrationsV1` in
+    //     src/updater/v1/pg/database-phase-ledger.mjs compares file + order +
+    //     digest positionally; the two appliers disagreed, and the lenient one is
+    //     the one every upgrade runs).
+    //
+    // WHY IT MUST BE BY NAME AND NOT BY INDEX. Comparing `applied[i]` with
+    // `executable[i]` is what the gap check below does, and it cannot tell a
+    // RENUMBERED row from a DELETED one: both leave the row at a different index
+    // than its order. A deleted middle row must stay `migration_gap` (there is a
+    // hole and the tail has to come off too -- see
+    // tests/result-upload-downgrade-postgres.test.ts), while a renumbered row is
+    // the collision. Looking the row up BY ITS OWN FILENAME and then comparing
+    // the ORDER that filename holds in this ledger separates them exactly, and
+    // reuses the by-filename lookup that already existed here.
+    if (applied.length > executable.length) throw new Error("migration_unknown_rows");
+    const executableByName = new Map(executable.map(entry => [entry.file, entry]));
     for (const row of applied) {
-      const pinned = executable.find(entry => entry.file === row.filename);
+      const pinned = executableByName.get(row.filename);
       if (!pinned) throw new Error(`migration_unknown_row:${row.filename}`);
       if (`sha256:${pinned.sha256}` !== row.digest) throw new Error(`migration_ledger_digest_mismatch:${row.filename}`);
+      if (Number(row.ledger_order) !== pinned.order) {
+        // The file that now HOLDS this migration's recorded position, which is
+        // the third name in the refusal. It is the other half of the story and
+        // is usually the more useful half: in the collision this closes, the
+        // database recorded `0285` at order 154 and the merged ledger gives
+        // order 154 to `0240`, so the operator needs both names to know that two
+        // branches each added a migration above the same last shipped one.
+        const holder = executable.find(entry => entry.order === Number(row.ledger_order))?.file ?? "none";
+        throw new Error(`migration_ledger_position_conflict:${row.ledger_order}:${row.filename}:${holder}`
+          + ` (this migration is recorded at a position this release gives to ${holder}, which means two`
+          + " branches each added a migration above the same last shipped one and this database applied"
+          + " one of them; rename the migration so it sorts after the applied head, regenerate the ledger,"
+          + " and re-run -- nothing has been changed here)");
+      }
+    }
+    // AND the applied positions must be a DENSE PREFIX of the executable ledger's
+    // positions, so a hole cannot be `pending`-filtered past: an entry with no row
+    // below it is a migration this database never ran, sitting under one it did.
+    // This is the `migration_gap` refusal, unchanged -- it is what makes a
+    // partially-applied upgrade a refusal rather than a re-apply.
+    const executableOrders = executable.map(entry => entry.order);
+    const appliedOrders = applied.map(row => row.ledger_order);
+    if (appliedOrders.length > executableOrders.length
+      || !appliedOrders.every((order, index) => order === executableOrders[index])) {
+      const bad = applied.find((row, index) => row.ledger_order !== executableOrders[index]);
+      throw new Error(`migration_gap:${bad?.filename ?? "unknown"}`);
     }
     const onDisk = new Map();
     for (const entry of ledger.entries) {
@@ -127,13 +273,6 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
       onDisk.set(entry.file, bytes);
     }
     if (appliedByName.size > executable.length) throw new Error("migration_unknown_rows");
-    const executableOrders = executable.map(entry => entry.order);
-    const appliedOrders = applied.map(row => row.ledger_order);
-    if (appliedOrders.length > executableOrders.length
-      || !appliedOrders.every((order, index) => order === executableOrders[index])) {
-      const bad = applied.find((row, index) => row.ledger_order !== executableOrders[index]);
-      throw new Error(`migration_gap:${bad?.filename ?? "unknown"}`);
-    }
     for (const row of applied) {
       if (!onDisk.has(row.filename)) throw new Error(`migration_missing:${row.filename}`);
     }
@@ -144,11 +283,33 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
     // by the migrator login. RESET ROLE returns to the migrator's own
     // privileges for the ledger row INSERT below.
     await client.query("SET ROLE control_room_schema_owner");
+    // Whether the canonical-payload guard is ARMED yet. The guard is created by
+    // 0003 and its body replaced by 0004, so a fresh install applying 0001 or
+    // 0002 has nothing to check and the check must not be a refusal there.
+    // Tracked from the migration TEXTS this run applied (plus the ones already
+    // recorded), never from a migration number restated in code: a second
+    // list of "which migration introduces the guard" would be the same
+    // drift this whole mechanism exists to remove.
+    let guardIntroduced = false;
+    for (const row of applied) {
+      if (introducesPayloadGuard(onDisk.get(row.filename) ?? "")) { guardIntroduced = true; break; }
+    }
     for (const entry of pending) {
       const pre = await readSchemaDigest(client);
       await client.query("BEGIN");
       try {
         await client.query(onDisk.get(entry.file));
+        if (introducesPayloadGuard(onDisk.get(entry.file))) guardIntroduced = true;
+        // The canonical-payload guard reads its table's columns by name out of
+        // to_jsonb(NEW), which PL/pgSQL resolves at RUN time. So a migration that
+        // renames one of those columns compiles, applies, and reports success --
+        // and every later write to that table is then refused with "canonical
+        // payload mirror mismatch". Checked HERE, inside the same transaction
+        // that applied the migration, so the rename rolls back with it and the
+        // ledger never records a migration that broke a data guard. The check
+        // must not be able to pass vacuously: verifyPayloadGuard throws rather
+        // than returning an empty finding when the guard cannot be read.
+        if (guardIntroduced) await verifyPayloadGuard(client, entry.file);
         const post = await readSchemaDigest(client);
         await client.query("RESET ROLE");
         await client.query(
@@ -197,7 +358,26 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
       await client.query("RESET ROLE");
     } catch (error) {
       await client.query("RESET ROLE").catch(() => {});
-      if (error?.code !== "42P01") throw error;
+      // 42P01 is `undefined_table`: the file names a RELATION the cluster does not
+      // have, which is what an upgrade from an older applied ledger looks like --
+      // this release's grant file grants on tables a prefix of the migrations never
+      // created.
+      //
+      // 42883 is `undefined_function`, and it is the SAME situation for a FUNCTION
+      // grant. `production_table_grants.sql` and the role files grant EXECUTE on
+      // `work_intake_split_suggestion_visible`, `planner_failure_scope_key` and
+      // `control_room_planner_grant_owner_retry`, all created by 0203-0205. An
+      // upgrade rung whose applied ledger stops before them therefore raised
+      // `function work_intake_split_suggestion_visible(text, text, text) does not
+      // exist` and the whole run failed (round 4, R4-B3: test:postgres-production
+      // #11-#15, "upgrade from S2's / main's / ... applied ledger").
+      //
+      // So the deferred-partial-schema arm covers both codes. Nothing is weakened:
+      // `grants` is reported as `deferred_partial_schema:<message>`, the run
+      // continues, and the S-slice tests assert `grants === "applied"` on a
+      // complete schema -- so a deferral on a cluster that IS complete is still
+      // visible in the result rather than silent.
+      if (error?.code !== "42P01" && error?.code !== "42883") throw error;
       grants = `deferred_partial_schema:${error.message.split("\n")[0]}`;
     }
     // Schedule-admission scheduler login (idempotent, owned by the schema
@@ -352,7 +532,7 @@ async function runBootstrap({ target, env, rootDir }) {
   }
 }
 
-const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   const args = process.argv.slice(2);
   try {

@@ -35,6 +35,10 @@ type PublicationWitness = Readonly<{ schema: "control-room.installation-plan-pub
 
 const unavailable = (): never => { throw new Error("installation_plan_journal_unavailable"); };
 const conflict = (): never => { throw new Error("installation_plan_journal_conflict"); };
+class PublicationSettling extends Error {
+  constructor() { super("installation_plan_journal_unavailable"); }
+}
+const settling = (): never => { throw new PublicationSettling(); };
 
 function capture(input: unknown): Configuration {
   if (!input || typeof input !== "object" || Array.isArray(input)) return unavailable();
@@ -116,10 +120,10 @@ export class InstallationPlanFilesystemJournalV1 {
     return result;
   }
 
-  private validPrivateFile(entry: InstallationPlanJournalEntryV1, maximumBytes: number, linkCount: number) {
+  private validPrivateFile(entry: InstallationPlanJournalEntryV1, maximumBytes: number, linkCount: number, allowEmpty = false) {
     return entry.kind === "file" && entry.canonical && entry.ownerUid === this.config.ownerUid
       && entry.linkCount === linkCount && (entry.mode & 0o077) === 0
-      && entry.size > 0 && entry.size <= maximumBytes;
+      && (entry.size > 0 || allowEmpty && entry.size === 0) && entry.size <= maximumBytes;
   }
 
   private async readPlan(revision: number, session: InstallationPlanJournalStorageSessionV1): Promise<InstallationPlanV1> {
@@ -140,7 +144,8 @@ export class InstallationPlanFilesystemJournalV1 {
   Promise<{ value: PublicationWitness; identity: Identity } | undefined> {
     const name = this.witnessName(revision), before = await session.statEntry(name);
     if (!before) return undefined;
-    if (!this.validPrivateFile(before, 1024, 1)) unavailable();
+    if (!this.validPrivateFile(before, 1024, 1, true)) unavailable();
+    if (before.size === 0) settling();
     try {
       const read = await session.readEntry(name, 1024);
       if (read.entry.identity.device !== before.identity.device || read.entry.identity.inode !== before.identity.inode
@@ -157,6 +162,8 @@ export class InstallationPlanFilesystemJournalV1 {
       return { value: Object.freeze(value as PublicationWitness),
         identity: read.entry.identity };
     } catch (error) {
+      const current = await session.statEntry(name);
+      if (!current) settling();
       if (error instanceof Error && error.message === "installation_plan_journal_unavailable") throw error;
       return unavailable();
     }
@@ -180,13 +187,38 @@ export class InstallationPlanFilesystemJournalV1 {
       const plan = await this.readPlan(revision, session);
       if (plan.planDigest !== witness.value.planDigest) unavailable();
       if (await session.statEntry(witness.value.tempName)) unavailable();
-      await this.unlinkWitness(revision, witness.identity, session);
+      await this.unlinkWitness(revision, witness.identity, session, true);
       return;
     }
     if (!this.validPrivateFile(targetEntry, MAX_PLAN_BYTES, 2)) unavailable();
-    if (!witness) return unavailable();
+    if (!witness) {
+      const current = await session.statEntry(targetName);
+      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)
+        && current.identity.device === targetEntry.identity.device
+        && current.identity.inode === targetEntry.identity.inode) return;
+      return unavailable();
+    }
     const tempEntry = await session.statEntry(witness.value.tempName);
-    if (!tempEntry) return unavailable();
+    if (!tempEntry) {
+      const current = await session.statEntry(targetName);
+      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)
+        && current.identity.device === targetEntry.identity.device
+        && current.identity.inode === targetEntry.identity.inode) settling();
+      return unavailable();
+    }
+    // A writer can unlink the temp alias between lstat and canonical-path lookup.
+    // Retry only the same private inode now held solely by the target; the next
+    // pass still validates the plan, witness digest and publication identities.
+    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)
+      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)
+      && tempEntry.identity.device === targetEntry.identity.device
+      && tempEntry.identity.inode === targetEntry.identity.inode) {
+      const current = await session.statEntry(targetName);
+      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)
+        && current.identity.device === targetEntry.identity.device
+        && current.identity.inode === targetEntry.identity.inode
+        && !await session.statEntry(witness.value.tempName)) settling();
+    }
     if (!this.validPrivateFile(tempEntry, MAX_PLAN_BYTES, 2)
       || tempEntry.identity.device !== targetEntry.identity.device
       || tempEntry.identity.inode !== targetEntry.identity.inode) unavailable();
@@ -222,7 +254,10 @@ export class InstallationPlanFilesystemJournalV1 {
     }
     revisions.sort((left, right) => left - right);
     if (revisions.length > MAX_REVISIONS || revisions.some((value, index) => value !== index)) unavailable();
-    if ([...witnessed].some(value => !revisions.includes(value))) unavailable();
+    for (const revision of witnessed) if (!revisions.includes(revision)) {
+      await this.readWitness(revision, session);
+      settling();
+    }
     const history: InstallationPlanV1[] = [];
     for (const revision of revisions) {
       signal?.throwIfAborted();
@@ -238,7 +273,20 @@ export class InstallationPlanFilesystemJournalV1 {
   }
 
   async readHistory(signal?: AbortSignal): Promise<readonly InstallationPlanV1[]> {
-    return this.withSession("read_history", signal, session => this.readHistoryInSession(session, signal));
+    return this.withSession("read_history", signal, session => this.readSettledHistory(session, signal));
+  }
+
+  private async readSettledHistory(session: InstallationPlanJournalStorageSessionV1, signal?: AbortSignal) {
+    // Retry only recognizable publication interleavings. Invalid metadata, plan
+    // contents and roots still refuse immediately; a crashed writer stays bounded.
+    const deadline = performance.now() + 5_000;
+    while (true) {
+      try { return await this.readHistoryInSession(session, signal); }
+      catch (error) {
+        if (!(error instanceof PublicationSettling) || performance.now() >= deadline) throw error;
+      }
+      await delay(2, undefined, signal ? { signal } : undefined);
+    }
   }
 
   /**
@@ -316,7 +364,7 @@ export class InstallationPlanFilesystemJournalV1 {
     const plan = verifyInstallationPlanV1(value);
     return this.withSession("append", signal, async session => {
     signal?.throwIfAborted();
-    const history = await this.readHistoryInSession(session, signal);
+    const history = await this.readSettledHistory(session, signal);
     const existing = history[plan.revision];
     if (existing) {
       if (!installationPlanReplayMatchesV1(existing, plan)) conflict();

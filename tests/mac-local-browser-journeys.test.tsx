@@ -9,15 +9,21 @@
 // into executable assertions, so the report cannot silently drift from the
 // code.
 //
-// Coverage follows M1's table exactly:
+// Coverage follows M1's table, updated for the cancel route added after M1
+// (Cook stream W3b, `src/web/v1/task-http.ts` `/cancel`; see
+// `task-assignment-coordinator.ts`'s `cancel()`):
 //   reachable (7):  sign in, project list, create project, create task,
 //                   status/run, result review, worker status
-//   routed-but-refused (5): assign, approve, request changes, accept, plan
-//   no route at all (1): cancel
+//   routed-but-refused (6): assign, approve, request changes, accept, plan,
+//                            cancel (this fixture never configures
+//                            `assignment`, so the real cancel route answers
+//                            the same `assignment_not_configured` 503 as the
+//                            other assignment-backed steps)
 //
 // A test that asserts a gap is still worth having: if someone installs the
-// missing operation, or adds a cancel route, these cases fail and force a
-// deliberate decision rather than an accidental capability change.
+// missing operation, or adds a route this file does not expect, these cases
+// fail and force a deliberate decision rather than an accidental capability
+// change.
 //
 // Database
 // --------
@@ -148,7 +154,7 @@ async function journeyFixture(t: TestContext, fresh: string, extra: Partial<MacL
     origin, workspaceId: configuration.workspaceId, clock: () => nowMs,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.tenantId,
       provider: trust.issuer, subject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: opened.client, close: async () => {} },
+    database: { client: opened.client, close: async () => {}, isAvailable: () => true },
     ...extra,
   });
   t.after(async () => { await app.close(); await opened.close(); await database.drop(); });
@@ -272,7 +278,8 @@ describe("W5 journey steps that are reachable as shipped", { skip: needsPg }, ()
     const workers = await f.request("/api/v1/local-workers", { headers: f.auth });
     assert.deepEqual(await readJson(workers, 200, "worker status"),
       { taskWorkersStarted: false, instruction: "create your first project, then run mac:down && mac:up",
-        projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "settings"],
+        // A website-only start has no project-event source, so no Activity section.
+        projectSections: ["overview", "inbox", "work", "agents", "reviews", "automations", "settings"],
         workers: [{ kind: "hermes-021", state: "unavailable", proof: "not_proven" }] });
   });
 });
@@ -300,6 +307,11 @@ describe("W5 journey steps that are routed but unusable as shipped", { skip: nee
       body: { artifactId: "artifact:synthetic", targetId: "target:synthetic", targetDigest: digestB,
         contentHash: digestC, decision: "accepted", feedback: "" } },
     { step: "12. plan a task", name: "plan", suffix: "plan", method: "POST",
+      body: { expectedInputDigest: digestD } },
+    // Cancel shares `options.assignment` with assign/expire/revoke (see
+    // TaskAssignmentCoordinator.cancel()), so this fixture -- which never
+    // configures `assignment` -- refuses it the same way: `assignment_not_configured` -> 503.
+    { step: "13. cancel", name: "cancel", suffix: "cancel", method: "POST",
       body: { expectedInputDigest: digestD } },
   ];
 
@@ -329,23 +341,15 @@ describe("W5 journey steps that are routed but unusable as shipped", { skip: nee
   }
 });
 
-describe("W5 journey step 13: cancel has no route anywhere in the mac-local table", { skip: needsPg }, () => {
-  test("every plausible cancel surface is unmounted in mac-local", async t => {
+describe("W5 journey step 13: every other plausible cancel surface stays unmounted", { skip: needsPg }, () => {
+  test("only the real /cancel route exists; no alias route is reachable", async t => {
     const f = await journeyFixture(t, "m2cancel");
     const { projectId, jobId } = await seedTask(f, "m2cancel");
-    // M1 found no cancel route in task-http.ts, project-http.ts,
-    // mac-local-web-process.ts, or private-process.ts. The only browser-visible
-    // cancel in the wider product is the Idea Lab `ideas/{id}/stop`, which lives
-    // in private-process.ts and is not mounted in mac-local at all. Pin all of
-    // it: adding a cancel route later must fail this test on purpose.
-    //
-    // The assertion is on the error CODE, not one status: mac-local's task
-    // dispatch (`/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/`) never matches
-    // `/api/v1/ideas/...`, so the idea path falls through to the product route
-    // and is refused as not_found. Either way it must be refused as NOT FOUND
-    // — it must never be accepted, and never invent a cancelled state.
+    // The real cancel route is `/cancel` (see the "routed but unusable" table
+    // above, step 13). These are the aliases M1 also checked; none of them
+    // must ever become a second, differently-shaped cancel surface, and none
+    // may invent a cancelled state through a path that isn't the real route.
     const candidates = [
-      `/api/v1/projects/${f.id(projectId)}/tasks/${f.id(jobId)}/cancel`,
       `/api/v1/projects/${f.id(projectId)}/tasks/${f.id(jobId)}/cancelled`,
       `/api/v1/projects/${f.id(projectId)}/tasks/${f.id(jobId)}/stop`,
       `/api/v1/projects/${f.id(projectId)}/tasks/${f.id(jobId)}/abort`,
@@ -371,7 +375,7 @@ describe("W5 journey step 13: cancel has no route anywhere in the mac-local tabl
     // routing, not about a broken fixture.
     const detail = await f.request(`/api/v1/projects/${f.id(projectId)}/tasks/${f.id(jobId)}`, { headers: f.auth });
     const body = await readJson<{ task: { state: string } }>(detail, 200, "task detail after cancel probes");
-    assert.notEqual(body.task.state, "cancelled", "mac-local must not invent a cancelled state");
+    assert.notEqual(body.task.state, "cancelled", "an alias route must not invent a cancelled state");
   });
 });
 

@@ -1,3 +1,4 @@
+import { isPolledReadAbort } from "./polled-read-scheduler";
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
 import { catalogProjectIdSchema, lifecycleSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
@@ -50,7 +51,10 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
         headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json" }), ...(key ? { "idempotency-key": key } : {}) },
         ...(body === undefined ? {} : { body }) });
-    } catch { throw new BrowserRequestError(method === "GET" ? "unavailable" : "uncertain"); }
+    } catch (reason) {
+      if (method === "GET" && (signal?.aborted || isPolledReadAbort(reason))) throw reason;
+      throw new BrowserRequestError(method === "GET" ? "unavailable" : "uncertain");
+    }
   }
   const errorFor = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required",
     403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
@@ -110,7 +114,10 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
             || lifecycle !== undefined && project.lifecycle !== lifecycle)) throw new Error();
         return page;
       }
-      catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async get(id: string, signal?: AbortSignal, readTransport?: typeof fetch): Promise<ProjectView> {
       try {
@@ -119,7 +126,10 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
           `/api/v1/projects/${encodeURIComponent(id)}`, "GET", undefined, undefined, signal, readTransport)));
         if (result.project.projectId !== id) throw new Error();
         return result.project;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     create(draft: { title: string; summary: string; templateSelection?: { templateId: string; configurationDigest: string } }) {
       const parsed = projectCreateSchema.safeParse(draft);

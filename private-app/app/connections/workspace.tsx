@@ -8,6 +8,7 @@ import { useInstallationTopology } from "../installation-topology";
 import { InstallationTopologySummary } from "../installation-topology-summary";
 import { LocalWorkerRouteStatus } from "../local-worker-route-status";
 import { usePolledRead } from "../use-polled-read";
+import { HostedWorkersBoard } from "../workers/workers-board";
 
 export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"; snapshot: PrivateConnectionSnapshot }
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
@@ -65,7 +66,7 @@ export function PrivateConnectionView({ data, onRefresh, children }: { data: Pri
   </main></div>;
 }
 
-export function PrivateConnections() {
+export function PrivateConnections({ children }: { children?: ReactNode } = {}) {
   const [refresh, setRefresh] = useState(0);
   const installationTopology = useInstallationTopology();
   // The shared polling hook owns the schedule: it pauses while the tab is
@@ -84,7 +85,12 @@ export function PrivateConnections() {
   });
   const data: PrivateConnectionViewState = read.value ?? { state: "loading" };
   return <PrivateConnectionView data={data} onRefresh={() => { void read.refresh(); setRefresh(value => value + 1); }}>
+    {/* Plain status board leads (owner-ux-feedback-2026-09-27.md); the
+        installation and route-setup panels below it are detail, not the
+        first thing an owner needs to scan. */}
+    <HostedWorkersBoard />
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <LocalWorkerRouteStatus setup={installationTopology?.setup} state={installationTopology?.state ?? "loading"} />
+    {children}
   </PrivateConnectionView>;
 }

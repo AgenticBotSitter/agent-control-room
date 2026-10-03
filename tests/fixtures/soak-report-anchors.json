@@ -1,0 +1,85 @@
+{
+  "provenance": "Synthetic anchors from m-soak-final.md Findings 1 and 2; raw three-hour observations absent from this worktree. Intermediate observations are modeled, not recorded.",
+  "durationMinutes": 180,
+  "observations": 181,
+  "cycles": 415,
+  "processes": [
+    {
+      "name": "harness",
+      "startMiB": 171,
+      "endMiB": 114,
+      "gcStepMiB": 34
+    },
+    {
+      "name": "web",
+      "startMiB": 218,
+      "endMiB": 159,
+      "gcStepMiB": 15
+    },
+    {
+      "name": "gateway",
+      "startMiB": 132,
+      "endMiB": 92,
+      "gcStepMiB": 10
+    },
+    {
+      "name": "database-owner",
+      "startMiB": 177,
+      "endMiB": 47,
+      "gcStepMiB": 0
+    },
+    {
+      "name": "postgres",
+      "startMiB": 23,
+      "endMiB": 20,
+      "gcStepMiB": 0
+    }
+  ],
+  "gcMinute": 23,
+  "latency": {
+    "nonBurstBaselineMs": 91.6,
+    "nonBurstTailMs": 127.7,
+    "nonBurstMedianMs": 50,
+    "nonBurstMaxMs": 192,
+    "burstMedianMs": 92,
+    "burstMaxMs": 400,
+    "burstTailMs": 352,
+    "burstMinutes": [
+      9,
+      14,
+      19,
+      24,
+      29,
+      34,
+      39,
+      44,
+      49,
+      54,
+      59,
+      64,
+      69,
+      74,
+      79,
+      84,
+      89,
+      94,
+      99,
+      104,
+      109,
+      114,
+      119,
+      124,
+      129,
+      134,
+      139,
+      144,
+      149,
+      154,
+      159,
+      164,
+      169,
+      174,
+      179
+    ]
+  }
+}

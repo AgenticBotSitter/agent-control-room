@@ -1,3 +1,4 @@
+import { isPolledReadAbort } from "./polled-read-scheduler";
 import { BrowserRequestError, observeBrowserAuthentication, type BrowserAuthenticationObserver,
   type BrowserFailureCode } from "./browser-client";
 import type { NewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/types";
@@ -34,7 +35,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
           ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) },
         ...(command ? { body: command.body } : {}) });
       observeBrowserAuthentication(response, observeAuthentication); return response;
-    } catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
+    } catch (reason) {
+      if (!command && (signal?.aborted || isPolledReadAbort(reason))) throw reason;
+      throw new BrowserRequestError(command ? "uncertain" : "unavailable");
+    }
   }
   async function read(url: string, signal?: AbortSignal, readTransport?: typeof fetch) {
     const response = await call(url, undefined, signal, readTransport); signal?.throwIfAborted();
@@ -75,7 +79,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
           || after !== undefined && task.jobId <= after || index > 0 && task.jobId <= page.tasks[index - 1].jobId)
           || page.nextCursor !== null && (page.tasks.length !== 50 || page.nextCursor !== page.tasks.at(-1)?.jobId)) throw new Error();
         return page;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async detail(projectId: string, jobId: string, signal?: AbortSignal, readTransport?: typeof fetch) {
       try {
@@ -84,7 +91,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
           `${path(projectId)}/${encodeURIComponent(jobId)}`, signal, readTransport));
         if (detail.project.projectId !== projectId || detail.task.projectId !== projectId || detail.task.jobId !== jobId) throw new Error();
         return detail;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async propose(projectId: string, draft: unknown) {
       checkId(projectId);
@@ -120,7 +130,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
           .map(byte => byte.toString(16).padStart(2, "0")).join("");
         if (bytes.byteLength !== value.sizeBytes || `sha256:${hash}` !== value.contentHash) throw new Error();
         return value;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async results(projectId: string, jobId: string, signal?: AbortSignal) {
       try {
@@ -130,7 +143,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
           || page.reviews.some(review => review.matchingArtifactIds.some(id => review.kind !== "document"
             || !page.items.some(item => item.artifactId === id && item.contentHash === review.contentHash)))) throw new Error();
         return page;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async resultContent(projectId: string, jobId: string, artifact: TaskResultMetadata | string, signal?: AbortSignal) {
       try {
@@ -156,7 +172,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
         const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
         if (bytes.byteLength !== content.artifact.sizeBytes || `sha256:${hash}` !== content.artifact.contentHash) throw new Error();
         return content;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
   };
 }

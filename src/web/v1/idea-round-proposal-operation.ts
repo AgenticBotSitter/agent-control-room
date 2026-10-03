@@ -16,7 +16,8 @@ export const ideaRoundProposalInputSchema = z.object({
   // The project is supplied only to select/confirm the one already linked
   // ordinary project. Later rounds cannot supply a contribution snapshot.
   round: z.number().int().min(1).max(3),
-}).strict();
+  followUp: z.string().trim().min(1).max(300).optional(),
+}).strict().refine(value => (value.round === 1) === (value.followUp === undefined));
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } });
@@ -57,16 +58,31 @@ export class WebIdeaRoundProposalOperation {
         throw new WebAccessError("conflict");
       const links = await new IdeaLabCanonicalTaskLinkStoreV1(db, this.key).list(this.scope.tenantId, sessionId);
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
+      const targetLinks = links.filter(link => link.round === input.data.round);
+      const expired = Date.parse(actor.now) > Date.parse(saved.createdAt) + saved.maxDurationSeconds * 1000;
+      // An exact, fully saved round remains replayable after the deadline so a
+      // lost browser response is recoverable. The deadline can never admit new
+      // or partial discussion work.
+      if (expired && targetLinks.length !== saved.participants.length) throw new WebAccessError("conflict");
       if (input.data.round === 1) {
         // A retained legacy run or result is evidence only. It cannot be mixed
-        // into this new canonical task lineage. Existing exact first-round
-        // links are permitted so a lost browser response can replay the normal
-        // task-service receipts; a partial or later-round lineage cannot.
+        // into this new canonical task lineage. Existing first-round links are
+        // permitted so a lost browser response can replay the normal
+        // task-service receipts, and so a round INTERRUPTED part-way through
+        // preparation can be finished: every link already present must be one
+        // of this session's own first-round turns for the same project, with
+        // no duplicate participant, and the missing turns are refilled
+        // idempotently below. Every other invariant still holds, unchanged:
+        // `bindSession` re-verifies that one discussion binds to exactly one
+        // project, and `assertPlanAvailable` refuses a changed plan for a turn
+        // that is already linked, so resuming cannot rewrite a saved turn or
+        // move the round to another project. A later-round lineage can never
+        // be present, because `links.length !== firstRound.length` refuses it.
         const firstRound = links.filter(link => link.round === 1);
         if (contributions.length || links.length !== firstRound.length
-          || (firstRound.length !== 0 && (firstRound.length !== saved.participants.length
-            || firstRound.some(link => link.projectId !== input.data.projectId)
-            || new Set(firstRound.map(link => link.participantId)).size !== saved.participants.length))) {
+          || firstRound.some(link => link.projectId !== input.data.projectId
+            || !saved.participants.some(participant => participant.participantId === link.participantId))
+          || new Set(firstRound.map(link => link.participantId)).size !== firstRound.length) {
           throw new WebAccessError("conflict");
         }
       } else {
@@ -86,7 +102,8 @@ export class WebIdeaRoundProposalOperation {
     const links = new IdeaLabCanonicalTaskLinkStoreV1(this.db, this.key);
     const service = new IdeaLabCanonicalTaskProposalServiceV1(this.tasks, { projectId: input.data.projectId }, links);
     let result;
-    try { result = await service.proposeRound(identity, { session: session.session, round: input.data.round, contributions: session.contributions }); }
+    try { result = await service.proposeRound(identity, { session: session.session, round: input.data.round,
+      contributions: session.contributions, followUp: input.data.followUp }); }
     catch (error) {
       // The canonical planner's integrity/scope codes deliberately disclose no
       // discussion or project detail through the browser boundary.

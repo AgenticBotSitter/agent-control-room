@@ -33,3 +33,17 @@ test("project UI shows exact mixed billing rollup and owner-visible table identi
   assert.match(html, /Project usage and cost/); assert.match(html, /1 run\(s\) included in subscription/);
   assert.match(html, /owner-prices/); assert.match(html, /Unknown cost/);
 });
+
+
+test("M3-COST-01: the project displays an exact decimal token and wall-time aggregate", () => {
+  const html = renderToStaticMarkup(<ProjectOverviewActivityView projectId="project:test" state={{ state: "ready", value: {
+    projectId: "project:test", current: [], awaitingReview: [], recent: [], additionalCurrentOmitted: false,
+    additionalReviewsOmitted: false, additionalRecentOmitted: false, observedAt: "2026-10-01T00:00:00.000Z", startsWork: false,
+    usageRollup: { runs: 2, inputTokens: "9007199254740993", outputTokens: "9007199254740993",
+      totalTokens: "18014398509481986", wallTimeMs: "9007199254740993", knownCostNanoUsd: "9007199254740993",
+      knownCostRuns: 2, subscriptionRuns: 0, unknownCostRuns: 0, unknownCostReasons: [] },
+    priceTable: { state: "not_recorded", tableId: null, recordedAt: null },
+  } }} />);
+  assert.match(html, /9007199254740993/);
+  assert.doesNotMatch(html, /9007199254740992/);
+});

@@ -30,7 +30,7 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security";
 
 // Reserved disposable-cluster lane: 58290-58299.
-const PORT = 58290;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58290);
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => {
@@ -140,7 +140,8 @@ test("the production private-web login passes preflight and serves the coordinat
       await verifyPrivateDatabase(web.client, config, { tenantId: A.tenant, workspaceId: A.workspace,
         ownerIdentityId: A.identity, issuer: PROVIDER }, Date.now(), { nativeQueue: true });
 
-      const store = createProjectCoordinationCanonicalStoreAdapterV1({ database: web.client, tenantId: A.tenant });
+      const store = createProjectCoordinationCanonicalStoreAdapterV1({
+        database: web.client, tenantId: A.tenant, workspaceId: A.workspace });
       const service = new ProjectCoordinationHttpService({ database: web.client,
         scope: { tenantId: A.tenant, workspaceId: A.workspace }, clock: () => Date.now(), store });
       const identity: VerifiedWebIdentity = { provider: PROVIDER, subject: A.identity, tokenDigest,

@@ -4,7 +4,8 @@ import { createAccessVerifier } from "../src/web/v1/access-verifier";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { sha256Digest } from "../src/security";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
-import { instant } from "./hermes-native-fixture";
+import { binding, instant } from "./hermes-native-fixture";
+import { at } from "./native-task-fixture";
 import { request, token, trust } from "./helpers/web-foundation";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 
@@ -102,4 +103,63 @@ test("the project projection keeps each actionable result status and excludes re
   internal.resultPage = async () => ({ ...page("pending"), additionalTargetsOmitted: true });
   assert.deepEqual((await internal.resultAttention(undefined, undefined,
     { project_id: "project:test", id: "job:test", has_artifacts: true })).reasons, ["review", "result_checks_unavailable"]);
+});
+
+
+// projectAttention INBOX mode, which is the half of this reader that shares the
+// workspace candidate predicate (R7I-01). The other tests here exercise only
+// `reviews` mode, which deliberately keeps EVERY artifact-bearing job and lets
+// the reason filter decide -- so nothing else would notice if the inbox arm
+// drifted from the workspace reader's own predicate.
+//
+// Run against the production default path: the real WebTaskService over the
+// fixture database, no injected port, tool, runner or fake for this read.
+test("project inbox attention applies the same settled exclusion as the workspace reader", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  // The fixture job is `leased` and carries a pending result: the inbox reader
+  // must offer it, because an accepted-but-unverified result is live work.
+  const live = await f.tasks.projectAttention(f.identity, "project:test", "inbox");
+  assert.ok(live.items.some(item => item.task.jobId === "job:test"),
+    `a leased job with a pending result must appear in the project inbox, saw ${JSON.stringify(live.items.map(i => i.task.jobId))}`);
+
+  // Accept and fully verify it, which is what `settledResultAttention` calls
+  // settled. The project inbox must then DROP it -- the exclusion the two
+  // readers now share.
+  await f.reviews.record(f.identity, "project:test", "job:test", f.draft, "project-inbox-settled");
+  // Every scenario the profile demands, recorded through the gate store exactly
+  // as the reader will read them. The fixture profile may demand one or two, so
+  // this enumerates it rather than assuming.
+  for (const [index, scenarioId] of f.profile.requiredVerificationScenarioIds.entries())
+    await f.reviewStore.recordVerification({ schemaVersion: "control-room-completion-gate/v1",
+      id: `verification:project-inbox:${index}`, tenantId: binding.tenantId, projectId: binding.projectId,
+      targetId: f.target.id, targetDigest: sha256Digest(f.target), acceptanceProfileId: f.profile.id,
+      acceptanceProfileDigest: sha256Digest(f.profile), scenarioId, outcome: "passed",
+      verifier: { actorId: "service:project-inbox", actorType: "service" },
+      evidenceDigests: [f.artifact.contentHash], verifiedAt: at(4000 + index), grantsApproval: false,
+      grantsExecutionAuthority: false });
+  const settled = await f.tasks.projectAttention(f.identity, "project:test", "inbox");
+  assert.equal(settled.items.some(item => item.task.jobId === "job:test"), false,
+    `an accepted and fully verified result is settled and must leave the project inbox, saw ${JSON.stringify(settled.items.map(i => i.task.jobId))}`);
+
+  // The `reviews` MODE contrast, asserted at the level where the two modes
+  // actually differ: the SQL candidate set. `reviews` mode must NOT carry the
+  // settled exclusion, because it exists to list RETURNED results and lets the
+  // reason filter decide. (Both modes end up with an empty page here, because
+  // the reason logic drops a ready target too -- so asserting on `items` would
+  // prove nothing and would have passed even if the modes were identical.)
+  const traced: string[] = [];
+  const tracedTasks = new WebTaskService(traceTransactions(f.db, traced), f.scope, () => instant + 6000,
+    f.ownerKeys);
+  await tracedTasks.projectAttention(f.identity, "project:test", "reviews");
+  const reviewsSql = traced.filter(sql => sql.includes("control_native_artifact_receipts")).join(" ");
+  assert.equal(reviewsSql.includes("minimumIndependentReviews"), false,
+    "reviews mode must not carry the settled exclusion: it is a different question");
+  traced.length = 0;
+  await tracedTasks.projectAttention(f.identity, "project:test", "inbox");
+  const inboxSql = traced.filter(sql => sql.includes("control_native_artifact_receipts")).join(" ");
+  assert.ok(inboxSql.includes("minimumIndependentReviews"),
+    "inbox mode must carry the shared settled predicate");
+  t.diagnostic(JSON.stringify({ inboxAfterSettling: settled.items.map(i => i.task.jobId),
+    reviewsCarriesSettledPredicate: reviewsSql.includes("minimumIndependentReviews"),
+    inboxCarriesSettledPredicate: inboxSql.includes("minimumIndependentReviews") }));
 });

@@ -20,6 +20,28 @@ function validateHint(hint: GitHubWorkerWakeHint): void {
     || !Number.isFinite(Date.parse(hint.observedAt))) throw new Error("github_worker_wake_hint_invalid");
 }
 
+/**
+ * Serialize hint appends behind one transaction-scoped advisory lock, so the
+ * identity a hint receives is also the order in which it becomes visible.
+ *
+ * `GENERATED ALWAYS AS IDENTITY` allocates from a sequence, and a sequence value
+ * becomes visible only at COMMIT. Two transactions can therefore allocate
+ * identities in one order and commit in the other, which leaves a permanent hole
+ * in an identity cursor: a reader that advances past the higher identity can
+ * never see the lower one again. Holding this lock from before the insert until
+ * COMMIT removes the inversion — the allocation order IS the commit order.
+ *
+ * The lock key is a fixed constant scoped to this table, so every writer
+ * contends on exactly one lock. It is deliberately transaction-scoped
+ * (`pg_advisory_xact_lock`): it releases on commit or rollback, so a crashed or
+ * rolled-back writer can never hold a wake path hostage.
+ */
+const WAKE_HINT_APPEND_LOCK_KEY = 0x0ac_70_15;
+
+const APPEND_LOCK_SQL = `SELECT pg_advisory_xact_lock($1::bigint)`;
+
+export type GitHubWorkerWakeHintAppendLockKey = typeof WAKE_HINT_APPEND_LOCK_KEY;
+
 /** PostgreSQL-backed wake sink and cursor reader. It stores metadata only, never GitHub text. */
 export class PostgresGitHubWorkerWakeStore implements GitHubWorkerWakeSink, GitHubWorkerAtomicAdmissionStore {
   readonly #database: DatabaseClient;
@@ -36,6 +58,9 @@ export class PostgresGitHubWorkerWakeStore implements GitHubWorkerWakeSink, GitH
   async publish(hint: GitHubWorkerWakeHint): Promise<void> {
     validateHint(hint);
     await this.#database.transaction(async (tx) => {
+      // Taken before the insert and held to COMMIT, so no writer can allocate a
+      // lower identity and commit after a higher one.
+      await tx.query(APPEND_LOCK_SQL, [String(WAKE_HINT_APPEND_LOCK_KEY)]);
       await tx.query("DELETE FROM control_github_worker_wake_hints WHERE expires_at <= clock_timestamp()");
       await tx.query(`INSERT INTO control_github_worker_wake_hints
         (delivery_id,source,repository,event,action,issue_or_pull_number,observed_at,expires_at)
@@ -70,6 +95,9 @@ export class PostgresGitHubWorkerWakeStore implements GitHubWorkerWakeSink, GitH
     validateHint(hint);
     try {
       await this.#database.transaction(async (tx) => {
+        // Same append lock as publish(): this path also inserts a hint, so it
+        // must not be able to commit out of identity order either.
+        await tx.query(APPEND_LOCK_SQL, [String(WAKE_HINT_APPEND_LOCK_KEY)]);
         await tx.query("DELETE FROM control_github_webhook_replays WHERE expires_at <= clock_timestamp()");
         await tx.query("DELETE FROM control_github_worker_wake_hints WHERE expires_at <= clock_timestamp()");
         const inserted = await tx.query<{ replay_key: string }>(`
@@ -100,6 +128,20 @@ export class PostgresGitHubWorkerWakeStore implements GitHubWorkerWakeSink, GitH
       CROSS JOIN control_github_worker_wake_hints h WHERE false`);
   }
 
+  /**
+   * Read the hints a consumer has not seen yet: everything strictly above its
+   * cursor, in cursor order, bounded by `limit`.
+   *
+   * There is no second, backward-looking scan. The advisory append lock is the
+   * one mechanism that keeps a hint from being skipped: it holds the identity
+   * allocation and the commit in the same order, so a hint can never become
+   * visible below an identity a reader has already passed. A backward-looking
+   * window cannot make that distinction either — it is stateless per call, so it
+   * re-delivers every hint in the window that was already delivered forward,
+   * on every poll, forever. Removing it keeps the `limit` contract exact (a
+   * caller asking for `limit` rows gets at most `limit`) and makes an idle poll
+   * at the current cursor return nothing.
+   */
   async readAfter(cursor = "0", limit = 100): Promise<readonly StoredGitHubWorkerWakeHint[]> {
     if (!/^(0|[1-9][0-9]{0,18})$/u.test(cursor) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("github_worker_wake_cursor_invalid");

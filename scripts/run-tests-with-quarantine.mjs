@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import { readQuarantine, validateQuarantine } from "./check-test-quarantine.mjs";
 
 const testFilePattern = /^tests\/.+\.test\.(?:ts|tsx|mjs|js)$/;
@@ -65,4 +65,4 @@ function main() {
   process.exitCode = quarantinedMode ? runQuarantined(entries) : runGate(args, entries);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

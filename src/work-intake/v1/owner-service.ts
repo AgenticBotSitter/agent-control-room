@@ -8,6 +8,9 @@ import { WebSessionAuthority, type WebActor } from "../../web/v1/session-authori
 import { WebTaskService } from "../../web/v1/task-service";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
 import { workBatchProposalDigestV1 } from "./digest";
+import { computeIntakeFlagsV1, type IntakeFlagKindV1 } from "./intake-gate";
+import { bindReusableSkillsToTaskInSessionV1, composeReusableSkillInstructionsV1,
+  resolveReusableSkillsInSessionV1 } from "../../skills/v1/service";
 import { captureWorkBatchQueueCatalogV1, resolveWorkBatchQueueWorkerV1,
   type WorkBatchQueueCatalogV1 } from "./queue-catalog";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1, workBatchOwnerViewSchemaV1,
@@ -34,6 +37,9 @@ type AdmissionRow = { admission_id: string; item_id: string; batch_id: string; p
   profile: string | null; assignment_revision: number; supersedes_admission_id: string | null;
   change_reason_code: string; authorized_by_identity_id: string;
   admission_digest: string; auth_tag: string; admitted_at: string | Date };
+type FlagDismissalRow = { id: string; batch_id: string; project_id: string; revision: number; local_id: string;
+  flag_kind: IntakeFlagKindV1; reason_code: string; dismissed_by_identity_id: string; dismissed_at: string | Date;
+  dismissal_digest: string; auth_tag: string; created_at: string | Date };
 
 export type WorkBatchQueueAdmissionSelectionV1 = Readonly<{ workerId: string;
   workerKind: "codex" | "claude-code" | "hermes"; nodeId: string; selectionKey: string;
@@ -42,11 +48,20 @@ export type WorkBatchQueueAcceptedResultSelectionV1 = Readonly<{
   sourceJobId: string; workerId: string; nodeId: string;
 }>;
 export type WorkBatchQueueAcceptedResultProofV1 = Readonly<{
+  executionJobId: string; attemptId: string; harnessRunId: string; artifactId: string;
   contentHash: string; revision: number;
 }>;
 /** Protected host-generation authority. Exact-worker admission is unavailable
- * without this current readiness/model-policy recheck. */
+ * without this current readiness/model-policy recheck.
+ *
+ * Transaction-bound: every accepted-result operation runs on the caller's own
+ * session. Completion Gate's acceptedContextInSession locks the tenant state
+ * there, and the lock is held until the caller commits, so a concurrent review,
+ * verification or revision cannot supersede the accepted target between the
+ * proof and the caller's write. Every mutation and currentness check must use
+ * this form, on a login that can read the coordinator's lifecycle tables. */
 export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
+  binding?: "caller_transaction";
   assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
   isAcceptedResultCurrent(tx: DatabaseSession,
     selection: WorkBatchQueueAcceptedResultSelectionV1): boolean | Promise<boolean>;
@@ -60,6 +75,22 @@ export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
     selection: WorkBatchQueueAcceptedResultSelectionV1): WorkBatchQueueAcceptedResultProofV1 | null
       | Promise<WorkBatchQueueAcceptedResultProofV1 | null>;
 }>;
+/** Presentation-only accepted-result view for the private-web login, which may
+ * not read the coordinator's lifecycle tables. The task coordinator resolves
+ * each answer in its own short transaction on its own pool and returns only the
+ * minimal proof. That transaction has committed, and its Completion Gate lock is
+ * released, before the caller sees the answer, so it is a snapshot: it may
+ * describe a page or count a queue, but it must never gate a durable write. It
+ * takes no session, and its binding cannot satisfy the transaction-bound type. */
+export type WorkBatchQueueAcceptedResultViewV1 = Readonly<{
+  binding: "coordinator_snapshot";
+  assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
+  isAcceptedResultCurrent(selection: WorkBatchQueueAcceptedResultSelectionV1): Promise<boolean>;
+  acceptedResultProof(selection: WorkBatchQueueAcceptedResultSelectionV1):
+    Promise<WorkBatchQueueAcceptedResultProofV1 | null>;
+}>;
+/** Either form, for a read-side consumer that only presents or counts. */
+export type WorkBatchQueueAcceptedResultPortV1 = WorkBatchQueueAdmissionAuthorityV1 | WorkBatchQueueAcceptedResultViewV1;
 
 const json = (value: unknown) => JSON.stringify(value);
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -70,11 +101,15 @@ export class WorkBatchOwnerServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
   readonly #queueCatalog: WorkBatchQueueCatalogV1;
-  readonly #queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  readonly #queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
+  // The web process holds the coordinator snapshot. Its accepted results feed
+  // the queue state it presents and the approval-time queue-depth count; the
+  // durable dependency gate is the coordinator's transaction-bound assignment
+  // check, not this count.
   constructor(private readonly db: DatabaseClient, private readonly tasks: WebTaskService,
     private readonly scope: { tenantId: string; workspaceId: string }, integrityKey: Uint8Array,
     private readonly clock: () => number = Date.now, queueCatalog: WorkBatchQueueCatalogV1 = [],
-    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1) {
+    queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("work_batch_owner_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
     this.#authority = new WebSessionAuthority(db, scope, clock, "work_batch");
@@ -82,10 +117,15 @@ export class WorkBatchOwnerServiceV1 {
     if (queueAdmissionAuthority && (typeof queueAdmissionAuthority.assertCurrent !== "function"
       || typeof queueAdmissionAuthority.isAcceptedResultCurrent !== "function"))
       throw new Error("work_batch_owner_configuration_invalid");
-    this.#queueAdmissionAuthority = queueAdmissionAuthority ? Object.freeze({
-      assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
-      isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
-    }) : undefined;
+    this.#queueAdmissionAuthority = !queueAdmissionAuthority ? undefined
+      : queueAdmissionAuthority.binding === "coordinator_snapshot" ? Object.freeze({ binding: "coordinator_snapshot" as const,
+        assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
+        isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
+        acceptedResultProof: queueAdmissionAuthority.acceptedResultProof.bind(queueAdmissionAuthority) })
+      : Object.freeze({
+        assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
+        isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
+      });
   }
 
   #verifyAdmission(row: AdmissionRow) {
@@ -104,9 +144,12 @@ export class WorkBatchOwnerServiceV1 {
   }
 
   async #acceptedResult(tx: DatabaseSession, selection: WorkBatchQueueAcceptedResultSelectionV1) {
-    if (!this.#queueAdmissionAuthority) return false;
-    try { return await this.#queueAdmissionAuthority.isAcceptedResultCurrent(tx, selection) === true; }
-    catch { return false; }
+    const authority = this.#queueAdmissionAuthority;
+    if (!authority) return false;
+    try {
+      return (authority.binding === "coordinator_snapshot" ? await authority.isAcceptedResultCurrent(selection)
+        : await authority.isAcceptedResultCurrent(tx, selection)) === true;
+    } catch { return false; }
   }
 
   async #queueState(tx: DatabaseSession, row: AdmissionRow) {
@@ -240,6 +283,29 @@ export class WorkBatchOwnerServiceV1 {
     if (digest !== row.item_digest || !same(tag, row.auth_tag)) throw new Error("work_batch_integrity_failed");
   }
 
+  #verifyDismissal(row: FlagDismissalRow) {
+    const material = { id: row.id, tenantId: this.scope.tenantId, batchId: row.batch_id, projectId: row.project_id,
+      revision: Number(row.revision), localId: row.local_id, flagKind: row.flag_kind, reasonCode: row.reason_code,
+      dismissedByIdentityId: row.dismissed_by_identity_id, dismissedAt: iso(row.dismissed_at) };
+    if (sha256Digest(material) !== row.dismissal_digest
+      || !same(hmacSha256Tag(this.#key, { purpose: "work-batch-intake-flag-dismissal/v1", record: material }), row.auth_tag))
+      throw new Error("work_batch_integrity_failed");
+    return material;
+  }
+
+  /** Every flag currently open (computed, not dismissed) for this exact
+   * revision. Recomputed from the live proposal text every time: nothing about
+   * a flag itself is stored, only the owner's dismissal of it. */
+  async #openFlags(tx: DatabaseSession, batchId: string, revision: number, proposal: WorkBatchProposalV1) {
+    const dismissed = new Set((await tx.query<{ local_id: string; flag_kind: string }>(`SELECT local_id,flag_kind
+      FROM work_batch_intake_flag_dismissals WHERE tenant_id=$1 AND batch_id=$2 AND revision=$3`,
+    [this.scope.tenantId, batchId, revision])).rows.map(row => `${row.local_id}\u0000${row.flag_kind}`));
+    const byLocal = new Map<string, { kind: IntakeFlagKindV1; reasonCode: string; dismissed: boolean }[]>();
+    for (const task of proposal.tasks) byLocal.set(task.localId, computeIntakeFlagsV1(task)
+      .map(flag => ({ ...flag, dismissed: dismissed.has(`${task.localId}\u0000${flag.kind}`) })));
+    return byLocal;
+  }
+
   #verifyProposedState(row: BatchRow, itemCount: number) {
     if (row.approval_identity_id !== null || row.approved_at !== null || row.decision_reason_code !== null
       || row.decision_digest !== null || row.decision_auth_tag !== null || itemCount !== 0)
@@ -306,6 +372,8 @@ export class WorkBatchOwnerServiceV1 {
       this.#verifyProposedState(batch, existingItemCount);
       const receipt = parsed.data.operation === "revise"
         ? await this.#revise(tx, actor, batch, parsed.data.proposal, parsed.data.reasonCode)
+        : parsed.data.operation === "dismiss_flag"
+        ? await this.#dismissFlag(tx, actor, batch, parsed.data.localId, parsed.data.flagKind, parsed.data.reasonCode)
         : await this.#decide(tx, actor, batch, parsed.data.items);
       await tx.query(`UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=$2
         WHERE tenant_id=$3 AND operation_scope=$4 AND idempotency_key=$5 AND request_digest=$6 AND status='processing'`,
@@ -336,6 +404,34 @@ export class WorkBatchOwnerServiceV1 {
       startsWork: false, grantsExecutionAuthority: false });
   }
 
+  async #dismissFlag(tx: DatabaseSession, actor: WebActor, batch: BatchRow, localId: string,
+    flagKind: IntakeFlagKindV1, reasonCode: string): Promise<WorkBatchOwnerReceiptV1> {
+    const revisionRow = (await tx.query<RevisionRow>(`SELECT revision,edited_by_identity_id,edited_at,reason_code,proposal,
+      revision_digest,auth_tag FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=$2 AND revision=$3`,
+    [this.scope.tenantId, batch.id, Number(batch.version)])).rows[0];
+    if (!revisionRow) throw new Error("work_batch_integrity_failed");
+    const proposal = this.#verifyRevision(revisionRow, batch.id);
+    const task = proposal.tasks.find(candidate => candidate.localId === localId);
+    if (!task || !computeIntakeFlagsV1(task).some(flag => flag.kind === flagKind)) throw new WebAccessError("invalid_request");
+    const id = `${batch.id}:flag-dismissal:${Number(batch.version)}:${localId}:${flagKind}`;
+    const material = { id, tenantId: this.scope.tenantId, batchId: batch.id, projectId: batch.project_id,
+      revision: Number(batch.version), localId, flagKind, reasonCode, dismissedByIdentityId: actor.id, dismissedAt: actor.now };
+    const digest = sha256Digest(material);
+    const tag = hmacSha256Tag(this.#key, { purpose: "work-batch-intake-flag-dismissal/v1", record: material });
+    await tx.query(`INSERT INTO work_batch_intake_flag_dismissals(id,tenant_id,batch_id,project_id,revision,local_id,
+      flag_kind,reason_code,dismissed_by_identity_id,dismissed_at,dismissal_digest,auth_tag,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$10)
+      ON CONFLICT (tenant_id,batch_id,revision,local_id,flag_kind) DO NOTHING`,
+    [id, this.scope.tenantId, batch.id, batch.project_id, Number(batch.version), localId, flagKind, reasonCode,
+      actor.id, actor.now, digest, tag]);
+    await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId: batch.project_id,
+      actorId: actor.id, actorType: "human", action: "work_batches.flag_dismissed", targetType: "work_batch", targetId: batch.id,
+      safeMetadata: { revision: Number(batch.version), localId, flagKind, reasonCode }, occurredAt: actor.now });
+    return workBatchOwnerReceiptSchemaV1.parse({ schema: "control-room.work-batch-owner-receipt/v1", batchId: batch.id,
+      projectId: batch.project_id, state: "proposed", revision: Number(batch.version), jobIds: [], replayed: false,
+      startsWork: false, grantsExecutionAuthority: false });
+  }
+
   async #decide(tx: DatabaseSession, actor: WebActor, batch: BatchRow,
     decisions: readonly { localId: string; decision: "approve" | "reject"; reasonCode?: string }[]): Promise<WorkBatchOwnerReceiptV1> {
     const revisionRow = (await tx.query<RevisionRow>(`SELECT revision,edited_by_identity_id,edited_at,reason_code,proposal,
@@ -349,6 +445,9 @@ export class WorkBatchOwnerServiceV1 {
     for (const edge of proposal.edges) if (byLocal.get(edge.toLocalId)?.decision === "approve"
       && byLocal.get(edge.fromLocalId)?.decision !== "approve") throw new WebAccessError("conflict");
     const approved = new Set(decisions.filter(item => item.decision === "approve").map(item => item.localId));
+    const openFlags = await this.#openFlags(tx, batch.id, Number(batch.version), proposal);
+    for (const task of proposal.tasks) if (approved.has(task.localId)
+      && (openFlags.get(task.localId) ?? []).some(flag => !flag.dismissed)) throw new WebAccessError("flagged_items_unresolved");
     const remaining = new Set(approved), ordered: typeof proposal.tasks = [];
     while (remaining.size) {
       const ready = proposal.tasks.filter(task => remaining.has(task.localId) && proposal.edges
@@ -377,10 +476,25 @@ export class WorkBatchOwnerServiceV1 {
       const dependsOnJobIds = proposal.edges.filter(edge => edge.toLocalId === task.localId)
         .map(edge => jobs.get(edge.fromLocalId)).filter((value): value is string => !!value);
       const key = `batch-item:${sha256Digest({ batchId: batch.id, revision: Number(batch.version), localId: task.localId }).slice(7)}`;
+      const skills = await resolveReusableSkillsInSessionV1(tx, { tenantId: this.scope.tenantId,
+        projectId: batch.project_id }, task.skillRefs ?? []);
+      composeReusableSkillInstructionsV1(task.instructions, skills);
+      // 0290: the worker receives what the owner approved, not just the one-line
+      // instruction. The criteria and tests the owner approved for THIS item are
+      // the requirements the bot needs to satisfy them, and until now nothing on
+      // any delivery route read them. They are handed to the ONE place that
+      // authors the job's hand-off, so the row is still written exactly once, in
+      // this same transaction, by the same login -- a second write here would be
+      // a write-once conflict with its own proposal.
       const command = await this.tasks.proposeWithDependenciesInSession(tx, actor, batch.project_id,
-        { title: task.title, instructions: task.instructions, ...(task.requestedModelKey ? { model: task.requestedModelKey } : {}) },
+        { title: task.title, instructions: task.instructions,
+          ...(task.requestedModelKey ? { model: task.requestedModelKey } : {}),
+          ...(task.acceptanceCriteria ? { acceptanceCriteria: task.acceptanceCriteria } : {}),
+          ...(task.acceptanceTests ? { acceptanceTests: task.acceptanceTests } : {}) },
         key, dependsOnJobIds);
       if (command.receipt.startsWork !== false) throw new Error("work_batch_task_authority_invalid");
+      await bindReusableSkillsToTaskInSessionV1(tx, { tenantId: this.scope.tenantId,
+        projectId: batch.project_id, jobId: command.receipt.jobId, references: task.skillRefs ?? [], boundAt: actor.now });
       jobs.set(task.localId, command.receipt.jobId);
     }
     const queue = new Map<string, { workerId: string; workerKind: "codex" | "claude-code" | "hermes";
@@ -541,11 +655,19 @@ export class WorkBatchOwnerServiceV1 {
         requestedModelKey: row.requested_model_key,
         acceptanceCriteria: row.acceptance_criteria, acceptanceTests: row.acceptance_tests,
         decisionState: row.decision_state, decisionReasonCode: row.decision_reason_code, jobId: row.job_id }));
+      const currentProposal = revisions.at(-1)?.proposal ?? original;
+      const openFlags = batch.state === "proposed"
+        ? await this.#openFlags(tx, batch.id, Number(batch.version), currentProposal) : new Map();
       return workBatchOwnerViewSchemaV1.parse({ batchId: batch.id, projectId, state: batch.state,
         revision: Number(batch.version), proposedByIdentityId: batch.proposed_by_identity_id, proposedAt: iso(batch.proposed_at),
         approvalIdentityId: batch.approval_identity_id, decidedAt: batch.approved_at ? iso(batch.approved_at) : null,
-        proposal: revisions.at(-1)?.proposal ?? original, revisions, items: publicItems, queue,
+        proposal: currentProposal, revisions, items: publicItems, queue,
         queueDepthLimit: Number(batch.queue_depth_limit),
+        flagsByLocalId: Object.fromEntries(openFlags),
+        routingOptions: this.#queueCatalog.map(worker => ({ workerId: worker.workerId,
+          workerKind: worker.workerKind, nodeId: worker.nodeId,
+          modelKeys: !worker.modelPolicy ? [] : "profiles" in worker.modelPolicy
+            ? worker.modelPolicy.profiles.map(profile => profile.name) : [...worker.modelPolicy.models] })),
         startsWork: false, grantsExecutionAuthority: false });
     });
   }

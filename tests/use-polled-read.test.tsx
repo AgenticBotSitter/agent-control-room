@@ -276,3 +276,51 @@ test("a failure still surfaces as an error state with no value", async () => {
       `a failing read stays on the error schedule, saw ${JSON.stringify(view.observed)}`);
   } finally { await view.stop(); }
 });
+
+test("R7P-05: explicit refresh keeps the accepted value and reports checking until it settles", async () => {
+  let attempt = 0, release!: (value: number) => void;
+  const view = mount<number>({ key: "use-polled-read:manual-continuity", read: async () => ++attempt === 1 ? 7 : new Promise(resolve => { release = resolve; }) });
+  try {
+    await view.start();
+    await act(async () => view.states.at(-1)!.refresh());
+    assert.equal(view.states.at(-1)!.value, 7);
+    assert.equal(view.states.at(-1)!.checking, true);
+    release(8); await act(async () => {});
+    assert.equal(view.states.at(-1)!.value, 8);
+    assert.equal(view.states.at(-1)!.checking, false);
+  } finally { await view.stop(); }
+});
+
+test("R7P-05: aborted authority refresh neither drops its value nor reports an error", async () => {
+  let attempt = 0;
+  const view = mount<number>({ key: "use-polled-read:cancelled-authority", dropValueOnError: true,
+    read: async () => { if (++attempt === 2) throw new DOMException("backgrounded", "AbortError"); return 7; } });
+  try {
+    await view.start(); await act(async () => view.states.at(-1)!.refresh());
+    assert.equal(view.states.at(-1)!.value, 7); assert.equal(view.states.at(-1)!.error, undefined);
+    assert.equal(view.states.at(-1)!.checking, true);
+    await act(async () => view.states.at(-1)!.refresh());
+    assert.equal(view.states.at(-1)!.value, 7); assert.equal(view.states.at(-1)!.checking, false);
+  } finally { await view.stop(); }
+});
+
+test("R7P-05: resuming the same read identity retains its value; changing identity clears it", async () => {
+  const { dom, restore } = installDom(); const states: PolledReadState<number>[] = [];
+  let reads = 0, release!: (value: number) => void;
+  const read = async () => ++reads === 1 ? 7 : new Promise<number>(resolve => { release = resolve; });
+  const Probe = ({ enabled, id }: { enabled: boolean; id: string }) => {
+    const state = usePolledRead({ key: id, enabled, read, baseIntervalMs: 60_000 }); states.push(state); return null;
+  };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(<Probe enabled id="continuity:one" />));
+    assert.equal(states.at(-1)!.value, 7);
+    await act(async () => root.render(<Probe enabled={false} id="continuity:one" />));
+    await act(async () => root.render(<Probe enabled id="continuity:one" />));
+    assert.equal(states.at(-1)!.value, 7); assert.equal(states.at(-1)!.checking, true);
+    release(8); await act(async () => {});
+    await act(async () => root.render(<Probe enabled id="continuity:two" />));
+    assert.equal(states.at(-1)!.value, undefined, "a different resource cannot inherit a held value");
+    release(9); await act(async () => {}); assert.equal(states.at(-1)!.value, 9);
+  } finally { await act(async () => root.unmount()); restore(); }
+});

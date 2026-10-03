@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "      if (!stat.isDirectory()) continue;\n      if ((stat.mode & 0o7777) !== 0o555) await chmod(path, 0o555);",
+    "replace": "      if ((stat.mode & 0o7777) !== 0o555) await chmod(path, 0o555);",
+    "test": "node --import tsx --test --test-name-pattern='the seal sets a DATA file to 0444' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 1: the seal's second loop must touch directories only, or every data file ends up 0555 \u2014 which is also what keeps the directory chmod() call from ever seeing a file"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "      if ((stat.mode & 0o7777) !== sealed) await lchmod(absolute, sealed);",
+    "replace": "      if ((stat.mode & 0o7777) !== sealed) await chmod(absolute, sealed);",
+    "test": "node --import tsx --test --test-name-pattern='lchmod remains observable' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding N2: lchmod and chmod are equivalent on the root install path, but not in the non-root synthetic lane when an archive member lacks owner-write permission"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "      if (entry.kind !== wanted)",
+    "replace": "      if (false)",
+    "test": "node --import tsx --test --test-name-pattern='symlinked directory member' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 3: a selected member must be shown to be a regular file or a directory BEFORE unzip runs"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "      if (!stat.isFile() || stat.nlink !== 1)",
+    "replace": "      if (false)",
+    "test": "node --import tsx --test --test-name-pattern='hard-linked member is refused' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 3 second half: every written path is lstat-ed again, and a symlink or a hard link is a refusal"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-copy.ts",
+    "find": "  if (segments[0] !== PG_RUNTIME_ROOT_SEGMENT_V1)",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='an archive entry that escapes its root' tests/pg-runtime-copy.test.ts",
+    "why": "finding 5: the archive's root segment must be pgsql, or a second root chooses which bin/postgres wins"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "    if (existing !== undefined)\n      refuse(`${existing} and ${archivePath} both land at ${destination} in the runtime`);",
+    "replace": "    if (false)\n      refuse(`${existing} and ${archivePath} both land at ${destination} in the runtime`);",
+    "test": "node --import tsx --test --test-name-pattern='two archive paths landing at one runtime destination' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 5: two archive paths must not map to one runtime destination, or the later rename silently wins"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-copy.ts",
+    "find": "    return PG_RUNTIME_LIB_KINDS_V1.extensions.test(name)\n      && PG_RUNTIME_EXTENSION_MODULES_V1.includes(name)",
+    "replace": "    return PG_RUNTIME_LIB_KINDS_V1.extensions.test(name)",
+    "test": "node --import tsx --test --test-name-pattern='only a dylib directly under lib/' tests/pg-runtime-copy.test.ts",
+    "why": "finding 6: lib/postgresql is a CLOSED list, not a glob; the glob admits 89 modules of which nine dlopen /Library"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "    if (selectedBytes > PG_RUNTIME_MAX_UNCOMPRESSED_BYTES_V1)",
+    "replace": "    if (false)",
+    "test": "node --import tsx --test --test-name-pattern='zip bomb' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 10: the selected members must not inflate past the uncompressed ceiling"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "      if (verified.teamIdentifier !== pin.teamIdentifier)",
+    "replace": "      if (false)",
+    "test": "node --import tsx --test --test-name-pattern='WRONG Team Identifier' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 9: every Mach-O's Team Identifier must equal the pin's, which the self-attested digest cannot be; the fixture is a real ad-hoc-signed image, so the comparison is load-bearing"
+  },
+  {
+    "file": "src/updater/v1/pg/pg-runtime-vendor.ts",
+    "find": "  if (typeof value.teamIdentifier !== \"string\" || !/^[0-9A-Z]{10}$/u.test(value.teamIdentifier))",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='Team Identifier' tests/pg-runtime-vendor-synthetic.test.ts",
+    "why": "finding 9: the Team Identifier is REQUIRED on the pin, not optional"
+  },
+  {
+    "file": "src/pg-runtime/v1/pg-clone-probe-sidecar.ts",
+    "find": "  const usableOk = ok !== null && claimedBytes === probeBytes;",
+    "replace": "  const usableOk = ok !== null;",
+    "test": "node --import tsx --test --test-name-pattern='strict parser' tests/pg-clone-probe-sidecar.test.ts",
+    "why": "finding 8: an `ok` line claiming a size other than the one asked for is not a result this module acts on"
+  },
+  {
+    "file": "src/pg-runtime/v1/pg-clone-probe-sidecar.ts",
+    "find": "const SIDECAR_ERRNO = /^errno ([0-9]{1,5})$/u;",
+    "replace": "const SIDECAR_ERRNO = /errno (\\d+)/u;",
+    "test": "node --import tsx --test --test-name-pattern='strict parser' tests/pg-clone-probe-sidecar.test.ts",
+    "why": "finding 8: the parser is anchored, so a second line or a padded number is not a result"
+  },
+  {
+    "file": "src/pg-runtime/v1/pg-clone-probe-sidecar.ts",
+    "find": "  if (!sidecar || !sidecar.isFile() || sidecar.isSymbolicLink())",
+    "replace": "  if (!sidecar)",
+    "test": "node --import tsx --test --test-name-pattern='portable sidecar path checks' tests/pg-clone-probe-sidecar.test.ts",
+    "why": "finding 8: the sidecar is the trust boundary, so a redirected path is refused rather than followed"
+  },
+  {
+    "file": "src/pg-runtime/v1/pg-clone-probe-sidecar.ts",
+    "find": "  if (createHash(\"sha256\").update(executable).digest(\"hex\") !== manifest.executableSha256)",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='portable artifact verification' tests/pg-clone-probe-sidecar.test.ts",
+    "why": "finding 8: the binary must be the one the manifest describes, checked before anything is spawned"
+  },
+  {
+    "file": "src/pg-runtime/v1/pg-preimage-clone.ts",
+    "find": "      \"-R\", \"-p\",",
+    "replace": "      \"-c\", \"-R\", \"-p\",",
+    "test": "node --import tsx --test --test-name-pattern='the copy arguments are' tests/pg-runtime-copy.test.ts",
+    "why": "finding 7: cp -c is an advisory request that silently full-copies, so it must not be named as the mechanism"
+  }
+]

@@ -26,7 +26,7 @@
 //     service).
 
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
@@ -120,6 +120,19 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
     expiresAt: new Date(FIXTURE_NOW + 300_000).toISOString(),
     now: new Date(FIXTURE_NOW).toISOString(),
   });
+  // The web session for the token these tests present, exactly as a real
+  // installation's first request does: the durable row the per-caller
+  // authorization check reads. Without it every write route refuses
+  // authentication_required, which is the correct answer for a credential with
+  // no session, not a route fault.
+  const tokenDigest = (token: string) => `sha256:${createHash("sha256").update(token).digest("hex")}`;
+  for (const token of [makeToken(FIXTURE_NOW, "test-app")]) {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1]!, "base64url").toString("utf8")) as { iat: number; exp: number };
+    await client.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
+      VALUES($1,$2,'identity:test',$3,$4) ON CONFLICT DO NOTHING`,
+    [FIXTURE_TENANT, tokenDigest(token), new Date(claims.iat * 1000).toISOString(),
+      new Date(claims.exp * 1000).toISOString()]);
+  }
 
   const headRows = new Map<string, { state: "active" | "revoked"; version: number; coordinatorActorType: "human" | "agent"; coordinatorIdentityId: string; executorId?: string; adapterId?: string; connectorProfileDigest?: string; executionBindingDigest?: string; occurredAt: string; ownerIdentityId: string }>();
   type CoordinatorHeadRow = NonNullable<ReturnType<typeof headRows.get>>;
@@ -802,6 +815,7 @@ test("policy POSTs reach the service facade with the route key, revision, and po
   // Idempotency-Key, the revision envelope, and the policy id — a facade
   // that swallowed the call (or refused early) would fail here.
   const seen: { name: string; policyId: string; idempotencyKey: string; expectedPolicyVersion: number }[] = [];
+  const authorized: [string, string][] = [];
   const recorder = (name: string) => async (_identity: unknown, input: {
     policyId: string; idempotencyKey: string; revision: { expectedPolicyVersion: number };
   }) => {
@@ -821,6 +835,12 @@ test("policy POSTs reach the service facade with the route key, revision, and po
     trust: makeTrust(FIXTURE_NOW),
     service: stubService,
     clock: () => FIXTURE_NOW,
+    // This case pins the route envelope (subaction, key, revision, policy), not
+    // the grant. The real durable check needs the session tables this facade
+    // deliberately replaces, so the caller's authorization is asserted to run
+    // and to receive the exact project, and the refusal of an unauthorized
+    // caller is proven in the dedicated coalescing tests.
+    authorizeCaller: async (verified, projectId) => { authorized.push([verified.subject, projectId]); },
   });
   const token = makeToken(FIXTURE_NOW, "test-app");
   const cases = [
@@ -853,6 +873,10 @@ test("policy POSTs reach the service facade with the route key, revision, and po
   }
   assert.deepEqual(seen, cases.map(({ name, key }) => ({ name, policyId: "policy:test",
     idempotencyKey: key, expectedPolicyVersion: 1 })));
+  // Every write request authorized itself, against the route's own project,
+  // before reaching the service — a follower cannot skip this by joining an
+  // in-flight promise.
+  assert.deepEqual(authorized, cases.map(() => ["test-owner", "project:example"]));
 });
 
 test("reconstructed handler returns the saved receipt — restart loses no retry safety", async (t) => {

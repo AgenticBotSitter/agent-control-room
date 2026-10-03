@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PORTABLE_PRINTABLE_TEXT_V1, assertNoHiddenTextV1 } from "../../security/inert-portable-input";
 
 const nativeDateV1 = Date, nativeDateParseV1 = Date.parse, nativeDateToISOStringV1 = Date.prototype.toISOString,
   nativeNumberV1 = Number, nativeNumberIsFiniteV1 = Number.isFinite,
@@ -84,7 +85,12 @@ export const ideaTimeSchemaV1 = z.string().refine(capturedIdeaTimeV1);
 export const ideaCodeSchemaV1 = z.string().min(2).max(100)
   .refine((value) => capturedPatternMatchesV1(/^[a-z][a-z0-9_]*$/, value));
 export const ideaLabelSchemaV1 = z.string().min(1).max(120);
-export const ideaTextSchemaV1 = z.string().min(1).max(800);
+export function printableIdeaTextV1(value: string): boolean {
+  if (!PORTABLE_PRINTABLE_TEXT_V1.test(value)) return false;
+  try { assertNoHiddenTextV1(value, "idea_text_not_printable"); return true; }
+  catch { return false; }
+}
+export const ideaTextSchemaV1 = z.string().min(1).max(800).refine(printableIdeaTextV1);
 
 const nonAuthority = {
   grantsApproval: z.literal(false),
@@ -198,7 +204,7 @@ export const ideaLabSessionProjectionSchemaV1 = z.object({
   ideaSummary:ideaTextSchemaV1,targetCustomer:z.string().min(1).max(300),
   state: z.enum(ideaLabSessionStatesV1), participantCount: z.number().int().min(3).max(6),
   contributionCount: z.number().int().min(0).max(18), messagesUsed: z.number().int().min(0).max(18),
-  costUsd: z.number().min(0).max(25), runId: ideaIdSchemaV1.optional(), runDigest: ideaDigestSchemaV1.optional(),
+  costUsd: z.number().min(0).max(450).nullable(), runId: ideaIdSchemaV1.optional(), runDigest: ideaDigestSchemaV1.optional(),
   synthesisDigest: ideaDigestSchemaV1.optional(), decisionDigest: ideaDigestSchemaV1.optional(),
   projectId: ideaIdSchemaV1.optional(), safeStatusCode: ideaCodeSchemaV1, retryPermitted: z.literal(false),
   liveProviderConfigured: z.literal(false), providerContacted: z.literal(false),

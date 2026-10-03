@@ -17,12 +17,12 @@ export const controllerWorkerAdapterIdSchemaV1 = z.string().min(3).max(180)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9._:-]*)*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
-const taskText = z.string().min(1).max(32_768).refine(value => Buffer.byteLength(value, "utf8") <= 32_768);
+const taskText = z.string().min(1).max(32_768).refine(value => new TextEncoder().encode(value).length <= 32_768);
 
 const identitySchema = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, runId: id, nodeId: id }).strict();
 const workerSchema = z.object({ workerId: id, adapterId: controllerWorkerAdapterIdSchemaV1,
   adapterRevision: z.string().min(7).max(180) }).strict();
-const inputSchema = z.object({ prompt: taskText, instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192) }).strict();
+const inputSchema = z.object({ prompt: taskText, instructions: z.string().max(8192).refine(value => new TextEncoder().encode(value).length <= 8192) }).strict();
 const writeScopeSchema = z.object({ scopeKind: z.enum(["file", "tree"]), path: z.string().max(512)
   .regex(/^(?:[a-z0-9_][a-z0-9._-]{0,127}(?:\/[a-z0-9_][a-z0-9._-]{0,127})*)?$/) }).strict()
   .superRefine((value, context) => {

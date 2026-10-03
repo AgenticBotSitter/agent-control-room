@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import { readWorkerInbox, renderWorkerInbox } from './public-worker-inbox.mjs';
 
 // Foreground, read-only watcher. The supervisor owns restart and termination.
@@ -37,5 +37,5 @@ async function main() {
     if (!stopping) await new Promise(resolve => { wake = resolve; timer = setTimeout(resolve, Number(seconds) * 1000); });
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(error.message); process.exitCode = 1; });

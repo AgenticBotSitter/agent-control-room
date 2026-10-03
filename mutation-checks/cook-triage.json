@@ -1,0 +1,212 @@
+[
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "allowEmpty && entry.size === 0",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='empty in-flight witness' tests/installation-plan-journal.test.ts",
+    "why": "an owner-private empty witness is a settling observation, never a settled plan"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (!this.validPrivateFile(before, 1024, 1, true)) unavailable();",
+    "replace": "if (false) unavailable();",
+    "test": "node --import tsx --test --test-name-pattern='empty witness with unsafe permissions' tests/installation-plan-journal.test.ts",
+    "why": "empty witnesses must retain all private-file metadata checks"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (before.size === 0) settling();",
+    "replace": "if (false) settling();",
+    "test": "node --import tsx --test --test-name-pattern='empty in-flight witness' tests/installation-plan-journal.test.ts",
+    "why": "a live empty witness must trigger re-observation rather than terminal refusal"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (!current) settling();",
+    "replace": "if (false) settling();",
+    "test": "node --import tsx --test --test-name-pattern='during witness-read' tests/installation-plan-journal.test.ts",
+    "why": "a peer can retire a witness between stat and read"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "await this.unlinkWitness(revision, witness.identity, session, true);\n      return;",
+    "replace": "await this.unlinkWitness(revision, witness.identity, session, false);\n      return;",
+    "test": "node --import tsx --test --test-name-pattern='two readers retiring' tests/installation-plan-journal.test.ts",
+    "why": "settled witness retirement is idempotent for concurrent recoverers"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) return;",
+    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) unavailable();",
+    "test": "node --import tsx --test --test-name-pattern='stale two-linked|during temp-lookup' tests/installation-plan-journal.test.ts",
+    "why": "a stale two-link observation must accept the same inode after peer retirement"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) return;",
+    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && true\n        && current.identity.inode === targetEntry.identity.inode) return;",
+    "test": "node --import tsx --test --test-name-pattern='missing-witness recovery refuses a changed target device' tests/installation-plan-journal.test.ts",
+    "why": "peer recovery must never accept a replacement target device"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) return;",
+    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && true) return;",
+    "test": "node --import tsx --test --test-name-pattern='missing-witness recovery refuses a changed target inode' tests/installation-plan-journal.test.ts",
+    "why": "peer recovery must never accept a replacement target inode"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) settling();",
+    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) unavailable();",
+    "test": "node --import tsx --test --test-name-pattern='stale two-linked|during temp-lookup' tests/installation-plan-journal.test.ts",
+    "why": "a stale two-link observation must accept the same inode after peer retirement"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) settling();",
+    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && true\n        && current.identity.inode === targetEntry.identity.inode) settling();",
+    "test": "node --import tsx --test --test-name-pattern='missing-temp recovery refuses a changed target device' tests/installation-plan-journal.test.ts",
+    "why": "peer recovery must never accept a replacement target device"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) settling();",
+    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && true) settling();",
+    "test": "node --import tsx --test --test-name-pattern='missing-temp recovery refuses a changed target inode' tests/installation-plan-journal.test.ts",
+    "why": "peer recovery must never accept a replacement target inode"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "for (const revision of witnessed) if (!revisions.includes(revision)) {\n      await this.readWitness(revision, session);\n      settling();\n    }",
+    "replace": "for (const revision of witnessed) if (!revisions.includes(revision)) {\n      await this.readWitness(revision, session);\n      unavailable();\n    }",
+    "test": "node --import tsx --test --test-name-pattern='in-flight publication|recovery reader waits' tests/installation-plan-journal.test.ts",
+    "why": "a witness without a target must be re-observed within the bounded settle window"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "for (const revision of witnessed) if (!revisions.includes(revision)) {\n      await this.readWitness(revision, session);\n      settling();\n    }",
+    "replace": "for (const revision of witnessed) if (!revisions.includes(revision)) {\n      \n      settling();\n    }",
+    "test": "node --import tsx --test --test-name-pattern='empty witness with unsafe permissions' tests/installation-plan-journal.test.ts",
+    "why": "an unmatched witness must be validated before it qualifies for settling"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "session => this.readSettledHistory(session, signal)",
+    "replace": "session => this.readHistoryInSession(session, signal)",
+    "test": "node --import tsx --test --test-name-pattern='recovery reader waits|empty in-flight witness' tests/installation-plan-journal.test.ts",
+    "why": "recovery reads must use the bounded publication settle path"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "const history = await this.readSettledHistory(session, signal);",
+    "replace": "const history = await this.readHistoryInSession(session, signal);",
+    "test": "node --import tsx --test --test-name-pattern='in-flight publication' tests/installation-plan-journal.test.ts",
+    "why": "append must wait out a live competing publisher in its held session"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (!(error instanceof PublicationSettling) || performance.now() >= deadline) throw error;",
+    "replace": "if (performance.now() >= deadline) throw error;",
+    "test": "node --import tsx --test --test-name-pattern='terminal refusal|unsafe permissions' tests/installation-plan-journal.test.ts",
+    "why": "terminal metadata and plan refusals must not be retried"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "if (!(error instanceof PublicationSettling) || performance.now() >= deadline) throw error;",
+    "replace": "if (!(error instanceof PublicationSettling)) throw error;",
+    "test": "node --import tsx --test --test-name-pattern='crashed empty witness refuses within' tests/installation-plan-journal.test.ts",
+    "why": "a crashed writer cannot keep a recovery read alive forever"
+  },
+  {
+    "file": "tests/mac-local-task-host-supervisor.test.mjs",
+    "find": "  if (child.exitCode !== null && child.exitCode !== undefined || child.signalCode) {\n    return [child.exitCode, child.signalCode];\n  }\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='closeWithin observes' tests/mac-local-task-host-supervisor.test.mjs",
+    "why": "a late subscriber must retain the child exit result"
+  },
+  {
+    "file": "tests/e2e2-rehearsal.mjs",
+    "find": "return { ...f.env, TMPDIR: f.snapshotTemp, CONTROL_ROOM_REHEARSAL_COMMAND_DIR: join(f.snapshotTemp, \"bin\") };",
+    "replace": "return { ...f.env, TMPDIR: tmpdir(), CONTROL_ROOM_REHEARSAL_COMMAND_DIR: f.bin };",
+    "test": "node --test --test-name-pattern='snapshot failure is retryable' tests/e2e2-rehearsal.test.mjs",
+    "why": "snapshot creation and retries must stay inside the fixture temp directory"
+  },
+  {
+    "file": "tests/e2e2-rehearsal.mjs",
+    "find": "const afterFailure = (await readdir(f.snapshotTemp)).filter(name => name.startsWith(prefix));",
+    "replace": "const afterFailure = (await readdir(tmpdir())).filter(name => name.startsWith(prefix));",
+    "test": "node --test --test-name-pattern='snapshot failure is retryable' tests/e2e2-rehearsal.test.mjs",
+    "why": "cleanup assertions must ignore another job appearing in the shared temp directory"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && true\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling accepts only one-link or two-link private temp snapshots"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (true && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "missing current target metadata must return the journal refusal"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (false\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "a completed temp metadata read is retried rather than refused"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (true\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "unsafe temp metadata cannot be promoted into the settle path"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && true\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling requires the temp device to match the target snapshot"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && true) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling requires the temp inode to match the target snapshot"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && true\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling requires fresh private target metadata"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && true\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling requires the current target device to match the snapshot"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && true\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling requires the current target inode to match the snapshot"
+  },
+  {
+    "file": "src/installer/v1/installation-plan-journal.ts",
+    "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && true) settling();\n    }\n",
+    "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
+    "why": "settling requires the temp alias to have disappeared"
+  }
+]

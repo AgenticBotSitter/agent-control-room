@@ -1,0 +1,9 @@
+[
+  {
+    "file": "private-app/app/result-files-panel.tsx",
+    "find": "if (set.state === \"quarantined\") return 0;",
+    "replace": "if (false) return 0;",
+    "test": "node --import tsx --test --test-name-pattern \"a quarantined set sorts before a declared or incomplete set\" tests/result-files-panel.test.tsx",
+    "why": "a held-back result set must remain ahead of an incomplete set even when its retained file row is stored"
+  }
+]

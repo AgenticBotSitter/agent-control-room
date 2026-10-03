@@ -1,3 +1,4 @@
+import { isPolledReadAbort } from "./polled-read-scheduler";
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskVerificationCommandSchema, taskVerificationDraftSchema, taskVerificationOptionsSchema,
@@ -36,7 +37,10 @@ export function createTaskVerificationBrowserClient(transport: typeof fetch = fe
         redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
         headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body }) });
-    } catch { throw new BrowserRequestError(body === undefined ? "unavailable" : "uncertain"); }
+    } catch (reason) {
+      if (body === undefined && (signal?.aborted || isPolledReadAbort(reason))) throw reason;
+      throw new BrowserRequestError(body === undefined ? "unavailable" : "uncertain");
+    }
   }
   async function json(response: Response) {
     if (!response.body || response.headers.get("content-type")?.split(";")[0].trim() !== "application/json") throw new Error();
@@ -99,7 +103,10 @@ export function createTaskVerificationBrowserClient(transport: typeof fetch = fe
             || recorded.scenarioId !== scenario.scenarioId || recorded.instructionsDigest !== scenario.instructionsDigest)) throw new Error();
         }
         return options;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async record(projectId: string, jobId: string, input: unknown) {
       ids(projectId, jobId);

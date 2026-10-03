@@ -5,7 +5,8 @@ import { isAbsolute, relative, resolve } from "node:path";
 const SCHEMA = "control-room.local-installation-package-preparation/v1";
 const MAX_FILES = 20_000;
 const MAX_BYTES = 1024 * 1024 * 1024;
-const MAX_PACKAGE_BYTES = 64 * 1024;
+// Same bound as the release builder and assembler (the manifest passed 64 KiB in int9).
+const MAX_PACKAGE_BYTES = 256 * 1024;
 const MAX_RELEASE_MANIFEST_BYTES = 16 * 1024 * 1024;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
@@ -26,9 +27,13 @@ const requiredFiles = Object.freeze([
   "pnpm-lock.yaml",
   "RELEASE_MANIFEST.json",
   "scripts/prepare-local-installation.mjs",
+  "scripts/release-signing.mjs",
+  "scripts/verify-signed-release.mjs",
   "scripts/run-private-vps.mjs",
   "scripts/run-private-local-installation-operator.mjs",
+  "src/installer/shared/is-main-module.mjs",
   "src/installer/v1/local-installation-release.mjs",
+  "src/installer/v1/signed-release-verifier.mjs",
 ]);
 
 const refused = () => { throw new Error("local_installation_package_refused"); };

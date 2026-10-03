@@ -1,0 +1,16 @@
+[
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "  case \"$d\" in\n    /private/tmp/*) testing=1; test_tmpdir=/private/tmp ;;\n    /tmp/*) testing=1; test_tmpdir=/tmp ;;\n    *) refuse 'bootstrap_test_root_refused' ;;\n  esac",
+    "replace": "  testing=1; test_tmpdir=/private/tmp",
+    "test": "node --test --test-name-pattern='tool injection is unavailable' tests/install-night-bootstrap.test.mjs",
+    "why": "absolute system-tool overrides exist only for the fake harness under a private temporary root"
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "try { return parseStrictJsonV1(Buffer.concat(chunks.map(value => Buffer.from(value)), length).toString(\"utf8\")); }",
+    "replace": "try { return JSON.parse(Buffer.concat(chunks.map(value => Buffer.from(value)), length).toString(\"utf8\")); }",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 gateway health refuses duplicate' tests/updater-health-terminal.test.mjs",
+    "why": "merged A2-06 + atk-fa F14: a duplicate 'ready' key on an otherwise valid tagged gateway answer must be refused, not last-wins"
+  }
+]

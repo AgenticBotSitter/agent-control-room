@@ -1,0 +1,135 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!absolutePath(candidate.executable)) throw toolManifestError(`${candidate.id}.executable must be an absolute path`);",
+    "replace": "if (false) throw toolManifestError(`${candidate.id}.executable must be an absolute path`);",
+    "test": "node --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
+    "why": "a server or task cannot select a relative executable"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "SHELL_META_PATTERN.test(arg)",
+    "replace": "false",
+    "test": "node --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
+    "why": "fixed arguments containing shell syntax are refused"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!inputNames.length || !outputNames.length)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
+    "why": "every adapter must declare both named input and output placeholders"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!adapter) throw toolError(\"tool_adapter_unknown\", \"This machine has no owner-declared adapter with that id.\");",
+    "replace": "if (false) throw toolError(\"tool_adapter_unknown\", \"This machine has no owner-declared adapter with that id.\");",
+    "test": "node --test --test-name-pattern \"task data cannot select argv\" tests/fleet-tool-adapter.test.mjs",
+    "why": "an unknown adapter id is refused before a process starts"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "detached: process.platform !== \"win32\", stdio: [\"ignore\", \"pipe\", \"pipe\"], windowsHide: true",
+    "replace": "detached: process.platform !== \"win32\", shell: true, stdio: [\"ignore\", \"pipe\", \"pipe\"], windowsHide: true",
+    "test": "node --test --test-name-pattern \"task data cannot select argv\" tests/fleet-tool-adapter.test.mjs",
+    "why": "local tools are spawned directly with argv and never through a shell"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (files.length >= MAX_TOOL_OUTPUT_FILES || info.size > limit || total > limit)",
+    "replace": "if (files.length >= MAX_TOOL_OUTPUT_FILES)",
+    "test": "node --test --test-name-pattern \"oversize and secret-bearing\" tests/fleet-tool-adapter.test.mjs",
+    "why": "an adapter cannot exceed its owner-declared output byte limit"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (containsSecret(content.toString(\"utf8\"), needles))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern \"oversize and secret-bearing\" tests/fleet-tool-adapter.test.mjs",
+    "why": "collected files are secret-scanned before they become upload objects"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (state.active < state.limit) { state.active += 1; return Promise.resolve(); }",
+    "replace": "if (state.active <= state.limit) { state.active += 1; return Promise.resolve(); }",
+    "test": "node --test --test-name-pattern \"20 parallel\" tests/fleet-tool-adapter.test.mjs",
+    "why": "a burst of callers cannot exceed the per-machine process cap"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "else process.kill(-child.pid, signal);",
+    "replace": "else process.kill(child.pid, signal);",
+    "test": "node --test --test-name-pattern \"timeout and stop kill\" tests/fleet-tool-adapter.test.mjs",
+    "why": "timeout and Stop terminate the full process group, not only its parent"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "for (const folder of roots) await walk(folder);",
+    "replace": "await walk(root);",
+    "test": "node --test --test-name-pattern \"oversize and secret-bearing\" tests/fleet-tool-adapter.test.mjs",
+    "why": "only files below a named output placeholder are collected"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "|| !FLEET_CAPABILITY_PATTERN_V1.test(item)) || new Set(value).size !== value.length",
+    "replace": "|| !FLEET_CAPABILITY_PATTERN_V1.test(item))",
+    "test": "node --import tsx --test --test-name-pattern \"malformed or duplicate\" tests/fleet-tool-capability-evidence.test.ts",
+    "why": "advertised capability evidence is bounded and deduplicated"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "return principal.workerKind === \"tool\" ? this.#toolTasks?.read(this.#tenantId, jobId) : undefined;",
+    "replace": "const binding = undefined;",
+    "test": "node --import tsx --test --test-name-pattern \"tool worker end to end\" tests/fleet-harness-handoff.test.ts",
+    "why": "a tool offer carries only its structured owner-approved adapter binding"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (terminating) return;",
+    "replace": "if (false) return;",
+    "test": "node --import tsx --test --test-name-pattern \"overflow terminates once\" tests/fleet-tool-adapter.test.mjs",
+    "why": "an output overflow sends only one termination sequence"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          drainDeadline = setTimeout(() => done({ code, signal: processSignal, outputIncomplete: true }), TOOL_KILL_GRACE_MS);",
+    "replace": "          void processSignal;",
+    "test": "node --import tsx --test --test-name-pattern \"escaped pipe holder\" tests/fleet-tool-adapter.test.mjs",
+    "why": "a descendant holding a pipe cannot keep execute pending after parent exit"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "// Always stop surviving group members before examining staged output.\n      killProcess(child, \"SIGKILL\"); child.stdout?.destroy(); child.stderr?.destroy();",
+    "replace": "// Always stop surviving group members before examining staged output.\n      child.stdout?.destroy(); child.stderr?.destroy();",
+    "test": "node --import tsx --test --test-name-pattern \"same-group children die\" tests/fleet-tool-adapter.test.mjs",
+    "why": "successful parent exit cannot leave same-group descendants alive"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "finally { releaseToolSlot(state); }",
+    "replace": "finally { }",
+    "test": "node --import tsx --test --test-name-pattern \"cleanup failure still releases\" tests/fleet-tool-adapter.test.mjs",
+    "why": "cleanup failure cannot permanently consume a local concurrency slot"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (JSON.stringify(identity) !== JSON.stringify(adapter.executableIdentity))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"rechecks executable identity\" tests/fleet-tool-adapter.test.mjs",
+    "why": "the executable identity is checked again immediately before every run"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (info.nlink > 1)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"refuses output hard links\" tests/fleet-tool-adapter.test.mjs",
+    "why": "tool output cannot use a hard link to collect outside data"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "await chmod(path, 0o700);",
+    "replace": "await chmod(path, 0o600);",
+    "test": "node --import tsx --test --test-name-pattern \"cleanup failure still releases\" tests/fleet-tool-adapter.test.mjs",
+    "why": "cleanup restores user access before removing tool-owned locked directories"
+  }
+]

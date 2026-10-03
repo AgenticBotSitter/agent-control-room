@@ -1,6 +1,6 @@
 {
-  "manifestSha256": "8e3e8bc11dc823048c82e46f96fd7d7beceb6e2cbf48dce63e867090fa9f43ad",
-  "lockSha256": "5be04739af0e32b35420a29cb4ed0383ea28b6ef939f8f8dcdfb04b524042b46",
+  "manifestSha256": "25460feb5a3200cc712ccfe582b30837de83a9fdbabb953e54e70e7c3cb4495e",
+  "lockSha256": "91d3c1722b19172bb557532621437db05decc058f0e5ebe1ab1a2c5bd7daa7cb",
   "source": "pnpm@11.19.0 licenses list --prod --json",
   "scope": "prepared local production dependency inventory; not bundle coverage",
   "records": [
@@ -65,6 +65,26 @@
       "license": "MIT"
     },
     {
+      "name": "@hexagon/base64",
+      "versions": [
+        "1.1.28"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@hexagon+base64@1.1.28/node_modules/@hexagon/base64"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@levischuck/tiny-cbor",
+      "versions": [
+        "0.2.11"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@levischuck+tiny-cbor@0.2.11/node_modules/@levischuck/tiny-cbor"
+      ],
+      "license": "MIT"
+    },
+    {
       "name": "@mozilla/readability",
       "versions": [
         "0.6.0"
@@ -81,6 +101,166 @@
       ],
       "paths": [
         "node_modules/.pnpm/@nodable+entities@3.0.0/node_modules/@nodable/entities"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-android",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-android@2.10.0/node_modules/@peculiar/asn1-android"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-asym-key",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-asym-key@2.10.0/node_modules/@peculiar/asn1-asym-key"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-cms",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-cms@2.10.0/node_modules/@peculiar/asn1-cms"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-csr",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-csr@2.10.0/node_modules/@peculiar/asn1-csr"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-ecc",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-ecc@2.10.0/node_modules/@peculiar/asn1-ecc"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-pfx",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-pfx@2.10.0/node_modules/@peculiar/asn1-pfx"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-pkcs8",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-pkcs8@2.10.0/node_modules/@peculiar/asn1-pkcs8"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-pkcs9",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-pkcs9@2.10.0/node_modules/@peculiar/asn1-pkcs9"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-rsa",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-rsa@2.10.0/node_modules/@peculiar/asn1-rsa"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-schema",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-schema@2.10.0/node_modules/@peculiar/asn1-schema"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-x509",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-x509@2.10.0/node_modules/@peculiar/asn1-x509"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-x509-attr",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-x509-attr@2.10.0/node_modules/@peculiar/asn1-x509-attr"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/asn1-x509-post-quantum",
+      "versions": [
+        "2.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+asn1-x509-post-quantum@2.10.0/node_modules/@peculiar/asn1-x509-post-quantum"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/utils",
+      "versions": [
+        "2.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+utils@2.0.3/node_modules/@peculiar/utils"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@peculiar/x509",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@peculiar+x509@2.1.0/node_modules/@peculiar/x509"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@simplewebauthn/server",
+      "versions": [
+        "14.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@simplewebauthn+server@14.0.3/node_modules/@simplewebauthn/server"
       ],
       "license": "MIT"
     },
@@ -197,12 +377,42 @@
       "license": "MIT"
     },
     {
+      "name": "asn1.js",
+      "versions": [
+        "5.4.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/asn1.js@5.4.1/node_modules/asn1.js"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "asn1js",
+      "versions": [
+        "3.0.10"
+      ],
+      "paths": [
+        "node_modules/.pnpm/asn1js@3.0.10/node_modules/asn1js"
+      ],
+      "license": "BSD-3-Clause"
+    },
+    {
       "name": "bail",
       "versions": [
         "2.0.2"
       ],
       "paths": [
         "node_modules/.pnpm/bail@2.0.2/node_modules/bail"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "bn.js",
+      "versions": [
+        "4.12.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/bn.js@4.12.5/node_modules/bn.js"
       ],
       "license": "MIT"
     },
@@ -489,6 +699,16 @@
       "license": "MIT"
     },
     {
+      "name": "http_ece",
+      "versions": [
+        "1.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/http_ece@1.2.0/node_modules/http_ece"
+      ],
+      "license": "MIT"
+    },
+    {
       "name": "https-proxy-agent",
       "versions": [
         "7.0.6"
@@ -507,6 +727,16 @@
         "node_modules/.pnpm/iconv-lite@0.6.3/node_modules/iconv-lite"
       ],
       "license": "MIT"
+    },
+    {
+      "name": "inherits",
+      "versions": [
+        "2.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/inherits@2.0.4/node_modules/inherits"
+      ],
+      "license": "ISC"
     },
     {
       "name": "inline-style-parser",
@@ -1169,6 +1399,26 @@
       "license": "MIT"
     },
     {
+      "name": "minimalistic-assert",
+      "versions": [
+        "1.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/minimalistic-assert@1.0.1/node_modules/minimalistic-assert"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "minimist",
+      "versions": [
+        "1.2.8"
+      ],
+      "paths": [
+        "node_modules/.pnpm/minimist@1.2.8/node_modules/minimist"
+      ],
+      "license": "MIT"
+    },
+    {
       "name": "ms",
       "versions": [
         "2.1.3"
@@ -1379,6 +1629,26 @@
       "license": "MIT"
     },
     {
+      "name": "pvtsutils",
+      "versions": [
+        "1.3.6"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pvtsutils@1.3.6/node_modules/pvtsutils"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pvutils",
+      "versions": [
+        "1.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pvutils@1.2.0/node_modules/pvutils"
+      ],
+      "license": "MIT"
+    },
+    {
       "name": "react",
       "versions": [
         "19.2.6"
@@ -1407,6 +1677,16 @@
         "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.6_supports-color@10.2.2/node_modules/react-markdown"
       ],
       "license": "MIT"
+    },
+    {
+      "name": "reflect-metadata",
+      "versions": [
+        "0.2.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/reflect-metadata@0.2.2/node_modules/reflect-metadata"
+      ],
+      "license": "Apache-2.0"
     },
     {
       "name": "remark-gfm",
@@ -1689,6 +1969,28 @@
       "license": "MIT"
     },
     {
+      "name": "tslib",
+      "versions": [
+        "1.14.1",
+        "2.8.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tslib@1.14.1/node_modules/tslib",
+        "node_modules/.pnpm/tslib@2.8.1/node_modules/tslib"
+      ],
+      "license": "0BSD"
+    },
+    {
+      "name": "tsyringe",
+      "versions": [
+        "4.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tsyringe@4.10.0/node_modules/tsyringe"
+      ],
+      "license": "MIT"
+    },
+    {
       "name": "type-fest",
       "versions": [
         "5.9.0"
@@ -1787,6 +2089,16 @@
         "node_modules/.pnpm/w3c-xmlserializer@5.0.0/node_modules/w3c-xmlserializer"
       ],
       "license": "MIT"
+    },
+    {
+      "name": "web-push",
+      "versions": [
+        "3.6.7"
+      ],
+      "paths": [
+        "node_modules/.pnpm/web-push@3.6.7_supports-color@10.2.2/node_modules/web-push"
+      ],
+      "license": "MPL-2.0"
     },
     {
       "name": "webidl-conversions",

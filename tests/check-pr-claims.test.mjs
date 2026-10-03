@@ -314,7 +314,9 @@ test("fence tracking is required to ignore command output references", async () 
     const source = readFileSync(join(repositoryRoot, "scripts/ci/check-pr-claims.mjs"), "utf8");
     const mutated = source.replace("if (fence) {", "if (false) {");
     const mutatedChecker = join(root, "mutated-check-pr-claims.mjs");
-    writeFileSync(mutatedChecker, mutated.replace("../check-private-names.mjs", join(repositoryRoot, "scripts/check-private-names.mjs")));
+    writeFileSync(mutatedChecker, mutated
+      .replace("../check-private-names.mjs", join(repositoryRoot, "scripts/check-private-names.mjs"))
+      .replace("../../src/installer/shared/is-main-module.mjs", join(repositoryRoot, "src/installer/shared/is-main-module.mjs")));
     const module = await import(`${new URL(`file://${mutatedChecker}`).href}?mutation=${Date.now()}`);
     const result = module.checkPrClaims({ root, body, changedPaths: ["src/server/example.ts"], workflowSource: workflow });
     assert.ok(result.errors.includes("test_reference_unresolved"));
@@ -542,7 +544,9 @@ test("restoring the whole-line reference scan makes the false-positive cases fai
       + " const ref = match ? { type: match[1].toLowerCase(), value: match[2] } : null;");
     assert.notEqual(mutated, source);
     const mutatedChecker = join(root, "mutated-check-pr-claims.mjs");
-    writeFileSync(mutatedChecker, mutated.replace("../check-private-names.mjs", join(repositoryRoot, "scripts/check-private-names.mjs")));
+    writeFileSync(mutatedChecker, mutated
+      .replace("../check-private-names.mjs", join(repositoryRoot, "scripts/check-private-names.mjs"))
+      .replace("../../src/installer/shared/is-main-module.mjs", join(repositoryRoot, "src/installer/shared/is-main-module.mjs")));
     const module = await import(`${new URL(`file://${mutatedChecker}`).href}?mutation=${Date.now()}`);
     const args = { root, body: proseBody, changedPaths: ["src/server/example.ts"], workflowSource: workflow };
     assert.deepEqual(checkPrClaims(args), { ok: true, errors: [], warnings: 0 },

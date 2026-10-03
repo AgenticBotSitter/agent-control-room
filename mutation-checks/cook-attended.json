@@ -1,0 +1,289 @@
+[
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (selfUpdate !== \"Off\") refuse(\"updater_install_requires_off\");",
+    "replace": "if (false) refuse(\"updater_install_requires_off\");",
+    "test": "node --test --test-name-pattern='hostile source trees' tests/updater-attended-source.test.mjs",
+    "why": "install --commit is available only while the root-held self-update flag is Off"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (parts.includes(\".git\")) refuse(\"updater_tree_dot_git_refused\");",
+    "replace": "if (false) refuse(\"updater_tree_dot_git_refused\");",
+    "test": "node --test --test-name-pattern='raw tree parser' tests/updater-attended-source.test.mjs",
+    "why": "a commit tree cannot plant Git control files in the archived source"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (parts.includes(\"node_modules\")) refuse(\"updater_tree_node_modules_refused\");",
+    "replace": "if (false) refuse(\"updater_tree_node_modules_refused\");",
+    "test": "node --test --test-name-pattern='raw tree parser' tests/updater-attended-source.test.mjs",
+    "why": "tracked dependency output cannot bypass the offline builder store"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (match[1] === \"120000\") refuse(\"updater_tree_symlink_refused\");",
+    "replace": "if (false) refuse(\"updater_tree_symlink_refused\");",
+    "test": "node --test --test-name-pattern='raw tree parser' tests/updater-attended-source.test.mjs",
+    "why": "the minimal attended source path refuses candidate symlinks before extraction"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (afterArchive !== fetched) refuse(\"updater_main_ref_moved\");",
+    "replace": "if (false) refuse(\"updater_main_ref_moved\");",
+    "test": "node --test --test-name-pattern='hostile source trees' tests/updater-attended-source.test.mjs",
+    "why": "the mirror main ref is pinned across archive creation"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await git(input, tools.git, mirror, [\"merge-base\", \"--is-ancestor\", commit, MAIN_REF])",
+    "replace": "await Promise.resolve({})",
+    "test": "node --test --test-name-pattern='hostile source trees' tests/updater-attended-source.test.mjs",
+    "why": "an object retained in the mirror is installable only while it remains on main"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (files.length !== tree.entries.length) refuse(\"updater_archive_tree_mismatch\");",
+    "replace": "if (false) refuse(\"updater_archive_tree_mismatch\");",
+    "test": "node --test --test-name-pattern='hostile source trees' tests/updater-attended-source.test.mjs",
+    "why": "export-ignore cannot remove a tracked guard from the archive"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "else if (!entry.isFile() || entry.nlink !== 1) refuse(entry.isFile() ? \"updater_archive_hardlink_refused\" : \"updater_archive_entry_refused\");",
+    "replace": "else if (!entry.isFile()) refuse(entry.isFile() ? \"updater_archive_hardlink_refused\" : \"updater_archive_entry_refused\");",
+    "test": "node --test --test-name-pattern='hostile source trees' tests/updater-attended-source.test.mjs",
+    "why": "a hard-linked extracted file cannot enter the builder tree"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (payload.length !== declared.size || payload.some(item => !declared.has(item.path))) refuse(\"updater_build_unmanifested_file\");",
+    "replace": "if (false) refuse(\"updater_build_unmanifested_file\");",
+    "test": "node --test --test-name-pattern='unmanifested build output' tests/updater-attended-source.test.mjs",
+    "why": "builder output cannot add an undeclared file before root adoption"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "uid: identity.builderUid, gid: identity.builderGid,",
+    "replace": "uid: undefined, gid: undefined,",
+    "test": "node --test --test-name-pattern='fetches a local bare mirror' tests/updater-attended-source.test.mjs",
+    "why": "every candidate and fixed build child runs as the dedicated builder identity"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (options.detached) killGroup(child.pid);",
+    "replace": "if (false) killGroup(child.pid);",
+    "test": "node --test --test-name-pattern='whole process group killed' tests/updater-attended-source.test.mjs",
+    "why": "the whole builder process group is killed before output verification"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (confirmation?.confirmed !== true || confirmation.planId !== planId || confirmation.planDigest !== planDigest\n      || downgrade && confirmation.downgradeConfirmed !== true)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='authorization returns without' tests/updater-attended-source.test.mjs",
+    "why": "adoption requires the exact root-rendered typed-code confirmation"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "|| uid !== undefined && entry.uid !== uid || mode !== undefined && (entry.mode & 0o777) !== mode) refuse(code);",
+    "replace": "|| uid !== undefined && entry.uid !== uid || false) refuse(code);",
+    "test": "node --test --test-name-pattern='hostile source trees' tests/updater-attended-source.test.mjs",
+    "why": "the dedicated read credential must retain its exact root-only mode"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "{ file: tools.pnpm, args: [\"fetch\", \"--ignore-scripts\", \"--frozen-lockfile\", `--store-dir=${store}`] },",
+    "replace": "{ file: tools.pnpm, args: [\"fetch\", \"--frozen-lockfile\", `--store-dir=${store}`] },",
+    "test": "node --test --test-name-pattern='fetches a local bare mirror' tests/updater-attended-source.test.mjs",
+    "why": "the source dependency fetch cannot execute candidate lifecycle scripts"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "args: [\"fetch\", \"--ignore-scripts\", \"--frozen-lockfile\", `--store-dir=${bundleStore}`],",
+    "replace": "args: [\"fetch\", \"--frozen-lockfile\", `--store-dir=${bundleStore}`],",
+    "test": "node --test --test-name-pattern='fetches a local bare mirror' tests/updater-attended-source.test.mjs",
+    "why": "the fixed updater dependency fetch cannot execute candidate lifecycle scripts"
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || !inside(root, path))",
+    "replace": "if (!entry.isFile() || !inside(root, path))",
+    "test": "node --test --test-name-pattern='fixed attended release builder' tests/updater-attended-source.test.mjs",
+    "why": "the fixed release builder refuses linked mandatory inputs before copying them"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (changesDatabase) classes.push(\"database\");",
+    "replace": "if (false) classes.push(\"database\");",
+    "test": "node --test --test-name-pattern='fetches a local bare mirror' tests/updater-attended-source.test.mjs",
+    "why": "the root-rendered class list must disclose a database-changing commit"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const trustedRuntime = await verifyRuntimeBeforeUse(input, root);",
+    "replace": "const trustedRuntime = {};",
+    "test": "node --test --test-name-pattern='shared T1 runtime check' tests/updater-attended-source.test.mjs",
+    "why": "the installed runtime and developer tools are T1-checked before the first attended-install spawn"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (uid === builderUid) pids.push(pid);",
+    "replace": "if (uid !== builderUid) pids.push(pid);",
+    "test": "node --test --test-name-pattern='exact numeric uid' tests/updater-attended-source.test.mjs",
+    "why": "builder process discovery uses an exact numeric uid match rather than a group or textual approximation"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await assertBuilderIdle(control, identity);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='job start refuses' tests/updater-attended-source.test.mjs",
+    "why": "a new attended job refuses when the builder uid has a process, crontab or at entry"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "for (const pid of before.pids) await control.killPid(pid);",
+    "replace": "for (const pid of []) await control.killPid(pid);",
+    "test": "node --test --test-name-pattern='uid-wide cleanup kills' tests/updater-attended-source.test.mjs",
+    "why": "uid-wide cleanup kills a builder child that genuinely daemonises outside the original process group"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await changeOwnership(session.input, session.job, identity.rootUid, identity.rootGid);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='uid-wide cleanup kills' tests/updater-attended-source.test.mjs",
+    "why": "candidate source and output become root-owned before their final verification"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await changeOwnership(session.input, bundleJob, identity.rootUid, identity.rootGid);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='uid-wide cleanup kills' tests/updater-attended-source.test.mjs",
+    "why": "the fixed updater bundle becomes root-owned before final verification and adoption"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "|| sha256(bytes) !== expected.sha256) refuse(\"updater_adoption_source_refused\");",
+    "replace": "|| false) refuse(\"updater_adoption_source_refused\");",
+    "test": "node --test --test-name-pattern='adoption re-hashes' tests/updater-attended-source.test.mjs",
+    "why": "adoption hashes bytes read through O_NOFOLLOW source descriptors instead of trusting an earlier manifest pass"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  \"src/installer/shared/jsonl-prefix.mjs\",\n]);",
+    "replace": "  \"src/installer/shared/jsonl-prefix.mjs\",\n  \"package.json\",\n]);",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the fixed bundle builder receives exactly its approved candidate inputs and no broader candidate tree"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "args: [tools.bundleEntry, \"--source\", bundleSource,",
+    "replace": "args: [tools.bundleEntry, \"--source\", source,",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the production fixed step points at the minimal builder-owned scratch source rather than the root-held candidate"
+  },
+  {
+    "file": "scripts/updater/build-fixed-updater-bundle.mjs",
+    "find": "if (seedEntryIsMainV1(process.argv[1], import.meta.url)) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the production fixed-bundle CLI runs when updater/current reaches it through a symlink"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await mkdir(targetPath, { mode: 0o750 }); await visit(sourcePath, targetPath); await chmod(targetPath, 0o550);",
+    "replace": "await mkdir(targetPath, { mode: 0o550 }); await visit(sourcePath, targetPath);",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "root can populate nested updater staging directories before sealing them read-only"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (after.pids.length > 0 || after.scheduled) refuse(\"builder_left_process\");",
+    "replace": "if (false) refuse(\"builder_left_process\");",
+    "test": "node --test --test-name-pattern='post-kill verification' tests/updater-attended-source.test.mjs",
+    "why": "builder cleanup rechecks the uid and refuses when a process survives the kill attempt"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (!Number.isSafeInteger(identity.builderUid) || identity.builderUid < 1 || identity.builderUid === identity.rootUid\n    || !BUILDER_ACCOUNT.test(identity.builderAccount)) refuse(\"updater_account_refused\");",
+    "replace": "if (false) refuse(\"updater_account_refused\");",
+    "test": "node --test --test-name-pattern='uid-zero builder' tests/updater-attended-source.test.mjs",
+    "why": "the real account lookup refuses a builder account that resolves to uid zero"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "const readOnlyAclRights = new Set([\"read\", \"readattr\", \"readextattr\", \"readsecurity\", \"list\", \"search\", \"execute\"]);",
+    "replace": "const readOnlyAclRights = new Set([\"read\", \"readattr\", \"readextattr\", \"readsecurity\", \"list\", \"search\", \"execute\", \"add_subdirectory\"]);",
+    "test": "node --test --test-name-pattern='T1 checks root ownership' tests/updater-trusted-runtime.test.mjs",
+    "why": "T1 treats an ACL grant to add subdirectories as a write capability"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "|| (entry.mode & 0o222) !== 0) refuse(\"updater_tool_root_refused\");",
+    "replace": "|| false) refuse(\"updater_tool_root_refused\");",
+    "test": "node --test --test-name-pattern='owner-writable toolRoot' tests/updater-attended-source.test.mjs",
+    "why": "the fixed builder programs must come from a root-owned tool root that no owner account can rewrite"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const entry = await statRegular(path, \"updater_tool_root_refused\",\n      { uid: identity.rootUid, mode: 0o500, maximum: 1024 * 1024 });",
+    "replace": "const entry = await lstat(path);",
+    "test": "node --test --test-name-pattern='toolRoot program symlink' tests/updater-attended-source.test.mjs",
+    "why": "each builder-side program must itself be a no-follow sealed file inside toolRoot"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const releaseId = `${packageValue.version}-${commit.slice(0, 12)}`;",
+    "replace": "const releaseId = packageValue.version;",
+    "test": "node --test --test-name-pattern='fetches a local bare mirror' tests/updater-attended-source.test.mjs",
+    "why": "two different commits with the same package version must receive distinct release ids"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (!session || input.bundle.uver !== input.uver || input.bundle.bundleDigest !== input.expectedDigest)",
+    "replace": "if (!session || input.bundle.uver !== input.uver || false)",
+    "test": "node --test --test-name-pattern='split pieces refuse' tests/updater-attended-source.test.mjs",
+    "why": "updater staging must stay bound to the fixed bundle digest that confirmation covered"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "typeof target === \"string\" && /^releases\\/[A-Za-z0-9._-]{1,80}$/u.test(target)",
+    "replace": "typeof target === \"string\"",
+    "test": "node --test --test-name-pattern='split pieces refuse' tests/updater-attended-source.test.mjs",
+    "why": "pointer restoration refuses an escaping or malformed journal target"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await compareArchivedSource(session.input, tools.git, source, session.tree);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='post-build source verification' tests/updater-attended-source.test.mjs",
+    "why": "post-build verification re-hashes every archived source path while generated install outputs remain outside the archive comparison"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (input.tools === undefined) tools = await stageBuilderTools(tools, join(job, \"builder-tools\"),",
+    "replace": "if (false) tools = await stageBuilderTools(tools, join(job, \"builder-tools\"),",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the default attended release builder executes a per-job copy instead of the root-only installed program"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (session.input.tools === undefined) tools = await stageBuilderTools(tools, join(bundleJob, \"builder-tools\"),",
+    "replace": "if (false) tools = await stageBuilderTools(tools, join(bundleJob, \"builder-tools\"),",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the fixed bundle builder receives only a per-job program and policy copy readable by its separate uid"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "for (let attempt = 1; attempt <= 3; attempt += 1) {",
+    "replace": "for (let attempt = 1; attempt <= 1; attempt += 1) {",
+    "test": "node --test --test-name-pattern='phone commit first' tests/updater-cli-flip.test.mjs",
+    "why": "the owner gets three attempts to type the six confirmation words before the install is unwound"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "? `Commit: ${plan.artifact.commit} (compare to the phone)\\n` : \"\"}`",
+    "replace": "? `Commit: ${plan.artifact.commit}\\n` : \"\"}`",
+    "test": "node --test --test-name-pattern='phone commit first' tests/updater-cli-flip.test.mjs",
+    "why": "the confirmation summary names the off-Mac phone comparison before showing any other plan detail"
+  }
+]

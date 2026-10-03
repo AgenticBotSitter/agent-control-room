@@ -1,0 +1,93 @@
+[
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "try { published = await session.query(`INSERT INTO updater.passkey_open_registrations",
+    "replace": "try { published = { rows: [{ registration_digest: $1 }] }; void (async () => `INSERT INTO updater.passkey_open_registrations",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/install-initial-passkey-real-postgres.test.ts",
+    "why": "the ceremony is unobservable without publishing the registration the phone reads; the test's phone is driven during the port's terminal wait and can only read what was published. MEASURED: `await` alone (the first form of this mutation) was caught by the row-count check rather than by the phone, which is the more specific signal \u2014 so the publish is stubbed here while the count check stays, and the phone is what must notice"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "await session.query(`UPDATE updater.passkey_open_registrations SET consumed_at = pg_catalog.now()",
+    "replace": "await (false && session.query)(`UPDATE updater.passkey_open_registrations SET consumed_at = pg_catalog.now()",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/install-initial-passkey-real-postgres.test.ts",
+    "why": "a burnt registration must stop being served; the test asserts no open row survives, because a live row is a page that keeps asking the owner to touch Face ID for a ceremony that cannot complete"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "    if (published?.rows?.length !== 1) refuse(\"passkey_registration_already_open\");",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node --import tsx --test --test-concurrency=1 tests/install-initial-passkey-real-postgres.test.ts",
+    "why": "the publish INSERT is ON CONFLICT DO NOTHING with RETURNING, so a retried begin for the same digest returns zero rows. Without the count check the port reports a publish it did not perform, and the owner is asked for a code against a row holding different options"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "const registration = await authority.beginRegistration({ mode: \"initial\",",
+    "replace": "const registration = await authority.beginRegistration({ mode: \"add\",",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/install-initial-passkey-real-postgres.test.ts",
+    "why": "INITIAL is what makes the first passkey active tonight; `add` puts it in a 24-hour cooling-off with no active passkey to approve it, and the test asserts coolingOffUntil is null in the ledger"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "if (registered && input.reason !== undefined) refuse(\"passkey_status_input_refused\");",
+    "replace": "if (false) refuse(\"passkey_status_input_refused\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/install-initial-passkey-real-postgres.test.ts",
+    "why": "a record claiming both a credential digest and a refusal reason leaves every later reader guessing whether the passkey exists"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "if (stopped && input.credentialIdDigest !== undefined) refuse(\"passkey_status_input_refused\");",
+    "replace": "if (false) refuse(\"passkey_status_input_refused\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/install-initial-passkey-real-postgres.test.ts",
+    "why": "the same rule from the other side: a stopped ceremony carrying a digest claims a passkey it did not create"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "return rows.length === 0 ? \"initial\" : \"add\";",
+    "replace": "return \"add\";",
+    "test": "node --test --test-name-pattern='CLI keeps status unprivileged' tests/updater-cli-flip.test.mjs",
+    "why": "`passkey add` on a Mac with no passkey must run the INITIAL ceremony, or the first passkey is inactive for 24 hours with no active passkey to approve it"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "arguments: mode === \"initial\" ? [\"initial\"] : [] });",
+    "replace": "arguments: [] });",
+    "test": "node --test --test-name-pattern='CLI keeps status unprivileged' tests/updater-cli-flip.test.mjs",
+    "why": "the mode has to reach the daemon: a `passkey-add-begin` with no argument means `add`, so a CLI that chose `initial` and did not say so would be contradicted by the daemon"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "context.stdout(mode === \"initial\"",
+    "replace": "context.stdout(true",
+    "test": "node --test --test-name-pattern='CLI keeps status unprivileged' tests/updater-cli-flip.test.mjs",
+    "why": "the message is the only place the owner learns whether this passkey works tonight; a blanket success message on a cooling-off passkey is how a day-long wait reads as done"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "const mode = request.arguments.length === 0 ? \"add\" : request.arguments[0];",
+    "replace": "const mode = \"add\";",
+    "test": "node --test --test-name-pattern='P8a' tests/updater-skeleton.test.mjs",
+    "why": "the daemon must honour the mode it is told. The CLI test only asserted what the CLI SENT; this is the first test that asserts what the daemon DID \u2014 a told `initial` reaches the authority AND the published row, and an unknown mode is refused rather than defaulted."
+  },
+  {
+    "file": "src/installer/shared/is-main-module.mjs",
+    "find": "  if (entryPath === undefined || entryPath === null) return false;",
+    "replace": "  if (entryPath === undefined || entryPath === null) return refuseV1(\"process.argv[1] is missing\");",
+    "test": "node --import tsx --test --test-name-pattern='MISSING argv' tests/invoked-directly.test.mjs",
+    "why": "a process with no argv[1] is an IMPORT (--eval, a bundle loaded by other code) and must load without running its main"
+  },
+  {
+    "file": "src/installer/shared/is-main-module.mjs",
+    "find": "  catch (error) { refuseV1(\"process.argv[1] could not be resolved\", error); }",
+    "replace": "  catch (error) { return false; }",
+    "test": "node --import tsx --test --test-name-pattern='dangling argv' tests/invoked-directly.test.mjs",
+    "why": "an entry that was genuinely started under a path that cannot be resolved would skip its own body, exit zero, and leave the port above it refusing with a code that names neither"
+  },
+  {
+    "file": "src/installer/shared/is-main-module.mjs",
+    "find": "  if (entryPath.startsWith(FILE_URL_PREFIX_V1)) {",
+    "replace": "  if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='file: URL' tests/invoked-directly.test.mjs",
+    "why": "a `file:` URL in argv[1] is an --eval import context and can never be a real entry (node refuses to start one), so it must be refused rather than resolved"
+  }
+]

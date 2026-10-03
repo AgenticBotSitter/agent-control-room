@@ -1,10 +1,9 @@
 import { PrivateDatabaseError, type PrivateDatabaseDriver } from "./bounded-database";
+import { databaseSqlStateV1 } from "../../persistence/database";
 
 function definiteSqlState(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  let code: unknown;
-  try { code = Reflect.get(error, "code"); } catch { return undefined; }
-  if (typeof code !== "string" || !/^[0-9A-Z]{5}$/u.test(code)) return undefined;
+  const code = databaseSqlStateV1(error);
+  if (!code) return undefined;
   // Connection loss (08), operator/crash shutdown (57P), resource exhaustion
   // (53), internal errors (XX) and statement_completion_unknown (40003) do not
   // prove what the server did; they stay uncertain and quarantine the pool.

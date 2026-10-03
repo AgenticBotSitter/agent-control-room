@@ -221,7 +221,7 @@ async function seed(options?: {
     'Beta review','Review the Beta result',NULL,$1,$1,'{}',$1)`, [iso(NOW - 8_000)]);
 
   const store = createProjectCoordinationCanonicalStoreAdapterV1({
-    database: client, tenantId: TENANT, now: () => NOW,
+    database: client, tenantId: TENANT, workspaceId: "workspace:test", now: () => NOW,
   });
   const service = new ProjectCoordinationHttpService({
     database: client,

@@ -1,0 +1,11 @@
+system = {
+	services = {
+		0	(pe)	com.apple.background-task
+		-	0	com.controlroom.live.web
+		91	-9	com.controlroom.live.worker
+	}
+	disabled services = {
+		"com.controlroom.live.disabled" => true
+		"com.apple.uninteresting" => false
+	}
+}

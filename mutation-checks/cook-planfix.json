@@ -1,0 +1,254 @@
+[
+  {
+    "file": "src/recurring/v1/plain-schedule.ts",
+    "find": "  const match = /^every (day|weekday|sunday|monday|tuesday|wednesday|thursday|friday|saturday) at ([01][0-9]|2[0-3]):([0-5][0-9])$/.exec(normalized)\n    ?? ",
+    "replace": "  const match = ",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Canonical schedules must parse their own saved representation"
+  },
+  {
+    "file": "src/recurring/v1/plain-schedule.ts",
+    "find": "  const match = /^every (day|weekday|sunday|monday|tuesday|wednesday|thursday|friday|saturday) at ([01][0-9]|2[0-3]):([0-5][0-9])$/.exec(normalized)",
+    "replace": "  const match = /^every (day|weekday|sunday|monday|tuesday|wednesday|thursday|friday|saturday) at ([01][0-9]|2[0-9]):([0-5][0-9])$/.exec(normalized)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Canonical hours must refuse 24 through 29"
+  },
+  {
+    "file": "src/recurring/v1/plain-schedule.ts",
+    "find": "  const match = /^every (day|weekday|sunday|monday|tuesday|wednesday|thursday|friday|saturday) at ([01][0-9]|2[0-3]):([0-5][0-9])$/.exec(normalized)",
+    "replace": "  const match = /^every (day|weekday|sunday|monday|tuesday|wednesday|thursday|friday|saturday) at ([01][0-9]|2[0-3]):([0-9][0-9])$/.exec(normalized)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Canonical minutes must refuse 60 through 99"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "    await this.failures.clear(input.projectScope);\n    if (input.signal?.aborted) return stopped();",
+    "replace": "    await this.failures.clear(input.projectScope);",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "Cancellation during cleanup must fence initial and re-split writes"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "const reply = await this.#runPlanner({",
+    "replace": "const reply = await this.planner.run({",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "An unresponsive planner must obey independent cancellation and deadline"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (!Number.isSafeInteger(plannerTimeoutMs) || plannerTimeoutMs < 1 || plannerTimeoutMs > 300_000)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "Planner deadlines must be finite bounded positive integers"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "      controller.abort();",
+    "replace": "      void controller;",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "Retiring a reply must also cancel the underlying worker signal"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (controller.signal.aborted) throw new Error(\"intake_planner_interrupted\");",
+    "replace": "if (false) throw new Error(\"intake_planner_interrupted\");",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "Cancellation before invocation must prevent a late worker start"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "return signal && signal !== active.signal ? this.#waitForCaller(active.promise, signal) : active.promise;",
+    "replace": "return active.promise;",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "Joined callers must be able to cancel their own wait"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "    if (signal.aborted) return stopped();",
+    "replace": "    if (false) return stopped();",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/intake-coordinator.test.ts",
+    "why": "Already-cancelled joined callers must return stopped immediately"
+  },
+  {
+    "file": "src/web/v1/mac-local-host.ts",
+    "find": "...(input.workBatchIntegrityKey ? { orchestration: createProjectOrchestrationServiceV1({",
+    "replace": "...(false ? { orchestration: createProjectOrchestrationServiceV1({",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "The default Mac host must mount the owner orchestration service"
+  },
+  {
+    "file": "src/web/v1/project-orchestration-composition.ts",
+    "find": "const describeAvailable = !!options.planner?.available && !!options.coordinator;",
+    "replace": "const describeAvailable = true;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Description preparation must remain unavailable without a planner host"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "    if (!input.recurring) return listener;",
+    "replace": "    if (true) return listener;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "The installed intake must actually start the recurring scheduler"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "    if (coordinatorConfig.username !== \"control_room_coordinator\"\n      || coordinatorConfig.host !== config.host || coordinatorConfig.port !== config.port\n      || coordinatorConfig.database !== config.database\n      || JSON.stringify(coordinatorConfig.privateEndpoint) !== JSON.stringify(config.privateEndpoint)\n      || input.credentials.some(mapping => mapping.principal.tenantId !== recurring.tenantId))",
+    "replace": "    if (false)",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Recurring bookkeeping must use the same endpoint and tenant on the coordinator login"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "if (allowed.allowed) return recurringWorkBatchProposalPortV1(service, mapping.principal, clock).propose(request);",
+    "replace": "if (true) return recurringWorkBatchProposalPortV1(service, mapping.principal, clock).propose(request);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "A missing or unauthorized proposer must be skipped without inventing authority"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "isReady: () => !closing && listener.isReady() && ownedCoordinator.isAvailable(),",
+    "replace": "isReady: () => listener.isReady() && ownedCoordinator.isAvailable(),",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Readiness must become false when shutdown begins"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "isReady: () => !closing && listener.isReady() && ownedCoordinator.isAvailable(),",
+    "replace": "isReady: () => !closing && listener.isReady(),",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "An unavailable recurring coordinator must fail readiness"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "if (closing) return Promise.reject(new Error(\"work_intake_private_service_closed\"));",
+    "replace": "if (false) return Promise.reject(new Error(\"work_intake_private_service_closed\"));",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "A closed recurring service must refuse restart"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "return starting ??= (async () => {",
+    "replace": "return (async () => {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Fifty concurrent starts must own one listener and one loop"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "if (outcome.failed.length) throw new Error(\"recurring_cycle_failed\");",
+    "replace": "if (false) throw new Error(\"recurring_cycle_failed\");",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Proposal refusals must be reported so the loop does not silently lose work"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "const drained = await Promise.allSettled([loop?.close()]);",
+    "replace": "const drained = await Promise.allSettled([]);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Shutdown must drain the selected tick before either pool closes"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "if ([...drained, ...results].some(result => result.status === \"rejected\"))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Failed cleanup must remain visibly uncertain while still closing both pools"
+  },
+  {
+    "file": "scripts/mac-local/start-web-host.mjs",
+    "find": "installed ? { tenantId: configuration.localOwnerSession.tenantId, database: databaseRoles.coordinator } : undefined",
+    "replace": "undefined",
+    "test": "node --import tsx --test --test-name-pattern=\"PLAN-05|optional intake\" tests/mac-local-web-host-launcher.test.mjs",
+    "why": "The actual installed launcher must pass recurring configuration"
+  },
+  {
+    "file": "scripts/mac-local/start-web-host.mjs",
+    "find": "isReady: () => active.isReady() && (intake?.isReady?.() ?? true),",
+    "replace": "isReady: () => active.isReady(),",
+    "test": "node --import tsx --test --test-name-pattern=\"PLAN-05|optional intake\" tests/mac-local-web-host-launcher.test.mjs",
+    "why": "The installed host must include recurring intake readiness"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "if (cleanup.some(result => result.status === \"rejected\"))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Preparation cleanup failure must be reported as uncertain"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (active.digest !== inputDigest) return Promise.resolve(Object.freeze({ ...common,",
+    "replace": "if (false) return Promise.resolve(Object.freeze({ ...common,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "concurrent reuse of a request key with different content must not share an outcome"
+  },
+  {
+    "file": "src/web/v1/project-orchestration-composition.ts",
+    "find": "const describeAvailable = !!options.planner?.available && !!options.coordinator;",
+    "replace": "const describeAvailable = !!options.planner?.available;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "An available planner alone cannot prepare descriptions without its coordinator"
+  },
+  {
+    "file": "src/web/v1/project-orchestration-composition.ts",
+    "find": "options.coordinator ? options.coordinator.ownerPrefill(input) : store.prefillForOwner(input)",
+    "replace": "options.coordinator!.ownerPrefill(input)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern=PLAN tests/recurring-work.test.ts",
+    "why": "Retained suggestions must remain usable with no running coordinator"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "coordinatorConfig.username !== \"control_room_coordinator\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Independently enforce recurring configuration: coordinatorConfig.username !== \"control_room_coordinator\""
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "coordinatorConfig.host !== config.host",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Independently enforce recurring configuration: coordinatorConfig.host !== config.host"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "coordinatorConfig.port !== config.port",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Independently enforce recurring configuration: coordinatorConfig.port !== config.port"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "coordinatorConfig.database !== config.database",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Independently enforce recurring configuration: coordinatorConfig.database !== config.database"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "JSON.stringify(coordinatorConfig.privateEndpoint) !== JSON.stringify(config.privateEndpoint)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Independently enforce recurring configuration: JSON.stringify(coordinatorConfig.privateEndpoint) !== JSON.stringify(config.privateEndpoint)"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "input.credentials.some(mapping => mapping.principal.tenantId !== recurring.tenantId)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "Independently enforce recurring configuration: input.credentials.some(mapping => mapping.principal.tenantId !== recurring.tenantId)"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "          await starting?.catch(() => {});",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "A first cycle must finish before shutdown closes its pools"
+  },
+  {
+    "file": "src/work-intake/v1/private-service.ts",
+    "find": "toleratesFirstCycleFailure: true",
+    "replace": "toleratesFirstCycleFailure: false",
+    "test": "node --import tsx --test --test-name-pattern=PLAN tests/work-intake-machine-api.test.ts",
+    "why": "A failed initial recurring cycle must leave a retrying service available"
+  }
+]

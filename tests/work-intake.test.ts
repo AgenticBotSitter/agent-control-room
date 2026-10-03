@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { downRungBefore, readMigrationGraph } from "./helpers/down-migration-order";
 import { AuditStore, auditPartition } from "../src/audit/audit-store";
 import { adaptPglite } from "../src/persistence/database";
 import { sha256Digest, type AuthenticatedPrincipal } from "../src/security";
@@ -24,6 +25,17 @@ const proposal = (overrides: Record<string, unknown> = {}) => ({
     acceptanceTests: "Run the focused test lane." }], edges: [], ...overrides,
 });
 
+test("FB-4: website and machine intake refuse PostgreSQL-invalid proposal text", () => {
+  for (const text of ["a\u0000b", "a\ud800b", "a\udc00b", "a\ude00\ud83db"]) {
+    for (const field of ["title", "instructions", "acceptanceCriteria", "acceptanceTests"]) {
+      const value = proposal({ tasks: [{ ...proposal().tasks[0], [field]: text }] });
+      assert.equal(validateWorkBatchProposalV1(JSON.stringify(value), "project:test").accepted, false, field);
+    }
+  }
+  const value = proposal({ tasks: [{ ...proposal().tasks[0], instructions: "😀é漢字\n\t\\u0000" }] });
+  assert.equal(validateWorkBatchProposalV1(JSON.stringify(value), "project:test").accepted, true);
+});
+
 async function fixture() {
   const raw = new PGlite();
   for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
@@ -34,10 +46,19 @@ async function fixture() {
   await raw.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
     redaction_policy_version,cursor_retention_days) VALUES('adapter:test','tenant:test','manual','1','control_room_native',
     'fixture','v1',1)`);
-  for (const id of ["project:test", "project:other"])
+  // Every real project has a lifecycle: ordinary projects get a
+  // `control_manual_project_heads` row at create() time, Idea projects get their
+  // `idea_project_*` domain_state. Proposal admission reads that lifecycle, so a
+  // fixture that seeds a bare `projects` row would be refused as
+  // `project_inactive` -- an unknown lifecycle is refused on purpose. `manual_project_
+  // active` plus the head row is what WebProjectService.create() actually writes.
+  for (const id of ["project:test", "project:other"]) {
     await raw.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
       normalized_state,domain_state,health,authority_mode,observed_at,payload) VALUES($1,'tenant:test','workspace:test',
-      'adapter:test',$1,'1','Project','ready','ready','healthy','control_room_native',$2,'{}')`, [id, NOW]);
+      'adapter:test',$1,'1','Project','planned','manual_project_active','healthy','control_room_native',$2,'{}')`, [id, NOW]);
+    await raw.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+      VALUES('tenant:test',$1,'active',1,$2,$2)`, [id, NOW]);
+  }
   await raw.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
     auth_subject_digest,state,created_at,updated_at) VALUES('identity:agent','tenant:test','agent','Proposing agent',
     'work-intake','${sha256Digest("agent")}', 'active',$1,$1)`, [NOW]);
@@ -177,6 +198,12 @@ test("the executable down migration refuses records and removes every owned obje
   const queueDown = await readFile("db/down/0104_work_batch_agent_queue.sql", "utf8");
   const ownerDown = await readFile("db/down/0102_work_batch_owner_approval.sql", "utf8");
   const down = await readFile("db/down/0093_work_batch_intake.sql", "utf8");
+  const graph = await readMigrationGraph(".");
+  // 0104's own rung goes first, newest first, exactly as a stacked rollback would
+  // take it: 0213's view reads 0104's admissions table, so 0104's down cannot run
+  // while that view is still there.
+  for (const file of downRungBefore(graph, "0104_work_batch_agent_queue.sql").files)
+    await populated.raw.exec(await readFile(`db/down/${file}`, "utf8"));
   await populated.raw.exec(queueDown);
   await assert.rejects(populated.raw.exec(ownerDown), /down migration refused/u);
   await populated.raw.exec("ROLLBACK");
@@ -185,7 +212,20 @@ test("the executable down migration refuses records and removes every owned obje
   const empty = new PGlite(); t.after(() => void empty.close());
   for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
     await empty.exec(await readFile(`db/migrations/${file}`, "utf8"));
-  await empty.exec(queueDown); await empty.exec(ownerDown); await empty.exec(down);
+  // The rung is DERIVED from the SQL, not listed by hand. Every policy that
+  // reads the intake binding has to be dropped before the binding goes, every
+  // table with a foreign key onto work_batches has to go before the table it
+  // points at, and 0151/0153 build their append-only triggers on a function
+  // 0109 owns -- which is why 0109's down refuses to run before them. A
+  // hand-maintained list went stale on exactly that last edge and the
+  // executable down migration was never tested against a cluster carrying it.
+  const rung = downRungBefore(graph, "0093_work_batch_intake.sql");
+  assert.ok(rung.files.includes("0109_pipeline_unattended_advance.sql"),
+    "the rung must carry 0109, whose down guards the history guard 0151 and 0153 still build on");
+  assert.ok(rung.files.includes("0110_work_batch_intake_flag_dismissals.sql"),
+    "the rung must carry 0110, whose table has a foreign key onto work_batches");
+  for (const file of [...rung.files, "0093_work_batch_intake.sql"])
+    await empty.exec(await readFile(`db/down/${file}`, "utf8"));
   const objects = await empty.query<{ batches: string | null; revisions: string | null; first_guard: string | null; second_guard: string | null }>(
     `SELECT to_regclass('work_batches')::text batches,to_regclass('work_batch_revisions')::text revisions,
       to_regprocedure('guard_proposal_only_work_batch_insert()')::text first_guard,

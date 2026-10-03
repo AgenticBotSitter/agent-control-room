@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "?? defaultUpdaterOwnerActionsV1({ mode, runner, backupNow, store });",
+    "replace": "?? defaultUpdaterOwnerActionsV1({ mode, runner, backupNow });",
+    "test": "node --import tsx --test --test-name-pattern='answers the owner.s acknowledgement' tests/updater-owner-action-r5bk.test.ts",
+    "why": "the composed updater must hand int10's owner-action handler its store, or r7ufix2's acknowledgement is refused as unbound"
+  }
+]

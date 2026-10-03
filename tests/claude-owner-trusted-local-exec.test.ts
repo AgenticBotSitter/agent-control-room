@@ -35,7 +35,9 @@ test("runs only the reviewed Mac-local Claude arguments and exposes no inherited
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "LOGNAME", "PATH", "TMPDIR", "USER"]);
   assert.equal(result.usageReported, true);
-  assert.deepEqual(result.usage, { inputTokens: 4, outputTokens: 2, totalTokens: 6 });
+  // Lead decision 2026-10-02 13:16 (r6tfix): a harness that reports usage but omits
+  // the cache count records an explicit zero, so the cost is known, not "Unknown".
+  assert.deepEqual(result.usage, { inputTokens: 4, outputTokens: 2, totalTokens: 6, cachedInputTokens: 0 });
   assert.deepEqual(await readdir(cwd), []);
 });
 

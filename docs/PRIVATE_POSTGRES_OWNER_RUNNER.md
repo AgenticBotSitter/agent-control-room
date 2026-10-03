@@ -27,7 +27,7 @@ Control Room's authority boundary.
 
 ## Safety behavior
 
-- The release and all 87 migration-ledger entries must match exactly.
+- The release must match, and every entry in the reviewed release's migration ledger must match exactly.
 - The database roles, memberships, table permissions, sequence permissions,
   migration history, required rows, and restricted-login proof must match the
   reviewed production scripts exactly.

@@ -11,17 +11,26 @@ const connection = (username: string) => ({ host: "127.0.0.1", port: 5432, datab
 const roles = Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1,
   web: connection("control_room_web"), coordinator: connection("control_room_coordinator"),
   results: connection("control_room_results"), publisher: connection("control_room_publisher"),
+  agentReviewer: connection("control_room_agent_reviewer_login"),
   queueWorker: connection("control_room_queue_worker") });
+const fleetRoles = Object.freeze({ ...roles, fleetGateway: connection("control_room_fleet"),
+  fleetOwner: connection("control_room_fleet_owner") });
 
 test("captures restricted roles for exactly one authority database", () => {
   const captured = captureMacLocalDatabaseRolesV1(roles);
   assert.equal(captured.web.database, "control_room");
   assert.equal(captured.coordinator.username, "control_room_coordinator");
+  const fleet = captureMacLocalDatabaseRolesV1(fleetRoles);
+  assert.equal(fleet.fleetGateway?.username, "control_room_fleet");
+  assert.equal(fleet.fleetOwner?.username, "control_room_fleet_owner");
 });
 
 test("refuses role reuse and a second database endpoint", () => {
   assert.throws(() => captureMacLocalDatabaseRolesV1({ ...roles, queueWorker: { ...roles.queueWorker, username: roles.coordinator.username } }));
   assert.throws(() => captureMacLocalDatabaseRolesV1({ ...roles, results: { ...roles.results, database: "other_control_room" } }));
+  assert.throws(() => captureMacLocalDatabaseRolesV1({ ...fleetRoles, fleetOwner: undefined }));
+  assert.throws(() => captureMacLocalDatabaseRolesV1({ ...fleetRoles,
+    fleetGateway: { ...fleetRoles.fleetGateway, database: "other_control_room" } }));
 });
 
 test("loads the fixed owner-only database-role file", async t => {

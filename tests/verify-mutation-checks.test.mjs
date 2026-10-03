@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
 import test from "node:test";
 
 const verifier = resolve("scripts/ci/verify-mutation-checks.mjs");
@@ -51,13 +53,42 @@ function run(root, path, env = {}) {
   return spawnSync(process.execPath, [verifier, path], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { ...process.env, MUTATION_CHECK_AUDIT_OUTPUT: undefined, ...env },
   });
 }
 
 function output(result) {
   return `${result.stdout}\n${result.stderr}`;
 }
+
+test("cleanup signal refusal aborts proof without skipping source or lock restoration", async () => {
+  // Simulate EPERM without creating an unkillable process in a restricted runner.
+  const source = readFileSync(verifier, "utf8");
+  const helpers = source.slice(source.indexOf('const MANIFEST_DIRECTORY'), source.indexOf('process.on("SIGINT"'));
+  for (const timedOut of [false, true]) {
+    const child = new EventEmitter(); child.pid = 42;
+    const events = [];
+    const context = {
+      spawn: () => child, console: { log() {}, error() {} }, setTimeout, clearTimeout,
+      process: { env: {}, kill() { throw Object.assign(new Error("signal refused"), { code: "EPERM" }); },
+        exit(code) { events.push(`exit:${code}`); } },
+    };
+    const api = runInNewContext(`${helpers}\n({runTest, describeConfigurationError, rethrowCleanupRefusal,
+      retained: () => activeChild === childUnderTest,
+      interrupt: () => { activeRestore = () => events.push("source");
+        activeAuditCleanup = () => events.push("lock"); restoreOnSignal("SIGTERM"); }})`,
+      { ...context, childUnderTest: child, events });
+    const pending = api.runTest("fixture", ".", timedOut ? 1 : 1_000);
+    if (!timedOut) child.emit("close", 0, null);
+    const result = await pending;
+    assert.match(result.cleanupError.message, /could not retire test process group 42/u);
+    assert.throws(() => api.describeConfigurationError({}, result), /could not retire/u);
+    assert.throws(() => api.rethrowCleanupRefusal(result.cleanupError), /could not retire/u);
+    assert.equal(api.retained(), true, "failed cleanup must retain ownership for interruption");
+    api.interrupt();
+    assert.deepEqual(events, ["source", "lock", "exit:1"]);
+  }
+});
 
 async function interruptDuringMutation(root, path, signal, verifierPath = verifier, marker = "RUNNING MUTATED TEST [1] src/guard.mjs") {
   const child = spawn(process.execPath, [verifierPath, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -121,9 +152,175 @@ test("find must match exactly once, rejecting both zero and multiple matches", (
       const result = run(root, path);
       assert.equal(result.status, 1);
       assert.match(output(result), new RegExp(`matched ${count} times; expected exactly once`, "u"));
+      assert.doesNotMatch(output(result), /Baseline/u);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test("running one manifest fails when an anchor in any declared manifest is unresolved", () => {
+  const root = fixture();
+  try {
+    const selected = manifest(root);
+    writeFileSync(join(root, "mutation-checks", "stale.json"), `${JSON.stringify([{
+      file: "src/guard.mjs",
+      find: "anchor that is no longer present",
+      replace: "replacement",
+      test: 'node -e "process.exit(0)"',
+      why: "every declared mutation remains live",
+    }], null, 2)}\n`);
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "stale second manifest");
+    const result = run(root, selected);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /mutation-checks\/stale\.json:.*find matched 0 times; expected exactly once/u);
+    assert.doesNotMatch(output(result), /Baseline \[1\]/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("anchor-only validation rejects stale manifests without a branch manifest or a clean tree", () => {
+  for (const [find, count] of [["missing text", 0], ['"', 2]]) {
+    const root = fixture();
+    try {
+      manifest(root, { find });
+      writeFileSync(join(root, "owner-edit.txt"), "preserve this edit\n");
+      const result = run(root, "--anchors-only");
+      assert.equal(result.status, 1, output(result));
+      assert.match(output(result), new RegExp(`matched ${count} times; expected exactly once`, "u"));
+      assert.doesNotMatch(output(result), /Baseline|No mutation manifest/u);
+      assert.equal(readFileSync(join(root, "owner-edit.txt"), "utf8"), "preserve this edit\n");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("anchor-only validation passes valid manifests without executing their test commands", () => {
+  const root = fixture();
+  try {
+    manifest(root, { test: 'node -e "process.exit(99)"' });
+    const result = run(root, "--anchors-only");
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /All declared mutation anchors match exactly once/u);
+    assert.doesNotMatch(output(result), /Baseline/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("maintenance audit reports every entry, distinguishes baselines, and preserves existing edits", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root);
+    const checks = JSON.parse(readFileSync(path, "utf8"));
+    checks.push({ ...checks[0], test: 'node -e "process.exit(0)"', why: "survives" });
+    checks.push({ ...checks[0], test: 'node -e "process.exit(1)"', why: "bad baseline" });
+    checks.push({ ...checks[0], find: "missing", why: "stale anchor" });
+    writeFileSync(path, `${JSON.stringify(checks, null, 2)}\n`);
+    const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
+    const result = run(root, "--audit-all");
+    assert.equal(result.status, 1, output(result));
+    const records = result.stdout.split("\n").filter(line => line.startsWith("AUDIT: ")).map(line => JSON.parse(line.slice(7)));
+    assert.deepEqual(records.map(record => record.status), ["caught", "failed", "baseline-failed", "failed"]);
+    assert.match(records[1].error, /mutation survived/u);
+    assert.match(records[2].error, /baseline failing/u);
+    assert.match(records[3].error, /matched 0 times/u);
+    assert.doesNotMatch(output(result), /Whitespace check \[4\]/u);
+    assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+    assert.equal(readFileSync(path, "utf8"), `${JSON.stringify(checks, null, 2)}\n`);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("maintenance audit stops when a test contaminates the checkout", () => {
+  const root = fixture();
+  try {
+    manifest(root, { test: 'node -e "require(\'fs\').writeFileSync(\'stray.txt\',\'stray\');process.exit(1)"' });
+    const result = run(root, "--audit-all");
+    assert.equal(result.status, 1, output(result));
+    assert.match(output(result), /audit test changed the checkout/u);
+    assert.doesNotMatch(output(result), /AUDIT:/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("maintenance audits refuse a concurrent caller and release their lock on interruption", async () => {
+  const root = fixture();
+  let child, closed;
+  try {
+    manifest(root, { test: 'exec node -e "setTimeout(()=>{},5000)"' });
+    child = spawn(process.execPath, [verifier, "--audit-all"], {
+      cwd: root, stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, MUTATION_CHECK_AUDIT_OUTPUT: undefined },
+    });
+    closed = new Promise(resolveDone => child.once("close", resolveDone));
+    let transcript = "";
+    await new Promise((resolveReady, rejectReady) => {
+      const timeout = setTimeout(() => rejectReady(new Error("audit never reached baseline")), 10_000);
+      child.stdout.on("data", data => {
+        transcript += data;
+        if (transcript.includes("Baseline [1]")) { clearTimeout(timeout); resolveReady(); }
+      });
+    });
+    const second = run(root, "--audit-all");
+    assert.equal(second.status, 1, output(second));
+    assert.match(output(second), /another maintenance audit owns this checkout/u);
+    child.kill("SIGTERM");
+    await closed;
+    assert.equal(existsSync(join(root, ".test-tmp", "mutation-audit.lock")), false);
+    const retry = run(root, "--audit-all", { MUTATION_CHECK_TIMEOUT_MS: "50" });
+    assert.doesNotMatch(output(retry), /another maintenance audit owns this checkout/u);
+  } finally {
+    child?.kill("SIGTERM");
+    if (closed) await closed;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("twenty simultaneous maintenance callers cannot enter an owned audit", async () => {
+  const root = fixture(), children = [], childrenClosed = [];
+  let owner, ownerClosed;
+  try {
+    manifest(root, { test: 'exec node -e "setInterval(()=>{},1000)"' });
+    owner = spawn(process.execPath, [verifier, "--audit-all"], { cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, MUTATION_CHECK_AUDIT_OUTPUT: undefined, MUTATION_CHECK_TIMEOUT_MS: "20000" } });
+    ownerClosed = new Promise(done => owner.once("close", done));
+    await new Promise((ready, reject) => {
+      let reached = false;
+      const timer = setTimeout(() => reject(new Error("owner never entered its baseline")), 10000);
+      owner.stdout.on("data", data => {
+        if (data.toString().includes("Baseline [1]")) { reached = true; clearTimeout(timer); ready(); }
+      });
+      owner.stderr.resume();
+      owner.once("close", () => { clearTimeout(timer); if (!reached) reject(new Error("owner exited before its baseline")); });
+    });
+    const results = await Promise.all(Array.from({ length: 20 }, () => new Promise((done, reject) => {
+      const child = spawn(process.execPath, [verifier, "--audit-all"], { cwd: root,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, MUTATION_CHECK_AUDIT_OUTPUT: undefined, MUTATION_CHECK_TIMEOUT_MS: "100" } });
+      children.push(child);
+      childrenClosed.push(new Promise(closed => child.once("close", closed)));
+      let transcript = "";
+      child.stdout.on("data", data => { transcript += data; });
+      child.stderr.on("data", data => { transcript += data; });
+      child.once("error", reject);
+      child.once("close", code => done({ code, transcript }));
+    })));
+    assert.equal(results.length, 20);
+    for (const result of results) {
+      assert.equal(result.code, 1);
+      assert.match(result.transcript, /another maintenance audit owns this checkout/u);
+      assert.doesNotMatch(result.transcript, /TEST PROCESS GROUP/u);
+    }
+    owner.kill("SIGTERM"); await ownerClosed;
+    assert.equal(existsSync(join(root, ".test-tmp", "mutation-audit.lock")), false);
+    const retry = run(root, "--audit-all", { MUTATION_CHECK_TIMEOUT_MS: "50" });
+    assert.doesNotMatch(output(retry), /another maintenance audit owns this checkout/u);
+    assert.match(output(retry), /baseline-failed/u);
+  } finally {
+    owner?.kill("SIGTERM");
+    for (const child of children) if (child.exitCode === null) child.kill("SIGTERM");
+    if (ownerClosed) await ownerClosed;
+    await Promise.all(childrenClosed);
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -837,6 +1034,10 @@ test("the CI job gates verification on a branch manifest and joins the merge gat
   assert.match(job, /fetch-depth: 0/u);
   assert.match(job, /if: steps\.manifest\.outputs\.exists == 'true'/u);
   assert.match(job, /--warn-only/u);
+  const anchorStep = job.split("      - name: ").find(step => step.startsWith("Validate every declared mutation anchor"));
+  assert.ok(anchorStep, "all branches must validate anchors");
+  assert.match(anchorStep, /run: node scripts\/ci\/verify-mutation-checks\.mjs --anchors-only/u);
+  assert.doesNotMatch(anchorStep, /\bif:/u);
   assert.doesNotMatch(job, /secrets\./u);
   const gate = workflow.slice(workflow.indexOf("  merge-gate:"));
   assert.match(gate, /needs: \[[^\]]*mutation-checks/u);
@@ -847,7 +1048,8 @@ test("the self-manifest runs behavioral tests without the source-drift meta-test
   const entries = JSON.parse(readFileSync("mutation-checks/codex-ci-mutation-check.json", "utf8"));
   assert.ok(entries.length > 0);
   for (const entry of entries) {
-    assert.match(entry.test, /--test-skip-pattern='declared manifests name unique, tracked source snippets'/u);
+    assert.match(entry.test, /--test-name-pattern=/u);
+    assert.doesNotMatch(entry.test, /declared manifests name unique, tracked source snippets/u);
     assert.match(entry.test, /tests\/verify-mutation-checks\.test\.mjs/u);
   }
 });

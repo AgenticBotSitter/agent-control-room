@@ -1,0 +1,15 @@
+{
+  "schema": "control-room.database-role-manifest/v1",
+  "database": "control_room",
+  "port": 5432,
+  "migratorLogin": "control_room_migrator",
+  "migratorGroup": "control_room_schema_owner",
+  "deployerLogin": "control_room_deployer",
+  "macRolePlan": {},
+  "roles": [
+    {
+      "name": "control_room_superuser",
+      "attributes": "LOGIN SUPERUSER INHERIT CREATEDB CREATEROLE REPLICATION BYPASSRLS"
+    }
+  ]
+}

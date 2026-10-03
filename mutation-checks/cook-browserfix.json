@@ -1,0 +1,156 @@
+[
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": ".replace(/<body>[\\s\\S]*<\\/main>/u,",
+    "replace": ".replace(/<a class=\"skip-link\"[\\s\\S]*<\\/main>/u,",
+    "test": "node --import tsx --test --test-name-pattern=B01 tests/website-owner-saves.test.tsx",
+    "why": "sign-out controls must be in the body, outside stylesheet comments"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "if(busy)return;",
+    "replace": "if(false)return;",
+    "test": "node --import tsx --test --test-name-pattern=B01 tests/website-owner-saves.test.tsx",
+    "why": "pending sign-out must reject synchronous re-entry"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "if(!response.ok&&response.status!==401)",
+    "replace": "if(false)",
+    "test": "node --import tsx --test --test-name-pattern=B01 tests/website-owner-saves.test.tsx",
+    "why": "a refused sign-out must retain its retry control"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "!response.ok&&response.status!==401",
+    "replace": "!response.ok",
+    "test": "node --import tsx --test --test-name-pattern=B01 tests/website-owner-saves.test.tsx",
+    "why": "expired sessions must be able to continue to sign in"
+  },
+  {
+    "file": "src/web/v1/project-settings-wire.ts",
+    "find": "expectedVersion: z.number().int().nonnegative(),\n  eligibleWorkerKinds: z.array(workerKind).max(3).nullable(),\n  maxConcurrentTasks: z.number().int().min(1).max(20).nullable(),",
+    "replace": "expectedVersion: z.number().int().nonnegative(),\n  eligibleWorkerKinds: z.array(workerKind).max(3).nullable(),\n  maxConcurrentTasks: z.number().min(1).max(20).nullable(),",
+    "test": "node --import tsx --test --test-name-pattern=B03 tests/website-owner-saves.test.tsx",
+    "why": "invalid limits must be refused before sending a save"
+  },
+  {
+    "file": "src/web/v1/project-settings-wire.ts",
+    "find": "expectedVersion: z.number().int().nonnegative(),\n  eligibleWorkerKinds: z.array(workerKind).max(3).nullable(),\n  maxConcurrentTasks: z.number().int().min(1).max(20).nullable(),",
+    "replace": "expectedVersion: z.number().int().nonnegative(),\n  eligibleWorkerKinds: z.array(workerKind).max(3).nullable(),\n  maxConcurrentTasks: z.number().int().max(20).nullable(),",
+    "test": "node --import tsx --test --test-name-pattern=B03 tests/website-owner-saves.test.tsx",
+    "why": "invalid limits must be refused before sending a save"
+  },
+  {
+    "file": "src/web/v1/project-settings-wire.ts",
+    "find": "expectedVersion: z.number().int().nonnegative(),\n  eligibleWorkerKinds: z.array(workerKind).max(3).nullable(),\n  maxConcurrentTasks: z.number().int().min(1).max(20).nullable(),",
+    "replace": "expectedVersion: z.number().int().nonnegative(),\n  eligibleWorkerKinds: z.array(workerKind).max(3).nullable(),\n  maxConcurrentTasks: z.number().int().min(1).nullable(),",
+    "test": "node --import tsx --test --test-name-pattern=B03 tests/website-owner-saves.test.tsx",
+    "why": "invalid limits must be refused before sending a save"
+  },
+  {
+    "file": "private-app/app/project-settings-panel.tsx",
+    "find": "onChange={() => setSaved(false)}",
+    "replace": "onChange={() => {}}",
+    "test": "node --import tsx --test --test-name-pattern=B05 tests/website-owner-saves.test.tsx",
+    "why": "every changed draft must clear the saved indicator"
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "if (inFlight.current) return;",
+    "replace": "if (false) return;",
+    "test": "node --import tsx --test --test-name-pattern=B04 tests/website-owner-saves.test.tsx",
+    "why": "an offer or read burst must issue one pending request"
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "if (!response.ok) throw",
+    "replace": "if (false) throw",
+    "test": "node --import tsx --test --test-name-pattern=B04 tests/website-owner-saves.test.tsx",
+    "why": "a failed saved-offer read must stay unavailable"
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "value && typeof value.jobId === \"string\"",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern=B04 tests/website-owner-saves.test.tsx",
+    "why": "malformed offer identities must not establish saved status"
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "[\"open\", \"closed\", \"blocked\"].includes(value.state)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern=B04 tests/website-owner-saves.test.tsx",
+    "why": "unknown offer states must not establish saved status"
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "setUncertain(true);",
+    "replace": "setUncertain(false);",
+    "test": "node --import tsx --test --test-name-pattern=B04 tests/website-owner-saves.test.tsx",
+    "why": "an unknown offer must require a status read before another offer"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "if (offers) return Response.json",
+    "replace": "if (false) return Response.json",
+    "test": "node --import tsx --test --test-name-pattern=B04 tests/website-owner-saves.test.tsx",
+    "why": "saved-offer recovery must reach the authenticated read service"
+  },
+  {
+    "file": "private-app/app/workers/connect/connect-bot-workspace.tsx",
+    "find": "&& !busy && !uncertain;",
+    "replace": "&& !busy;",
+    "test": "node --import tsx --test --test-name-pattern=B06 tests/website-owner-saves.test.tsx",
+    "why": "an unknown code outcome must block another issuance until recovery"
+  },
+  {
+    "file": "private-app/app/workers/connect/connect-bot-workspace.tsx",
+    "find": "          : \"The code creation could not be confirmed. It may have been saved. Open Workers to check for a waiting code before trying again, and cancel it if it is for this bot.\");",
+    "replace": "          : \"The code was not created. Nothing changed.\");",
+    "test": "node --import tsx --test --test-name-pattern=B06 tests/website-owner-saves.test.tsx",
+    "why": "a lost code reply cannot establish that nothing changed"
+  },
+  {
+    "file": "private-app/app/module-bundle-upload.tsx",
+    "find": "approvalBusy.current || (stage.status",
+    "replace": "false || (stage.status",
+    "test": "node --import tsx --test --test-name-pattern=B09 tests/module-bundle-transfer-ui.test.tsx",
+    "why": "approval re-entry must not overwrite success with a conflict"
+  },
+  {
+    "file": "private-app/app/module-bundle-upload.tsx",
+    "find": "stage.status !== \"ready\" && stage.status !== \"uncertain\"",
+    "replace": "stage.status !== \"ready\"",
+    "test": "node --import tsx --test --test-name-pattern=B09 tests/module-bundle-transfer-ui.test.tsx",
+    "why": "the original uncertain approval must remain retryable"
+  },
+  {
+    "file": "private-app/app/module-bundle-upload.tsx",
+    "find": "client.approve(submission, draft, approvalKey)",
+    "replace": "client.approve(submission, draft, crypto.randomUUID())",
+    "test": "node --import tsx --test --test-name-pattern=B09 tests/module-bundle-transfer-ui.test.tsx",
+    "why": "approval retry must retain its original idempotency key"
+  },
+  {
+    "file": "private-app/app/module-bundle-upload.tsx",
+    "find": "failure.code === \"uncertain\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=B09 tests/module-bundle-transfer-ui.test.tsx",
+    "why": "a lost approval reply must retain the original recovery identity"
+  },
+  {
+    "file": "private-app/app/module-bundle-upload.tsx",
+    "find": "failure.code === \"unavailable\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=B09 tests/module-bundle-transfer-ui.test.tsx",
+    "why": "an unavailable or unreadable approval reply must retain the original recovery identity"
+  },
+  {
+    "file": "private-app/app/module-bundle-upload.tsx",
+    "find": "disabled={busy || stage.status === \"uncertain\"}",
+    "replace": "disabled={busy}",
+    "test": "node --import tsx --test --test-name-pattern=B09 tests/module-bundle-transfer-ui.test.tsx",
+    "why": "an unknown approval must be reconciled before replacing the file"
+  }
+]

@@ -154,7 +154,9 @@ assert.deepEqual(leaked, [], "a cluster was killed rather than stopped");
 
 Both helpers return `null` rather than an empty list when `ipcs` cannot be read,
 so a guard that could not run refuses instead of reporting a clean result it
-never measured. `tests/attack-kit.test.ts` asserts this over the whole suite,
+never measured. `tests/support/attack-kit/suite-lane.ts` asserts this for each
+attack-kit test file (`tests/attack-kit.test.ts`,
+`tests/attack-kit-mutation.test.ts`, `tests/attack-kit-real-postgres.test.ts`),
 comparing by segment id rather than by count — a teardown that released one
 cluster's segment while leaking another's would otherwise show a flat count.
 

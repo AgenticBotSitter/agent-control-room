@@ -1,0 +1,387 @@
+[
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "return Math.max(databaseNext, journalNext ?? 1);",
+    "replace": "return databaseNext;",
+    "test": "node --test --test-name-pattern='every failed update' tests/updater-skeleton.test.mjs",
+    "why": "failed effects must consume a file ordinal"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "PRE_DRAIN_V1.has(run.state) && EFFECT_FAILURES_V1.get(error) !== \"drain\"",
+    "replace": "PRE_DRAIN_V1.has(run.state)",
+    "test": "node --test --test-name-pattern='every failed update' tests/updater-skeleton.test.mjs",
+    "why": "a failed drain must recover the service even though its durable state is still quick_backup"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (run.state === \"rollback_started\" && !journalUncertain && !journalRecoveryPending) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='Check and continue resumes' tests/updater-skeleton.test.mjs",
+    "why": "owner recovery resumes the durable undo tail"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "const KERNEL_LOCK_V1 = 0x20;",
+    "replace": "const KERNEL_LOCK_V1 = 0;",
+    "test": "node --test --test-name-pattern='eight journal processes' tests/updater-robustness.test.mjs",
+    "why": "writers in different processes must share a kernel lock"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "const relativeTemp = `${KEY_PATH_V1}.new-${randomBytes(16).toString(\"hex\")}`;",
+    "replace": "const relativeTemp = `${KEY_PATH_V1}.new`;",
+    "test": "node --test --test-name-pattern='abandoned first-key' tests/updater-robustness.test.mjs",
+    "why": "a crash residue cannot block key creation"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "'updater_journal_canonical_refused', 'updater_journal_ordinal_refused'].includes",
+    "replace": "'updater_journal_canonical_refused'].includes",
+    "test": "node --test --test-name-pattern='conflicting ordinals' tests/updater-robustness.test.mjs",
+    "why": "legacy ordinal damage must be explicitly quarantinable"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "&& canonicalV1(existing) !== canonicalV1(candidate)) throw journalErrorV1(\"updater_journal_ordinal_refused\");",
+    "replace": "&& false) throw journalErrorV1(\"updater_journal_ordinal_refused\");",
+    "test": "node --test --test-name-pattern='conflicting ordinals' tests/updater-robustness.test.mjs",
+    "why": "a conflicting append must refuse before damaging the chain"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (kind === \"intent\" || kind === \"done\") {\n        if (typeof entry.runId !== \"string\" || !Number.isSafeInteger(entry.ordinal) || entry.ordinal < 1)",
+    "replace": "if (kind === \"intent\" || kind === \"done\") {\n        if (false)",
+    "test": "node --test --test-name-pattern='invalid ordinals' tests/updater-robustness.test.mjs",
+    "why": "malformed ordinal labels never enter authority"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (!rescued && !journalUncertain && !journalRecoveryPending)\n          throw updaterRefuseV1(\"updater_check_continue_refused\");",
+    "replace": "if (!rescued || journalUncertain || journalRecoveryPending)\n          throw updaterRefuseV1(\"updater_check_continue_refused\");",
+    "test": "node --test --test-name-pattern='root repairs an empty' tests/updater-robustness.test.mjs",
+    "why": "an idle corrupt journal must be recoverable on the Mac"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "try { await Promise.race([this.#current, new Promise((_, reject) => {\n      timer = setTimeout(() => reject(updaterRefuseV1(\"updater_heartbeat_stop_timeout\")), this.stopTimeoutMs);\n    })]); }",
+    "replace": "try { await this.#current; }",
+    "test": "node --test --test-name-pattern='stop is bounded' tests/updater-robustness.test.mjs",
+    "why": "hung database heartbeats must not block shutdown"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "requestSeen = true; clearTimeout(deadline); socket.setTimeout(0);",
+    "replace": "requestSeen = true; socket.setTimeout(0);",
+    "test": "node --test --test-name-pattern='complete slow request' tests/updater-robustness.test.mjs",
+    "why": "the input deadline ends once a request is complete"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "requestSeen = true; clearTimeout(deadline); socket.setTimeout(0);",
+    "replace": "requestSeen = true; clearTimeout(deadline);",
+    "test": "node --test --test-name-pattern='complete slow request' tests/updater-robustness.test.mjs",
+    "why": "the input idle timeout must not interrupt an active action"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "const release = await acquireUpdaterLocalLockV1(this.root, \"updater-state/control.lock\", { busyCode: \"updater_control_busy\" });",
+    "replace": "const release = async () => {};",
+    "test": "node --test --test-name-pattern='second control server' tests/updater-robustness.test.mjs",
+    "why": "a second server must not remove the live control socket"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (entry.dev !== this.#socketIdentity.dev || entry.ino !== this.#socketIdentity.ino) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='second control server' tests/updater-robustness.test.mjs",
+    "why": "closing an old server preserves a foreign socket inode"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "[\"check-and-continue\", \"rollback\", \"backup-now\"].includes(verb) ? 300000 : 5000",
+    "replace": "false ? 300000 : 5000",
+    "test": "node --test --test-name-pattern='CLI recovery requests' tests/updater-robustness.test.mjs",
+    "why": "recovery commands allow time for the physical action"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "  const value = text.replace(/\\n$/u, \"\");",
+    "replace": "  const value = text.trim();",
+    "test": "node --import tsx --test --test-name-pattern='F3-23 only the exact switch bytes' tests/updater-robustness.test.mjs",
+    "why": "routine whitespace is not routine any more: only the exact On/Off bytes are a switch (R4S-13)"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "age >= 0 && age < 3600",
+    "replace": "age < 3600",
+    "test": "node --test --test-name-pattern='stale or damaged guard' tests/updater-robustness.test.mjs",
+    "why": "future restart display timestamps are ignored"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "age >= 0 && age < 3600",
+    "replace": "age >= 0",
+    "test": "node --test --test-name-pattern='stale or damaged guard' tests/updater-robustness.test.mjs",
+    "why": "old restart counts must expire"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch { /* Guard status is a disposable display cache, never authority. */ }",
+    "replace": "catch (error) { throw error; }",
+    "test": "node --test --test-name-pattern='stale or damaged guard' tests/updater-robustness.test.mjs",
+    "why": "damaged display facts cannot stop the updater"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (!this.#watching) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern='hung watcher is bounded' tests/updater-robustness.test.mjs",
+    "why": "timed out watcher calls are not overlapped"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "timer = setTimeout(() => reject(updaterRefuseV1(\"updater_watcher_timeout\")), this.watcherTimeoutMs);",
+    "replace": "timer = setTimeout(() => {}, this.watcherTimeoutMs);",
+    "test": "node --test --test-name-pattern='hung watcher is bounded' tests/updater-robustness.test.mjs",
+    "why": "a hung watcher must yield the main loop"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch (error) { try { this.onError(error); } catch { /* reporting cannot block the runner */ } }",
+    "replace": "catch (error) { this.onError(error); }",
+    "test": "node --test --test-name-pattern='broken watcher error reporter' tests/updater-robustness.test.mjs",
+    "why": "logging failure cannot strand the update"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch (error) { try { this.onError(error); } catch { /* reporting cannot block the runner */ } }",
+    "replace": "catch (error) { throw error; }",
+    "test": "node --test --test-name-pattern='newer-release race' tests/updater-skeleton.test.mjs",
+    "why": "watcher failures must not stop an in flight update"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "if (await this.plans.liveRun?.()) return { status: \"run_active\" };",
+    "replace": "if (false) return { status: \"run_active\" };",
+    "test": "node --test --test-name-pattern='live updater run suppresses' tests/updater-watcher.test.mjs",
+    "why": "live runs own the plan until settled"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "timer = setTimeout(() => { failure = new Error(\"command_timeout\"); kill(); }, options.timeout);",
+    "replace": "timer = setTimeout(() => {}, options.timeout);",
+    "test": "node --test --test-name-pattern='git and classifier' tests/updater-robustness.test.mjs",
+    "why": "hung command groups are bounded"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "const release = await acquireUpdaterLocalLockV1(root, \"updater-state/updater.lock\");",
+    "replace": "const release = async () => {};",
+    "test": "node --test --test-name-pattern='fifty updater starts' tests/updater-robustness.test.mjs",
+    "why": "local exclusivity is established before touching the store"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "timer = setTimeout(() => reject(updaterRefuseV1(\"updater_release_timeout\")), 1000);",
+    "replace": "timer = setTimeout(() => {}, 1000);",
+    "test": "node --test --test-name-pattern='composed stop' tests/updater-robustness.test.mjs",
+    "why": "a hung lease release must not block shutdown"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "error.updaterStep ??= startupStep;",
+    "replace": "error.updaterStep ??= undefined;",
+    "test": "node --test --test-name-pattern='whitespace flags' tests/updater-robustness.test.mjs",
+    "why": "startup errors name the failing phase"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "if (!entry.isFile() || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())",
+    "replace": "if (false || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())",
+    "test": "node --test --test-name-pattern='local kernel lock refuses' tests/updater-robustness.test.mjs",
+    "why": "local lock metadata must refuse unsafe custody"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "if (!entry.isFile() || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())",
+    "replace": "if (!entry.isFile() || false || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())",
+    "test": "node --test --test-name-pattern='local kernel lock refuses' tests/updater-robustness.test.mjs",
+    "why": "local lock metadata must refuse unsafe custody"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "if (!entry.isFile() || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())",
+    "replace": "if (!entry.isFile() || entry.nlink !== 1 || false || entry.uid !== process.getuid())",
+    "test": "node --test --test-name-pattern='local kernel lock refuses' tests/updater-robustness.test.mjs",
+    "why": "local lock metadata must refuse unsafe custody"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "if (!entry.isFile() || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())",
+    "replace": "if (!entry.isFile() || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || false)",
+    "test": "node --test --test-name-pattern='local kernel lock refuses' tests/updater-robustness.test.mjs",
+    "why": "local lock metadata must refuse unsafe custody"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "  if [ \"$observed_boot\" != \"$boot\" ] || [ \"$observed_change\" != \"$changed\" ] || [ \"$now\" -lt \"$observed\" ]; then",
+    "replace": "  if [ \"$observed_boot\" != \"$boot\" ] || [ \"$observed_change\" != \"$changed\" ] || [ \"$now\" -lt \"$observed\" ] || { [ \"$changed\" != missing ] && [ \"$changed\" -gt \"$now\" ]; }; then",
+    "test": "node --test --test-name-pattern='wall-clock jumps never roll back' tests/updater-guard.test.mjs",
+    "why": "future heartbeats cannot hide a dead updater"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "&& $2 <= now {n++}",
+    "replace": "{n++}",
+    "test": "node --test --test-name-pattern='elapsed-clock reset' tests/updater-guard.test.mjs",
+    "why": "future restart records cannot exhaust the limit"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "  write_guard_status\n  changed=missing",
+    "replace": "  :\n  changed=missing",
+    "test": "node --test --test-name-pattern='guard counter decays' tests/updater-robustness.test.mjs",
+    "why": "healthy guard checks publish the decayed count"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "  if [ \"$observed_boot\" != \"$boot\" ] || [",
+    "replace": "  if [",
+    "test": "node --test --test-name-pattern='guard gives first load' tests/updater-robustness.test.mjs",
+    "why": "a new boot gives the updater time to write its first heartbeat"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "  observed_boot=none observed=0 observed_change=none",
+    "replace": "  observed_boot=$boot observed=0 observed_change=$changed",
+    "test": "node --test --test-name-pattern=\"first installation with no observation\" tests/updater-guard.test.mjs",
+    "why": "a first installation has one bounded missing heartbeat grace"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "  if [ \"$watch_refused\" = 0 ]; then revert_upgrade_links; fi",
+    "replace": "  if [ \"$watch_refused\" = 0 ]; then :; fi",
+    "test": "node --test --test-name-pattern='malformed selfupgrade' tests/updater-robustness.test.mjs",
+    "why": "broken revert evidence cannot suppress updater revival. Re-anchored: cook/r7ufix replaced the `(revert_upgrade_links) || echo guard_warning:...` fallback with an explicit `watch_refused` guard, so the rule is now expressed by the guard around the call rather than by a fallback after it. The mutant skips the revert while still taking the revival path, which is exactly the state the finding was about."
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "case \"$1\" in \"\"|.|..|*[!A-Za-z0-9._-]*) die invalid_id ;; esac",
+    "replace": "case \"$1\" in \"\") die invalid_id ;; esac",
+    "test": "node --test --test-name-pattern='two-line rescue ids' tests/updater-robustness.test.mjs",
+    "why": "complete identifiers are validated before side effects"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "[ \"${#1}\" -le 80 ] || die invalid_id",
+    "replace": ":",
+    "test": "node --test --test-name-pattern='two-line rescue ids' tests/updater-robustness.test.mjs",
+    "why": "rescue identifiers are bounded"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "IFS= read -r answer || die owner_declined_data_loss;",
+    "replace": "IFS= read -r answer;",
+    "test": "node --test --test-name-pattern='interrupted rescue resumes' tests/updater-robustness.test.mjs",
+    "why": "EOF must give an explicit owner decline reason"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "if [ -f \"$intent\" ]; then",
+    "replace": "if false; then",
+    "test": "node --test --test-name-pattern='interrupted rescue resumes' tests/updater-robustness.test.mjs",
+    "why": "an interrupted rescue must retain its selected pair"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "if [ ! -f \"$intent\" ]; then",
+    "replace": "if false; then",
+    "test": "node --test --test-name-pattern='interrupted rescue resumes' tests/updater-robustness.test.mjs",
+    "why": "pair selection is durable before the first link changes"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "[ \"$(extract \"$intent\" schema)\" = control-room.rescue-intent/v1 ] || die invalid_rescue_intent",
+    "replace": ":",
+    "test": "node --test --test-name-pattern='invalid recorded rescue' tests/updater-robustness.test.mjs",
+    "why": "an unknown intent schema cannot authorize rescue"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "[ \"$selected\" -ge 0 ] || die invalid_rescue_intent",
+    "replace": ":",
+    "test": "node --test --test-name-pattern='invalid recorded rescue' tests/updater-robustness.test.mjs",
+    "why": "a recorded target must belong to known good history"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "case \"$1\" in \"\"|.|..|*[!A-Za-z0-9._-]*) die invalid_id ;; esac",
+    "replace": "case \"$1\" in \"\") die invalid_id ;; esac",
+    "test": "node --test --test-name-pattern='malformed or injected' tests/updater-guard.test.mjs",
+    "why": "guard validates every link id before invoking ln"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "IFS= read -r answer || die owner_declined_data_loss; [ \"$answer\" = YES ] || die owner_declined_data_loss",
+    "replace": "IFS= read -r answer || die owner_declined_data_loss; :",
+    "test": "node --test --test-name-pattern='declining a data-loss rescue' tests/updater-guard.test.mjs",
+    "why": "declining an older database pair refuses before any service is stopped"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (requestsSettled && !this.#stopping && flag === \"On\" && this.watcher) {",
+    "replace": "if (this.watcher) {",
+    "test": "node --test --test-name-pattern='main loop does not poll' tests/updater-skeleton.test.mjs",
+    "why": "the source watcher must remain inert while self-update is Off"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > options.maxBuffer) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='command output bounds' tests/updater-robustness.test.mjs",
+    "why": "bounded child replies must refuse before they can exhaust memory"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "if (error.code === \"EPERM\") child.kill(\"SIGKILL\");",
+    "replace": "if (error.code === \"EPERM\") throw error;",
+    "test": "node --test --test-name-pattern=\"group-signal refusal\" tests/updater-robustness.test.mjs",
+    "why": "F3-11 a process-group signal refusal still terminates the owned child without an uncaught exception"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "else await releaseStoreV1(store).catch(() => {});",
+    "replace": "else await store?.release?.().catch(() => {});",
+    "test": "node --test --test-name-pattern=\"failed startup releases\" tests/updater-robustness.test.mjs",
+    "why": "F3-18 a failed startup releases the local lock even when store cleanup hangs"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (error && (typeof error === \"object\" || typeof error === \"function\")) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern=\"every failed update step\" tests/updater-skeleton.test.mjs",
+    "why": "primitive effect failures must be wrapped before failure tagging"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "releaseId = SAFE_ID_V1.test(basename(target)) ? basename(target) : null;",
+    "replace": "releaseId = basename(target);",
+    "test": "node --test --test-name-pattern=\"whitespace flags and display release\" tests/updater-robustness.test.mjs",
+    "why": "unusual display release names must not abort startup"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "Number.isSafeInteger(guard.at) && age >= 0 && age < 3600",
+    "replace": "age >= 0 && age < 3600",
+    "test": "node --test --test-name-pattern=\"stale or damaged guard\" tests/updater-robustness.test.mjs",
+    "why": "guard cache timestamps must be whole seconds"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (typeof entry.runId !== \"string\" || !Number.isSafeInteger(entry.ordinal) || entry.ordinal < 1)\n          throw journalErrorV1(\"updater_journal_ordinal_refused\");\n        const { at: _at, ...candidate } = entry;",
+    "replace": "if (!Number.isSafeInteger(entry.ordinal) || entry.ordinal < 1)\n          throw journalErrorV1(\"updater_journal_ordinal_refused\");\n        const { at: _at, ...candidate } = entry;",
+    "test": "node --test --test-name-pattern=\"invalid ordinals\" tests/updater-robustness.test.mjs",
+    "why": "invalid run identifiers cannot damage the journal before read validation"
+  }
+]

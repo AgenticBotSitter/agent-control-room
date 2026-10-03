@@ -54,6 +54,12 @@ export interface CompletionReviewTargetV1 {
   submittedAt: string;
 }
 
+export interface CompletionReviewExceptionV1 {
+  id: string;
+  statementDigest: string;
+  followUpJobId: string;
+}
+
 export interface CompletionReviewV1 {
   schemaVersion: typeof COMPLETION_GATE_SCHEMA_VERSION_V1;
   id: string;
@@ -65,11 +71,12 @@ export interface CompletionReviewV1 {
   acceptanceProfileDigest: string;
   reviewer: CompletionPrincipalV1;
   authority: "advisory" | "completion_gate";
-  decision: "commented" | "accepted" | "changes_requested" | "rejected";
+  decision: "commented" | "accepted" | "accepted_with_exceptions" | "changes_requested" | "rejected";
   assessedRisk: CompletionRiskV1;
   effectiveRisk: CompletionRiskV1;
   evidenceDigests: string[];
   findingIds: string[];
+  exceptions?: CompletionReviewExceptionV1[];
   reviewedAt: string;
   grantsApproval: false;
   grantsExecutionAuthority: false;

@@ -1,11 +1,14 @@
 import { z } from "zod";
+import { modelIdentifierSchemaV1 } from "../../domain/v1/model-identifier";
+import { reusableSkillReferencesSchemaV1 } from "../../skills/v1/schemas";
 
 export const WORK_BATCH_PROPOSAL_V1 = "control-room.work-batch-proposal/v1" as const;
 export const WORK_BATCH_RECEIPT_V1 = "control-room.work-batch-receipt/v1" as const;
 export const WORK_BATCH_MAX_TASKS_V1 = 32;
 export const WORK_BATCH_MAX_EDGES_V1 = 64;
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
-const localId = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9._-]*$/);
+export const workBatchLocalIdSchemaV1 = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9._-]*$/);
+const localId = workBatchLocalIdSchemaV1;
 const line = z.string().min(1).max(180).refine((value) => !/[\r\n]/.test(value), "must be one line");
 
 const workBatchProposalTaskSchemaV1 = z.object({
@@ -17,9 +20,10 @@ const workBatchProposalTaskSchemaV1 = z.object({
   role: z.enum(["builder", "checker", "validator"]),
   requestedWorkerId: id.optional(),
   requestedWorkerKind: id.optional(),
-  requestedModelKey: id.optional(),
+  requestedModelKey: modelIdentifierSchemaV1.optional(),
   acceptanceCriteria: z.string().min(1).max(4_000),
   acceptanceTests: z.string().min(1).max(4_000),
+  skillRefs: reusableSkillReferencesSchemaV1.optional(),
 }).strict();
 
 function validateWorkBatchProposalGraphV1(value: { tasks: readonly { localId: string }[];

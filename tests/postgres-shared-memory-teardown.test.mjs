@@ -326,6 +326,29 @@ test("the ladder stops at the first step that finds the postmaster gone, and nev
   assert.deepEqual(ladder.steps, [{ action: "cooperative", mode: "fast", stopped: true, failed: false }]);
 });
 
+test("a successful pg_ctl stop is given time to exit, so a lingering pid is not sent a second, failing stop", async () => {
+  // Measured failure: `pg_ctl -m fast -w` returned success (postmaster.pid is
+  // unlinked on the exit path), the pid was still alive for a moment on a loaded
+  // machine, the ladder ran `-m immediate` -- which fails with "PID file does not
+  // exist" -- and a clean shutdown surfaced as
+  // `attack_kit_cluster_stop_degraded:...:pg_ctl_stop_immediate_failed`.
+  // Here the pid outlives the successful fast stop until some time has passed.
+  const calls = [];
+  let waited = false;
+  const ladder = await shutdownLadder({
+    alive: () => !waited,
+    cooperativeStop: async mode => {
+      calls.push(`cooperative:${mode}`);
+      if (mode === "immediate") throw new Error("pg_ctl: PID file does not exist");
+    },
+    signal: signal => { calls.push(`signal:${signal}`); },
+    tickMs: 1, graceMs: 1_000, sleep: async () => { waited = true; },
+  });
+  assert.deepEqual(calls, ["cooperative:fast"], "the exiting postmaster is waited for, not stopped again");
+  assert.deepEqual(ladder.steps, [{ action: "cooperative", mode: "fast", stopped: true, failed: false }]);
+  assert.equal(ladder.forced, false);
+});
+
 test("a postmaster that refuses every cooperative shutdown is SIGKILLed, and that is reported as forced", async () => {
   // Reaching SIGKILL cost the machine a 56-byte segment, so it cannot be
   // reported as a clean teardown. This is the one path that still leaks, and it

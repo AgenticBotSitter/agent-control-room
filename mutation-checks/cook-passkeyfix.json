@@ -1,0 +1,156 @@
+[
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    IF NEW.idempotency_key IS NOT NULL THEN\n      RAISE EXCEPTION 'only the updater may set a push idempotency key'",
+    "replace": "    IF false THEN\n      RAISE EXCEPTION 'only the updater may set a push idempotency key'",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-1: the web cannot hold' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-1: the web must not be able to pre-claim an updater push key, or it silently swallows the cooling-off warning and the refusal alert"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF own <> 2 THEN\n    RAISE EXCEPTION 'updater cooling-off notice key is held by a row the updater did not write'",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater cooling-off notice key is held by a row the updater did not write'",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-1: the web cannot hold' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-1: a key held by a foreign row must make the enqueue raise, not count the squatter as a queued warning"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    WHERE p.template = 'control-room-updater.passkey_cooling_off'\n      AND p.title = 'A new passkey was added' AND p.body = body_text\n      AND ((p.idempotency_key = key_now AND p.not_before IS NULL)\n        OR (p.idempotency_key = key_repeat AND p.not_before IS NOT NULL));",
+    "replace": "    WHERE p.idempotency_key IN (key_now, key_repeat);",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-1: the web cannot hold' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-1: the enqueue must count only the updater's own notices under its keys (the review's reproduction: 2 counted, 0 real)"
+  },
+  {
+    "file": "src/updater/v1/passkey-store.mjs",
+    "find": "row.subscriptions < 1 || row.enqueued !== 2)",
+    "replace": "row.subscriptions < 1)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-1: the store refuses' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-1: the port must require both notices, so a short count can never become 'warnings were queued'"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "          if (notice?.enqueued !== 2) throw updaterRefuseV1(\"updater_passkey_cooling_off_refused\");\n",
+    "replace": "",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='queued fewer than both notices' tests/updater-passkey.test.mjs",
+    "why": "DB-1: the authority must not write a cooling-off key when the port did not report both notices"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN\n    RAISE EXCEPTION 'updater registration row cap",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater registration row cap",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-2:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-2: under REPEATABLE READ the advisory-locked count reads a stale snapshot and 20 racers land past a cap of 4"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_credential_id text;\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-3:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-3: item 7's table has no auth_* columns; without the ALTER the pairing CHECK fails with 42703 and the updater cannot start"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_signature bytea;\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-3:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-3: every auth_* column must arrive on an upgraded table, not just the first"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "-- The column arrives by ALTER for the same reason the registration columns did:\n-- an install that already has item 7's shape must be upgraded, not skipped. It\n-- comes BEFORE the index that names it; the other order failed on item 7's\n-- table (review passkey2 DB-3).\nALTER TABLE updater.push_queue ADD COLUMN IF NOT EXISTS idempotency_key text;\n-- Two bounds that `CREATE TABLE IF NOT EXISTS` does not bring to item 7's table,\n-- under the names a fresh install gives them:\n--\n--   * `push_queue_idempotency_key_check`, the key's alphabet, which the ALTER\n--     above could not carry;\n--   * `push_queue_template_check`, which item 7 wrote WITHOUT `-`. Left alone,\n--     an upgraded queue would refuse every `control-room-updater.*` template,\n--     so the cooling-off enqueue would fail on exactly the installs that already\n--     have an owner to warn. It is replaced only when its text lacks the `-`\n--     range; widening a CHECK cannot invalidate a row the narrower one accepted.\nDO $$\nBEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c\n      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid\n      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace\n     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'\n       AND c.conname = 'push_queue_idempotency_key_check') THEN\n    ALTER TABLE updater.push_queue ADD CONSTRAINT push_queue_idempotency_key_check\n      CHECK (idempotency_key IS NULL\n        OR (idempotency_key ~ '^[a-z]' AND idempotency_key ~ '^[A-Za-z0-9:._~-]{2,191}$'));\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c\n      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid\n      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace\n     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'\n       AND c.conname = 'push_queue_template_check'\n       AND pg_catalog.strpos(pg_catalog.pg_get_constraintdef(c.oid), 'a-z0-9._-') > 0) THEN\n    ALTER TABLE updater.push_queue DROP CONSTRAINT IF EXISTS push_queue_template_check;\n    ALTER TABLE updater.push_queue ADD CONSTRAINT push_queue_template_check\n      CHECK (template ~ '^[a-z][a-z0-9._-]{1,63}$');\n  END IF;\nEND;\n$$;\n-- A PARTIAL unique index, so the web's un-keyed pushes are unaffected while the\n-- updater's keyed ones refuse a duplicate exactly. `CREATE UNIQUE INDEX IF NOT\n-- EXISTS` is idempotent for the same reason every other statement here is.\nCREATE UNIQUE INDEX IF NOT EXISTS push_queue_idempotency ON updater.push_queue(idempotency_key)\n  WHERE idempotency_key IS NOT NULL;\n",
+    "replace": "-- The column arrives by ALTER for the same reason the registration columns did:\n-- an install that already has item 7's shape must be upgraded, not skipped. It\n-- comes BEFORE the index that names it; the other order failed on item 7's\n-- table (review passkey2 DB-3).\n-- Two bounds that `CREATE TABLE IF NOT EXISTS` does not bring to item 7's table,\n-- under the names a fresh install gives them:\n--\n--   * `push_queue_idempotency_key_check`, the key's alphabet, which the ALTER\n--     above could not carry;\n--   * `push_queue_template_check`, which item 7 wrote WITHOUT `-`. Left alone,\n--     an upgraded queue would refuse every `control-room-updater.*` template,\n--     so the cooling-off enqueue would fail on exactly the installs that already\n--     have an owner to warn. It is replaced only when its text lacks the `-`\n--     range; widening a CHECK cannot invalidate a row the narrower one accepted.\nDO $$\nBEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c\n      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid\n      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace\n     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'\n       AND c.conname = 'push_queue_idempotency_key_check') THEN\n    ALTER TABLE updater.push_queue ADD CONSTRAINT push_queue_idempotency_key_check\n      CHECK (idempotency_key IS NULL\n        OR (idempotency_key ~ '^[a-z]' AND idempotency_key ~ '^[A-Za-z0-9:._~-]{2,191}$'));\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c\n      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid\n      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace\n     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'\n       AND c.conname = 'push_queue_template_check'\n       AND pg_catalog.strpos(pg_catalog.pg_get_constraintdef(c.oid), 'a-z0-9._-') > 0) THEN\n    ALTER TABLE updater.push_queue DROP CONSTRAINT IF EXISTS push_queue_template_check;\n    ALTER TABLE updater.push_queue ADD CONSTRAINT push_queue_template_check\n      CHECK (template ~ '^[a-z][a-z0-9._-]{1,63}$');\n  END IF;\nEND;\n$$;\n-- A PARTIAL unique index, so the web's un-keyed pushes are unaffected while the\n-- updater's keyed ones refuse a duplicate exactly. `CREATE UNIQUE INDEX IF NOT\n-- EXISTS` is idempotent for the same reason every other statement here is.\nCREATE UNIQUE INDEX IF NOT EXISTS push_queue_idempotency ON updater.push_queue(idempotency_key)\n  WHERE idempotency_key IS NOT NULL;\nALTER TABLE updater.push_queue ADD COLUMN IF NOT EXISTS idempotency_key text;\n",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-3:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-3: the idempotency_key ALTER must run before the unique index that names it (the review's second upgrade failure)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "       AND pg_catalog.strpos(pg_catalog.pg_get_constraintdef(c.oid), 'a-z0-9._-') > 0) THEN",
+    "replace": "       ) THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-3:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-3: item 7's template CHECK has no '-', so an upgraded queue refuses every control-room-updater.* notice unless it is replaced"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "       AND c.conname = 'push_queue_idempotency_key_check') THEN",
+    "replace": "       AND true) THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-3:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-3: an upgraded push_queue must carry the idempotency-key alphabet CHECK a fresh install has"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "      ('passkey_registrations_auth_signature_check',\n       'CHECK (auth_signature IS NULL OR octet_length(auth_signature) BETWEEN 32 AND 512)'),\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-3:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-3: each auth_* bound must be installed on an upgraded table under the fresh install's name"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "        await boundedV1(() => this.store.markRefusalJournaled(planId, bucketStart));\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-4:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-4: without the journal mark a delivered bucket stays pending forever and every re-drive re-sends it"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "        await boundedV1(() => this.store.markRefusalPushed(planId, bucketStart));\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-4:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-4: without the push mark the re-drive sends the phone alert again"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "      } catch (error) { failure ??= error; }\n    }\n    if (!pushed) {",
+    "replace": "      } catch (error) { throw error; }\n    }\n    if (!pushed) {",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-4:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-4: a failed journal must not stop the phone alert"
+  },
+  {
+    "file": "src/updater/v1/passkey-store.mjs",
+    "find": "    if (result.rowCount !== 1) throw updaterRefuseV1(\"updater_refusal_bucket_refused\");\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-4:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-4: a mark that matched no bucket must refuse rather than report delivery"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    IF NEW.not_before IS NOT NULL OR NEW.queued_at IS DISTINCT FROM pg_catalog.now() THEN",
+    "replace": "    IF NEW.not_before IS NOT NULL THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-5:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-5: a web row with a future queue time is a scheduled send only the updater may make"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    IF NEW.not_before IS NOT NULL OR NEW.queued_at",
+    "replace": "    IF false OR NEW.queued_at",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-5:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-5: a web row may not carry not_before at all"
+  },
+  {
+    "file": "src/updater/v1/passkey-store.mjs",
+    "find": "        throw updaterRefuseV1(\"updater_refusal_replayed\");\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='replayed approval|DB-4:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-6: a replay must surface as the typed updater_refusal_replayed, not a raw 42501"
+  },
+  {
+    "file": "src/updater/v1/passkey-store.mjs",
+    "find": "      FROM updater.passkey_open_registrations_web WHERE registration_digest = $1`",
+    "replace": "      FROM updater.passkey_open_registrations WHERE registration_digest = $1 AND expires_at > pg_catalog.now()`",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-8:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-8: reading the table directly serves the options of a consumed registration"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "   WHERE o.consumed_at IS NULL AND o.expires_at > pg_catalog.now();",
+    "replace": "   WHERE o.expires_at > pg_catalog.now();",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-8:' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-8: the web view must hide consumed registrations"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "GRANT SELECT ON updater.passkey_open_registrations_web TO control_room_private_web;\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-name-pattern='DB-8:|open-registration row is the updater' tests/updater-passkey-postgres.test.ts",
+    "why": "DB-8: the web's usable read is the view, so the grant on it is required"
+  }
+]

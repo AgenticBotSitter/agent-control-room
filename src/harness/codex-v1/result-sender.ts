@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from 'zod';
 import type { SqliteCodexStartJournalV1 } from './start-journal';
 import type { SqliteBridgeJournal } from '../../node-bridge/journal';
@@ -20,8 +21,8 @@ const inputSchema = z.object({
   initializedConnectionDigest: digestSchema,
   observedAt: instant,
   status: z.literal('completed'),
-  identity: z.object({ runId: localId, threadId: localId, turnId: localId,
-    source: z.literal('correlated_codex_start_receipts') }).passthrough(),
+  identity: upstreamObjectV1({ runId: localId, threadId: localId, turnId: localId,
+    source: z.literal('correlated_codex_start_receipts') }),
   exactPackageResult: z.unknown(),
 }).strict();
 

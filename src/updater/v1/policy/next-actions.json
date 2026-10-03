@@ -1,0 +1,9 @@
+{
+  "check_and_continue": "Tap Check and continue to check the interrupted update before continuing.",
+  "review_rescue_on_mac": "Review the rescue on the Mac. If no update is running, clear the rescue marker.",
+  "review_recovery": "Review the failed update and recovery on the Mac before trying another update.",
+  "upgrade_on_mac": "Complete the attended upgrade on the Mac.",
+  "rescue_resolved": "The rescue marker was cleared. Your rescue review is resolved.",
+  "review_refused_update": "Review the refused update on the Mac. Nothing was changed, so retrying is safe.",
+  "review_rolled_back_update": "Review the rollback on the Mac. The previous known-good version is back."
+}

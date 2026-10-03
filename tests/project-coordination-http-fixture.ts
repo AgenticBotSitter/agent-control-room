@@ -472,10 +472,16 @@ export async function composedProjectCoordinationHttpFixture(now: number) {
       '["proposal.adopt"]','["executor:agent"]','low','none',8,1000000,8,$4,$5,'{}',$4,$4)`,
     [policyId, policyDigest, ownerDigest, iso, new Date(now + 3_600_000).toISOString()]);
 
-  const store = createProjectCoordinationCanonicalStoreAdapterV1({ database: db, tenantId: "tenant:test", now: () => now });
+  const store = createProjectCoordinationCanonicalStoreAdapterV1({
+    database: db, tenantId: "tenant:test", workspaceId: "workspace:test", now: () => now });
   const service = new ProjectCoordinationHttpService({ database: db, scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
     clock: () => now, store });
-  const handler = createCoordinationHttpHandler({ origin: FIXTURE_ORIGIN, trust, service, clock: () => now });
+  // The REAL per-caller authorization check, not a stub: this fixture already
+  // stands up the durable session/grant tables, so the fixture's write requests
+  // are held to exactly the check production runs before joining an in-flight
+  // promise.
+  const handler = createCoordinationHttpHandler({ origin: FIXTURE_ORIGIN, trust, service, clock: () => now,
+    authorizeCaller: async (verified, projectId) => { await service.authorizeCaller(verified, projectId); } });
   const server = createServer(async (req, res) => {
     try {
       const request = new Request(`${FIXTURE_ORIGIN}${req.url ?? "/"}`, {

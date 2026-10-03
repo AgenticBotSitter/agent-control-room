@@ -1,15 +1,19 @@
 {
   "schema": "control-room.runtime-license-report/v1",
-  "manifestSha256": "8e3e8bc11dc823048c82e46f96fd7d7beceb6e2cbf48dce63e867090fa9f43ad",
-  "lockSha256": "5be04739af0e32b35420a29cb4ed0383ea28b6ef939f8f8dcdfb04b524042b46",
-  "inventorySha256": "f4360eaba0a4598c8e43e519292ffbc093b69cd5659db30537c63e4fba0ff28c",
-  "inventoryDigest": "3f63b91f0c670be0bb76fa2d09a0cbcd52422408b8c890fefb07f574341c59d1",
+  "manifestSha256": "25460feb5a3200cc712ccfe582b30837de83a9fdbabb953e54e70e7c3cb4495e",
+  "lockSha256": "91d3c1722b19172bb557532621437db05decc058f0e5ebe1ab1a2c5bd7daa7cb",
+  "inventorySha256": "a4ec842fbd10a7932fca526144a71154e69b264c3e5919591e56883b9bb7a76b",
+  "inventoryDigest": "ddb8ecd6cd6b2786144b21307e9a1530997cb2fe256dedd0a636bc4ac27021ce",
   "scope": "prepared runtime root texts only; not complete distribution clearance",
-  "packages": 193,
+  "packages": 225,
   "missing": [
     {
       "name": "@nodable/entities",
       "version": "3.0.0"
+    },
+    {
+      "name": "http_ece",
+      "version": "1.2.0"
     },
     {
       "name": "pg-types",
@@ -110,6 +114,34 @@
       "status": "root_text_collected"
     },
     {
+      "name": "@hexagon/base64",
+      "version": "1.1.28",
+      "path": "node_modules/.pnpm/@hexagon+base64@1.1.28/node_modules/@hexagon/base64",
+      "manifestSha256": "4442456b51131c248c39189a13f1f3341146f2840eb36ed9a07afd77675ea819",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1101,
+          "sha256": "b9c657e3785c8b54b6165808e2a2744dfa33251f5bb8f2324ac5f70ff0d9af57"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@levischuck/tiny-cbor",
+      "version": "0.2.11",
+      "path": "node_modules/.pnpm/@levischuck+tiny-cbor@0.2.11/node_modules/@levischuck/tiny-cbor",
+      "manifestSha256": "a936a51322f5bcb9775eeb5736269afcbffdcb446634544659215424c19f47c9",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1061,
+          "sha256": "5871de52772b5b8e6a7054616a4b59f3f7a7949adb588af7eddcf825c8db86b8"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
       "name": "@mozilla/readability",
       "version": "0.6.0",
       "path": "node_modules/.pnpm/@mozilla+readability@0.6.0/node_modules/@mozilla/readability",
@@ -130,6 +162,230 @@
       "manifestSha256": "548526ce0e1cad9ffe904fba19067013c9fea336eafd3cd52a337ec44406c9ed",
       "attachments": [],
       "status": "missing_root_text"
+    },
+    {
+      "name": "@peculiar/asn1-android",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-android@2.10.0/node_modules/@peculiar/asn1-android",
+      "manifestSha256": "e793e1235cb9e99ed72f9d99c7d74703c18f01a60b19b9f7121995a12c5c2b49",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1056,
+          "sha256": "3ee7c4b649b783688f1186c9aa0da50e331027514c9bfa143f27983e23783c71"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-asym-key",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-asym-key@2.10.0/node_modules/@peculiar/asn1-asym-key",
+      "manifestSha256": "b3cda091b2e3fe378b537298a1287bac8877255c249eb519786a7ac42c6947e8",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1079,
+          "sha256": "1a00d37fb9fca78a7f792fa6c8fd13f0123388756d81b471bcec11484316ff73"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-cms",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-cms@2.10.0/node_modules/@peculiar/asn1-cms",
+      "manifestSha256": "9d04f51df93e5ca9000ba8f62892ce868daf62ccf8bc7e68f751aa0c4e8437fc",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1057,
+          "sha256": "1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-csr",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-csr@2.10.0/node_modules/@peculiar/asn1-csr",
+      "manifestSha256": "e2f5de1d19930666a0b2e9423ea84adc334786d429474dcd140bd5a7a794cd0c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-ecc",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-ecc@2.10.0/node_modules/@peculiar/asn1-ecc",
+      "manifestSha256": "0cee2a01bea7ff5b71f7f409e70a4d3679f02d43a4ec4bebb51d9900d2c066cd",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-pfx",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-pfx@2.10.0/node_modules/@peculiar/asn1-pfx",
+      "manifestSha256": "7ac706a320147fe2f961b02cb6b5d38db8e5f5a19928884c81ea206b134e522e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-pkcs8",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-pkcs8@2.10.0/node_modules/@peculiar/asn1-pkcs8",
+      "manifestSha256": "765040f9ce2acb42bec8a90dd8b138e2d252344351248317754f50e0169bef87",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-pkcs9",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-pkcs9@2.10.0/node_modules/@peculiar/asn1-pkcs9",
+      "manifestSha256": "728567cd9b060e0f0350a48a6ecda0cb5cd50224d399617fe5d66e9bad3c3694",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1056,
+          "sha256": "3ee7c4b649b783688f1186c9aa0da50e331027514c9bfa143f27983e23783c71"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-rsa",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-rsa@2.10.0/node_modules/@peculiar/asn1-rsa",
+      "manifestSha256": "2e49b7c6fa19b86111da58e64bb8aae3b0ec97e9f1ffb64ff74cbd76d02ea2ea",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-schema",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-schema@2.10.0/node_modules/@peculiar/asn1-schema",
+      "manifestSha256": "1c9c99853605aa7047c21ee0343266e67eb44cbeb42fd1c50b1088e99ff8b588",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1057,
+          "sha256": "1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-x509",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-x509@2.10.0/node_modules/@peculiar/asn1-x509",
+      "manifestSha256": "5a82ceb1ea7525c62e26c1cec00b3ef8ec60950fb18221d3ecc6a1a6cbbfc222",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1057,
+          "sha256": "1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-x509-attr",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-x509-attr@2.10.0/node_modules/@peculiar/asn1-x509-attr",
+      "manifestSha256": "96836f59432db44766bb89dcb0f2ea333775d5d408abae3d11b7ad7f2a07c53a",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/asn1-x509-post-quantum",
+      "version": "2.10.0",
+      "path": "node_modules/.pnpm/@peculiar+asn1-x509-post-quantum@2.10.0/node_modules/@peculiar/asn1-x509-post-quantum",
+      "manifestSha256": "96176e0bcc32f35c22d3eb6d0afd2cb110f8f42f805f6a1643687474c270892b",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1079,
+          "sha256": "1a00d37fb9fca78a7f792fa6c8fd13f0123388756d81b471bcec11484316ff73"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/utils",
+      "version": "2.0.3",
+      "path": "node_modules/.pnpm/@peculiar+utils@2.0.3/node_modules/@peculiar/utils",
+      "manifestSha256": "a94d3387ec3358c0445e395c9446236468044375a2e53e50ba3d9972cb7a1e6f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "ce2ae0f0066d1be56ab4ec851cc611805bb95cdc8dd858b301e22ee54b351d43"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@peculiar/x509",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/@peculiar+x509@2.1.0/node_modules/@peculiar/x509",
+      "manifestSha256": "af72b88cb2442274e30abc0a2ca0e3c7167b972e7f1a2ca9828ac84c4e9d704a",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1091,
+          "sha256": "3d5d1b1150b1fc25144d342daaba3875899b8dc2fcb172ea4810cc69affbe4d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@simplewebauthn/server",
+      "version": "14.0.3",
+      "path": "node_modules/.pnpm/@simplewebauthn+server@14.0.3/node_modules/@simplewebauthn/server",
+      "manifestSha256": "321fb48e43d8b3880b54261835c10dcfdd7c7402515d8b93128b85b7017c9f79",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1071,
+          "sha256": "bd9e3f45696472076c7160c7f66e54b2d62d38bc2646c812d19be83ee4400c63"
+        }
+      ],
+      "status": "root_text_collected"
     },
     {
       "name": "@types/debug",
@@ -300,6 +556,34 @@
       "status": "root_text_collected"
     },
     {
+      "name": "asn1.js",
+      "version": "5.4.1",
+      "path": "node_modules/.pnpm/asn1.js@5.4.1/node_modules/asn1.js",
+      "manifestSha256": "a7f7950928493c0c6ee49d25cdea08c838fbd86deb40bc8ab3ef4782779bc0ee",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1070,
+          "sha256": "251ecdcdb2bafa7b106187a8cce96f322d0074c66e557c3c94cb49c769970408"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "asn1js",
+      "version": "3.0.10",
+      "path": "node_modules/.pnpm/asn1js@3.0.10/node_modules/asn1js",
+      "manifestSha256": "e5e046b9bca640e0aa4aeb60fe1e8178a97959c6383b965b0ff52ee565b0ff2c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1571,
+          "sha256": "ebe5d98519d0dfcbcb80e20b22a56e7321e8557cd14355760434bbd4c1f4f683"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
       "name": "bail",
       "version": "2.0.2",
       "path": "node_modules/.pnpm/bail@2.0.2/node_modules/bail",
@@ -309,6 +593,20 @@
           "file": "license",
           "bytes": 1099,
           "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "bn.js",
+      "version": "4.12.5",
+      "path": "node_modules/.pnpm/bn.js@4.12.5/node_modules/bn.js",
+      "manifestSha256": "34b1923a700a3a344515f0ea673cd36b22cdbfe9f68ef30dfc06dcdaf285ee0b",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1055,
+          "sha256": "445739f5b5eb63e5aeff5aeb0f35a45080a421615dce0d97f9939aeea498acdd"
         }
       ],
       "status": "root_text_collected"
@@ -720,6 +1018,14 @@
       "status": "root_text_collected"
     },
     {
+      "name": "http_ece",
+      "version": "1.2.0",
+      "path": "node_modules/.pnpm/http_ece@1.2.0/node_modules/http_ece",
+      "manifestSha256": "ba8f177144f82e807eee301f33745705afd853f1135aa4af96a7df5be6267514",
+      "attachments": [],
+      "status": "missing_root_text"
+    },
+    {
       "name": "https-proxy-agent",
       "version": "7.0.6",
       "path": "node_modules/.pnpm/https-proxy-agent@7.0.6_supports-color@10.2.2/node_modules/https-proxy-agent",
@@ -743,6 +1049,20 @@
           "file": "LICENSE",
           "bytes": 1064,
           "sha256": "ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "inherits",
+      "version": "2.0.4",
+      "path": "node_modules/.pnpm/inherits@2.0.4/node_modules/inherits",
+      "manifestSha256": "be645800bc94fd8de29c8ae91690549b316cc437100108aeea7b2f347693cc80",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 749,
+          "sha256": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b"
         }
       ],
       "status": "root_text_collected"
@@ -1672,6 +1992,34 @@
       "status": "root_text_collected"
     },
     {
+      "name": "minimalistic-assert",
+      "version": "1.0.1",
+      "path": "node_modules/.pnpm/minimalistic-assert@1.0.1/node_modules/minimalistic-assert",
+      "manifestSha256": "9a8e71d52eadcfae410d56953bf873e4089903001c872f964fc529fe906b8335",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 727,
+          "sha256": "136fee1129ea96ce18b41c26a72f5d4ba196ee41bfd73b55d0b8509cdda148e9"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "minimist",
+      "version": "1.2.8",
+      "path": "node_modules/.pnpm/minimist@1.2.8/node_modules/minimist",
+      "manifestSha256": "252881f6a068a3e70386706d88a694b5e8e9e053b6d9f309fd9a329e651bbf81",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1073,
+          "sha256": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
       "name": "ms",
       "version": "2.1.3",
       "path": "node_modules/.pnpm/ms@2.1.3/node_modules/ms",
@@ -1954,6 +2302,34 @@
       "status": "root_text_collected"
     },
     {
+      "name": "pvtsutils",
+      "version": "1.3.6",
+      "path": "node_modules/.pnpm/pvtsutils@1.3.6/node_modules/pvtsutils",
+      "manifestSha256": "c919db2c1458eceb304414b4e4da34dabc43cee71141ceb13d1a0d389a9b5a01",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "c620c1d08a47c93ce242914a4269b86e41df5a97845325725a5f83d5d6f9d7fd"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pvutils",
+      "version": "1.2.0",
+      "path": "node_modules/.pnpm/pvutils@1.2.0/node_modules/pvutils",
+      "manifestSha256": "8d7f27545db8668ab8e1a65f40cac53465646c36e18d1400bba3947f6ca7ed4c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1137,
+          "sha256": "15c88630f1e778db64a446cb31b67362cc9eb7a048fdf5ac7ab51905b74464cd"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
       "name": "react",
       "version": "19.2.6",
       "path": "node_modules/.pnpm/react@19.2.6/node_modules/react",
@@ -1991,6 +2367,20 @@
           "file": "license",
           "bytes": 1079,
           "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "reflect-metadata",
+      "version": "0.2.2",
+      "path": "node_modules/.pnpm/reflect-metadata@0.2.2/node_modules/reflect-metadata",
+      "manifestSha256": "e0f6d5cf809e02e338f501d3030e917fa57e3a10044387de890cbf142b4f4083",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 9141,
+          "sha256": "c5217b0544ea9c91d010863582d6f6b35ec50e4146c34dee085ddcec5dd92def"
         }
       ],
       "status": "root_text_collected"
@@ -2382,6 +2772,48 @@
       "status": "root_text_collected"
     },
     {
+      "name": "tslib",
+      "version": "1.14.1",
+      "path": "node_modules/.pnpm/tslib@1.14.1/node_modules/tslib",
+      "manifestSha256": "f685f35daa1c75b3e6e3e2e9158de36130e34aee095498f65af9e508ea2d56b0",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 655,
+          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tslib",
+      "version": "2.8.1",
+      "path": "node_modules/.pnpm/tslib@2.8.1/node_modules/tslib",
+      "manifestSha256": "f02b4851df316f29bdfcd404aa1eb41e4e216b5859015f81fcd3e91caf8be931",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 655,
+          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tsyringe",
+      "version": "4.10.0",
+      "path": "node_modules/.pnpm/tsyringe@4.10.0/node_modules/tsyringe",
+      "manifestSha256": "d62f650419534a5f60d404d7d9cbf578ec7bca83b4b46a7a4a16a024969f95b1",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1162,
+          "sha256": "27ebda9d51f0a56b7e281ccd8230a27236dcb51c05f64b07869ecf6e965d68b0"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
       "name": "type-fest",
       "version": "5.9.0",
       "path": "node_modules/.pnpm/type-fest@5.9.0/node_modules/type-fest",
@@ -2522,6 +2954,20 @@
           "file": "LICENSE.md",
           "bytes": 1105,
           "sha256": "ab654de803cdaa9e2819ab2e934bdf7f757e308649ec231d78e80e92425cdc34"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "web-push",
+      "version": "3.6.7",
+      "path": "node_modules/.pnpm/web-push@3.6.7_supports-color@10.2.2/node_modules/web-push",
+      "manifestSha256": "b979933af768f8b930b6d9dc74db9728fccd7a2c62e24160ec2874edf65bcafd",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 228,
+          "sha256": "1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce"
         }
       ],
       "status": "root_text_collected"

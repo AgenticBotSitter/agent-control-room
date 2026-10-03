@@ -325,9 +325,13 @@ export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessio
         // Cache creation and cache read tokens are additional to `input_tokens`,
         // never a subset of it (Claude's own accounting), so they are recorded
         // as one combined "cached" count rather than folded into input.
+        // A `usage` block that reports input and output IS a cache report, even
+        // when it names neither cache field — Claude omits both when nothing was
+        // cached. Recording an explicit zero there keeps the count known and the
+        // run priceable; only a snapshot that reports no cache use stays unknown.
         const cachedInputTokens = (cacheCreation ?? 0) + (cacheRead ?? 0);
         usage = Object.freeze({ inputTokens, outputTokens, totalTokens: inputTokens + outputTokens,
-          ...(cacheCreation !== undefined || cacheRead !== undefined ? { cachedInputTokens } : {}) });
+          cachedInputTokens });
       }
     }
     let resultText: string | undefined;

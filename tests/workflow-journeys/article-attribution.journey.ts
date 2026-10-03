@@ -21,6 +21,8 @@ import assert from "node:assert/strict";
 import { sha256Digest } from "../../src/security";
 import { buildNewsStoryV1 } from "../../src/project-adapters/news/v1/story";
 import { buildNewsWorkOrderProposalV1 } from "../../src/project-adapters/news/v1/proposal";
+import { PostgresNewsStoreV1 } from "../../src/project-adapters/news/v1/postgres-store";
+import { PostgresNewsTaskProposalLinksV1 } from "../../src/project-adapters/news/v1/task-proposal-links";
 import { ProjectWorkspaceContractErrorV1 } from "../../src/project-workspace/v1";
 import { newsResearchTaskDraft } from "../../src/web/v1/news-research-draft";
 import { newsArticleActions, newsResearchInputSchema, newsResearchPreviewSchema } from "../../src/web/v1/news-wire";
@@ -102,7 +104,7 @@ export async function runArticleAttributionJourney(): Promise<JourneyOutcomeV1> 
       `title ${draft.title.length}/${TASK_TITLE_BOUND} chars, ${draft.instructions.length} instruction chars, source ${item.source.label} retained`);
 
     const preview = newsResearchPreviewSchema.parse({ projectId: syntheticScope.projectId, storyId: story.storyId,
-      storyDigest: story.storyDigest, draft, saved: false, dispatch: "not_requested" });
+      storyDigest: story.storyDigest, proposal, draft, saved: false, dispatch: "not_requested" });
     assert.equal(preview.saved, false, "preparation must not save a task by itself");
     assert.equal(preview.dispatch, "not_requested", "preparation must not dispatch work");
     record(`preview: ${item.caseId}`, `saved=${preview.saved} dispatch=${preview.dispatch} (no task saved, no bot started)`);
@@ -133,7 +135,11 @@ export async function runArticleAttributionJourney(): Promise<JourneyOutcomeV1> 
     const scope: JourneyScopeV1 = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: created.project.projectId };
     const other = await f.service.create(identity,
       { title: "Unrelated project", summary: "Isolation control for the attributed save." }, "attributed-article-project-002");
-    const tasks = new WebTaskService(f.client, { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, () => now);
+    const newsKey = new Uint8Array(32).fill(19);
+    const stories = new PostgresNewsStoreV1(f.client, scope, newsKey);
+    for (const item of ATTRIBUTED_ARTICLE_CASES_V1) await stories.saveStory(attributedStory(scope, item));
+    const tasks = new WebTaskService(f.client, { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, () => now,
+      { newsIntegrityKey: newsKey });
     const protectedSave = createTaskHttpHandler({ origin, trust, service: tasks, clock: () => now });
     const savePath = `/api/v1/projects/${encodeURIComponent(scope.projectId)}/tasks/from-news`;
     const receipts = new Map<string, TaskReceipt>();
@@ -165,6 +171,10 @@ export async function runArticleAttributionJourney(): Promise<JourneyOutcomeV1> 
       assert.equal(detail.dispatch, "not_connected");
       assert.equal(detail.artifacts, "not_connected");
       assert.deepEqual(detail.attempts, [], "a saved task must have no attempt");
+      const link = await new PostgresNewsTaskProposalLinksV1(f.client, scope, newsKey).get(receipt.jobId);
+      assert.equal(link?.proposal.proposalDigest, proposal.proposalDigest,
+        "the normal proposed task must retain a typed link to its exact news proposal");
+      assert.equal(link?.proposal.storyDigest, proposal.storyDigest);
       record(`protected save: ${item.caseId}`,
         `proposed job ${receipt.jobId} attributed to proposal ${proposal.proposalId}; replay replayed=true; changed content refused 409; detail state=proposed, attempts=0`);
     }

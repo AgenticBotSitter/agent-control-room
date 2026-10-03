@@ -1,0 +1,100 @@
+[
+  {
+    "file": "src/persistence/postgres-text.ts",
+    "find": "!/[\\u0000\\uD800-\\uDFFF]/u.test(value)",
+    "replace": "!/[\\uD800-\\uDFFF]/u.test(value)",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "NUL is refused in parsed proposal strings and keys"
+  },
+  {
+    "file": "src/persistence/postgres-text.ts",
+    "find": "!/[\\u0000\\uD800-\\uDFFF]/u.test(value)",
+    "replace": "!/[\\u0000]/u.test(value)",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "unpaired surrogates are refused while valid pairs remain accepted"
+  },
+  {
+    "file": "src/persistence/postgres-text.ts",
+    "find": "if (typeof item === \"string\" && !isPostgresTextV1(item)) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "JSON string values use the shared PostgreSQL text guard"
+  },
+  {
+    "file": "src/persistence/postgres-text.ts",
+    "find": "if (!isPostgresTextV1(key)) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "JSON object keys use the same text guard"
+  },
+  {
+    "file": "src/persistence/postgres-text.ts",
+    "find": "pending.push(child);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "nested arrays and objects are traversed"
+  },
+  {
+    "file": "src/web/v1/project-wire.ts",
+    "find": "z.string().refine(isPostgresTextV1).transform(value => value.trim())",
+    "replace": "z.string().transform(value => value.trim())",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "project text is refused before trimming and persistence"
+  },
+  {
+    "file": "src/work-intake/v1/validation.ts",
+    "find": "if (!isPostgresJsonTextV1(value)) return { accepted: false, safeReasonCode: \"content_invalid\" };",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "website and machine proposal validation refuse non-storable text"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (!isPostgresJsonTextV1(body)) return fleetFail(\"invalid\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "fleet proposal wire validation refuses bad text before submission"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (error instanceof Error && (error as Error & { code?: unknown }).code === \"updater_registration_expired\") {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "closed registration links have a clear 410 refusal"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "    throw error;\n  }\n}\n\n/**\n * The first real Mac-local web composition.",
+    "replace": "    return Response.json({}, { status: 410 });\n  }\n}\n\n/**\n * The first real Mac-local web composition.",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "unrelated registration failures retain outage responses"
+  },
+  {
+    "file": "src/web/v1/mac-local-host.ts",
+    "find": "      await store.options(registrationDigest);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "insertion verifies the registration is still open before writing"
+  },
+  {
+    "file": "src/web/v1/mac-local-host.ts",
+    "find": "if (databaseSqlStateIsAnyV1(error, [\"42501\"])) await store.options(registrationDigest);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "expiry or consumption between read and write is reclassified"
+  },
+  {
+    "file": "src/web/v1/mac-local-host.ts",
+    "find": "if (databaseSqlStateIsAnyV1(error, [\"42501\"])) await store.options(registrationDigest);",
+    "replace": "await store.options(registrationDigest);",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "only permission refusals are rechecked, never unrelated outages"
+  },
+  {
+    "file": "src/web/v1/mac-local-host.ts",
+    "find": "        throw error;\n      }\n      return Object.freeze({ accepted: true });",
+    "replace": "        return Object.freeze({ accepted: true });\n      }\n      return Object.freeze({ accepted: true });",
+    "test": "node --import tsx --test --test-name-pattern='FB-' tests/website-input-refusals.test.ts tests/fleet-intake-refusal-translation.test.ts tests/work-intake.test.ts",
+    "why": "an open registration does not hide a real insert failure"
+  }
+]

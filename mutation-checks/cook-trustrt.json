@@ -1,0 +1,254 @@
+[
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (isAlwaysStrippedEnvironmentName(name) && !allowed.has(name.toUpperCase())) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='spawn environments' tests/updater-trusted-runtime.test.mjs",
+    "why": "hostile inherited and caller-supplied loader configuration must not cross the spawn boundary"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (entry.isSymbolicLink() || entry.uid !== 0 || (entry.mode & 0o022) !== 0) refuse(\"t1_path_writable\");",
+    "replace": "if (entry.isSymbolicLink()) refuse(\"t1_path_writable\");",
+    "test": "node --test --test-name-pattern='T1 checks' tests/updater-trusted-runtime.test.mjs",
+    "why": "T1 must reject a non-root owner and every group-writable or world-writable ancestor"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (aclAllowsWrite(acl)) refuse(\"t1_path_writable\");",
+    "replace": "if (false) refuse(\"t1_path_writable\");",
+    "test": "node --test --test-name-pattern='T1 checks' tests/updater-trusted-runtime.test.mjs",
+    "why": "a writable ACL is as dangerous as writable POSIX mode bits"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (!roots.some(root => inside(root, canonical))) refuse(\"t1_path_outside_roots\");",
+    "replace": "if (false) refuse(\"t1_path_outside_roots\");",
+    "test": "node --test --test-name-pattern='T1 checks' tests/updater-trusted-runtime.test.mjs",
+    "why": "root ownership does not make an executable part of the approved runtime roots"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "for (const config of initConfigFiles) await assertT1Path(config, { allowedRoots, runtime });",
+    "replace": "",
+    "test": "node --test --test-name-pattern='T1 checks' tests/updater-trusted-runtime.test.mjs",
+    "why": "init-time configuration files must satisfy the same ownership boundary as the executable"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (!SYSTEM_ROOTS.some(root => inside(root, canonical))) pending.push(canonical);",
+    "replace": "",
+    "test": "node --test --test-name-pattern='T1 checks' tests/updater-trusted-runtime.test.mjs",
+    "why": "the T1 check must walk the complete non-system dynamic-library closure"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (!Array.isArray(rpaths) || rpaths.length === 0) refuse(\"t1_library_unresolved\");",
+    "replace": "if (!Array.isArray(rpaths) || rpaths.length === 0) return [\"/usr/lib/libSystem.B.dylib\"];",
+    "test": "node --test --test-name-pattern='T1 checks' tests/updater-trusted-runtime.test.mjs",
+    "why": "an unresolved rpath must never be guessed into a trusted location"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "assertT1Executable(results[tool], {",
+    "replace": "Promise.resolve({ executable: results[tool], ignored: true }, {",
+    "test": "node --test --test-name-pattern='xcrun resolution uses' tests/updater-trusted-runtime.test.mjs",
+    "why": "xcrun output is untrusted until every resolved tool and ancestor passes T1"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    || approvedProfileParameters.get(options.profileParameters) !== options.role",
+    "replace": "    || false",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "only role-bound profile parameters may reach sandbox-exec"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "return childSpawn(sandbox, [\"-f\", profile, ...(options.profileParameters ?? []).flatMap(([name, value]) => {",
+    "replace": "return childSpawn(executable, [...(options.profileParameters ?? []).flatMap(([name, value]) => {",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "every service child must enter its Seatbelt profile"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    uid: options.uid,",
+    "replace": "    uid: undefined,",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "the child must drop to its configured service uid before sandbox-exec starts"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "      await verifyPinnedFile(snapshot, artifact.archiveSha256);",
+    "replace": "",
+    "test": "node --test --test-name-pattern='vendor step is fail-closed' tests/updater-trusted-runtime.test.mjs",
+    "why": "no archive may be unpacked before its pinned digest is verified"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "  await verifyPinnedFile(join(destination, artifact.executableRelativePath), artifact.executableSha256);",
+    "replace": "",
+    "test": "node --test --test-name-pattern='vendor step is fail-closed' tests/updater-trusted-runtime.test.mjs",
+    "why": "the extracted executable must independently match its pinned digest"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "    refuse(\"runtime_vendor_destination_exists\");",
+    "replace": "    void 0;",
+    "test": "node --test --test-name-pattern='vendor step is fail-closed' tests/updater-trusted-runtime.test.mjs",
+    "why": "a retry or concurrent caller must never replace an existing runtime"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "    try { await rename(staging, destination); }",
+    "replace": "    try { await Promise.resolve(); }",
+    "test": "node --test --test-name-pattern='vendor step verifies bytes' tests/updater-trusted-runtime.test.mjs",
+    "why": "a fully verified runtime must publish in one atomic rename"
+  },
+  {
+    "file": "src/updater/v1/policy/bundle.json",
+    "find": "\"candidateBuildOutputAccepted\": false",
+    "replace": "\"candidateBuildOutputAccepted\": true",
+    "test": "node --test --test-name-pattern='runtime inventory pins' tests/updater-trusted-runtime.test.mjs",
+    "why": "candidate-produced updater bundles must never become root code"
+  },
+  {
+    "file": "src/updater/v1/policy/service-supervisor.sb",
+    "find": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\") (subpath \"/Users\"))",
+    "replace": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\"))",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the supervisor and children must not read any owner home"
+  },
+  {
+    "file": "src/updater/v1/policy/service-gateway.sb",
+    "find": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\") (subpath \"/Users\"))",
+    "replace": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\"))",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the gateway must not read any owner home"
+  },
+  {
+    "file": "src/updater/v1/policy/service-postgres.sb",
+    "find": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\") (subpath \"/Users\"))",
+    "replace": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\"))",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "PostgreSQL must not load code or configuration from an owner home"
+  },
+  {
+    "file": "src/updater/v1/policy/service-builder.sb",
+    "find": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\") (subpath \"/Users\"))",
+    "replace": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\"))",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the builder must not read any owner home"
+  },
+  {
+    "file": "src/updater/v1/policy/service-upgrader.sb",
+    "find": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\") (subpath \"/Users\"))",
+    "replace": "(deny file-read* file-map-executable (subpath \"/opt/homebrew\"))",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the upgrader must not read any owner home"
+  },
+  {
+    "file": "src/updater/v1/policy/service-supervisor.sb",
+    "find": "(deny file-write*",
+    "replace": "(allow file-write*",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the supervisor write boundary must stay deny-by-default"
+  },
+  {
+    "file": "src/updater/v1/policy/service-gateway.sb",
+    "find": "(deny file-write*",
+    "replace": "(allow file-write*",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the gateway write boundary must stay deny-by-default"
+  },
+  {
+    "file": "src/updater/v1/policy/service-postgres.sb",
+    "find": "(deny file-write*",
+    "replace": "(allow file-write*",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the PostgreSQL write boundary must stay deny-by-default"
+  },
+  {
+    "file": "src/updater/v1/policy/service-builder.sb",
+    "find": "(deny file-write*",
+    "replace": "(allow file-write*",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the builder write boundary must stay deny-by-default"
+  },
+  {
+    "file": "src/updater/v1/policy/service-upgrader.sb",
+    "find": "(deny file-write*",
+    "replace": "(allow file-write*",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the upgrader write boundary must stay deny-by-default"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    await verifyInstalledFileInventory(root, legacy.files, runtime);",
+    "replace": "    void legacy.files;",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "the checker must verify the complete installed file inventory before using the runtime"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "      await verifyPinnedFile(path, item.sha256).catch(error => {",
+    "replace": "      await Promise.resolve().catch(error => {",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "every inventoried regular file must match its recorded sha256"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    if (!typeMatches || entryMode(entry) !== item.mode) refuse(\"trusted_runtime_inventory_mismatch\");",
+    "replace": "    if (!typeMatches) refuse(\"trusted_runtime_inventory_mismatch\");",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "inventory verification must reject mode drift"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "      if (entry.size !== item.bytes) refuse(\"trusted_runtime_inventory_mismatch\");",
+    "replace": "      void item.bytes;",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "inventory verification must reject file size drift"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  if (root !== suppliedRoot) refuse(\"trusted_spawn_profile_parameter_invalid\");",
+    "replace": "  if (false) refuse(\"trusted_spawn_profile_parameter_invalid\");",
+    "test": "node --test --test-name-pattern='service profile parameters' tests/updater-trusted-runtime.test.mjs",
+    "why": "profile write paths must never be minted from a symlinked root"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  if (!plainRecord(environmentInput) || !Array.isArray(explicitlySet)) refuse(\"trusted_spawn_environment_invalid\");",
+    "replace": "  if (false) refuse(\"trusted_spawn_environment_invalid\");",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "builder environment wiring must not normalize malformed caller containers into accepted input"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    environmentInput = { ...environmentInput, TMPDIR: temp };",
+    "replace": "    environmentInput = { ...environmentInput };",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "the builder child must receive the same private TMPDIR granted by its profile"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  if (!/^\\S.*:$/u.test(rows[0] ?? \"\")) refuse(\"t1_otool_output_invalid\");",
+    "replace": "  if (false) refuse(\"t1_otool_output_invalid\");",
+    "test": "node --test --test-name-pattern='otool parser' tests/updater-trusted-runtime.test.mjs",
+    "why": "garbage otool library output must not be accepted as an empty dependency closure"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "      if (destinationExists) refuse(\"runtime_vendor_destination_exists\");",
+    "replace": "      if (false) refuse(\"runtime_vendor_destination_exists\");",
+    "test": "node --test --test-name-pattern='vendor step is fail-closed' tests/updater-trusted-runtime.test.mjs",
+    "why": "concurrent vendor losers must fail with the named destination refusal"
+  },
+  {
+    "file": "docs/UPDATER_TRUSTED_RUNTIME_OWNER_HOME_AUDIT.md",
+    "find": "`scripts/qualify-local-workers.ts`",
+    "replace": "`scripts/qualify-local-workers-owner-side.ts`",
+    "test": "node --test --test-name-pattern='owner-home audit' tests/updater-trusted-runtime.test.mjs",
+    "why": "every production owner-home read must remain listed in the enforced audit"
+  }
+]

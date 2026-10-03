@@ -1,0 +1,289 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      await writeHeldResult(heldDirectory, claim.claimId, { summary, idempotencyKey: `${keyBase}-result`,\n        heldAt: Date.now(), deadlineAt: claimLeaseDeadline(claim) });",
+    "replace": "      await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern \"kept on this machine\" tests/fleet-held-result.test.ts",
+    "why": "a finished answer is recorded on this machine before the first delivery attempt, with the instant it was held and the lease it was granted, so a drop cannot lose it and a restart cannot start the clock again"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (directory) await clearHeldResult(directory, claim.claimId);",
+    "replace": "      if (false) await clearHeldResult(directory, claim.claimId);",
+    "test": "node --import tsx --test --test-name-pattern \"delivered answer leaves nothing behind\" tests/fleet-held-result.test.ts",
+    "why": "a delivered answer leaves no record behind, so the directory beside the credential cannot grow"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const round = Math.max(0, Math.min(RESULT_ROUND_BUDGET_MS, leaseLeft, named ? leaseLeft : REPORT_MIN_BUDGET_MS));",
+    "replace": "    const round = Math.max(0, Math.min(RESULT_MAX_LEASE_MS, leaseLeft, named ? leaseLeft : REPORT_MIN_BUDGET_MS));",
+    "test": "node --import tsx --test --test-name-pattern \"buys more ROUNDS\" tests/fleet-held-result.test.ts",
+    "why": "one delivery round is short enough that the loop re-reads the claim's lease repeatedly, so a claim the gateway takes away mid-wait is noticed rather than waited out to the end of the lease"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const RESULT_ROUND_BUDGET_MS = 20_000;",
+    "replace": "const RESULT_ROUND_BUDGET_MS = RESULT_UNNAMED_LEASE_MS;",
+    "test": "node --import tsx --test --test-name-pattern \"no longer holds is answered\" tests/fleet-held-result.test.ts",
+    "why": "one delivery round is short enough that the loop re-reads the claim's lease, so a claim the gateway has taken away is noticed instead of waited out"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (reported !== null) return known === null ? reported : Math.min(reported, known);",
+    "replace": "    if (reported !== null) return known === null ? reported : Math.max(reported, known);",
+    "test": "node --import tsx --test --test-name-pattern \"sliding forward|naming no lease, on a gateway\" tests/fleet-held-result.test.ts",
+    "why": "a lease reading EARLIER than what is already learned is the one that wins: a later reading is ignored rather than taken, so a gateway that slides its own expiry forward cannot hold a worker open"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const RESULT_MAX_LEASE_MS = 60 * 60_000;",
+    "replace": "const RESULT_MAX_LEASE_MS = Number.MAX_SAFE_INTEGER;",
+    "test": "node --import tsx --test --test-name-pattern \"restart keeps the deadline|ceiling the delivery waits under\" tests/fleet-held-result.test.ts",
+    "why": "the wait is capped by the gateway's maximum lease from the moment the answer was held, so even a deadline that keeps sliding forward cannot hold a worker open without end"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (!plainObject(value) || value.schema !== RESULT_JOURNAL_SCHEMA || value.claimId !== claimId",
+    "replace": "  if (!plainObject(value) || value.schema !== RESULT_JOURNAL_SCHEMA || false",
+    "test": "node --import tsx --test --test-name-pattern \"never delivered, never silently deleted\" tests/fleet-held-result.test.ts",
+    "why": "a held answer is refused unless it is this connector's own record for THIS claim"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    || typeof value.idempotencyKey !== \"string\" || !IDEMPOTENCY_PATTERN.test(value.idempotencyKey) || !summary",
+    "replace": "    || !summary",
+    "test": "node --import tsx --test --test-name-pattern \"never delivered, never silently deleted\" tests/fleet-held-result.test.ts",
+    "why": "a held answer without a usable idempotency key is never sent"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      delivered.push(Object.freeze({ claimId, outcome: \"held\", reason }));",
+    "replace": "      delivered.push(Object.freeze({ claimId, outcome: \"held\", reason }));\n      await clearHeldResult(directory, claimId);",
+    "test": "node --import tsx --test --test-name-pattern \"gateway will not accept stays\" tests/fleet-held-result.test.ts",
+    "why": "an answer the gateway would not take is kept on disk, not deleted"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    await deliverHeldResults({ client, configPath, log });",
+    "replace": "    await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern \"through the run loop\" tests/fleet-held-result.test.ts",
+    "why": "the run loop delivers held answers before it takes new work"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      `SELECT fc.claim_id,fc.project_id,fc.job_id,fc.claimed_at,l.state AS lease_state,l.expires_at AS lease_expires_at,\n        j.state AS job_state,r.result_id,rv.decision,rv.note",
+    "replace": "      `SELECT fc.claim_id,fc.project_id,fc.job_id,fc.claimed_at,l.state AS lease_state,NULL::timestamptz AS lease_expires_at,\n        j.state AS job_state,r.result_id,rv.decision,rv.note",
+    "test": "node --import tsx --test --test-name-pattern \"names no lease is told its deadline\" tests/fleet-held-result.test.ts",
+    "why": "a worker's own claims report when their lease ends, which is the only place a held answer can learn it"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (!mine) return null;\n  if (typeof mine.leaseState === \"string\" && mine.leaseState !== \"active\") return now();",
+    "replace": "  if (!mine) return now();",
+    "test": "node --import tsx --test --test-name-pattern \"missing from the gateway\" tests/fleet-held-result.test.ts",
+    "why": "a claim absent from the gateway's bounded claim list is still live, so a held answer is kept rather than treated as undeliverable"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    // tell the operator to wait for a network that is working perfectly.\n    if (error?.code === \"unauthenticated\") {\n      log(`The task ${claim.jobId} can no longer be reported on (Control Room refused this machine's key); `\n        + \"nothing was submitted.\");\n      return Object.freeze({ ...outcome, outcome: \"abandoned\", reason: \"claim_lost\" });\n    }",
+    "replace": "    // tell the operator to wait for a network that is working perfectly.",
+    "test": "node --import tsx --test --test-name-pattern \"stops accepting is a lost claim\" tests/fleet-held-result.test.ts",
+    "why": "a credential the gateway refuses is a lost claim, never reported as a network outage"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    // would point the operator at a network that is working perfectly.\n    if (error?.code === \"unauthenticated\") {\n      log(`The task ${claim.jobId} can no longer be reported on (Control Room refused this machine's key); `\n        + \"nothing was submitted.\");\n      return Object.freeze({ ...outcome, outcome: \"abandoned\", reason: \"claim_lost\" });\n    }",
+    "replace": "    // would point the operator at a network that is working perfectly.",
+    "test": "node --import tsx --test --test-name-pattern \"refused BEFORE the run starts\" tests/fleet-held-result.test.ts",
+    "why": "a credential the gateway refuses before the run starts is a lost claim, never reported as a network outage"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  let learned = granted === null ? held?.deadlineAt ?? null : earliestInstant(granted, held?.deadlineAt ?? null);",
+    "replace": "  let learned = held?.deadlineAt ?? null;",
+    "test": "node --import tsx --test --test-name-pattern \"honoured for its WHOLE life\" tests/fleet-held-result.test.ts",
+    "why": "the lease the CLAIM REPLY carried is the starting deadline, so a real grant is honoured for its whole life -- the 300-second outage is longer than any fallback this connector has"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        { summary, idempotencyKey, heldAt, deadlineAt: earliestInstant(learned, persisted) }, held !== null);",
+    "replace": "        { summary, idempotencyKey, heldAt, deadlineAt: null }, held !== null);",
+    "test": "node --import tsx --test --test-name-pattern \"naming no lease, on a gateway\" tests/fleet-held-result.test.ts",
+    "why": "a deadline this connector learned is written down with the answer, so the process that takes it over waits the same length of time"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const deadline = () => Math.min(learned ?? (heldAt + RESULT_UNNAMED_LEASE_MS), heldAt + RESULT_MAX_LEASE_MS);",
+    "replace": "  const deadline = () => Math.min(learned ?? (heldAt + RESULT_UNNAMED_LEASE_MS), started + RESULT_MAX_LEASE_MS);",
+    "test": "node --import tsx --test --test-name-pattern \"ceiling the delivery waits under\" tests/fleet-held-result.test.ts",
+    "why": "the ceiling is measured from when the answer was FIRST held, so a process that takes it over cannot reset how long this machine may still wait"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    || deadlineAt === undefined) throw refused();",
+    "replace": "    || false) throw refused();",
+    "test": "node --import tsx --test --test-name-pattern \"deadline cannot be believed\" tests/fleet-held-result.test.ts",
+    "why": "a held record naming an instant this machine cannot believe is refused rather than used, because a forged one would push the wait out by however far it claims"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const round = Math.max(0, Math.min(RESULT_ROUND_BUDGET_MS, leaseLeft, named ? leaseLeft : REPORT_MIN_BUDGET_MS));",
+    "replace": "    const round = Math.max(0, Math.min(RESULT_ROUND_BUDGET_MS, leaseLeft));",
+    "test": "node --import tsx --test --test-name-pattern \"buys more ROUNDS|NOTHING has ever named still asks\" tests/fleet-held-result.test.ts",
+    "why": "a claim whose deadline NOTHING has ever named gets ONE short round, so the loop comes back and asks the gateway again instead of waiting blind for the whole window"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "export const FLEET_MAX_LEASE_MS_V1 = 3_600_000;",
+    "replace": "export const FLEET_MAX_LEASE_MS_V1 = 7_200_000;",
+    "test": "node --import tsx --test --test-name-pattern \"ceiling the delivery\" tests/fleet-held-result.test.ts",
+    "why": "real gateway maximum drift"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "this.#leaseMs > FLEET_MAX_LEASE_MS_V1",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern \"ceiling the delivery\" tests/fleet-held-result.test.ts",
+    "why": "gateway constructor rejects beyond its exported maximum"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "handle = await open(path, \"wx\", 0o600);",
+    "replace": "handle = await open(path, \"w\", 0o600);",
+    "test": "node --import tsx --test --test-name-pattern \"synchronized recovery|claim locks\" tests/fleet-held-result.test.ts",
+    "why": "exclusive claim election"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "Date.now() - started >= 2_000",
+    "replace": "Date.now() - started >= 60_000",
+    "test": "node --import tsx --test --test-name-pattern \"claim locks\" tests/fleet-held-result.test.ts",
+    "why": "bounded incomplete-owner wait"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "owner.pid > 0 && !pidAlive(owner.pid)",
+    "replace": "owner.pid > 0",
+    "test": "node --import tsx --test --test-name-pattern \"synchronized recovery\" tests/fleet-held-result.test.ts",
+    "why": "never remove a live lock owner"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "owner.pid > 0 && !pidAlive(owner.pid)",
+    "replace": "owner.pid > 0 && false",
+    "test": "node --import tsx --test --test-name-pattern \"stopped direct-child\" tests/fleet-held-result.test.ts",
+    "why": "dead lock owners can recover"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "current.dev === info.dev && current.ino === info.ino",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern \"stopped direct-child\" tests/fleet-held-result.test.ts",
+    "why": "generation recovery removes only observed lock"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "finally { await unlink(path); }",
+    "replace": "finally { await Promise.resolve(); }",
+    "test": "node --import tsx --test --test-name-pattern \"claim locks\" tests/fleet-held-result.test.ts",
+    "why": "claim lock releases in finally"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "requireExisting && current === null",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern \"conflicting or disappeared\" tests/fleet-held-result.test.ts",
+    "why": "recovery never resurrects a removed record"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "current.summary !== record.summary || current.idempotencyKey !== record.idempotencyKey",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern \"conflicting or disappeared\" tests/fleet-held-result.test.ts",
+    "why": "refuse conflicting answer body"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const known = earliestInstant(current?.deadlineAt, record.deadlineAt);",
+    "replace": "const known = record.deadlineAt ?? null;",
+    "test": "node --import tsx --test --test-name-pattern \"synchronized recovery|two public recovery\" tests/fleet-held-result.test.ts",
+    "why": "disk minimum wins over stale caller"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const heldAt = earliestInstant(current?.heldAt, record.heldAt);",
+    "replace": "const heldAt = record.heldAt;",
+    "test": "node --import tsx --test --test-name-pattern \"synchronized recovery\" tests/fleet-held-result.test.ts",
+    "why": "earliest valid first-held anchor wins"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (current?.heldAt === heldAt && current?.deadlineAt === deadlineAt)",
+    "replace": "if (current?.deadlineAt === deadlineAt)",
+    "test": "node --import tsx --test --test-name-pattern \"anchors are persisted|durability refusal\" tests/fleet-held-result.test.ts",
+    "why": "persist missing anchor even without a shorter deadline"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!await rememberDeadline(learned)) throw durabilityError();",
+    "replace": "await rememberDeadline(learned);",
+    "test": "node --import tsx --test --test-name-pattern \"durability refusal\" tests/fleet-held-result.test.ts",
+    "why": "anchor failure stops immediately"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      return false;\n    }\n  };\n  // A partial",
+    "replace": "      return true;\n    }\n  };\n  // A partial",
+    "test": "node --import tsx --test --test-name-pattern \"outstanding deadline|persistent shortening|durability refusal\" tests/fleet-held-result.test.ts",
+    "why": "failed persistence pauses delivery"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (++failures >= 2) throw durabilityError();",
+    "replace": "if (++failures >= 20) throw durabilityError();",
+    "test": "node --import tsx --test --test-name-pattern \"persistent shortening\" tests/fleet-held-result.test.ts",
+    "why": "durability failure is bounded and clear"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "learned = earliestInstant(learned, endsAt);",
+    "replace": "learned = learned;",
+    "test": "node --import tsx --test --test-name-pattern \"outstanding deadline\" tests/fleet-held-result.test.ts",
+    "why": "pending minimum is retained across write failure"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "await client.blocker(claimId, message, `held-${claimId.slice(\"fleet-claim:\".length)}-durability`, true);",
+    "replace": "await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern \"durability refusal\" tests/fleet-held-result.test.ts",
+    "why": "public durability refusal hands back"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "RESULT_ROUND_BUDGET_MS, leaseLeft, named ? leaseLeft",
+    "replace": "RESULT_ROUND_BUDGET_MS, named ? leaseLeft",
+    "test": "node --import tsx --test --test-name-pattern \"anchors are persisted\" tests/fleet-held-result.test.ts",
+    "why": "expired unnamed deadline has no extra round"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  try { await parent.sync(); } finally { await parent.close(); }",
+    "replace": "  try { await Promise.resolve(); } finally { await parent.close(); }",
+    "test": "node --import tsx --test --test-name-pattern \"directory sync refusal\" tests/fleet-held-result.test.ts",
+    "why": "directory rename durability is required even when a minimum already appears on disk"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const explanation = reason === \"held_result_durability\" ? deliveryError.message",
+    "replace": "const explanation = false ? deliveryError.message",
+    "test": "node --import tsx --test --test-name-pattern \"both finished-task paths\" tests/fleet-held-result.test.ts",
+    "why": "storage refusal uses the true cause in the tool handback"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const explanation = reason === \"held_result_durability\" ? error.message",
+    "replace": "const explanation = false ? error.message",
+    "test": "node --import tsx --test --test-name-pattern \"both finished-task paths\" tests/fleet-held-result.test.ts",
+    "why": "storage refusal uses the true cause in the harness handback"
+  }
+]

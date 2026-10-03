@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "|| Object.values(value.launchdLabels).some(label => typeof label !== \"string\" || !labelPattern.test(label) || !label.includes(\".rehearsal.\"))",
+    "replace": "|| Object.values(value.launchdLabels).some(label => typeof label !== \"string\" || !labelPattern.test(label))",
+    "test": "node --import tsx --test --test-name-pattern='colliding with a live default' tests/control-room-installer.test.mjs",
+    "why": "all launchd labels must remain explicit rehearsal identities distinct from live defaults"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (!rehearsal || options.root !== rehearsal.root || options.webPort !== rehearsal.webPort\n    || options.freshDatabase !== true || options.authenticator !== rehearsal.authenticator\n    || typeof options.e2e2EvidenceLog !== \"string\") refuse(\"rehearsal_invocation_refused\");",
+    "replace": "if (!rehearsal || options.root !== rehearsal.root || options.webPort !== rehearsal.webPort\n    || false || options.authenticator !== rehearsal.authenticator\n    || typeof options.e2e2EvidenceLog !== \"string\") refuse(\"rehearsal_invocation_refused\");",
+    "test": "node --test --test-name-pattern='rehearsal invocation checks each required option independently' tests/control-room-installer.test.mjs",
+    "why": "fresh database selection must be explicit for every rehearsal"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (options.moveLiveDatabase === true) refuse(\"rehearsal_move_live_database_refused\");",
+    "replace": "if (false) refuse(\"rehearsal_move_live_database_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity is checked' tests/control-room-installer.test.mjs",
+    "why": "rehearsal mode must refuse live database movement before any effect"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (recordedRehearsalDigest !== undefined && recordedRehearsalDigest !== rehearsal?.digest\n    || recordedRehearsalDigest === undefined && rehearsal !== undefined) refuse(\"rehearsal_identity_mismatch\");",
+    "replace": "if (false) refuse(\"rehearsal_identity_mismatch\");",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity is checked' tests/control-room-installer.test.mjs",
+    "why": "interrupted recovery must authenticate the exact recorded rehearsal configuration"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "|| service.plistPath !== `/Library/LaunchDaemons/${service.label}.plist`) refuse(\"services_batch_uncertain\");",
+    "replace": "|| false) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal labels' tests/updater-services.test.mjs",
+    "why": "every privileged plist path must be derived from its authenticated rehearsal label"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (rendered === source || SERVICE_POLICY_LABELS_V1.some(service => rendered.includes(service.plistPath))) {\n      refuse(\"guard_install_refused\");\n    }",
+    "replace": "if (false) {\n      refuse(\"guard_install_refused\");\n    }",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal guard' tests/updater-stage-one-ports.test.mjs",
+    "why": "a rehearsal guard must not retain any live plist path or an unrendered identity"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (name.startsWith(stalePrefix) && /^[A-Za-z0-9._-]{1,100}$/u.test(name)) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='real subprocess SIGKILL' tests/updater-attended-source.test.mjs",
+    "why": "a retry after a killed source fetch must remove its same-commit stale scratch directory"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (existing) {\n    if (!existing.isDirectory()",
+    "replace": "if (false) {\n    if (!existing.isDirectory()",
+    "test": "node --import tsx --test --test-name-pattern='real subprocess SIGKILL' tests/updater-attended-source.test.mjs",
+    "why": "release staging retries only by re-verifying the exact already-renamed tree"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (Object.values(value.accounts).some(name => live.accounts.has(name.toLowerCase()))\n    || Object.values(value.launchdLabels).some(label => live.labels.has(label.toLowerCase()))\n    || Object.values(value.ports).some(port => live.ports.has(port)) || live.hosts.has(value.tailnetName)) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='colliding with a live default' tests/control-room-installer.test.mjs",
+    "why": "the privileged last check must reject identities discovered in current live configuration"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (flags[\"--fresh-database\"] !== undefined && flags[\"--fresh-database\"] !== \"yes\")\n      throw updaterRefuseV1(\"arguments_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"arguments_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='bad input, non-root calls' tests/control-room-installer.test.mjs",
+    "why": "the CLI accepts only the explicit fresh-database yes spelling"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "[ -z \"$rehearsal_config\" ] || { case \"$rehearsal_config\" in /*) ;; *) refuse 'bootstrap_rehearsal_config_refused' ;; esac; refuse_dotdot \"$rehearsal_config\" 'bootstrap_rehearsal_config_refused'; }",
+    "replace": ": # mutant accepts a relative rehearsal config",
+    "test": "node --import tsx --test --test-name-pattern='stage B refuses malformed or incomplete rehearsal-only arguments' tests/install-night-bootstrap.test.mjs",
+    "why": "Stage B must pass only one canonical absolute rehearsal config path"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "[ -z \"$fresh_database\" ] || [ \"$fresh_database\" = yes ] || refuse 'bootstrap_fresh_database_refused'",
+    "replace": ": # mutant accepts a non-fresh database selector",
+    "test": "node --import tsx --test --test-name-pattern='stage B refuses malformed or incomplete rehearsal-only arguments' tests/install-night-bootstrap.test.mjs",
+    "why": "Stage B must reject every database mode other than explicit yes"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (!rehearsal || options.root !== rehearsal.root || options.webPort !== rehearsal.webPort\n    || options.freshDatabase !== true || options.authenticator !== rehearsal.authenticator\n    || typeof options.e2e2EvidenceLog !== \"string\") refuse(\"rehearsal_invocation_refused\");",
+    "replace": "if (!rehearsal || options.root !== rehearsal.root || options.webPort !== rehearsal.webPort\n    || false || options.authenticator !== rehearsal.authenticator\n    || typeof options.e2e2EvidenceLog !== \"string\") refuse(\"rehearsal_invocation_refused\");",
+    "test": "node --test --test-name-pattern='rehearsal invocation checks each required option independently' tests/control-room-installer.test.mjs",
+    "why": "fresh database selection must be explicit for every rehearsal"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "rpId = options.rehearsalMode === true ? options.tailnetIdentity\n      : await ports.readTailscaleRpId({ identity: context.invokingUser });",
+    "replace": "rpId = await ports.readTailscaleRpId({ identity: context.invokingUser });",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "rehearsal must take the validated configured identity without reading Tailscale"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "    rpId = options.rehearsalMode === true ? options.tailnetIdentity\n      : await ports.readTailscaleRpId({ identity: context.invokingUser });",
+    "replace": "    rpId = await ports.readTailscaleRpId({ identity: context.invokingUser });",
+    "test": "node --import tsx --test --test-name-pattern='never enters a Tailscale port' tests/control-room-installer.test.mjs",
+    "why": "a rehearsal takes its rp-id from the rehearsal config and NEVER reads it from Tailscale — the whole of the skip, and the property the deleted rehearsal_tailnet_identity_refused used to enforce"
+  }
+]

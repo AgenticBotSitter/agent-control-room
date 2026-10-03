@@ -1,5 +1,6 @@
+import type { ResultFileStoreV1 } from "../../artifacts/v1/result-file-store";
 import type { PrivateWebProcessOptions } from "./private-process";
-import type { WebTaskKeys } from "./task-service";
+import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
@@ -19,9 +20,15 @@ import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, type ProjectEven
  */
 export type MacLocalTaskApplicationV1 = Readonly<{
   operations: MacLocalCanonicalTaskOperationsV1;
+  /** The one ordinary web task service shared with the loopback process.  Owner
+   * reviews use its in-session proposal port for accepted exceptions, so those
+   * follow-ups and the review commit atomically on the web connection. */
+  taskService: WebTaskService;
   taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios" | "usagePriceTable">
     & Pick<WebTaskKeys, "taskPlanIntegrityKey">;
   projectEvents?: ProjectEventReadSourceV1;
+  /** The protected result-file byte store, forwarded to the download route. */
+  resultFileStore?: ResultFileStoreV1;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueDelivery"];
@@ -29,6 +36,7 @@ export type MacLocalTaskApplicationV1 = Readonly<{
   results?: ReturnType<typeof createTaskCoordinatorLifecycle>["results"];
   quality?: ReturnType<typeof createTaskCoordinatorLifecycle>["quality"];
   workBatchAuthority?: NonNullable<ReturnType<typeof createTaskCoordinatorLifecycle>["workBatchAuthority"]>;
+  workBatchView?: NonNullable<ReturnType<typeof createTaskCoordinatorLifecycle>["workBatchView"]>;
   actionInboxSource?: NonNullable<import("./mac-local-web-process").MacLocalWebProcessOptionsV1["actionInboxSource"]>;
 }>;
 
@@ -37,6 +45,9 @@ export type MacLocalTaskApplicationInputV1 = Readonly<{
     database: TaskCoordinatorDatabase;
   };
   coordinator: TaskCoordinatorConfiguration;
+  /** The SAME store instance the publishers write through, forwarded rather than
+   * opened again: two instances would be two views of one directory. */
+  resultFileStore?: ResultFileStoreV1;
   clock?: () => number;
 }>;
 
@@ -64,10 +75,17 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
   try {
     lifecycle = createTaskCoordinatorLifecycle(coordinator);
     const clock = input.clock ?? Date.now;
+    // Keep one web-task service for this installation. The loopback process
+    // receives this same instance below; constructing another one there would
+    // leave accepted-with-exceptions without its ordinary follow-up port.
+    const taskService = new WebTaskService(web.database.client,
+      { tenantId: web.tenantId, workspaceId: web.workspaceId }, clock,
+      tasks ? { ...tasks, ideaIntegrityKey: web.ideaProjects?.integrityKey } : undefined);
     const ownerReviews = tasks?.ownerReviews ? new WebTaskReviewService(web.database.client,
       { tenantId: web.tenantId, workspaceId: web.workspaceId }, {
         ...tasks.ownerReviews, harnessIntegrityKey: tasks.harnessIntegrityKey!, results: tasks.results!,
         ideaIntegrityKey: web.ideaProjects?.integrityKey,
+        followUps: taskService,
       }, clock) : undefined;
     const ownerVerifications = tasks?.manualVerificationScenarios ? new WebTaskVerificationService(web.database.client,
       { tenantId: web.tenantId, workspaceId: web.workspaceId }, {
@@ -97,6 +115,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
     } });
     return Object.freeze({
       operations,
+      taskService,
       actionInboxSource,
       ...(tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
         deriveProjectEventIntegrityKeyV1(tasks.harnessIntegrityKey), () => new Date(clock()).toISOString()) } : {}),
@@ -105,6 +124,9 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
         results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews,
         modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios,
         usagePriceTable: tasks.usagePriceTable } } : {}),
+      // The download route reads the SAME store instance the publishers write
+      // through, forwarded from the composition rather than opened a second time.
+      ...(input.resultFileStore ? { resultFileStore: input.resultFileStore } : {}),
       isReady: lifecycle.isReady.bind(lifecycle),
       close: lifecycle.close.bind(lifecycle),
       ...(lifecycle.queueDelivery ? { queueDelivery: lifecycle.queueDelivery } : {}),
@@ -112,6 +134,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       ...(lifecycle.results ? { results: lifecycle.results } : {}),
       ...(lifecycle.quality ? { quality: lifecycle.quality } : {}),
       ...(lifecycle.workBatchAuthority ? { workBatchAuthority: lifecycle.workBatchAuthority } : {}),
+      ...(lifecycle.workBatchView ? { workBatchView: lifecycle.workBatchView } : {}),
     });
   } catch (error) {
     if (lifecycle) {

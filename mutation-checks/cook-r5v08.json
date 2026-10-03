@@ -1,0 +1,30 @@
+[
+  {
+    "file": "src/updater/v1/rehearsal/scenarios.mjs",
+    "find": "function requireMacGuardHostV1() {\n  if (process.platform !== \"darwin\") throw Object.assign(\n    new Error(\"guard_refused:unsupported_platform\"), { code: GUARD_HOST_CODE_V1 });\n}",
+    "replace": "function requireMacGuardHostV1() {\n  if (false) throw Object.assign(\n    new Error(\"guard_refused:unsupported_platform\"), { code: GUARD_HOST_CODE_V1 });\n}",
+    "test": "node --import tsx --test tests/updater-rehearsal-guard-platform.test.mjs",
+    "why": "the one place that starts the real Mac-only rescue guard must refuse by name on any other platform, before spawning it"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/scenarios.mjs",
+    "find": "async function runGuard(fixture, verb = \"rescue\") {\n  requireMacGuardHostV1();",
+    "replace": "async function runGuard(fixture, verb = \"rescue\") {",
+    "test": "node --import tsx --test tests/updater-rehearsal-guard-platform.test.mjs",
+    "why": "every rehearsal scenario that runs the real guard reaches it only through runGuard, which must check the platform itself"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/catalog.mjs",
+    "find": "export const rehearsalScenarioPendingV1 = scenario => (scenario.requiresMacHost === true\n  && process.platform !== \"darwin\" ? scenario.unavailable : undefined);",
+    "replace": "export const rehearsalScenarioPendingV1 = scenario => (scenario.requiresMacHost === true\n  ? scenario.unavailable : undefined);",
+    "test": "node --import tsx --test tests/updater-rehearsal-guard-platform.test.mjs",
+    "why": "a Mac-only rehearsal case must stay runnable on the Mac; gating it on the platform alone would make the acceptance rehearsal permanently pending"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/harness.mjs",
+    "find": "        if (scenario.pending !== undefined || unavailable !== undefined)\n          result = { status: \"pending\", reason: unavailable ?? scenario.pending };",
+    "replace": "        if (scenario.pending !== undefined)\n          result = { status: \"pending\", reason: scenario.pending };",
+    "test": "node --import tsx --test tests/updater-rehearsal-guard-platform.test.mjs",
+    "why": "the harness must honour the platform-resolved unavailability and report a Mac-only case pending with its reason rather than running or failing it"
+  }
+]

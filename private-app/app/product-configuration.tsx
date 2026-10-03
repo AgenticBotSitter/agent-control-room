@@ -13,7 +13,7 @@ export function ProductConfigurationProvider({ children }: { children: ReactNode
   const runtime = useLocalRuntime();
   const [configuration, setConfiguration] = useState<ProductConfigurationState>();
   useEffect(() => {
-    if (runtime.mode !== "hosted") return;
+    if (runtime.mode === "checking") return;
     const controller = new AbortController();
     void (async () => {
       try {
@@ -37,3 +37,6 @@ export function useProductModule(name: keyof ProductConfigurationV1["modules"]) 
   // optional surface that the server may have disabled.
   return configuration?.modules[name] === true;
 }
+
+/** Lets navigation render tests supply a settled configuration without a read. */
+export const ProductConfigurationContextV1 = ProductConfigurationContext;

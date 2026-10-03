@@ -1,0 +1,619 @@
+{
+  "version": 1,
+  "appliedRevision": "d53b7e713af13a5af379004bfec5357953aa8a68",
+  "appliedLedgerDigest": "b116c38bd01e4b61549c9f2af77d0b8a049ec6ae36912f80d19e7e64fecc7a65",
+  "entries": [
+    {
+      "file": "db/migrations/0001_control_room_core.sql",
+      "sha256": "7d7b3994f8867a385d516ee480771ad425e2950b2fc7554b5d1315f9231cc8ed"
+    },
+    {
+      "file": "db/migrations/0002_allocation_simulation_audit.sql",
+      "sha256": "7a5ca4ae4f3ed58c526148b44fef4d15e5d91c65319ab622aa5090f47885fe21"
+    },
+    {
+      "file": "db/migrations/0003_canonical_domain_delivery.sql",
+      "sha256": "95ddcff940c17a2ea655789b479d9a75c86c7650fe75ae76083337c2f6d2df9c"
+    },
+    {
+      "file": "db/migrations/0004_cr4b_review_hardening.sql",
+      "sha256": "098d3cfcdc6e2259f23e88f6007b47ee80310dcfee77170e212600d64154a6d0"
+    },
+    {
+      "file": "db/migrations/0005_cr4c_identity_policy.sql",
+      "sha256": "1278ff95469510b4c1557aa21a915a91c4478db6b8ff4c13c429453f71da4299"
+    },
+    {
+      "file": "db/migrations/0006_cr4d_audit_chain.sql",
+      "sha256": "0d2e6af9f1ad723f54c9b9ef47a6f4e054d57e63f20196eafa8d3efffef4b2a7"
+    },
+    {
+      "file": "db/migrations/0007_cr4q_integrity_hardening.sql",
+      "sha256": "b52060e391f141c319bf6eca8ef85faa36c7ac6ecd5ff7e04d939cd7766ccdc5"
+    },
+    {
+      "file": "db/migrations/0008_cr5a_node_protocol_identity.sql",
+      "sha256": "b94d9847b9765bb59c874c5c2221498849bc4767e38f5577e80d24083c963b51"
+    },
+    {
+      "file": "db/migrations/0009_cr5b_protocol_delivery_semantics.sql",
+      "sha256": "f444d9b0859f9e25b28b02ad7c4c45388502f6788e55bd4922d9cc7598e9eae1"
+    },
+    {
+      "file": "db/migrations/0010_cr5d_node_operation_requests.sql",
+      "sha256": "a65eb47b9f02ee14ead7e0ad86cef273503b6b40440bbea7f6f783e8f7d9e1dc"
+    },
+    {
+      "file": "db/migrations/0011_cr5d_node_job_evidence.sql",
+      "sha256": "010bec227c33808a188d96c3142dcbc56c61e8c26527d583de9a29e93cfbcc60"
+    },
+    {
+      "file": "db/migrations/0012_cr6b_fleet_history.sql",
+      "sha256": "eca4b14497d94eff4cc3a46afa29a93557e6db002588e0fef4cd8d5db0fcf300"
+    },
+    {
+      "file": "db/migrations/0013_cr6b_fleet_current_subject.sql",
+      "sha256": "a9915f339f88eeb4de0ff5e64de553e4531008a090a4ebaef755a692a7800f2e"
+    },
+    {
+      "file": "db/migrations/0014_cr6c_resource_reservations.sql",
+      "sha256": "c2e4fd7df7599f011e03b48ee2c600a80fd12f0bcb100dd542e00d1271ae8088"
+    },
+    {
+      "file": "db/migrations/0015_cr6c_project_budget_reservations.sql",
+      "sha256": "b5208bb3e33c499a170de4dc0ba9cbbc628b4fa81decd41cc64ec9d8f9ce9852"
+    },
+    {
+      "file": "db/migrations/0016_cr6d_schedule_occurrences.sql",
+      "sha256": "c1389b551d17ec0091903dcfdbeb3e7b56092dd4dfd11dff33b855cbabef7c83"
+    },
+    {
+      "file": "db/migrations/0017_cr6d_service_incidents.sql",
+      "sha256": "102cb0f273986252b6ace20b8b28e9879c75be6b027c9854ff2c44a0110cca7f"
+    },
+    {
+      "file": "db/migrations/0018_cr6d_service_incident_remedies.sql",
+      "sha256": "9d3dc47f260060a1ab6fdf8b4322ad5c2402de122d53adde02eede03d7e930d2"
+    },
+    {
+      "file": "db/migrations/0019_cr6e_operator_surfaces.sql",
+      "sha256": "5a1befb752f028db82374527c97134699991df9471b14e79de672abb326395c0"
+    },
+    {
+      "file": "db/migrations/0020_cr7_harness_runs.sql",
+      "sha256": "0524b6bdbd44ab1dc4b87403e745402d5d37c7e4e00773f5ff39abe0625f98ea"
+    },
+    {
+      "file": "db/migrations/0021_cr7e_package_registry.sql",
+      "sha256": "1db7f3be842b8c49f40cdbe830df80d22b40ca2558a026eb4caf0e4150acf74f"
+    },
+    {
+      "file": "db/migrations/0022_cr8b_completion_gate.sql",
+      "sha256": "64bb9be28b7a84f4f38ddf1e03fb7d4a60ee4ead74a8fcd2db8ca1691d3c7ae4"
+    },
+    {
+      "file": "db/migrations/0023_cr8d_telegram_delivery.sql",
+      "sha256": "72c09f09510c51208e741974df7d1f96fcab606f35403fbdbd001083457fe081"
+    },
+    {
+      "file": "db/migrations/0024_cr8q_rollback_checkpoints.sql",
+      "sha256": "7fcef3a321fbe90ae08919d4f12680e54e48bf7ea0aea325094bd5e9528fd3e4"
+    },
+    {
+      "file": "db/migrations/0025_cr9a_external_content_sync.sql",
+      "sha256": "a461e52cba46035e5a7e9a060fbba5039b73ee708c2695a99680fbcea1307c91"
+    },
+    {
+      "file": "db/migrations/0026_cr9a_external_content_placement.sql",
+      "sha256": "843fe2549b300d7a1d4bdb60ac2a60739805a91c67c7d55efa768981e9b55d36"
+    },
+    {
+      "file": "db/migrations/0027_cr11b_ready_frontier_handoffs.sql",
+      "sha256": "b7b03db48bd6ca59e6095197e200cea6f3424506dfd1c48d56a2c0f27f34c6fe"
+    },
+    {
+      "file": "db/migrations/0028_cr12b_idea_lab_project_lifecycle.sql",
+      "sha256": "a81b3c59d969005963aae7d9ccaa8310e013524be17360131e1a583082341e6e"
+    },
+    {
+      "file": "db/migrations/0029_cr12b_idea_lab_protected_coordinator.sql",
+      "sha256": "b223e276801074fb560610522aaa7b1212e9d0d2773822825ac7042c8b10a26d"
+    },
+    {
+      "file": "db/migrations/0030_cr12b_local_fake_pilot.sql",
+      "sha256": "c82ac7ec91830b0488415aa259be7775e44746adf7a41e67f3d06fd55319f6d2"
+    },
+    {
+      "file": "db/migrations/0031_cr12b_live_panel_authority.sql",
+      "sha256": "0cce314b741e951946a56df920c337a941fc3fe415de1f15510a81bd5faa4b48"
+    },
+    {
+      "file": "db/migrations/0032_cr12b_idea_qualification_spends.sql",
+      "sha256": "67461e5d538827b74b8245a714a8fd9401c3e40ff602bc37ab2c97183bcbdc87"
+    },
+    {
+      "file": "db/migrations/0033_cr13a_project_live_events.sql",
+      "sha256": "7aca6c767a8b5e67ef0d41859b11e8172983b96fd2b09d87d7e85f3221d0c008"
+    },
+    {
+      "file": "db/migrations/0034_cr13a_connection_registry.sql",
+      "sha256": "0c201b83b66a80de38e89c7f53e66ab52a8332c23d84b711c3d32267b3d7a6a3"
+    },
+    {
+      "file": "db/migrations/0035_cr13a_connection_enrollment_intake.sql",
+      "sha256": "e869fd177a14e175d1d122fef4756745f5edbc71e2f6812fae3a8715bec7ee04"
+    },
+    {
+      "file": "db/migrations/0036_cr13a_connection_enrollment_node_delivery.sql",
+      "sha256": "e6e6372ee347710706a212a85f72a129c74687adf4cde5991433d6cc89452f0c"
+    },
+    {
+      "file": "db/migrations/0037_cr13a_native_observation_authorizations.sql",
+      "sha256": "8d4efd8e49f9b1891079c99ee0bf82afc2c731349386ec44ceca8c2eb2f1b154"
+    },
+    {
+      "file": "db/migrations/0038_cr13a_native_observation_authorization_consumptions.sql",
+      "sha256": "c98128708a164ec7bb888b8f8de3465478451605c46ea41e37d6c45b68647ab5"
+    },
+    {
+      "file": "db/migrations/0039_cr14b_web_projects.sql",
+      "sha256": "05e43d3ca1780762fae214ca38347a01a2320d41ab0241846488d1717b6c98f3"
+    },
+    {
+      "file": "db/migrations/0040_cr14b_private_web_lock_support.sql",
+      "sha256": "83e4240a53a77e86f967581c1f3405de77a12143dd7e4271c93a7e29a498a12b"
+    },
+    {
+      "file": "db/migrations/0041_cr14c_private_task_proposals.sql",
+      "sha256": "9825891d9f8ef1423a12465af39569f6d33a0b63a3960a4bdbccb44cc8b5beba"
+    },
+    {
+      "file": "db/migrations/0042_cr14c_private_task_results.sql",
+      "sha256": "16c8ca4e23839b4e1b1ca15140031859c97723cf5488941dd4a627a878f771b8"
+    },
+    {
+      "file": "db/migrations/0043_cr14c_owner_result_review.sql",
+      "sha256": "27435749e36b4e91fffd3468e06f39b15e344a8cea73bbadc78a2e8f80e2eb73"
+    },
+    {
+      "file": "db/migrations/0044_cr14c_native_review_plans.sql",
+      "sha256": "86513cbb56cf0c011318db34943f9851b3c48dab5ba7bf26b64e6a1bf61bac09"
+    },
+    {
+      "file": "db/migrations/0045_cr14c_task_execution_plans.sql",
+      "sha256": "c31ba47121ec94e63a4c1b129d95bebcb59061630006af639c9e6825dd6645fb"
+    },
+    {
+      "file": "db/migrations/0046_cr14c_coordinator_lock_support.sql",
+      "sha256": "6c864ac7e94dbb5becce6ebaed1de22bf4ed213f30f07b13cff945f399c2b0dc"
+    },
+    {
+      "file": "db/migrations/0047_cr14c_native_approval_packets.sql",
+      "sha256": "e8257bd352c5971ad421f54d317fe138c90617661f5bc6e25d5ff81f4381852a"
+    },
+    {
+      "file": "db/migrations/0048_cr14c_native_task_queue.sql",
+      "sha256": "baa999af03fe2e9b6ef27ef226a06cee785842e8d5e11d2079220cb9551bc9a1"
+    },
+    {
+      "file": "db/migrations/0049_cr14c_native_delivery_preparations.sql",
+      "sha256": "140a5651a01edecfef9248d72149019885209fcbff47a789a2fd6985c601723b"
+    },
+    {
+      "file": "db/migrations/0050_cr14c_native_delivery_envelopes.sql",
+      "sha256": "f0e11f0a20c21e7c9c50a603c4dd187b3d24cc0497561127f39386960fdcdd28"
+    },
+    {
+      "file": "db/migrations/0051_cr14c_native_transmission_intents.sql",
+      "sha256": "6d2a4e4dd6494e0e075b47d0ebedf470591debff8807da1877782f8bb8761a81"
+    },
+    {
+      "file": "db/migrations/0052_cr14c_native_delivery_receipts.sql",
+      "sha256": "acb6f70c05654a5a5d892ed7ae35f55bf76da3a271c41a7440717f2ca103ce62"
+    },
+    {
+      "file": "db/migrations/0053_cr14c_owner_result_verification.sql",
+      "sha256": "b19e78325e83a61378632674e09a938a4f4c1351b6f54bbcae345640bde3f7c1"
+    },
+    {
+      "file": "db/migrations/0054_cr14c_quality_coordinator.sql",
+      "sha256": "425beeff9e7fc5762ff62f23ef702b817638581a39dd6644d5362ac90e98579f"
+    },
+    {
+      "file": "db/migrations/0055_cr14c_native_result_writer.sql",
+      "sha256": "235646625730e102baefc918b65cddfdd4edc9546c689732ec8d0f4d4f39062c"
+    },
+    {
+      "file": "db/migrations/0056_cr14c_native_evidence_locks.sql",
+      "sha256": "db8dde9b3adb0a29191d7ef6f2d29dc7f06592ed98890d96673cdd123f0caf59"
+    },
+    {
+      "file": "db/migrations/0057_cr14c_protocol_replay_lock.sql",
+      "sha256": "0ff887f53c954a5011f8255fd7f0305692f324a028919280e42e9e3e980c46c5"
+    },
+    {
+      "file": "db/migrations/0058_audit_chain_required_hashes.sql",
+      "sha256": "0d757ee0e751c3ef0f5a71524ce0184a7c9bea581aa46fbd7204de166b3460ac"
+    },
+    {
+      "file": "db/migrations/0059_news_postgres.sql",
+      "sha256": "ee6600820cacf283159ef0d445b0d81fb57f20cb2e03b31bf56a8fc00907f87c"
+    },
+    {
+      "file": "db/migrations/0060_news_source_observations.sql",
+      "sha256": "7135591e747203a54d6b4bcc7dea5562ce533d6bd0e210b4ea8d73ece7346b33"
+    },
+    {
+      "file": "db/migrations/0061_news_feed_plans.sql",
+      "sha256": "fed50aa8bbd9d9a6a9ea51d782397bf1380c70608d99bb08b907ee7a484dfcca"
+    },
+    {
+      "file": "db/migrations/0062_news_discovery_baselines.sql",
+      "sha256": "f5c852619364c41ac2ab1712eb016e27aff075601e3eb40b5f6ac40e0fdfffae"
+    },
+    {
+      "file": "db/migrations/0063_news_source_settings.sql",
+      "sha256": "eed06f618846e2febc1f8d31adc6827f7eb428d30b390e5dd223789f6cf1b4a0"
+    },
+    {
+      "file": "db/migrations/0064_news_story_archives.sql",
+      "sha256": "cdc6e707b742cf09abbac5e7dcaa978e526f10a5915338ed1831169019507f69"
+    },
+    {
+      "file": "db/migrations/0065_news_article_details.sql",
+      "sha256": "ebc0f93830f477bdcf1d6ffcc6ff0b6ed2ec693ef074bd017bb6c003940e6962"
+    },
+    {
+      "file": "db/migrations/0066_restore_stable_delivery_check.sql",
+      "sha256": "7f311e16e5dc6e6d9192022198e11dd1640e2e139b0a2c50db830447063f5551"
+    },
+    {
+      "file": "db/migrations/0067_cr15a_codex_delivery_envelopes.sql",
+      "sha256": "62b319baecc24397783b262f2dcff297b710ae6395e7235026c9c0b9719842c4"
+    },
+    {
+      "file": "db/migrations/0068_cr15a_codex_transmission_intents.sql",
+      "sha256": "aa500302a6ce661e9f6e4fc27277fe605dc3468fcfba2373cec7fa053f7872d1"
+    },
+    {
+      "file": "db/migrations/0069_cr15a_codex_delivery_receipts.sql",
+      "sha256": "33e4487423129330d43c56b8ddb1a730e812efe8286341652f2676ce20ead94d"
+    },
+    {
+      "file": "db/migrations/0070_cr15a_codex_activation_transmission_intents.sql",
+      "sha256": "0a59c09821963dba1901a2ce93d47ba6f2ff0683d7d282b04733e9e13643e50c"
+    },
+    {
+      "file": "db/migrations/0071_cr15b_native_result_write_reservations.sql",
+      "sha256": "5a81a4bd90fdb09391f56e53869b53f99bbf5692f30f4872f951847cea9c4896"
+    },
+    {
+      "file": "db/migrations/0072_cr15c_codex_canonical_results.sql",
+      "sha256": "6708b4152b5babeb7b4045f6a177e0a57818e0039171875ad4abcaf68ab0f571"
+    },
+    {
+      "file": "db/migrations/0073_scheduled_task_admissions.sql",
+      "sha256": "4a682c369fda14ad200c028bc6d3f2aa5257e57ea5495fb974c3b12cafcef498"
+    },
+    {
+      "file": "db/migrations/0074_scheduled_assignment_authority.sql",
+      "sha256": "7d9b31c5663e89b4e3884e8b6dfe6ab995b490a257245df0dddb40a353a12cdf"
+    },
+    {
+      "file": "db/migrations/0075_project_coordination_authority.sql",
+      "sha256": "3c40d90144169adcdbf78fd9716c5a0d6a6bcd207b527d322346d359820c239b"
+    },
+    {
+      "file": "db/migrations/0076_project_work_resource_admission.sql",
+      "sha256": "76153a5888d5d6768ae5d83ebd91ffac2680c8c293475a2689d1db357e43e595"
+    },
+    {
+      "file": "db/migrations/0077_durable_result_write_reservations.sql",
+      "sha256": "9fa4c54ea911b3a166b9fa02bdd436b73b217554ba09a1a305114cab94c7c028"
+    },
+    {
+      "file": "db/migrations/0078_github_webhook_replays.sql",
+      "sha256": "7a74fa9ac3cedde22c83e527bd13144bea45c94935545f101d8e6970a426a23c"
+    },
+    {
+      "file": "db/migrations/0079_github_worker_wake_hints.sql",
+      "sha256": "3c95895fc7a3b900a2f20d838703757158a8e97ab3fe23790269d2b7eb60ec8b"
+    },
+    {
+      "file": "db/migrations/0080_unified_worker_delivery_receipts.sql",
+      "sha256": "f70999ab2f034fb140f500b938de476479b6178453577d93e120d7a8e7325bce"
+    },
+    {
+      "file": "db/migrations/0081_idea_lab_canonical_task_links.sql",
+      "sha256": "5f2c41bde9fe29c0fcb299a206260d1acbf3d1d449bfcfcced5e104155989f43"
+    },
+    {
+      "file": "db/migrations/0082_worktree_change_audit_plans.sql",
+      "sha256": "1ca0b5a17372118577b9def6ff66672132180ac5faca6299019497e32c2384c2"
+    },
+    {
+      "file": "db/migrations/0083_worktree_change_audit_records.sql",
+      "sha256": "1862233e90d1261ac4098cd5c4f062db3ad9b44f470a02b8d788f9fe77ca4a68"
+    },
+    {
+      "file": "db/migrations/0084_installation_transition_revisions.sql",
+      "sha256": "c0c69a4f5bf5230262278fbc2b36b9ce81bce88c04bac5e2d36572ef93446ba8"
+    },
+    {
+      "file": "db/migrations/0085_remote_worker_enrollment_revisions.sql",
+      "sha256": "198f9781887930fe6601551725f421134cc319a68bc8d3e5fe40ac27f9d72b7d"
+    },
+    {
+      "file": "db/migrations/0086_mac_local_owner_review_profile.sql",
+      "sha256": "f23d3b0277272d4349ebf452d6679c99f8fb32f5a4dc27e665185996cb979f9d"
+    },
+    {
+      "file": "db/migrations/0087_mac_local_fleet_signals.sql",
+      "sha256": "55487112da40d81e6b4b08891100b571531daab96e60b55a21e03f1e46a8beb9"
+    },
+    {
+      "file": "db/migrations/0088_mac_local_delivery_receipt_lock.sql",
+      "sha256": "573cee22f0483ff158be66c9125801d69c937d45474270641d4c82958216f677"
+    },
+    {
+      "file": "db/migrations/0089_mac_local_result_publisher_locks.sql",
+      "sha256": "56696d5c44d35aaa8f25791142477e4adcc0d68c70574da6321ebc2d5e0c0e6f"
+    },
+    {
+      "file": "db/migrations/0090_mac_local_quality_read_locks.sql",
+      "sha256": "beb022b476ea96aaa11e7bbf7dbf391693f42d8aff2da1227aa45dc4b97a2f1c"
+    },
+    {
+      "file": "db/migrations/0091_task_models_and_assignment_scopes.sql",
+      "sha256": "9632cac868bd9e807a80bc63492df7b6d12f6a64709c9c256fbd412b4247ca48"
+    },
+    {
+      "file": "db/migrations/0092_phase2b_mac_local_quality_profile.sql",
+      "sha256": "33da1e6f4d24d96f955fe36f4c1f5b87018b081d06b11bb56877842e777f8599"
+    },
+    {
+      "file": "db/migrations/0093_work_batch_intake.sql",
+      "sha256": "30d958f97287b3590dda8fd66789964fe7f04f8342336a27a0da70e1ecb7f191"
+    },
+    {
+      "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
+      "sha256": "a91e629f09bec5f2e2d31bda5ff81a82693b4126c5ae9e5a9ccfa96435cfa9a1"
+    },
+    {
+      "file": "db/migrations/0101_owner_review_job_lock.sql",
+      "sha256": "98e7fbdd2078b2a1879681a6387604fe356752cdb0781b891d2ca77370b8a5e8"
+    },
+    {
+      "file": "db/migrations/0102_work_batch_owner_approval.sql",
+      "sha256": "cf6adc2beb2fea062062c906be5270614ed25d063e8b7b2652b2607a819773c3"
+    },
+    {
+      "file": "db/migrations/0104_work_batch_agent_queue.sql",
+      "sha256": "e8dc9caba61133d1e8d81ab40cd2732795aa21cb73011165fcec8aaa83c649f8"
+    },
+    {
+      "file": "db/migrations/0105_linear_pipeline_runs.sql",
+      "sha256": "dde578a0a387bf64b5816bc1faaef6a7f47f9320840740691428627c94ff77c9"
+    },
+    {
+      "file": "db/migrations/0106_agent_review_plans.sql",
+      "sha256": "c1c78a6317efcc5e1eb347b411557f0c10b5bdd00906d57c73faada0fa82b04b"
+    },
+    {
+      "file": "db/migrations/0107_task_project_activity_events.sql",
+      "sha256": "36b2993d78b512f3f1d7a19f63141e458a06241cad31fdee4d4506381ca0961b"
+    },
+    {
+      "file": "db/migrations/0108_pipeline_build_publications.sql",
+      "sha256": "3f7f3a97de3b50dc73932f6f78ca690959b8b884d03dfbc866a062c672fd6202"
+    },
+    {
+      "file": "db/migrations/0109_pipeline_unattended_advance.sql",
+      "sha256": "2d453a1308435fc66cedb43cd8ff180170af51873cf6bdbbd18310a505aabd9e"
+    },
+    {
+      "file": "db/migrations/0110_work_batch_intake_flag_dismissals.sql",
+      "sha256": "eb443b20f5580d848c54fd74ef17aefc739e70ec1df2a4e2a076907cf42976db"
+    },
+    {
+      "file": "db/migrations/0111_fleet_handoff_task_timeline.sql",
+      "sha256": "ccf10a568ad613215320cb4a844badb7cfee8b59f9bb276a38ebf7e8e3ee1909"
+    },
+    {
+      "file": "db/migrations/0115_owner_review_accepted_with_exceptions.sql",
+      "sha256": "468777d6dcfbf93285f7570e65f818eb2267a678395c7dde538d751778a1b635"
+    },
+    {
+      "file": "db/migrations/0135_control_project_settings.sql",
+      "sha256": "82b3a23c46fcc1e86982860e7bc74452ff7d44ce584dac69adbb760e3f08d547"
+    },
+    {
+      "file": "db/migrations/0140_fleet_worker_connector.sql",
+      "sha256": "76b579acb5585c429ae2049cb79e132f1329ab89b1c550024ea14116ab9e48b6"
+    },
+    {
+      "file": "db/migrations/0141_fleet_owner_authority.sql",
+      "sha256": "c09934ec360234e967c53a5ffe38c90dda09c2821f811acff0b57b4cc16dc574"
+    },
+    {
+      "file": "db/migrations/0150_pipeline_installation_allowances.sql",
+      "sha256": "21d89c7af8c6ece4173578df7d2fedcd9967fdfface9b5a4f2b665e6fe1df2ea"
+    },
+    {
+      "file": "db/migrations/0151_pipeline_stage_loop_counts.sql",
+      "sha256": "3511c5aa69e383ee4b5f100ad8ce14fc245bb4a3553d23584fed0d165ead7d24"
+    },
+    {
+      "file": "db/migrations/0152_pipeline_advance_unknown_cost.sql",
+      "sha256": "4e0c09fd02fbc1696aa30c379e22d11fb38a96c2b78e61006af57a805868ac72"
+    },
+    {
+      "file": "db/migrations/0153_pipeline_machine_capacity_observations.sql",
+      "sha256": "952ea8d3bff4d8df1c378bed03508ae3f5b0b679bcbcc0ae07a3766e47d7c47f"
+    },
+    {
+      "file": "db/migrations/0154_pipeline_advance_round_receipts.sql",
+      "sha256": "d4a72c7287ac385ad77ebd773ca2091c01337be514b2018096a13cdd68588df9"
+    },
+    {
+      "file": "db/migrations/0155_installation_operations_modes.sql",
+      "sha256": "2542b1cd19e0b9215c32eb09046481b3d71a580f8709da54955dbbe1ca62d667"
+    },
+    {
+      "file": "db/migrations/0156_installation_operations_mode_gates.sql",
+      "sha256": "209599dd63ce0d7debdb3b0f7044b3b283b6e2e3d15215931e6050f070b54bae"
+    },
+    {
+      "file": "db/migrations/0157_installation_operations_mode_grants.sql",
+      "sha256": "d85dc5ca942091cbe4c96aae5a1ac287b0befa44fb947e1b4b34f423d7133366"
+    },
+    {
+      "file": "db/migrations/0160_improve_control_room_desk.sql",
+      "sha256": "38ecf365e222c50bca814b103c3159607e24cc99b70cd929ddb6688823822b8d"
+    },
+    {
+      "file": "db/migrations/0161_update_candidate_evidence.sql",
+      "sha256": "fc20337f12964b44b64915762ba8158f2d49a0745f24c0b6a60ea35d9a9eb30d"
+    },
+    {
+      "file": "db/migrations/0162_validate_update_candidate_evidence.sql",
+      "sha256": "757c27002a4db203642d25d902503c5f568ba493febd7c21a760e149d8a531f4"
+    },
+    {
+      "file": "db/migrations/0173_owner_web_push_subscriptions.sql",
+      "sha256": "db167e9858d1e229202e6a72df105c9bcd947dac0d7cc7ee81721b6f7068d100"
+    },
+    {
+      "file": "db/migrations/0174_owner_web_push_delivery_ledger.sql",
+      "sha256": "cfe71fa0f86af24a1c5cdabd733a5123494c04e76b9aea4239eba8ddb601961b"
+    },
+    {
+      "file": "db/migrations/0175_owner_web_push_tenant_isolation.sql",
+      "sha256": "32dac31f73e8b58f4dc87f2e462ddb5a996220ad8c05989f150ded864c883e1b"
+    },
+    {
+      "file": "db/migrations/0176_owner_web_push_retention.sql",
+      "sha256": "71ad26a9a7192fcc682d416d6e3960e0f7897e1fea68143c73820e24dc5dd19c"
+    },
+    {
+      "file": "db/migrations/0177_supervisor_reconciliation.sql",
+      "sha256": "35a67d9adfc50d699b66e6fdb97967b4ab9a4a85fbce8656e5131d0fda81152d"
+    },
+    {
+      "file": "db/migrations/0178_supervisor_machine_health.sql",
+      "sha256": "723b85cf066043f8a30c62f7182f1c4663e3e137debe028aa07fb615287a7e0f"
+    },
+    {
+      "file": "db/migrations/0179_provider_wait_states.sql",
+      "sha256": "8c42f57ee21f5a05da8caa539ec8c75ed5cc6df98eaa85b174687588e54d41f5"
+    },
+    {
+      "file": "db/migrations/0185_idea_promotion_task_links.sql",
+      "sha256": "fa283a10b0c3a315c450d5f2a0d024798618609b443add11bd28f4f83793d9cc"
+    },
+    {
+      "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
+      "sha256": "ab0da4776b9c4e9bb277f69c03fec1aca82efd7da1cc04a6c71387f6d4dd4d29"
+    },
+    {
+      "file": "db/migrations/0190_news_task_proposal_links.sql",
+      "sha256": "6c63b8143c1e6a31311dec9bfbc76ef6063a418187a640dc7a5f5046cfb836d0"
+    },
+    {
+      "file": "db/migrations/0195_module_install_approvals.sql",
+      "sha256": "24f348af037ed35308feb243edbb2553661c4dbcddd38a9ca4680193a005826e"
+    },
+    {
+      "file": "db/migrations/0196_supervisor_incident_outbox_guard.sql",
+      "sha256": "f457aecd166f393aecfa559767ef10f462bd075bcd0d022102fd851fc0076a5a"
+    },
+    {
+      "file": "db/migrations/0200_work_batch_split_suggestions.sql",
+      "sha256": "e43ba88f6899b0ba22ed81fa0f00f6ff50edb46c75a7730fd94ff81de662c8c3"
+    },
+    {
+      "file": "db/migrations/0201_control_project_settings_planner_selection.sql",
+      "sha256": "3aa38a030309ef47342c2bf6dfa0b7befbc92900e5adcd835940ae826efaf7a2"
+    },
+    {
+      "file": "db/migrations/0202_planner_failure_and_needs_you.sql",
+      "sha256": "143d1966a2eb5b74731ebb79a98bc62999c7dee381650a1ecc199821ce8d65c7"
+    },
+    {
+      "file": "db/migrations/0203_work_batch_split_suggestions_tenant_bound_read.sql",
+      "sha256": "529155e784553a27ad2cc84f93357fbc3ac1c1f54badaba40c12af06aa47256f"
+    },
+    {
+      "file": "db/migrations/0204_planner_needs_you_digest_scopes.sql",
+      "sha256": "d84948d7b6d6efd70ffdad9cf97b41d24dcfa2551e5446cc2ecdbc5a466b0111"
+    },
+    {
+      "file": "db/migrations/0205_planner_barrier_and_owner_retry.sql",
+      "sha256": "cf261dedc4b5162a8e964b9a63c7d021487f3746094128101b9de5c0d72dbf4d"
+    },
+    {
+      "file": "db/migrations/0206_result_file_catalog.sql",
+      "sha256": "6f01b8592ebdab5d4853eeb06677852116e890a094e474fac6af08852c848f09"
+    },
+    {
+      "file": "db/migrations/0207_result_file_store_admission.sql",
+      "sha256": "bd78ccb53ed0a3caf2b46180f489eec9e249a0c7602be1250a025da0be4e9889"
+    },
+    {
+      "file": "db/migrations/0208_result_file_download_grants.sql",
+      "sha256": "2c3bf5f5203f2a3075f489e8ba24517b2fd7a867704f88aa30c2f3def4cb422f"
+    },
+    {
+      "file": "db/migrations/0209_result_upload_sessions.sql",
+      "sha256": "de098c4b63d6b372342c9dba95d39e3b3645d6d735a4c3f2565267a7f7d33c89"
+    },
+    {
+      "file": "db/migrations/0210_result_upload_publication.sql",
+      "sha256": "d31ed45993c96873aef402167737c5eb44468769b9f22fe06c9b6f06c4fa72d8"
+    },
+    {
+      "file": "db/migrations/0211_job_artifact_inputs.sql",
+      "sha256": "a12ff3d2da73e99a97e979d9e92bb371867dedfec2b8964632e1402b2a7c992c"
+    },
+    {
+      "file": "db/migrations/0212_text_copy_derivations.sql",
+      "sha256": "fae78320e1e4062a46462258a431a0468e5fdc3ca64cce7203f7ff2ae5a3c2cd"
+    },
+    {
+      "file": "db/migrations/0213_text_copy_derivation_grants.sql",
+      "sha256": "5ac756a83a0680573a6431edc605d89f060ed9722bcc6b24cc513ce17c61f86e"
+    },
+    {
+      "file": "db/migrations/0224_owner_push_attempt_heads.sql",
+      "sha256": "b754fb5d2740cfffa3c1907014b91aa7380b763dc6c504a54808ffb1a1c1172d"
+    },
+    {
+      "file": "db/migrations/0225_owner_push_attempt_guards.sql",
+      "sha256": "12aaa27dd2970893c3768c0f1c158a45fbb2199287f7a83340ea3610a7331bc8"
+    },
+    {
+      "file": "db/migrations/0226_owner_push_attempt_grants.sql",
+      "sha256": "76fbb1db277847f2fbd6eac355d55ab81020352cafa263e8bb3b02e4e82f4ddf"
+    },
+    {
+      "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
+      "sha256": "7be226a0f7b977a1a2f135d55aefcdeb911df15089b38663b3c0a2e6eec86a7f"
+    },
+    {
+      "file": "db/migrations/0230_result_file_retention_sweeper.sql",
+      "sha256": "2b72fc4ae2c668bc7553373c2d942b349c0e384ccd4a2ce66d2a67a2e13756a1"
+    },
+    {
+      "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+      "sha256": "614eb03924750c5fae06a2961bfddc67f001d45de2d50a81ebe91ba49960d80e"
+    },
+    {
+      "file": "db/migrations/0237_supervisor_effect_intent_read.sql",
+      "sha256": "04141b680eee687929a014c89421a2946c0be6855136695e830457d099fff9f3"
+    },
+    {
+      "file": "db/migrations/0238_artifact_input_completeness_reads.sql",
+      "sha256": "652f8fabf4ee6bc9370613a61fcccc4b733c136d3f13d05fa08a75a3778b5d11"
+    }
+  ]
+}

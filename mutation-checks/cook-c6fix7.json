@@ -1,0 +1,93 @@
+[
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "const entries = Object.entries(web).filter(([key]) => key.endsWith(\":443\"));",
+    "replace": "const entries = Object.entries(web);",
+    "test": "node --import tsx --test --test-name-pattern='live Serve reader' tests/control-room-native-install-ports.test.mjs",
+    "why": "the live Serve reader must select only the managed 443 handler from a multi-entry configuration"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "|| funnel[key] === true",
+    "replace": "|| Object.values(funnel).some(Boolean)",
+    "test": "node --import tsx --test --test-name-pattern='live Serve reader' tests/control-room-native-install-ports.test.mjs",
+    "why": "an unrelated Funnel entry such as the 8443 preview must not block the managed 443 handler"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "const args = snapshot.target === null ? [\"serve\", \"--https=443\", \"off\"]\n    : [\"serve\", \"--bg\", \"--https=443\", snapshot.target];",
+    "replace": "const args = [\"serve\", \"set-config\", \"--all\", snapshot.target ?? \"\"];",
+    "test": "node --import tsx --test --test-name-pattern='Serve capture and restore' tests/control-room-native-install-ports.test.mjs",
+    "why": "activation and rollback must change only the 443 Serve handler rather than replacing all Serve state"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "if (error?.code === 1) return true;",
+    "replace": "if (error?.code !== undefined) return true;",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal evidence probes' tests/control-room-native-install-ports.test.mjs",
+    "why": "an owner probe proves denial only for the expected permission-denied status, not an arbitrary probe failure"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "if (program.stdout.trim() !== \"/usr/bin/sandbox-exec\"\n    || profile.stdout.trim() !== join(root, \"updater\", \"current\", \"policy\", `service-${role}.sb`))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal evidence probes' tests/control-room-native-install-ports.test.mjs",
+    "why": "Seatbelt evidence must prove both the sandbox executable and the exact installed profile"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "const entries = Object.entries(serve.Web).filter(([key]) => key.endsWith(\":443\"));",
+    "replace": "const entries = Object.entries(serve.Web);",
+    "test": "node --import tsx --test --test-name-pattern='Serve exclusivity is scoped' tests/control-room-installer.test.mjs",
+    "why": "Serve exclusivity must inspect only 443 and preserve unrelated handlers"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "|| funnel[entry[0]] === true",
+    "replace": "|| Object.values(funnel).some(Boolean)",
+    "test": "node --import tsx --test --test-name-pattern='Serve exclusivity is scoped' tests/control-room-installer.test.mjs",
+    "why": "Serve exclusivity must reject Funnel only on 443 and ignore an unrelated preview Funnel entry"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await ports.assertT1Path(file, { executable: true });",
+    "replace": "await Promise.resolve(file);",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal metadata, T1' tests/control-room-installer.test.mjs",
+    "why": "every rehearsed child process must pass the T1 executable check before spawn"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const metadataResult = await ports.assertRuntimeTreeRootMetadata({ root, tree });",
+    "replace": "const metadataResult = { entries: 2 };",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal metadata, T1' tests/control-room-installer.test.mjs",
+    "why": "each vendored tool runtime must be checked directly before root-metadata evidence is written"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "const seatbelt = await ports.assertSeatbeltApplied({ root, role: \"postgres\", servicePolicy: options.servicePolicy });",
+    "replace": "const seatbelt = { role: \"postgres\", applied: true, skipped: false };",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal metadata, T1' tests/control-room-installer.test.mjs",
+    "why": "PostgreSQL Seatbelt evidence must come from the live service check rather than a fabricated result"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "const denial = await ports.assertRehearsalOwnerDenied({ root, identity: context.invokingUser,\n        operation, servicePolicy: options.servicePolicy });",
+    "replace": "const denial = { uid: ownerUid, operation, denied: true };",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal metadata, T1' tests/control-room-installer.test.mjs",
+    "why": "P0 denial evidence must be emitted only after the owner-uid probe actually refuses read, write, and signal"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "await options.writeEvidence(\"health\", { healthy: true, samples: health.samples, schemaDigest: health.schemaDigest });",
+    "replace": "await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern='rehearsal identity' tests/control-room-installer.test.mjs",
+    "why": "a successful three-sample health check must write its correlated evidence record"
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "&& healthEvidence.length === 1\n    && healthEvidence[0].healthy === true && healthEvidence[0].samples === 3\n    && healthEvidence[0].schemaDigest === health.data.schemaDigest;",
+    "replace": ";",
+    "test": "node --import tsx --test --test-name-pattern='collector independently fails' tests/e2e2-rehearsal.test.mjs",
+    "why": "the collector must fail when correlated health evidence is absent even if the install journal says health passed"
+  }
+]

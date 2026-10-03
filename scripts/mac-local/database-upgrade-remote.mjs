@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** Runs only under the PostgreSQL owner account on the VPS. The dry run issues
  * SELECTs only. A login code (a SCRAM verifier, never a password) is read from
  * stdin only when the plan creates a new login, and never appears in the
@@ -14,6 +15,7 @@ import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 import { databaseRoleAttributesV1, databaseRoleManifestV1 as manifest, databaseRoleNamesV1 as principals }
   from "./database-role-manifest.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "./fixed-queue-schema.mjs";
+import { isSqlStateCodeV1 } from "../../src/persistence/node-errno-sqlstate.mjs";
 
 const bootstrapTarget = "host=/var/run/postgresql dbname=control_room user=postgres";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -129,6 +131,10 @@ export function parseMacDatabaseLoginCodesV1(input) {
 }
 
 export function plainMacDatabaseUpgradeRefusalV1(error) {
+  // The concurrent-upgrade refusal first: it is the one an operator hits by
+  // accident, and it must read as "you started two" rather than as whatever
+  // error the interleaving would otherwise have produced.
+  if (error?.message === "upgrade_already_running_refused") return plainMacDatabaseUpgradeBusyRefusalV1();
   const names = /^upgrade_new_login_needs_verifier:([a-z_,]+)$/u.exec(error?.message ?? "")?.[1].split(",");
   if (!names?.length || names.some(name => !newLogins.includes(name))) return undefined;
   return `Refused: this upgrade adds the new database login ${names.join(" and ")}, and each needs its login `
@@ -151,11 +157,102 @@ export function macDatabaseUpgradePlanDigestV1(plan) {
   return `sha256:${sha256(JSON.stringify(plan))}`;
 }
 
+/**
+ * The one upgrade may hold at a time, as a session-level PostgreSQL advisory
+ * lock.
+ *
+ * WHY. Without it, two upgrades started together interleave: each computes its
+ * plan from a snapshot, then both apply. The second one then fails somewhere
+ * deep -- `upgrade_convergence_refused`, a grant that no longer matches, a
+ * migration that reports a digest mismatch against a ledger the other one is
+ * midway through rewriting -- and each of those reads as a broken upgrade
+ * rather than as "you started two". The operator is sent looking for a bug in
+ * the schema instead of being told the second thing to do.
+ *
+ * WHY AN ADVISORY LOCK AND NOT A TABLE. `pg_advisory_lock` is session-scoped:
+ * it is released by the server when the session ends, including on a crash, so
+ * a killed upgrade cannot leave a lock behind that blocks the next one. It adds
+ * no table, no row and no migration, so nothing about the schema, the ledger or
+ * the digest changes -- which is what keeps this fix free of a down-rung and
+ * SECURITY DEFINER entry.
+ *
+ * WHY A NAMED CONSTANT, NOT A MAGIC NUMBER. Two literals in two files would
+ * drift, and the drift is silent: each side would hold a different lock and
+ * both upgrades would proceed. One exported name is the whole contract.
+ *
+ * WHY THE KEY IS DERIVED FROM THIS NAME, NOT CHOSEN. A hash keeps the key
+ * inside PostgreSQL's bigint range without a hand-picked number, and it is
+ * stable across runs, machines and code paths because the input is a constant
+ * here -- not a hostname, a path, a version or a timestamp. Change the name and
+ * the lock changes with it, which is what stops two parts of the tree from
+ * quietly acquiring different locks.
+ */
+export const MAC_DATABASE_UPGRADE_LOCK_V1 = hashToBigInt("control_room_mac_database_upgrade");
+
+/** FNV-1a over the name, reduced into PostgreSQL's signed bigint range. */
+function hashToBigInt(name) {
+  const prime = 1099511628211n, offset = 14695981039346656037n, mask = (1n << 64n) - 1n;
+  let hash = offset;
+  for (const character of name) hash = ((hash ^ BigInt(character.codePointAt(0))) * prime) & mask;
+  return hash % (1n << 63n);
+}
+
+/** Two 32-bit words, for `pg_advisory_lock(int, int)`. Both derived from the key. */
+const UPGRADE_LOCK_ARGS = [
+  Number(MAC_DATABASE_UPGRADE_LOCK_V1 >> 32n) | 0,
+  Number(MAC_DATABASE_UPGRADE_LOCK_V1 & 0xffffffffn) | 0,
+];
+
+/**
+ * Take the upgrade lock, or refuse in plain words.
+ *
+ * `pg_try_advisory_lock` is asked once: a blocking wait would leave an operator
+ * watching a frozen upgrade and would need its own timeout story. A refusal
+ * names the reason and what to do instead, which is the whole requirement -- the
+ * previous behaviour was four unrelated migration errors that named no cause.
+ *
+ * @param {{ query: (sql: string, values?: unknown[]) => Promise<unknown> }} client
+ * @returns {Promise<boolean>} whether the lock is now held by this session
+ */
+export async function tryMacDatabaseUpgradeLockV1(client) {
+  const { rows } = await client.query("SELECT pg_try_advisory_lock($1::int, $2::int) AS locked",
+    UPGRADE_LOCK_ARGS);
+  return rows?.[0]?.locked === true;
+}
+
+/** Release the lock. Safe to call when it was never taken. */
+export async function releaseMacDatabaseUpgradeLockV1(client) {
+  await client.query("SELECT pg_advisory_unlock($1::int, $2::int)", UPGRADE_LOCK_ARGS);
+}
+
+export function plainMacDatabaseUpgradeBusyRefusalV1() {
+  return "Refused: another Control Room database upgrade is already running on this Mac, so this one "
+    + "changed nothing. Wait for it to finish, then run the upgrade again.";
+}
+
 /** Roles first: missing manifest groups and new logins are created before any
  * migration or grant refers to them. A login code is read only when the
  * approved plan creates a login, so a repeat upgrade needs no code at all. */
 export async function applyMacDatabaseUpgradeV1({ client, expectedPlanDigest, applyPending, publisherVerifier,
   loginVerifiers, readLoginVerifiers, onStage = () => {} }) {
+  // Taken BEFORE the plan is read, so two concurrent upgrades cannot both plan
+  // against a database one of them is about to change. Released in `finally`, on
+  // every path including the throw: the lock is session-scoped anyway, so even a
+  // hard crash releases it, but an orderly release is what makes a retry
+  // immediate rather than dependent on the server noticing the session is gone.
+  const locked = await tryMacDatabaseUpgradeLockV1(client);
+  if (!locked) throw new Error("upgrade_already_running_refused");
+  try {
+    return await applyMacDatabaseUpgradeBodyV1({ client, expectedPlanDigest, applyPending,
+      publisherVerifier, loginVerifiers, readLoginVerifiers, onStage });
+  } finally {
+    await releaseMacDatabaseUpgradeLockV1(client).catch(() => {});
+  }
+}
+
+/** The body of the upgrade, which runs with the upgrade lock already held. */
+async function applyMacDatabaseUpgradeBodyV1({ client, expectedPlanDigest, applyPending, publisherVerifier,
+  loginVerifiers, readLoginVerifiers, onStage }) {
   onStage("plan");
   const before = await inspectMacDatabaseUpgradeV1({ client });
   if (expectedPlanDigest !== undefined && macDatabaseUpgradePlanDigestV1(before) !== expectedPlanDigest)
@@ -238,7 +335,11 @@ const safeCauseCode = (error, accept) => {
   }
   return "none";
 };
-const safeSqlstate = error => safeCauseCode(error, code => /^[0-9A-Z]{5}$/u.test(code));
+// The same accept test the shared reader uses, from the same frozen set: a
+// Node errno name is not a SQLSTATE, but an ERRCODE the installed database
+// chose itself IS one. This pure-Node runner reads raw pg, so it must not
+// classify a refusal it actually received as "no state".
+const safeSqlstate = error => safeCauseCode(error, isSqlStateCodeV1);
 const safeSystemCode = error => safeCauseCode(error, code => ["ENOENT", "EACCES", "EPERM", "ECONNREFUSED",
   "ECONNRESET", "ETIMEDOUT", "EPIPE"].includes(code));
 const safeErrorClass = error => {
@@ -261,15 +362,25 @@ export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
     "upgrade_role_membership_options_refused", "upgrade_unexpected_default_grant",
     "upgrade_source_ledger_refused", "upgrade_ledger_prefix_refused", "upgrade_queue_snapshot_unverified",
     "upgrade_queue_shape_refused", "upgrade_queue_existing_refused", "upgrade_queue_cleanup_refused",
+    "upgrade_already_running_refused",
     "upgrade_grant_catalog_refused", "upgrade_grant_source_refused", "upgrade_unexpected_function_grant",
     "migration_peer_target_refused", "migration_peer_operator_refused", "migration_peer_role_refused",
     "migration_peer_identity_refused", "migration_live_schema_drift", "migration_failed",
     "migration_gap", "migration_missing", "migration_altered", "migration_ledger_digest_mismatch",
+    // The two ledger-shape refusals `apply-migrations.mjs` can now raise BEFORE
+    // any migration's DDL runs (rv-mr5o Finding 1). Both are operator-actionable
+    // and both name only a ledger position and migration filenames, so they are
+    // safe to surface; without this they would collapse to the uninformative
+    // `remote_refused` and the operator would be sent looking for a bug in the
+    // schema rather than told two branches claimed one ledger position.
+    "migration_ledger_position_conflict", "migration_ledger_duplicate_rows",
     "migration_unknown_row", "migration_unknown_rows", "migration_unknown_kind",
-    "migration_refused_non_owner_objects"]);
+    "migration_refused_non_owner_objects", "upgrade_mac_login_connected", "upgrade_schema_drift_refused",
+    "upgrade_disk_space_low", "upgrade_backup_failed"]);
   const candidate = /^(?:upgrade|migration)_[a-z0-9_]+/u.exec(message)?.[0];
   const code = candidate && known.has(candidate) ? candidate : "remote_refused";
-  return `upgrade_error:${code} stage=${["plan", "migrate", "queue", "roles", "grants", "verify"].includes(stage)
+  return `upgrade_error:${code} stage=${["check", "plan", "backup", "migrate", "queue", "roles", "grants", "verify"]
+    .includes(stage)
     ? stage : "plan"} sqlstate=${safeSqlstate(error)} class=${safeErrorClass(error)} system=${safeSystemCode(error)}`;
 }
 
@@ -311,7 +422,7 @@ async function readVerifierStdinV1() {
   return input;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   let stage = "plan";
   try {
     const result = await runMacDatabaseUpgradeCommandV1({ args: process.argv.slice(2),

@@ -1,3 +1,4 @@
+import { privateRequestBudgets } from "./private-request-budgets";
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust,
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
@@ -28,7 +29,7 @@ export function createWorkBatchOwnerHttpHandlerV1(options: { origin: string; ser
       if (request.method !== "POST" || !batchId || !request.body
         || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
         throw new WebAccessError("invalid_request");
-      const value = await readBoundedJson(request.body, 131_072);
+      const value = await readBoundedJson(request.body, privateRequestBudgets.workBatch);
       if (!value || typeof value !== "object" || (value as { batchId?: unknown }).batchId !== batchId)
         throw new WebAccessError("invalid_request");
       const result = await options.service.command(identity, projectId, value, request.headers.get("idempotency-key") ?? "");

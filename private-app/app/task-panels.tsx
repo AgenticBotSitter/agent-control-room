@@ -1,15 +1,16 @@
+import { ownerStatusLabels } from "./owner-status-labels";
 import type { HermesDeliveryRecovery, TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { formatNanoUsdV1 } from "../../src/usage/v1/usage-cost";
 import { StateChip, chipToneForStateV1 } from "./owner-ui";
 
-export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
-  proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
-  waiting_approval: "Waiting for approval", succeeded: "Completed", failed: "Job failed", cancelled: "Job cancelled",
-  orphaned: "Assignment lost", rejected: "Proposal rejected",
-};
+export const taskStateLabel = ownerStatusLabels.task;
+/** The one cancelled state whose cause the owner chose on purpose. The summary
+ * carries `ownerRejected` only when the saved attempt record proves it, so this
+ * is the owner's own recorded decision and not a guess from the job state. */
 export const taskSummaryStateLabel = (task: TaskPage["tasks"][number]) => task.state === "succeeded" && task.qualityStatus === "accepted"
-  ? "Completed · Accepted" : taskStateLabel[task.state];
+  ? ownerStatusLabels.taskOutcome.accepted : task.state === "cancelled" && task.ownerRejected === true
+    ? ownerStatusLabels.taskOutcome.ownerRejected : taskStateLabel[task.state];
 const nativeLabel: Record<NonNullable<TaskRun["nativeState"]>, string> = { prepared: "Prepared", dispatching: "Starting",
   queued: "Agent queued", running: "Agent working", waiting_approval: "Agent waiting for approval", stopping: "Stop requested",
   completed: "Agent reports completion", failed: "Agent reports failure", cancelled: "Agent reports cancellation",
@@ -25,7 +26,8 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
   const runningContradiction = detail.task.state === "running" && (detail.progressSource !== "configured" || !latestRun
     || latestRun.nativeState !== null && ["completed", "failed", "cancelled", "interrupted"].includes(latestRun.nativeState)
     || ["succeeded", "failed", "cancelled"].includes(latestRun.state));
-  const uncertain = runningContradiction || !!latestRun && (latestRun.stale
+  const activeTask = ["leased", "running", "waiting_approval"].includes(detail.task.state);
+  const uncertain = runningContradiction || activeTask && !!latestRun && (latestRun.stale
     || latestRun.state === "disconnected" || latestRun.nativeState === "ambiguous"
     || latestRun.availability !== null && latestRun.availability !== "current");
   if (uncertain) return { heading: "Check what was already recorded", uncertain: true,
@@ -54,8 +56,11 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
       explanation: "Control Room has current progress for this task. Checking status only reads newer saved evidence and never starts another run." };
     case "failed": return { heading: "The recorded run failed", uncertain: false,
       explanation: "Control Room will not create replacement work automatically. Check the saved evidence before deciding whether to prepare a new task." };
-    case "cancelled": return { heading: "The task was cancelled", uncertain: false,
-      explanation: "Cancellation is recorded. This page will not restart the task; check saved status if an outside process may still be finishing." };
+    case "cancelled": return detail.task.ownerRejected === true
+      ? { heading: "You rejected this result", uncertain: false,
+        explanation: "You rejected what this machine returned, and the task is closed. Nothing is running. Save a new task when you want different work." }
+      : { heading: "The task was cancelled", uncertain: false,
+        explanation: "Cancellation is recorded. This page will not restart the task; check saved status if an outside process may still be finishing." };
     case "orphaned": return { heading: "Reassign or cancel this task", uncertain: false, href: "#task-assignment",
       action: "Choose a worker again", explanation: "The old reservation ended without a confirmed run. Choose a worker again below, or leave the task unassigned." };
     case "rejected": return { heading: "The proposal was rejected", uncertain: false,
@@ -155,11 +160,12 @@ const unknownCost: Record<Extract<TaskRun["cost"], { kind: "unknown" }>["reason"
   usage_not_reported: "the harness did not report token usage", model_not_recorded: "the run has no recorded model",
   price_table_not_recorded: "no owner price table is recorded", price_entry_not_recorded: "the recorded price table has no matching model entry",
   partial_token_usage: "the harness did not report both input and output tokens",
+  cached_usage_not_reported: "this bot doesn't report cache use",
   cache_pricing_not_recorded: "the run used cached tokens the recorded price table does not price",
 };
 function CostValue({ cost }: { cost: TaskRun["cost"] }) {
   return cost.kind === "known" ? <>{formatNanoUsdV1(cost.nanoUsd)} <span className="private-note">({cost.priceEntryId})</span></>
-    : cost.kind === "included_in_subscription" ? <>Included in subscription <span className="private-note">({cost.priceEntryId})</span></>
+    : cost.kind === "included_in_subscription" ? <>{ownerStatusLabels.cost.subscription} <span className="private-note">({cost.priceEntryId})</span></>
       : <>Cost unknown — {unknownCost[cost.reason]}</>;
 }
 function UsageRollup({ value, label }: { value: TaskDetail["usageRollup"]; label: string }) {
@@ -168,14 +174,17 @@ function UsageRollup({ value, label }: { value: TaskDetail["usageRollup"]; label
       <div><dt>Input tokens</dt><dd>{value.inputTokens === null ? "Unknown — at least one run did not report them" : value.inputTokens.toLocaleString()}</dd></div>
       <div><dt>Output tokens</dt><dd>{value.outputTokens === null ? "Unknown — at least one run did not report them" : value.outputTokens.toLocaleString()}</dd></div>
       <div><dt>Wall time</dt><dd>{value.wallTimeMs === null ? "Unknown — at least one run has no finished wall time" : `${value.wallTimeMs.toLocaleString()} ms`}</dd></div>
-      <div><dt>Known cost</dt><dd>{formatNanoUsdV1(value.knownCostNanoUsd)} across {value.knownCostRuns} priced run(s)</dd></div>
+      <div><dt>Known cost</dt><dd>{value.knownCostRuns > 0 ? formatNanoUsdV1(value.knownCostNanoUsd) : value.unknownCostRuns > 0 ? ownerStatusLabels.cost.unknown : "No token-priced runs"} across {value.knownCostRuns} priced run(s)</dd></div>
       <div><dt>Subscription</dt><dd>{value.subscriptionRuns} run(s) included in subscription</dd></div>
       <div><dt>Unknown cost</dt><dd>{value.unknownCostRuns} run(s){value.unknownCostReasons.length
         ? ` — ${value.unknownCostReasons.map(reason => unknownCost[reason]).join("; ")}` : ""}</dd></div></dl></section>;
 }
 
 export function RunPanel({ run }: { run: TaskRun }) {
-  const retained = run.stale || run.state === "disconnected" || run.availability !== null && run.availability !== "current";
+  const terminal = ["succeeded", "failed", "cancelled"].includes(run.state)
+    || run.nativeState !== null && ["completed", "failed", "cancelled", "interrupted"].includes(run.nativeState);
+  const retained = !terminal && (run.stale || run.state === "disconnected"
+    || run.availability !== null && run.availability !== "current");
   const label = run.nativeState ? nativeLabel[run.nativeState] : run.state.replaceAll("_", " ");
   const routeLabel = run.routeEvidence === "local_hermes" ? "local Hermes Agent adapter"
     : run.routeEvidence === "local_claude" ? "local Claude Code adapter"
@@ -254,9 +263,12 @@ function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
     {/* This is prose about the route, not a task state, so it gets its own class.
         It previously shared .private-state with the task's own state label, which
         made `.private-task-detail .private-state` ambiguous — the owner journey
-        reads that selector expecting the task state. */}
+        reads that selector expecting the task state. Needs-attention text stays
+        outside the <details> below so it is never the thing a toggle hides. */}
     <p className={observation.state === "needs_attention" ? "private-notice" : "private-route-observation"}>{text}</p>
-    <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
+    <details><summary>Details</summary>
+      <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
+    </details>
   </section>;
 }
 
@@ -267,6 +279,19 @@ export function TaskRevisionTaskLinks({ projectId, links }: { projectId: string;
     {links.previousJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.previousJobId)}`}>Open previous task</a></p>}
     {links.nextJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.nextJobId)}`}>Open revised task</a></p>}
   </div>;
+}
+
+/** The owner's own words for "who has this task right now", read at a glance
+ * beside the state chip. This is additive: every existing "prepared for X"
+ * sentence lower on the page is untouched, so no existing assertion on that
+ * copy moves or changes. This line exists because the owner could not tell
+ * who a task was assigned to without opening the lower "Prepared worker"
+ * section (owner-ux-feedback-2026-09-27.md item 4). */
+function assignedToLabel(detail: TaskDetail): string {
+  const worker = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
+    : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "a configured worker" : undefined;
+  if (worker) return `Assigned to ${worker}`;
+  return detail.task.state === "proposed" || detail.task.state === "rejected" ? "Not yet assigned" : "No worker route recorded";
 }
 
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
@@ -282,6 +307,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
           ? "This route is a saved plan category. Assignment still checks the configured route and does not start a worker." : undefined;
   return <div className="private-task-detail">
     <section className="private-panel"><StateChip state={detail.task.state} label={taskSummaryStateLabel(detail.task)} /><h2>{detail.task.title}</h2>
+      <p className="private-status-line"><strong>{assignedToLabel(detail)}</strong></p>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
         {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}
@@ -291,16 +317,20 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         links={detail.revisionLinks ?? { previousJobId: null, nextJobId: null, revisionNumber: 0 }} /></section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
       <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
+      <details><summary>Details</summary>
       {detail.modelSelection?.model
         ? <p><strong>Chosen for this prepared task:</strong> {preparedFor} · {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
           {detail.modelSelection.model} · effort {detail.modelSelection.effort}</p>
         : <p className="private-note">Model and effort are not configurable for this task; the worker uses its protected default.</p>}
       <p className="private-note">{preparedRouteDetail}</p>
-      <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
+      <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p>
+      </details></section>}
     <LocalRouteObservationPanel detail={detail} />
     {!!detail.ownershipLeases.length && <section className="private-panel" aria-label="Ownership leases"><h2>Ownership leases</h2>
+      <details><summary>Details</summary>
       {detail.ownershipLeases.map(lease => <div key={`${lease.nodeId}:${lease.expiresAt}`}><p><strong>{lease.nodeId}</strong> · {lease.current ? "active" : lease.state} · expires <ConfiguredTimestamp value={lease.expiresAt} /></p>
-        <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}</section>}
+        <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}
+      </details></section>}
     <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <UsageRollup value={detail.usageRollup} label="Task" />
     <p className="private-note">{detail.priceTable.state === "recorded"
@@ -309,8 +339,9 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"
         ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."
-        : "Task submission is not configured for this app."}</p>
+        : "This installation does not queue tasks from this page. A task offered to other machines runs only when a connected bot claims it."}</p>
       {detail.progressSource === "not_configured" && <p className="private-notice">Agent evidence is not configured for this app. Missing progress does not mean no agent work exists.</p>}
+      <details><summary>Details ({detail.attempts.length} attempt{detail.attempts.length === 1 ? "" : "s"})</summary>
       {!detail.attempts.length && <p>No assignment attempts are recorded for this task.</p>}
       {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt">
         {/* The attempt state is in this heading, so no chip repeats it beside the
@@ -323,6 +354,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         {attempt.runs.map(run => <RunPanel key={run.runId} run={run} />)}
         {attempt.additionalRunsOmitted && <p>Only the 10 most recently created run records are shown.</p>}</section>)}
       {detail.earlierAttemptsOmitted && <p>Only the 10 most recent attempts are shown. Earlier history remains saved.</p>}
+      </details>
     </section>
     {detail.artifacts === "not_connected" && detail.review === "not_connected" && <section className="private-panel"><h2>Result and review</h2><p>Result content, independent checks and owner review are not connected to this page yet.</p>
       <p>Agent completion is not owner acceptance. This page cannot approve a result, start a revision, cancel work or authorize an external action.</p></section>}

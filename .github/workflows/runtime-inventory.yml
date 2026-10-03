@@ -1,0 +1,40 @@
+name: Runtime inventory publisher proof
+
+on:
+  schedule:
+    - cron: "17 11 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - src/updater/v1/policy/runtime-inventory.json
+      - src/updater/v1/trusted-runtime.mjs
+      - scripts/ci/verify-runtime-inventory.mjs
+      - .github/workflows/runtime-inventory.yml
+  pull_request:
+    paths:
+      - src/updater/v1/policy/runtime-inventory.json
+      - src/updater/v1/trusted-runtime.mjs
+      - scripts/ci/verify-runtime-inventory.mjs
+      - .github/workflows/runtime-inventory.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-inventory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify pinned runtime archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: node scripts/ci/verify-runtime-inventory.mjs

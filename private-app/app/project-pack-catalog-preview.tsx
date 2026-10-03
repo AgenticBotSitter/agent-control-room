@@ -4,6 +4,7 @@ import {
   browseProjectPackV1,
   refusalTextV1,
   PROJECT_PACK_SCHEMA_V1,
+  PROJECT_PACK_MAX_BYTES_V1,
   type ProjectPackBrowseOutcomeV1,
   type ProjectPackLocalConfigurationV1,
 } from "../../src/project-packs/v1/browse-preview";
@@ -77,11 +78,18 @@ export function ProjectPackCatalogPreviewPanel({ outcome }: { outcome: ProjectPa
  */
 export function ProjectPackCatalogPreview({ localConfiguration }: { localConfiguration: ProjectPackLocalConfigurationV1 }) {
   const [rawText, setRawText] = useState("");
-  const outcome = rawText.trim().length === 0 ? null : browseProjectPackV1({ rawText }, localConfiguration);
+  const [fileRefusal, setFileRefusal] = useState<ProjectPackBrowseOutcomeV1 | null>(null);
+  const outcome = fileRefusal ?? (rawText.length === 0 ? null : browseProjectPackV1({ rawText }, localConfiguration));
 
   const onFileChosen = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > PROJECT_PACK_MAX_BYTES_V1) {
+      setRawText("");
+      setFileRefusal({ status: "refused", reason: "project_pack_input_oversized" });
+      return;
+    }
+    setFileRefusal(null);
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") setRawText(reader.result);
@@ -102,7 +110,7 @@ export function ProjectPackCatalogPreview({ localConfiguration }: { localConfigu
         id="pack-raw-text"
         data-field="pack-raw-text"
         value={rawText}
-        onChange={event => setRawText(event.target.value)}
+        onChange={event => { setFileRefusal(null); setRawText(event.target.value); }}
         rows={8}
       />
       <label htmlFor="pack-file-input">Pack file (read locally)</label>

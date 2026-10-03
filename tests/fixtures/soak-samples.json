@@ -1,0 +1,431 @@
+[
+  {
+    "minute": 0,
+    "cycles": 0,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 0,
+    "tableBytes": 1000000,
+    "indexBytes": 500000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 20,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50000000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45000000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 1,
+    "cycles": 2,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 10,
+    "tableBytes": 1120000,
+    "indexBytes": 580000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 21,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50010000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45010000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 2,
+    "cycles": 4,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 20,
+    "tableBytes": 1240000,
+    "indexBytes": 660000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 22,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50020000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45020000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 3,
+    "cycles": 6,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 30,
+    "tableBytes": 1360000,
+    "indexBytes": 740000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 20,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50000000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45000000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 4,
+    "cycles": 8,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 0,
+    "tableBytes": 1480000,
+    "indexBytes": 820000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 21,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50010000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45010000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 5,
+    "cycles": 10,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 10,
+    "tableBytes": 1600000,
+    "indexBytes": 900000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 22,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50020000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45020000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 6,
+    "cycles": 12,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 20,
+    "tableBytes": 1720000,
+    "indexBytes": 980000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 20,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50000000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45000000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 7,
+    "cycles": 14,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 30,
+    "tableBytes": 1840000,
+    "indexBytes": 1060000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 21,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50010000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45010000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 8,
+    "cycles": 16,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 0,
+    "tableBytes": 1960000,
+    "indexBytes": 1140000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 22,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50020000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45020000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 9,
+    "cycles": 18,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 10,
+    "tableBytes": 2080000,
+    "indexBytes": 1220000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 20,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50000000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45000000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  },
+  {
+    "minute": 10,
+    "cycles": 20,
+    "connections": 8,
+    "tempFiles": 0,
+    "deadTuples": 20,
+    "tableBytes": 2200000,
+    "indexBytes": 1300000,
+    "attentionCount": 1,
+    "inboxIds": [
+      "job:review"
+    ],
+    "truthInboxIds": [
+      "job:review"
+    ],
+    "duplicateJobs": 0,
+    "stuckRunning": 0,
+    "running": 0,
+    "burstInterval": false,
+    "p95Ms": 21,
+    "processes": [
+      {
+        "name": "web",
+        "pid": 1001,
+        "rssBytes": 50010000,
+        "handles": 24,
+        "alive": true,
+        "restarts": 0
+      },
+      {
+        "name": "gateway",
+        "pid": 1002,
+        "rssBytes": 45010000,
+        "handles": 20,
+        "alive": true,
+        "restarts": 0
+      }
+    ]
+  }
+]

@@ -1,20 +1,33 @@
 "use client";
 
+import { formatNanoUsdV1 } from "../../src/usage/v1/usage-cost";
+import { pipelineAdvanceFailureSchemaV1, pipelineAdvanceReasonSchemaV1, PIPELINE_ADVANCE_REASON_TEXT_V1,
+  type PipelineAdvanceSafeReasonV1 } from "../../src/pipelines/v1/stop-reasons";
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import type { BrowserFailureCode } from "../../src/web/v1/browser-client";
+import { BrowserRequestError, type BrowserFailureCode } from "../../src/web/v1/browser-client";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
+import { buildCompareAndCombineProposalV1 } from "../../src/work-intake/v1/compare-combine-template";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1,
-  workBatchOwnerViewSchemaV1, type WorkBatchOwnerViewV1 } from "../../src/work-intake/v1/owner-schemas";
-import { pipelineRunPageSchemaV1, pipelineRunViewSchemaV1, type PipelineRunViewV1 } from "../../src/pipelines/v1/schemas";
+  workBatchOwnerViewSchemaV1, type WorkBatchOwnerViewV1, type WorkBatchRoutingOptionV1 } from "../../src/work-intake/v1/owner-schemas";
+import { applySuggestedSplitV1, computeSuggestedSplitV1, INTAKE_FLAG_REASON_TEXT_V1 } from "../../src/work-intake/v1/intake-gate";
+import { taskDetailSchema } from "../../src/web/v1/task-wire";
+import { taskSubmissionReadSchema, taskSubmissionReceiptSchema } from "../../src/web/v1/task-submission-wire";
+import { pipelineHistorySchemaV1,pipelineRunPageSchemaV1,pipelineRunViewSchemaV1,
+  pipelineUnattendedTransitionReceiptSchemaV1,pipelineUnattendedTransitionSchemaV1,
+  type PipelineHistoryV1,type PipelineRunViewV1 } from "../../src/pipelines/v1/schemas";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { createProjectOrchestrationBrowserClient, orchestrationErrorMessage } from
+  "../../src/web/v1/project-orchestration-browser-client";
+import type { ProjectOrchestrationSuggestionV1 } from "../../src/web/v1/project-orchestration-wire";
+import { ChiefOfStaffSuggestionCard } from "./project-orchestration";
 
 type OwnerPage = z.infer<typeof workBatchOwnerPageSchemaV1>;
 type OwnerReceipt = z.infer<typeof workBatchOwnerReceiptSchemaV1>;
-type PipelineFailureCode = BrowserFailureCode | "queue_depth_exceeded";
+type PipelineFailureCode = BrowserFailureCode | "queue_depth_exceeded" | "flagged_items_unresolved";
 class PipelineRequestError extends Error {
   constructor(readonly code: PipelineFailureCode) { super(code); }
 }
@@ -22,10 +35,95 @@ type ReadState<T> = { state: "loading" } | { state: "ready"; value: T }
   | { state: "unavailable"; code: PipelineFailureCode };
 type Choice = "undecided" | "approve" | "reject";
 export type PipelineDecisionDraft = Readonly<Record<string, Readonly<{ decision: Choice; reasonCode: string }>>>;
+export type PipelineStartResult = Readonly<{ started: readonly string[]; alreadyStarted: readonly string[];
+  notReady: readonly string[] }>;
 
-function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string }) {
+type ProposalTask = WorkBatchProposalV1["tasks"][number];
+type GraphPreset = "split_by_part" | "compare_and_combine";
+
+const placeholderTask = (localId: string, ordinal: number): ProposalTask => ({ localId,
+  title: `Part ${ordinal}`, instructions: `Describe what part ${ordinal} must produce.`,
+  requiredCapability: "capability:choose", role: "builder", acceptanceCriteria: "Describe the result to accept.",
+  acceptanceTests: "Describe how the result will be checked." });
+
+export function fillGraphPresetV1(projectId: string, preset: GraphPreset, current: WorkBatchProposalV1,
+  routes: readonly WorkBatchRoutingOptionV1[]): WorkBatchProposalV1 | null {
+  if (preset === "split_by_part") return workBatchProposalSchemaV1.parse({ schema: current.schema, projectId,
+    tasks: [placeholderTask("part-1", 1), placeholderTask("part-2", 2)], edges: [] });
+  const selections = routes.flatMap(route => route.modelKeys.map(modelKey => ({ route, modelKey })))
+    .filter((value, index, all) => all.findIndex(candidate => candidate.route.workerId === value.route.workerId
+      || candidate.route.nodeId === value.route.nodeId) === index);
+  if (selections.length < 3) return null;
+  const source = current.tasks[0], question = source?.instructions ?? "Describe the question to compare.";
+  const step = (index: number, title: string) => ({ title, instructions: index < 2
+    ? "Answer independently. Do not read another answer." : "Compare the independent answers and explain the combined result.",
+  requiredCapability: source?.requiredCapability ?? "capability:choose",
+  requestedWorkerId: selections[index]!.route.workerId, requestedWorkerKind: selections[index]!.route.workerKind,
+  requestedModelKey: selections[index]!.modelKey,
+  acceptanceCriteria: source?.acceptanceCriteria ?? "The answer addresses the question.",
+  acceptanceTests: source?.acceptanceTests ?? "Check the answer against the question." });
+  return buildCompareAndCombineProposalV1({ schema: "control-room.compare-and-combine-template/v1", projectId,
+    question, answerers: [step(0, "Independent answer 1"), step(1, "Independent answer 2")],
+    combiner: step(2, "Combine the answers") });
+}
+
+export class PipelineAdvanceRequestError extends Error {
+  constructor(readonly safeReason:PipelineAdvanceSafeReasonV1) { super(PIPELINE_ADVANCE_REASON_TEXT_V1[safeReason]); }
+}
+
+export function PipelineStageUsage({usage}:{usage:PipelineRunViewV1["stages"][number]["usage"]}) {
+  if (usage === "unknown") return <>Unknown — harness usage has not been reported.</>;
+  const totals = usage.totals;
+  return <><span>Input {totals.inputTokens ?? "unreported"}; output {totals.outputTokens ?? "unreported"}; total {totals.totalTokens ?? "unreported"} tokens.</span>
+    <span> Known cost: {totals.knownCostRuns ? formatNanoUsdV1(totals.knownCostNanoUsd) : "unreported"}; {totals.subscriptionRuns} subscription runs; {totals.unknownCostRuns} unpriced runs.</span>
+    {usage.reports.filter(report=>report.usage).map(report=><span key={report.runId}> Cached input: {report.usage!.cachedInputTokens ?? 0} tokens.</span>)}
+    {usage.earlierReportsOmitted&&<span> Earlier run details omitted; totals include all recorded runs.</span>}</>;
+}
+
+export function createPipelineRunOwnerBrowserClient(transport:typeof fetch=fetch,
+  makeKey:()=>string=()=>`pipeline-consent:${crypto.randomUUID()}`){
+  const base=(projectId:string,runId:string)=>`/api/v1/projects/${encodeURIComponent(projectId)}/pipeline-runs/${encodeURIComponent(runId)}`;
+  return {async history(projectId:string,runId:string){const response=await transport(`${base(projectId,runId)}/history`,{
+      credentials:"same-origin",cache:"no-store",redirect:"error",headers:{accept:"application/json","x-requested-with":"XMLHttpRequest"}});
+    if(!response.ok)throw new PipelineRequestError(errorCode(response.status));return pipelineHistorySchemaV1.parse(await readBrowserJson(response));},
+    async setUnattended(projectId:string,run:PipelineRunViewV1,policyId:string,enabled:boolean){
+      const value=pipelineUnattendedTransitionSchemaV1.parse({runId:run.runId,templateId:run.templateId,policyId,enabled,
+        expectedRunVersion:run.runVersion,expectedTemplateVersion:run.templateVersion});
+      const response=await transport(`${base(projectId,run.runId)}/unattended`,{method:"POST",credentials:"same-origin",
+        cache:"no-store",redirect:"error",headers:{accept:"application/json","content-type":"application/json",
+          "x-requested-with":"XMLHttpRequest","idempotency-key":makeKey()},body:JSON.stringify(value)});
+      if(!response.ok) {
+        if(response.status===409) {
+          const refused=pipelineAdvanceFailureSchemaV1.safeParse(await readBrowserJson(response));
+          if(refused.success)throw new PipelineAdvanceRequestError(refused.data.safeReason);
+        }
+        throw new PipelineRequestError(errorCode(response.status));
+      }
+      return pipelineUnattendedTransitionReceiptSchemaV1.parse(await readBrowserJson(response));},};
+}
+
+export function PipelineRunAllowance({ allowance }: { allowance: PipelineRunViewV1["loopAllowance"] }) {
+  if (!allowance) return null;
+  if ("status" in allowance) return <p role="status">Run allowance unavailable: {allowance.reason === "read_permission_denied"
+    ? "read permission denied" : "allowance read failed"}.</p>;
+  return <p>Run allowance: {allowance.usedThisHour}/{allowance.runsPerHour} this hour;
+    {" "}{allowance.usedByAgentToday}/{allowance.runsPerAgentPerDay} for this worker today;
+    {" "}{allowance.activeAgentProcesses}/{allowance.machineMaxAgentProcesses} active worker processes;
+    {" "}{allowance.recordedDbClusters ?? "unknown"}/{allowance.machineMaxDbClusters} recorded database clusters;
+    {" "}{allowance.runTotalLoops}/{allowance.maxTotalLoops} total rounds.</p>;
+}
+
+/** The linear-run panel. Exported for its own tests: the history panel's
+ * refusal state is the only place the UI distinguishes "still checking" from
+ * "this installation will not answer", and that distinction is invisible to a
+ * static render of the batch surfaces below. */
+export function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string }) {
   const [value, setValue] = useState<PipelineRunViewV1 | z.infer<typeof pipelineRunPageSchemaV1>>();
   const [failed, setFailed] = useState(false);
+  const [history, setHistory] = useState<PipelineHistoryV1>();
+  const [historyUnavailable, setHistoryUnavailable] = useState(false);
+  const [policyId,setPolicyId]=useState(""),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState<string|null>(null);
+  const [generation,setGeneration]=useState(0);
   useEffect(() => {
     const abort = new AbortController(); setFailed(false);
     const suffix = runId ? `/${encodeURIComponent(runId)}` : "";
@@ -37,8 +135,15 @@ function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string 
       const raw = await readBrowserJson(response);
       setValue(runId ? pipelineRunViewSchemaV1.parse(raw) : pipelineRunPageSchemaV1.parse(raw));
     }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
+    const currentRunId=runId;
+    // History is a separate read with its own fate. A refusal must never leave
+    // the page claiming it is still checking: it says so, plainly, and says
+    // nothing about run state.
+    if(currentRunId){setHistoryUnavailable(false);
+      void createPipelineRunOwnerBrowserClient().history(projectId,currentRunId)
+        .then(value=>setHistory(value),()=>setHistoryUnavailable(true));}
     return () => abort.abort();
-  }, [projectId, runId]);
+  }, [projectId, runId,generation]);
   if (failed) return <section className="private-panel"><h2>Pipeline runs</h2>
     <p role="alert">Saved pipeline runs could not be checked. No run state or empty list is inferred.</p></section>;
   if (!value) return <section className="private-panel"><h2>Pipeline runs</h2><p role="status">Loading saved pipeline runs…</p></section>;
@@ -51,23 +156,54 @@ function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string 
       <p className="private-note">Eligibility is read-only. Opening this page never assigns, dispatches, or starts a stage.</p></section>;
   }
   const run = pipelineRunViewSchemaV1.parse(value);
+  const latestContinuation = history?.truncated ? undefined : history?.events.filter(event=>event.targetType==="pipeline_run"
+    && event.targetId===run.runId && ["advance_refused","advanced","completed"].includes(event.kind))
+    .sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt)||a.chainSequence-b.chainSequence).at(-1);
+  const stopReason = latestContinuation?.kind === "advance_refused"
+    ? pipelineAdvanceReasonSchemaV1.safeParse(latestContinuation.safeReason) : null;
   return <section className="private-panel"><h2>{run.title}</h2><p>Run state: {run.state}</p>
+    {run.pinnedTemplateVersion !== undefined && <p>This run is using template version {run.pinnedTemplateVersion}.
+      {run.pinnedTemplateVersion !== run.templateVersion && <> The shared template has since changed to version {run.templateVersion}; this run keeps its saved stages.</>}</p>}
+    {history?.truncated&&<p>Additional history is omitted. Check Needs Attention for the current continuation reason.</p>}
+    {stopReason?.success&&<p role="alert">Continuation stopped: {PIPELINE_ADVANCE_REASON_TEXT_V1[stopReason.data]}</p>}
+    <PipelineRunAllowance allowance={run.loopAllowance} />
+    <form className="private-pipeline-decisions" onSubmit={event=>{event.preventDefault();setSaving(true);setSaveError(null);
+      void createPipelineRunOwnerBrowserClient().setUnattended(projectId,run,policyId,!run.unattended)
+        .then(()=>{setPolicyId("");setGeneration(value=>value+1);},error=>setSaveError(error instanceof PipelineAdvanceRequestError?error.message:"The consent change was not confirmed. Refresh the saved run before trying again.")).finally(()=>setSaving(false));}}>
+      <fieldset><legend>Unattended continuation</legend><p>Current run consent: <strong>{run.unattended?"enabled":"disabled"}</strong>.
+        Enabling records owner consent under one current delegation policy; it does not start work in this request.</p>
+        <label>Delegation policy ID<input value={policyId} required minLength={1} maxLength={180}
+          autoComplete="off" onChange={event=>setPolicyId(event.target.value)}/></label>
+        <button type="submit" disabled={saving||!policyId}>{saving?"Saving…":run.unattended?"Disable unattended continuation":"Enable unattended continuation"}</button>
+        {saveError&&<p role="alert">{saveError}</p>}</fieldset>
+    </form>
     <ol className="private-pipeline-items">{run.stages.map(stage => <li key={stage.ordinal}>
       <header><h3>{stage.ordinal + 1}. {stage.role}</h3><span className="private-state">{stage.state.replaceAll("_", " ")}</span></header>
       <dl className="private-task-facts"><div><dt>Stored kind</dt><dd>{stage.stageKind}</dd></div>
         <div><dt>Agent</dt><dd>{stage.workerId}</dd></div><div><dt>Model</dt><dd>{stage.model} · {stage.effort}</dd></div>
-        <div><dt>Round</dt><dd>{stage.round ?? "unknown"}</dd></div><div><dt>Usage</dt><dd>{stage.usage}</dd></div>
+        <div><dt>Round</dt><dd>{stage.round ?? "unknown"}</dd></div><div><dt>Usage</dt><dd><PipelineStageUsage usage={stage.usage}/></dd></div>
         <div><dt>Previous result</dt><dd>{stage.predecessorResultDigest ?? "not accepted yet"}</dd></div></dl>
       <a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(stage.jobId)}`}>Open ordinary task</a>
-    </li>)}</ol><p className="private-note">An eligible stage is not invoked automatically. Start remains an ordinary owner action.</p></section>;
+    </li>)}</ol><section aria-label="Pipeline history"><h3>Verified history</h3>{history?<ul className="private-timeline">
+      {history.events.map(event=><li key={event.id}><strong>{event.kind.replaceAll("_"," ")}</strong>
+        {event.safeReason&&<span>{pipelineAdvanceReasonSchemaV1.safeParse(event.safeReason).success
+          ? PIPELINE_ADVANCE_REASON_TEXT_V1[event.safeReason as PipelineAdvanceSafeReasonV1] : event.safeReason.replaceAll("_"," ")}</span>}
+        <span>{event.actorId}</span><ConfiguredTimestamp value={event.occurredAt}/></li>)}</ul>
+      :historyUnavailable
+        // A refusal is stated, not kept pending. The run above is unaffected and
+        // no history is invented to fill the gap.
+        ?<p role="alert">Pipeline history is not available on this installation. Run state above is unaffected.</p>
+        :<p role="status">Checking authenticated pipeline history…</p>}</section>
+    <p className="private-note">Only a consented run and the installation’s separate live switch may continue automatically.</p></section>;
 }
 
 const errorCode = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required",
   403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
 const commandErrorCode = async (response: Response): Promise<PipelineFailureCode> => {
   if (response.status === 409) try {
-    const parsed = z.object({ error: z.literal("queue_depth_exceeded") }).strict().safeParse(await readBrowserJson(response));
-    if (parsed.success) return "queue_depth_exceeded";
+    const parsed = z.object({ error: z.enum(["queue_depth_exceeded", "flagged_items_unresolved"]) }).strict()
+      .safeParse(await readBrowserJson(response));
+    if (parsed.success) return parsed.data.error;
   } catch { /* fall back to the status-bound code */ }
   return errorCode(response.status);
 };
@@ -78,6 +214,7 @@ export const pipelineErrorMessage: Record<PipelineFailureCode, string> = {
   invalid_request: "The proposed decision or revision is invalid. Check every item and reason code.",
   conflict: "This batch changed in another tab. Check its saved revision before deciding again.",
   queue_depth_exceeded: "The selected agent already has the recorded maximum unfinished work. Wait for an accepted result or revise the proposal to use another agent.",
+  flagged_items_unresolved: "One or more approved items still have an open intake flag. Resolve every flag below (dismiss it or revise the proposal) before saving this decision.",
   not_found: "This pipeline batch is no longer available in this project.",
   unavailable: "The saved database or protected pipeline service could not be checked. No empty state or decision is inferred.",
   uncertain: "The decision could not be confirmed. Keep this page open and check this exact save again; do not submit a different decision.",
@@ -86,6 +223,7 @@ export const pipelineErrorMessage: Record<PipelineFailureCode, string> = {
 /** Browser-only owner client. A lost POST retains its exact body and key for reconciliation. */
 export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetch,
   makeKey: () => string = () => `pipeline:${crypto.randomUUID()}`) {
+  let busy = false;
   let pending: { path: string; body: string; key: string; uncertain: boolean } | undefined;
   async function call(path: string, method: "GET" | "POST", body?: string, key?: string) {
     try {
@@ -100,6 +238,7 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
     try { return await readBrowserJson(response); } catch { throw new PipelineRequestError("unavailable"); }
   }
   async function command(projectId: string, batchId: string, value?: unknown): Promise<OwnerReceipt> {
+    if (busy) throw new PipelineRequestError("uncertain");
     const path = `/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`;
     if (value !== undefined) {
       const parsed = workBatchOwnerCommandSchemaV1.safeParse(value);
@@ -109,11 +248,16 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
       pending ??= { path, body, key: makeKey(), uncertain: false };
     }
     if (!pending) throw new PipelineRequestError("invalid_request");
+    if (pending.path !== path) throw new PipelineRequestError("uncertain");
+    // Single-flight covers both the POST and its body, so an older call cannot alter the next save.
+    const operation = pending;
+    busy = true;
     try {
-      const response = await call(pending.path, "POST", pending.body, pending.key);
+      const response = await call(operation.path, "POST", operation.body, operation.key);
       if (!response.ok) throw new PipelineRequestError([400, 401, 403, 404, 409].includes(response.status)
         ? await commandErrorCode(response) : "uncertain");
-      const value = workBatchOwnerReceiptSchemaV1.parse(await read(response));
+      // Failure to read a successful write acknowledgement cannot establish that the save failed.
+      const value = workBatchOwnerReceiptSchemaV1.parse(await readBrowserJson(response));
       if (value.projectId !== projectId || value.batchId !== batchId || value.startsWork || value.grantsExecutionAuthority)
         throw new Error();
       pending = undefined;
@@ -123,7 +267,7 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
       if (pending && failure.code === "uncertain") pending.uncertain = true;
       else if (pending && !pending.uncertain) pending = undefined;
       throw failure;
-    }
+    } finally { busy = false; }
   }
   return {
     hasPending: () => !!pending,
@@ -147,6 +291,86 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
     },
     command,
     retry(projectId: string, batchId: string) { return command(projectId, batchId); },
+  };
+}
+
+/** Starts only through the ordinary task-submission route. It never creates a
+ * batch-only execution path, and a lost POST must be reconciled before another
+ * submission is attempted. */
+export function createWorkBatchStartBrowserClient(transport: typeof fetch = fetch) {
+  let busy = false;
+  let uncertain: { projectId: string; batchId: string; jobId: string; inputDigest: string; packetDigest: string } | undefined;
+  const failure = (status: number): PipelineFailureCode => ({ 400: "invalid_request", 401: "authentication_required",
+    403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, PipelineFailureCode>)[status] ?? "unavailable";
+  async function request(path: string, init?: RequestInit) {
+    try { return await transport(path, { ...init, credentials: "same-origin", cache: "no-store", redirect: "error",
+      signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+      headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest", ...(init?.body
+        ? { "content-type": "application/json" } : {}) } }); }
+    catch { throw new PipelineRequestError(init?.method === "POST" ? "uncertain" : "unavailable"); }
+  }
+  async function submission(projectId: string, jobId: string, inputDigest: string, signal?: AbortSignal) {
+    const response = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`
+      + `/submission?inputDigest=${encodeURIComponent(inputDigest)}`, { signal });
+    if (!response.ok) throw new PipelineRequestError(failure(response.status));
+    const value = taskSubmissionReadSchema.parse(await readBrowserJson(response));
+    if (value.projectId !== projectId || value.jobId !== jobId || value.inputDigest !== inputDigest)
+      throw new PipelineRequestError("unavailable");
+    return value;
+  }
+  return {
+    hasPending: () => busy || !!uncertain,
+    async start(projectId: string, batch: WorkBatchOwnerViewV1, signal?: AbortSignal): Promise<PipelineStartResult> {
+      if (busy) throw new PipelineRequestError("uncertain");
+      if (batch.projectId !== projectId || batch.state === "proposed") throw new PipelineRequestError("invalid_request");
+      busy = true;
+      const started: string[] = [], alreadyStarted: string[] = [], notReady: string[] = [];
+      try {
+        if (uncertain) {
+          if (uncertain.projectId !== projectId || uncertain.batchId !== batch.batchId)
+            throw new PipelineRequestError("uncertain");
+          const checked = await submission(projectId, uncertain.jobId, uncertain.inputDigest, signal);
+          if (!checked.receipt || checked.receipt.packetDigest !== uncertain.packetDigest)
+            throw new PipelineRequestError("uncertain");
+          alreadyStarted.push(uncertain.jobId); uncertain = undefined;
+        }
+        const admitted = new Set(batch.queue.map(item => item.jobId));
+        const jobs = batch.items.filter(item => item.decisionState === "approved" && item.jobId).map(item => item.jobId!);
+        for (const jobId of jobs) {
+          signal?.throwIfAborted();
+          if (alreadyStarted.includes(jobId)) continue;
+          if (!admitted.has(jobId)) { notReady.push(jobId); continue; }
+          const detailResponse = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`,
+            { signal });
+          if (!detailResponse.ok) throw new PipelineRequestError(failure(detailResponse.status));
+          const detail = taskDetailSchema.parse(await readBrowserJson(detailResponse));
+          if (detail.task.projectId !== projectId || detail.task.jobId !== jobId) throw new PipelineRequestError("unavailable");
+          const first = await submission(projectId, jobId, detail.inputDigest, signal);
+          if (first.receipt) { alreadyStarted.push(jobId); continue; }
+          if (!first.preview) { notReady.push(jobId); continue; }
+          const fresh = await submission(projectId, jobId, detail.inputDigest, signal);
+          if (fresh.receipt) { alreadyStarted.push(jobId); continue; }
+          if (!fresh.preview || fresh.preview.packetDigest !== first.preview.packetDigest) {
+            notReady.push(jobId); continue;
+          }
+          uncertain = { projectId, batchId: batch.batchId, jobId, inputDigest: detail.inputDigest,
+            packetDigest: fresh.preview.packetDigest };
+          const response = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/submission`, {
+            method: "POST", signal, body: JSON.stringify({ expectedInputDigest: detail.inputDigest,
+              expectedPacketDigest: fresh.preview.packetDigest }) });
+          if (!response.ok) { const code = failure(response.status); if (code !== "unavailable") uncertain = undefined;
+            throw new PipelineRequestError(code === "unavailable" ? "uncertain" : code); }
+          const receipt = taskSubmissionReceiptSchema.parse(await readBrowserJson(response));
+          if (receipt.projectId !== projectId || receipt.jobId !== jobId || receipt.packetDigest !== fresh.preview.packetDigest)
+            throw new PipelineRequestError("uncertain");
+          uncertain = undefined; started.push(jobId);
+        }
+        return Object.freeze({ started: Object.freeze(started), alreadyStarted: Object.freeze(alreadyStarted),
+          notReady: Object.freeze(notReady) });
+      } catch (error) {
+        throw error instanceof PipelineRequestError ? error : new PipelineRequestError(uncertain ? "uncertain" : "unavailable");
+      } finally { busy = false; }
+    },
   };
 }
 
@@ -207,29 +431,133 @@ export function PipelineBatchList({ projectId, data }: { projectId: string; data
   </section>;
 }
 
-function ProposalContents({ proposal }: { proposal: WorkBatchProposalV1 }) {
+const routeValue = (task: ProposalTask) => JSON.stringify([task.requestedWorkerId ?? "",
+  task.requestedWorkerKind ?? "", task.requestedModelKey ?? ""]);
+const routeLabel = (route: WorkBatchRoutingOptionV1, modelKey: string, pinned: boolean) =>
+  `${pinned ? "Pin" : "Pool"}: ${pinned ? route.workerId : `all ${route.workerKind}`} · ${modelKey}`;
+
+function eligibleRoute(task: ProposalTask, routes: readonly WorkBatchRoutingOptionV1[]) {
+  if (!routes.length) return false;
+  return routes.some(route => (!task.requestedWorkerId || route.workerId === task.requestedWorkerId)
+    && (!task.requestedWorkerKind || route.workerKind === task.requestedWorkerKind)
+    && (!task.requestedModelKey || route.modelKeys.includes(task.requestedModelKey)) && route.modelKeys.length > 0);
+}
+
+function ProposalContents({ proposal, routingOptions = [] }: { proposal: WorkBatchProposalV1;
+  routingOptions?: readonly WorkBatchRoutingOptionV1[] }) {
   const incoming = new Map(proposal.tasks.map(task => [task.localId,
     proposal.edges.filter(edge => edge.toLocalId === task.localId).map(edge => edge.fromLocalId)]));
-  return <ol className="private-pipeline-items">{proposal.tasks.map(task => <li key={task.localId}>
-    <header><h4>{task.title}</h4><span className="private-state">{task.role}</span></header>
-    <p className="private-prewrap">{task.instructions}</p>
-    <dl className="private-task-facts"><div><dt>Capability</dt><dd>{task.requiredCapability}</dd></div>
-      <div><dt>Agent</dt><dd>{task.requestedWorkerId ?? task.requestedWorkerKind ?? "Not requested"}</dd></div>
-      <div><dt>Model</dt><dd>{task.requestedModelKey ?? "Not requested"}</dd></div>
-      <div><dt>Depends on</dt><dd>{incoming.get(task.localId)?.join(", ") || "Nothing in this batch"}</dd></div></dl>
-    <h5>Acceptance criteria</h5><p className="private-prewrap">{task.acceptanceCriteria}</p>
-    <h5>Acceptance tests</h5><p className="private-prewrap">{task.acceptanceTests}</p>
-  </li>)}</ol>;
+  return <div className="private-work-graph" aria-label="Proposal graph">
+    <ol className="private-work-graph-grid">{proposal.tasks.map(task => <li key={task.localId}>
+      <header><div><span className="private-part-kicker">Part {proposal.tasks.indexOf(task) + 1}</span><h4>{task.title}</h4></div>
+        <span className="private-state">{task.role}</span></header>
+      <div className="private-capability-chips" aria-label={`Capabilities for ${task.title}`}>
+        <span>{task.requiredCapability}</span></div>
+      <p className="private-prewrap">{task.instructions}</p>
+      <dl className="private-task-facts"><div><dt>Routing</dt><dd>{task.requestedWorkerId
+        ? `Pinned to ${task.requestedWorkerId}` : task.requestedWorkerKind ? `Pool: all ${task.requestedWorkerKind}`
+          : "Every approved eligible machine"}</dd></div>
+        <div><dt>Model</dt><dd>{task.requestedModelKey ?? "Owner-approved default"}</dd></div>
+        <div><dt>Inputs</dt><dd>{incoming.get(task.localId)?.join(", ") || "Starts independently"}</dd></div></dl>
+      {!eligibleRoute(task, routingOptions) && <p className="private-no-eligible" role="status">No eligible machine is recorded for this part.</p>}
+      <details><summary>Acceptance details</summary><h5>Acceptance criteria</h5><p className="private-prewrap">{task.acceptanceCriteria}</p>
+        <h5>Acceptance tests</h5><p className="private-prewrap">{task.acceptanceTests}</p></details>
+    </li>)}</ol>
+    <section className="private-graph-edges" aria-label="Dependency arrows"><h4>Arrows</h4>
+      {proposal.edges.length ? <ul>{proposal.edges.map(edge => <li key={`${edge.fromLocalId}:${edge.toLocalId}`}>
+        <span>{edge.fromLocalId}</span><span aria-hidden="true">→</span><span>{edge.toLocalId}</span></li>)}</ul>
+        : <p>These parts are independent and may run in parallel.</p>}</section>
+  </div>;
+}
+
+export function ProposalGraphEditor({ proposal, routingOptions = [], disabled = false, onChange }:
+  { proposal: WorkBatchProposalV1; routingOptions?: readonly WorkBatchRoutingOptionV1[]; disabled?: boolean;
+    onChange: (proposal: WorkBatchProposalV1) => void }) {
+  const updateTask = (localId: string, patch: Partial<ProposalTask>) => onChange({ ...proposal,
+    tasks: proposal.tasks.map(task => task.localId === localId ? { ...task, ...patch } : task) });
+  const setRoute = (task: ProposalTask, raw: string) => {
+    const [workerId, workerKind, modelKey] = z.tuple([z.string(), z.string(), z.string()]).parse(JSON.parse(raw));
+    const next: ProposalTask = { ...task }; delete next.requestedWorkerId; delete next.requestedWorkerKind;
+    delete next.requestedModelKey;
+    if (workerId) next.requestedWorkerId = workerId;
+    if (workerKind) next.requestedWorkerKind = workerKind;
+    if (modelKey) next.requestedModelKey = modelKey;
+    updateTask(task.localId, next);
+  };
+  const compare = fillGraphPresetV1(proposal.projectId, "compare_and_combine", proposal, routingOptions);
+  const poolChoices = routingOptions.flatMap(route => route.modelKeys.map(modelKey => ({ route, modelKey })))
+    .filter((value, index, all) => all.findIndex(candidate => candidate.route.workerKind === value.route.workerKind
+      && candidate.modelKey === value.modelKey) === index);
+  return <section className="private-graph-editor" aria-label="Edit proposal graph">
+    <div className="private-preset-bar"><div><h3>Start from a preset</h3>
+      <p>Presets fill this same proposal graph. Review every part before saving the revision.</p></div>
+      <div className="private-actions"><button type="button" disabled={disabled} onClick={() => onChange(
+        fillGraphPresetV1(proposal.projectId, "split_by_part", proposal, routingOptions)!)}>Split by part</button>
+        <button type="button" disabled={disabled || !compare} onClick={() => { if (compare) onChange(compare); }}>
+          Compare and combine</button></div></div>
+    {!compare && <p className="private-note">Compare and combine needs three approved workers on distinct nodes. No eligible machine set currently satisfies it.</p>}
+    <ol className="private-graph-editor-parts">{proposal.tasks.map((task, index) => <li key={task.localId}>
+      <fieldset disabled={disabled}><legend>Part {index + 1}: {task.title}</legend>
+        <div className="private-editor-grid"><label>Part ID<input value={task.localId} readOnly /></label>
+          <label>Role<select value={task.role} onChange={event => updateTask(task.localId,
+            { role: event.target.value as ProposalTask["role"] })}><option value="builder">Builder</option>
+            <option value="checker">Checker</option><option value="validator">Validator</option></select></label></div>
+        <label>Title<input value={task.title} maxLength={180}
+          onChange={event => updateTask(task.localId, { title: event.target.value })} /></label>
+        <label>Instructions<textarea rows={4} value={task.instructions} maxLength={4_000}
+          onChange={event => updateTask(task.localId, { instructions: event.target.value })} /></label>
+        <label>Capability<input value={task.requiredCapability} maxLength={180}
+          onChange={event => updateTask(task.localId, { requiredCapability: event.target.value })} /></label>
+        <div className="private-capability-chips"><span>{task.requiredCapability || "Choose a capability"}</span></div>
+        <label>Pin or pool<select value={routeValue(task)} onChange={event => setRoute(task, event.target.value)}>
+          <option value={JSON.stringify(["", "", ""])}>Every approved eligible machine</option>
+          {poolChoices.map(({ route, modelKey }) => <option key={`pool:${route.workerKind}:${modelKey}`}
+            value={JSON.stringify(["", route.workerKind, modelKey])}>{routeLabel(route, modelKey, false)}</option>)}
+          {routingOptions.flatMap(route => route.modelKeys.map(modelKey => <option key={`pin:${route.workerId}:${modelKey}`}
+            value={JSON.stringify([route.workerId, route.workerKind, modelKey])}>{routeLabel(route, modelKey, true)}</option>))}</select></label>
+        {!eligibleRoute(task, routingOptions) && <p className="private-no-eligible" role="status">No eligible machine is recorded for this routing choice.</p>}
+        <fieldset className="private-dependency-picker"><legend>Inputs from other parts</legend>
+          {proposal.tasks.filter(candidate => candidate.localId !== task.localId).map(candidate => {
+            const checked = proposal.edges.some(edge => edge.fromLocalId === candidate.localId && edge.toLocalId === task.localId);
+            return <label key={candidate.localId}><input type="checkbox" checked={checked} onChange={event => onChange({ ...proposal,
+              edges: event.target.checked ? [...proposal.edges, { fromLocalId: candidate.localId, toLocalId: task.localId }]
+                : proposal.edges.filter(edge => edge.fromLocalId !== candidate.localId || edge.toLocalId !== task.localId) })} />
+              {candidate.title}</label>; })}</fieldset>
+        <label>Acceptance criteria<textarea rows={3} value={task.acceptanceCriteria} maxLength={4_000}
+          onChange={event => updateTask(task.localId, { acceptanceCriteria: event.target.value })} /></label>
+        <label>Acceptance tests<textarea rows={3} value={task.acceptanceTests} maxLength={4_000}
+          onChange={event => updateTask(task.localId, { acceptanceTests: event.target.value })} /></label>
+        <button type="button" disabled={disabled || proposal.tasks.length === 1} onClick={() => onChange({ ...proposal,
+          tasks: proposal.tasks.filter(candidate => candidate.localId !== task.localId),
+          edges: proposal.edges.filter(edge => edge.fromLocalId !== task.localId && edge.toLocalId !== task.localId) })}>Remove part</button>
+      </fieldset>
+    </li>)}</ol>
+    <button type="button" disabled={disabled || proposal.tasks.length >= 32} onClick={() => {
+      let ordinal = proposal.tasks.length + 1, localId = `part-${ordinal}`;
+      while (proposal.tasks.some(task => task.localId === localId)) { ordinal += 1; localId = `part-${ordinal}`; }
+      onChange({ ...proposal, tasks: [...proposal.tasks, placeholderTask(localId, ordinal)] });
+    }}>Add part</button>
+  </section>;
 }
 
 export function PipelineBatchDetail({ projectId, data, decisions = {}, pending = false, saveError,
   onDecision = () => {}, onAll = () => {}, onSave = () => {}, onRetry = () => {},
-  revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {} }:
+  revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {},
+  onDismissFlag = () => {}, onUseSuggestedSplit = () => {}, suggestions = [], suggestionPending = false,
+  dismissAvailable = false, suggestionError, onUseSuggestion = () => {}, onDismissSuggestion = () => {},
+  editedProposal, onProposalChange = () => {}, startPending = false, startResult, startError, onStart = () => {} }:
   { projectId: string; data: ReadState<WorkBatchOwnerViewV1>; decisions?: PipelineDecisionDraft; pending?: boolean;
     saveError?: PipelineFailureCode; onDecision?: (localId: string, decision: Choice, reasonCode: string) => void;
     onAll?: (choice: Exclude<Choice, "undecided">) => void; onSave?: () => void; onRetry?: () => void;
     revisionText?: string; revisionReason?: string; onRevisionText?: (value: string) => void;
-    onRevisionReason?: (value: string) => void; onRevise?: () => void }) {
+    onRevisionReason?: (value: string) => void; onRevise?: () => void;
+    editedProposal?: WorkBatchProposalV1; onProposalChange?: (value: WorkBatchProposalV1) => void;
+    onDismissFlag?: (localId: string, flagKind: "needs_breakdown" | "needs_more_info") => void;
+    onUseSuggestedSplit?: (localId: string) => void; suggestions?: readonly ProjectOrchestrationSuggestionV1[];
+    suggestionPending?: boolean; dismissAvailable?: boolean; suggestionError?: BrowserFailureCode;
+    onUseSuggestion?: (suggestion: ProjectOrchestrationSuggestionV1) => void;
+    onDismissSuggestion?: (suggestion: ProjectOrchestrationSuggestionV1) => void;
+    startPending?: boolean; startResult?: PipelineStartResult; startError?: PipelineFailureCode; onStart?: () => void }) {
   if (data.state === "loading") return <section className="private-panel"><h2>Batch review</h2>
     <p role="status">Loading the saved batch and every revision…</p></section>;
   if (data.state === "unavailable") return <section className="private-panel"><h2>Batch review</h2>
@@ -241,13 +569,24 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
   });
   const dependenciesValid = value.proposal.edges.every(edge => decisions[edge.toLocalId]?.decision !== "approve"
     || decisions[edge.fromLocalId]?.decision === "approve");
+  const approvalBlockedByFlags = value.proposal.tasks.some(task => decisions[task.localId]?.decision === "approve"
+    && (value.flagsByLocalId[task.localId] ?? []).some(flag => !flag.dismissed));
   const savedByLocal = new Map(value.items.map(item => [item.localId, item]));
   const queueByLocal = new Map(value.queue.map(item => [item.localId, item]));
+  const approvedItems = value.items.filter(item => item.decisionState === "approved" && item.jobId);
+  const admittedJobs = new Set(value.queue.map(item => item.jobId));
+  const startable = approvedItems.filter(item => admittedJobs.has(item.jobId!));
+  let revisionValid = false;
+  try { const parsed = workBatchProposalSchemaV1.safeParse(JSON.parse(revisionText));
+    revisionValid = parsed.success && parsed.data.projectId === projectId; } catch { revisionValid = false; }
   return <>
     <section className="private-panel"><div className="private-pipeline-heading"><div><h2>Batch review</h2>
       <p>Revision {value.revision} · {value.state.replaceAll("_", " ")}</p></div>
       <span className="private-state">{value.proposal.tasks.length} items</span></div>
-      <ProposalContents proposal={value.proposal} />
+      <section className="private-batch-status" aria-label="Batch status"><h3>{decided ? "Plan decision recorded" : "Needs your decision"}</h3>
+        <p>{decided ? "The graph is frozen at this revision. Work has not been started from this decision."
+          : "Review the graph, routing and open intake flags before approving the plan."}</p></section>
+      <ProposalContents proposal={value.proposal} routingOptions={value.routingOptions} />
       {decided ? <section aria-label="Recorded item decisions"><h3>Recorded item decisions</h3>
         <ul className="private-dashboard-list">{value.proposal.tasks.map(task => { const item = savedByLocal.get(task.localId); return <li key={task.localId}>
           <strong>{task.title}: {item?.decisionState ?? "decision unavailable"}</strong>
@@ -271,8 +610,32 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
         <div className="private-actions"><button type="button" disabled={pending} onClick={() => onAll("approve")}>Approve all items</button>
           <button type="button" disabled={pending} onClick={() => onAll("reject")}>Reject all items</button></div>
         <div className="private-pipeline-decisions">{value.proposal.tasks.map(task => { const draft = decisions[task.localId]
-          ?? { decision: "undecided" as const, reasonCode: "" }; return <fieldset key={task.localId} disabled={pending}>
-            <legend>{task.title}</legend><label>Decision<select value={draft.decision}
+          ?? { decision: "undecided" as const, reasonCode: "" };
+          const flags = value.flagsByLocalId[task.localId] ?? [];
+          const openFlags = flags.filter(flag => !flag.dismissed);
+          const suggestedSplit = flags.some(flag => flag.kind === "needs_breakdown" && !flag.dismissed)
+            ? computeSuggestedSplitV1(task) : null;
+          return <fieldset key={task.localId} disabled={pending}>
+            <legend>{task.title}</legend>
+            {flags.length > 0 && <section aria-label={`Intake flags for ${task.title}`} className="private-intake-flags">
+              {flags.map(flag => <div key={`${flag.kind}:${flag.reasonCode}`} className="private-notice" role={flag.dismissed ? undefined : "alert"}>
+                <p>{INTAKE_FLAG_REASON_TEXT_V1[flag.reasonCode] ?? flag.reasonCode.replaceAll("_", " ")}</p>
+                {flag.dismissed ? <span className="private-state">Dismissed by the owner</span>
+                  : <div className="private-actions">
+                    <button type="button" disabled={pending} onClick={() => onDismissFlag(task.localId, flag.kind)}>
+                      {flags.filter(candidate => candidate.kind === flag.kind).length > 1
+                        ? "Dismiss both information concerns" : "Dismiss this flag"}</button>
+                    {flag.kind === "needs_breakdown" && suggestedSplit && <button type="button" disabled={pending}
+                      onClick={() => onUseSuggestedSplit(task.localId)}>
+                      Use suggested split ({suggestedSplit.length} parts)</button>}
+                  </div>}
+              </div>)}
+              {openFlags.some(flag => flag.kind === "needs_breakdown") && !suggestedSplit && <p className="private-note">
+                No automatic split is available: instructions and acceptance criteria must have matching bullet counts.
+                Revise this task into smaller parts in the graph editor.</p>}
+              {openFlags.length > 0 && <p className="private-note">This item cannot be approved until every flag above is dismissed or the proposal is revised.</p>}
+            </section>}
+            <label>Decision<select value={draft.decision}
               onChange={event => onDecision(task.localId, event.target.value as Choice, draft.reasonCode)}>
               <option value="undecided">Choose a decision</option><option value="approve">Approve as proposed task</option>
               <option value="reject">Reject item</option></select></label>
@@ -280,23 +643,46 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
               maxLength={64} placeholder="owner_rejected" onChange={event => onDecision(task.localId, "reject", event.target.value)} /></label>}
           </fieldset>; })}</div>
         {!dependenciesValid && <p role="alert">An approved item cannot depend on a rejected or undecided item. Approve its dependencies or reject the dependent item.</p>}
-        <button type="button" disabled={pending || !complete || !dependenciesValid} onClick={onSave}>Save all item decisions</button>
+        {approvalBlockedByFlags && <p role="alert">Resolve every open intake flag on approved parts before approving the plan.</p>}
+        <button type="button" disabled={pending || !complete || !dependenciesValid || approvalBlockedByFlags} onClick={onSave}>Approve plan</button>
       </section>}
       {saveError && <div className="private-notice" role="alert"><p>{pipelineErrorMessage[saveError]}</p>
         {saveError === "uncertain" && <button type="button" disabled={pending} onClick={onRetry}>Check this exact save</button>}</div>}
       {pending && <p role="status">Saving this exact batch decision…</p>}
       {noWorkStarts()}
     </section>
+    {!decided && suggestions.map(suggestion => <ChiefOfStaffSuggestionCard key={suggestion.suggestionId} suggestion={suggestion}
+      pending={suggestionPending} dismissAvailable={dismissAvailable} onUse={onUseSuggestion} onDismiss={onDismissSuggestion} />)}
+    {suggestionError && <p className="private-notice" role="alert">{orchestrationErrorMessage[suggestionError]}</p>}
+    {decided && value.state !== "rejected" && <section className="private-panel private-start-panel" aria-label="Start approved plan">
+      <div className="private-pipeline-heading"><div><p className="private-eyebrow">Second tap</p><h2>Start approved plan</h2></div>
+        <span className="private-state">{startable.length} admitted route{startable.length === 1 ? "" : "s"}</span></div>
+      <p>Start uses each ordinary task’s existing owner submission command. Dependency gates still decide when later parts may run.</p>
+      {approvedItems.filter(item => !admittedJobs.has(item.jobId!)).map(item => <p className="private-no-eligible" key={item.localId}>
+        No eligible machine is recorded for {value.proposal.tasks.find(task => task.localId === item.localId)?.title ?? item.localId}.</p>)}
+      <button type="button" disabled={pending || startPending || startable.length === 0} onClick={onStart}>
+        {startPending ? "Starting approved plan…" : "Start approved plan"}</button>
+      {startResult && <p role="status">Started {startResult.started.length}; already started {startResult.alreadyStarted.length};
+        not ready {startResult.notReady.length}.</p>}
+      {startError && <p role="alert">{startError === "uncertain"
+        ? "A start could not be confirmed. Press Start again only to reconcile the exact task receipt; no different task will be sent."
+        : pipelineErrorMessage[startError]}</p>}
+    </section>}
     <section className="private-panel"><h2>Full revision history</h2>
       {value.revisions.map(revision => <details key={revision.revision} open={revision.revision === value.revision}>
         <summary>Revision {revision.revision} · {revision.reasonCode.replaceAll("_", " ")} · <ConfiguredTimestamp value={revision.editedAt} /></summary>
         <p className="private-note">Recorded by {revision.editedByIdentityId}.</p>
-        <ProposalContents proposal={revision.proposal} />
+        <ProposalContents proposal={revision.proposal} routingOptions={value.routingOptions} />
       </details>)}
-      {!decided && <details><summary>Revise this proposal</summary><label>Reason code<input value={revisionReason}
+      {!decided && <details open><summary>Edit this proposal graph</summary>
+        {editedProposal && <ProposalGraphEditor proposal={editedProposal} routingOptions={value.routingOptions}
+          disabled={pending} onChange={onProposalChange} />}
+        <label>Reason code<input value={revisionReason}
         pattern="[a-z][a-z0-9_]{2,63}" maxLength={64} onChange={event => onRevisionReason(event.target.value)} /></label>
-        <label>Strict proposal JSON<textarea rows={16} value={revisionText} onChange={event => onRevisionText(event.target.value)} /></label>
-        <button type="button" disabled={pending || !revisionText || !/^[a-z][a-z0-9_]{2,63}$/u.test(revisionReason)} onClick={onRevise}>Save revision</button>
+        <details><summary>Advanced proposal JSON</summary><label>Strict proposal JSON<textarea rows={16} value={revisionText}
+          onChange={event => onRevisionText(event.target.value)} /></label></details>
+        {!revisionValid && <p role="alert">The edited graph is not a valid acyclic proposal yet. Fix missing fields or dependency loops before saving.</p>}
+        <button type="button" disabled={pending || !revisionValid || !/^[a-z][a-z0-9_]{2,63}$/u.test(revisionReason)} onClick={onRevise}>Save revision</button>
         {noWorkStarts()}</details>}
     </section>
   </>;
@@ -304,19 +690,35 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
 
 function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId?: string }) {
   const [client] = useState(() => createWorkBatchOwnerBrowserClient());
+  const [orchestrationClient] = useState(() => createProjectOrchestrationBrowserClient());
+  const [startClient] = useState(() => createWorkBatchStartBrowserClient());
   const [data, setData] = useState<ReadState<OwnerPage | WorkBatchOwnerViewV1>>({ state: "loading" });
   const [generation, setGeneration] = useState(0), [pending, setPending] = useState(false);
   const [saveError, setSaveError] = useState<PipelineFailureCode>(), [decisions, setDecisions] = useState<PipelineDecisionDraft>({});
   const [revisionText, setRevisionText] = useState(""), [revisionReason, setRevisionReason] = useState("owner_revision");
+  const [suggestions, setSuggestions] = useState<readonly ProjectOrchestrationSuggestionV1[]>([]);
+  const [dismissAvailable, setDismissAvailable] = useState(false);
+  const [suggestionPending, setSuggestionPending] = useState(false), [suggestionError, setSuggestionError] = useState<BrowserFailureCode>();
+  const [editedProposal, setEditedProposal] = useState<WorkBatchProposalV1>();
+  const [startPending, setStartPending] = useState(false), [startResult, setStartResult] = useState<PipelineStartResult>();
+  const [startError, setStartError] = useState<PipelineFailureCode>();
   useEffect(() => {
-    const abort = new AbortController(); setData({ state: "loading" }); setSaveError(undefined);
+    const abort = new AbortController(); setData({ state: "loading" }); setSaveError(undefined); setStartError(undefined);
     void (batchId ? client.view(projectId, batchId) : client.list(projectId)).then(value => {
       if (abort.signal.aborted) return; setData({ state: "ready", value });
-      if (batchId) setRevisionText(JSON.stringify((value as WorkBatchOwnerViewV1).proposal, null, 2));
+      if (batchId) { const proposal = (value as WorkBatchOwnerViewV1).proposal;
+        setEditedProposal(proposal); setRevisionText(JSON.stringify(proposal, null, 2)); }
     }, error => { if (!abort.signal.aborted) setData({ state: "unavailable",
       code: error instanceof PipelineRequestError ? error.code : "unavailable" }); });
     return () => abort.abort();
   }, [client, projectId, batchId, generation]);
+  useEffect(() => {
+    let live = true; setSuggestions([]); setDismissAvailable(false); setSuggestionError(undefined);
+    if (batchId) void orchestrationClient.listSuggestions(projectId, batchId).then(value => {
+      if (live) { setSuggestions(value.suggestions); setDismissAvailable(value.dismissAvailable); }
+    }, error => { if (live && error instanceof BrowserRequestError && error.code !== "not_found") setSuggestionError(error.code); });
+    return () => { live = false; };
+  }, [orchestrationClient, projectId, batchId, generation]);
   const detail = data.state === "ready" && batchId ? data.value as WorkBatchOwnerViewV1 : undefined;
   const submit = async (retry = false, revise = false) => {
     if (!batchId || !detail || pending) return;
@@ -336,14 +738,68 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
     } catch (error) { setSaveError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
     finally { setPending(false); }
   };
+  const dismissFlag = async (localId: string, flagKind: "needs_breakdown" | "needs_more_info") => {
+    if (!batchId || !detail || pending) return;
+    setPending(true); setSaveError(undefined);
+    try {
+      await client.command(projectId, batchId, { operation: "dismiss_flag", batchId, expectedRevision: detail.revision,
+        localId, flagKind, reasonCode: "owner_dismissed" });
+      setGeneration(value => value + 1);
+    } catch (error) { setSaveError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
+    finally { setPending(false); }
+  };
+  const useSuggestedSplit = (localId: string) => {
+    if (!detail) return;
+    const revised = applySuggestedSplitV1(detail.proposal, localId);
+    if (!revised) return;
+    setRevisionReason("intake_suggested_split");
+    setEditedProposal(revised); setRevisionText(JSON.stringify(revised, null, 2));
+  };
+  const start = async () => {
+    if (!detail || startPending || pending) return;
+    setStartPending(true); setStartError(undefined); setStartResult(undefined);
+    try { setStartResult(await startClient.start(projectId, detail)); }
+    catch (error) { setStartError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
+    finally { setStartPending(false); }
+  };
+  const useChiefSuggestion = async (suggestion: ProjectOrchestrationSuggestionV1) => {
+    if (!batchId || !detail || pending || suggestionPending) return;
+    setSuggestionPending(true); setSuggestionError(undefined);
+    try { const value = await orchestrationClient.useSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
+      // The graph editor and the JSON draft are one draft: filling only the JSON
+      // left the editor on the old plan, and its first edit wrote that back over
+      // the suggestion.
+      setRevisionReason("chief_of_staff_split"); setEditedProposal(value.proposal);
+      setRevisionText(JSON.stringify(value.proposal, null, 2)); }
+    catch (error) { setSuggestionError(error instanceof BrowserRequestError ? error.code : "unavailable"); }
+    finally { setSuggestionPending(false); }
+  };
+  const dismissChiefSuggestion = async (suggestion: ProjectOrchestrationSuggestionV1) => {
+    if (!batchId || !detail || pending || suggestionPending || !dismissAvailable) return;
+    setSuggestionPending(true); setSuggestionError(undefined);
+    try { await orchestrationClient.dismissSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
+      setSuggestions(current => current.filter(value => value.suggestionId !== suggestion.suggestionId)); }
+    catch (error) { setSuggestionError(error instanceof BrowserRequestError ? error.code : "unavailable"); }
+    finally { setSuggestionPending(false); }
+  };
   const content = batchId
     ? <PipelineBatchDetail projectId={projectId} data={data as ReadState<WorkBatchOwnerViewV1>} decisions={decisions}
       pending={pending} saveError={saveError} revisionText={revisionText} revisionReason={revisionReason}
+      editedProposal={editedProposal} startPending={startPending} startResult={startResult} startError={startError}
       onDecision={(localId, decision, reasonCode) => setDecisions(current => ({ ...current, [localId]: { decision, reasonCode } }))}
       onAll={choice => setDecisions(Object.fromEntries((detail?.proposal.tasks ?? []).map(task =>
         [task.localId, { decision: choice, reasonCode: choice === "reject" ? "owner_rejected" : "" }] )))}
       onSave={() => { void submit(); }} onRetry={() => { void submit(true); }}
-      onRevisionText={setRevisionText} onRevisionReason={setRevisionReason} onRevise={() => { void submit(false, true); }} />
+      onProposalChange={proposal => { setEditedProposal(proposal); setRevisionText(JSON.stringify(proposal, null, 2)); }}
+      onRevisionText={value => { setRevisionText(value); try { const parsed = workBatchProposalSchemaV1.safeParse(JSON.parse(value));
+        if (parsed.success && parsed.data.projectId === projectId) setEditedProposal(parsed.data); } catch { /* invalid advanced draft */ } }}
+      onRevisionReason={setRevisionReason} onRevise={() => { void submit(false, true); }}
+      onDismissFlag={(localId, flagKind) => { void dismissFlag(localId, flagKind); }}
+      onUseSuggestedSplit={useSuggestedSplit} suggestions={suggestions} suggestionPending={suggestionPending}
+      dismissAvailable={dismissAvailable} suggestionError={suggestionError}
+      onUseSuggestion={suggestion => { void useChiefSuggestion(suggestion); }}
+      onDismissSuggestion={suggestion => { void dismissChiefSuggestion(suggestion); }}
+      onStart={() => { void start(); }} />
     : <PipelineBatchList projectId={projectId} data={data as ReadState<OwnerPage>} />;
   const heading = batchId ? "Pipeline batch" : "Project pipelines";
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
@@ -352,7 +808,8 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
     <div className="private-heading"><p className="private-eyebrow">Owner-reviewed proposals</p><h1>{heading}</h1>
       <p>Review agent-proposed batches before they become ordinary tasks. Batch decisions never start work.</p></div>
     <ProjectNavigation projectId={projectId} current="pipelines" />{!batchId && <PipelineRuns projectId={projectId} />}{content}
-    <button type="button" disabled={pending || client.hasPending()} onClick={() => setGeneration(value => value + 1)}>Check saved pipelines again</button>
+    <button type="button" disabled={pending || startPending || client.hasPending() || startClient.hasPending()}
+      onClick={() => setGeneration(value => value + 1)}>Check saved pipelines again</button>
   </main></div>;
 }
 

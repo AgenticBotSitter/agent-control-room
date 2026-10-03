@@ -1,0 +1,58 @@
+[
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "        if (existing.state === \"open\" && existing.capability === capability\n          && sameWorkerSet(existing.allowed_worker_ids, allowed))",
+    "replace": "        if (existing.state === \"open\" && existing.capability === capability)",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "a re-offer with a different chosen-bot set must be a conflict, not a replay over the old scope (R6F-06)"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "        if (existing.state === \"open\" && existing.capability === capability\n          && sameWorkerSet(existing.allowed_worker_ids, allowed))",
+    "replace": "        if (existing.capability === capability && sameWorkerSet(existing.allowed_worker_ids, allowed))",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "a withdrawn (closed) offer must not replay as open, even with an identical scope"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "        WHERE j.tenant_id=$1 AND j.id=$2 AND j.project_id=$3 AND p.workspace_id=$4`,\n      [this.#tenantId, jobId, projectId, this.#workspaceId])).rows[0];\n      if (!job) return fleetFail(\"not_found\");",
+    "replace": "        WHERE j.tenant_id=$1 AND j.id=$2`,\n      [this.#tenantId, jobId])).rows[0];\n      if (!job) return fleetFail(\"not_found\");",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "the job offered must belong to the authorized project and workspace before the replay lookup runs (R6W-06)"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "        WHERE j.tenant_id=$1 AND j.id=$2 AND j.project_id=$3 AND p.workspace_id=$4`,\n      [this.#tenantId, jobId, projectId, this.#workspaceId])).rows[0];",
+    "replace": "        WHERE j.tenant_id=$1 AND j.id=$2 AND j.project_id=$3`,\n      [this.#tenantId, jobId, projectId])).rows[0];",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "a project of the same tenant in another workspace is not this installation's task to offer"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "  const left = [...new Set(stored as string[])].sort(), right = [...new Set(requested)].sort();\n  return left.length === right.length && left.every((value, index) => value === right[index]);",
+    "replace": "  const left = stored as string[], right = [...requested];\n  return left.length === right.length && left.every((value, index) => value === right[index]);",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "the chosen-bot scope is a SET: the order the owner ticked the boxes is not part of it"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "  if (requested === null) return stored === null;",
+    "replace": "  if (requested === null) return stored === null || Array.isArray(stored);",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "an unrestricted saved scope is not the same request as one naming chosen bots, in either direction"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "        FROM fleet_work_offers WHERE tenant_id=$1 AND job_id=$2 AND project_id=$3`,\n      [this.#tenantId, jobId, projectId])).rows[0];",
+    "replace": "        FROM fleet_work_offers WHERE tenant_id=$1 AND job_id=$2`,\n      [this.#tenantId, jobId])).rows[0];",
+    "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=59500 CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-offer-scope-postgres.test.ts",
+    "why": "the replay answer is bound to the authorized project, not to whatever project the job names (R6W-06; equivalent on today's rows because 0140 pins the two, and proved by the assertion beside it)"
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "        setMessage(response.status === 409\n",
+    "replace": "        setMessage(false\n",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/website-owner-saves.test.tsx",
+    "why": "a conflict is worded as its own plain sentence, not the generic refusal that blames the bot choice"
+  }
+]

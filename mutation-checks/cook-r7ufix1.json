@@ -1,0 +1,72 @@
+[
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      const publicState = damagedSwitch ? \"needs_attention\"\n        : outstanding ? durableState",
+    "replace": "      const publicState = damagedSwitch ? \"needs_attention\"\n        : false ? durableState",
+    "test": "node --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "an outstanding durable run outcome is the published state, not idle"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      const needsYou = damagedSwitch || switchUnreadable !== undefined || Boolean(outstanding)",
+    "replace": "      const needsYou = damagedSwitch || switchUnreadable !== undefined || false",
+    "test": "node --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "an outstanding durable outcome keeps asking for the owner"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      if (durable) {\n        await this.store.observeRunAttention(durable.state, { runId: durable.runId, code: durable.code });\n      }",
+    "replace": "      if (durable && false) {\n        await this.store.observeRunAttention(durable.state, { runId: durable.runId, code: durable.code });\n      }",
+    "test": "node --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "the tick's durable outcome is recorded before it is published"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "    if (!durable || typeof durable !== \"object\" || Array.isArray(durable)) return null;\n    if (typeof durable.runId !== \"string\" || typeof durable.state !== \"string\") return null;",
+    "replace": "    if (!durable || typeof durable !== \"object\" || Array.isArray(durable)) return null;\n    if (typeof durable.runId !== \"string\" || typeof durable.state !== \"string\") return null;\n    if (true) return null;",
+    "test": "node --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "a durable run outcome from the row reaches the store (a malformed or missing one never does)"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "  const reason = typeof code === \"string\" && Object.hasOwn(UPDATER_RUN_REASON_V1, code)\n    ? UPDATER_RUN_REASON_V1[code] : UPDATER_RUN_STATE_REASON_V1[state];",
+    "replace": "  const reason = typeof code === \"string\" && false\n    ? UPDATER_RUN_REASON_V1[code] : UPDATER_RUN_STATE_REASON_V1[state];",
+    "test": "node --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "a known code renders its own sentence rather than the state's fallback"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "      || !OWNER_SENTENCES_V1.has(reason)))",
+    "replace": "      || !OWNER_SENTENCES_V1.has(reason) && false))",
+    "test": "node --import tsx --test --test-name-pattern='R7U-01' tests/updater-home-status.test.tsx",
+    "why": "a reason that is not one of the fixed owner sentences is refused, so no caller can compose wording"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "    || value.reason !== undefined && (typeof value.reason !== \"string\" || !REASON_V1.test(value.reason)\n      || !OWNER_SENTENCES_V1.has(value.reason))",
+    "replace": "    || value.reason !== undefined && false",
+    "test": "node --import tsx --test --test-name-pattern='R7U-01' tests/updater-home-status.test.tsx",
+    "why": "a malformed owner reason is refused by the display reader. The mutant drops the allowlist AND the bound together, because a bound alone accepts any 200 printable characters \u2014 which is how the reader and the contract disagreed until this was measured: the contract refused a KEY in the reason field and the reader rendered it."
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "  if (nextAction !== null && (typeof nextAction !== \"string\" || !Object.hasOwn(NEXT_ACTIONS_V1, nextAction)))",
+    "replace": "  if (nextAction !== null && (typeof nextAction !== \"string\" || false))",
+    "test": "node --import tsx --test --test-name-pattern='R7U-01' tests/updater-home-status.test.tsx",
+    "why": "nextAction is an ALLOWLISTED KEY, not free text (lead decision 1)"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        ...(attention ? { reason: attention.reason } : {}) });",
+    "replace": "        ...(attention && false ? { reason: attention.reason } : {}) });",
+    "test": "node --import tsx --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "the owner's reason travels even when a rescue key won the nextAction field"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "        durableOutcome: run && typeof run.run_id === \"string\"",
+    "replace": "        durableOutcome: false && run && typeof run.run_id === \"string\"",
+    "test": "node --import tsx --test --test-name-pattern='R7U-01' tests/updater-self-update-safety.test.mjs",
+    "why": "a runner error with a live run is published durably (lead decision 2)"
+  }
+]

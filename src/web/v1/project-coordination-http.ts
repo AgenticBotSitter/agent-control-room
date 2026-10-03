@@ -32,6 +32,7 @@ import {
 import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
+import { workspaceScopedProjectLookupV1 } from "./project-workspace-lookup";
 import type {
   ProjectCoordinationPage,
   ProjectCoordinationRevision,
@@ -368,6 +369,28 @@ export class ProjectCoordinationHttpService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Authorize one caller without running the operation — the check every
+   * in-flight coalescing follower must pass before it receives a shared result.
+   *
+   * It reads the caller's own identity, web session and owner/operator grants,
+   * so a session revoked in PostgreSQL refuses here even while a leader holding
+   * a DIFFERENT live session is mid-flight, which is precisely the case a
+   * coalescing map used to answer with 200.
+   *
+   * It takes no locks and commits before returning, so a burst of followers
+   * neither serializes on the identity row nor holds a connection for the
+   * leader's duration.
+   */
+  async authorizeCaller(identity: VerifiedWebIdentity, projectId: string): Promise<void> {
+    // The non-locking probe, deliberately. `authenticated` would take
+    // `FOR UPDATE` on the identity row, and a coalescing follower that ran
+    // there would block behind the very leader it is waiting for — the refusal
+    // would arrive as a lock-timeout 503 long after the leader committed, and
+    // the convoy would serialize every follower behind one write.
+    await this.authority.probeCaller(identity, ACTIONS.read, projectId);
   }
 
   async appointCoordinator(
@@ -977,11 +1000,24 @@ function joinAmbientSession(session: DatabaseSession): DatabaseClient {
 export function createProjectCoordinationCanonicalStoreAdapterV1(options: {
   database: DatabaseClient;
   tenantId: string;
+  /**
+   * The configured deployment workspace. Optional only for the in-memory test
+   * doubles that have no workspace column to fence against; a deployment that
+   * supplies a database MUST supply this too, because a tenant+project lookup
+   * without it resolves a sibling workspace's project and hands its title,
+   * summary and lifecycle to whoever held the coordination read grant.
+   */
+  workspaceId?: string;
   now?: () => number;
 }): ProjectCoordinationCanonicalStoreAdapter {
   const tenantId = options.tenantId;
+  const workspaceId = options.workspaceId;
   const now = options.now ?? Date.now;
   const db = options.database;
+  if (options.workspaceId !== undefined
+    && (typeof options.workspaceId !== "string" || !options.workspaceId)) {
+    throw new Error("coordination_store_workspace_invalid");
+  }
   // Builder so bindSession can rebind every helper and the lifecycle port to
   // the ambient transaction session. The parameter shadows the outer client
   // on purpose, so every closure below keeps working unchanged.
@@ -1347,22 +1383,23 @@ export function createProjectCoordinationCanonicalStoreAdapterV1(options: {
       return attentionList(projectId);
     },
     async project(projectId) {
-      const row = (await db.query<{
-        projectId: string; title: string; summary: string; lifecycle: string;
-        version: string | number; createdAt: unknown; updatedAt: unknown;
-      }>(
-        `SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
-           h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt"
-         FROM projects p
-         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
-         WHERE p.tenant_id=$1 AND p.id=$2`,
-        [tenantId, projectId])).rows[0];
+      if (workspaceId === undefined) {
+        // No configured workspace to fence against (in-memory doubles only).
+        // A deployment that reaches this branch with a real database would
+        // resolve any project in the tenant, so refuse rather than serve it.
+        throw new Error("coordination_store_workspace_not_configured");
+      }
+      // The SAME workspace-fenced lookup ordinary project reads use
+      // (project-workspace-lookup.ts). A tenant+project query here resolved a
+      // sibling workspace's project and returned its title, summary and
+      // lifecycle to any caller holding the coordination grant.
+      const row = await workspaceScopedProjectLookupV1(db, { tenantId, workspaceId }, { projectId });
       if (!row || (row.lifecycle !== "active" && row.lifecycle !== "paused"
         && row.lifecycle !== "completed" && row.lifecycle !== "archived")) {
         throw new WebAccessError("not_found");
       }
       return {
-        projectId: row.projectId,
+        projectId: row.id,
         title: row.title,
         summary: row.summary,
         lifecycle: row.lifecycle,

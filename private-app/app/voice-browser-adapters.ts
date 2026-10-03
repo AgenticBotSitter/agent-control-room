@@ -125,13 +125,19 @@ class RecognitionSession {
         return;
       }
       let reportedError = false;
+      let deliveredFinal = false;
       engine.onresult = (event: unknown) => {
+        if (this.activeEngine !== engine) return;
+        if (!event || typeof event !== "object") return;
         const results = (event as { results?: ArrayLike<ArrayLike<{ transcript?: string }>> }).results;
         if (!results) return;
-        for (let index = 0; index < results.length; index += 1) {
+        if (typeof results.length !== "number" || !Number.isFinite(results.length) || results.length < 0) return;
+        const count = Math.min(Math.floor(results.length), 64);
+        for (let index = 0; index < count; index += 1) {
           const alternative = results[index]?.[0];
           const transcript = alternative?.transcript;
           if (typeof transcript !== "string" || transcript.length === 0) continue;
+          deliveredFinal = true;
           callbacks.onEvent({
             eventId: `recognition-${this.instanceId}-${index}`,
             transcript,
@@ -140,6 +146,7 @@ class RecognitionSession {
         }
       };
       engine.onerror = (event: { error?: string }) => {
+        if (this.activeEngine !== engine) return;
         reportedError = true;
         const mapped = mapRecognitionError(event?.error);
         callbacks.onError(mapped.kind, mapped.message);
@@ -151,7 +158,7 @@ class RecognitionSession {
         engine.onresult = null;
         engine.onerror = null;
         engine.onend = null;
-        if (reportedError) return;
+        if (reportedError || deliveredFinal) return;
         callbacks.onError("cancelled", "Recognition ended without a final result.");
       };
       this.activeEngine = engine;

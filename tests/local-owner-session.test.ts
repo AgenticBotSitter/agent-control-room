@@ -7,8 +7,9 @@ import { sha256Digest } from "../src/security";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1,
   readLocalOwnerCodeV1, renderLocalOwnerSignInPageV1 } from "../src/web/v1/local-owner-session";
 import { authenticatedWebSessionBindingV1, WebAccessError } from "../src/web/v1/access-verifier";
+import { readBoundedJson } from "../src/web/v1/http-common";
 import type { LocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
-import type { PersistedLocalOwnerSessionV1 } from "../src/web/v1/local-owner-session";
+import type { LocalOwnerSessionProfileV1, PersistedLocalOwnerSessionV1 } from "../src/web/v1/local-owner-session";
 
 const origin = "http://127.0.0.1:3210";
 const ownerCode = "local-owner-code-that-is-long-enough";
@@ -298,4 +299,178 @@ test("a failed persistent revoke is surfaced and leaves the in-memory session ac
   assert.equal(service.verify(request("/api/v1/projects", { cookie }), 2_001).subject, profile.subject);
   const restarted = new LocalOwnerSessionServiceV1(profile, store, await store.load(2_001));
   assert.equal(restarted.verify(request("/api/v1/projects", { cookie }), 2_001).subject, profile.subject);
+});
+
+/** A body-stream over exact bytes, so a refusal can be attributed to parsing
+ *  rather than to the transport. */
+function bytes(text: string) {
+  return new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close(); } });
+}
+async function readJson(text: string) {
+  return readBoundedJson(bytes(text), 4_096);
+}
+
+test("R4C-01: the shared owner front door refuses a duplicated member name, plain or escaped", async () => {
+  // The last spelling won silently before, so a sign-in body could authenticate
+  // one value while the request the owner reviewed named another.
+  for (const text of [`{"ownerCode":null,"ownerCode":${JSON.stringify(ownerCode)}}`,
+    `{"ownerCode":null,"owner\\u0043ode":${JSON.stringify(ownerCode)}}`,
+    `{"owner\\u0043ode":"first","ownerCode":${JSON.stringify(ownerCode)}}`]) {
+    await assert.rejects(readJson(text),
+      (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request", text);
+  }
+  // Nested duplicates are refused too: the guard is per object, not top-level.
+  await assert.rejects(readJson(`{"outer":{"ownerCode":null,"ownerCode":"second"}}`),
+    (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request");
+  // Controls: the shapes a real caller sends still parse, and the byte ceiling
+  // and fatal UTF-8 decoding are unchanged by the stricter parse.
+  assert.deepEqual(await readJson(JSON.stringify({ ownerCode })), { ownerCode });
+  assert.deepEqual(await readJson(`{"a":[1,2,{"b":"c"}]}`), { a: [1, 2, { b: "c" }] });
+  for (const text of ["{", `{"ownerCode":"a"}{"ownerCode":"b"}`, `{"ownerCode":"a"} trailing`,
+    `{"ownerCode":"a",}`]) {
+    await assert.rejects(readJson(text),
+      (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request", text);
+  }
+  // Fatal UTF-8 decoding is still the decoder's job: a truncated multi-byte
+  // sequence is refused rather than repaired.
+  await assert.rejects(readBoundedJson(new ReadableStream<Uint8Array>({ start(controller) {
+    controller.enqueue(Uint8Array.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xe2, 0x82, 0x22, 0x7d])); controller.close();
+  } }), 4_096), (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request");
+  await assert.rejects(readBoundedJson(bytes(`{"ownerCode":"${"a".repeat(5_000)}"}`), 4_096),
+    (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request");
+});
+
+test("R4C-01: the sign-in route refuses a duplicated owner code instead of issuing a session", async () => {
+  const raw = `{"ownerCode":null,"owner\\u0043ode":${JSON.stringify(ownerCode)}}`;
+  await assert.rejects(readLocalOwnerCodeV1(new Request(`${origin}/api/v1/local-owner-session`,
+    { method: "POST", headers: { origin, "content-type": "application/json" }, body: raw })),
+    (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request");
+  // The unambiguous body is still accepted, so the guard refuses duplicates only.
+  assert.equal(await readLocalOwnerCodeV1(new Request(`${origin}/api/v1/local-owner-session`,
+    { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) })),
+    ownerCode);
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// R4C-06: a malformed profile is a controlled refusal, and invisible identity text is refused.
+test("R4C-06: a malformed origin is refused as an invalid profile, not a raw URL error", () => {
+  for (const changes of [{ origin: "not a url" }, { trustedOrigin: "::" }, { origin: "" }, { trustedOrigin: "https://" }]) {
+    // `new URL` threw a raw TypeError/ERR_INVALID_URL out of the profile parser,
+    // so a corrupt configuration file crashed with an unhandled error instead of
+    // the controlled refusal every other invalid field produces.
+    assert.throws(() => captureLocalOwnerSessionProfileV1({ ...profile, ...changes }),
+      (error: unknown) => error instanceof Error && !(error instanceof TypeError)
+        && error.message === "invalid_local_owner_session_profile",
+      JSON.stringify(changes));
+  }
+});
+
+test("R4C-06: identity strings with invisible or unpaired text are refused", () => {
+  // These three were accepted UNCHANGED. The subject and tenant are written into
+  // audit rows and log lines, so a lone surrogate or a bidi/bidi-neutral override
+  // can render a different identity to a human reader than the one stored.
+  const invisible = [
+    ["tenantId", "tenant:\ud800"], ["subject", "owner:\ud800"], ["provider", "local\udfff"],
+    ["subject", "owner:\u202e"], ["tenantId", "tenant:\u202e"], ["provider", "local\u200b"],
+    ["subject", "owner:\u200b"], ["tenantId", "tenant:\u200e"], ["provider", "local\ufeff"],
+    ["subject", "owner:\u2066"], ["tenantId", "tenant:\u00ad"], ["provider", "local\u061c"],
+  ];
+  for (const [field, value] of invisible) {
+    assert.throws(() => captureLocalOwnerSessionProfileV1({ ...profile, [field]: value }),
+      (error: unknown) => error instanceof Error && !(error instanceof TypeError)
+        && error.message === "invalid_local_owner_session_profile",
+      `${field} = ${JSON.stringify(value)}`);
+  }
+  // Control: ordinary identity text, including non-ASCII letters, is unaffected.
+  const ordinary: { field: "tenantId" | "subject" | "provider"; value: string }[] =
+    [{ field: "tenantId", value: "tenant:local-2" }, { field: "subject", value: "owner:josé" },
+      { field: "provider", value: "local-owner" }, { field: "subject", value: "owner:日本" }];
+  for (const { field, value } of ordinary) {
+    assert.equal(captureLocalOwnerSessionProfileV1({ ...profile, [field]: value })[field], value, field);
+  }
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// R4C-09: sign-out must finish, not loop, when its own successful reply was lost.
+test("R4C-09: signing out an already-revoked session succeeds and clears the cookie", async () => {
+  // The store behaves like the real one: `load` returns the sessions that are
+  // still live, so an unknown cookie is genuinely absent rather than the store
+  // being unable to say. `load` also honours `nowMs` against `expiresAt`, which
+  // is why sign-out cannot pass a sentinel clock value.
+  const rows = new Map<string, { tokenDigest: string; issuedAt: string; expiresAt: string }>();
+  const store = {
+    save: async (s: { tokenDigest: string; issuedAt: string; expiresAt: string }) => { rows.set(s.tokenDigest, s); },
+    load: async (nowMs: number) => [...rows.values()].filter(s => Date.parse(s.expiresAt) > nowMs),
+    revoke: async (digest: string) => { rows.delete(digest); },
+  };
+  const service = new LocalOwnerSessionServiceV1(profile, store as never);
+  const issued = await service.issue(request(undefined, { origin, "sec-fetch-site": "same-origin" }), ownerCode, 1_000);
+  const cookie = issued.cookie.split(";")[0]!;
+  await service.revoke(request(undefined, { cookie, origin }), 1_001);
+  assert.equal(rows.size, 0, "the fixture store really dropped the session");
+  assert.deepEqual(await store.load(1_002), [], "no live session remains for it");
+  // The owner's browser lost the 204 on the way back, so it still holds the
+  // cookie and retries. Every retry used to answer 401 with no cookie-clearing
+  // header, so the sign-out page never left its failure state.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await assert.doesNotReject(service.revoke(request(undefined, { cookie, origin }), 1_002),
+      `retry ${attempt} of a completed sign-out must finish, not report failure`);
+  }
+  // A well-formed cookie this installation never issued names no live session
+  // here, so sign-out finishes and clears it. That grants nothing: no session is
+  // revoked, no identity is returned, and the response body is empty. What it
+  // must NOT do is decide that from a bogus clock value -- alreadyEnded judges
+  // against the store's live rows using the request's own time, which the
+  // sentinel version got wrong in the direction of "everything already ended".
+  await assert.doesNotReject(service.revoke(request(undefined, { cookie: `control_room_local_owner=${"A".repeat(43)}`, origin }), 1_003));
+  // And it only reaches that answer because the store really has nothing: a
+  // session the store DOES hold is never treated as finished.
+  const other = await service.issue(request(undefined, { origin, "sec-fetch-site": "same-origin" }), ownerCode, 3_000);
+  const otherCookie = other.cookie.split(";")[0]!;
+  await assert.doesNotReject(service.revoke(request(undefined, { cookie: otherCookie, origin }), 3_001));
+  assert.deepEqual([...(await store.load(3_002))].length, 0, "the live session really was revoked");
+  // A MISSING or MALFORMED cookie is still refused outright: there is no cookie
+  // to clear, so answering success would be a lie about the browser state.
+  await assert.rejects(service.revoke(request(undefined, { origin }), 1_003),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+  await assert.rejects(service.revoke(request(undefined, { cookie: "control_room_local_owner=short", origin }), 1_003),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+  // Two cookies are ambiguous and stay refused rather than picking one.
+  await assert.rejects(service.revoke(request(undefined, { cookie: `${cookie}; ${cookie}`, origin }), 1_003),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+  // The origin checks still run first: a foreign origin cannot use idempotence.
+  await assert.rejects(service.revoke(request(undefined, { cookie, origin: "https://foreign.example" }), 1_003),
+    (error: unknown) => error instanceof WebAccessError && error.code === "access_denied");
+  // A real persistence failure for a LIVE session is still surfaced, not
+  // swallowed into a success.
+  const live = new LocalOwnerSessionServiceV1(profile, { save: async () => {}, load: async () => [],
+    revoke: async () => { throw new Error("store is down"); } } as never);
+  const liveIssued = await live.issue(request(undefined, { origin, "sec-fetch-site": "same-origin" }), ownerCode, 2_000);
+  await assert.rejects(live.revoke(request(undefined, { cookie: liveIssued.cookie.split(";")[0]!, origin }), 2_001),
+    /store is down/u);
+});
+
+
+test("R4C-10: a store that cannot answer does not sign the owner out", async () => {
+  // A live session the store cannot confirm is still served. A database outage
+  // must not lock the owner out of their own machine, and refusing here would
+  // also turn every protected request into a 503 during an incident. These
+  // three are the ways a store fails to answer: throwing before it returns a
+  // promise, rejecting, and not implementing `load` at all.
+  for (const [label, store] of Object.entries({
+    "throwing synchronously": { load: () => { throw new Error("store unavailable"); } },
+    "rejecting": { load: async () => { throw new Error("store unavailable"); } },
+    "not implementing load": { save: async () => {}, revoke: async () => {} },
+  })) {
+    const issuer = new LocalOwnerSessionServiceV1(profile);
+    const issued = await issuer.issue(request(undefined, { origin, "sec-fetch-site": "same-origin" }), ownerCode, 1_000);
+    const cookie = issued.cookie.split(";")[0]!;
+    const seeded = new LocalOwnerSessionServiceV1(profile, store as never,
+      [issuer.verify(request("/api/v1/local-workers", { cookie }), 1_001)]);
+    await assert.doesNotReject(Promise.resolve(seeded.verifyLive(request("/api/v1/local-workers", { cookie }), 1_002)),
+      `a live session must survive ${label}`);
+    assert.equal(seeded.verify(request("/api/v1/local-workers", { cookie }), 1_002).subject, profile.subject, label);
+  }
 });

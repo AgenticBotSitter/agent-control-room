@@ -1,0 +1,23 @@
+[
+  {
+    "file": "src/web/v1/mac-local-node-key-pin.ts",
+    "find": "      if ((error as NodeJS.ErrnoException)?.code !== \"EEXIST\") refused();\n      await acceptExistingPin(file, nodeIds, fingerprints);\n      return;",
+    "replace": "      refused();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-name-pattern='^item 2 stress:' tests/mac-local-complete-first-owner.test.mjs",
+    "why": "identical concurrent first-owner callers must validate the atomic winner instead of failing"
+  },
+  {
+    "file": "scripts/mac-local/start-web-host.mjs",
+    "find": "    || typeof fleetModule.loadMacLocalFleetConnectorReleaseV1 !== \"function\")",
+    "replace": "    || false)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern='^item 9:' tests/mac-local-web-host-launcher.test.mjs",
+    "why": "the built web-host release must export every function the launcher invokes"
+  },
+  {
+    "file": "src/web/v1/native-https-service.ts",
+    "find": "requestCert: true, rejectUnauthorized: true,",
+    "replace": "requestCert: false, rejectUnauthorized: false,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-name-pattern='^item 15:' tests/native-https-service.test.ts",
+    "why": "the native HTTPS listener must reject clients without a trusted certificate"
+  }
+]

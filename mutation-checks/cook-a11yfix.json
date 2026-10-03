@@ -1,0 +1,16 @@
+[
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "const projectSection = ownerProjectSectionPageV1.exec(url.pathname);",
+    "replace": "const projectSection = /^\\/projects\\/([^/]+)\\/(inbox|agents|reviews|activity|files|settings|automations|improvements)$/.exec(url.pathname);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-timeout=30000 tests/owner-project-pages.test.mjs",
+    "why": "Mac-local coordination must reach the authorized owner project page instead of returning a pre-authorization 404"
+  },
+  {
+    "file": "src/web/v1/private-process.ts",
+    "find": "const projectUtilityPage = ownerProjectSectionPageV1.exec(url.pathname);",
+    "replace": "const projectUtilityPage = /^\\/projects\\/([^/]+)\\/(inbox|agents|automations|improvements)$/.exec(url.pathname);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-timeout=30000 tests/owner-project-pages.test.mjs",
+    "why": "both hosts must reach coordination through the shared project page list"
+  }
+]

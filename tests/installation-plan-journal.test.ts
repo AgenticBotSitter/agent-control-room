@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { chmod, link, lstat, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { InstallationPlanFilesystemJournalV1 } from "../src/installer/v1/installation-plan-journal";
-import { openInstallationPlanFilesystemStorageSessionV1 } from
+import { openInstallationPlanFilesystemStorageSessionV1, type InstallationPlanJournalEntryV1 } from
   "../src/installer/v1/installation-plan-journal-storage-session";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1,
   refreshInstallationPlanV1 } from "../src/installer/v1/installation-plan";
@@ -90,6 +91,609 @@ test("exact sequential and concurrent replay succeeds while changed same-revisio
   } finally { await f.cleanup(); }
 });
 
+test("a concurrent writer's in-flight publication never refuses another exact writer", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-inflight-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-inflight", ownerUid = process.getuid!();
+  const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+  // The winner is held in linkNoReplace, which is the last step before its target
+  // exists: its witness is already created, written, file-synced and
+  // directory-synced, so the journal on disk is exactly "witness present, target
+  // absent" - the live mid-publication state a concurrent writer really leaves
+  // behind. Holding any earlier (create or write) would let the late writer read an
+  // empty directory and would prove nothing.
+  let atLink!: () => void;
+  const winnerIsLinking = new Promise<void>(resolve => { atLink = resolve; });
+  let releaseWinner!: () => void;
+  const winnerMayFinish = new Promise<void>(resolve => { releaseWinner = resolve; });
+  const winner = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base,
+        async linkNoReplace(sourceName, sourceIdentity, targetName) {
+          atLink(); await winnerMayFinish;
+          return base.linkNoReplace(sourceName, sourceIdentity, targetName);
+        },
+      });
+    });
+  // The late writer is instrumented for observation only: listEntryNames returns
+  // the real names and behaves identically, it just tells the test when its own
+  // first directory listing has returned and what it saw. A refusal is reported
+  // through the same latch, because a late writer that cannot even open a session
+  // or list the directory never reaches the listing and would otherwise hang.
+  type FirstListing = { kind: "names"; names: readonly string[] } | { kind: "refusal"; error: Error };
+  let observedFirstListing!: (listing: FirstListing) => void;
+  const firstListing = new Promise<FirstListing>(resolve => { observedFirstListing = resolve; });
+  const reportRefusal = (error: unknown) => observedFirstListing({ kind: "refusal", error: error as Error });
+  const late = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      try {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base,
+          async listEntryNames() {
+            try {
+              const names = await base.listEntryNames();
+              observedFirstListing({ kind: "names", names });
+              return names;
+            }
+            catch (error) { reportRefusal(error); throw error; }
+          },
+        });
+      } catch (error) { reportRefusal(error); throw error; }
+    });
+  const plan = create();
+  // Held in outer scope so the finally block can settle both writers, but only
+  // started at the points below: the late writer must not begin before the winner
+  // is actually parked in linkNoReplace.
+  let winnerResult!: ReturnType<typeof winner.append>;
+  let lateResult!: Promise<{ result: Awaited<ReturnType<typeof late.append>> } | { error: Error }>;
+  try {
+    winnerResult = winner.append(plan);
+    await winnerIsLinking;
+    lateResult = late.append(plan).then(result => ({ result }), (error: Error) => ({ error }));
+    // The whole point of the test: the late writer has to reach its own first
+    // listing while the winner is still held, so it observes the in-flight witness
+    // with no target. Releasing the winner first (as an earlier version of this
+    // test did) means the late writer never sees that state and the fix is untested.
+    // The runner has no per-test timeout, so this is bounded: a late writer that
+    // never lists anything fails here instead of hanging the whole suite.
+    const listingGuard = new AbortController();
+    const listing = await Promise.race([firstListing,
+      delay(10_000, undefined, { signal: listingGuard.signal })
+        .then(() => ({ kind: "no-listing" } as const), () => ({ kind: "no-listing" } as const))]);
+    listingGuard.abort();
+    if (listing.kind !== "names") throw listing.kind === "refusal"
+      ? listing.error : new Error("the late writer never reached its first directory listing");
+    assert.ok(listing.names.includes(witnessName), "the late writer's first listing saw the live witness");
+    assert.equal(listing.names.includes(name(installationId, 0)), false,
+      "the late writer's first listing saw no target, so the publication was still in flight");
+    releaseWinner();
+    const [first, second] = [await winnerResult, await lateResult];
+    const refusal = "error" in second ? second.error.message : "none";
+    assert.ok(!("error" in second), `the late exact writer was refused instead of replayed: ${refusal}`);
+    assert.equal(first.replayed, false, "the writer that linked the target is the publisher");
+    assert.equal(second.result.replayed, true, "the late exact writer replays the winner's publication");
+    assert.equal(first.planDigest, plan.planDigest);
+    assert.equal(second.result.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)],
+      "the witness and both temps are retired, leaving only the published target");
+    assert.equal((await lstat(join(root, name(installationId, 0)))).nlink, 1);
+    assert.equal((await late.readHistory()).length, 1);
+  } finally {
+    // Both writers must be settled before the directory is removed, or a writer
+    // still inside its publication can recreate entries underneath the rm and
+    // leave the temp directory behind, replacing the real failure with ENOTEMPTY.
+    releaseWinner();
+    await Promise.all([winnerResult, lateResult].map(result => result.then(() => undefined, () => undefined)));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a read-only read still refuses a witness with no target and never repairs it", async () => {
+  const f = await fixture();
+  try {
+    const plan = create();
+    const tempName = `${f.installationId}.installation-plan.revision-0000000000.66666666-6666-4666-8666-666666666666.tmp`;
+    const witness = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+    await writeFile(join(f.root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(join(f.root, witness), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+    const before = (await readdir(f.root)).sort();
+    // A genuine crash in that window is indistinguishable from a live writer, so
+    // the repairing read must still fail closed rather than wait it out forever.
+    await assert.rejects(() => f.journal.readHistory(), /installation_plan_journal_unavailable/);
+    await assert.rejects(() => f.journal.inspectSettledHistory(), /installation_plan_journal_unavailable/);
+    assert.deepEqual((await readdir(f.root)).sort(), before, "a refused read must not repair or delete");
+  } finally { await f.cleanup(); }
+});
+
+test("a recovery reader waits out a live publication instead of refusing it", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-waitout-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-waitout", ownerUid = process.getuid!();
+  let atWitness!: () => void;
+  const witnessCreated = new Promise<void>(resolve => { atWitness = resolve; });
+  let releaseWinner!: () => void;
+  const winnerMayFinish = new Promise<void>(resolve => { releaseWinner = resolve; });
+  const winner = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base,
+        async linkNoReplace(...args: Parameters<typeof base.linkNoReplace>) {
+          atWitness(); await winnerMayFinish;
+          return base.linkNoReplace(...args);
+        },
+      });
+    });
+  let observed!: () => void;
+  const readerListed = new Promise<void>(resolve => { observed = resolve; });
+  const reader = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base, async listEntryNames() {
+        const names = await base.listEntryNames(); observed(); return names;
+      } });
+    });
+  let winnerResult: ReturnType<typeof winner.append> | undefined;
+  let reading: ReturnType<typeof reader.readHistory> | undefined;
+  try {
+    const plan = create();
+    winnerResult = winner.append(plan);
+    await witnessCreated;
+    const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    while (!(await readdir(root)).includes(witnessName)) await new Promise(resolve => { setTimeout(resolve, 1); });
+    reading = reader.readHistory(); reading.catch(() => {});
+    await readerListed;
+    assert.ok((await readdir(root)).includes(witnessName), "the reader starts while the witness is live");
+    releaseWinner();
+    await winnerResult;
+    const history = await reading;
+    assert.equal(history.length, 1, "a live publication must be waited out, not refused");
+    assert.equal(history[0]!.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)]);
+  } finally {
+    releaseWinner(); await Promise.allSettled([winnerResult, reading]);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovery retries a temp metadata read completed after the writer unlinks its alias", { timeout: 30_000 }, async t => {
+  const variants = ["good", "removed-alias", "temp-link-count", "temp-mode", "temp-device", "temp-inode",
+    "current-mode", "current-device", "current-inode", "current-missing", "temp-present"];
+  for (const variant of variants) await t.test(variant, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-metadata-race-")));
+    await chmod(root, 0o700);
+    const installationId = "local-installation-metadata-race", ownerUid = process.getuid!();
+    let atWitness!: () => void, releaseWriter!: () => void;
+    const ready = new Promise<void>(resolve => { atWitness = resolve; });
+    const gate = new Promise<void>(resolve => { releaseWriter = resolve; });
+    const writer = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base, async linkNoReplace(...args: Parameters<typeof base.linkNoReplace>) {
+          const result = await base.linkNoReplace(...args); atWitness(); await gate; return result;
+        } });
+      });
+    let publishing: ReturnType<typeof writer.append> | undefined;
+    let observed = false;
+    let savedEntry: InstallationPlanJournalEntryV1 | undefined;
+    const reader = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base, async statEntry(entryName: string) {
+          const entry = await base.statEntry(entryName);
+          if (!observed && entryName.endsWith(".tmp") && entry?.linkCount === 2) {
+            observed = true;
+            // Complete the metadata observation of the opened inode after unlink.
+            // Preserve its identity, permissions and size from the real session.
+            releaseWriter(); await publishing;
+            savedEntry = Object.freeze({ ...entry, linkCount: (await lstat(join(root, name(installationId, 0)))).nlink });
+            return Object.freeze({ ...savedEntry,
+              ...(variant === "temp-mode" ? { mode: 0o644 } : {}),
+              ...(variant === "removed-alias" ? { canonical: false, linkCount: 2 } : {}),
+              ...(variant === "temp-link-count" ? { linkCount: 3 } : {}),
+              identity: { ...entry.identity,
+                ...(variant === "temp-device" ? { device: entry.identity.device + BigInt(1) } : {}),
+                ...(variant === "temp-inode" ? { inode: entry.identity.inode + BigInt(1) } : {}) } });
+          }
+          if (observed && entryName.endsWith(".tmp") && variant === "temp-present") return savedEntry;
+          if (observed && entryName === name(installationId, 0) && variant === "current-missing") return undefined;
+          if (observed && entryName === name(installationId, 0) && entry) return Object.freeze({ ...entry,
+            ...(variant === "current-mode" ? { mode: 0o644 } : {}),
+            identity: { ...entry.identity,
+              ...(variant === "current-device" ? { device: entry.identity.device + BigInt(1) } : {}),
+              ...(variant === "current-inode" ? { inode: entry.identity.inode + BigInt(1) } : {}) } });
+          return entry;
+        } });
+      });
+    try {
+      const plan = create(); publishing = writer.append(plan); await ready;
+      // The hard link is present and the writer is held until the reader observes its temp.
+      if (variant === "good" || variant === "removed-alias") {
+        const histories = await Promise.all(Array.from({ length: 50 }, () => reader.readHistory()));
+        for (const history of histories) {
+          assert.equal(history.length, 1);
+          assert.equal(history[0]!.planDigest, plan.planDigest);
+        }
+      } else await assert.rejects(reader.readHistory(), /installation_plan_journal_unavailable/);
+      await publishing;
+      assert.equal(observed, true);
+    } finally {
+      releaseWriter(); await Promise.allSettled([publishing]);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test("recovery refuses a substituted temp or target inside the unlink-alias retry window", { timeout: 30_000 }, async t => {
+  // The committed retry test proves the guard reads the right METADATA, but it
+  // returns the reader's entries directly. These cases pin the REASON the guard is
+  // safe, against a real filesystem: the retry admits a temp only when its inode
+  // equals the inode the reader had already captured from the target, and it
+  // re-reads both names afterwards. So a substituted file cannot win.
+  //
+  // Every variant reaches the real window. That requires the target to have
+  // nlink === 2 (the writer's hard link still present), otherwise the reader takes
+  // the settled-target branch at line 185 and never sees the retry at all -- an
+  // earlier draft of this test made exactly that mistake and "passed" without ever
+  // executing the guard.
+  const variants = [
+    // The alias is unlinked and a foreign private file takes its place: identical
+    // in owner, mode and size, differing only in identity.
+    "foreign-temp-file",
+    // The alias is replaced by a hard link to a second private file, so
+    // linkCount and mode are genuine too and only the inode still differs.
+    "foreign-temp-hardlink",
+    // The target itself is swapped. The temp still matches the ORIGINAL target
+    // snapshot, so only the fresh-target identity re-read can catch this.
+    "foreign-target-file",
+    // The target is truncated in place: same inode, so no identity check can see
+    // it and only the size read catches it.
+    "truncated-target",
+  ] as const;
+  for (const variant of variants) await t.test(variant, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-substitution-")));
+    await chmod(root, 0o700);
+    const installationId = "local-installation-substitution", ownerUid = process.getuid!();
+    const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    const targetPath = join(root, name(installationId, 0));
+    const tempName = `${installationId}.installation-plan.revision-0000000000.77777777-7777-4777-8777-777777777777.tmp`;
+    const tempPath = join(root, tempName);
+    const plan = create();
+    await writeFile(targetPath, `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    // The writer's hard link: target and temp are one inode, so the reader is in
+    // the publishing window rather than the settled one.
+    await link(targetPath, tempPath);
+    await writeFile(join(root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+    assert.equal((await lstat(targetPath)).nlink, 2, "the reader must start inside the publication window");
+
+    const targetBefore = await lstat(targetPath, { bigint: true });
+    let interposed = false;
+    const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base, async statEntry(entryName: string) {
+          if (!interposed && entryName === tempName) {
+            interposed = true;
+            // Reproduce the production race with real syscalls: lstat the alias,
+            // then let the writer unlink it, then fail the canonical lookup
+            // because the name is gone. This is exactly the interleaving the guard
+            // was written for, and the entry handed back is the pre-unlink one.
+            const opened = await lstat(tempPath, { bigint: true });
+            await rm(tempPath);
+            const canonical = await realpath(tempPath).then(value => value === tempPath).catch(() => false);
+            if (variant === "foreign-temp-file") await writeFile(tempPath, `${canonicalJson(plan)}\n`, { mode: 0o600 });
+            if (variant === "foreign-temp-hardlink") {
+              const attacker = join(root, "attacker-private-plan.json");
+              await writeFile(attacker, `${canonicalJson(create("attacker"))}\n`, { mode: 0o600 });
+              await link(attacker, tempPath);
+            }
+            if (variant === "foreign-target-file") {
+              await rm(targetPath);
+              await writeFile(targetPath, `${canonicalJson(create("attacker"))}\n`, { mode: 0o600 });
+            }
+            if (variant === "truncated-target") await writeFile(targetPath, "", { mode: 0o600 });
+            return Object.freeze({ identity: { device: opened.dev, inode: opened.ino },
+              kind: "file" as const, ownerUid: Number(opened.uid), mode: Number(opened.mode & BigInt(0o7777)),
+              linkCount: Number(opened.nlink), size: Number(opened.size), canonical });
+          }
+          return base.statEntry(entryName);
+        } });
+      });
+    try {
+      // The refusal is the load-bearing claim: the substituted file must never be
+      // read as the published plan, so readHistory rejects rather than resolving.
+      await assert.rejects(journal.readHistory(), /installation_plan_journal_unavailable/,
+        "a substituted file inside the retry window must be refused, not read");
+      assert.equal(interposed, true, "the interposition fired");
+      // Prove each variant really changed what it claims to change, so a passing
+      // rejection cannot be an accident of a substitution that never happened.
+      const targetAfter = await lstat(targetPath, { bigint: true });
+      if (variant === "foreign-target-file") {
+        assert.notEqual(targetAfter.ino, targetBefore.ino, "the target inode really changed");
+      } else {
+        assert.equal(targetAfter.ino, targetBefore.ino, "these variants substitute the temp, not the target");
+      }
+      if (variant === "truncated-target") assert.equal(targetAfter.size, BigInt(0), "the target really was truncated");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The m-mutpg review (report §5) asked for one more test: a variant where the
+// temp alias is substituted by a FOREIGN file AND the reader then re-stats the
+// target as the same inode -- the case the inode-equality predicate is actually
+// written for. m-mutpg's four variants hand back the PRE-unlink lstat, so the
+// temp always carries the target's real inode and the guard's identity comparison
+// never decides anything; their refusals all come from the later `unlinkExact`.
+// That is real coverage of the window, but it does not isolate the predicate, and
+// this test does.
+//
+// It isolates it by the only honest means available: the substituted temp is
+// given EVERY property the guard checks EXCEPT the one it is testing. Owner,
+// mode, size and link count are the genuine values read from the real filesystem
+// after substitution; the witness's planDigest, the target inode and the target
+// bytes are untouched, so the ONLY reason to refuse is the inode comparison at
+// installation-plan-journal.ts:223-224. A guard that dropped that comparison
+// would accept this, and the surrounding `unlinkExact` then refuses on a real
+// filesystem -- which is the point: the predicate fires first, and dropping it is
+// visible as a different failure rather than as a pass.
+test("the unlink-alias retry refuses a substituted temp whose only wrong property is its inode",
+  { timeout: 30_000 }, async t => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-temp-inode-")));
+    await chmod(root, 0o700);
+    const installationId = "local-installation-temp-inode", ownerUid = process.getuid!();
+    const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    const targetName = name(installationId, 0);
+    const targetPath = join(root, targetName);
+    const tempName = `${installationId}.installation-plan.revision-0000000000.99999999-9999-4999-8999-999999999999.tmp`;
+    const tempPath = join(root, tempName);
+    const plan = create();
+    await writeFile(targetPath, `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await link(targetPath, tempPath);
+    await writeFile(join(root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+    // The publication window: target nlink 2, or the reader settles early and
+    // never reaches the retry (an earlier draft made exactly this mistake).
+    assert.equal((await lstat(targetPath)).nlink, 2, "the reader must start inside the publication window");
+
+    const targetBefore = await lstat(targetPath, { bigint: true });
+    const foreign = join(root, "foreign-private-plan.json");
+    await writeFile(foreign, `${canonicalJson(create("foreign"))}\n`, { mode: 0o600, flag: "wx" });
+    let interposed = false, unlinked: string | undefined;
+    const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base, async statEntry(entryName: string) {
+          if (!interposed && entryName === tempName) {
+            interposed = true;
+            const live = await base.statEntry(tempName);
+            if (!live) throw new Error("the live temp must exist to be substituted");
+            // Substitute the alias with a hard link to a genuinely foreign private
+            // file, then report metadata read from that substituted name AFTER the
+            // substitution: owner, mode, size and link count are all REAL values
+            // for the file now at tempPath. Only the inode is not the target's.
+            await rm(tempPath);
+            await link(foreign, tempPath);
+            const substituted = await base.statEntry(tempName);
+            if (!substituted) throw new Error("the substituted temp must be statable");
+            assert.notEqual(substituted.identity.inode, live.identity.inode,
+              "the substitution must really have produced a different inode");
+            // Report the substituted file's REAL identity, so nothing about the
+            // returned entry is a lie except its relationship to the target.
+            return substituted;
+          }
+          // The target is re-stat'd by the guard and must come back unchanged: the
+          // same inode, the genuine private file. So the target cannot be blamed
+          // for the refusal.
+          return base.statEntry(entryName);
+        }, async unlinkExact(entryName: string, identityArgument, allowMissing?: boolean) {
+          unlinked = entryName;
+          return base.unlinkExact(entryName, identityArgument, allowMissing);
+        } });
+      });
+    try {
+      // Every predicate except inode-equality holds, so the refusal can only be
+      // the identity comparison at lines 223-224.
+      await assert.rejects(journal.readHistory(), /installation_plan_journal_unavailable/,
+        "a substituted temp must be refused even when only its inode is wrong");
+      assert.equal(interposed, true, "the interposition fired");
+      assert.equal(unlinked, undefined,
+        "the guard must refuse at the identity comparison, before it unlinks the alias");
+      // And the reason is pinned: the target is byte-identical and same-inode, so
+      // the only thing that changed anywhere is the temp's identity.
+      const targetAfter = await lstat(targetPath, { bigint: true });
+      assert.equal(targetAfter.ino, targetBefore.ino, "the target inode is unchanged");
+      assert.equal(targetAfter.size, targetBefore.size, "the target size is unchanged");
+      assert.equal((await lstat(tempPath, { bigint: true })).ino, (await lstat(foreign, { bigint: true })).ino,
+        "the temp really is the foreign file now");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+test("two readers retiring one settled witness both succeed and retire it once", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-double-retire-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-double-retire", ownerUid = process.getuid!();
+  try {
+    const plan = create();
+    // A settled revision that still carries its witness: exactly the state two
+    // concurrent recoverers both observe and both try to retire.
+    const target = join(root, name(installationId, 0));
+    const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    await writeFile(target, `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(join(root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName: `${installationId}.installation-plan.revision-0000000000.77777777-7777-4777-8777-777777777777.tmp`,
+      planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+
+    // Hold the first reader just before it retires the witness, so the second
+    // reader completes the retirement underneath it. Retiring a witness is
+    // idempotent, so the loser of the unlink race must not be told it cannot.
+    let observedSettled!: () => void;
+    const sawSettledTarget = new Promise<void>(resolve => { observedSettled = resolve; });
+    let resume!: () => void;
+    const mayResume = new Promise<void>(resolve => { resume = resolve; });
+    let held = false;
+    const slow = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base,
+          async statEntry(nameValue: string) {
+            const entry = await base.statEntry(nameValue);
+            // Hold on the temp lookup, which this reader performs only after
+            // readWitness has returned the witness and before it retires it. That
+            // is the exact window in which a peer can retire the witness first.
+            if (!held && nameValue.endsWith(".tmp")) { held = true; observedSettled(); await mayResume; }
+            return entry;
+          },
+        });
+      });
+    const peer = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+    const reading = slow.readHistory();
+    await sawSettledTarget;
+    assert.equal((await peer.readHistory()).length, 1, "the peer retires the witness first");
+    assert.equal((await readdir(root)).includes(witnessName), false, "the peer retired the witness");
+    resume();
+    assert.equal((await reading).length, 1, "the loser of the witness unlink race must not be refused");
+    assert.equal((await lstat(target)).nlink, 1);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)],
+      "the temp and the witness are retired exactly once");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a live writer's empty in-flight witness does not refuse a reader", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-empty-witness-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-empty-witness", ownerUid = process.getuid!();
+  const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+  try {
+    const plan = create();
+    // A settled revision-0 target plus an EMPTY publication witness is the exact
+    // shape readWitness must absorb: the storage session refuses an empty entry,
+    // so without settling handling this read is a terminal refusal.
+    await writeFile(join(root, name(installationId, 0)), `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(join(root, witnessName), "", { mode: 0o600, flag: "wx" });
+    assert.equal((await lstat(join(root, witnessName))).size, 0, "the witness is empty");
+    let observedRetry!: () => void, sawEmpty = false, listings = 0;
+    const sawRetry = new Promise<void>(resolve => { observedRetry = resolve; });
+    const reader = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base,
+          async listEntryNames() {
+            const names = await base.listEntryNames();
+            if (++listings > 1 && sawEmpty) observedRetry();
+            return names;
+          },
+          async statEntry(entryName: string) {
+            const entry = await base.statEntry(entryName);
+            if (entryName === witnessName && entry?.size === 0) sawEmpty = true;
+            return entry;
+          },
+        });
+      });
+
+    // Fill the witness in, but only after the reader has already refused to read
+    // the empty one, so the reader must have re-observed rather than failed.
+    const started = performance.now();
+    const reading = reader.readHistory(); reading.catch(() => {});
+    await Promise.race([sawRetry, reading.then(() => assert.fail("the empty witness was accepted before publication"))]);
+    await writeFile(join(root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName: `${installationId}.installation-plan.revision-0000000000.99999999-9999-4999-8999-999999999999.tmp`,
+      planDigest: plan.planDigest })}\n`, { mode: 0o600 });
+    const history = await reading;
+    assert.equal(history.length, 1, "an empty in-flight witness must be waited out, not refused");
+    assert.equal(history[0]!.planDigest, plan.planDigest);
+    assert.ok(performance.now() - started < 4_000, "the reader must not burn the whole settle window");
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a stale two-linked observation of a journal another reader settled is accepted once", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-stale-observation-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-stale", ownerUid = process.getuid!();
+  const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+  try {
+    const plan = create();
+    const target = join(root, name(installationId, 0));
+    const tempName = `${installationId}.installation-plan.revision-0000000000.88888888-8888-4888-8888-888888888888.tmp`;
+    // Start in the two-linked, witness-present shape, then hold this reader at its
+    // very first observation so a peer can complete the recovery underneath it.
+    await writeFile(join(root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await link(join(root, tempName), target);
+    await writeFile(join(root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+
+    let observedTwoLinked!: () => void;
+    const sawTwoLinks = new Promise<void>(resolve => { observedTwoLinked = resolve; });
+    let resume!: () => void;
+    const mayResume = new Promise<void>(resolve => { resume = resolve; });
+    let held = false;
+    const slowReader = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+      async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base,
+          async statEntry(nameValue: string) {
+            const entry = await base.statEntry(nameValue);
+            // Hold only the first two-linked observation of the target.
+            if (!held && nameValue.endsWith(".json") && entry && entry.linkCount === 2) {
+              held = true; observedTwoLinked(); await mayResume;
+            }
+            return entry;
+          },
+        });
+      });
+    const peer = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+    const reading = slowReader.readHistory();
+    await sawTwoLinks;
+    assert.equal((await peer.readHistory()).length, 1, "the peer completes the recovery");
+    assert.equal((await lstat(target)).nlink, 1);
+    assert.equal((await readdir(root)).includes(witnessName), false, "the peer retired the witness");
+    resume();
+    // The slow reader now holds a stale two-linked observation whose witness is
+    // gone. The journal on disk is exactly what a clean settled journal looks
+    // like, so this must not be refused.
+    assert.equal((await reading).length, 1, "a stale observation of a settled journal must not refuse");
+    assert.equal((await lstat(target)).nlink, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a terminal refusal is not waited out", async () => {
+  const f = await fixture();
+  try {
+    // Every one of these is genuinely unusable and must refuse on the first
+    // observation, never after the settle window. If a terminal refusal were
+    // retried, these would each take seconds instead of milliseconds.
+    const foreignRoot = new InstallationPlanFilesystemJournalV1({ rootDirectory: join(f.root, "missing"),
+      installationId: "local-installation-two", ownerUid: process.getuid!() });
+    const alias = join(f.root, "alias"); await symlink(f.root, alias);
+    const aliased = new InstallationPlanFilesystemJournalV1({ rootDirectory: alias,
+      installationId: "local-installation-two", ownerUid: process.getuid!() });
+
+    for (const [label, read] of [
+      ["a missing root", () => foreignRoot.readHistory()],
+      ["a symlinked root", () => aliased.readHistory()],
+      ["a digest mismatch", async () => {
+        const plan = create(), target = join(f.root, name(f.installationId, 0));
+        const wrong = advanceInstallationPlanV1(plan, { expectedRevision: 0, stage: "release_preflight", action: "start" });
+        await writeFile(target, `${canonicalJson(wrong)}\n`, { mode: 0o600, flag: "wx" });
+        return f.journal.readHistory();
+      }],
+    ] as const) {
+      const started = performance.now();
+      await assert.rejects(read, /installation_plan_journal_(unavailable|conflict)/, label);
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed < 1_000, `${label} must refuse immediately, not after a settle window (took ${elapsed.toFixed(0)}ms)`);
+    }
+  } finally { await rm(join(f.root, "alias"), { force: true }).catch(() => {}); await f.cleanup(); }
+});
+
+
+
 test("four exact writers repeatedly settle as one publication and clean replays", async () => {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const f = await fixture();
@@ -104,6 +708,156 @@ test("four exact writers repeatedly settle as one publication and clean replays"
     } finally { await f.cleanup(); }
   }
 });
+
+test("fifty concurrent exact writers publish once and replay without leaving artifacts", async () => {
+  for (let round = 0; round < 5; round += 1) {
+    const f = await fixture();
+    try {
+      const plan = create();
+      const results = await Promise.all(Array.from({ length: 50 }, () => f.journal.append(plan)));
+      assert.equal(results.filter(result => !result.replayed).length, 1);
+      assert.equal(results.filter(result => result.replayed).length, 49);
+      assert.ok(results.every(result => result.planDigest === plan.planDigest));
+      assert.deepEqual((await readdir(f.root)).sort(), [name(f.installationId, 0)]);
+      assert.equal((await lstat(join(f.root, name(f.installationId, 0)))).nlink, 1);
+    } finally { await f.cleanup(); }
+  }
+});
+
+for (const phase of ["witness-read", "temp-lookup"] as const) {
+  test(`a recovery peer can retire the publication during ${phase}`, async () => {
+    const f = await fixture();
+    try {
+      const plan = create(), tempName = `${f.installationId}.installation-plan.revision-0000000000.88888888-8888-4888-8888-888888888888.tmp`;
+      const witnessName = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+      await writeFile(join(f.root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600 });
+      await link(join(f.root, tempName), join(f.root, name(f.installationId, 0)));
+      await writeFile(join(f.root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+        revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600 });
+      let recovered = false;
+      const slow = new InstallationPlanFilesystemJournalV1({ rootDirectory: f.root, installationId: f.installationId,
+        ownerUid: process.getuid!() }, async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        const recover = async () => {
+          recovered = true;
+          assert.equal((await f.journal.readHistory()).length, 1);
+          assert.equal((await lstat(join(f.root, name(f.installationId, 0)))).nlink, 1);
+        };
+        return Object.freeze({ ...base,
+          async readEntry(entryName: string, maximumBytes: number) {
+            if (phase === "witness-read" && entryName === witnessName && !recovered) await recover();
+            return base.readEntry(entryName, maximumBytes);
+          },
+          async statEntry(entryName: string) {
+            if (phase === "temp-lookup" && entryName === tempName && !recovered) await recover();
+            return base.statEntry(entryName);
+          },
+        });
+      });
+      assert.equal((await slow.readHistory())[0]!.planDigest, plan.planDigest);
+      assert.equal(recovered, true);
+      assert.deepEqual((await readdir(f.root)).sort(), [name(f.installationId, 0)]);
+    } finally { await f.cleanup(); }
+  });
+}
+
+test("an interrupted settle preserves crash evidence and a clean retry can publish", async () => {
+  const f = await fixture();
+  try {
+    const plan = create(), witnessName = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+    await writeFile(join(f.root, witnessName), "", { mode: 0o600 });
+    const controller = new AbortController();
+    let observed!: () => void;
+    const sawWitness = new Promise<void>(resolve => { observed = resolve; });
+    const reader = new InstallationPlanFilesystemJournalV1({ rootDirectory: f.root, installationId: f.installationId,
+      ownerUid: process.getuid!() }, async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base, async statEntry(entryName: string) {
+        const entry = await base.statEntry(entryName);
+        if (entryName === witnessName && entry?.size === 0) observed();
+        return entry;
+      } });
+    });
+    const reading = reader.readHistory(controller.signal);
+    const refused = assert.rejects(reading, error => error === controller.signal.reason
+      || error instanceof Error && error.name === "AbortError" && error.cause === controller.signal.reason);
+    await sawWitness;
+    controller.abort(new Error("triage_stop"));
+    await refused;
+    assert.equal((await lstat(join(f.root, witnessName))).size, 0);
+    await rm(join(f.root, witnessName));
+    assert.equal((await f.journal.append(plan)).replayed, false);
+    assert.equal((await f.journal.readHistory())[0]!.planDigest, plan.planDigest);
+  } finally { await f.cleanup(); }
+});
+
+test("a crashed empty witness refuses within the settle deadline without deleting evidence", { timeout: 8_000 }, async t => {
+  const f = await fixture();
+  try {
+    const witnessName = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+    await writeFile(join(f.root, witnessName), "", { mode: 0o600 });
+    const started = performance.now();
+    await assert.rejects(f.journal.readHistory(t.signal), /installation_plan_journal_unavailable/);
+    assert.ok(performance.now() - started < 7_000);
+    assert.deepEqual(await readdir(f.root), [witnessName]);
+    assert.equal((await lstat(join(f.root, witnessName))).size, 0);
+  } finally { await f.cleanup(); }
+});
+
+test("an empty witness with unsafe permissions refuses immediately", async () => {
+  const f = await fixture();
+  try {
+    const witness = join(f.root, `${f.installationId}.installation-plan.revision-0000000000.publish.json`);
+    await writeFile(witness, "", { mode: 0o600 }); await chmod(witness, 0o644);
+    const started = performance.now();
+    await assert.rejects(f.journal.readHistory(), /installation_plan_journal_unavailable/);
+    assert.ok(performance.now() - started < 1_000);
+    assert.equal((await lstat(witness)).size, 0);
+  } finally { await f.cleanup(); }
+});
+
+for (const phase of ["missing-witness", "missing-temp"] as const) {
+  for (const replacement of ["inode", "device"] as const) {
+    test(`a ${phase} recovery refuses a changed target ${replacement}`, async () => {
+      const f = await fixture();
+      try {
+        const plan = create(), targetName = name(f.installationId, 0);
+        const tempName = `${f.installationId}.installation-plan.revision-0000000000.88888888-8888-4888-8888-888888888888.tmp`;
+        const witnessName = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+        await writeFile(join(f.root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600 });
+        await link(join(f.root, tempName), join(f.root, targetName));
+        await writeFile(join(f.root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+          revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600 });
+        let recovered = false;
+        const slow = new InstallationPlanFilesystemJournalV1({ rootDirectory: f.root, installationId: f.installationId,
+          ownerUid: process.getuid!() }, async request => {
+          const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+          return Object.freeze({ ...base, async statEntry(entryName: string) {
+            const entry = await base.statEntry(entryName);
+            if (!recovered && (phase === "missing-witness" && entryName === targetName
+              || phase === "missing-temp" && entryName === tempName)) {
+              recovered = true;
+              await f.journal.readHistory();
+              if (replacement === "inode") {
+                await rm(join(f.root, targetName));
+                await writeFile(join(f.root, targetName), `${canonicalJson(create("substituted"))}\n`, { mode: 0o600 });
+              }
+              return phase === "missing-witness" ? entry : undefined;
+            }
+            if (entry && entryName === targetName && recovered && replacement === "device") {
+              return Object.freeze({ ...entry, identity: Object.freeze({ ...entry.identity, device: entry.identity.device + BigInt(1) }) });
+            }
+            return entry;
+          } });
+        });
+        const started = performance.now();
+        await assert.rejects(slow.readHistory(), /installation_plan_journal_unavailable/);
+        assert.equal(recovered, true);
+        assert.ok(performance.now() - started < 1_000, "a changed target must refuse without settling");
+      } finally { await f.cleanup(); }
+    });
+  }
+}
 
 test("a late exact writer accepts recovery that already retired its own witness", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-late-witness-")));

@@ -1,0 +1,261 @@
+[
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "const handle = await open(temporary, \"wx\", mode);\n    try {",
+    "replace": "const handle = await open(path, \"wx\", mode);\n    try {",
+    "test": "node --import tsx --test --test-name-pattern='R2-01: ENOSPC' tests/installer-round2.test.mjs",
+    "why": "partial signing writes cannot reserve the final name"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "      await handle.sync();\n    } finally { await handle.close(); }",
+    "replace": "      // mutation: no file sync\n    } finally { await handle.close(); }",
+    "test": "node --import tsx --test --test-name-pattern='sync precede' tests/installer-round2.test.mjs",
+    "why": "signing bytes sync before publication"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "    try { await directory.sync(); } finally { await directory.close(); }",
+    "replace": "    try { /* mutation: no directory sync */ } finally { await directory.close(); }",
+    "test": "node --import tsx --test --test-name-pattern='sync precede' tests/installer-round2.test.mjs",
+    "why": "signing publication syncs its directory"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (options.gid !== undefined) await handle.chown(options.expectedUid, options.gid);",
+    "replace": "if (false) await handle.chown(options.expectedUid, options.gid);",
+    "test": "node --import tsx --test --test-name-pattern='sync precede' tests/installer-round2.test.mjs",
+    "why": "trust group ownership precedes publication"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "for (const path of [privateKeyPath, configPath, trustPath]) await recoverPublicationAliases(path, expectedUid);",
+    "replace": "/* mutation: no alias recovery */",
+    "test": "node --import tsx --test --test-name-pattern='kill immediately after publication' tests/installer-round2.test.mjs",
+    "why": "crashed complete publications preserve their established key"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (!published.isFile() || published.isSymbolicLink() || published.uid !== expectedUid) refuse(\"file\");",
+    "replace": "if (false) refuse(\"file\");",
+    "test": "node --import tsx --test --test-name-pattern='unexpected file owner' tests/installer-round2.test.mjs",
+    "why": "alias cleanup refuses unexpected ownership before touching aliases"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (!name.startsWith(prefix) || !/^[0-9]+-[a-f0-9]{16}$/u.test(name.slice(prefix.length))) continue;",
+    "replace": "if (false) continue;",
+    "test": "node --import tsx --test --test-name-pattern='unrelated private temporaries' tests/installer-round2.test.mjs",
+    "why": "alias cleanup only touches publication names"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (entry?.dev === published.dev && entry.ino === published.ino && entry.isFile() && !entry.isSymbolicLink()) {",
+    "replace": "if (entry) {",
+    "test": "node --import tsx --test --test-name-pattern='unrelated private temporaries' tests/installer-round2.test.mjs",
+    "why": "alias cleanup proves the final inode"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await write(\"planned\", \"switch-pointers\", switchResult);",
+    "replace": "await write(\"planned\", \"switch-pointers\", {});",
+    "test": "node --import tsx --test --test-name-pattern='SIGKILL after switching a repeat' tests/installer-round2.test.mjs",
+    "why": "pointer snapshots are durable before switching"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const pointers = actionFor(entries, id, \"switch-pointers\") ?? actionFor(entries, id, \"switch-pointers\", \"planned\");",
+    "replace": "const pointers = actionFor(entries, id, \"switch-pointers\");",
+    "test": "node --import tsx --test --test-name-pattern='SIGKILL after switching a repeat' tests/installer-round2.test.mjs",
+    "why": "planned-only switches recover before installed-commit inference"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (![\"oldCurrent\", \"oldPrevious\", \"oldUpdaterCurrent\", \"oldUpdaterPrevious\"]\n      .every(name => Object.hasOwn(pointers.data ?? {}, name))) refuse(\"install_journal_refused\");",
+    "replace": "if (false) refuse(\"install_journal_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='forged snapshot paths' tests/installer-round2.test.mjs",
+    "why": "recovery refuses incomplete pointer snapshots"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const guard = acquirePrivateProcessLockV1(join(root, \".installer-process-lock\"), { busyCode: \"install_already_running\" });",
+    "replace": "const guard = { release() {} };",
+    "test": "node --import tsx --test --test-name-pattern='paused live takeover' tests/installer-round2.test.mjs",
+    "why": "a paused takeover retains its kernel lease"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const kernelLock = process.platform === \"darwin\" ? 0x20 | constants.O_NONBLOCK : 0;",
+    "replace": "const kernelLock = 0;",
+    "test": "node --import tsx --test --test-name-pattern='kernel guard refuses' tests/installer-round2.test.mjs",
+    "why": "macOS uses a held kernel descriptor"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const privateFile = (s, uid) => s.isFile() && !s.isSymbolicLink() && s.nlink === 1\n  && s.uid === uid && (s.mode & 0o077) === 0;",
+    "replace": "const privateFile = () => true;",
+    "test": "node --import tsx --test --test-name-pattern='kernel guard refuses' tests/installer-round2.test.mjs",
+    "why": "kernel leases refuse wrong ownership, modes and hard links"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const same = (a, b) => a.dev === b.dev && a.ino === b.ino;",
+    "replace": "const same = () => true;",
+    "test": "node --import tsx --test --test-name-pattern='kernel guard refuses' tests/installer-round2.test.mjs",
+    "why": "the locked descriptor still names the same inode"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "await atomicFile(recoveryPath, Buffer.from(`${JSON.stringify(receipt)}\\n`));",
+    "replace": "/* mutation: no owner recovery receipt */",
+    "test": "node --import tsx --test --test-name-pattern='SIGKILL after remint' tests/installer-round2.test.mjs",
+    "why": "the recovery receipt precedes either owner digest change"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "const guard = acquirePrivateProcessLockV1(join(input.root, \"updater-state\", \".owner-code.lock\"), { busyCode: \"owner_code_recovery_pending\" });",
+    "replace": "const guard = { release() {} };",
+    "test": "node --import tsx --test --test-name-pattern='twenty concurrent remints' tests/installer-round2.test.mjs",
+    "why": "concurrent remints cannot replace each other or their receipt"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (await lstat(recoveryPath).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error))) {\n    refuse(\"owner_code_recovery_pending\");\n  }",
+    "replace": "if (false) { refuse(\"owner_code_recovery_pending\"); }",
+    "test": "node --import tsx --test --test-name-pattern='pending recovery cannot be overwritten' tests/installer-round2.test.mjs",
+    "why": "pending owner recovery cannot be overwritten"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "receipt = saved;",
+    "replace": "/* mutation: ignore saved receipt */",
+    "test": "node --import tsx --test --test-name-pattern='SIGKILL after remint' tests/installer-round2.test.mjs",
+    "why": "receiptless recovery restores both owner digests"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (receipt !== undefined && (!exactKeys(saved, Object.keys(receipt ?? {}))\n      || Object.entries(saved).some(([key, value]) => receipt[key] !== value))) refuse(\"owner_code_rollback_refused\");",
+    "replace": "if (false) refuse(\"owner_code_rollback_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='pending recovery cannot be overwritten' tests/installer-round2.test.mjs",
+    "why": "supplied rollback identity matches the saved receipt"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "      await handle.sync();\n    } finally { await handle.close(); }",
+    "replace": "      // mutation: no file sync\n    } finally { await handle.close(); }",
+    "test": "node --import tsx --test --test-name-pattern='sync precede' tests/installer-round2.test.mjs",
+    "why": "owner bytes sync before publication"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "    try { await directory.sync(); } finally { await directory.close(); }",
+    "replace": "    try { /* mutation: no directory sync */ } finally { await directory.close(); }",
+    "test": "node --import tsx --test --test-name-pattern='sync precede' tests/installer-round2.test.mjs",
+    "why": "owner receipt directory sync precedes effects"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "passkey: await savedPasskeyOutcome(root)",
+    "replace": "passkey: undefined",
+    "test": "node --import tsx --test --test-name-pattern='retains the persisted stopped passkey warning' tests/installer-round2.test.mjs",
+    "why": "repeat readiness carries durable passkey state"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "  if (value?.schema === \"control-room.install-passkey-status/v1\" && value.status === \"registered\"\n    && Object.keys(value).sort().join(\",\") === \"attempts,credentialIdDigest,schema,status\"\n    && /^sha256:[a-f0-9]{64}$/u.test(value.credentialIdDigest ?? \"\")\n    && Number.isSafeInteger(value.attempts) && value.attempts >= 1 && value.attempts <= 5) return value;",
+    "replace": "  if (true) return value;",
+    "test": "node --import tsx --test --test-name-pattern='absent, malformed' tests/installer-round2.test.mjs",
+    "why": "saved registered readiness validates schema and fields"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "  if (value?.schema === \"control-room.install-passkey-status/v1\" && value.status === \"stopped\"\n    && Object.keys(value).sort().join(\",\") === \"reason,schema,status\"\n    && /^[a-z][a-z0-9_-]{0,79}$/u.test(value.reason ?? \"\")) return value;",
+    "replace": "  if (true) return value;",
+    "test": "node --import tsx --test --test-name-pattern='absent, malformed' tests/installer-round2.test.mjs",
+    "why": "saved stopped readiness validates schema and fields"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await recomposeGatewayFile(root, id, write, ports, undo);",
+    "replace": "/* mutation: no gateway refresh */",
+    "test": "node --import tsx --test --test-name-pattern='rerun recomposes' tests/installer-round2.test.mjs",
+    "why": "gateway refresh precedes restart"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!saved || typeof saved !== \"object\" || Array.isArray(saved)) refuse(\"gateway_configuration_refused\");",
+    "replace": "if (false) refuse(\"gateway_configuration_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='malformed and missing configuration' tests/installer-round2.test.mjs",
+    "why": "gateway recomposition refuses malformed inputs"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!snapshot || !/^gateway-config-before-[A-Za-z0-9-]{1,80}$/u.test(snapshot.backup ?? \"\")\n    || !digestPattern.test(snapshot.before ?? \"\") || !digestPattern.test(snapshot.after ?? \"\")) refuse(\"install_journal_refused\");",
+    "replace": "if (false) refuse(\"install_journal_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='forged snapshot paths' tests/installer-round2.test.mjs",
+    "why": "gateway backup names and digest shapes are confined"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (digest(bytes) !== snapshot.before || ![snapshot.before, snapshot.after].includes(digest(current))) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='forged snapshot paths' tests/installer-round2.test.mjs",
+    "why": "gateway rollback refuses changed bytes"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (digest(current) !== snapshot.before) await replaceGatewayFile(root, bytes, ports);",
+    "replace": "if (false) await replaceGatewayFile(root, bytes, ports);",
+    "test": "node --import tsx --test --test-name-pattern='rerun recomposes' tests/installer-round2.test.mjs",
+    "why": "gateway rollback restores old bytes before restart"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (!await exists(tool)) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='a removed PostgreSQL runtime' tests/installer-round2.test.mjs",
+    "why": "shutdown checks cannot execute from a removed runtime"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "/fleet/v1/local-health)",
+    "replace": "/fleet/v1/health)",
+    "test": "node --import tsx --test --test-name-pattern='LOW wording' tests/installer-round2.test.mjs",
+    "why": "protected policy names the actual gateway probe"
+  },
+  {
+    "file": "tests/updater-protected-config.test.mjs",
+    "find": "banner: { js: 'import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);' }",
+    "replace": "banner: { js: \"\" }",
+    "test": "node --import tsx --test --test-name-pattern='svc2 real composer emits' tests/updater-protected-config.test.mjs",
+    "why": "the fixture loads its bundled CommonJS dependency"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "export async function remintOwnerCodeV1(input) {\n  if (!safeRoot(input?.root)) refuse(\"owner_code_refused\");",
+    "replace": "export async function remintOwnerCodeV1(input) {\n  if (false) refuse(\"owner_code_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='rejects missing roots' tests/installer-round2.test.mjs",
+    "why": "remint validates its root before filesystem effects"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "export async function rollbackOwnerCodeV1(input) {\n  if (!safeRoot(input?.root)) refuse(\"owner_code_rollback_refused\");",
+    "replace": "export async function rollbackOwnerCodeV1(input) {\n  if (false) refuse(\"owner_code_rollback_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='rejects missing roots' tests/installer-round2.test.mjs",
+    "why": "rollback validates its root before filesystem effects"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (updater ? !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u.test(target) : !validPointerSnapshot(target)) refuse(\"release_pointer_refused\");",
+    "replace": "if (false) refuse(\"release_pointer_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='snapshots refuse malformed' tests/installer-round2.test.mjs",
+    "why": "pointer snapshots refuse malformed relative targets"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!inside(join(root, updater ? \"updater\" : \"releases\"), await realpath(path))) refuse(\"release_pointer_refused\");",
+    "replace": "if (false) refuse(\"release_pointer_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='snapshots refuse malformed' tests/installer-round2.test.mjs",
+    "why": "pointer snapshots refuse filesystem escapes"
+  }
+]

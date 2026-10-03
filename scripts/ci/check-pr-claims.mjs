@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import { redactPrivateNames } from "../check-private-names.mjs";
 
 export const MAX_BODY_BYTES = 65_536;
@@ -225,4 +225,4 @@ export function main(env = process.env) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

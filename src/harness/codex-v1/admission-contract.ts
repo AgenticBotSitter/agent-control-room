@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from 'zod';
 import { sha256Digest } from '../../security/canonical-digest';
 import { digestSchema, localId } from '../v1/native-run-identifiers';
@@ -112,19 +113,19 @@ const requiredOwn = (keys: readonly string[]) => (value: object, context: z.Refi
     context.addIssue({ code: 'custom', path: [key], message: `missing exact-package field: ${key}` });
   }
 };
-const threadProjectionSchema = z.object({
+const threadProjectionSchema = upstreamObjectV1({
   id: upstreamId,
   sessionId: upstreamId,
   ephemeral: z.literal(false),
   cliVersion: z.literal(CODEX_APP_SERVER_START_CONTRACT.version),
-}).passthrough().superRefine(requiredOwn([
+}).superRefine(requiredOwn([
   'cliVersion', 'createdAt', 'cwd', 'ephemeral', 'id', 'modelProvider', 'preview',
   'projectId', 'sessionId', 'source', 'status', 'turns', 'updatedAt',
 ]));
-const threadStartResultSchema = z.object({
+const threadStartResultSchema = upstreamObjectV1({
   cwd: z.string(), model: z.string(), modelProvider: z.string(),
   thread: threadProjectionSchema,
-}).passthrough().superRefine(requiredOwn(CODEX_APP_SERVER_START_CONTRACT.threadStart.responseRequired));
+}).superRefine(requiredOwn(CODEX_APP_SERVER_START_CONTRACT.threadStart.responseRequired));
 const threadResponseSchema = z.object({
   id: rpcId,
   result: threadStartResultSchema,
@@ -230,11 +231,11 @@ export function createCodexTurnStartIntentV1(threadReceiptValue: unknown, value:
 
 const turnResponseSchema = z.object({
   id: rpcId,
-  result: z.object({ turn: z.object({
+  result: z.object({ turn: upstreamObjectV1({
     id: upstreamId,
     items: z.array(z.unknown()),
     status: z.literal('inProgress'),
-  }).passthrough() }).strict(),
+  }) }).strict(),
 }).strict();
 
 export const codexTurnStartReceiptSchemaV1 = z.object({

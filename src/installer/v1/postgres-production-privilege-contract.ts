@@ -22,7 +22,7 @@ const applicationDeleteTables = new Set([
 ]);
 const schedulerReadTables = new Set([
   "workspaces", "projects", "control_schedule_occurrences", "control_schedules", "control_requests",
-  "control_workflows", "control_jobs",
+  "control_workflows", "control_jobs", "control_manual_project_heads",
 ]);
 const brokerTables = new Set(["control_github_webhook_replays", "control_github_worker_wake_hints"]);
 const workIntakeReadTables = new Set(["control_identities", "control_role_grants", "projects"]);

@@ -1,0 +1,205 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "|| typeof result.displayName !== \"string\" || !plainObject(result.workingAgreement)) protocolInvalid();",
+    "replace": "|| typeof result.displayName !== \"string\" || !plainObject(result.workingAgreement)) protocolInvalid();\n      localWorkingAgreement(result.workingAgreement);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-01' tests/fleet-connector-round2.test.mjs",
+    "why": "agreement drift must reach the self-update check (the local refusal helper was hoisted to protocolInvalid in round 4 R4C-05)"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      error.status = response.status;",
+    "replace": "      // status omitted",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='definitive enrollment refusal' tests/fleet-connector-install.test.mjs",
+    "why": "HTTP status preserves definitive refusal cleanup"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (finalRefusal) {\n      await removePendingJoin(configPath, clientNonce);",
+    "replace": "    if (true) {\n      await removePendingJoin(configPath, clientNonce);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-02' tests/fleet-connector-round2.test.mjs",
+    "why": "ambiguous enrollment answers preserve the nonce and secret"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "            if (presented) refused.add(presented);",
+    "replace": "            void presented;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='R4C-03' tests/fleet-connector-round4.test.mjs",
+    "why": "a refused secret is remembered so a revoked credential is never retried; round 4 R4C-03 moved this from a post-call check to the presentation point, so the anchor moved with it"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      current = await recoverPending({ configPath, fetcher, checkAgreement: false });",
+    "replace": "      current = await recoverPending({ configPath, fetcher });",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-01: pending' tests/fleet-connector-round2.test.mjs",
+    "why": "pending recovery leaves agreement checking until after self-update"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (current.safetyHalt === true) {",
+    "replace": "      if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-04' tests/fleet-connector-round2.test.mjs",
+    "why": "a durable safety halt stops all requests on subsequent starts"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "try { await writePrivate(configPath, { ...await loadConfig(configPath), safetyHalt: true }); }",
+    "replace": "try { await writePrivate(configPath, { ...await loadConfig(configPath), safetyHalt: false }); }",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-04' tests/fleet-connector-round2.test.mjs",
+    "why": "runaway execution persists its halt before returning a clean exit"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        if (finished.forcedTimeout) {",
+    "replace": "        if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-04' tests/fleet-connector-round2.test.mjs",
+    "why": "a runaway harness terminates the work loop cleanly"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    ticker = setInterval(() => { ticking = ticking.then(tick); }, progressIntervalMs);",
+    "replace": "    ticker = undefined;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-05: local' tests/fleet-connector-round2.test.mjs",
+    "why": "tool tasks renew and observe Stop"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const result = await runner.execute({ adapterId: claim.adapterId, inputs: claim.inputs }, controller.signal);",
+    "replace": "const result = await runner.execute({ adapterId: claim.adapterId, inputs: claim.inputs });",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-05: local' tests/fleet-connector-round2.test.mjs",
+    "why": "tool execution receives the cancel signal"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "try { if (await readMode() === \"stopped\") abort(); }",
+    "replace": "try { if (false) abort(); }",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-05: local' tests/fleet-connector-round2.test.mjs",
+    "why": "Stop aborts the tool before submission"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "catch (error) { if (LOST_CLAIM_CODES.has(error?.code)) { lost = true; abort(); } }",
+    "replace": "catch (error) { if (true) { abort(); } }",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-05: tool' tests/fleet-connector-round2.test.mjs",
+    "why": "lost tool claims suppress subsequent reports"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (/(?:\\.harnesses$|\\.json\\.)/iu.test(name)) throw new Error(\"That bot profile name is reserved for connector settings.\");",
+    "replace": "  if (false) throw new Error(\"That bot profile name is reserved for connector settings.\");",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-06' tests/fleet-connector-round2.test.mjs",
+    "why": "profile names cannot overlap credential and harness files"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (code !== undefined && config.codeDigest !== sha256(code)) {",
+    "replace": "      if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-07' tests/fleet-connector-round2.test.mjs",
+    "why": "replacement codes install a new credential"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        if (replacement && (replacement.server !== config.server || replacement.codeDigest !== sha256(code)\n          || replacement.workerKind !== bot)) throw new Error(\"A different key replacement is pending. Retry its original code first.\");",
+    "replace": "        if (false) throw new Error(\"A different key replacement is pending. Retry its original code first.\");",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-07: lost' tests/fleet-connector-round2.test.mjs",
+    "why": "staged replacements stay bound to the original request"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        if (replacement.workerId !== config.workerId) {",
+    "replace": "        if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-07: a code' tests/fleet-connector-round2.test.mjs",
+    "why": "replacement cannot switch to another worker"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "...(config.safetyHalt === true ? { safetyHalt: true } : {})",
+    "replace": "...(false ? { safetyHalt: true } : {})",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-07: a code' tests/fleet-connector-round2.test.mjs",
+    "why": "key replacement preserves the safety halt"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        if (replacement?.workerId && replacement.secret === config.secret && replacement.codeDigest === config.codeDigest) {",
+    "replace": "        if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-07: a code' tests/fleet-connector-round2.test.mjs",
+    "why": "committed staging records left by crashes do not wedge the next replacement"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (activeUsable && active.version !== currentVersion",
+    "replace": "if (active.version !== currentVersion",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-08' tests/fleet-connector-round2.test.mjs",
+    "why": "coalescing requires verified installed bytes"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (compareConnectorVersionsV1(release.version, active.version) <= 0 && activeUsable) {",
+    "replace": "if (compareConnectorVersionsV1(release.version, active.version) <= 0) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-08' tests/fleet-connector-update.test.mjs",
+    "why": "damaged current versions are repaired"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "      from = pointer(currentVersion);",
+    "replace": "      from = active;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-08' tests/fleet-connector-update.test.mjs",
+    "why": "failed repair rolls back to a verified fallback"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "      if (error?.code !== \"trust_busy\") throw error;\n      if (attempt >= attempts) refuse(\"trust_busy\");",
+    "replace": "      throw error;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-10' tests/release-signing.test.mjs",
+    "why": "a waiter on the kernel trust lock retries instead of failing, so 20 installers recovering a dead lock all finish (R2C-10)"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "          const elected = await electGenerationCleaner(lockPath, generation, clock);",
+    "replace": "          const elected = true;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='^R2C-10' tests/fleet-connector-update.test.mjs",
+    "why": "one cleaner preserves update mutual exclusion"
+  },
+  {
+    "file": "tests/release-signing-e2e.test.ts",
+    "find": "workerKind: \"cursor\", displayName: \"Signing E2E\", operationsMode:",
+    "replace": "displayName: \"Signing E2E\", operationsMode:",
+    "test": "node --import tsx --test tests/release-signing-e2e.test.ts",
+    "why": "a heartbeat fixture must declare its worker kind and failure must exit promptly through registered cleanup"
+  },
+  {
+    "file": "tests/release-signing-e2e.test.ts",
+    "find": "  t.after(async () => { if (gateway.server.listening) await stopGateway(gateway.server); });",
+    "replace": "  // gateway cleanup removed",
+    "test": "node --import tsx --test --test-name-pattern='signing E2E releases' tests/release-signing.test.mjs",
+    "why": "a failed signing setup must close its HTTP server so the lane exits"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (!activeUsable && compareConnectorVersionsV1(release.version, active.version) < 0)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='^R2C-08' tests/fleet-connector-round2.test.mjs",
+    "why": "a damaged pointer never authorizes a downgrade"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (controller.signal.aborted) return;",
+    "replace": "    if (false) return;",
+    "test": "node --import tsx --test --test-name-pattern='^R2C-05: local' tests/fleet-connector-round2.test.mjs",
+    "why": "Stop suppresses further tool lease renewals"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  signal?.addEventListener(\"abort\", abort, { once: true });",
+    "replace": "  // parent abort listener omitted",
+    "test": "node --import tsx --test --test-name-pattern='^R2C-05: parent' tests/fleet-connector-round2.test.mjs",
+    "why": "cancellation reaches already-running tools"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (signal?.aborted) abort();",
+    "replace": "  if (false) abort();",
+    "test": "node --import tsx --test --test-name-pattern='^R2C-05: parent' tests/fleet-connector-round2.test.mjs",
+    "why": "cancellation reaches tools before they start"
+  }
+]

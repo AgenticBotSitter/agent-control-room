@@ -5,11 +5,19 @@ import { readFile } from 'node:fs/promises';
 // Source-preview direct dependencies only. This is not a bundled-artifact SBOM.
 const notices = {
   '@mozilla/readability': ['LICENSE.md', 'readability/LICENSE'],
+  // Added with the passkey registration work (M1). Without this entry the test fails
+  // `new direct dependencies require a notice mapping` on the key-set comparison, which
+  // is the test doing exactly its job: a new direct runtime dependency with no retained
+  // license text. The file is the package's own, copied verbatim.
+  '@simplewebauthn/server': ['LICENSE.md', 'simplewebauthn-server/LICENSE.md'],
   'cron-parser': ['LICENSE', 'cron-parser/LICENSE'],
   'fast-xml-parser': ['LICENSE', 'fast-xml-parser/LICENSE'],
   jsdom: ['LICENSE.txt', 'jsdom/LICENSE'],
   jsonwebtoken: ['LICENSE', 'jsonwebtoken/LICENSE'],
   luxon: ['LICENSE.md', 'luxon/LICENSE.md'],
+  'mdast-util-from-markdown': ['license', 'mdast-util-from-markdown/LICENSE'],
+  'mdast-util-gfm': ['license', 'mdast-util-gfm/LICENSE'],
+  'micromark-extension-gfm': ['license', 'micromark-extension-gfm/LICENSE'],
   pg: ['LICENSE', 'pg/LICENSE'],
   'pg-boss': ['LICENSE', 'pg-boss/LICENSE'],
   react: ['LICENSE', 'react/LICENSE'],
@@ -17,6 +25,7 @@ const notices = {
   'react-markdown': ['license', 'react-markdown/LICENSE'],
   'remark-gfm': ['license', 'remark-gfm/LICENSE'],
   'rss-parser': ['LICENSE', 'rss-parser/LICENSE'],
+  'web-push': ['LICENSE', 'web-push/LICENSE'],
   zod: ['LICENSE', 'zod/LICENSE'],
 };
 test('every direct runtime dependency retains its exact installed license and pinned version', async () => {

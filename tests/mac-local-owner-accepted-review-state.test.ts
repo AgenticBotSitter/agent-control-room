@@ -195,18 +195,41 @@ test("the failure message names both states the accepted path allows", () => {
 
 // Wiring: a guard that no test proves the rehearsal actually calls is the exact
 // failure mode two PRs shipped on 2026-09-28. The unit cases above prove the
-// derivation; this proves the post-acceptance assertion in journey.ts is routed
-// through it and can no longer silently revert to a bare scalar comparison.
-test("the rehearsal's post-acceptance assertion is routed through this guard", async () => {
+// derivation; this proves the rehearsal's post-acceptance assertion cannot
+// silently revert to a bare scalar comparison.
+//
+// SCOPE CHANGE (m-twfix): the installed Mac is connector-only
+// (start-web-host.mjs `connectorOnly: true`). It builds no result store and no
+// completion-gate review plan, so `/results` is not_configured there and
+// journey.ts no longer walks the local review page this helper reads. The
+// derivation and its unit cases are untouched and still load-bearing for any
+// host that configures a result store. What must still hold HERE is that the
+// journey asserts the accepted outcome through a named verdict rather than a
+// bare scalar, and that the unused import cannot linger pretending it does.
+test("the rehearsal asserts the accepted outcome through a named verdict, not a scalar", async () => {
   const journey = await readFile(new URL("../scripts/mac-local/rehearsal/journey.ts", import.meta.url), "utf8");
-  assert.match(journey, /import \{ checkOwnerAcceptedStateV1, ownerAcceptedStateMessageV1 \} from "\.\/owner-accepted-state";/u,
-    "journey.ts must import the guard this test exercises");
-  const call = journey.indexOf("checkOwnerAcceptedStateV1(acceptedPage");
-  assert.notEqual(call, -1, "journey.ts must check the post-acceptance page with this guard");
-  const window = journey.slice(call, call + 400);
-  assert.match(window, /acceptedVerdict\.ok/u, "the guard's verdict must drive an assertion");
-  assert.match(window, /ownerAcceptedStateMessageV1\(agent\.kind, decision\)/u,
-    "the assertion message must name the states the accepted path allows");
-  assert.doesNotMatch(window, /assert\.equal\(acceptedPage\.status/u,
-    "the bare scalar comparison this replaced must not come back");
+  const usesGuard = /checkOwnerAcceptedStateV1\(/u.test(journey);
+  if (usesGuard) {
+    assert.match(journey, /import \{ checkOwnerAcceptedStateV1, ownerAcceptedStateMessageV1 \} from "\.\/owner-accepted-state";/u,
+      "a journey that calls the guard must import it");
+    const call = journey.indexOf("checkOwnerAcceptedStateV1(");
+    assert.notEqual(call, -1);
+    const window = journey.slice(call, call + 400);
+    assert.match(window, /\.ok/u, "the guard's verdict must drive an assertion");
+    assert.doesNotMatch(window, /assert\.equal\([^)]*\.status/u,
+      "the bare scalar comparison this replaced must not come back");
+    return;
+  }
+  // The connector-only route: the journey must still prove acceptance from saved
+  // evidence rather than from a single field.
+  assert.doesNotMatch(journey, /import \{ checkOwnerAcceptedStateV1/u,
+    "an import the journey no longer calls is dead weight that hides whether the guard is wired");
+  assert.match(journey, /"SELECT state FROM control_jobs WHERE tenant_id=\$1 AND id=\$2"[\s\S]*== "succeeded"/u,
+    "the accepted outcome must be proved from the saved job state on the connector route");
+  assert.match(journey, /reviewReplay\.replayed, true/u,
+    "one decision must be proved to replay rather than record a second row");
+  assert.match(journey, /reviewReplay\.reviewId, reviewed\.reviewId/u,
+    "both owner decisions must carry the same review id");
+  assert.doesNotMatch(journey, /assert\.equal\(settled, "succeeded"\)/u,
+    "the settled proof is polled with a named assertion, not a bare field compare");
 });

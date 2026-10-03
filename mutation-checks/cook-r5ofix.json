@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/web/v1/task-submission-browser-client.ts",
+    "find": "pending.packetDigest === result.receipt.packetDigest",
+    "replace": "pending.packetDigest === packetDigest",
+    "test": "node --import tsx --test --test-name-pattern=R5O-01 tests/task-command-retry.test.tsx",
+    "why": "a matching saved receipt must resolve pending without an optional digest"
+  },
+  {
+    "file": "src/web/v1/task-submission-browser-client.ts",
+    "find": "pending.packetDigest === result.receipt.packetDigest",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern=R5O-01 tests/task-command-retry.test.tsx",
+    "why": "another packet receipt must not resolve the pending submission"
+  },
+  {
+    "file": "private-app/app/project-pipelines-workspace.tsx",
+    "find": "async function command(projectId: string, batchId: string, value?: unknown): Promise<OwnerReceipt> {\n    if (busy) throw new PipelineRequestError(\"uncertain\");",
+    "replace": "async function command(projectId: string, batchId: string, value?: unknown): Promise<OwnerReceipt> {",
+    "test": "node --import tsx --test --test-name-pattern=R5O-02 tests/task-command-retry.test.tsx",
+    "why": "duplicate commands and retries must not enter transport concurrently"
+  },
+  {
+    "file": "private-app/app/project-pipelines-workspace.tsx",
+    "find": "if (pending.path !== path) throw new PipelineRequestError(\"uncertain\");",
+    "replace": "if (false) throw new PipelineRequestError(\"uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern=R5O-02 tests/task-command-retry.test.tsx",
+    "why": "a retry from another project or batch must not post the saved command"
+  },
+  {
+    "file": "private-app/app/project-pipelines-workspace.tsx",
+    "find": "workBatchOwnerReceiptSchemaV1.parse(await readBrowserJson(response))",
+    "replace": "workBatchOwnerReceiptSchemaV1.parse(await read(response))",
+    "test": "node --import tsx --test --test-name-pattern=R5O-06 tests/task-command-retry.test.tsx",
+    "why": "an unreadable successful POST reply must preserve the exact pending operation"
+  }
+]

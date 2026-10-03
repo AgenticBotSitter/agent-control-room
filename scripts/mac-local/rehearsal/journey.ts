@@ -1,24 +1,28 @@
-// Package 6b: one task per local agent (Hermes, Claude Code, Codex owner-trusted), driven only
-// through the same HTTP API the website uses, against the exact disposable PG17 cluster made by
-// `pnpm mac:rehearsal up`. Proves section 9/14 of MAC_LOCAL_TASK_RUNTIME_TRUST_DECISION.md: project
-// -> proposal -> plan -> assignment -> submission preview -> submit -> the task host's own queue
-// worker runs a fake PINNED EXECUTABLE through the production process adapters -> pending review,
-// exactly once per agent, with a replay returning the same receipt and queuing nothing new.
-// The owner then reviews each result through the same HTTP API the website uses.
+// Package 6b: the disposable PG17 rehearsal the website actually serves, driven only
+// through the same HTTP API the website uses.
+//
+// The installed Mac is CONNECTOR-ONLY (start-web-host.mjs `connectorOnly: true`):
+// it builds no planner, no assignment coordinator and no queue, so its bots are
+// fleet connector workers and an owner's task reaches one only as an offer
+// claimed through the gateway. This journey therefore drives propose -> offer ->
+// claim -> result -> owner decision -> completed, through the real connector
+// client against the real signed connector release, and proves both PG17
+// lock-order collisions against the fleet rows that path writes.
+//
 // Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR
-//   [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]
+//   [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--browser-phone-width-e2e|--model-allowlists]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { Client } from "pg";
+import { databaseSqlStateIsAnyV1 } from "../../../src/persistence/database";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
-import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
-import { checkOwnerAcceptedStateV1, ownerAcceptedStateMessageV1 } from "./owner-accepted-state";
-import { MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1 } from "../../../src/web/v1/mac-local-owner-review-profile";
+import { removeRehearsalConnectorAdvertisementV1, signRehearsalConnectorReleaseV1 } from "./sign-connector-release";
+import { connectBotForJourney, deliverForJourney, removeJourneyConnectorWorkspacesV1 } from "./journey-connector-route";
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
@@ -35,81 +39,7 @@ if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
 const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 let verifiedThisRehearsalCluster = false;
 let stackMayBeUp = false;
-
-const AGENTS = Object.freeze([
-  { kind: "claude" as const, worker: "claude-code" as const, node: "claude" },
-  { kind: "codex" as const, worker: "codex" as const, node: "codex" },
-  // The pre-0091-shaped proposal defaults to a root-tree ownership scope, so
-  // assign it last after both narrower-scope journeys have finished.
-  { kind: "hermes" as const, worker: "hermes" as const, node: "hermes" },
-]);
-
-// One shell script per agent: it answers `--version` for the pin check, and
-// otherwise reads (and discards) stdin, then emits exactly the stream the real
-// production adapter for that agent parses (see the invoke() header comment
-// on each block below for the exact source it was matched against). A fixed
-// shebang path is used deliberately: the production spawn only exposes
-// PATH=/usr/bin:/bin to the child, which would not resolve `env node`.
-function hermesFakeScript(version: string, selected: boolean) {
-  return `#!/bin/sh
-for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 0; done
-[ "$1" = "--help" ] && printf '%s\\n' '--profile --provider --model' && exit 0
-${selected ? `case " $* " in *" -p build "*) ;; *) exit 41 ;; esac
-case " $* " in *" --model model-rehearsal "*) ;; *) exit 41 ;; esac
-case " $* " in *" --provider provider-rehearsal "*) ;; *) exit 41 ;; esac` : ""}
-case " $* " in *" --max-turns 4 "*) ;; *) exit 44 ;; esac
-cat >/dev/null
-session_id="fake-hermes-session-$(printf '%012d' "$$")"
-printf '%s\\n' 'rehearsal output' > "$PWD/hermes-result.txt"
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model","timestamp":1}'
-printf '%s\\n' '{"type":"text","text":"I will write the requested result.","timestamp":2}'
-printf '%s\\n' '{"type":"tool_use","name":"write_file","tool_call_id":"tool-1","input":{"path":"hermes-result.txt"},"timestamp":3}'
-printf '%s\\n' '{"type":"tool_result","name":"write_file","tool_call_id":"tool-1","output":"Wrote hermes-result.txt","duration_ms":1,"is_error":false,"timestamp":4}'
-printf '%s\\n' '{"type":"result","session_id":"'"$session_id"'","exit_code":0,"text":"Fake Hermes pinned executable result '"$session_id"'.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
-printf 'session_id: %s\\n' "$session_id" >&2
-exit 0
-`;
-}
-// Matches src/harness/claude-code-v1/owner-trusted-local-exec.ts (stdin prompt,
-// OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1) and stream-json-decode.ts (init, then one
-// terminal result frame with subtype "success", is_error false, a usage object).
-function claudeFakeScript(version: string, selected: boolean) {
-  return `#!/bin/sh
-for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 0; done
-[ "$1" = "--help" ] && printf '%s\\n' '--model --effort' && exit 0
-${selected ? `case " $* " in *" --model sonnet-rehearsal "*) ;; *) exit 42 ;; esac
-case " $* " in *" --effort high "*) ;; *) exit 42 ;; esac` : ""}
-cat >/dev/null
-session_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model"}'
-printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
-printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
-printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result '"$session_id"'."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{"input_tokens":3,"output_tokens":5}}'
-exit 0
-`;
-}
-// Matches src/harness/codex-v1/owner-trusted-local-exec.ts (stdin prompt, args
-// end with -C <cwd> -) and its parseLine(): item.completed/agent_message text,
-// then turn.completed with a usage object.
-function codexFakeScript(version: string, selected: boolean) {
-  return `#!/bin/sh
-for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 0; done
-[ "$1 $2" = "debug models" ] && printf '%s\\n' 'gpt-rehearsal' && exit 0
-[ "$1 $2" = "exec --help" ] && printf '%s\\n' '--model' && exit 0
-${selected ? `case " $* " in *" -m gpt-rehearsal "*) ;; *) exit 43 ;; esac
-case " $* " in *" model_reasoning_effort=high "*) ;; *) exit 43 ;; esac` : ""}
-cat >/dev/null
-thread_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
-printf '%s\\n' '{"type":"thread.started","thread_id":"'"$thread_id"'"}'
-printf '%s\\n' '{"type":"turn.started"}'
-printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning"}}'
-printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result '"$thread_id"'."}}'
-printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}'
-exit 0
-`;
-}
-const fakeScript = Object.freeze({ hermes: hermesFakeScript, "claude-code": claudeFakeScript, codex: codexFakeScript });
+let signedConnectorRelease = false;
 
 function invoke(args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", ...args], {
@@ -164,36 +94,8 @@ async function main() {
   } catch { throw new Error("STOP: coordinator lacks SELECT on a completion-gate table; do not widen grants or provision the tenant"); }
   finally { await coordinator.end(); }
 
-  // Real, on-disk pinned executables. Not a code seam: the production process
-  // adapters spawn these exact paths and parse their exact stdout.
-  const fakeDirectory = join(protectedRoot, "fake-workers");
-  await mkdir(fakeDirectory, { mode: 0o700 });
-  await chmod(fakeDirectory, 0o700);
-  const withModelAllowlists = mode === "--model-allowlists";
-  for (const worker of config.enablement.workers) {
-    const name = worker.kind === "claude-code" ? "claude" : worker.kind;
-    const executable = join(fakeDirectory, name);
-    const version = `${name} 1.0.0`;
-    await writeFile(executable, fakeScript[worker.kind as keyof typeof fakeScript](version, withModelAllowlists), { mode: 0o700, flag: "wx" });
-    await chmod(executable, 0o700);
-    worker.executablePath = executable;
-    worker.recordedVersion = version;
-    if (withModelAllowlists) worker.modelPolicy = worker.kind === "hermes" ? {
-      profiles: [{ name: "build", provider: "provider-rehearsal", model: "model-rehearsal" }],
-      defaultProfile: "build", efforts: ["default"], defaultEffort: "default",
-    } : worker.kind === "claude-code" ? {
-      models: ["sonnet-rehearsal"], defaultModel: "sonnet-rehearsal", efforts: ["high"], defaultEffort: "high",
-    } : {
-      models: ["gpt-rehearsal"], defaultModel: "gpt-rehearsal", efforts: ["high"], defaultEffort: "high",
-    };
-  }
-  await writeJsonPrivate(join(protectedRoot, "config/mac-local.json"), config);
-
-  // probe-adapters.ts is not used here: it expects a real CLI that answers a
-  // prompt and can be canceled/timed out mid-run, which a fixed-output fake
-  // cannot honestly simulate. The fakes are instead proven end-to-end below,
-  // by the same production process adapters the real task host queue worker
-  // uses when a submitted task is actually delivered.
+  // The connector-only host never spawns a pinned local executable, so this
+  // rehearsal writes no fakes. Bots are real connector clients driven below.
 
   // First-owner setup: the minimal positive path (see section13.ts for the
   // negative/fault-injection coverage of this same sequence).
@@ -212,6 +114,11 @@ async function main() {
   const complete = invoke(["scripts/mac-local/complete-first-owner.mjs", protectedRoot, receiptPath]);
   assert.equal(complete.status, 0, complete.stderr || complete.stdout);
 
+  // The installed Mac runs a fleet gateway from a signed connector release, and
+  // its bots reach work only through it. Sign this rehearsal's release so
+  // `mac:up` starts the same gateway instead of a website no bot can join.
+  signedConnectorRelease = true;
+  await signRehearsalConnectorReleaseV1(root);
   const upArgs = ["scripts/mac-local/up.mjs", "--protected-root", protectedRoot];
 
   // Start with no active project, then create the first project through the
@@ -249,11 +156,45 @@ async function main() {
   const { project } = await require5xxOr201(projectResponse, "create project") as { project: { projectId: string } };
   const projectId = project.projectId;
 
-  const workersResponse = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie } });
-  assert.equal(workersResponse.status, 200);
-  const workersBody = await workersResponse.json() as { workers: { kind: string; state: string }[] };
-  assert.equal(workersBody.workers?.length, 3);
-  assert.ok(workersBody.workers.every(worker => worker.state === "ready"), `all three workers must be ready: ${JSON.stringify(workersBody.workers)}`);
+  const idOf = (value: string) => encodeURIComponent(value);
+  // The installed Mac is CONNECTOR-ONLY (start-web-host.mjs `connectorOnly:
+  // true`): its workers are fleet connector bots the owner connects, and a task
+  // reaches one only as an offer claimed through the gateway. There is no local
+  // worker roster to be "ready" and no /plan route to prepare against, so this
+  // journey drives the route the Mac really has -- the same route the browser
+  // suites drive -- instead of the removed direct one.
+  const fleetBoardResponse = await fetch(new URL("/api/v1/fleet", origin), { headers: { cookie } });
+  assert.equal(fleetBoardResponse.status, 200, "the connector-only host must serve the fleet board");
+  const fleetBoard = await fleetBoardResponse.json() as { workers: unknown[]; pendingCodes: unknown[];
+    gatewayConfigured: boolean };
+  assert.ok(Array.isArray(fleetBoard.workers) && Array.isArray(fleetBoard.pendingCodes),
+    `the fleet board must list workers and codes: ${JSON.stringify(fleetBoard)}`);
+  assert.equal(fleetBoard.gatewayConfigured, true,
+    "a signed connector release and a running gateway are what make a bot reachable");
+  // The dead-end steps this host does not have must answer honestly, not as a
+  // dead end the owner could follow. The plan route is mounted and reports its
+  // own availability; the assignment and submission routes are not mounted.
+  // Probed against the real project and a real proposed task, because a
+  // fabricated job id would 404 for a reason that proves nothing here.
+  const probeTask = await require5xxOr201(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json",
+      "idempotency-key": "journey-default-probe-0001" },
+    body: JSON.stringify({ title: "Journey preflight probe", instructions: "Return one harmless short line." }),
+  }), "connector-only preflight probe") as { receipt: { jobId: string } };
+  const planProbe = await requireOk(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(probeTask.receipt.jobId)}/plan`, origin),
+    { headers: { cookie } }), 200, "connector-only plan probe") as { availability: string; templates?: unknown[] };
+  assert.equal(planProbe.availability, "not_configured");
+  assert.ok(!planProbe.templates || planProbe.templates.length === 0,
+    "there is no local worker roster to choose from on this host");
+  for (const [label, path] of [
+    ["assignment", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(probeTask.receipt.jobId)}/assignment`],
+    ["submission", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(probeTask.receipt.jobId)}/submission`],
+  ] as const) {
+    const gone = await fetch(new URL(path, origin), { headers: { cookie } });
+    assert.ok(gone.status >= 400, `${label} must not be served on a connector-only host: ${await gone.text()}`);
+  }
 
   if (mode === "--browser-proof") {
     process.stdout.write(`Isolated built-page browser proof ready at ${origin}/projects. Press Return in this runner after the proof to shut down its host and database.\n`);
@@ -261,370 +202,152 @@ async function main() {
     return;
   }
 
-  const idOf = (value: string) => encodeURIComponent(value);
   const outcomes: Record<string, unknown> = {};
 
-  // Reproduce a proposal that existed before 0091 added model and declared-
-  // scope rows. The public API creates a valid saved proposal first; while the
-  // disposable host is stopped, the cluster owner removes only those two
-  // post-0090 child rows. Restart, prepare and assign must all work, and one
-  // refusal must never collapse the coordinator pool behind every task route.
-  const legacyProposal = await require5xxOr201(await fetch(new URL(
+  // The connector-only Mac's own journey: an owner saves a task, offers it, a
+  // real connector bot claims it through the gateway and returns a result, and
+  // the owner decides on it. This is the same chain the browser suites drive, so
+  // this mode is not a second opinion about a route that no longer exists.
+  const firstBot = await connectBotForJourney({ origin, cookie, projectId, name: "Journey default bot" });
+  const defaultTask = await require5xxOr201(await fetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json",
-      "idempotency-key": "journey-pre-0091-source-0001" },
-    body: JSON.stringify({ title: "Pre-0091 saved proposal", instructions: "Return one harmless short line." }),
-  }), "pre-0091-shaped propose") as { receipt: { jobId: string } };
-  const legacySourceJobId = legacyProposal.receipt.jobId;
-  const legacySource = await requireOk(await fetch(new URL(
-    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}`, origin), { headers: { cookie } }),
-  200, "pre-0091-shaped detail") as { inputDigest: string };
-  const stopForLegacyShape = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
-  assert.equal(stopForLegacyShape.status, 0, stopForLegacyShape.stderr || stopForLegacyShape.stdout);
-  stackMayBeUp = false;
-  const legacyAdmin = connectTarget(target);
-  await legacyAdmin.connect();
-  try {
-    await legacyAdmin.query("BEGIN");
-    await legacyAdmin.query("DELETE FROM control_task_model_selections WHERE job_id=$1", [legacySourceJobId]);
-    await legacyAdmin.query("DELETE FROM control_task_declared_scopes WHERE job_id=$1", [legacySourceJobId]);
-    await legacyAdmin.query("COMMIT");
-  } catch (error) {
-    await legacyAdmin.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally { await legacyAdmin.end(); }
-  const restartForLegacyShape = invoke(upArgs);
-  assert.equal(restartForLegacyShape.status, 0, restartForLegacyShape.stderr || restartForLegacyShape.stdout);
-  stackMayBeUp = true;
-  cookie = await signIn();
-  const legacyPlanOptions = await requireOk(await fetch(new URL(
-    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), { headers: { cookie } }),
-  200, "pre-0091-shaped planning options") as { templates?: { id: string }[]; availability: string };
-  assert.equal(legacyPlanOptions.availability, "available");
-  const legacyTemplateId = legacyPlanOptions.templates?.find(item => item.id.startsWith("template:mac-local:hermes:"))?.id;
-  assert.ok(legacyTemplateId);
-  const legacyPlanned = await require5xxOr201(await fetch(new URL(
-    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), {
-    method: "POST", headers: { origin, cookie, "content-type": "application/json" },
-    body: JSON.stringify({ expectedInputDigest: legacySource.inputDigest, templateId: legacyTemplateId }),
-  }), "pre-0091-shaped plan") as { receipt: { jobId: string; inputDigest: string } };
-  const legacyJobId = legacyPlanned.receipt.jobId;
-  const legacyNodeId = `${config.enablement.nodeId}.hermes`;
-  const assignLegacyShape = async () => {
-    const assigned = await require5xxOr201(await fetch(new URL(
-      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}/assignment`, origin), {
-      method: "POST", headers: { origin, cookie, "content-type": "application/json" },
-      body: JSON.stringify({ action: "assign", nodeId: legacyNodeId,
-        expectedInputDigest: legacyPlanned.receipt.inputDigest }),
-    }), "pre-0091-shaped assignment") as { receipt: { inputDigest: string } };
-    for (const [label, path] of [
-      ["task list", `/api/v1/projects/${idOf(projectId)}/tasks`],
-      ["task detail", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}`],
-      ["task plan", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}/plan`],
-      ["task results", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}/results`],
-    ] as const) await requireOk(await fetch(new URL(path, origin), { headers: { cookie } }), 200,
-      `post-assignment ${label}`);
-    outcomes.legacyPre0091Shape = { sourceJobId: legacySourceJobId, jobId: legacyJobId,
-      assignmentSurvived: true, endpointsAvailable: true };
-    return assigned;
-  };
-
-  for (const agent of AGENTS) {
-    // The legacy-shaped task is also the Hermes end-to-end journey. Reusing
-    // its live reservation proves delivery and review without fabricating a
-    // second lease or mutating canonical lease evidence in the fixture.
-    const declaredScope = { kind: "tree" as const, path: agent.kind === "hermes" ? "" : `rehearsal/${agent.kind}` };
-    let jobId: string, assignedInputDigest: string;
-    if (agent.kind === "hermes") {
-      jobId = legacyJobId;
-      assignedInputDigest = (await assignLegacyShape()).receipt.inputDigest;
-    } else {
-    // 1) proposal
-    const proposed = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
-      method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": `journey-${agent.kind}-source-0001` },
-      body: JSON.stringify({ title: `Journey ${agent.kind} task`, instructions: "Return one harmless short line.", scopes: [declaredScope] }),
-    });
-    const proposedBody = await require5xxOr201(proposed, `${agent.kind} propose`) as { receipt: { jobId: string } };
-    const sourceJobId = proposedBody.receipt.jobId;
-    const detail = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}`, origin), { headers: { cookie } });
-    const detailBody = await requireOk(detail, 200, `${agent.kind} source detail`) as { inputDigest: string };
-    const sourceInputDigest = detailBody.inputDigest;
-
-    // 2) Discover through the same read the real task page uses. Computing
-    // template IDs here hid a broken browser-facing planning response.
-    const planOptions = await requireOk(await fetch(new URL(
-      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}/plan`, origin), { headers: { cookie } }),
-    200, `${agent.kind} planning options`) as { templates?: { id: string; adapter: string }[]; availability: string };
-    assert.equal(planOptions.availability, "available", `${agent.kind} source must be preparable`);
-    assert.equal(planOptions.templates?.length, 3, `${agent.kind} must see all three local workers`);
-    const templateId = planOptions.templates?.find(item => item.id ===
-      `template:mac-local:${agent.kind}:${sha256Digest(projectId).slice(7, 39)}`)?.id;
-    assert.ok(templateId, `${agent.kind} must be a browser-discoverable choice`);
-    const planned = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}/plan`, origin), {
-      method: "POST", headers: { origin, cookie, "content-type": "application/json" },
-      body: JSON.stringify({ expectedInputDigest: sourceInputDigest, templateId }),
-    });
-    const plannedBody = await require5xxOr201(planned, `${agent.kind} plan`) as { receipt: { jobId: string; inputDigest: string } };
-    jobId = plannedBody.receipt.jobId;
-    const inputDigest = plannedBody.receipt.inputDigest;
-
-    // 3) assignment
-    const nodeId = `${config.enablement.nodeId}.${agent.node}`;
-    const assignmentOptions = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/assignment`, origin), { headers: { cookie } });
-    assert.equal(assignmentOptions.status, 200, `${agent.kind} assignment options: ${await assignmentOptions.text()}`);
-    const assigned = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/assignment`, origin), {
-      method: "POST", headers: { origin, cookie, "content-type": "application/json" },
-      body: JSON.stringify({ action: "assign", nodeId, expectedInputDigest: inputDigest }),
-    });
-    const assignedBody = await require5xxOr201(assigned, `${agent.kind} assignment`) as { receipt: { inputDigest: string } };
-    assignedInputDigest = assignedBody.receipt.inputDigest;
-    }
-    const assignedDetail = await requireOk(await fetch(new URL(
-      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin), { headers: { cookie } }),
-    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string;
-      ownershipLeases: { scopes: { kind: "file" | "tree"; path: string }[]; current: boolean }[] };
-    assert.equal(assignedDetail.preparedFor, agent.kind, `${agent.kind} prepared worker visible to task page`);
-    assert.ok(assignedDetail.attempts.length > 0, `${agent.kind} task page must expose local submission after assignment`);
-    assert.equal(assignedDetail.inputDigest, assignedInputDigest, `${agent.kind} page and submission digests must match`);
-    assert.deepEqual(assignedDetail.ownershipLeases.find(lease => lease.current)?.scopes, [declaredScope],
-      `${agent.kind} assignment must hold only its declared rehearsal tree`);
-
-    // 4) submission preview, then submit with the exact previewed digest.
-    const previewRead = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission?inputDigest=${assignedInputDigest}`, origin),
-      { headers: { cookie } });
-    const previewBody = await requireOk(previewRead, 200, `${agent.kind} submission preview read`) as
-      { receipt: unknown; preview?: { packetDigest: string } };
-    assert.equal(previewBody.receipt, null, `${agent.kind}: nothing should be queued yet`);
-    assert.ok(previewBody.preview, `${agent.kind}: a preview must be present before anything is queued`);
-    const packetDigest = previewBody.preview!.packetDigest;
-
-    const submitted = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission`, origin), {
-      method: "POST", headers: { origin, cookie, "content-type": "application/json" },
-      body: JSON.stringify({ expectedInputDigest: assignedInputDigest, expectedPacketDigest: packetDigest }),
-    });
-    const submittedBody = await require5xxOr201(submitted, `${agent.kind} submit`) as
-      { queueId: string; packetDigest: string; replayed: boolean };
-    assert.equal(submittedBody.replayed, false, `${agent.kind}: the first submit must not be a replay`);
-    assert.equal(submittedBody.packetDigest, packetDigest);
-
-    // 5) replay: same digests, same receipt, nothing new queued.
-    const replay = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission`, origin), {
-      method: "POST", headers: { origin, cookie, "content-type": "application/json" },
-      body: JSON.stringify({ expectedInputDigest: assignedInputDigest, expectedPacketDigest: packetDigest }),
-    });
-    const replayBody = await requireOk(replay, 200, `${agent.kind} replay`) as { queueId: string; replayed: boolean };
-    assert.equal(replayBody.replayed, true, `${agent.kind}: the second identical submit must be a replay`);
-    assert.equal(replayBody.queueId, submittedBody.queueId, `${agent.kind}: replay must return the same receipt`);
-
-    // 6) poll for the task host's own queue worker to run the fake pinned
-    // executable through the production adapter and reach pending review.
-    let reviewStatus: string | undefined, items = 0;
-    let pendingPage: { items: { artifactId: string; contentHash: string; modelSelection?: {
-      model: string; effort: string; profile?: string; provider?: string;
-    } }[];
-      reviews: { targetId: string; targetDigest: string; contentHash: string; status: string;
-        matchingArtifactIds: string[];
-        missingVerificationScenarioIds: string[]; openFindingCount: number;
-        verifications: { scenarioId: string; outcome: string }[];
-        reviews: { decision: string; authority: string }[] }[] } | undefined;
-    const polled = await waitFor(async () => {
-      const results = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin), { headers: { cookie } });
-      if (results.status !== 200) return false;
-      const body = await results.json() as NonNullable<typeof pendingPage>;
-      items = body.items.length;
-      reviewStatus = body.reviews[0]?.status;
-      if (items === 1 && reviewStatus === "pending") pendingPage = body;
-      return items === 1 && reviewStatus === "pending";
-    // The Claude adapter permits 120 seconds for its pinned CLI. Do not call
-    // delivery stuck before that budget and a short queue/publication margin.
-    }, 135);
-    assert.ok(polled, `${agent.kind}: expected exactly one result reaching pending review within the bounded timeout (items=${items}, reviewStatus=${reviewStatus})`);
-    const page = pendingPage!;
-    const artifact = page.items[0]!, target = page.reviews[0]!;
-    assert.deepEqual(artifact.modelSelection, withModelAllowlists
-      ? agent.worker === "hermes"
-        ? { model: "model-rehearsal", effort: "default", profile: "build", provider: "provider-rehearsal" }
-        : { model: agent.worker === "claude-code" ? "sonnet-rehearsal" : "gpt-rehearsal", effort: "high" }
-      : { model: "default", effort: "default" }, `${agent.kind}: result must record selected or default model evidence`);
-
-    // Prove the owner price table -- written by `mac:rehearsal up` into this
-    // protected root's `usage-prices.json` -- reached this real, separately
-    // started task host process through the full production composition
-    // (Control Room #412 review finding 3: the provider's own load-and-carry
-    // hop, `mac-local-default-task-provider.ts`, was never exercised end to
-    // end). Every fake harness reports 3 input / 5 output tokens; the price
-    // table prices every model this journey can select at the same rate, so
-    // the expected cost is fixed regardless of mode: 3*1000 + 5*2000 = 13000.
-    const taskDetail = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin),
-      { headers: { cookie } }), 200, `${agent.kind} task detail for price table wiring`) as { priceTable: { state: string };
-        attempts: { runs: { cost: { kind: string; nanoUsd?: string } }[] }[] };
-    assert.equal(taskDetail.priceTable.state, "recorded",
-      `${agent.kind}: the task detail page must show the rehearsal owner price table as recorded`);
-    const runCost = taskDetail.attempts[0]?.runs[0]?.cost;
-    assert.equal(runCost?.kind, "known",
-      `${agent.kind}: a run priced by the rehearsal table must show a computed cost, not an unknown reason`);
-    assert.equal(runCost?.nanoUsd, "13000", `${agent.kind}: the computed cost must match the rehearsal table's prices exactly`);
-
-    assert.deepEqual(target.matchingArtifactIds, [artifact.artifactId], `${agent.kind}: the pending target must bind the one saved artifact`);
-    assert.equal(target.contentHash, artifact.contentHash);
-    assert.equal(target.reviews.length, 0);
-    const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
-    const optionsResponse = await fetch(new URL(reviewPath, origin), { headers: { cookie } });
-    const expectedAuthentication = { actorId: optionsResponse.headers.get("x-control-room-authenticated-actor"),
-      sessionEpoch: optionsResponse.headers.get("x-control-room-session-epoch") };
-    assert.ok(expectedAuthentication.actorId, `${agent.kind}: review options must bind the authenticated actor`);
-    assert.ok(expectedAuthentication.sessionEpoch, `${agent.kind}: review options must bind the session epoch`);
-    const options = await requireOk(optionsResponse, 200,
-      `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
-        contentHash: string; ownReview: null | { decision: string; reviewId: string };
-        acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
-    assert.equal(options.canReview, true, `${agent.kind}: owner must be able to review the pending result`);
-    assert.equal(options.availability, "available");
-    assert.equal(options.ownReview, null);
-    assert.equal(options.targetDigest, target.targetDigest);
-    assert.equal(options.contentHash, artifact.contentHash);
-    const decision = agent.kind === "hermes" ? "changes_requested" : "accepted";
-    const feedback = decision === "changes_requested" ? "Please revise the harmless test response." : "";
-    if (decision === "accepted") assert.ok(options.acceptanceAttestation,
-      `${agent.kind}: public owner acceptance must expose its explicit human-read attestation`);
-    const draft = { artifactId: artifact.artifactId, targetId: target.targetId,
-      targetDigest: options.targetDigest, contentHash: options.contentHash, decision, feedback,
-      ...(decision === "accepted" ? { acceptanceAttestation: { scenarioId: options.acceptanceAttestation!.scenarioId,
-        instructionsDigest: options.acceptanceAttestation!.instructionsDigest, confirmed: true } } : {}) };
-    const reviewKey = `journey-${agent.kind}-owner-review-0001`;
-    const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
-      headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
-      body: JSON.stringify({ review: draft, expectedAuthentication }) });
-    const recorded = await requireOk(await writeReview(), 201, `${agent.kind} owner review`) as
-      { receipt: { reviewId: string; findingId: string | null; decision: string }; replayed: boolean };
-    assert.equal(recorded.replayed, false);
-    assert.equal(recorded.receipt.decision, decision);
-    assert.equal(recorded.receipt.findingId !== null, decision === "changes_requested");
-    const reviewReplay = await requireOk(await writeReview(), 200, `${agent.kind} owner review replay`) as typeof recorded;
-    assert.equal(reviewReplay.replayed, true);
-    assert.deepEqual(reviewReplay.receipt, recorded.receipt, `${agent.kind}: exact replay must not record another review`);
-    let after = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
-      { headers: { cookie } }), 200, `${agent.kind} reviewed result`) as NonNullable<typeof pendingPage>;
-    assert.equal(after.items.length, 1, `${agent.kind}: result must remain singular after review`);
-    assert.equal(after.reviews.length, 1, `${agent.kind}: target must remain singular after review`);
-    // An owner acceptance is a saved quality vote, not automatic completion:
-    // this profile also requires the separate structural verification scenario.
-    //
-    // The bare `status === "pending"` this replaced was a race against the
-    // rehearsal host's own background quality sweep (`setInterval(..., 2_000)` in
-    // mac-local-default-task-provider.ts), which records that automatic
-    // verification and can therefore carry the target to `ready` between this
-    // review committing and this read returning. Assert the status the completion
-    // gate actually derives for the verification evidence THIS page reports, so
-    // both real orders pass and a genuinely wrong status still fails.
-    const acceptedPage = after.reviews[0]!;
-    const acceptedVerdict = checkOwnerAcceptedStateV1(acceptedPage, { decision,
-      requiredVerificationScenarioIds: [MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1],
-      minimumIndependentReviews: 1 });
-    assert.ok(acceptedVerdict.ok,
-      `${ownerAcceptedStateMessageV1(agent.kind, decision)}: ${acceptedVerdict.ok ? "" : acceptedVerdict.problem}`);
-    assert.equal(after.reviews[0]?.reviews.length, 1, `${agent.kind}: owner decision must be recorded exactly once`);
-    assert.equal(after.reviews[0]?.reviews[0]?.decision, decision);
-    const afterOptions = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
-      `${agent.kind} saved review options`) as typeof options;
-    assert.equal(afterOptions.canReview, false);
-    assert.equal(afterOptions.availability, "already_reviewed");
-    assert.equal(afterOptions.ownReview?.reviewId, recorded.receipt.reviewId);
-    const taskUrl = new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin);
-    let taskState = "", attemptState = "";
-    if (decision === "accepted") {
-      // Acceptance atomically records the explicitly configured owner-read
-      // verification. The separate endpoint must see that same canonical row
-      // as already recorded, never offer a second manual decision.
-      const verificationPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/verifications/${idOf(target.targetId)}`;
-      const verificationOptions = await requireOk(await fetch(new URL(verificationPath, origin), { headers: { cookie } }), 200,
-        `${agent.kind} human verification options`) as { source: string; grantsExecutionAuthority: boolean; targetDigest: string;
-          contentHash: string; scenarios: { scenarioId: string; instructionsDigest: string; availability: string;
-            ownVerification: null | { outcome: string; grantsApproval: boolean; grantsExecutionAuthority: boolean; completesJob: boolean } }[] };
-      assert.equal(verificationOptions.source, "configured");
-      assert.equal(verificationOptions.grantsExecutionAuthority, false);
-      assert.equal(verificationOptions.targetDigest, target.targetDigest);
-      assert.equal(verificationOptions.contentHash, artifact.contentHash);
-      assert.equal(verificationOptions.scenarios.length, 1);
-      const scenario = verificationOptions.scenarios[0]!;
-      assert.equal(scenario.scenarioId, options.acceptanceAttestation!.scenarioId);
-      assert.equal(scenario.instructionsDigest, options.acceptanceAttestation!.instructionsDigest);
-      assert.equal(scenario.availability, "already_recorded");
-      assert.equal(scenario.ownVerification?.outcome, "passed");
-      assert.equal(scenario.ownVerification?.grantsApproval, false);
-      assert.equal(scenario.ownVerification?.grantsExecutionAuthority, false);
-      assert.equal(scenario.ownVerification?.completesJob, false);
-      const completed = await waitFor(async () => {
-        const taskResponse = await fetch(taskUrl, { headers: { cookie } });
-        if (taskResponse.status !== 200) return false;
-        const taskBody = await taskResponse.json() as { task: { state: string }; attempts: { state: string }[] };
-        taskState = taskBody.task.state; attemptState = taskBody.attempts[0]?.state ?? "";
-        if (taskState !== "succeeded" || attemptState !== "succeeded") return false;
-        const resultsResponse = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
-          { headers: { cookie } });
-        if (resultsResponse.status !== 200) return false;
-        after = await resultsResponse.json() as NonNullable<typeof pendingPage>;
-        return after.items.length === 1 && after.reviews.length === 1
-          && after.reviews[0]?.reviews.length === 1 && after.reviews[0]?.reviews[0]?.decision === "accepted";
-      }, 55);
-      assert.ok(completed, `${agent.kind}: accepted result must complete exactly once through the Mac-local quality sweep (task=${taskState}, attempt=${attemptState})`);
-      assert.equal(after.reviews[0]?.status, "ready", `${agent.kind}: verified accepted result must reach ready`);
-      // Observe the canonical terminal state again. A replayed automatic sweep must not add a second result, review, or attempt.
-      const stableTask = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200, `${agent.kind} completed task replay`) as
-        { task: { state: string }; attempts: { state: string }[] };
-      const stableResults = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
-        { headers: { cookie } }), 200, `${agent.kind} completed result replay`) as NonNullable<typeof pendingPage>;
-      assert.equal(stableTask.task.state, "succeeded");
-      assert.equal(stableTask.attempts[0]?.state, "succeeded");
-      assert.equal(stableResults.items.length, 1);
-      assert.equal(stableResults.reviews.length, 1);
-      assert.equal(stableResults.reviews[0]?.reviews.length, 1);
-    } else {
-      const unchangedTask = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200, `${agent.kind} changes-requested task`) as
-        { task: { state: string } };
-      taskState = unchangedTask.task.state;
-      assert.equal(taskState, "succeeded",
-        `${agent.kind}: the received successful attempt must display complete independently of its changes-requested review`);
-      assert.equal(after.reviews[0]?.status, "changes_requested");
-    }
-    outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19),
-      queueId: submittedBody.queueId.slice(0, 24), items, reviewStatus: after.reviews[0]?.status,
-      ownerDecision: decision, reviewCount: after.reviews[0]?.reviews.length, taskState, attemptState };
+      "idempotency-key": "journey-default-source-0001" },
+    body: JSON.stringify({ title: "Journey default task", instructions: "Return one harmless short line." }),
+  }), "default journey propose") as { receipt: { jobId: string } };
+  const defaultJobId = defaultTask.receipt.jobId;
+  // The direct preparation steps must not lead anywhere on this host. The plan
+  // route is mounted and reports its own availability honestly; the assignment
+  // and submission routes are not mounted at all. What must never happen is one
+  // of them offering a choice the owner could take.
+  const planOptions = await requireOk(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(defaultJobId)}/plan`, origin), { headers: { cookie } }),
+    200, "connector journey plan options") as { availability: string; templates?: unknown[] };
+  assert.equal(planOptions.availability, "not_configured",
+    `a connector-only host must not offer a local worker: ${JSON.stringify(planOptions)}`);
+  assert.ok(!planOptions.templates || planOptions.templates.length === 0,
+    "there is no local worker roster to choose from on this host");
+  for (const [label, path] of [
+    ["assignment", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(defaultJobId)}/assignment`],
+    ["submission", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(defaultJobId)}/submission`],
+  ] as const) {
+    const gone = await fetch(new URL(path, origin), { headers: { cookie } });
+    assert.ok(gone.status >= 400, `${label} must not be served on a connector-only host: ${await gone.text()}`);
   }
+  const offered = await requireOk(await fetch(new URL("/api/v1/fleet/offers", origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+    body: JSON.stringify({ projectId, jobId: defaultJobId, capability: "code.change" }),
+  }), 201, "connector journey offer") as { offerId: string };
+  // A replay of the same offer is the same offer, not a second one.
+  const offerReplay = await requireOk(await fetch(new URL("/api/v1/fleet/offers", origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+    body: JSON.stringify({ projectId, jobId: defaultJobId, capability: "code.change" }),
+  }), 201, "connector journey offer replay") as { offerId: string; replayed: boolean };
+  assert.equal(offerReplay.offerId, offered.offerId, "an exact replay must return the same offer");
+  assert.equal(offerReplay.replayed, true);
 
-  process.stdout.write(`Package 6b journey (${withModelAllowlists ? "configured model allowlists" : "CLI/profile defaults"}): PASS ${JSON.stringify(outcomes)}\n`);
+  const offerLedger = connectTarget(target);
+  await offerLedger.connect();
+  let offerRows: string;
+  try {
+    offerRows = (await offerLedger.query<{ n: string }>("SELECT count(*)::text AS n FROM fleet_work_offers"
+      + " WHERE tenant_id=$1 AND job_id=$2", [config.localOwnerSession.tenantId, defaultJobId])).rows[0]!.n;
+  } finally { await offerLedger.end(); }
+  assert.equal(offerRows, "1", "two identical owner gestures must record exactly one offer");
 
-  // Exercise the publisher's implicit FK parent-before-child order against a
-  // simultaneous reader. The conformance test above pins the real reader's
-  // SQL lock sequence; this PG17 collision proves that order has no 40P01.
-  const collisionConnection = () => new Client({ host: roleMap.coordinator.host, port: roleMap.coordinator.port,
-    database: roleMap.coordinator.database, user: roleMap.coordinator.username, password: roleMap.coordinator.password,
-    connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
-  const collisionLookup = collisionConnection();
-  await collisionLookup.connect();
-  const collisionRow = (await collisionLookup.query<{ job_id: string; run_id: string; attempt_id: string; node_id: string; epoch: number }>(`
-    SELECT r.job_id,r.id AS run_id,r.attempt_id,r.node_id,a.lease_epoch AS epoch
-    FROM control_harness_runs r JOIN control_attempts a ON a.tenant_id=r.tenant_id AND a.id=r.attempt_id
-    JOIN control_native_review_plans p ON p.tenant_id=r.tenant_id AND p.run_id=r.id
-    WHERE r.tenant_id=$1 ORDER BY r.id LIMIT 1`, [config.localOwnerSession.tenantId])).rows[0];
-  await collisionLookup.end();
-  assert.ok(collisionRow, "collision proof requires a saved result");
-  const publisher = collisionConnection(), reader = collisionConnection();
+  await deliverForJourney({ bot: firstBot, jobId: defaultJobId, answer: "One harmless line.", key: "journey-default-0001" });
+
+  // The owner's decision, recorded by the production service and applied by the
+  // production gateway reconciler. The web host has no hook into the separate
+  // gateway process, so the task settles on the gateway's reconcile timer.
+  // A poll that opens and closes its own connection each round. The cluster is
+  // stopped by this journey's own teardown, so a probe interrupted mid-flight by
+  // the administrator is a fact about teardown, not a journey failure, and must
+  // not escape as an unhandled 'error' event.
+const probeJobState = async (jobId: string): Promise<string | undefined> => {
+  const probe = connectTarget(target);
+  try { await probe.connect(); } catch { return undefined; }
+  probe.on("error", () => {});
+  try {
+    return (await probe.query<{ state: string }>("SELECT state FROM control_jobs WHERE tenant_id=$1 AND id=$2",
+      [config.localOwnerSession.tenantId, jobId])).rows[0]?.state;
+  } catch { return undefined; }
+  finally { await probe.end().catch(() => {}); }
+};
+
+  const waitingForOwner = await waitFor(async () =>
+    (await probeJobState(defaultJobId)) === "waiting_approval", 90);
+  assert.ok(waitingForOwner, "a returned result must reach the owner");
+  const board = await requireOk(await fetch(new URL("/api/v1/fleet", origin), { headers: { cookie } }),
+    200, "connector journey board") as { results: { resultId: string; jobId: string; decision: string | null }[] };
+  const result = board.results.find(item => item.jobId === defaultJobId);
+  assert.ok(result, `the owner's result list must show the returned result: ${JSON.stringify(board.results)}`);
+  const reviewed = await requireOk(await fetch(new URL(
+    `/api/v1/fleet/results/${idOf(result.resultId)}/review`, origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+    body: JSON.stringify({ decision: "accepted" }),
+  }), 200, "connector journey owner decision") as { reviewId: string; decision: string; replayed: boolean };
+  assert.equal(reviewed.decision, "accepted");
+  assert.equal(reviewed.replayed, false);
+  // The same decision again is a replay of one row, not a second decision.
+  const reviewReplay = await requireOk(await fetch(new URL(
+    `/api/v1/fleet/results/${idOf(result.resultId)}/review`, origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+    body: JSON.stringify({ decision: "accepted" }),
+  }), 200, "connector journey owner decision replay") as { reviewId: string; replayed: boolean };
+  assert.equal(reviewReplay.replayed, true);
+  assert.equal(reviewReplay.reviewId, reviewed.reviewId, "one decision must keep one reviewId");
+
+  const settled = await waitFor(async () => (await probeJobState(defaultJobId)) === "succeeded", 75);
+  assert.ok(settled, "an accepted result must complete the task exactly once");
+  outcomes.connectorRoute = { jobId: defaultJobId.slice(0, 24), offerId: offered.offerId.slice(0, 24),
+    reviewId: reviewed.reviewId.slice(0, 24), offerRows, taskState: "succeeded" };
+
+  // The exact parent-before-child collision, against the fleet tables the
+  // accepted decision just wrote. Same proof as before, on the rows this host
+  // really produces.
+  // Each collision client carries its own error handler: the cluster is stopped by
+  // this journey's own teardown, and an unhandled 'error' event on a pg client
+  // crashes the process after the work has already been reported.
+const collisionConnection = () => {
+    const client = new Client({ host: roleMap.coordinator.host, port: roleMap.coordinator.port,
+      database: roleMap.coordinator.database, user: roleMap.coordinator.username, password: roleMap.coordinator.password,
+      connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
+    client.on("error", () => {});
+    return client;
+  };
+  // The fleet tables are readable ONLY by the fleet roles (0140 grants them to
+  // control_room_fleet_gateway, control_room_fleet_owner_authority and
+  // control_room_private_web). The coordinator login is refused on them, so the
+  // fleet-side collision is proved as the login that actually does that work.
+  const fleetConnection = () => {
+    const login = roleMap.fleetGateway;
+    const client = new Client({ host: login.host, port: login.port, database: login.database,
+      user: login.username, password: login.password,
+      connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
+    client.on("error", () => {});
+    return client;
+  };
+  const lookup = fleetConnection();
+  await lookup.connect();
+  const collisionRow = (await lookup.query<{ job_id: string; result_id: string }>(`SELECT r.job_id,r.result_id
+    FROM fleet_results r WHERE r.tenant_id=$1 ORDER BY r.result_id LIMIT 1`,
+    [config.localOwnerSession.tenantId])).rows[0];
+  await lookup.end();
+  assert.ok(collisionRow, "collision proof requires a saved fleet result");
+  const publisher = fleetConnection(), reader = fleetConnection();
   await Promise.all([publisher.connect(), reader.connect()]);
   try {
     await publisher.query("BEGIN"); await reader.query("BEGIN");
     await publisher.query("SELECT id FROM control_jobs WHERE id=$1 FOR KEY SHARE", [collisionRow.job_id]);
     const read = (async () => {
       await reader.query("SELECT id FROM control_jobs WHERE id=$1 FOR UPDATE", [collisionRow.job_id]);
-      await reader.query("SELECT id FROM control_attempts WHERE id=$1 FOR UPDATE", [collisionRow.attempt_id]);
-      await reader.query("SELECT id FROM control_leases WHERE attempt_id=$1 AND node_id=$2 AND epoch=$3 FOR UPDATE",
-        [collisionRow.attempt_id, collisionRow.node_id, collisionRow.epoch]);
-      await reader.query("SELECT id FROM control_harness_runs WHERE id=$1 FOR UPDATE", [collisionRow.run_id]);
-      await reader.query("SELECT run_id FROM control_native_artifact_receipts WHERE run_id=$1 FOR UPDATE", [collisionRow.run_id]);
-      await reader.query("SELECT run_id FROM control_native_review_plans WHERE run_id=$1 FOR UPDATE", [collisionRow.run_id]);
+      await reader.query("SELECT result_id FROM fleet_results WHERE tenant_id=$1 AND result_id=$2 FOR UPDATE",
+        [config.localOwnerSession.tenantId, collisionRow.result_id]);
     })();
     await new Promise(resolve => setTimeout(resolve, 100));
-    await publisher.query("SELECT run_id FROM control_native_review_plans WHERE run_id=$1 FOR UPDATE", [collisionRow.run_id]);
+    await publisher.query("SELECT result_id FROM fleet_results WHERE tenant_id=$1 AND result_id=$2 FOR UPDATE",
+      [config.localOwnerSession.tenantId, collisionRow.result_id]);
     await publisher.query("COMMIT");
     await read;
     await reader.query("COMMIT");
@@ -632,17 +355,14 @@ async function main() {
     await Promise.allSettled([publisher.query("ROLLBACK"), reader.query("ROLLBACK")]);
     await Promise.allSettled([publisher.end(), reader.end()]);
   }
-  process.stdout.write("Package 6b parent-before-child PG17 collision: PASS (no deadlock)\n");
+  process.stdout.write("Connector-route parent-before-child PG17 collision: PASS (no deadlock)\n");
 
-  // Exact second collision captured in pg_locks: assignment held a tenant
-  // FOR UPDATE while waiting for completion-gate integrity; completion held
-  // integrity while its transition-event INSERT waited on the tenant FK.
-  // The reader's tenant key-share must now precede integrity acquisition.
+  // The tenant-before-completion-gate order, against the same rows.
   const assignment = collisionConnection(), completion = collisionConnection();
   await Promise.all([assignment.connect(), completion.connect()]);
   try {
-    await assignment.query("BEGIN"); await completion.query("BEGIN");
     const tenantId = config.localOwnerSession.tenantId;
+    await assignment.query("BEGIN"); await completion.query("BEGIN");
     await assignment.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
     const complete = (async () => {
       await completion.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [tenantId]);
@@ -663,44 +383,9 @@ async function main() {
     await Promise.allSettled([assignment.query("ROLLBACK"), completion.query("ROLLBACK")]);
     await Promise.allSettled([assignment.end(), completion.end()]);
   }
-  process.stdout.write("Package 6b tenant-before-gate PG17 collision: PASS (no deadlock)\n");
+  process.stdout.write("Connector-route tenant-before-gate PG17 collision: PASS (no deadlock)\n");
 
-  // Owner review follows the same canonical parent-before-gate order. Hold the
-  // stronger tenant lock used by competing lifecycle work, prove owner review
-  // waits there (without owning the gate), capture the live wait graph, then
-  // release it and let both transactions acquire the gate in tenant order.
-  const quality = collisionConnection(), ownerReview = collisionConnection(), lockObserver = collisionConnection();
-  await Promise.all([quality.connect(), ownerReview.connect(), lockObserver.connect()]);
-  try {
-    const tenantId = config.localOwnerSession.tenantId;
-    await quality.query("BEGIN"); await ownerReview.query("BEGIN");
-    const qualityPid = Number((await quality.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid);
-    const ownerPid = Number((await ownerReview.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid);
-    await quality.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
-    const ownerTenant = ownerReview.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [tenantId]);
-    await new Promise(resolve => setTimeout(resolve, 100));
-    const waits = (await lockObserver.query<{ pid: number; blocking_pids: number[] }>(
-      "SELECT pid,pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE pid=ANY($1::int[]) ORDER BY pid",
-      [[qualityPid, ownerPid]])).rows;
-    const locks = (await lockObserver.query<{ pid: number; locktype: string; relation: string | null; mode: string; granted: boolean }>(`
-      SELECT pid,locktype,relation::regclass::text AS relation,mode,granted FROM pg_locks
-      WHERE pid=ANY($1::int[]) ORDER BY pid,granted,locktype,mode`, [[qualityPid, ownerPid]])).rows;
-    assert.deepEqual(waits.find(row => Number(row.pid) === ownerPid)?.blocking_pids.map(Number), [qualityPid]);
-    assert.deepEqual(waits.find(row => Number(row.pid) === qualityPid)?.blocking_pids.map(Number), []);
-    assert.equal(locks.some(row => Number(row.pid) === ownerPid && row.relation === "control_completion_gate_integrity"), false,
-      "owner review must not acquire the gate while waiting for its parent tenant");
-    process.stdout.write(`Owner-review tenant wait pg_locks: ${JSON.stringify(locks)}\n`);
-    process.stdout.write(`Owner-review tenant wait pg_blocking_pids: ${JSON.stringify(waits)}\n`);
-    await quality.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
-    await quality.query("COMMIT");
-    await ownerTenant;
-    await ownerReview.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
-    await ownerReview.query("ROLLBACK");
-  } finally {
-    await Promise.allSettled([quality.query("ROLLBACK"), ownerReview.query("ROLLBACK")]);
-    await Promise.allSettled([quality.end(), ownerReview.end(), lockObserver.end()]);
-  }
-  process.stdout.write("Owner-review tenant-before-gate PG17 collision: PASS (captured wait, no deadlock)\n");
+  process.stdout.write(`Package 6b journey (connector-only route): PASS ${JSON.stringify(outcomes)}\n`);
 
   const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
   assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);
@@ -718,22 +403,58 @@ async function require5xxOr201(response: Response, label: string) {
   return JSON.parse(text);
 }
 
+// The journey stops its own disposable cluster in the finally below. A pg client
+// whose connection the OS then tears down emits an 'error' event; a client with
+// no listener turns that into an unhandled exception that fails the process after
+// the assertions have already reported. Every client this file opens is closed in
+// a finally of its own, so this listener is only a backstop for the window
+// between them. It handles exactly the teardown artefacts and nothing else: any
+// other error is re-thrown, so a real fault still fails the run.
+const isTornDownConnection = (error: unknown): boolean => {
+  const code = (error as { code?: string } | null)?.code;
+  const message = (error as { message?: string } | null)?.message ?? "";
+  // 57P01 through the shared reader (cook/sqlstate), the errno by name.
+  return databaseSqlStateIsAnyV1(error, ["57P01"]) || code === "ECONNRESET" || code === "EPIPE"
+    || /terminating connection|Connection terminated|Client has encountered a connection error/u.test(message);
+};
+// Registered before the argument guard, so it also covers the paths above. A
+// torn-down connection is a fact about teardown and exits 0; anything else is
+// reported in full and exits 1, so a real fault is never silent.
+const reportAndExit = (error: unknown, code: number) => {
+  if (isTornDownConnection(error)) process.exit(0);
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exit(code);
+};
+process.on("uncaughtException", (error: Error) => reportAndExit(error, 1));
+process.on("unhandledRejection", (error: Error) => reportAndExit(error, 1));
+
 try {
   await main();
 } finally {
-  if (verifiedThisRehearsalCluster) {
-    if (stackMayBeUp) {
-      const downHost = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/down.mjs", "--protected-root", protectedRoot], {
-        cwd: process.cwd(), encoding: "utf8", timeout: 60_000,
+  try {
+    if (verifiedThisRehearsalCluster) {
+      if (stackMayBeUp) {
+        const downHost = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/down.mjs", "--protected-root", protectedRoot], {
+          cwd: process.cwd(), encoding: "utf8", timeout: 60_000,
+        });
+        if (downHost.status !== 0) throw new Error("rehearsal_mac_stack_stop_failed");
+      }
+      const down = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/rehearsal/setup.ts", "down", root], {
+        cwd: process.cwd(), encoding: "utf8", timeout: 120_000,
       });
-      if (downHost.status !== 0) throw new Error("rehearsal_mac_stack_stop_failed");
+      const status = spawnSync(pgExecutable("pg_ctl"), ["-D", join(root, "pg"), "status"], { encoding: "utf8", timeout: 10_000 });
+      if (status.status === 0) throw new Error("rehearsal_cluster_still_running_after_cleanup");
+      if (down.status !== 0 && !/data directory .* not exist/u.test(`${down.stderr}\n${down.stdout}`))
+        throw new Error("rehearsal_cluster_stop_failed");
     }
-    const down = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/rehearsal/setup.ts", "down", root], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 120_000,
-    });
-    const status = spawnSync(pgExecutable("pg_ctl"), ["-D", join(root, "pg"), "status"], { encoding: "utf8", timeout: 10_000 });
-    if (status.status === 0) throw new Error("rehearsal_cluster_still_running_after_cleanup");
-    if (down.status !== 0 && !/data directory .* not exist/u.test(`${down.stderr}\n${down.stdout}`))
-      throw new Error("rehearsal_cluster_stop_failed");
+  } finally {
+    // The advertisement is signed by this rehearsal's throwaway key. Left in
+    // the shared release directory, it would make a later `mac:up` on any other
+    // protected root refuse its connector release outright.
+    if (signedConnectorRelease) await removeRehearsalConnectorAdvertisementV1();
+    // Every bot workspace this run created, whether the journey reached its
+    // connector leg or not, is removed before the process exits.
+    await removeJourneyConnectorWorkspacesV1();
   }
 }

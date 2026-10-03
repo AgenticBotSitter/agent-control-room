@@ -151,8 +151,8 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(grants, /GRANT SELECT ON control_identities, control_role_grants, projects, work_batches/u);
   assert.doesNotMatch(grants, /GRANT .*control_jobs.* TO control_room_work_intake/u);
   assert.doesNotMatch(grants, /GRANT .*control_room_queue.* TO control_room_work_intake/u);
-  assert.match(browser, /work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web/u);
-  assert.match(browser, /GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web/u);
+  assert.match(browser, /work_batches, work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals,\s*\n\s*control_action_inbox TO control_room_private_web/u);
+  assert.match(browser, /GRANT INSERT ON work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals TO control_room_private_web/u);
   assert.doesNotMatch(browser, /GRANT .*control_room_queue.* TO control_room_private_web/u);
   assert.match(migration, /CREATE TABLE work_intake_role_anchor/u);
   assert.match(migration, /pg_has_role\(s\.oid,a\.grantee,'member'\)/u);
@@ -225,4 +225,104 @@ test("production composition is inert, role-pinned, loopback-only, and closes it
     integrityKey: new Uint8Array(32), database: { host: "127.0.0.1", port: 5432, database: "control_room",
       username: "control_room_private_web", password: "disposable", majorVersion: 17 } }, { openDatabase: () => {
       throw new Error("must not open"); } }), /prepare_failed/u);
+});
+
+
+test("PLAN-05: recurring composition refuses a wrong login, endpoint, or tenant and closes opened pools", async () => {
+  const database = { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_work_intake_agent",
+    password: "disposable", majorVersion: 17 as const };
+  for (const change of [{ username: "control_room_web" }, { host: "localhost" }, { host: "/fixture/pg/socket" },
+    { port: 5433 }, { database: "other_database" }]) {
+    let opened = 0, closed = 0;
+    await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, database, credentials: MAPPINGS,
+      integrityKey: new Uint8Array(32), recurring: { tenantId: PRINCIPAL.tenantId,
+        database: { ...database, username: "control_room_coordinator", ...change } } },
+    { openDatabase() { opened++; return { client: {} as never, isAvailable: () => true, async close() { closed++; } }; } }),
+    /work_intake_private_service_prepare_failed/);
+    assert.equal(opened, 1); assert.equal(closed, 1);
+  }
+  const { privatePostgresEndpointFingerprintV1 } = await import("../src/web/v1/private-postgres-endpoint");
+  const endpoint = { ...database, host: "100.64.0.2" };
+  const policy = { schema: "control-room.private-postgres-endpoint/v2" as const, routeKind: "tailscale" as const,
+    endpointFingerprint: privatePostgresEndpointFingerprintV1(endpoint), privateRouteEvidenceDigest: `sha256:${"a".repeat(64)}`,
+    serverIdentity: { serverName: "database.example.invalid" } };
+  let endpointOpened = 0, endpointClosed = 0;
+  await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, database: { ...endpoint, privateEndpoint: policy },
+    credentials: MAPPINGS, integrityKey: new Uint8Array(32), recurring: { tenantId: PRINCIPAL.tenantId,
+      database: { ...endpoint, username: "control_room_coordinator",
+        privateEndpoint: { ...policy, privateRouteEvidenceDigest: `sha256:${"b".repeat(64)}` } } } },
+  { openDatabase() { endpointOpened++; return { client: {} as never, isAvailable: () => true,
+    async close() { endpointClosed++; } }; } }), /work_intake_private_service_prepare_failed/);
+  assert.equal(endpointOpened, 1); assert.equal(endpointClosed, 1);
+  let opened = 0, closed = 0;
+  await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, database, credentials: MAPPINGS,
+    integrityKey: new Uint8Array(32), recurring: { tenantId: "tenant:other", database: { ...database, username: "control_room_coordinator" } } },
+  { openDatabase() { opened++; return { client: {} as never, isAvailable: () => true, async close() { closed++; } }; } }),
+  /work_intake_private_service_prepare_failed/);
+  assert.equal(opened, 1); assert.equal(closed, 1);
+  opened = 0; closed = 0;
+  await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, database, credentials: MAPPINGS,
+    integrityKey: new Uint8Array(32), recurring: { tenantId: PRINCIPAL.tenantId, database: { ...database, username: "control_room_coordinator" } } },
+  { openDatabase() { if (++opened === 2) throw new Error("injected_missing_coordinator");
+    return { client: {} as never, isAvailable: () => true, async close() { closed++; } }; } }),
+  /work_intake_private_service_prepare_failed/);
+  assert.equal(opened, 2); assert.equal(closed, 1);
+  await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, database, credentials: MAPPINGS,
+    integrityKey: new Uint8Array(32), recurring: { tenantId: "tenant:other", database: { ...database, username: "control_room_coordinator" } } },
+  { openDatabase() { return { client: {} as never, isAvailable: () => true,
+    async close() { throw new Error("injected_cleanup_failure"); } }; } }), /work_intake_private_service_cleanup_uncertain/);
+});
+
+test("PLAN-05: failed cycles expose only a safe code and failed shutdown still closes both pools", async () => {
+  const database = { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_work_intake_agent",
+    password: "disposable", majorVersion: 17 as const };
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, ready: () => void) => { queueMicrotask(ready); return server; }) as typeof server.listen;
+  server.close = ((done: () => void) => { queueMicrotask(done); return server; }) as typeof server.close;
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const messages: string[] = [], closed: string[] = [];
+  const prepared = await prepareWorkIntakePrivateServiceV1({ port: 3212, database, credentials: MAPPINGS,
+    integrityKey: new Uint8Array(32), recurring: { tenantId: PRINCIPAL.tenantId, database: { ...database, username: "control_room_coordinator" } } },
+  { openDatabase(config) { return { client: { query: async () => { throw new Error("injected private diagnostic"); } } as never,
+    isAvailable: () => true, async close() { closed.push(config.username); } }; }, createServer: () => server,
+    loopRuntime: { setInterval: () => ({ unref() {} }) as never,
+      clearInterval() { throw new Error("injected_clear_failure"); }, report(error) { messages.push((error as Error).message); } } });
+  try {
+    await Promise.all(Array.from({ length: 50 }, () => prepared.start()));
+    assert.deepEqual(messages, ["recurring_cycle_unavailable"]);
+    await assert.rejects(prepared.close(), /work_intake_private_service_cleanup_uncertain/);
+    assert.deepEqual(closed.sort(), ["control_room_coordinator", "control_room_work_intake_agent"]);
+    await assert.rejects(prepared.close(), /work_intake_private_service_cleanup_uncertain/);
+    assert.equal(closed.length, 2);
+  } finally { await prepared.close().catch(() => {}); }
+});
+
+test("PLAN-05: shutdown during the first cycle drains startup before closing either pool", async () => {
+  const database = { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_work_intake_agent",
+    password: "disposable", majorVersion: 17 as const };
+  let selected!: () => void, release!: () => void, closed = 0, listens = 0, intervals = 0, cleared = 0;
+  const selecting = new Promise<void>(resolve => { selected = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, ready: () => void) => { listens++; queueMicrotask(ready); return server; }) as typeof server.listen;
+  server.close = ((done: () => void) => { queueMicrotask(done); return server; }) as typeof server.close;
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const prepared = await prepareWorkIntakePrivateServiceV1({ port: 3212, database, credentials: MAPPINGS,
+    integrityKey: new Uint8Array(32), recurring: { tenantId: PRINCIPAL.tenantId,
+      database: { ...database, username: "control_room_coordinator" } } },
+  { openDatabase() { return { client: { async query() { selected(); await held;
+    assert.equal(closed, 0); throw new Error("injected_first_cycle_failure"); } } as never,
+  isAvailable: () => true, async close() { closed++; } }; }, createServer: () => server,
+    loopRuntime: { setInterval() { intervals++; return { unref() {} } as never; },
+      clearInterval() { cleared++; }, report() {} } });
+  const starting = Promise.all(Array.from({ length: 50 }, () => prepared.start()));
+  try {
+    await selecting;
+    const closing = prepared.close();
+    assert.equal(prepared.isReady(), false);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closed, 0, "a first cycle must not outlive its database pools");
+    release(); await starting; await closing;
+    assert.equal(listens, 1); assert.equal(intervals, 1); assert.equal(cleared, 1); assert.equal(closed, 2);
+  } finally { release(); await starting.catch(() => {}); await prepared.close(); }
 });

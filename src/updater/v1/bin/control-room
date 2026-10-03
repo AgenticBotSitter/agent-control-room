@@ -1,0 +1,21 @@
+#!/bin/sh -p
+R="/Library/Application Support/Control Room"
+cd / || exit 1
+case "$1" in
+  rescue) exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root /bin/sh -p "$R/guard/guard.sh" rescue ;;
+esac
+INVOKING_USER=${SUDO_USER-}
+INVOKING_UID=${SUDO_UID-}
+INVOKING_GID=${SUDO_GID-}
+if [ "${SUDO_USER+x}${SUDO_UID+x}${SUDO_GID+x}" != "" ]; then
+  case "$INVOKING_USER" in ""|*[!A-Za-z0-9._-]*) exit 64 ;; esac
+  case "$INVOKING_UID" in ""|*[!0-9]*) exit 64 ;; esac
+  case "$INVOKING_GID" in ""|*[!0-9]*) exit 64 ;; esac
+  [ "${#INVOKING_USER}" -le 64 ] || exit 64
+  exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root \
+    "$R/runtime/node-current/bin/node" "$R/updater/current/bin/control-room.mjs" "$@" \
+    --invoking-user "$INVOKING_USER" --invoking-uid "$INVOKING_UID" --invoking-gid "$INVOKING_GID"
+fi
+case "$1" in install) exit 64 ;; esac
+exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root \
+  "$R/runtime/node-current/bin/node" "$R/updater/current/bin/control-room.mjs" "$@"

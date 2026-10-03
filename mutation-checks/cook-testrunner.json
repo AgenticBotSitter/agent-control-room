@@ -1,0 +1,198 @@
+[
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (!authorized(request.headers.authorization, token)) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='auth guard' tests/test-runner-service.test.mjs",
+    "why": "every HTTP request must carry the private bearer token"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "(details.mode & 0o777) !== 0o600",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='private token guard' tests/test-runner-service.test.mjs",
+    "why": "the bearer token must never be group-readable or world-readable"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (!config.allowedWorktreePrefixes.some(prefix => worktree.startsWith(prefix))) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='worktree path guard' tests/test-runner-service.test.mjs",
+    "why": "a symlink must not escape the configured real-path prefix"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (scripts[body.script] !== pinned) throw new RunnerRefusal(403, \"command_refused\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern='pinned script guard' tests/test-runner-service.test.mjs",
+    "why": "an allowed script name may only run the exact command text the lead pinned in the config, never whatever the worktree's package.json currently says"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "child = spawn(SANDBOX_EXEC, [\"-p\", profile, command.executable, ...command.argv], {",
+    "replace": "child = spawn(command.executable, command.argv, {",
+    "test": "node --test --test-name-pattern='sandbox guard blocks writes' tests/test-runner-service.test.mjs",
+    "why": "every approved command is worktree-written code and must run inside the macOS sandbox, never with the service account's full file access"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "const environment = {\n    PATH:",
+    "replace": "const environment = { ...process.env,\n    PATH:",
+    "test": "node --test --test-name-pattern='fixed environment guard' tests/test-runner-service.test.mjs",
+    "why": "caller environment variables must not cross the execution boundary"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    this.#free.delete(base);",
+    "replace": "",
+    "test": "node --test --test-name-pattern='port lease guard' tests/test-runner-service.test.mjs",
+    "why": "simultaneous runs must never receive overlapping port blocks"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "process.kill(-pid, signal);",
+    "replace": "process.kill(pid, signal);",
+    "test": "node --test --test-name-pattern='timeout guard' tests/test-runner-service.test.mjs",
+    "why": "a timeout must terminate the complete process group rather than only its leader"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (reservations >= config.concurrency) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='concurrency guard' tests/test-runner-service.test.mjs",
+    "why": "the configured concurrent-run limit must be enforced before execution"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (this.totalBytes <= this.maximumBytes) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern='output cap guard' tests/test-runner-service.test.mjs",
+    "why": "untrusted command output must remain bounded"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "`(allow network-outbound (remote unix-socket (subpath \"${tempReal}\")))`,",
+    "replace": "\"(allow network-outbound (remote unix-socket))\",",
+    "test": "node --test --test-name-pattern='S1\\)' tests/test-runner-service.test.mjs",
+    "why": "a test must not connect to a Unix socket outside its run, such as a local PostgreSQL, ssh-agent or Docker socket"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "const deniedRoots = [home, ...READ_DENIED_ROOTS];",
+    "replace": "const deniedRoots = [...READ_DENIED_ROOTS];",
+    "test": "node --test --test-name-pattern='denies reads under' tests/test-runner-service.test.mjs",
+    "why": "nothing under the service account's home may be readable unless it is one of the run's own roots"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "`(deny file-read* file-write* file-map-executable ${protectedFilter})`,",
+    "replace": "\"\",",
+    "test": "node --test --test-name-pattern='built-in credential' tests/test-runner-service.test.mjs",
+    "why": "credential, agent, private-plan and live-app folders stay closed even when they sit inside an allowed root"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(deny default)\",",
+    "replace": "\"(allow default)\",",
+    "test": "node --test --test-name-pattern='S3\\)' tests/test-runner-service.test.mjs",
+    "why": "the run's sandbox must start from deny-by-default, not allow-by-default"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(allow process-fork)\",",
+    "replace": "\"(allow process-fork) (allow process-exec)\",",
+    "test": "node --test --test-name-pattern='S3\\)' tests/test-runner-service.test.mjs",
+    "why": "only allowlisted programs may be executed, never launchctl, osascript or open"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(allow signal (target same-sandbox))\",",
+    "replace": "\"(allow signal)\",",
+    "test": "node --test --test-name-pattern='S3\\)' tests/test-runner-service.test.mjs",
+    "why": "a test may signal only processes inside its own sandbox, never the live app or the runner"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    await killByRunMarker(runId);\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='run-id reaper' tests/test-runner-service.test.mjs",
+    "why": "a detached grandchild that kept the worktree as its cwd must not outlive its run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (await portBlockHeld(portBlock)) ports.quarantine(portBlock);\n      else ports.release(portBlock);",
+    "replace": "ports.release(portBlock);",
+    "test": "node --test --test-name-pattern='port quarantine' tests/test-runner-service.test.mjs",
+    "why": "a port block that an escaped process still holds must not be handed to the next run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (readRoots.some(root => inside(real, root))) throw refuseProfile();",
+    "replace": "if (readRoots.some(root => inside(real, root))) continue;",
+    "test": "node --test --test-name-pattern='fails closed' tests/test-runner-service.test.mjs",
+    "why": "a protected folder that contains the worktree must refuse the run, not be silently dropped"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (overlapsWorktree || inside(real, tmpReal)) throw new Error(",
+    "replace": "if (false) throw new Error(",
+    "test": "node --test --test-name-pattern='configuration guard refuses' tests/test-runner-service.test.mjs",
+    "why": "a configuration whose private folders contain the worktrees or /tmp must be refused at startup"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    ATTACK_KIT_SOCKET_ROOT: tempDirectory,\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='socket root guard' tests/test-runner-service.test.mjs",
+    "why": "the attack kit's short sockets must live inside the run, not in a shared /tmp pattern"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (!ownRoots.some(root => inside(root, dataDirectory))) continue;",
+    "replace": "",
+    "test": "node --test --test-name-pattern='S7\\)' tests/test-runner-service.test.mjs",
+    "why": "cleanup must never pg_ctl-stop a cluster whose data directory resolves outside the run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (controller.signal.aborted || response.destroyed) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='S8\\)' tests/test-runner-service.test.mjs tests/test-runner-disconnect.test.mjs",
+    "why": "a client that disconnects before its run starts must not start a run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    response.once(\"close\", onResponseClose);\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='client disconnects before it finishes' tests/test-runner-service.test.mjs tests/test-runner-disconnect.test.mjs",
+    "why": "a client that disconnects mid-run must abort the run and free its slot"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    \"(deny process-info*)\",\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "a test must not read the argv, environment, cwd or open files of a process outside its own sandbox; (deny default) does not cover process-info"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(allow process-info* (target same-sandbox))\",",
+    "replace": "\"(allow process-info*)\",",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "process details are reopened only for the run's own processes, never for the service, the live app or an agent session"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    '(deny sysctl-read (sysctl-name-prefix \"kern.procargs\") (sysctl-name-prefix \"kern.proc.\"))',\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "kern.procargs2 hands out another process's argv and environment whenever the sysctl read is allowed, even with process-info denied"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "  \"/usr/bin/true\", \"/usr/bin/uname\",\n]);",
+    "replace": "  \"/usr/bin/true\", \"/usr/bin/uname\", \"/usr/sbin/lsof\",\n]);",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "lsof maps every process's files, working directory and sockets, and no test needs it"
+  }
+]

@@ -14,13 +14,19 @@ export function createIdeaDecisionClient(transport: typeof fetch = fetch) {
         headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json" }, body: pending.body });
       if (!response.ok) {
         const code = ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[response.status];
-        if (code) { if (!pending.uncertain) pending = undefined; throw new BrowserRequestError(code); }
+        // Promotion saves the decision before proposing its task. A refusal
+        // from that second step cannot establish that nothing was saved.
+        if (code) {
+          if (!pending.uncertain && !ideaDecisionDraftSchema.parse(JSON.parse(pending.body)).promotionTask) pending = undefined;
+          throw new BrowserRequestError(code);
+        }
         throw new BrowserRequestError("uncertain");
       }
       const result = ideaDecisionReceiptSchema.parse(await readBrowserJson(response));
       const sent = ideaDecisionDraftSchema.parse(JSON.parse(pending.body));
       if (result.sessionId !== pending.sessionId || result.sessionDigest !== sent.sessionDigest || result.synthesisDigest !== sent.synthesisDigest
-        || result.decision !== sent.intent.decision || result.projectId !== (sent.intent.project?.projectId ?? null)) throw new Error();
+        || result.decision !== sent.intent.decision || result.projectId !== (sent.intent.project?.projectId ?? null)
+        || (result.firstTask !== null) !== (sent.promotionTask !== undefined)) throw new Error();
       pending = undefined; return result;
     } catch (error) { if (pending) pending.uncertain = true;
       throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");

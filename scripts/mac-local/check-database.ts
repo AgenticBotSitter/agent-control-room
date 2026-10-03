@@ -1,13 +1,14 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { Client } from "pg";
 import { createPrivatePostgresDatabase, privatePostgresOptions, type PrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
 import { loadMacLocalDatabaseRolesFromRootV1 } from "./load-protected-configuration";
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { macLocalOwnerIdentityIdV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyLocalResultPublisherDatabase,
-  verifyNativeQueueWorkerDatabase } from "../../src/web/v1/private-database-preflight";
+  verifyAgentReviewerDatabase, verifyNativeQueueWorkerDatabase } from "../../src/web/v1/private-database-preflight";
 
 type OpenedDatabase = ReturnType<typeof createPrivatePostgresDatabase>;
-type RoleName = "web" | "coordinator" | "results" | "publisher" | "queueWorker";
+type RoleName = "web" | "coordinator" | "results" | "publisher" | "agentReviewer" | "queueWorker";
 export type MacLocalDatabaseCheckRuntimeV1 = Readonly<{
   loadRoles: typeof loadMacLocalDatabaseRolesFromRootV1;
   loadConfiguration: (protectedRoot: string) => Promise<Pick<Awaited<ReturnType<typeof loadMacLocalProtectedConfigurationFromRootV1>>,
@@ -51,6 +52,7 @@ const production: MacLocalDatabaseCheckRuntimeV1 = Object.freeze({
     coordinator: (db, config, scope) => verifyTaskCoordinatorDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     results: (db, config, scope) => verifyNativeResultDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     publisher: (db, config, scope) => verifyLocalResultPublisherDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
+    agentReviewer: (db, config, scope) => verifyAgentReviewerDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     queueWorker: (db, config) => verifyNativeQueueWorkerDatabase(db.client, config),
   },
   deniedWrite: deniedWriteV1,
@@ -64,10 +66,11 @@ const deniedProbe: Readonly<Record<RoleName, string>> = Object.freeze({
   coordinator: "UPDATE control_jobs SET result_lock=result_lock WHERE false",
   results: "UPDATE control_jobs SET state=state WHERE false",
   publisher: "UPDATE control_harness_runs SET native_session_key_digest=native_session_key_digest WHERE false",
+  agentReviewer: "DELETE FROM control_completion_gate_records WHERE false",
   queueWorker: "UPDATE control_room_queue.queue SET name=name WHERE false",
 });
 
-/** Read-only privilege and connectivity check for the five fixed Mac-local
+/** Read-only privilege and connectivity check for the six fixed Mac-local
  * accounts. Every denied probe has a false predicate, so even an incorrectly
  * granted account cannot change rows. Never prints configuration. */
 export async function checkMacLocalDatabaseV1(protectedRoot: string,
@@ -83,7 +86,7 @@ export async function checkMacLocalDatabaseV1(protectedRoot: string,
   }
   catch { runtime.report(refusal()); return 1; }
   let exitCode = 0;
-  for (const name of ["web", "coordinator", "results", "publisher", "queueWorker"] as const satisfies readonly RoleName[]) {
+  for (const name of ["web", "coordinator", "results", "publisher", "agentReviewer", "queueWorker"] as const satisfies readonly RoleName[]) {
     let database: OpenedDatabase | undefined;
     try {
       const configuration = roles[name];
@@ -110,7 +113,7 @@ export async function checkMacLocalDatabaseV1(protectedRoot: string,
   return exitCode;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const root = process.argv[2];
   if (!root || process.argv.length !== 3) {
     process.stdout.write("Usage: pnpm mac:check-database /absolute/Protected\n");

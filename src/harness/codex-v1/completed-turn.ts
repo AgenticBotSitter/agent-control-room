@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { assertNoSecretMaterial } from '../../security/redaction';
@@ -13,18 +14,18 @@ const memoryCitationEntry = z.object({
   path: z.string(), lineStart: unsignedInteger, lineEnd: unsignedInteger, note: z.string(),
 }).strict();
 const memoryCitation = z.object({ entries: z.array(memoryCitationEntry), threadIds: z.array(z.string()) }).strict();
-const agentMessage = z.object({
+const agentMessage = upstreamObjectV1({
   type: z.literal('agentMessage'), id: upstreamId, text: z.string(),
   phase: z.enum(CODEX_APP_SERVER_RESULT_CONTRACT.messagePhases).nullable().optional(),
   delivery: z.literal('async').nullable().optional(), memoryCitation: memoryCitation.nullable().optional(),
-}).passthrough();
-const item = z.object({ type: z.string().min(1).max(80), id: upstreamId.optional() }).passthrough();
-const turn = z.object({ id: upstreamId, status: z.enum(CODEX_APP_SERVER_READ_CONTRACT.turnStatuses),
+});
+const item = upstreamObjectV1({ type: z.string().min(1).max(80), id: upstreamId.optional() });
+const turn = upstreamObjectV1({ id: upstreamId, status: z.enum(CODEX_APP_SERVER_READ_CONTRACT.turnStatuses),
   items: z.array(z.unknown()).max(MAXIMUM_ITEMS),
-  itemsView: z.enum(['notLoaded', 'summary', 'full']).optional() }).passthrough();
-const response = z.object({ thread: z.object({ id: upstreamId,
+  itemsView: z.enum(['notLoaded', 'summary', 'full']).optional() });
+const response = upstreamObjectV1({ thread: upstreamObjectV1({ id: upstreamId,
   cliVersion: z.literal(CODEX_APP_SERVER_READ_CONTRACT.version),
-  turns: z.array(turn).max(1_024) }).passthrough() }).passthrough();
+  turns: z.array(turn).max(1_024) }) });
 
 export const CODEX_EXACT_PACKAGE_RESULT_CONTRACT_V1 = Object.freeze({
   schema: 'control-room.codex-exact-package-result-contract/v1' as const,

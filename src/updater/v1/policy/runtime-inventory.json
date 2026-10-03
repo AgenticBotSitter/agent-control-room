@@ -1,0 +1,83 @@
+{
+  "schema": "control-room.runtime-inventory/v1",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "artifacts": [
+    {
+      "tool": "node",
+      "version": "22.23.3",
+      "linkBase": "node",
+      "archiveName": "node-v22.23.3-darwin-arm64.tar.gz",
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-darwin-arm64.tar.gz",
+      "archiveSha256": "23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53",
+      "archiveBytes": 49963763,
+      "extraction": "tar-gz-strip-1",
+      "executableRelativePath": "bin/node",
+      "executableSha256": "68f4d07ca49e0500cc135c7e0a445093e228e42e126ac22306d045f0a8c2636b",
+      "publisherProof": {
+        "kind": "nodejs-shasums-gpg",
+        "shasumsUrl": "https://nodejs.org/dist/v22.23.3/SHASUMS256.txt",
+        "signatureUrl": "https://nodejs.org/dist/v22.23.3/SHASUMS256.txt.asc",
+        "keyringUrl": "https://github.com/nodejs/release-keys/raw/refs/heads/main/gpg/pubring.kbx",
+        "signerFingerprints": [
+          "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356"
+        ]
+      }
+    },
+    {
+      "tool": "pnpm",
+      "version": "11.19.0",
+      "linkBase": "pnpm",
+      "archiveName": "pnpm-darwin-arm64.tar.gz",
+      "url": "https://github.com/pnpm/pnpm/releases/download/v11.19.0/pnpm-darwin-arm64.tar.gz",
+      "archiveSha256": "00075435e24d20f5d369c9aec1ee1c29ebb78b52de8ea9807013fc70187ea0e5",
+      "archiveBytes": 47991397,
+      "extraction": "tar-gz",
+      "executableRelativePath": "pnpm",
+      "executableSha256": "65cb7439d9b023b95d0e19d843adf14e0654426ef85ad4ecd33d58849315f669",
+      "publisherProof": {
+        "kind": "none"
+      }
+    },
+    {
+      "tool": "esbuild",
+      "version": "0.28.2",
+      "linkBase": "esbuild",
+      "archiveName": "darwin-arm64-0.28.2.tgz",
+      "url": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.28.2.tgz",
+      "archiveSha256": "1980cde09749094452b20d36ff267585ccb3f72749c7bc97291cd9996ccf5a2a",
+      "archiveBytes": 4434422,
+      "extraction": "npm-tgz-bin-esbuild",
+      "executableRelativePath": "esbuild",
+      "executableSha256": "10b6243df618d374bb2d5c9cfbe7052e1405f6aa4e53a6164f11a91b9f2e1384",
+      "publisherProof": {
+        "kind": "npm-integrity",
+        "metadataUrl": "https://registry.npmjs.org/@esbuild%2fdarwin-arm64/0.28.2",
+        "sha512": "n4KqkOQrraxHJcgjM1RvwbigfQKIKJVpM7xp+KsxiyUSrRdIXnt73VhrPAx0fV44hgfmIVKjxMN9J1t5jySVkw=="
+      }
+    },
+    {
+      "tool": "postgresql",
+      "version": "17.11",
+      "linkBase": "pg",
+      "archiveName": "postgresql-17.11-4-osx-binaries.zip",
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-4-osx-binaries.zip",
+      "archiveSha256": "a61d220546ae10517db8e688d10c06fc3ac639ab0242b92f7b81aa0913da422f",
+      "archiveBytes": 437510312,
+      "extraction": "edb-zip-allowlist-v1",
+      "executableRelativePath": "bin/postgres",
+      "executableSha256": "7c73c5b7a7e21c9cd4bfdc741901c87769930cd9e5b3e5a22abea213e9e754a8",
+      "teamIdentifier": "26QKX55P9K",
+      "publisherProof": {
+        "kind": "developer-id",
+        "teamIdentifier": "26QKX55P9K",
+        "identifier": "com.edb.postgresql",
+        "measured": "codesign -dv --verbose=4 on bin/postgres, bin/initdb and lib/libssl.3.dylib all report TeamIdentifier=26QKX55P9K and Identifier=com.edb.postgresql; codesign --verify --strict exits 0 on each"
+      },
+      "provenance": {
+        "etag": "4b6866df08d6e0754b275091b07ef280-53",
+        "lastModified": "Fri, 18 Sep 2026 10:31:53 GMT"
+      }
+    }
+  ]
+}

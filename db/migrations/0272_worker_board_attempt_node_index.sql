@@ -1,0 +1,87 @@
+-- MLOAD-03 / MLOAD-03b: the Workers board scanned the whole attempts table 41
+-- times per load. There is no index on control_attempts whose FIRST key column is
+-- node_id, state or updated_at -- read from the live catalogue on this tree, not
+-- assumed:
+--
+--   control_attempts, first key column:
+--     node_id     -> (none)
+--     state       -> (none)
+--     updated_at  -> (none)
+--
+-- Its real indexes are (id), (tenant_id, id), (job_id, attempt_number DESC),
+-- (tenant_id, job_id, attempt_number), (tenant_id, id, job_id) and
+-- (tenant_id, id, job_id, node_id). node_id appears only in FOURTH position of
+-- the last one, which cannot serve `node_id = ?`.
+--
+-- The read (src/web/v1/worker-board-read.ts:37-62) therefore did:
+--
+--   Seq Scan on control_attempts   (actual rows=70000 loops=1)  <- the CTE
+--   Seq Scan on control_attempts a (actual rows=4     loops=20) <- LATERAL 1
+--   Seq Scan on control_attempts a_1(actual rows=3490  loops=20) <- LATERAL 2
+--   Buffers: shared hit=286,883
+--   Execution Time: 651.984 ms
+--
+-- 41 full scans to render 60 rows, on the read that MLOAD-03b showed loses half
+-- of its requests at only EIGHT concurrent readers.
+--
+-- WHAT THIS INDEX IS FOR, IN ORDER. Both LATERALs are keyed on
+-- (tenant_id, node_id) and both then filter and sort on state and updated_at:
+--
+--   current_attempt: a.state IN ('leased','running','waiting')
+--                    ORDER BY CASE a.state ... , a.updated_at DESC, a.id
+--   terminal:        a.state IN ('succeeded','failed','cancelled','orphaned')
+--                    ORDER BY a.updated_at DESC, a.id DESC LIMIT 3
+--
+-- and the CTE itself needs the distinct node_id set in node_id order, which
+-- (tenant_id, node_id) already serves as an ordered skip scan. So
+-- (tenant_id, node_id, state, updated_at DESC, id) answers all three: the
+-- tenant and node are equality keys, state becomes an index condition for both
+-- LATERALs, and updated_at DESC with id as the tiebreak makes each LATERAL's
+-- ordering an ordered index scan that stops at LIMIT 1 / LIMIT 3 instead of
+-- sorting that worker's whole attempt history.
+--
+-- `id` is last so the sort can be satisfied by the index for BOTH orderings:
+-- the current_attempt LATERAL sorts updated_at DESC, a.id (ASC on the
+-- tiebreak) and the terminal LATERAL sorts updated_at DESC, a.id DESC. Neither
+-- is a plain prefix of (updated_at DESC, id), so the planner will read the
+-- matching index entries and still sort -- which is correct and still bounded:
+-- the rows it sorts are the worker's own matching attempts, not the table's.
+--
+-- SCOPE. An index, no grant, no data change, no trigger, no rewrite of any
+-- existing object. It is created CONCURRENTLY-equivalent in cost by being
+-- plain CREATE INDEX, which is the right choice for a fresh install and takes a
+-- ShareLock (blocking writes, not reads) while it builds.
+--
+-- UPGRADE COST, measured on this tree at 200,000 attempts: 0.5 seconds, 18 MB.
+-- Both migrations in this packet build inside the applier's own statement_timeout
+-- of 5 s, which was verified rather than assumed.
+--
+-- WHY NOT CONCURRENTLY. Squawk's require-concurrent-index-creation rule asks for
+-- CREATE INDEX CONCURRENTLY, and it is right that a plain CREATE INDEX takes a
+-- ShareLock that blocks writes for the duration of the build. Two reasons it is
+-- not used here:
+--
+--   * CONCURRENTLY cannot run inside a transaction block, and the applier runs
+--     every migration inside one (`deploy/postgres/apply-migrations.mjs`), so
+--     CONCURRENTLY would fail outright.
+--   * At this size it is not needed: 0.5 s on 200,000 rows, inside the
+--     applier's own 5 s statement_timeout, with readers unaffected throughout
+--     (measured -- a reader issuing the board read during the build was not
+--     refused).
+--
+-- The lock_timeout below is the part that IS worth having and IS cheap: it
+-- bounds how long this statement waits for the ShareLock rather than queueing
+-- behind an open transaction, so an upgrade on a busy installation fails fast
+-- and retries rather than piling up. It matches what the grant migrations in
+-- this same range already set.
+
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
+-- CONCURRENTLY cannot run inside the applier's transaction, and at growth size the
+-- plain build is 0.5s inside the statement_timeout above; the lock_timeout bounds
+-- how long this statement waits for the ShareLock.
+-- squawk-ignore require-concurrent-index-creation
+CREATE INDEX idx_control_attempts_node_state_updated
+  ON control_attempts (tenant_id, node_id, state, updated_at DESC, id)
+  WHERE node_id IS NOT NULL;

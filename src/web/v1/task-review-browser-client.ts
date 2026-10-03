@@ -1,3 +1,4 @@
+import { isPolledReadAbort } from "./polled-read-scheduler";
 import { BrowserRequestError, observeBrowserAuthentication, type BrowserAuthenticationObserver,
   type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
@@ -29,7 +30,10 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
           ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) }, ...(command ? { body: command.body } : {}) });
       observeBrowserAuthentication(response, observeAuthentication); return response;
     }
-    catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
+    catch (reason) {
+      if (!command && (signal?.aborted || isPolledReadAbort(reason))) throw reason;
+      throw new BrowserRequestError(command ? "uncertain" : "unavailable");
+    }
   }
   async function json(response: Response) {
     if (!response.body || response.headers.get("content-type")?.split(";")[0].trim() !== "application/json") throw new Error();
@@ -60,7 +64,9 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
       if (receipt.projectId !== pending.projectId || receipt.jobId !== pending.jobId || receipt.artifactId !== pending.draft.artifactId
         || receipt.targetId !== pending.draft.targetId || receipt.targetDigest !== pending.draft.targetDigest
         || receipt.contentHash !== pending.draft.contentHash || receipt.decision !== pending.draft.decision
-        || receipt.feedbackDigest !== feedbackDigest || (receipt.findingId !== null) !== (receipt.decision === "changes_requested")) throw new Error();
+        || receipt.feedbackDigest !== feedbackDigest || (receipt.findingId !== null) !== (receipt.decision === "changes_requested")
+        || (receipt.exceptions?.length ?? 0) !== (pending.draft.exceptions?.length ?? 0)
+        || receipt.exceptions?.some((value, index) => value.statement !== pending!.draft.exceptions?.[index])) throw new Error();
       pending = undefined; return receipt;
     } catch (error) {
       if (pending) pending.uncertain = true;
@@ -81,7 +87,10 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
             (options.ownReview.targetId !== bound.targetId || options.ownReview.targetDigest !== bound.targetDigest
               || options.ownReview.contentHash !== bound.contentHash)) throw new Error();
         return options;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) {
+        if (signal?.aborted || isPolledReadAbort(error)) throw error;
+        throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
+      }
     },
     async record(projectId: string, jobId: string, input: unknown, expectedAuthentication: TaskReviewAuthenticationExpectation) {
       ids(projectId, jobId); const parsed = taskReviewDraftSchema.safeParse(input);

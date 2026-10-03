@@ -25,7 +25,7 @@ export function workerAvailabilityForTaskV1(eligibility: TaskProjectAgentOptions
     return { state: "unavailable", message: "Matching worker capability is not verified." };
   if (capacity.capacity.evidence !== "measured")
     return { state: "unavailable", message: `Matching capacity is unavailable: ${capacity.capacity.reasonCode.replaceAll("_", " ")}.` };
-  const observedAt = Date.parse(capacity.lastObservedAt);
+  const observedAt = Date.parse(capacity.lastObservedAt ?? "");
   if (!Number.isFinite(observedAt) || nowMs - observedAt > CAPACITY_FRESHNESS_MINUTES_V1 * 60_000)
     return { state: "unavailable", message: "Matching capacity observation is stale." };
   if (capacity.capacity.value.availableSlots <= 0)
@@ -120,7 +120,7 @@ export function ControlRoomWorkboardExpiryContent({ projectId, data, clock = sys
     // Rows already past that point are deliberately ignored: they must not
     // prevent a later still-fresh row from scheduling its own redraw.
     const expiry = Math.min(...data.capacity.value.workers.map(worker => {
-      const observed = Date.parse(worker.lastObservedAt);
+      const observed = Date.parse(worker.lastObservedAt ?? "");
       const nextExpiry = Number.isFinite(observed) ? observed + CAPACITY_FRESHNESS_MINUTES_V1 * 60_000 + 1 : Number.POSITIVE_INFINITY;
       return nextExpiry > nowMs ? nextExpiry : Number.POSITIVE_INFINITY;
     }));

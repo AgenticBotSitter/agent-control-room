@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from "zod";
 import type { ClaudeCodeLocalAssignedTaskExecutionV1 } from "../../harness/claude-code-v1/assigned-task-execution";
 import { executeAssignedClaudeCodeLocalTaskV1 } from "../../harness/claude-code-v1/assigned-task-execution";
@@ -12,7 +13,7 @@ const unresolved = (): never => { throw new Error("claude_code_local_queue_deliv
  * review path. All other outcomes deliberately remain visible for recovery or
  * operator attention and must not look like completed delivery. */
 export function requireClaudeCodeQueuePublicationV1(value: unknown): void {
-  const state = z.object({ state: z.enum(["published_pending_review", "recovered_pending_review", "terminal_result_uncertain", "not_started"]) }).passthrough()
+  const state = upstreamObjectV1({ state: z.enum(["published_pending_review", "recovered_pending_review", "terminal_result_uncertain", "not_started"]) })
     .parse(value).state;
   if (state !== "published_pending_review" && state !== "recovered_pending_review") unresolved();
 }

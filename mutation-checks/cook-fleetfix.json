@@ -1,0 +1,289 @@
+[
+  {
+    "file": "db/roles/fleet_gateway_roles.sql",
+    "find": "  fleet_result_reviews TO control_room_private_web;",
+    "replace": "  fleet_result_reviews TO control_room_private_web;\nGRANT INSERT ON fleet_result_reviews TO control_room_private_web;",
+    "test": "node --import tsx --test --test-name-pattern \"owner decision tables\" tests/fleet-connector.test.ts",
+    "why": "the ordinary web login cannot write an owner decision"
+  },
+  {
+    "file": "db/roles/fleet_gateway_roles.sql",
+    "find": "  fleet_worker_credentials, fleet_worker_presence TO control_room_fleet_gateway;",
+    "replace": "  fleet_worker_credentials, fleet_worker_presence, fleet_enrollment_redemptions TO control_room_fleet_gateway;",
+    "test": "node --import tsx --test --test-name-pattern \"owner decision tables\" tests/fleet-connector.test.ts",
+    "why": "the gateway cannot manufacture an enrollment redemption by direct SQL"
+  },
+  {
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "    IF redemption.client_nonce_digest<>p_client_nonce_digest\n      OR redemption.credential_digest<>p_credential_digest THEN RETURN; END IF;",
+    "replace": "    IF redemption.credential_digest<>p_credential_digest THEN RETURN; END IF;",
+    "test": "node --import tsx --test --test-name-pattern \"lost enrollment response\" tests/fleet-connector.test.ts",
+    "why": "an enrollment replay remains bound to the original client nonce"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const secret = pending?.secret ?? newSecret();",
+    "replace": "  const secret = newSecret();",
+    "test": "node --import tsx --test --test-name-pattern \"lost enrollment response\" tests/fleet-connector.test.ts",
+    "why": "a retry reuses the pending credential whose digest the server committed"
+  },
+  {
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "  IF NOT FOUND OR enrollment.state<>'issued' OR enrollment.expires_at<=pg_catalog.statement_timestamp()\n    OR enrollment.expires_at<=p_redeemed_at THEN RETURN; END IF;",
+    "replace": "  IF NOT FOUND OR enrollment.state<>'issued' THEN RETURN; END IF;",
+    "test": "node --import tsx --test --test-name-pattern \"cannot be replayed after the code expires\" tests/fleet-connector.test.ts",
+    "why": "a matching enrollment replay is still refused after the code expires"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (!tick(budget.state, now, budget.limit)) { refund(charges); return undefined; }",
+    "replace": "if (!tick(budget.state, now, budget.limit)) { return undefined; }",
+    "test": "node --import tsx --test --test-name-pattern \"IPv6 /48\" tests/fleet-connector.test.ts",
+    "why": "a source or allocation refusal refunds earlier charges"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "budgets.push({ state: global[kind], limit: globalLimit[kind] });",
+    "replace": "if (kind !== \"enroll\") budgets.push({ state: global[kind], limit: globalLimit[kind] });",
+    "test": "node --import tsx --test --test-name-pattern \"global limit\" tests/fleet-connector.test.ts",
+    "why": "unauthenticated enrollment traffic is bounded globally across client networks"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "const budgets = [{ state: stateFor(sources, `${kind}:${network}`, now, maxTrackedIps), limit: perIp[kind] }];",
+    "replace": "const budgets = [{ state: stateFor(sources, `${kind}:${network}`, now, maxTrackedIps), limit: Number.MAX_SAFE_INTEGER }];",
+    "test": "node --import tsx --test --test-name-pattern \"oversized and rate-limited\" tests/fleet-connector.test.ts",
+    "why": "unauthenticated enrollment traffic is bounded per client network"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (active.authenticate >= maxConcurrent) return fleetFail(\"rate_limited\");",
+    "replace": "if (false) return fleetFail(\"rate_limited\");",
+    "test": "node --import tsx --test --test-name-pattern \"caps concurrent\" tests/fleet-connector.test.ts",
+    "why": "pre-authentication database work has a global concurrency ceiling"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "const network = fleetGatewayClientNetworkV1(address);",
+    "replace": "const network = address;",
+    "test": "node --import tsx --test --test-name-pattern \"IPv6 /64\" tests/fleet-connector.test.ts",
+    "why": "IPv6 interface-address rotation stays inside one unauthenticated budget"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (selected === \"none\" || !trusted.has(peer)) return peer;",
+    "replace": "if (selected === \"none\") return peer;",
+    "test": "node --import tsx --test --test-name-pattern \"gateway client identity\" tests/fleet-connector.test.ts",
+    "why": "a forwarded address is trusted only from an allowlisted immediate proxy peer"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "header(request, \"x-forwarded-for\")?.split(\",\").at(-1)?.trim();",
+    "replace": "header(request, \"x-forwarded-for\")?.split(\",\").at(0)?.trim();",
+    "test": "node --import tsx --test --test-name-pattern \"gateway client identity\" tests/fleet-connector.test.ts",
+    "why": "X-Forwarded-For uses the proxy-appended rightmost address"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "const state = stateFor(workers, authenticatedWorkerId, now, maxTrackedWorkers);",
+    "replace": "const state = stateFor(sources, authenticatedWorkerId, now, maxTrackedIps);",
+    "test": "node --import tsx --test --test-name-pattern \"source tracking never consume\" tests/fleet-connector.test.ts",
+    "why": "failed sources cannot occupy the authenticated-worker tracking reserve"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "budgets.push({ state: global[kind], limit: globalLimit[kind] });",
+    "replace": "if (kind !== \"authenticate\") budgets.push({ state: global[kind], limit: globalLimit[kind] });",
+    "test": "node --import tsx --test --test-name-pattern \"exhausted failed-authentication\" tests/fleet-connector.test.ts",
+    "why": "failed authentication remains globally bounded across client networks"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (!tick(state, now, authenticatedPerWorker) || !tick(global.authenticated, now, authenticatedGlobal))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"known workers are refused\" tests/fleet-connector.test.ts",
+    "why": "the authenticated reserve retains its own per-worker and global ceilings"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "lease.completeAuthentication(principal.workerId);",
+    "replace": "lease.completeAuthentication(null);",
+    "test": "node --import tsx --test --test-name-pattern \"IPv6 /64\" tests/fleet-connector.test.ts",
+    "why": "a proven worker is charged only to the authenticated reserve"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "try { lease.completeAuthentication(null); }",
+    "replace": "try { lease.release(); }",
+    "test": "node --import tsx --test --test-name-pattern \"IPv6 /64\" tests/fleet-connector.test.ts",
+    "why": "failed credentials are charged to their bounded failure lane"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "} else if (knownCredential && declaredWorkerId !== undefined) {",
+    "replace": "} else if (false) {",
+    "test": "node --import tsx --test --test-name-pattern \"exhausted failed-authentication\" tests/fleet-connector.test.ts",
+    "why": "a server-verified credential bypasses the failure budget and uses only the reserved worker lane"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "admission.registerCredential(result.workerId, body.credentialDigest as string);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"exhausted failed-authentication\" tests/fleet-connector.test.ts",
+    "why": "successful enrollment places the machine in the reserved authentication lane"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "for (const credential of await store.activeAdmissionCredentials())",
+    "replace": "for (const credential of [])",
+    "test": "node --import tsx --test --test-name-pattern \"exhausted failed-authentication\" tests/fleet-connector.test.ts",
+    "why": "gateway startup preloads already-enrolled machines into the authenticated reserve"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "WHERE c.tenant_id=$1 AND c.state='active' AND w.state='active'",
+    "replace": "WHERE c.tenant_id=$1 AND w.state='active'",
+    "test": "node --import tsx --test --test-name-pattern \"restart preload includes only\" tests/fleet-connector.test.ts",
+    "why": "revoked credentials are never preloaded into the authenticated reserve"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "WHERE c.tenant_id=$1 AND c.state='active' AND w.state='active'",
+    "replace": "WHERE c.tenant_id=$1 AND c.state='active'",
+    "test": "node --import tsx --test --test-name-pattern \"restart preload includes only\" tests/fleet-connector.test.ts",
+    "why": "credentials for revoked workers are never preloaded into the authenticated reserve"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "AND c.expires_at>statement_timestamp() AND c.expires_at>$2::timestamptz",
+    "replace": "AND $2::timestamptz IS NOT NULL",
+    "test": "node --import tsx --test --test-name-pattern \"restart preload includes only\" tests/fleet-connector.test.ts",
+    "why": "expired credentials are never preloaded into the authenticated reserve"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "refund(provisionalCharges);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"provisional failure charge\" tests/fleet-connector.test.ts",
+    "why": "successful or interrupted authentication refunds its provisional global failure charge"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (charge.state.startedAt === charge.window && charge.state.count > 0)",
+    "replace": "if (charge.state.count > 0)",
+    "test": "node --import tsx --test --test-name-pattern \"provisional failure charge\" tests/fleet-connector.test.ts",
+    "why": "a slow lookup cannot refund another caller in a later global window"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "charges.push({ state: budget.state, window: budget.state.startedAt });",
+    "replace": "charges.push({ state: budget.state, window: -1 });",
+    "test": "node --import tsx --test --test-name-pattern \"provisional failure charge\" tests/fleet-connector.test.ts",
+    "why": "a slow lookup cannot refund another caller in a later source window"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (knownCredential && declaredWorkerId !== undefined) credentials.delete(declaredWorkerId);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"cached credential that no longer\" tests/fleet-connector.test.ts",
+    "why": "a revoked or expired cached credential loses its reserved-lane bypass after one database refusal"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (isIP(address) === 6) budgets.push({",
+    "replace": "if (false) budgets.push({",
+    "test": "node --import tsx --test --test-name-pattern \"IPv6 /48\" tests/fleet-connector.test.ts",
+    "why": "IPv6 allocation rotation is bounded by an additional /48 budget"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "|| selectedHeader !== \"none\" && trustedProxies.length === 0)",
+    "replace": "|| false)",
+    "test": "node --import tsx --test --test-name-pattern \"protected configuration\" tests/fleet-connector.test.ts",
+    "why": "enabling a forwarded header requires at least one explicit trusted proxy address"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "{ enroll: 4 * 1024, small: 32 * 1024,",
+    "replace": "{ enroll: 64 * 1024, small: 32 * 1024,",
+    "test": "node --import tsx --test --test-name-pattern \"oversized and rate-limited\" tests/fleet-connector.test.ts",
+    "why": "the unauthenticated enrollment body is capped at 4 KiB"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"gateway unauthenticated identities\" tests/fleet-connector.test.ts",
+    "why": "expanded IPv4-mapped IPv6 addresses share the IPv4 /24 budget"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "lane = \"enroll\";",
+    "replace": "lane = \"known\";",
+    "test": "node --import tsx --test --test-name-pattern \"four IPv6 /64s\" tests/fleet-connector.test.ts",
+    "why": "enrollment cannot consume the known-credential concurrency lane"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (active.enroll >= maxConcurrentEnroll) return fleetFail(\"rate_limited\");",
+    "replace": "if (false) return fleetFail(\"rate_limited\");",
+    "test": "node --import tsx --test --test-name-pattern \"four IPv6 /64s\" tests/fleet-connector.test.ts",
+    "why": "slow enrollment bodies have their own small concurrency ceiling"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (worker.count >= authenticatedPerWorker || global.authenticated.count >= authenticatedGlobal",
+    "replace": "if (false || global.authenticated.count >= authenticatedGlobal",
+    "test": "node --import tsx --test --test-name-pattern \"known workers are refused\" tests/fleet-connector.test.ts",
+    "why": "a known worker over its window is refused before database work"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "worker.count >= authenticatedPerWorker || global.authenticated.count >= authenticatedGlobal",
+    "replace": "worker.count >= authenticatedPerWorker || false",
+    "test": "node --import tsx --test --test-name-pattern \"known workers are refused\" tests/fleet-connector.test.ts",
+    "why": "a spent authenticated global window is refused before database work"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "|| active.known >= maxConcurrentKnown",
+    "replace": "|| false",
+    "test": "node --import tsx --test --test-name-pattern \"one known worker\" tests/fleet-connector.test.ts",
+    "why": "known credentials retain their own global concurrency ceiling"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "|| (activeKnownWorkers.get(declaredWorkerId) ?? 0) >= maxConcurrentKnownPerWorker)",
+    "replace": "|| false)",
+    "test": "node --import tsx --test --test-name-pattern \"one known worker\" tests/fleet-connector.test.ts",
+    "why": "one known worker cannot occupy every known-credential slot"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        try { lease.completeAuthentication(null); }\n        catch (chargeError) {\n          if (!(chargeError instanceof FleetErrorV1 && chargeError.code === \"rate_limited\"))\n            options.onUnexpectedError?.(chargeError);\n        }",
+    "replace": "        lease.completeAuthentication(null);",
+    "test": "node --import tsx --test --test-name-pattern \"spent failure charge\" tests/fleet-connector.test.ts",
+    "why": "a failed charge preserves the original authentication refusal and MCP audit"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "connectionsCheckingInterval: 1_000",
+    "replace": "connectionsCheckingInterval: 30_000",
+    "test": "node --import tsx --test --test-name-pattern \"checks slow request timeouts\" tests/fleet-connector.test.ts",
+    "why": "slow enrollment sockets are checked promptly for request timeout"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),\n        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);\n      const lease = admission.enter(request, \"enroll\");",
+    "replace": "      const lease = admission.enter(request, \"enroll\");\n      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),\n        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
+    "test": "node --import tsx --test --test-name-pattern \"slow enrollment uploads from two networks\" tests/fleet-connector.test.ts",
+    "why": "an incomplete enrollment upload cannot occupy one of the four database-work slots"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  try { return new TextDecoder(\"utf-8\", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length)); }\n  catch { return fleetFail(\"invalid\"); }",
+    "replace": "    if (false) return fleetFail(\"invalid\");\n    throw error;\n  }\n  try { return new TextDecoder(\"utf-8\", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length)); }\n  catch { return fleetFail(\"invalid\"); }",
+    "test": "node --import tsx --test --test-name-pattern \"stopped halfway\" tests/fleet-connector.test.ts",
+    "why": "an aborted enrollment body is a fixed invalid refusal rather than an unexpected logged error"
+  }
+]

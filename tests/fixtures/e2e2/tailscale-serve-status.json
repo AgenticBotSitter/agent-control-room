@@ -1,0 +1,26 @@
+{
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    },
+    "8443": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "fixture-mac.live-tail.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:7864"
+        }
+      }
+    },
+    "fixture-mac.live-tail.ts.net:8443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:3310"
+        }
+      }
+    }
+  }
+}

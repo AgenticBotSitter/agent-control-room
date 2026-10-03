@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { types } from "node:util";
@@ -57,10 +58,10 @@ const startupBindingSchema = z.object({
 }).strict();
 export type PrivateHermes021LocalStartupAdmissionBindingV1 = Readonly<z.infer<typeof startupBindingSchema>>;
 
-const installationBindingSchema = z.object({
+const installationBindingSchema = upstreamObjectV1({
   preparationDigest: digest, topologyPlanDigest: digest, releaseDigest: digest,
   workerBindingDigest: digest, runnerConfigurationDigest: digest,
-}).passthrough();
+});
 const installedCompositionIdentitySchema = z.object({
   schema: z.literal(PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1),
   installationId: identifier,

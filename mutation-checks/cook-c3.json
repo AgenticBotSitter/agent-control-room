@@ -1,0 +1,163 @@
+[
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (!exactKeys(artifact, expectedKeys) || !RUNTIME_INVENTORY_TOOLS.includes(artifact.tool)",
+    "replace": "if (false || !RUNTIME_INVENTORY_TOOLS.includes(artifact.tool)",
+    "test": "node --import tsx --test --test-name-pattern='runtime manifest rejects' tests/updater-trusted-runtime.test.mjs",
+    "why": "runtime inventory artifacts accept only the reviewed exact field set"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "|| typeof artifact.url !== \"string\" || !artifact.url.startsWith(\"https://\")",
+    "replace": "|| typeof artifact.url !== \"string\" || false",
+    "test": "node --import tsx --test --test-name-pattern='runtime manifest rejects' tests/updater-trusted-runtime.test.mjs",
+    "why": "every runtime archive and publisher proof source must use HTTPS"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "|| input.tools.some(tool => !TOOL_NAMES.includes(tool)) || new Set(input.tools).size !== input.tools.length",
+    "replace": "|| false || new Set(input.tools).size !== input.tools.length",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-runtime-vendor.test.mjs",
+    "why": "the vendor accepts only the four closed-set runtime tools"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime)",
+    "replace": "await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: undefined, gid: undefined }, runtime)",
+    "test": "node --import tsx --test --test-name-pattern='downloads as builder' tests/updater-runtime-vendor.test.mjs",
+    "why": "post-bootstrap downloads must execute as the builder uid and gid"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "\"-q\", \"--proto\", \"=https\"",
+    "replace": "\"--proto\", \"=https\"",
+    "test": "node --import tsx --test --test-name-pattern='downloads as builder' tests/updater-runtime-vendor.test.mjs",
+    "why": "curl must ignore user and builder curlrc files before parsing any other option"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "await removeTree(path, { recursive: true, force: true });",
+    "replace": "await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo removes' tests/updater-runtime-vendor.test.mjs",
+    "why": "a failed fresh install deletes its transaction-owned runtime tree instead of retaining about one gigabyte per attempt"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!exactKeys(input, [\"receipt\", \"root\"]) || !absolute(input.root)) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "runtime undo accepts only an exact absolute-root request before deleting transaction-owned paths"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!exactKeys(value, [\"schema\", \"trees\", \"links\"]) || value.schema !== RUNTIME_UNDO_SCHEMA\n    || !Array.isArray(value.trees) || value.trees.length < 1 || value.trees.length > TOOL_NAMES.length\n    || new Set(value.trees).size !== value.trees.length || value.trees.some(path => typeof path !== \"string\" || !RUNTIME_TREE.test(path))\n    || !Array.isArray(value.links) || value.links.length !== value.trees.length * 2) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "an undo receipt can name only the closed-set transaction-owned runtime trees and exact link records"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!match || !bases.has(match[1]) || names.has(link.path)\n      || !validTarget(link.installedTarget) || !validTarget(link.previousTarget)\n      || RUNTIME_TARGET.exec(link.installedTarget ?? \"\")?.[1] !== match[1]\n      || link.previousTarget !== null && RUNTIME_TARGET.exec(link.previousTarget)?.[1] !== match[1]) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "undo link targets remain in the same tool family and cannot be redirected to another runtime"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (current.installedTarget !== tree.slice(\"runtime/\".length)) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "the receipt binds each current link to the exact tree this transaction created"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (await realpath(input.root).catch(() => null) !== input.root\n    || await realpath(runtimeRoot).catch(() => null) !== runtimeRoot) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "runtime undo never traverses a symlinked install or runtime root"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!entry.isSymbolicLink()) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "runtime undo refuses an ordinary file planted where a managed link belongs"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (target !== link.installedTarget && target !== link.previousTarget) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "runtime undo stops on link drift instead of overwriting a later transaction"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!entry.isDirectory() || entry.isSymbolicLink() || await realpath(path) !== path) refuse(\"runtime_undo_refused\");",
+    "replace": "if (false) refuse(\"runtime_undo_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='runtime undo refuses' tests/updater-runtime-vendor.test.mjs",
+    "why": "recursive deletion applies only to the exact real runtime directory, never a planted link or file"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!before.isFile() || before.nlink !== 1 || before.size !== expectedBytes) refuse(\"runtime_vendor_archive_invalid\");",
+    "replace": "if (!before.isFile() || before.nlink !== 1 || false) refuse(\"runtime_vendor_archive_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='independent size' tests/updater-runtime-vendor.test.mjs",
+    "why": "an archive whose byte count differs from the inventory is refused before extraction"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (await sha256File(snapshot) !== artifact.archiveSha256) refuse(\"runtime_vendor_archive_invalid\");",
+    "replace": "if (false) refuse(\"runtime_vendor_archive_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='independent size' tests/updater-runtime-vendor.test.mjs",
+    "why": "the root snapshot digest must equal the inventory before extraction"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "|| await sha256File(executable) !== artifact.executableSha256) {",
+    "replace": "|| false) {",
+    "test": "node --import tsx --test --test-name-pattern='independent size' tests/updater-runtime-vendor.test.mjs",
+    "why": "the extracted tool executable must equal its independent pin"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (fresh && (oldCurrent !== null || oldPrevious !== null)) refuse(\"runtime_link_refused\");",
+    "replace": "if (false) refuse(\"runtime_link_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='independent size' tests/updater-runtime-vendor.test.mjs",
+    "why": "a fresh install never overwrites a planted current or previous link"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (!entry.isDirectory() || entry.isSymbolicLink() || canonical !== current || (entry.mode & 0o022) !== 0\n      || process.geteuid?.() === 0 && (entry.uid !== 0 || entry.gid !== 0)) refuse(\"runtime_vendor_destination_exists\");",
+    "replace": "if (false) refuse(\"runtime_vendor_destination_exists\");",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-runtime-vendor.test.mjs",
+    "why": "runtime work directories cannot traverse a planted symbolic link"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (await sha256File(executable) !== artifact.executableSha256) refuse(\"pg_runtime_vendor_refused\");",
+    "replace": "if (false) refuse(\"pg_runtime_vendor_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='independent size' tests/updater-runtime-vendor.test.mjs",
+    "why": "the PostgreSQL executable must equal the inventory after allowlisted extraction"
+  },
+  {
+    "file": "scripts/ci/verify-runtime-inventory.mjs",
+    "find": "|| actual.sha256 !== artifact.archiveSha256) refuse();",
+    "replace": "|| false) refuse();",
+    "test": "node --import tsx --test --test-name-pattern='one-byte archive change' tests/updater-runtime-vendor.test.mjs",
+    "why": "the network verifier refuses a one-byte archive change"
+  },
+  {
+    "file": "scripts/ci/verify-runtime-inventory.mjs",
+    "find": "await nodeVerifier({ artifact, proof: artifact.publisherProof, workDirectory: artifactRoot, download });",
+    "replace": "await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern='bad Node GPG signature' tests/updater-runtime-vendor.test.mjs",
+    "why": "Node pinning requires a valid publisher GPG signature"
+  },
+  {
+    "file": "scripts/ci/verify-runtime-inventory.mjs",
+    "find": "if (metadata?.dist?.integrity !== `sha512-${proof.sha512}` || archiveSha512 !== proof.sha512) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test --test-name-pattern='npm registry integrity proof' tests/updater-runtime-vendor.test.mjs",
+    "why": "esbuild bytes must match both the checked-in and live npm integrity values"
+  }
+]

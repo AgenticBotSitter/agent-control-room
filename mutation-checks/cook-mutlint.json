@@ -1,0 +1,114 @@
+[
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "    validateAllManifestAnchors(repositoryRoot());",
+    "replace": "",
+    "test": "node --test --test-name-pattern='anchor-only validation rejects stale' tests/verify-mutation-checks.test.mjs",
+    "why": "all branches validate every declared anchor before any tests"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Validate every declared mutation anchor\n        run: node scripts/ci/verify-mutation-checks.mjs --anchors-only\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='the CI job gates verification' tests/verify-mutation-checks.test.mjs",
+    "why": "CI must register the global anchor check without a branch-manifest condition"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "        if (matches !== 1) throw new Error(`find matched ${matches} times; expected exactly once`);",
+    "replace": "        if (false) throw new Error(`find matched ${matches} times; expected exactly once`);",
+    "test": "node --test --test-name-pattern='maintenance audit reports every entry' tests/verify-mutation-checks.test.mjs",
+    "why": "the audit refuses stale anchors before control edits"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "        if (baseline) {",
+    "replace": "        if (false) {",
+    "test": "node --test --test-name-pattern='maintenance audit reports every entry' tests/verify-mutation-checks.test.mjs",
+    "why": "an already failing baseline is never reported as a caught mutation"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "      if (before() !== snapshot) throw new Error(`audit test changed the checkout: ${name} entry ${index + 1}`);",
+    "replace": "      if (false) throw new Error(`audit test changed the checkout: ${name} entry ${index + 1}`);",
+    "test": "node --test --test-name-pattern='maintenance audit stops when a test' tests/verify-mutation-checks.test.mjs",
+    "why": "checkout contamination stops the audit before it emits proof"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "    try { mkdirSync(lock); } catch (error) {",
+    "replace": "    try { /* lock acquisition removed */ } catch (error) {",
+    "test": "node --test --test-name-pattern='maintenance audits refuse a concurrent' tests/verify-mutation-checks.test.mjs",
+    "why": "only one maintenance audit may mutate a checkout at a time"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "    activeAuditCleanup?.();",
+    "replace": "",
+    "test": "node --test --test-name-pattern='maintenance audits refuse a concurrent' tests/verify-mutation-checks.test.mjs",
+    "why": "interruption releases the run-owned audit lock"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "  if (failures) throw new Error(`${failures} audit entries were not proved caught`);",
+    "replace": "  if (false) throw new Error(`${failures} audit entries were not proved caught`);",
+    "test": "node --test --test-name-pattern='maintenance audit reports every entry' tests/verify-mutation-checks.test.mjs",
+    "why": "any unproved audit entry must make the command fail"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "        if (baseline === undefined) {",
+    "replace": "        if (false) {",
+    "test": "node --test --test-name-pattern='maintenance audit reports every entry' tests/verify-mutation-checks.test.mjs",
+    "why": "an uncached test command gets a real baseline run"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "      if (record.status !== \"caught\") failures += 1;",
+    "replace": "      if (false) failures += 1;",
+    "test": "node --test --test-name-pattern='maintenance audit reports every entry' tests/verify-mutation-checks.test.mjs",
+    "why": "baseline refusals and surviving mutations count as failed audit entries"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "      if (error.code === \"EEXIST\") throw new Error(\"another maintenance audit owns this checkout (or left its lock after SIGKILL)\");",
+    "replace": "      if (false) throw new Error(\"another maintenance audit owns this checkout (or left its lock after SIGKILL)\");",
+    "test": "node --test --test-name-pattern='maintenance audits refuse a concurrent' tests/verify-mutation-checks.test.mjs",
+    "why": "a concurrent caller receives the explicit ownership refusal"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "  if (error instanceof MutationProcessCleanupRefusal) throw error;",
+    "replace": "  if (false) throw error;",
+    "test": "node --test --test-name-pattern='cleanup signal refusal' tests/verify-mutation-checks.test.mjs",
+    "why": "cleanup refusal must propagate instead of becoming mutation proof"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "  if (result.cleanupError) throw result.cleanupError;",
+    "replace": "  if (false) throw result.cleanupError;",
+    "test": "node --test --test-name-pattern='cleanup signal refusal' tests/verify-mutation-checks.test.mjs",
+    "why": "cleanup errors cannot be accepted as a successful test exit"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "      if (!cleanupError && activeChild === child) activeChild = undefined;",
+    "replace": "      if (activeChild === child) activeChild = undefined;",
+    "test": "node --test --test-name-pattern='cleanup signal refusal' tests/verify-mutation-checks.test.mjs",
+    "why": "ownership is retained when the sandbox refuses process retirement"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "      resolveResult({ ...result, cleanupError });",
+    "replace": "      resolveResult({ ...result });",
+    "test": "node --test --test-name-pattern='cleanup signal refusal' tests/verify-mutation-checks.test.mjs",
+    "why": "normal-exit and timeout cleanup failures must reach the caller"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "    if (activeRestore) activeRestore();",
+    "replace": "    if (false) activeRestore();",
+    "test": "node --test --test-name-pattern='cleanup signal refusal' tests/verify-mutation-checks.test.mjs",
+    "why": "signal refusal cannot skip restoration of the mutated source"
+  }
+]

@@ -19,9 +19,13 @@
     "src/config/v1/product-configuration.ts",
     "src/web/v1/private-serving.ts",
     "src/github-app/v1/private-service.ts",
+    "src/fleet/v1/gateway-entry.ts",
+    "src/installer/v1/first-owner-entry.ts",
+    "src/fleet/v1/mac-local-composition.ts",
     "src/installer/v1/local-setup-host.ts",
     "src/installer/v1/local-installation-plan-bootstrap.ts",
     "src/installer/v1/private-local-installation-operator-cli.ts",
+    "src/installer/v1/nightly-backup-entry.ts",
     "src/web/v1/private-database-rehearsal.ts",
     "src/web/v1/private-fixture-preparation.ts",
     "src/web/v1/private-task-application.ts",
@@ -37,7 +41,9 @@
     "src/web/v1/private-postgres.ts",
     "src/web/v1/mac-local-task-provider.ts",
     "src/web/v1/mac-local-default-task-provider.ts",
-    "src/project-adapters/news/v1/article-extraction-runtime.mjs"
+    "src/project-adapters/news/v1/article-extraction-runtime.mjs",
+    "src/converter/v1/text-copy-port.ts",
+    "src/converter/v1/text-copy-service.ts"
   ],
   "exclude": ["node_modules", "dist-vps", ".next"]
 }

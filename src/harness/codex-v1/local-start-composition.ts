@@ -4,6 +4,7 @@ import { createCodexStartAdmissionV1 } from './admission-contract';
 import { createCodexLocalStartRuntimeV1, type CodexLocalStartAuthorityV1,
   type CodexLocalStartBindingV1 } from './local-start-runtime';
 import { createCodexDeliveryBoundWorkspacePreparationV1,
+  type CodexBuildStagePublicationCompositionV1,
   type CodexDeliveryBoundWorkspacePolicyV1 } from './delivery-bound-workspace-preparation';
 import type { CodexOwnedStartV1 } from './owned-start';
 import type { SqliteCodexStartJournalV1 } from './start-journal';
@@ -49,7 +50,8 @@ export function createCodexLocalStartCompositionV1(input: {
   bridgeJournal: BridgeStartJournal;
   startJournal: StartJournal;
   workspacePort: ObservableGitWorkspacePort;
-  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
+  workspacePolicy?: CodexDeliveryBoundWorkspacePolicyV1;
+  buildPublication?: CodexBuildStagePublicationCompositionV1;
   authority: CodexLocalStartAuthorityV1;
   ownedStart: CodexOwnedStartV1;
   clock: () => number;
@@ -80,7 +82,8 @@ export function createCodexLocalStartCompositionV1(input: {
   });
 
   const workspace = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent,
-    workspacePort: input.workspacePort, journal: bridge, policy: input.workspacePolicy });
+    workspacePort: input.workspacePort, journal: bridge, ...(input.workspacePolicy ? { policy: input.workspacePolicy } : {}),
+    ...(input.buildPublication ? { publication: input.buildPublication } : {}) });
   const runtime = createCodexLocalStartRuntimeV1({
     queueId: input.queueId,
     connectionAttemptId: input.connectionAttemptId,
@@ -118,5 +121,6 @@ export function createCodexLocalStartCompositionV1(input: {
     } },
     clock: input.clock.bind(input),
   });
-  return Object.freeze({ bindDelivery: workspace.bindDelivery, start: runtime.start, close: runtime.close });
+  return Object.freeze({ bindDelivery: workspace.bindDelivery, start: runtime.start, close: runtime.close,
+    publishBuildPullRequest: workspace.publishBuildPullRequest });
 }

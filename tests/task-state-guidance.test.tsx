@@ -24,8 +24,10 @@ import type {
   OwnerNotificationSettingsV1,
 } from "../src/notifications/v1/index.ts";
 import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
-import { HermesDeliveryRecoveryPanel, TaskDetailPanel, TaskStateGuidance, taskStateGuidance,
-  taskSummaryStateLabel } from "../private-app/app/task-panels.tsx";
+import { HermesDeliveryRecoveryPanel, RunPanel, TaskDetailPanel, TaskStateGuidance, taskStateGuidance,
+  taskStateLabel, taskSummaryStateLabel } from "../private-app/app/task-panels.tsx";
+import { OWNER_REJECTED_FAILURE_CODE_V1, projectTaskDisplayStateV1 }
+  from "../src/web/v1/task-display-state.ts";
 import { PrivateSettingsWorkspace } from "../private-app/app/settings/workspace.tsx";
 import { readOwnerNotificationsV1, unavailableOwnerNotificationsV1 } from "../src/web/v1/owner-notifications-browser-client.ts";
 import { OwnerNotificationsPanel } from "../private-app/app/owner-notifications-workspace.tsx";
@@ -75,6 +77,59 @@ test("execution completion never claims owner acceptance without authenticated q
   const completed = detail("succeeded").task;
   assert.equal(taskSummaryStateLabel(completed), "Completed");
   assert.equal(taskSummaryStateLabel({ ...completed, qualityStatus: "accepted" }), "Completed · Accepted");
+});
+
+test("a task the owner rejected reads \"Rejected by you\", not \"Job cancelled\"", () => {
+  // The gateway records the owner's Reject decision as the attempt's safe
+  // failure code when it applies it. That record is the only evidence that this
+  // particular cancellation was the owner's own choice.
+  const rejected = detail("cancelled").task;
+  assert.equal(taskSummaryStateLabel(rejected), "Job cancelled",
+    "a cancellation with no recorded reason must keep the plain wording");
+  assert.equal(taskSummaryStateLabel({ ...rejected, ownerRejected: true }), "Rejected by you");
+  // The flag can never appear on any other state, so it cannot mislabel work.
+  for (const state of ["proposed", "ready", "leased", "running", "waiting_approval", "succeeded", "failed",
+    "orphaned", "rejected"] as const)
+    assert.equal(taskSummaryStateLabel({ ...rejected, state, ownerRejected: true }),
+      taskStateLabel[state], `${state} must be unaffected by ownerRejected`);
+});
+
+test("the rejected task's guidance says who closed it and offers nothing to restart it", () => {
+  const rejected = detail("cancelled");
+  rejected.task = { ...rejected.task, ownerRejected: true };
+  const guidance = taskStateGuidance(rejected);
+  assert.equal(guidance.heading, "You rejected this result");
+  assert.match(guidance.explanation, /You rejected what this machine returned/u);
+  assert.equal(guidance.href, undefined, "a rejected task has no next action; nothing can revive it");
+  const html = renderToStaticMarkup(<TaskStateGuidance detail={rejected} refreshing={false} onRefresh={() => {}} />);
+  assert.match(html, /You rejected this result/u);
+  assert.doesNotMatch(html, /The task was cancelled/u);
+  // The owner's own Cancel control must not appear on a task they already closed.
+  assert.doesNotMatch(html, /Cancel task|Assign and run|Prepare revised task/u);
+});
+
+test("the projection only marks a rejection from the saved attempt's own recorded reason", () => {
+  const summary = detail("cancelled").task;
+  const base = { results: [], reviews: [], additionalResultsOmitted: false, additionalTargetsOmitted: false };
+  // The recorded reason on the latest, failed attempt: the owner's Reject.
+  assert.equal(projectTaskDisplayStateV1(summary, { ...base, latestAttemptFailureCode: OWNER_REJECTED_FAILURE_CODE_V1,
+    latestAttemptOutcome: { attemptId: "attempt:test", attemptState: "failed", runId: "run:test", runState: "succeeded" } })
+    .ownerRejected, true);
+  // Any other recorded reason leaves the plain wording: the gateway also writes
+  // revision_requested, worker_blocked and worker_revoked.
+  for (const code of ["revision_requested", "worker_blocked", "worker_revoked", "some_other_reason"])
+    assert.equal(projectTaskDisplayStateV1(summary, { ...base, latestAttemptFailureCode: code }).ownerRejected, undefined,
+      `${code} is not the owner rejecting a result`);
+  // No record at all: nothing is claimed.
+  assert.equal(projectTaskDisplayStateV1(summary, base).ownerRejected, undefined);
+  // A task that is not cancelled can never claim it, whatever the record says.
+  for (const state of ["succeeded", "failed", "running", "leased", "proposed"] as const)
+    assert.equal(projectTaskDisplayStateV1({ ...summary, state },
+      { ...base, latestAttemptFailureCode: OWNER_REJECTED_FAILURE_CODE_V1 }).ownerRejected, undefined,
+      `${state} must never read as a rejected result`);
+  // The canonical state itself is never changed by this projection.
+  assert.equal(projectTaskDisplayStateV1(summary, { ...base,
+    latestAttemptFailureCode: OWNER_REJECTED_FAILURE_CODE_V1 }).state, "cancelled");
 });
 
 test("local Hermes recovery tells the owner only what saved evidence proves", () => {
@@ -506,4 +561,52 @@ test("the settings surface renders labelled keyboard and text controls, never po
   assert.equal((empty.match(/<tr>/g) ?? []).length, 3);
   assert.equal((html.match(/<td>Delivery succeeded recorded complete<\/td>/g) ?? []).length, 1);
   assert.equal((html.match(/<tr>/g) ?? []).length, 4);
+});
+
+// R7-02: the age calculation used by the task read must not erase a settled outcome.
+test("R7-02 settled tasks retain their outcome after observations age", () => {
+  const now = Date.parse(at) + 600_000;
+  const headings = { succeeded: "Review the returned result", failed: "The recorded run failed",
+    cancelled: "The task was cancelled" } as const;
+  for (const state of ["succeeded", "failed", "cancelled"] as const) {
+    for (const age of [30_000, 120_000, 120_001, 600_000]) {
+      for (const availability of ["current", "offline", "expired", "unknown", null] as const) {
+        const value = detail(state, { state, nativeState: state === "succeeded" ? "completed" : state,
+          lastObservedAt: new Date(now - age).toISOString(), stale: age > 120_000, availability });
+        const guidance = taskStateGuidance(value);
+        assert.equal(guidance.heading, headings[state], `${state}, age ${age}, ${availability}`);
+        assert.equal(guidance.uncertain, false);
+        const html = renderToStaticMarkup(<TaskStateGuidance detail={value} refreshing={false} onRefresh={() => {}} />);
+        assert.doesNotMatch(html, /information is missing, old|Check what was already recorded/);
+        if (state === "succeeded") assert.match(html, /href="#task-results"/);
+      }
+    }
+    // A retained disconnected or ambiguous snapshot must not override the job outcome either.
+    assert.equal(taskStateGuidance(detail(state, { state: "disconnected", nativeState: "ambiguous", stale: true })).heading,
+      headings[state]);
+  }
+});
+
+test("R7-02 finished run cards show the recorded outcome rather than stale live progress", () => {
+  const terminalRuns = [
+    ...(["succeeded", "failed", "cancelled"] as const).map(state => ({ state, nativeState: null })),
+    ...(["completed", "failed", "cancelled", "interrupted"] as const)
+      .map(nativeState => ({ state: "disconnected" as const, nativeState })),
+  ];
+  for (const terminal of terminalRuns) {
+    const run = detail("succeeded", { ...terminal, stale: true, availability: "offline" }).attempts[0]!.runs[0]!;
+    const html = renderToStaticMarkup(<RunPanel run={run} />);
+    assert.doesNotMatch(html, /Agent progress is not current|Not a current live signal/);
+    const nativeLabels = { completed: "Agent reports completion", failed: "Agent reports failure",
+      cancelled: "Agent reports cancellation", interrupted: "Agent interrupted" };
+    assert.match(html, new RegExp(terminal.nativeState ? nativeLabels[terminal.nativeState] : terminal.state));
+  }
+  for (const state of ["leased", "running", "waiting_approval"] as const) {
+    for (const evidence of [{ stale: true }, { state: "disconnected" as const },
+      { nativeState: "ambiguous" as const }, { availability: "offline" as const }]) {
+      assert.equal(taskStateGuidance(detail(state, evidence)).uncertain, true);
+    }
+  }
+  const activeRun = detail("running", { stale: true }).attempts[0]!.runs[0]!;
+  assert.match(renderToStaticMarkup(<RunPanel run={activeRun} />), /Not a current live signal/);
 });

@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/web/v1/mac-local-node-key-pin.ts",
+    "find": "      if ((error as NodeJS.ErrnoException)?.code !== \"EEXIST\") refused();\n      await acceptExistingPin(file, nodeIds, fingerprints);\n      return;",
+    "replace": "      refused();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 5: pinning twice' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "identical concurrent pin callers must validate the atomic winner instead of failing"
+  },
+  {
+    "file": "src/web/v1/mac-local-node-key-pin.ts",
+    "find": "      || nodeIds.some(id => parsed.fingerprints[id] !== fingerprints[id])) refused();",
+    "replace": "      || false) refused();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 5: the real protected writer refuses a symlinked' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "a pin file naming the wrong fingerprints must be refused, not adopted as this Mac's own"
+  },
+  {
+    "file": "src/web/v1/mac-local-node-key-pin.ts",
+    "find": "    handle = await open(temporary, \"wx\", 0o600);",
+    "replace": "    handle = await open(temporary, \"wx\", 0o644);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 4: the pin command reads' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "the pin's staging inode must be owner-only before it is linked into place"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \"object\"\n      || Array.isArray(record.web)) throw new Error();\n    return validatePrivatePostgresConfiguration(record.web as PrivatePostgresConfiguration, { installRoot: dirname(protectedRoot) });",
+    "replace": "    return validatePrivatePostgresConfiguration(record.web as PrivatePostgresConfiguration, { installRoot: dirname(protectedRoot) });",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13: the ledger head is read on the pre-upgrade' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "the narrow web-role reader must refuse a record of the wrong schema rather than read a login out of it"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "  try { return await loadMacLocalWebRoleFromRootV1(protectedRoot); }\n  catch { failure(\"upgrade_ledger_head_refused\"); }",
+    "replace": "  return await loadMacLocalWebRoleFromRootV1(protectedRoot);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13: the ledger head is read on the pre-upgrade' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "an unreadable or malformed protected record must surface as the upgrade refusal the CLI can name, never as an opaque loader error that becomes upgrade_failed"
+  }
+]

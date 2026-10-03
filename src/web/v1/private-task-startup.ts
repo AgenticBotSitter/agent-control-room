@@ -48,8 +48,24 @@ import { verifyLocalClaudePostInstallAdmissionReceiptV1 } from
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 import { isPrivateRemoteControllerWorkerQueueCapabilityV1 } from
   "../../harness/v1/private-remote-controller-worker-composition";
+import type { CoordinationCostEvidencePortV1 } from "../../project-coordination/v1/schemas";
+import type { WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
+import type { UpdateCandidatePublisherConfigurationV1 } from "../../improve-control-room/v1";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
+
+/** One non-overlapping controller poller. Closing first prevents another tick,
+ * then waits for the bounded in-flight transaction before its database owner
+ * may close. */
+export function createPipelineAdvanceCycleV1(input:{enabled:()=>boolean;sweep:(limit:number)=>Promise<unknown>;intervalMs:number},
+  timers:{schedule:(run:()=>void,ms:number)=>unknown;clear:(handle:unknown)=>void}={
+    schedule:(run,ms)=>setInterval(run,ms),clear:handle=>clearInterval(handle as ReturnType<typeof setInterval>)}){
+  let pending:Promise<void>|undefined,closing=false;
+  const tick=()=>{if(closing||pending)return;let enabled=false;try{enabled=input.enabled();}catch{return;}if(!enabled)return;
+    pending=input.sweep(8).then(()=>{},()=>{}).finally(()=>{pending=undefined;});};
+  const handle=timers.schedule(tick,input.intervalMs);let closePromise:Promise<void>|undefined;
+  return Object.freeze({tick,close:()=>closePromise??=(async()=>{closing=true;timers.clear(handle);await pending;})()});
+}
 
 /**
  * The operator assembler is the usual way to build this configuration, but
@@ -89,6 +105,11 @@ export type PrivateTaskStartupConfiguration = {
     installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
     nativeQueue?: true;
     nativeQueueRecovery?: true;
+    /** Explicit S7 controller composition. Absence leaves both routes and the
+     * controller cycle unavailable; `enabled` is the live default-off fence. */
+    pipelines?: { integrityKey:Uint8Array; selectionAuthority:WorkBatchQueueSelectionAuthorityV1;
+      advance?:{enabled:()=>boolean;costEvidence:CoordinationCostEvidencePortV1;pollIntervalMs:number;
+        candidatePublisher?:UpdateCandidatePublisherConfigurationV1} };
     /** Explicit local composition; no default worker factory or deployment activation. */
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     /** Read-only, installation-journal-bound admission for the exact local Hermes composition. */
@@ -145,7 +166,19 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if (nativeQueue !== undefined && (nativeQueue !== true || !approvals)) throw new Error();
     const nativeQueueRecovery = input.coordinator.nativeQueueRecovery;
     if (nativeQueueRecovery !== undefined && (nativeQueueRecovery !== true || !nativeQueue)) throw new Error();
+    const pipelineInput=input.coordinator.pipelines;
+    const pipelines=pipelineInput?{integrityKey:key(pipelineInput.integrityKey),
+      selectionAuthority:Object.freeze({assertCurrent:pipelineInput.selectionAuthority.assertCurrent.bind(pipelineInput.selectionAuthority)}),
+      ...(pipelineInput.advance?{advance:{enabled:pipelineInput.advance.enabled.bind(pipelineInput.advance),
+        costEvidence:Object.freeze({currentCost:pipelineInput.advance.costEvidence.currentCost.bind(pipelineInput.advance.costEvidence)}),
+        pollIntervalMs:pipelineInput.advance.pollIntervalMs,
+        ...(pipelineInput.advance.candidatePublisher?{candidatePublisher:pipelineInput.advance.candidatePublisher}:{})}}:{})}:undefined;
+    if(pipelines&&typeof pipelines.selectionAuthority.assertCurrent!=="function")throw new Error();
+    if(pipelines?.advance&&(!nativeQueue||!approvals||typeof pipelines.advance.enabled!=="function"
+      ||typeof pipelines.advance.costEvidence.currentCost!=="function"||!Number.isSafeInteger(pipelines.advance.pollIntervalMs)
+      ||pipelines.advance.pollIntervalMs<1000||pipelines.advance.pollIntervalMs>60000))throw new Error();
     const quality = input.coordinator.quality ? captureTaskQualityConfiguration(input.coordinator.quality) : undefined;
+    if(pipelines&&!quality)throw new Error();
     if (quality) validateTaskQualityKeys(quality, planning.reviewIntegrityKey, web.tasks);
     const resultDatabase = input.coordinator.resultDatabase ? validatePrivatePostgresConfiguration(input.coordinator.resultDatabase) : undefined;
     if (resultDatabase && (!quality || resultDatabase.host !== database.host || resultDatabase.port !== database.port
@@ -284,7 +317,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if ([web.database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV2(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
-    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,
+    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
       claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
@@ -516,7 +549,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       // web tenant, and CanonicalStore inside the adapter is the durable
       // coordinator port. No fakes, no empty hooks.
       const coordinationStore = createProjectCoordinationCanonicalStoreAdapterV1({
-        database: web.client, tenantId: config.web.tenantId, now: () => clock(),
+        database: web.client, tenantId: config.web.tenantId, workspaceId: config.web.workspaceId, now: () => clock(),
       });
       // This bound reader is the only recovery capability passed toward the
       // browser task view. It closes over already-verified private resources;
@@ -567,6 +600,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(hermesDeliveryRecovery ? { hermesDeliveryRecovery } : {}),
         ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}) }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
+        ...(config.pipelines?{workBatches:{integrityKey:config.pipelines.integrityKey}}:{}),
         coordination: { store: coordinationStore },
         ...(webTasks ? { tasks: webTasks } : {}),
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
@@ -587,6 +621,11 @@ export function createPrivateTaskBootstrap(dependencies: {
           ? bindPrivateCodexResultReturnV1(config.codexResultReturn, artifactStorage.storage) : undefined,
         nativeHttp: config.nativeHttp,
         nativeSubmission: submission,
+        ...(config.pipelines?{workBatches:{integrityKey:config.pipelines.integrityKey,
+          selectionAuthority:config.pipelines.selectionAuthority}}:{}),
+        ...(config.pipelines?.advance?{pipelineAdvance:{enabled:config.pipelines.advance.enabled,
+          costEvidence:config.pipelines.advance.costEvidence,
+          ...(config.pipelines.advance.candidatePublisher?{candidatePublisher:config.pipelines.advance.candidatePublisher}:{})}}:{}),
       });
       requireActive();
       if (!application.isReady()) throw new Error();
@@ -643,18 +682,27 @@ export function createPrivateTaskBootstrap(dependencies: {
         newsWorker = Object.freeze({ close: prepared.close, status: prepared.raw.status.bind(prepared.raw) });
       }
       const readyApplication = application;
+      let pipelineCycle:ReturnType<typeof createPipelineAdvanceCycleV1>|undefined;
+      if(config.pipelines?.advance){
+        if(!readyApplication.sweepPipelineAdvances)throw new Error("private_task_startup_config_invalid");
+        pipelineCycle=createPipelineAdvanceCycleV1({enabled:config.pipelines.advance.enabled,
+          sweep:readyApplication.sweepPipelineAdvances,intervalMs:config.pipelines.advance.pollIntervalMs});
+      }
+      let pipelineClosing:Promise<void>|undefined;
+      const cycledApplication=pipelineCycle?{handle:readyApplication.handle,isReady:readyApplication.isReady,
+        close:()=>pipelineClosing??=(async()=>{await pipelineCycle!.close();await readyApplication.close();})()}:readyApplication;
       let newsClosing: Promise<void> | undefined;
       const ownedApplication = config.news ? {
-        handle: readyApplication.handle,
-        isReady: () => !newsClosing && acquired.every(pool => pool.isAvailable()) && readyApplication.isReady(),
+        handle: cycledApplication.handle,
+        isReady: () => !newsClosing && acquired.every(pool => pool.isAvailable()) && cycledApplication.isReady(),
         close: () => newsClosing ??= (async () => {
-          const appResult = await Promise.allSettled([readyApplication.close()]);
+          const appResult = await Promise.allSettled([cycledApplication.close()]);
           const producerResult = newsSubmission ? await Promise.allSettled([newsSubmission.close()]) : [];
           const poolResults = await Promise.allSettled(acquired.map(pool => pool.close()));
           if ([...appResult, ...producerResult, ...poolResults].some(result => result.status === "rejected"))
             throw new Error("private_task_startup_cleanup_uncertain");
         })(),
-      } : application;
+      } : cycledApplication;
       const workers = [worker, newsWorker].filter((value): value is OwnedQueueWorker => !!value);
       const installed = workers.length ? composePrivateTaskWorkerApplication(ownedApplication, workers) : ownedApplication;
       requireActive();

@@ -37,7 +37,7 @@ const BIN = CANDIDATE_BINS.find(dir => existsSync(join(dir, "initdb")) && exists
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined
   : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
-const PORT = Number(process.env.GATE_LOCK_ORDER_PG_PORT ?? 58233);
+const PORT = Number(process.env.GATE_LOCK_ORDER_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58233);
 const DATABASE = "cr_gate_lock_order";
 const OWNER_APP = "gate-lock-order-owner", QUALITY_APP = "gate-lock-order-quality";
 const exec = promisify(execFile);

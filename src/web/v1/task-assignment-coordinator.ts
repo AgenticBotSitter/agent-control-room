@@ -3,7 +3,7 @@ import { z } from "zod";
 import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema, nodeRecordSchema,
   requestRecordSchema, workflowRecordSchema, type AttemptRecord, type JobRecord, type LeaseRecord } from "../../domain/v1";
 import { CanonicalStore } from "../../persistence/canonical-store";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { MAX_NATIVE_UNSENT_RECOVERIES, nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference, type NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { FleetSignalStore } from "../../node-fleet/v1/fleet-signal-store";
 import { evaluateFleetEligibility } from "../../node-fleet/v1/eligibility";
@@ -54,6 +54,7 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { scopesOverlapV1 } from "../../project-coordination/v1/resource-conflict";
 import { workBatchProposalDigestV1 } from "../../work-intake/v1/digest";
 import { workBatchProposalSchemaV1 } from "../../work-intake/v1/schemas";
+import { taskCancelReceiptSchema } from "./task-cancel-wire";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -65,6 +66,15 @@ const routeSchema = z.object({ nodeId: localId, executorId: localId,
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
+/** Every capability probe id a route can carry, mapped to the plain worker kind a project's
+ * eligibility setting names. `controller-worker-remote` has no fixed kind -- a remote worker's
+ * kind is not known at routing time -- so it matches no restricted eligibility list; a project
+ * that restricts eligibility therefore also excludes remote-controller-worker routes. */
+const CAPABILITY_WORKER_KIND_V1: Readonly<Record<string, "codex" | "claude-code" | "hermes">> = Object.freeze({
+  "harness.hermes.native.runs.v1": "hermes", [HERMES_021_MACOS_LOCAL_CAPABILITY_V1]: "hermes",
+  [HERMES_LOCAL_CAPABILITY_V1]: "hermes", [CODEX_APP_SERVER_CAPABILITY]: "codex",
+  [CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1]: "codex", [CLAUDE_CODE_LOCAL_CAPABILITY_V1]: "claude-code",
+});
 export type NativeApprovalEnrollment = { enrollment: NativeEnrollment; nodeClass: string };
 export type CodexPermitEnrollment = CodexOwnerPermitBindingV1 & {
   approvalKeyId: string;
@@ -102,7 +112,7 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
 }
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"];
-  revoke: TaskAssignmentCoordinator["revoke"];
+  revoke: TaskAssignmentCoordinator["revoke"]; cancel: TaskAssignmentCoordinator["cancel"];
   options: TaskAssignmentCoordinator["options"]; projectOptions: TaskAssignmentCoordinator["projectOptions"] }>;
 export type OwnershipLeaseHolderV1 = Pick<ServerNativeChannel,
   "tenantId" | "nodeId" | "expiresAt" | "assertCurrent">;
@@ -243,10 +253,12 @@ export class TaskAssignmentCoordinator {
     const stage = (await tx.query<{ project_id: string; current_job_id: string; stage_kind: string; stage_ordinal: number;
       role: string; worker_id: string; worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
       effort: string; provider: string | null; profile: string | null; state: string; max_loops: number;
+      allowed_paths: unknown | null; maximum_changed_files: number | null; maximum_changed_bytes: number | null;
       handoff_from_result_digest: string | null; signoff_review_id: string | null; started_at: string | Date | null;
       finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number }>(`SELECT project_id,
         current_job_id,stage_kind,stage_ordinal,role,worker_id,worker_kind,node_id,selection_key,model,effort,provider,
-        profile,state,max_loops,handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
+        profile,state,max_loops,allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,
+        signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
       FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
     [this.scope.tenantId, link.pipeline_run_id, Number(link.stage_ordinal)])).rows[0];
     if (!stage || stage.project_id !== job.projectId || stage.stage_kind !== link.stage_kind
@@ -269,12 +281,22 @@ export class TaskAssignmentCoordinator {
       nodeId: stage.node_id, selectionKey: stage.selection_key, model: stage.model, effort: stage.effort,
       provider: stage.provider, profile: stage.profile, currentJobId: stage.current_job_id,
       currentAttemptId: null, currentLeaseId: null, state: stage.state, maxLoops: Number(stage.max_loops),
+      allowedPaths: stage.stage_kind === "build" ? stage.allowed_paths : null,
+      maximumChangedFiles: stage.stage_kind === "build" ? Number(stage.maximum_changed_files) : null,
+      maximumChangedBytes: stage.stage_kind === "build" ? Number(stage.maximum_changed_bytes) : null,
       handoffFromResultDigest: stage.handoff_from_result_digest, signoffReviewId: stage.signoff_review_id,
       startedAt: stage.started_at ? new Date(stage.started_at).toISOString() : null,
       finishedAt: stage.finished_at ? new Date(stage.finished_at).toISOString() : null, version: Number(stage.version) };
     const expected = Buffer.from(hmacSha256Tag(this.workBatchAdmission.integrityKey,
       { purpose: "pipeline-stage-run/v1", record: material })), actual = Buffer.from(stage.auth_tag);
-    if (sha256Digest(material) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual)) conflict();
+    if (sha256Digest(material) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = material;
+      const legacyExpected = Buffer.from(hmacSha256Tag(this.workBatchAdmission.integrityKey,
+        { purpose: "pipeline-stage-run/v1", record: legacy }));
+      if (stage.allowed_paths !== null || stage.maximum_changed_files !== null || stage.maximum_changed_bytes !== null
+        || sha256Digest(legacy) !== stage.record_digest || legacyExpected.length !== actual.length
+        || !timingSafeEqual(legacyExpected, actual)) conflict();
+    }
     try {
       await this.workBatchAdmission.assertCurrent(tx, { tenantId: this.scope.tenantId, projectId: job.projectId,
         batchId: link.pipeline_run_id, itemId: `${link.pipeline_run_id}:stage:${Number(stage.stage_ordinal)}`,
@@ -514,7 +536,7 @@ export class TaskAssignmentCoordinator {
   }
   webOperation(): TaskAssignmentOperation {
     return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this),
-      revoke: this.revoke.bind(this),
+      revoke: this.revoke.bind(this), cancel: this.cancel.bind(this),
       options: this.options.bind(this), projectOptions: this.projectOptions.bind(this) });
   }
   /** Trusted owner-review loader. It reconstructs one unsigned Codex permit from
@@ -646,7 +668,7 @@ export class TaskAssignmentCoordinator {
     if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
       || ref.tenantId !== this.scope.tenantId) conflict();
     const kind = await this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const job = await this.job(tx, ref.projectId, ref.jobId);
@@ -688,7 +710,7 @@ export class TaskAssignmentCoordinator {
     if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
       || ref.tenantId !== this.scope.tenantId) conflict();
     const remote = await this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const job = await this.job(tx, ref.projectId, ref.jobId);
@@ -712,7 +734,7 @@ export class TaskAssignmentCoordinator {
     if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
       || ref.tenantId !== this.scope.tenantId) conflict();
     return this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const job = await this.job(tx, ref.projectId, ref.jobId);
@@ -896,7 +918,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE", [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.origin !== "ordinary") conflict();
@@ -971,7 +993,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1019,6 +1041,77 @@ export class TaskAssignmentCoordinator {
       return Object.freeze({ ...queued, startsWork: false as const, grantsExecutionAuthority: false as const });
     });
   }
+
+  /** Server-only pipeline continuation.  It deliberately supports one already
+   * existing native route and writes the identical protected queue intent used
+   * by the owner-start path.  Unsupported adapters never fall through to a
+   * generic/native queue and this method is not included in webOperation(). */
+  async enqueuePipelineHermes021InSession(tx: DatabaseSession, input: Readonly<{
+    tenantId:string; projectId:string; runId:string; stageOrdinal:number; sourceJobId:string; executionJobId:string;
+    workerId:string; workerKind:"codex"|"claude-code"|"hermes"; nodeId:string; selectionKey:string; model:string;
+    effort:string; provider:string|null; profile:string|null; attemptId:string; leaseId:string; leaseEpoch:number;
+    inputDigest:string; policyId:string; approvingOwnerIdentityId:string; idempotencyKey:string; commitDeadline:number;
+  }>, authority: Readonly<{actorId:"service:pipeline-advance:v1";assertCurrent:()=>void|Promise<void>}>) {
+    if (!this.approvalStore || !this.nativeTaskSubmission || input.tenantId!==this.scope.tenantId
+      || !Number.isSafeInteger(input.commitDeadline) || input.commitDeadline<0) conflict();
+    for (const id of [input.projectId,input.executionJobId,input.nodeId,input.attemptId,input.leaseId,input.policyId,
+      input.approvingOwnerIdentityId]) localId.parse(id);
+    digestSchema.parse(input.inputDigest); await authority.assertCurrent();
+    const store=this.approvalStore,job=await this.job(tx,input.projectId,input.executionJobId),
+      plan=await this.planner.readInSession(tx,input.executionJobId),stored=await this.stored(tx,job);
+    if (!plan||!stored||plan.tenantId!==this.scope.tenantId||plan.projectId!==input.projectId
+      ||job.inputDigest!==input.inputDigest||job.jobType!==HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
+      ||job.requiredCapability!==HERMES_021_MACOS_LOCAL_CAPABILITY_V1
+      ||(plan.schema!=="control-room.task-execution-plan/v5"&&plan.schema!=="control-room.task-execution-plan/v6"
+        &&plan.schema!=="control-room.task-execution-plan/v7"&&plan.schema!=="control-room.task-execution-plan/v8")
+      ||plan.connectorProfileDigest!==HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1
+      ||stored.attempt.id!==input.attemptId||stored.lease.id!==input.leaseId||stored.lease.epoch!==input.leaseEpoch) conflict();
+    const route=this.routes.find(value=>value.nodeId===stored.lease.nodeId),now=this.clock(),
+      deadline=Math.min(Date.parse(stored.lease.expiresAt),Date.parse(job.authority.expiresAt),input.commitDeadline);
+    if(!route||route.nodeId!==input.nodeId||route.executorId!==input.workerId||route.executorId!==job.authority.allowedExecutor
+      ||route.capabilityProbeId!==HERMES_021_MACOS_LOCAL_CAPABILITY_V1||!Number.isSafeInteger(now)||now<0||now>=deadline) conflict();
+    const approvingOwner=(await tx.query<{owner_identity_id:string}>(`SELECT p.owner_identity_id
+      FROM control_project_delegation_policies p JOIN control_identities i
+        ON i.tenant_id=p.tenant_id AND i.id=p.owner_identity_id AND i.actor_type='human' AND i.state='active'
+      WHERE p.tenant_id=$1 AND p.project_id=$2 AND p.id=$3 AND p.state='active' AND p.owner_identity_id=$4
+        AND EXISTS(SELECT 1 FROM control_role_grants g WHERE g.tenant_id=p.tenant_id
+          AND g.identity_id=p.owner_identity_id AND g.role_key='owner' AND g.revoked_at IS NULL
+          AND (g.expires_at IS NULL OR g.expires_at>$5) AND g.require_strong_factor=false
+          AND (g.project_ids ? $2 OR g.project_ids ? '*')
+          AND (g.allowed_actions ? 'tasks.read' OR g.allowed_actions ? '*'))
+        AND EXISTS(SELECT 1 FROM control_role_grants g WHERE g.tenant_id=p.tenant_id
+          AND g.identity_id=p.owner_identity_id AND g.role_key='owner' AND g.revoked_at IS NULL
+          AND (g.expires_at IS NULL OR g.expires_at>$5) AND g.require_strong_factor=false
+          AND (g.project_ids ? $2 OR g.project_ids ? '*')
+          AND (g.allowed_actions ? 'tasks.approve' OR g.allowed_actions ? '*'))
+      FOR SHARE OF p,i`,[this.scope.tenantId,input.projectId,input.policyId,input.approvingOwnerIdentityId,
+      new Date(now).toISOString()])).rows[0];
+    if(!approvingOwner)conflict();
+    await this.assertWorkBatchQueueAdmission(tx,job,route,stored.attempt.workerId??null);await authority.assertCurrent();
+    const packetDigest=sha256Digest({schema:"control-room.hermes-021-macos-local-queue-intent/v1",
+      planDigest:sha256Digest(plan),authorityDigest:job.authority.digest,tenantId:this.scope.tenantId,
+      projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,leaseId:stored.lease.id,
+      leaseEpoch:stored.lease.epoch,nodeId:route.nodeId,executorId:route.executorId,capability:route.capabilityProbeId,
+      connectorProfileDigest:plan.connectorProfileDigest});
+    const intent:NativeTaskQueueIntent={schema:"control-room.native-task-queue/v1",tenantId:this.scope.tenantId,
+      projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,nodeId:route.nodeId,
+      leaseId:stored.lease.id,leaseEpoch:stored.lease.epoch,inputDigest:input.inputDigest,packetDigest,
+      operationDigest:job.authority.digest,bindingDigest:sha256Digest({nodeId:route.nodeId,executorId:route.executorId,
+        capability:route.capabilityProbeId,connectorProfileDigest:plan.connectorProfileDigest}),
+      enrollmentDigest:sha256Digest({adapter:HERMES_021_MACOS_LOCAL_JOB_TYPE_V1,nodeId:route.nodeId}),
+      deliveryKind:"hermes-021-macos-local",deadline,queuedAt:new Date(now).toISOString(),queuedBy:approvingOwner.owner_identity_id};
+    const queued=await store.enqueueHermes021LocalInSession(tx,intent,sha256Digest(plan));
+    const retainedIntent=await store.readQueueIntentInSession(tx,intent);
+    if(!retainedIntent||retainedIntent.queuedBy!==approvingOwner.owner_identity_id)conflict();
+    if(!queued.replayed)await this.nativeTaskSubmission.enqueueInSession(tx,{schema:"control-room.native-task-submission/v1",
+      tenantId:this.scope.tenantId,projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,
+      queueId:queued.queueId,inputDigest:input.inputDigest,packetDigest});
+    if(!queued.replayed)await appendAuditWith(tx,{id:`audit:hermes-021:${queued.queueId}`,tenantId:this.scope.tenantId,
+      projectId:input.projectId,actorId:authority.actorId,actorType:"service",action:"hermes.021.local.task.queued",
+      targetType:"job",targetId:input.executionJobId,correlationId:queued.queueId,idempotencyKey:`hermes-021:${queued.queueId}`,
+      safeMetadata:{packetDigest},occurredAt:intent.queuedAt});
+    await authority.assertCurrent();return Object.freeze({queueId:queued.queueId,replayed:queued.replayed});
+  }
   /**
    * Server-side pickup lookup for a queued local Hermes task.  The pg-boss message
    * is merely a locator.  This method verifies its HMAC-backed queue intent,
@@ -1035,7 +1128,7 @@ export class TaskAssignmentCoordinator {
       readQueueIntentInSession: store.readQueueIntentInSession.bind(store),
     }, this.clock).authenticated(ref, async (tx, actor) => {
       actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1112,7 +1205,7 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1135,7 +1228,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1176,7 +1269,7 @@ export class TaskAssignmentCoordinator {
       readQueueIntentInSession: store.readQueueIntentInSession.bind(store),
     }, this.clock).authenticated(ref, async (tx, actor) => {
       actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1243,7 +1336,7 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1265,7 +1358,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1300,7 +1393,7 @@ export class TaskAssignmentCoordinator {
     return new NativeQueueAuthority(this.db, this.scope, { readQueueIntentInSession: store.readQueueIntentInSession.bind(store) }, this.clock)
       .authenticated(ref, async (tx, actor) => {
         actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
         await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
           [this.scope.tenantId, ref.projectId]);
         const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1363,7 +1456,7 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1383,7 +1476,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1420,7 +1513,7 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
@@ -1465,7 +1558,7 @@ export class TaskAssignmentCoordinator {
     return new NativeQueueAuthority(this.db, this.scope, { readQueueIntentInSession: store.readQueueIntentInSession.bind(store) }, this.clock)
       .authenticated(ref, async (tx, actor) => {
         actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
         await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
           [this.scope.tenantId, ref.projectId]);
         const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1707,7 +1800,7 @@ export class TaskAssignmentCoordinator {
       }) };
     const operation = async (tx: DatabaseSession, actor: WebActor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1829,7 +1922,7 @@ export class TaskAssignmentCoordinator {
     const operation = async (tx: DatabaseSession, actor: WebActor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
       // Match reservation/expiry lock order, keeping the complete canonical snapshot in one transaction.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE", [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
@@ -2069,7 +2162,7 @@ export class TaskAssignmentCoordinator {
     authority: LockedAssignmentAuthority) {
       const { projectId, jobId, nodeId, expectedInputDigest } = input;
       // Match canonical ready-transition lock order and serialize capacity selection across owners.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await authority.project();
@@ -2099,6 +2192,14 @@ export class TaskAssignmentCoordinator {
       this.planner.assertPlanAssignable(plan);
       const route = this.routes.find(route => route.nodeId === nodeId);
       if (!route) conflict();
+      // Project settings (Settings tab): an eligibility list restricts which worker kinds may
+      // claim this project's work at all; an unrecognized capability with a restriction configured
+      // fails closed rather than assuming it is eligible.
+      const settings = await this.projects.readSettingsRowInSession(tx, projectId);
+      if (settings.eligibleWorkerKinds !== null) {
+        const kind = CAPABILITY_WORKER_KIND_V1[route.capabilityProbeId];
+        if (!kind || !settings.eligibleWorkerKinds.includes(kind)) conflict();
+      }
       const batchAdmission = await this.assertWorkBatchQueueAdmission(tx, job, route);
       if (project.lifecycle !== "active" || project.origin !== "ordinary" || !["proposed", "ready", "orphaned"].includes(job.state)
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId
@@ -2168,6 +2269,13 @@ export class TaskAssignmentCoordinator {
       const active = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases
         WHERE tenant_id=$1 AND node_id=$2 AND state='active'`, [this.scope.tenantId, nodeId])).rows[0];
       if (Number(active?.count) >= route.maxConcurrentTasks) conflict();
+      if (settings.maxConcurrentTasks !== null) {
+        const projectActive = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases l
+          JOIN control_jobs j ON j.tenant_id=l.tenant_id AND j.id=l.job_id
+          WHERE l.tenant_id=$1 AND j.project_id=$2 AND j.id<>$3 AND l.state='active'`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+        if (Number(projectActive?.count) >= settings.maxConcurrentTasks) conflict();
+      }
       const commitDeadline = Math.min(now + Math.min(route.leaseSeconds, job.authority.maxDurationSeconds) * 1000,
         Date.parse(job.authority.expiresAt), Date.parse(telemetry.expiresAt), Date.parse(capability.expiresAt),
         key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
@@ -2192,7 +2300,7 @@ export class TaskAssignmentCoordinator {
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.scope.tenantId, claimed.lease.id, projectId, jobId,
           claimed.attempt.id, nodeId, declared.scope_kind, declared.path_fold]);
       } catch (error) {
-        if (["23P01", "23514"].includes((error as { code?: string }).code ?? "")) conflict();
+        if (databaseSqlStateIsAnyV1(error, ["23P01", "23514"])) conflict();
         throw error;
       }
       await appendAuditWith(tx, { id: ids.auditId, tenantId: this.scope.tenantId, projectId,
@@ -2217,7 +2325,7 @@ export class TaskAssignmentCoordinator {
     if (holder.tenantId !== this.scope.tenantId) conflict();
     return this.db.transactionWithPreCommitCheck(async tx => {
       try { holder.assertCurrent(); } catch { conflict(); }
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const job = await this.job(tx, projectId, jobId), stored = await this.stored(tx, job);
@@ -2258,9 +2366,22 @@ export class TaskAssignmentCoordinator {
       if (!stored || stored.lease.id !== leaseId || stored.lease.epoch !== leaseEpoch
         || stored.lease.nodeId !== holder.nodeId || stored.lease.state !== "active"
         || this.clock() >= Date.parse(stored.lease.expiresAt)) conflict();
+      // No row lock on the scope rows themselves, and none is needed. The
+      // `stored()` read above already holds the attempt and lease rows FOR
+      // UPDATE, and every writer that removes or adds a scope row for this
+      // lease must first take that same lease row lock: the stale-scope prune
+      // only deletes scopes whose lease is terminal or elapsed, and owner
+      // revocation releases the rows after making the lease terminal. A
+      // concurrent scope insert can only widen the permitted set, so a stale
+      // read here refuses rather than admits - the fail-closed direction.
+      //
+      // `FOR SHARE` would add nothing and would break the fence outright:
+      // PostgreSQL requires UPDATE on the locked table, and the coordinator
+      // login holds SELECT, INSERT and DELETE on control_assignment_lease_scopes
+      // but deliberately no UPDATE, so the lock was refused with 42501.
       const scopes = (await tx.query<{ scope_kind: "file" | "tree"; path_fold: string }>(
         `SELECT scope_kind,path_fold FROM control_assignment_lease_scopes
-         WHERE tenant_id=$1 AND lease_id=$2 ORDER BY scope_kind,path_fold FOR SHARE`,
+         WHERE tenant_id=$1 AND lease_id=$2 ORDER BY scope_kind,path_fold`,
       [this.scope.tenantId, leaseId])).rows;
       if (!scopes.length || paths.some(path => !scopes.some(scope => scopesOverlapV1(
         { scopeKind: "file", path }, { scopeKind: scope.scope_kind, path: scope.path_fold })))) conflict();
@@ -2276,7 +2397,7 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       await this.projects.getViewInSession(tx, actor, projectId);
@@ -2306,13 +2427,148 @@ export class TaskAssignmentCoordinator {
     });
   }
 
+  /** The installation's running work, as this coordinator's own login sees it.
+   * `leased` and `running` are the two attempt states that mean a worker may
+   * still be executing; `offered` and `waiting` have no process behind them yet.
+   *
+   * Bounded, and ordered, so a stop is a finite list rather than an open-ended
+   * scan: a very large installation stops what it found and says so through the
+   * receipt's counts rather than running unbounded. */
+  async listRunning(tenantId: string): Promise<readonly {
+    jobId: string; attemptId: string; leaseId: string; leaseEpoch: number; attemptVersion: number;
+    jobVersion: number; projectId: string }[]> {
+    if (tenantId !== this.scope.tenantId) return [];
+    const rows = (await this.db.query<{ job_id: string; attempt_id: string; lease_id: string; lease_epoch: string | number;
+      attempt_version: string | number; job_version: string | number; project_id: string }>(`SELECT l.job_id,l.attempt_id,
+        l.id AS lease_id,l.epoch AS lease_epoch,a.version AS attempt_version,j.version AS job_version,j.project_id
+      FROM control_leases l
+      JOIN control_attempts a ON a.tenant_id=l.tenant_id AND a.id=l.attempt_id
+      JOIN control_jobs j ON j.tenant_id=l.tenant_id AND j.id=l.job_id
+      WHERE l.tenant_id=$1 AND l.state='active' AND a.state IN ('leased','running')
+      ORDER BY l.job_id LIMIT 500`, [this.scope.tenantId])).rows;
+    return Object.freeze(rows.map(row => Object.freeze({ jobId: row.job_id, attemptId: row.attempt_id,
+      leaseId: row.lease_id, leaseEpoch: Number(row.lease_epoch), attemptVersion: Number(row.attempt_version),
+      jobVersion: Number(row.job_version), projectId: row.project_id })));
+  }
+
+  /** The installation-wide `stopped` mode asks running work to stop through
+   * exactly the canonical transition `revoke()` performs, on the coordinator's
+   * own login, in its own transaction. It exists so the operations-mode service
+   * has one stop path rather than a weaker private copy, and so the tenant and
+   * project lock order, the derived-scope release and the audit record all stay
+   * in the ordinary `revoke()` body above.
+   *
+   * `already_terminal` is a definite outcome, not an error: a job that finished
+   * or was already revoked needs no second stop. Anything else throws, and the
+   * caller records the job as uncertain rather than stopped. */
+  async revokeRunning(input: Readonly<{ tenantId: string; projectId: string; jobId: string; attemptId: string;
+    leaseId: string; leaseEpoch: number; attemptVersion: number; jobVersion: number; actorId: string; now: string }>)
+    : Promise<"revoked" | "already_terminal"> {
+    if (input.tenantId !== this.scope.tenantId) conflict();
+    for (const id of [input.projectId, input.jobId, input.attemptId, input.leaseId]) localId.parse(id);
+    if (!Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1) conflict();
+    return this.db.transaction(async tx => {
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, input.projectId]);
+      const leaseRow = (await tx.query<{ payload: LeaseRecord }>("SELECT payload FROM control_leases WHERE tenant_id=$1 AND id=$2",
+        [this.scope.tenantId, input.leaseId])).rows[0];
+      if (!leaseRow) return "already_terminal";
+      const lease = leaseRow.payload;
+      if (lease.jobId !== input.jobId || lease.attemptId !== input.attemptId) conflict();
+      if (lease.state !== "active") return "already_terminal";
+      if (lease.epoch !== input.leaseEpoch) conflict();
+      const attempt = (await tx.query<{ payload: AttemptRecord }>("SELECT payload FROM control_attempts WHERE tenant_id=$1 AND id=$2",
+        [this.scope.tenantId, input.attemptId])).rows[0];
+      const job = (await tx.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2",
+        [this.scope.tenantId, input.jobId])).rows[0];
+      if (!attempt || !job || job.payload.projectId !== input.projectId) conflict();
+      if (attempt.payload.version !== input.attemptVersion || job.payload.version !== input.jobVersion) conflict();
+      const ids = this.ids(input.jobId, attempt.payload.attemptNumber), canonical = new CanonicalStore(joined(tx));
+      const revoked = await canonical.revokeLease({ tenantId: this.scope.tenantId, leaseId: lease.id, jobId: job.payload.id,
+        attemptId: attempt.payload.id, expectedLeaseVersion: lease.version, expectedAttemptVersion: attempt.payload.version,
+        expectedJobVersion: job.payload.version, epoch: lease.epoch, transitionId: `${ids.transitionId}:operations-stop`,
+        idempotencyKey: `${ids.idempotencyKey}:operations-stop`,
+        actor: { actorId: input.actorId, actorType: "human" }, occurredAt: input.now });
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.scope.tenantId, lease.id]);
+      // confirmedProcessStop is false on purpose: this records that the stop was
+      // requested of the canonical record. Whether a process on a worker
+      // observed it is not known here and is never claimed to be.
+      await appendAuditWith(tx, { id: `${ids.auditId}:operations-stop`, tenantId: this.scope.tenantId,
+        projectId: input.projectId, actorId: input.actorId, actorType: "human", action: "tasks.assignment.operations_stop",
+        targetType: "job", targetId: input.jobId, idempotencyKey: `${ids.idempotencyKey}:operations-stop`,
+        occurredAt: input.now, safeMetadata: { attemptId: attempt.payload.id, leaseId: lease.id, leaseEpoch: lease.epoch,
+          requestedBy: "installation_operations_mode", confirmedProcessStop: false } });
+      return revoked.replayed ? "already_terminal" : "revoked";
+    });
+  }
+
+  /** Owner-only, idempotent stop. A queued reservation (no run yet started, attempt state
+   * "offered" or "leased") is cancelled immediately: attempt and job move to "cancelled" and the
+   * lease is revoked, exactly like an explicit owner lease revocation. A running attempt cannot
+   * be claimed stopped this way -- none of the mac-local owner-trusted harnesses (Claude, Codex,
+   * Hermes-local) report a confirmed mid-run cancellation (HarnessRunV1.cancelState is always
+   * "unsupported" for them) -- so the request is only recorded, durably and idempotently, with no
+   * canonical state change. RES-010: an unsupported stop stays visibly unconfirmed, never a
+   * fabricated "cancelled". A worker/agent identity cannot call this; only an owner session can
+   * (`actor.require("tasks.assign", ...)`, the same authority `assign`/`expire`/`revoke` require). */
+  async cancel(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
+      if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId
+        || job.inputDigest !== expectedInputDigest) conflict();
+      const stored = await this.stored(tx, job); if (!stored) conflict();
+      const { lease, attempt } = stored, ids = this.ids(jobId, attempt.attemptNumber);
+      const occurredAt = new Date(this.clock()).toISOString();
+      if (attempt.state === "running") {
+        const key = `${ids.idempotencyKey}:cancel-requested`;
+        const { replayed } = await appendAuditWith(tx, { id: `audit:${key}`, tenantId: this.scope.tenantId, projectId,
+          actorId: actor.id, actorType: "human", action: "tasks.cancel.requested", targetType: "job", targetId: jobId,
+          idempotencyKey: key, occurredAt,
+          safeMetadata: { attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch,
+            confirmsNativeStop: false, startsWork: false } });
+        return { receipt: taskCancelReceiptSchema.parse({ effect: "stop_requested" as const, projectId, jobId,
+          inputDigest: job.inputDigest, attemptId: attempt.id, leaseId: lease.id,
+          confirmsNativeStop: false as const, startsWork: false as const, grantsExecutionAuthority: false as const }), replayed };
+      }
+      if (lease.state === "revoked") {
+        await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+          [this.scope.tenantId, lease.id]);
+        return { receipt: taskCancelReceiptSchema.parse({ effect: "cancelled" as const, projectId, jobId,
+          inputDigest: job.inputDigest, leaseId: lease.id, startsWork: false as const, grantsExecutionAuthority: false as const }),
+          replayed: true };
+      }
+      if (lease.state !== "active") conflict();
+      const canonical = new CanonicalStore(joined(tx));
+      const revoked = await canonical.revokeLease({ tenantId: this.scope.tenantId, leaseId: lease.id, jobId: job.id,
+        attemptId: attempt.id, expectedLeaseVersion: lease.version, expectedAttemptVersion: attempt.version,
+        expectedJobVersion: job.version, epoch: lease.epoch, transitionId: `${ids.transitionId}:cancel`,
+        idempotencyKey: `${ids.idempotencyKey}:cancel`, actor: { actorId: actor.id, actorType: "human" }, occurredAt });
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.scope.tenantId, lease.id]);
+      await appendAuditWith(tx, { id: `audit:${ids.idempotencyKey}:cancel`, tenantId: this.scope.tenantId, projectId,
+        actorId: actor.id, actorType: "human", action: "tasks.cancel", targetType: "job", targetId: jobId,
+        idempotencyKey: `${ids.idempotencyKey}:cancel`, occurredAt,
+        safeMetadata: { attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch } });
+      return { receipt: taskCancelReceiptSchema.parse({ effect: "cancelled" as const, projectId, jobId,
+        inputDigest: revoked.job.inputDigest, leaseId: revoked.lease.id,
+        startsWork: false as const, grantsExecutionAuthority: false as const }), replayed: revoked.replayed };
+    });
+  }
   /** Reconcile an elapsed reservation only. This does not confirm a process stopped or make the
    * one-attempt task retryable through this coordinator. No timer or native cancellation is installed. */
   async expire(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await this.projects.getViewInSession(tx, actor, projectId);
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();

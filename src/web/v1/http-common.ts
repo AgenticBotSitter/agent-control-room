@@ -1,3 +1,4 @@
+import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
 import { WebAccessError } from "./access-verifier";
 
 export const privateResponseHeaders = {
@@ -8,11 +9,22 @@ export const privateResponseHeaders = {
 export function webFailure(error: unknown): Response {
   const code = error instanceof WebAccessError ? error.code : "service_unavailable";
   const status = { authentication_required: 401, access_denied: 403, invalid_request: 400,
-    conflict: 409, queue_depth_exceeded: 409, not_found: 404, service_unavailable: 503 }[code];
+    conflict: 409, queue_depth_exceeded: 409, flagged_items_unresolved: 409, not_found: 404,
+    service_unavailable: 503 }[code];
   return Response.json({ error: code }, { status, headers: privateResponseHeaders });
 }
 
-/** Bounded byte and time consumption; cancellation is requested, never awaited indefinitely. */
+/** Bounded byte and time consumption; cancellation is requested, never awaited indefinitely.
+ *
+ * Duplicate member names are refused before any consumer sees a value, including
+ * escaped spellings of the same name (`co\u0064e` next to `code`): native
+ * `JSON.parse` keeps the LAST occurrence and a reviver cannot see the earlier one,
+ * so a route that read `body.ownerCode` would authenticate one value while the
+ * owner reviewed another. `parseStrictJsonV1` walks the text itself and throws a
+ * bounded `SyntaxError`, which the same refusal below translates into the one
+ * `invalid_request` every caller already handles. The byte and time bounds above
+ * it are unchanged, and fatal UTF-8 decoding still happens on the real bytes.
+ */
 export async function readBoundedJson(body: ReadableStream<Uint8Array>, limit: number, timeoutMs = 5000): Promise<unknown> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -33,7 +45,9 @@ export async function readBoundedJson(body: ReadableStream<Uint8Array>, limit: n
       const bytes = new Uint8Array(size);
       let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      // The strict walk counts its own bytes against the same limit the reader
+      // enforced, so a boundary can never be widened by the decode step.
+      return parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes), { maxBytes: limit });
     })()]);
   } catch {
     void reader.cancel().catch(() => {});

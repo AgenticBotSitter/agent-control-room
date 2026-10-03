@@ -54,9 +54,12 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   // Before the browser identifies hosted versus Mac-local, server rendering
   // exposes only links shared by both. Hosted links hydrate after the read.
   for (const href of ["/projects", "/workers", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
-  assert.doesNotMatch(html, /href="\/setup"/);
-  assert.doesNotMatch(html, /href="\/settings"/);
-  assert.doesNotMatch(html, /href="\/ideas"/);
+  // The Home-only grouped browser intentionally lists every registry page;
+  // only the header itself keeps the pre-detection shared-route restriction.
+  const header = html.slice(0, html.indexOf("</header>") + "</header>".length);
+  assert.doesNotMatch(header, /href="\/setup"/);
+  assert.doesNotMatch(header, /href="\/settings"/);
+  assert.doesNotMatch(header, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
   assert.match(html, /<nav id="private-workspace-navigation" class="private-navigation"/);
   assert.doesNotMatch(html, /<details/);
@@ -292,6 +295,8 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
     React.createElement(PrivateHome)));
   const tick = async () => { await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
   const counts = () => Object.fromEntries(paths.map(path => [path, requests.filter(item => item === path).length]));
+  // Home and the header share one read, including on focus and visibility.
+  const expected = (base: number) => Object.fromEntries(paths.map(path => [path, base]));
   const settle = async () => {
     const reads = pending.splice(0);
     await React.act(async () => { for (const read of reads) read.resolve(responseFor(read.path)); });
@@ -300,10 +305,10 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
   try {
     await React.act(async () => { root.render(render("checking")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 0])));
+    assert.deepEqual(counts(), expected(0));
     await React.act(async () => { root.render(render("local")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "StrictMode starts one dashboard batch");
+    assert.deepEqual(counts(), expected(1), "StrictMode starts one dashboard batch");
     assert.equal(requests.includes("/api/v1/connections"), false, "local Home never requests the hosted connection route");
     await React.act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
@@ -313,23 +318,23 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
       assert.ok(button); button.click();
     });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "in-flight refreshes are coalesced");
+    assert.deepEqual(counts(), expected(1), "in-flight refreshes are coalesced");
     await settle();
     await React.act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
       dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
     });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    assert.deepEqual(counts(), expected(2), "settled batch permits one refresh");
     await settle();
     hidden = true;
     await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "hidden Home pauses polling");
+    assert.deepEqual(counts(), expected(2), "hidden Home pauses polling");
     hidden = false;
     await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 3])), "visible Home resumes one saved-state refresh");
+    assert.deepEqual(counts(), expected(3), "visible Home resumes one saved-state refresh");
     await settle();
   } finally {
     await React.act(async () => { root.unmount(); });

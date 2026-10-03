@@ -1,0 +1,23 @@
+[
+  {
+    "file": "src/updater/v1/install/rehearsal-authenticator.mjs",
+    "find": "    || typeof rpId !== \"string\" || !hostPattern.test(rpId) || !rpId.split(\".\").some(label => label.includes(\"rehearsal\"))",
+    "replace": "    || typeof rpId !== \"string\" || !hostPattern.test(rpId)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test tests/rehearsal-software-authenticator.test.mjs",
+    "why": "the practice phone must refuse a real install's name; without the rehearsal-label rule the production port would build it for a real tailnet name and go on to the database"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "  if (phone !== undefined && input.authenticator !== \"software\") refuse(\"passkey_registration_input_refused\");",
+    "replace": "",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test tests/rehearsal-software-authenticator.test.mjs",
+    "why": "a phone handed to the real path (no --authenticator software) would answer for the owner; the port must refuse it before publishing anything"
+  },
+  {
+    "file": "src/updater/v1/passkey-store.mjs",
+    "find": "    if (path !== \"pg_catalog, public\" && path !== \"pg_catalog, updater, pg_temp\")\n",
+    "replace": "    if (true)\n",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test tests/rehearsal-software-authenticator.test.mjs",
+    "why": "a session SET on the web host's qualified pool fails the next checkout's qualification and the setup page's options call answers 503 (measured by the bring-up lane)"
+  }
+]

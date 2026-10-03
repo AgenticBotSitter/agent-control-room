@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { DOMAIN_CONTRACT_VERSION, authorityEnvelopeSchema, jobRecordSchema, requestRecordSchema,
@@ -35,6 +36,8 @@ import { taskPlanningReceiptSchema, type TaskPlanningReceipt } from "./task-plan
 import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevisionRequest } from "./task-revision-wire";
 import { inheritTaskModelRequestV1, resolveTaskModelV1, type TaskModelCatalogV1,
   type RequestedTaskModelV1, type TaskModelWorkerKindV1 } from "./task-model-selection";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
+import { composeReusableSkillInstructionsV1, readBoundReusableSkillsInSessionV1 } from "../../skills/v1/service";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
@@ -426,7 +429,7 @@ export async function readCodexTaskExecutionPlanV3InSession(tx: DatabaseSession,
     const row = (await tx.query<Row>(`SELECT tenant_id,project_id,source_job_id,job_id,plan,auth_tag
       FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2`, [tenantId, jobId])).rows[0];
     if (!row) return undefined;
-    const raw = z.object({ schema: z.enum(["control-room.task-execution-plan/v3", "control-room.task-execution-plan/v4"]) }).passthrough().parse(row.plan);
+    const raw = upstreamObjectV1({ schema: z.enum(["control-room.task-execution-plan/v3", "control-room.task-execution-plan/v4"]) }).parse(row.plan);
     const plan = raw.schema === "control-room.task-execution-plan/v3"
       ? codexTaskExecutionPlanSchemaV3.parse(row.plan) : codexTaskExecutionPlanSchemaV4.parse(row.plan);
     const expected = Buffer.from(hmacSha256Tag(integrityKey,
@@ -453,6 +456,7 @@ export class TaskExecutionPlanner {
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService | TaskResultInspectionSourceV1;
   private readonly modelCatalog?: TaskModelCatalogV1;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: { template?: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; templateRegistry?: NativeTaskTemplateRegistryV1;
       integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
@@ -481,6 +485,8 @@ export class TaskExecutionPlanner {
     if (revisionResults) {
       if (revisionResults.integrityKey.length !== this.reviewKey.length || !timingSafeEqual(revisionResults.integrityKey, this.reviewKey)) fail();
       this.revisionSource = new NativeResultSubmissionService(db, { ...revisionResults, checkpoints: this.checkpoints });
+      this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+        deriveProjectEventIntegrityKeyV1(revisionResults.harnessIntegrityKey), () => new Date(this.clock()).toISOString()));
     }
     if (revisionSource) this.revisionSource = revisionSource;
     taskExecutionPlannerDatabases.set(this, db);
@@ -755,6 +761,9 @@ export class TaskExecutionPlanner {
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const source = await this.source(tx, projectId, sourceJobId);
       if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
+      const boundSkills = await readBoundReusableSkillsInSessionV1(tx,
+        { tenantId: this.scope.tenantId, projectId, jobId: sourceJobId });
+      const prompt = composeReusableSkillInstructionsV1(source.request.objective, boundSkills);
       template = this.selectTemplate(projectId, templateId);
       const templateDigest = sha256Digest(template), sourceDigest = sha256Digest(source);
       const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
@@ -773,7 +782,7 @@ export class TaskExecutionPlanner {
       requireTemplateTime(); materializing = true;
       const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
-      const input = { prompt: source.request.objective, instructions: template.instructions };
+      const input = { prompt, instructions: template.instructions };
       const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
       const codexLocal = template.adapter === CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1;
       const hermes021 = template.adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
@@ -791,7 +800,7 @@ export class TaskExecutionPlanner {
         projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest, plannedBy: actor.id, plannedAt: actor.now, input,
         acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
         request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
-          objective: source.request.objective, state: "draft", priority: source.request.priority,
+          objective: prompt, state: "draft", priority: source.request.priority,
           requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `execution:${suffix}` },
         workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId, requestId: `request:execution:${suffix}`,
           definitionVersion: codex ? "codex-task-plan/v1" : codexLocal ? "codex-owner-trusted-local-task-plan/v1" : hermes021 ? "hermes-021-task-plan/v1" : hermesLocal ? "hermes-local-task-plan/v1" : claude ? "claude-code-local-task-plan/v1" : remote ? "controller-worker-remote-task-plan/v1" : "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
@@ -1064,6 +1073,9 @@ export class TaskExecutionPlanner {
       await appendAuditWith(tx, { id: `audit:revision:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",
         action: "tasks.revisions.plan", targetType: "job", targetId: plan.job.id, idempotencyKey: `revision:${suffix}`, occurredAt: actor.now,
         safeMetadata: { sourceJobId, fromTargetId: input.targetId, sourceDigest, templateDigest, inputDigest: plan.job.inputDigest, startsWork: false } });
+      if (this.projectEvents) await this.projectEvents.appendInSession(tx, { ...this.scope, projectId,
+        subjectId: plan.job.id, action: "task_revised", sourceId: plan.job.id,
+        sourceVersion: `revision-${plan.revision.revisionNumber}`, occurredAt: actor.now });
       current(); return { receipt: this.revisionReceipt(plan), replayed: false };
     });
     // Commit acknowledgement may arrive after cancellation or the operation budget.

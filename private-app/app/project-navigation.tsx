@@ -3,7 +3,13 @@ import { useProductModule } from "./product-configuration";
 import { useLocalRuntime } from "./local-runtime";
 import type { EffectiveProjectPresentation } from "../../src/web/v1/project-wire";
 
-type ProjectPage = "overview" | "inbox" | "work" | "pipelines" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "coordination" | "settings";
+type ProjectPage = "overview" | "inbox" | "work" | "pipelines" | "improvements" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "coordination" | "settings";
+
+/** Purely presentation-level gate shared by the project tabs and their tests.
+ * The server independently refuses disabled-module routes and commands. */
+export function projectModuleVisible(module: "news", globallyEnabled: boolean, presentation?: EffectiveProjectPresentation) {
+  return globallyEnabled && (presentation === undefined || presentation.availableModules.includes(module));
+}
 
 export function ProjectNavigation({ projectId, current, presentation }: {
   projectId: string; current: ProjectPage; presentation?: EffectiveProjectPresentation;
@@ -12,13 +18,13 @@ export function ProjectNavigation({ projectId, current, presentation }: {
   const newsModuleGlobal = useProductModule("news");
   // Legacy projects (no presentation) keep the global module decision. Saved presentations
   // additionally constrain news to templates that include it.
-  const newsSaved = presentation === undefined || presentation.availableModules.includes("news");
-  const news = newsModuleGlobal && newsSaved;
+  const news = projectModuleVisible("news", newsModuleGlobal, presentation);
   const base = `/projects/${encodeURIComponent(projectId)}`;
   const link = (href: string, label: string, page: ProjectPage) =>
     <a href={href} aria-current={current === page ? "page" : undefined}>{label}</a>;
   return <nav className="private-tabs" aria-label="Project pages">
     {link(base, "Overview", "overview")}
+    {presentation?.templateId === "control-room" && link(`${base}/improvements`, "Improvements", "improvements")}
     {runtime.mode === "local" ? <>
       {runtime.status?.projectSections.includes("inbox") && link(`${base}/inbox`, "Inbox", "inbox")}
       {link(`${base}/tasks`, "Tasks", "work")}
@@ -26,6 +32,7 @@ export function ProjectNavigation({ projectId, current, presentation }: {
       {runtime.status?.projectSections.includes("agents") && link(`${base}/agents`, "Agents", "agents")}
       {runtime.status?.projectSections.includes("reviews") && link(`${base}/reviews`, "Reviews", "reviews")}
       {runtime.status?.projectSections.includes("activity") && link(`${base}/activity`, "Activity", "activity")}
+      {runtime.status?.projectSections.includes("automations") && link(`${base}/automations`, "Automations", "automations")}
       {runtime.status?.projectSections.includes("files") && link(`${base}/files`, "Files", "files")}
       {runtime.status?.projectSections.includes("settings") && link(`${base}/settings`, "Settings", "settings")}
     </> : runtime.mode === "checking" ? link(`${base}/tasks`, "Tasks", "work") : <>

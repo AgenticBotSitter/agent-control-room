@@ -2,6 +2,15 @@ import type { CompletionAcceptanceProfileV1, CompletionPrincipalV1 } from "./typ
 
 export type ReviewerIndependencePolicyV1 = "different_worker" | "different_model_family";
 
+export type ReviewerIndependenceSafeCodeV1 = "reviewer_not_independent" | "reviewer_provenance_missing";
+
+export class ReviewerIndependenceErrorV1 extends Error {
+  constructor(readonly safeCode: ReviewerIndependenceSafeCodeV1) {
+    super(safeCode);
+    this.name = "ReviewerIndependenceErrorV1";
+  }
+}
+
 export function reviewerSeparationForPolicyV1(policy: ReviewerIndependencePolicyV1): CompletionAcceptanceProfileV1["reviewerSeparation"] {
   return Object.freeze({
     actor: true,
@@ -26,7 +35,8 @@ export function assertReviewerIndependentV1(producer: CompletionPrincipalV1, rev
   for (const [policy, field] of axes) {
     if (!separation[policy] || reviewer.actorType === "human" && policy !== "actor") continue;
     const source = producer[field], candidate = reviewer[field];
-    if (typeof source !== "string" || typeof candidate !== "string" || source === candidate)
-      throw new Error("reviewer_not_independent");
+    if (typeof source !== "string" || typeof candidate !== "string")
+      throw new ReviewerIndependenceErrorV1("reviewer_provenance_missing");
+    if (source === candidate) throw new ReviewerIndependenceErrorV1("reviewer_not_independent");
   }
 }

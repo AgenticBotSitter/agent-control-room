@@ -1,4 +1,4 @@
-/** Offline-only setup for the five Mac-local PostgreSQL logins. Never imported
+/** Offline-only setup for the Mac-local PostgreSQL logins. Never imported
  * by application startup. Existing grants are inspected, not repaired here;
  * live membership correction is the separately reviewed step 11.C. */
 import { readFile } from "node:fs/promises";
@@ -9,6 +9,24 @@ const plan = Object.freeze(Object.entries(macRolePlan));
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+  "agent_reviewer_roles.sql", "fleet_gateway_roles.sql",
+  // R5B-01: the nightly backup dumps as `control_room_migrator` and `pg_dump`
+  // reads every schema, so the dump login needs a read on `control_room_queue`.
+  // LAST, because it is the only one here that depends on `installFixedQueue`
+  // having run — the function above it — and depends on nothing any other file in
+  // this list creates. The loop applies these as the client this provisioner was
+  // handed, which on a Mac-local install is the queue schema's owner, and that
+  // is the only role that can make the grant at all.
+  //
+  // DELIBERATELY NOT IN `database-upgrade-grants.mjs`'s `roleFiles`. That list is
+  // the release grant CONVERGER's source, its parser requires every grantee to be
+  // one of the Mac-local service groups, and `control_room_schema_owner` is
+  // deliberately not one of them: it is the migrator's group, not a service
+  // login's. Adding this file there would make the parser refuse the whole
+  // release. It is also unnecessary — the converger only reads grants for the
+  // principals in `desired-grants.json`, so a grant to `control_room_schema_owner`
+  // is invisible to it and can never be revoked as extra.
+  "queue_backup_read_roles.sql",
 ]);
 const roleSource = file => new URL(`../../db/roles/${file}`, import.meta.url);
 

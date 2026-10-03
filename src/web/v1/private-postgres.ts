@@ -1,6 +1,6 @@
 import { createPrivatePgDatabase } from "./private-pg-database";
 import { capturePrivatePostgresEndpointPolicyV2, privatePostgresTlsOptionsV2,
-  type PrivatePostgresEndpointPolicyV2 } from "./private-postgres-endpoint";
+  type PrivatePostgresEndpointPolicyV2, type PrivatePostgresValidationContextV1 } from "./private-postgres-endpoint";
 import { exactHostDataSnapshotV1 } from "../../security/host-value";
 
 export interface PrivatePostgresConfiguration {
@@ -9,7 +9,10 @@ export interface PrivatePostgresConfiguration {
   majorVersion: 17;
   privateEndpoint?: PrivatePostgresEndpointPolicyV2;
 }
-export function validatePrivatePostgresConfiguration(input: PrivatePostgresConfiguration) {
+/** `context.installRoot`, when the caller knows it, binds a socket host to that
+ * installation's own socket directory (see isInstalledPostgresSocketDirectoryV1). */
+export function validatePrivatePostgresConfiguration(input: PrivatePostgresConfiguration,
+  context: PrivatePostgresValidationContextV1 = {}) {
   const captured = exactHostDataSnapshotV1(input, ["host", "port", "database", "username", "password", "majorVersion"],
     ["privateEndpoint"]);
   if (!captured) throw new Error("invalid_private_database_config");
@@ -20,7 +23,7 @@ export function validatePrivatePostgresConfiguration(input: PrivatePostgresConfi
     || !/^[a-z][a-z0-9_]{0,62}$/.test(input.username) || input.username === "control_room_private_web"
     || typeof input.password !== "string" || input.password.length < 1 || input.password.length > 4096 || input.password.includes("\0"))
     throw new Error("invalid_private_database_config");
-  const privateEndpoint = capturePrivatePostgresEndpointPolicyV2(input, input.privateEndpoint);
+  const privateEndpoint = capturePrivatePostgresEndpointPolicyV2(input, input.privateEndpoint, context);
   return Object.freeze({ host: input.host, port: input.port, database: input.database,
     username: input.username, password: input.password, majorVersion: input.majorVersion,
     ...(privateEndpoint ? { privateEndpoint } : {}) });

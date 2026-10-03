@@ -1,6 +1,6 @@
+import { isUnbundledMainModuleV1 as isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { macLocalOwnerGrantIdV1, macLocalOwnerIdentityIdV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
@@ -122,7 +122,7 @@ export async function writeMacLocalFirstOwnerManifestV1(protectedRoot, outFile) 
   return manifest;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     if (process.argv.length !== 4) throw new Error("usage: pnpm mac:first-owner-manifest ABSOLUTE_PROTECTED_ROOT ABSOLUTE_OUT_FILE");
     const manifest = await writeMacLocalFirstOwnerManifestV1(process.argv[2], process.argv[3]);

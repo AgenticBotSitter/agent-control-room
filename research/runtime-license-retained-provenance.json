@@ -1,6 +1,116 @@
 {
   "schema": "control-room.runtime-license-retained-provenance/v1",
   "roots": {
+    "src/vendor/control-center": {
+      "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+      "qualification": "pinned_upstream_with_reviewed_local_adaptations",
+      "reviewedExclusions": [
+        {
+          "path": "freshness.ts",
+          "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "industry.ts",
+          "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "pinned-fetch.ts",
+          "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "safe-fetch.ts",
+          "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "sitemap.ts",
+          "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "source-reader.ts",
+          "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        }
+      ],
+      "files": [
+        {
+          "file": "feed-discovery.ts",
+          "bytes": 893,
+          "sha256": "d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974"
+        },
+        {
+          "file": "freshness.ts",
+          "bytes": 1140,
+          "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca"
+        },
+        {
+          "file": "industry-curation.ts",
+          "bytes": 19888,
+          "sha256": "ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962"
+        },
+        {
+          "file": "industry.ts",
+          "bytes": 2511,
+          "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b"
+        },
+        {
+          "file": "pinned-fetch.ts",
+          "bytes": 8071,
+          "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca"
+        },
+        {
+          "file": "public-address.ts",
+          "bytes": 3590,
+          "sha256": "291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48"
+        },
+        {
+          "file": "safe-fetch.ts",
+          "bytes": 3777,
+          "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733"
+        },
+        {
+          "file": "sitemap.ts",
+          "bytes": 15984,
+          "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e"
+        },
+        {
+          "file": "source-reader.ts",
+          "bytes": 12458,
+          "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab"
+        },
+        {
+          "file": "types.ts",
+          "bytes": 7780,
+          "sha256": "25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f"
+        }
+      ]
+    },
+    "third_party/control-center": {
+      "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+      "qualification": "pinned_upstream_notice",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1067,
+          "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b"
+        },
+        {
+          "file": "NOTICE.md",
+          "bytes": 6380,
+          "sha256": "f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf"
+        }
+      ]
+    },
     "third_party/cron-parser": {
       "packageName": "cron-parser",
       "packageVersion": "5.10.0",
@@ -45,6 +155,19 @@
         }
       ]
     },
+    "third_party/http_ece": {
+      "packageName": "http_ece",
+      "packageVersion": "1.2.0",
+      "sourceCommit": "0562510a30819f52424724a6fd5504becacd98a1",
+      "qualification": "pinned_npm_release_integrity; retained upstream LICENSE from the exact npm gitHead because the package tarball omits it",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1082,
+          "sha256": "717363ac0c7f0883042868db171cfed1f4b423119249eac9bce5131291017ea8"
+        }
+      ]
+    },
     "third_party/jsdom": {
       "packageName": "jsdom",
       "packageVersion": "26.1.0",
@@ -86,6 +209,45 @@
           "file": "LICENSE.md",
           "bytes": 1076,
           "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006"
+        }
+      ]
+    },
+    "third_party/mdast-util-from-markdown": {
+      "packageName": "mdast-util-from-markdown",
+      "packageVersion": "2.0.3",
+      "sourceCommit": "971e0266bc1ec8e8af558b4a668feb2d42d904e5",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ]
+    },
+    "third_party/mdast-util-gfm": {
+      "packageName": "mdast-util-gfm",
+      "packageVersion": "3.1.0",
+      "sourceCommit": "6b34bb2868c38c0b2909fa69c78534d5e44dc309",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ]
+    },
+    "third_party/micromark-extension-gfm": {
+      "packageName": "micromark-extension-gfm",
+      "packageVersion": "3.0.0",
+      "sourceCommit": "d4d848ba0cf6ffc8ce29f897bceda8dee4f2612f",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
         }
       ]
     },
@@ -161,6 +323,21 @@
           "file": "LICENSE.from-README.md",
           "bytes": 1073,
           "sha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4"
+        }
+      ]
+    },
+    "third_party/postgres": {
+      "reviewedExclusion": "retained historical public-domain notice only; no package bytes are assembled",
+      "files": [
+        {
+          "file": "NOTICE.md",
+          "bytes": 770,
+          "sha256": "3d149888548e267da55a49eb7982417fbd8b420833c276ea8ce45ef8a10cd8e8"
+        },
+        {
+          "file": "UNLICENSE",
+          "bytes": 1212,
+          "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c"
         }
       ]
     },
@@ -265,6 +442,32 @@
         }
       ]
     },
+    "third_party/simplewebauthn-server": {
+      "packageName": "@simplewebauthn/server",
+      "packageVersion": "14.0.3",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1071,
+          "sha256": "bd9e3f45696472076c7160c7f66e54b2d62d38bc2646c812d19be83ee4400c63"
+        }
+      ]
+    },
+    "third_party/web-push": {
+      "packageName": "web-push",
+      "packageVersion": "3.6.7",
+      "sourceCommit": "8d9ba1b33bfe0d73ccf3606c59ead4287f50e3b8",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package and exact npm gitHead",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 228,
+          "sha256": "1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce"
+        }
+      ]
+    },
     "third_party/zod": {
       "packageName": "zod",
       "packageVersion": "4.1.12",
@@ -275,131 +478,6 @@
           "file": "LICENSE",
           "bytes": 1072,
           "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
-        }
-      ]
-    },
-    "third_party/postgres": {
-      "reviewedExclusion": "retained historical public-domain notice only; no package bytes are assembled",
-      "files": [
-        {
-          "file": "NOTICE.md",
-          "bytes": 770,
-          "sha256": "3d149888548e267da55a49eb7982417fbd8b420833c276ea8ce45ef8a10cd8e8"
-        },
-        {
-          "file": "UNLICENSE",
-          "bytes": 1212,
-          "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c"
-        }
-      ]
-    },
-    "third_party/control-center": {
-      "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
-      "qualification": "pinned_upstream_notice",
-      "files": [
-        {
-          "file": "LICENSE",
-          "bytes": 1067,
-          "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b"
-        },
-        {
-          "file": "NOTICE.md",
-          "bytes": 6380,
-          "sha256": "f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf"
-        }
-      ]
-    },
-    "src/vendor/control-center": {
-      "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
-      "qualification": "pinned_upstream_with_reviewed_local_adaptations",
-      "reviewedExclusions": [
-        {
-          "path": "freshness.ts",
-          "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca",
-          "classification": "documented_local_adaptation",
-          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
-        },
-        {
-          "path": "industry.ts",
-          "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b",
-          "classification": "documented_local_adaptation",
-          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
-        },
-        {
-          "path": "pinned-fetch.ts",
-          "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca",
-          "classification": "documented_local_adaptation",
-          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
-        },
-        {
-          "path": "safe-fetch.ts",
-          "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733",
-          "classification": "documented_local_adaptation",
-          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
-        },
-        {
-          "path": "sitemap.ts",
-          "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e",
-          "classification": "documented_local_adaptation",
-          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
-        },
-        {
-          "path": "source-reader.ts",
-          "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab",
-          "classification": "documented_local_adaptation",
-          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
-        }
-      ],
-      "files": [
-        {
-          "file": "feed-discovery.ts",
-          "bytes": 893,
-          "sha256": "d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974"
-        },
-        {
-          "file": "freshness.ts",
-          "bytes": 1140,
-          "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca"
-        },
-        {
-          "file": "industry-curation.ts",
-          "bytes": 19888,
-          "sha256": "ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962"
-        },
-        {
-          "file": "industry.ts",
-          "bytes": 2511,
-          "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b"
-        },
-        {
-          "file": "pinned-fetch.ts",
-          "bytes": 8071,
-          "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca"
-        },
-        {
-          "file": "public-address.ts",
-          "bytes": 3590,
-          "sha256": "291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48"
-        },
-        {
-          "file": "safe-fetch.ts",
-          "bytes": 3777,
-          "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733"
-        },
-        {
-          "file": "sitemap.ts",
-          "bytes": 15984,
-          "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e"
-        },
-        {
-          "file": "source-reader.ts",
-          "bytes": 12458,
-          "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab"
-        },
-        {
-          "file": "types.ts",
-          "bytes": 7780,
-          "sha256": "25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f"
         }
       ]
     }

@@ -23,16 +23,38 @@ export function request(path = "/api/v1/projects", method = "GET", value?: unkno
     "content-type": "application/json", "idempotency-key": key }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
 }
 export type WebFixtureMigrationProfile = "full" | "without-external-content";
-export async function fixture(clock = () => now, migrationProfile: WebFixtureMigrationProfile = "full") {
+export async function fixture(clock = () => now, migrationProfile: WebFixtureMigrationProfile = "full", ownerSubject = "test-owner") {
   const db = new PGlite();
   const omitted = migrationProfile === "without-external-content"
     ? new Set(["0025_cr9a_external_content_sync.sql", "0026_cr9a_external_content_placement.sql"]) : new Set<string>();
-  for (const file of (await readdir("db/migrations")).filter(f => f.endsWith(".sql") && !omitted.has(f)).sort())
+  // The migrations must run as the NOLOGIN schema owner, exactly as the
+  // production applier runs them (apply-migrations.mjs: `SET ROLE
+  // control_room_schema_owner` per migration). Replaying them raw on PGlite
+  // left every object owned by the `postgres` superuser, which the compiled
+  // startup preflight then refused: its SECURITY DEFINER allowlist requires the
+  // shipped functions to be owned by control_room_schema_owner, and a database
+  // whose functions are owned by a superuser is one an operator could re-create
+  // or replace, so the web login's missing EXECUTE is not a sufficient reason to
+  // exempt them. Creating the role first and applying each file under SET ROLE
+  // reproduces production ownership, so the fixture and the boundary agree
+  // about what a correct database looks like.
+  await db.exec(`CREATE ROLE control_room_schema_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+    NOREPLICATION NOBYPASSRLS`);
+  // The same two grants apply-migrations.mjs issues after the migrate phase
+  // (lines 328-329): without CREATE on the schema the very first migration
+  // fails with 42501 permission denied for schema public.
+  await db.exec(`GRANT CREATE, USAGE ON SCHEMA public TO control_room_schema_owner`);
+  const files = (await readdir("db/migrations")).filter(f => f.endsWith(".sql") && !omitted.has(f)).sort();
+  for (const file of files) {
+    await db.exec("BEGIN");
+    await db.exec("SET LOCAL ROLE control_room_schema_owner");
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
+    await db.exec("COMMIT");
+  }
   await db.query("INSERT INTO tenants(id,display_name) VALUES('tenant:web','Test tenant')");
   await db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Test workspace')");
   const client = adaptPglite(db);
-  await new SecurityStore(client).bootstrapOwner({ tenantId: "tenant:web", provider: trust.issuer, subject: "test-owner",
+  await new SecurityStore(client).bootstrapOwner({ tenantId: "tenant:web", provider: trust.issuer, subject: ownerSubject,
     identityId: "identity:web", grantId: "grant:web", displayName: "Test owner", verifiedAt: new Date(now - 60_000).toISOString(),
     expiresAt: new Date(now + 300_000).toISOString(), now: new Date(now).toISOString() });
   const service = new WebProjectService(client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, clock);

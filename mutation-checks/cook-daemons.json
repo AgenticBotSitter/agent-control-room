@@ -1,0 +1,464 @@
+[
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": ".refine(value => ![\"root\", \"staff\"].includes(value))",
+    "replace": ".refine(() => true)",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "root must never be accepted as a configured non-root service account"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "isAbsolute(value)",
+    "replace": "!isAbsolute(value)",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "privileged service paths must be canonical absolute paths"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "if (!within(join(parsed.installRoot, \"runtime\"), parsed.postgresExecutable)\n    || !parsed.postgresExecutable.endsWith(\"/bin/postgres\")) {",
+    "replace": "if (false) {",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "postgres must execute only from the root-owned trusted runtime"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "if (knownProtectedSecrets.some(secret => resources.some(resource => resource.kind !== \"protected_config\"\n    && resource.contents.includes(secret)))) {",
+    "replace": "if (false) {",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "known secret bytes must be refused before plist installation"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "if (canonicalJson(parsed) !== canonicalJson(expected)) throw new Error(\"macos_launch_daemon_bundle_refused\");",
+    "replace": "if (false) throw new Error(\"macos_launch_daemon_bundle_refused\");",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a forged bundle must not redirect privileged file paths"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "{ role: \"supervisor\", executable: sandbox,",
+    "replace": "{ role: \"supervisor\", executable: runtimeNode,",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the supervisor must enter its Seatbelt profile"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "OPENSSL_CONF: join(parsed.installRoot, \"runtime\", \"pg-current\", \"etc\", \"openssl.cnf\"),",
+    "replace": "",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "postgres must use the root-owned OpenSSL configuration"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "[\"-D\", join(parsed.installRoot, \"pg\", \"current\"), \"-k\", join(parsed.installRoot, \"pg\", \"socket\")]),",
+    "replace": "[\"-D\", join(parsed.installRoot, \"pg\", \"data-17\"), \"-k\", join(parsed.installRoot, \"pg\", \"socket\")]),",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the static postgres plist must follow pg current rather than pinning an old cluster"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "{ role: \"nightly-backup\", executable: runtimeNode,",
+    "replace": "{ role: \"supervisor\", executable: runtimeNode,",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "nightly backup must remain until updater item 19a lands"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "directoryOwner: \"root\" as const, directoryGroup: \"wheel\" as const,",
+    "replace": "directoryOwner: service.accountName as \"root\", directoryGroup: service.groupName as \"wheel\",",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "log directories must stay root-owned while only files belong to services"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (canonicalJson(parsed) !== canonicalJson(expected)) throw new Error(\"macos_launch_daemon_receipt_refused\");",
+    "replace": "if (false) throw new Error(\"macos_launch_daemon_receipt_refused\");",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "uninstall and rollback must accept only the exact install receipt"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (typeof elevatedPort?.invokeBatch !== \"function\") throw new Error(\"macos_launch_daemon_installer_refused\");",
+    "replace": "if (false) throw new Error(\"macos_launch_daemon_installer_refused\");",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "installation must have exactly one explicit elevated batch entry point"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (busy) return report(action, \"refused\", 0);",
+    "replace": "if (!busy) return report(action, \"refused\", 0);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a second concurrent caller must be refused before elevation"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (!(signal instanceof AbortSignal) || signal.aborted) return report(action, \"refused\", 0);",
+    "replace": "if (false) return report(action, \"refused\", 0);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "an already cancelled request must not invoke the elevated helper"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (action !== \"install\") verifyReceipt(verifiedBundle, value);",
+    "replace": "if (false) verifyReceipt(verifiedBundle, value);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "removal must be bound to the exact inventory installed earlier"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (signal.aborted || result.requestDigest !== request.requestDigest) return report(action, \"uncertain\", 1);",
+    "replace": "if (signal.aborted) return report(action, \"uncertain\", 1);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a helper receipt from another request must fail closed"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "if (canonicalJson(result.inventory ?? []) !== canonicalJson(expectedInventory)) return report(action, \"uncertain\", 1);",
+    "replace": "if (false) return report(action, \"uncertain\", 1);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a helper may confirm only the exact installed or removed inventory"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "const installRollbackBootout = [\"updater-guard\", \"updater\", \"nightly-backup\", \"fleet-gateway\", \"supervisor\", \"postgresql17\"]",
+    "replace": "const installRollbackBootout = [...installBootstrap].reverse()",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "install rollback must stop updater and guard before the services they protect"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "strategy: \"launchctl_bootout_first\" as const,",
+    "replace": "strategy: \"pg_ctl_first\" as \"launchctl_bootout_first\",",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "postgres must be booted out before any shutdown verification or data change"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "listenAddresses: \"\" as const, ssl: \"off\" as const",
+    "replace": "listenAddresses: \"*\" as \"\", ssl: \"on\" as \"off\"",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "postgres configuration must stay socket-only with TLS disabled"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "if (typeof entry !== \"string\" || !isAbsolute(entry) || resolve(entry) !== entry) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='built gateway accepts' tests/fleet-connector.test.ts",
+    "why": "the built gateway must derive release assets only from its canonical absolute entry path"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "return args.length === 2 && args[0] === \"--configuration\" && !args[1]!.startsWith(\"-\") ? args[1] : undefined;",
+    "replace": "return args[0] === \"--configuration\" ? args[1] : undefined;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='built gateway accepts' tests/fleet-connector.test.ts",
+    "why": "the built gateway must refuse missing and option-shaped configuration paths"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "join(current, \"dist-vps\", \"server\", \"nightlyBackup.js\")",
+    "replace": "join(current, \"dist-vps\", \"server\", \"does-not-exist.js\")",
+    "test": "node scripts/build-vps.mjs && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "every current-relative daemon program must exist in the staged release"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "'  <key>ThrottleInterval</key>', '  <integer>30</integer>',",
+    "replace": "'  <key>ThrottleInterval</key>', '  <integer>0</integer>',",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "launchd restart throttling must remain bounded"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "'  <key>Umask</key>', '  <integer>63</integer>',",
+    "replace": "'  <key>Umask</key>', '  <integer>0</integer>',",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "service-created files must retain the restrictive umask"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "const environment: Readonly<Record<string, string>> | undefined = definition.role === \"postgresql17\" ? {",
+    "replace": "const environment: Readonly<Record<string, string>> | undefined = definition.role === \"postgresql17\" ? { PATH: \"/usr/bin:/bin\",",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "daemon environments must not inherit or add a search path"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "return args.length === 2 && args[0] === \"--configuration\" && isAbsolute(args[1]!)",
+    "replace": "return args[0] === \"--configuration\" && isAbsolute(args[1]!)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the backup entry must accept only one exact protected configuration argument"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (!configurationPath) throw new Error(\"nightly_backup_configuration_refused\");",
+    "replace": "if (false) throw new Error(\"nightly_backup_configuration_refused\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a missing backup configuration must stop before any database call"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-configuration.ts",
+    "find": "if (canonicalJson(value) !== canonicalJson(expected)) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the runtime must accept only the installer-generated login, paths, ledger pin and retention"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (result.planned !== false || !/^sha256:[a-f0-9]{64}$/u.test(result.identityDigest ?? \"\")) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a plan or incomplete backup must never be reported as a completed nightly dump"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "if (isMainModuleV1(process.argv[1], import.meta.url)) {",
+    "replace": "if (false && isMainModuleV1(process.argv[1], import.meta.url)) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='focused compiled nightly entry' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the compiled backup entry must actually execute instead of exiting inertly"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "Object.freeze({ kind: \"protected_config\" as const, path: nightlyBackupConfigurationFileV1(parsed.installRoot),",
+    "replace": "Object.freeze({ kind: \"newsyslog_config\" as const, path: nightlyBackupConfigurationFileV1(parsed.installRoot),",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the install batch must carry the generated protected backup configuration"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-configuration.ts",
+    "find": "export const NIGHTLY_BACKUP_LOGIN_V1 = \"control_room_migrator\" as const;",
+    "replace": "export const NIGHTLY_BACKUP_LOGIN_V1 = \"control_room_app\" as const;",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the generated config must name the existing login that can read the complete database"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-configuration.ts",
+    "find": "export const NIGHTLY_BACKUP_RETENTION_V1 = 14 as const;",
+    "replace": "export const NIGHTLY_BACKUP_RETENTION_V1 = 1 as const;",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the installed backup history must retain fourteen nightly generations"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (active) throw new Error(\"nightly_backup_concurrent_refused\");",
+    "replace": "if (false) throw new Error(\"nightly_backup_concurrent_refused\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup refuses a burst' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a burst must start only one dump in the daemon process"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (password.length < 1 || password.length > 4096 || /[\\u0000\\r\\n]/u.test(password)) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "an empty or malformed protected credential must stop before pg_dump"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== now) throw new Error(\"nightly_backup_clock_refused\");",
+    "replace": "if (false) throw new Error(\"nightly_backup_clock_refused\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "an invalid backup generation timestamp must fail with a bounded refusal"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (generations.some(entry => !entry.directory || entry.symbolicLink)) throw new Error(\"unsafe_generation\");",
+    "replace": "if (false) throw new Error(\"unsafe_generation\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "retention must never treat a symlink or non-directory as a removable backup generation"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "const retired = spendable.filter(generation => !kept.has(generation));",
+    "replace": "const retired = [];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "successful backups must apply the configured retention count"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "if (args.length === 1 && (args[0] === \"--help\" || args[0] === \"-h\")) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='focused compiled nightly entry' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the shipped entry must answer help with plain usage and exit zero"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "if (args.length === 1 && args[0] === \"--version\") {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='focused compiled nightly entry' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the shipped entry must answer version and exit zero"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "return error instanceof Error && failureCodes.has(error.message) ? error.message : \"nightly_backup_execution_failed\";",
+    "replace": "return \"nightly_backup_execution_failed\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='focused compiled nightly entry' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "operational failures must retain a bounded diagnosable reason code"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-configuration.ts",
+    "find": "outputRoot: join(installRoot, \"backups\", \"nightly\"),",
+    "replace": "outputRoot: join(protectedRoot, \"backups\", \"nightly\"),",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the nightly job must write the spec root-level backup directory"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-configuration.ts",
+    "find": "\"tenants\", \"workspaces\", \"projects\", \"control_web_task_commands\", \"control_harness_runs\",",
+    "replace": "\"tenant_rows\", \"workspaces\", \"projects\", \"control_web_task_commands\", \"control_harness_runs\",",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "required backup tables must be pinned against independent literals"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-configuration.ts",
+    "find": "ledger.digest",
+    "replace": "\"0\".repeat(64)",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the compiled migration ledger pin must be checked against a literal"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "Object.freeze({ kind: \"protected_config\" as const, path: macosFleetGatewayConfigurationFileV1(parsed.installRoot),",
+    "replace": "Object.freeze({ kind: \"newsyslog_config\" as const, path: macosFleetGatewayConfigurationFileV1(parsed.installRoot),",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the installer must write the protected fleet gateway configuration"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "Object.freeze({ purpose: \"nightly_backup_output\" as const, path: nightlyConfiguration.outputRoot,",
+    "replace": "Object.freeze({ purpose: \"nightly_backup_lock\" as const, path: nightlyConfiguration.outputRoot,",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='account that runs it' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the install request must declare the nightly output directory explicitly"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "keepAlive: \"failed\" as const, exitTimeOut: 45 },",
+    "replace": "keepAlive: true, exitTimeOut: 45 },",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "known fleet configuration refusals must not enter an unconditional launchd crash loop"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-installer.ts",
+    "find": "writableDirectories: bundle.writableDirectories,",
+    "replace": "writableDirectories: [],",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='one elevated request' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the elevated item-4 request must receive the mkdir and lchown contract"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (!output.directory || output.symbolicLink) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts|fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a symlinked output root must be refused before backup execution"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (!credential.file || credential.symbolicLink) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts|fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a symlinked password file must be refused before its bytes are read"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW",
+    "replace": "constants.O_RDONLY | constants.O_DIRECTORY",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the output directory must not be followed when it is swapped after lstat"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);\n  try {\n    const entry = await handle.stat();\n    if (!entry.isFile()) throw new Error(\"nightly_backup_credential_refused\");",
+    "replace": "  const handle = await open(path, constants.O_RDONLY);\n  try {\n    const entry = await handle.stat();\n    if (!entry.isFile()) throw new Error(\"nightly_backup_credential_refused\");",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the password file must be opened with O_NOFOLLOW and read through the descriptor"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "releaseLock = await runtime.acquireLock(parsed.lockFile);",
+    "replace": "releaseLock = undefined;",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "separate backup processes must share a filesystem lock"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | kernelLock, 0o600);",
+    "replace": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "The descriptor must hold the kernel exclusion across backup processes"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const kernelLock = process.platform === \"darwin\" ? 0x20 | constants.O_NONBLOCK : 0;",
+    "replace": "const kernelLock = 0;",
+    "test": "node --import tsx --test --test-name-pattern='empty and recycled' tests/hard7-robustness.test.mjs",
+    "why": "Mac kernel ownership must recover empty stamps and recycled PIDs while preserving a live owner"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (error instanceof Error && error.message === \"nightly_backup_dependency_missing\") throw error;",
+    "replace": "if (false) throw error;",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "a missing pg package must retain its own bounded reason code"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (error instanceof Error && error.message === \"unsafe_generation\") throw error;",
+    "replace": "if (false) throw error;",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "an unsafe retained generation must keep its distinct reason code"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "  \"unsafe_generation\",",
+    "replace": "",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the CLI boundary must expose unsafe_generation without collapsing it"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "  \"nightly_backup_dependency_missing\",",
+    "replace": "",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the CLI boundary must expose a missing pg dependency distinctly"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "const info = await fileSystem.lstat(path);",
+    "replace": "const info = await import(\"node:fs/promises\").then(fs => fs.stat(path));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='gateway configuration failures' tests/fleet-connector.test.ts",
+    "why": "the fleet gateway must inspect the protected path with lstat rather than following it"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "const handle = await fileSystem.open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);",
+    "replace": "const handle = await fileSystem.open(path, fsConstants.O_RDONLY);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='gateway configuration failures' tests/fleet-connector.test.ts",
+    "why": "the gateway configuration loader refuses a protected-file symlink swapped in after lstat; this runtime loader carries the race hook"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "} catch { refuseFleetGatewayConfigurationV1(); }",
+    "replace": "} catch (error) { throw error; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='gateway configuration failures' tests/fleet-connector.test.ts",
+    "why": "missing or bad gateway configuration must not leak raw filesystem errors or paths"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "return code === \"fleet_gateway_execution_failed\" ? 1 : 0;",
+    "replace": "return 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='gateway configuration failures' tests/fleet-connector.test.ts",
+    "why": "known fleet configuration refusals must park the failed-only keepalive job"
+  },
+  {
+    "file": "docs/UPDATER_DAEMON_INSTALLER_INTERFACE.md",
+    "find": "reject a name, UID or GID collision",
+    "replace": "accept a name, UID or GID collision",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "the item-4 hand-off must retain the UID and GID collision refusal"
+  },
+  {
+    "file": "docs/UPDATER_DAEMON_INSTALLER_INTERFACE.md",
+    "find": "generates exactly six plists",
+    "replace": "generates an unspecified plist set",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='generates the realigned' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "branch alignment must pin six plists and the item-19a removal boundary"
+  }
+]

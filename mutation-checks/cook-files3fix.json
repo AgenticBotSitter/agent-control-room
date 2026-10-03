@@ -1,0 +1,275 @@
+[
+  {
+    "file": "src/web/v1/result-file-http.ts",
+    "find": "const setId = safeDecode(download![2]);\n      const fileId = safeDecode(download![3]);",
+    "replace": "const setId = download![2];\n      const fileId = download![3];",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-05 FILES3-01\" tests/result-file-service.test.ts",
+    "why": "encoded browser paths must reach the real service"
+  },
+  {
+    "file": "src/web/v1/result-file-http.ts",
+    "find": "if (!catalogProjectIdSchema.safeParse(projectId).success)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=\"decoded path IDs refuse\" tests/result-file-download-http.test.ts",
+    "why": "project path segments are decoded once and validated before minting"
+  },
+  {
+    "file": "src/web/v1/result-file-http.ts",
+    "find": "if (!/^result-set:[a-f0-9]{32}$/u.test(setId) || !/^result-file:[a-f0-9]{32}$/u.test(fileId))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=\"decoded path IDs refuse\" tests/result-file-download-http.test.ts",
+    "why": "set and file path segments cannot contain separators or repeated encoding"
+  },
+  {
+    "file": "src/web/v1/result-file-http.ts",
+    "find": "if (!resultFileDisplayNameSchema.safeParse(displayName).success)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=\"attachment names reject\" tests/result-file-download-http.test.ts",
+    "why": "the HTTP edge applies the shared filename safety contract"
+  },
+  {
+    "file": "src/web/v1/result-file-http.ts",
+    "find": "+ (fallback === displayName ? \"\" : `; filename*=UTF-8''${encoded}`)",
+    "replace": "+ \"\"",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-05 FILES3-01\" tests/result-file-service.test.ts",
+    "why": "Unicode attachment names retain an encoded filename parameter"
+  },
+  {
+    "file": "src/web/v1/result-file-wire.ts",
+    "find": ".max(120).refine(isPostgresTextV1)",
+    "replace": ".max(120)",
+    "test": "node --import tsx --test --test-name-pattern=\"attachment names reject\" tests/result-file-download-http.test.ts",
+    "why": "the shared filename contract rejects unpaired surrogates"
+  },
+  {
+    "file": "src/web/v1/result-file-wire.ts",
+    "find": "!/[\\u0000-\\u001f\\u007f-\\u009f]/.test(value)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern=\"attachment names reject\" tests/result-file-download-http.test.ts",
+    "why": "C1 controls are refused before header construction"
+  },
+  {
+    "file": "src/artifacts/v1/result-file-store.ts",
+    "find": "JSON.stringify([\"control-room.result-file-store/v2\", tenantId, projectId, fileId, contentDigest])",
+    "replace": "`control-room.result-file-store/v2:${tenantId}:${projectId}:${fileId}:${contentDigest}`",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-02\" tests/result-file-store.test.ts",
+    "why": "distinct namespace tuples must have distinct byte addresses"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "JSON.stringify([\"control-room.result-upload-staging/v2\", tenantId, projectId, uploadId, ordinal])",
+    "replace": "`control-room.result-upload-staging/v2:${tenantId}:${projectId}:${uploadId}:${ordinal}`",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-02\" tests/result-upload-staging.test.ts",
+    "why": "staging keys cannot alias another session namespace"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (abandoned.length) await this.removeBoundNames(abandoned, operation, true);",
+    "replace": "if (false) await this.removeBoundNames(abandoned, operation, true);",
+    "test": "node --import tsx --test --test-name-pattern=\"twenty stopped writers\" tests/result-upload-staging.test.ts",
+    "why": "a proven dead writer must not strand its scratch bytes"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (!Number.isSafeInteger(total) || total > (this.configuration.maximumTotalBytes ?? 2 * 512 * 1024 * 1024))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=\"fifty staging requests\" tests/result-upload-staging.test.ts",
+    "why": "staged chunks and scratch reservations share an aggregate disk ceiling"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (!root.isDirectory() || root.dev.toString() !== device || root.ino.toString() !== inode\n        || (Number(root.mode) & 0o077) !== 0) throw Error(\"root_changed\");",
+    "replace": "if (false) throw Error(\"root_changed\");",
+    "test": "node --import tsx --test --test-name-pattern=\"cleanup helper sent\" tests/result-upload-staging.test.ts",
+    "why": "the cleanup child verifies the admitted directory identity"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (!entry.isFile() || entry.isSymbolicLink() || (Number(entry.mode) & 0o077) !== 0\n          || (entry.nlink !== 1n && !(scratch && entry.nlink === 2n))) throw Error(\"entry_changed\");",
+    "replace": "if (false) throw Error(\"entry_changed\");",
+    "test": "node --import tsx --test --test-name-pattern=\"cleanup refuses symlinks\" tests/result-upload-staging.test.ts",
+    "why": "cleanup never removes substituted symlinks or hardlinked chunks"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "fs.unlinkSync(name); removed++;",
+    "replace": "fs.unlinkSync(require(\"node:path\").join(${JSON.stringify(this.root)}, name)); removed++;",
+    "test": "node --import tsx --test --test-name-pattern=\"swapping the root after\" tests/result-upload-staging.test.ts",
+    "why": "unlink remains relative to the kernel-held working directory"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "maxChunks < 0",
+    "replace": "maxChunks < 1",
+    "test": "node --import tsx --test --test-name-pattern=\"empty assembly is valid\" tests/result-upload-staging.test.ts",
+    "why": "an empty file is assembled from zero chunks"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, 1);\n      await this.assertAccountedFor(operation);\n      const pieces",
+    "replace": "await this.assertAccountedFor(operation);\n      const pieces",
+    "test": "node --import tsx --test --test-name-pattern=\"empty assembly is valid\" tests/result-upload-staging.test.ts",
+    "why": "zero-chunk assembly still validates its upload identity"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "      stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, 1);\n      await this.assertAccountedFor(operation);\n      const pieces",
+    "replace": "      stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, 1);\n      if (maxChunks > 0) await this.assertAccountedFor(operation);\n      const pieces",
+    "test": "node --import tsx --test --test-name-pattern=\"empty assembly is valid\" tests/result-upload-staging.test.ts",
+    "why": "zero-chunk assembly still proves the root"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "(input.sizeBytes as number) < 0",
+    "replace": "(input.sizeBytes as number) < 1",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-07: fleet\" tests/result-upload-staging.test.ts",
+    "why": "the fleet reserve path must admit an authorized empty promise"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "if (expectedSize < 0)",
+    "replace": "if (expectedSize < 1)",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-07: fleet\" tests/result-upload-staging.test.ts",
+    "why": "the fleet finalizer must admit verified empty bytes"
+  },
+  {
+    "file": "scripts/converter/html-to-markdown-worker.mjs",
+    "find": "if (html.includes(\"\\u0000\")) throw new Error(\"input_not_utf8\");",
+    "replace": "if (false) throw new Error(\"input_not_utf8\");",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-06\" tests/text-copy-converter.test.ts",
+    "why": "NUL-interspersed HTML is invalid before parsing"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "activeConversions >= TEXT_COPY_ADMISSION_LIMITS.activeConversions",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=\"fifty requests across\" tests/text-copy-converter.test.ts",
+    "why": "service instances share one active conversion admission ceiling"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "activeSourceBytes + source.byteLength > TEXT_COPY_ADMISSION_LIMITS.sourceBytes",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=\"aggregate source bytes\" tests/text-copy-converter.test.ts",
+    "why": "input bytes are admitted before copying or writing"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "finally { activeConversions--; activeSourceBytes -= reservedBytes; }",
+    "replace": "finally {}",
+    "test": "node --import tsx --test --test-name-pattern=\"FILES3-U1\" tests/text-copy-converter.test.ts",
+    "why": "cancellation and failure release aggregate admission"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "      throw new ResultUploadStagingError(\"staging_invalid\");\n    } catch (error) { throw safe(error); }",
+    "replace": "      return;\n    } catch (error) { throw safe(error); }",
+    "test": "node --import tsx --test --test-name-pattern=\"volume ignoring directory locks\" tests/result-upload-staging.test.ts",
+    "why": "the staging volume must prove that kernel directory locks work"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "configuration.maximumTotalBytes !== undefined && (!Number.isSafeInteger(configuration.maximumTotalBytes)\n        || configuration.maximumTotalBytes < configuration.maximumChunkBytes)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern=\"malformed aggregate budgets\" tests/result-upload-staging.test.ts",
+    "why": "aggregate staging budgets must be valid finite integer bounds"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "        if (!/^[a-f0-9]{64}\\\\.chunk$/u.test(name) && !(scratch && (abandoned === \"true\" || ownedScratch === \"true\"))) throw Error(\"name_invalid\");",
+    "replace": "        if (false) throw Error(\"name_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern=\"cleanup helper rejects unbounded names\" tests/result-upload-staging.test.ts",
+    "why": "cleanup only accepts flat derived entry names"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "try { process.kill(pid, 0); }",
+    "replace": "try { throw { code: \"ESRCH\" }; }",
+    "test": "node --import tsx --test --test-name-pattern=\"parent reclamation\" tests/result-upload-staging.test.ts",
+    "why": "the parent never schedules live scratch writers"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if ((error as NodeJS.ErrnoException).code === \"ESRCH\") abandoned.push(name);",
+    "replace": "if (true) abandoned.push(name);",
+    "test": "node --import tsx --test --test-name-pattern=\"parent reclamation\" tests/result-upload-staging.test.ts",
+    "why": "inaccessible writers are retained without scheduling deletion"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "try { process.kill(parseInt(name.split(\"-\")[2], 36), 0); continue; }",
+    "replace": "try { throw { code: \"ESRCH\" }; }",
+    "test": "node --import tsx --test --test-name-pattern=\"child scratch cleanup\" tests/result-upload-staging.test.ts",
+    "why": "the child independently proves the scratch writer is dead"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (error.code !== \"ESRCH\") continue;",
+    "replace": "if (false) continue;",
+    "test": "node --import tsx --test --test-name-pattern=\"child scratch cleanup\" tests/result-upload-staging.test.ts",
+    "why": "permission refusal is never treated as proof of writer death"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (scratch && ownedScratch === \"true\" && parseInt(name.split(\"-\")[2], 36) !== Number(parentPid)) throw Error(\"owner_changed\");",
+    "replace": "if (false) throw Error(\"owner_changed\");",
+    "test": "node --import tsx --test --test-name-pattern=\"child scratch cleanup\" tests/result-upload-staging.test.ts",
+    "why": "successful-write cleanup may remove only the parent writer scratch"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (final.dev !== entry.dev || final.ino !== entry.ino) throw Error(\"entry_changed\");",
+    "replace": "if (false) throw Error(\"entry_changed\");",
+    "test": "node --import tsx --test --test-name-pattern=\"child scratch cleanup\" tests/result-upload-staging.test.ts",
+    "why": "a two-link scratch entry must share custody with its derived final chunk"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (current.dev !== entry.dev || current.ino !== entry.ino || current.nlink !== entry.nlink) throw Error(\"entry_changed\");",
+    "replace": "if (false) throw Error(\"entry_changed\");",
+    "test": "node --import tsx --test --test-name-pattern=\"entry replaced between\" tests/result-upload-staging.test.ts",
+    "why": "entry identity is rechecked before unlinking"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (held.dev !== this.identity.device || held.ino !== this.identity.inode)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern=\"held quota lock\" tests/result-upload-staging.test.ts",
+    "why": "the opened quota lock belongs to the admitted directory"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if ((error as NodeJS.ErrnoException).code !== \"EAGAIN\") throw safe(error);",
+    "replace": "if (false) throw safe(error);",
+    "test": "node --import tsx --test --test-name-pattern=\"held quota lock\" tests/result-upload-staging.test.ts",
+    "why": "only kernel lock contention is retried"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (!entry.isFile() || entry.isSymbolicLink()) throw new ResultUploadStagingError(\"staging_ambiguous\");",
+    "replace": "if (false) throw new ResultUploadStagingError(\"staging_ambiguous\");",
+    "test": "node --import tsx --test --test-name-pattern=\"disk budget rejects\" tests/result-upload-staging.test.ts",
+    "why": "disk accounting refuses directory and symbolic-link entries"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "Math.max(Number(entry.size), Number(name.split(\"-\")[3].split(\".\")[0]))",
+    "replace": "Number(entry.size)",
+    "test": "node --import tsx --test --test-name-pattern=\"disk budget rejects\" tests/result-upload-staging.test.ts",
+    "why": "live partial writes reserve their promised bytes"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "timer = setTimeout(() => { try { kill(\"SIGKILL\"); } catch { /* the close/exit result decides */ } },",
+    "replace": "timer = setTimeout(() => {},",
+    "test": "node --import tsx --test --test-name-pattern=\"stalled cleanup child\" tests/result-upload-staging.test.ts",
+    "why": "a stalled cleanup process cannot exceed the operation deadline"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (code !== 0 || !/^\\d+$/u.test(output)) throw new ResultUploadStagingError(\"staging_ambiguous\");",
+    "replace": "if (false) throw new ResultUploadStagingError(\"staging_ambiguous\");",
+    "test": "node --import tsx --test --test-name-pattern=\"child scratch cleanup\" tests/result-upload-staging.test.ts",
+    "why": "child refusals cannot be mistaken for successful cleanup"
+  }
+]

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { posix } from "node:path";
 import { checkServerIdentity, type ConnectionOptions, type PeerCertificate } from "node:tls";
 import { sha256Digest } from "../../security/canonical-digest";
 import { exactHostDataSnapshotV1 } from "../../security/host-value";
@@ -20,10 +21,31 @@ type Address = Readonly<{ host: string; port: number; database: string; majorVer
 
 function refused(): never { throw new Error("invalid_private_database_endpoint"); }
 
+const INSTALLED_SOCKET_SUFFIX_V1 = "/pg/socket";
+export type PrivatePostgresValidationContextV1 = Readonly<{ installRoot?: string }>;
+
+/** The installer's own socket directory, `<root>/pg/socket`: the installed cluster
+ * is socket-only (`listen_addresses = ''`), so this is how the services reach it.
+ * Absolute, already normal (no `.`/`..`/`//`), no control, invisible or separator
+ * characters. (A path too long for a Unix socket is the cluster's own refusal, at
+ * init.) A caller that knows the install root (every protected-file loader and the
+ * composer pass it; it never comes from the JSON itself) gets exactly
+ * `<installRoot>/pg/socket` and every other directory is refused. Without a root,
+ * only the shape is checked; that is re-validation of an already-bound value. */
+export function isInstalledPostgresSocketDirectoryV1(host: unknown, installRoot?: string): host is string {
+  if (typeof host !== "string" || !host.startsWith("/") || !host.endsWith(INSTALLED_SOCKET_SUFFIX_V1)
+    || host.length <= INSTALLED_SOCKET_SUFFIX_V1.length || host.length > 1024
+    || posix.normalize(host) !== host || /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(host)) return false;
+  if (installRoot === undefined) return true;
+  return typeof installRoot === "string" && installRoot.startsWith("/") && installRoot !== "/"
+    && posix.normalize(installRoot) === installRoot && host === `${installRoot}${INSTALLED_SOCKET_SUFFIX_V1}`;
+}
+
 /** Only exact canonical literals are accepted. No resolution, localhost alias,
- * IPv4 shorthand, mapped IPv6, subnet route, wildcard, or ambient DNS lookup. */
-export function isSupportedPrivatePostgresHostV1(host: unknown): host is string {
-  if (host === "127.0.0.1") return true;
+ * IPv4 shorthand, mapped IPv6, subnet route, wildcard, or ambient DNS lookup.
+ * The one non-address host is the installed socket directory (above). */
+export function isSupportedPrivatePostgresHostV1(host: unknown, installRoot?: string): host is string {
+  if (host === "127.0.0.1" || isInstalledPostgresSocketDirectoryV1(host, installRoot)) return true;
   if (typeof host !== "string" || isIP(host) !== 4) return false;
   const bytes = host.split(".").map(Number);
   return bytes.join(".") === host && bytes[0] === 100 && bytes[1]! >= 64 && bytes[1]! <= 127
@@ -36,9 +58,10 @@ export function privatePostgresEndpointFingerprintV1(endpoint: Address): string 
 }
 
 export function capturePrivatePostgresEndpointPolicyV2(endpoint: Address,
-  value: unknown): PrivatePostgresEndpointPolicyV2 | undefined {
-  if (!isSupportedPrivatePostgresHostV1(endpoint.host)) return refused();
-  if (endpoint.host === "127.0.0.1") {
+  value: unknown, context: PrivatePostgresValidationContextV1 = {}): PrivatePostgresEndpointPolicyV2 | undefined {
+  if (!isSupportedPrivatePostgresHostV1(endpoint.host, context.installRoot)) return refused();
+  // Loopback and the local socket never leave this Mac: no route evidence, no TLS.
+  if (endpoint.host === "127.0.0.1" || isInstalledPostgresSocketDirectoryV1(endpoint.host, context.installRoot)) {
     if (value !== undefined) return refused();
     return undefined;
   }

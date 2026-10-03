@@ -152,6 +152,22 @@ test("private endpoints reject public, alternate loopback, ambiguous, DNS and un
   assert.throws(() => privatePgOptions(loopbackWithPolicy), /invalid_private_database_endpoint/u);
 });
 
+test("the installed socket directory is a local host: no policy, no TLS; every other path is refused", () => {
+  const socketHost = "/Library/Application Support/Control Room/pg/socket";
+  const options = privatePgOptions({ ...config, host: socketHost, port: 5432 });
+  const client = new Client(options);
+  assert.equal(client.connectionParameters.host, socketHost);
+  assert.equal(client.connectionParameters.ssl, false);
+  assert.equal(validatePrivatePostgresConfiguration({ ...config, host: socketHost }).privateEndpoint, undefined);
+  // A socket host with route evidence is as wrong as loopback with route evidence.
+  assert.throws(() => privatePgOptions({ ...remoteConfiguration(), host: socketHost }), /invalid_private_database_endpoint/u);
+  for (const host of ["pg/socket", "./pg/socket", "/pg/socket", "/", "/tmp", "/tmp/socket", "/tmp/pg/socket/",
+    "/tmp/pg/sockets", "/tmp/pg/socket/..", "/tmp/../pg/socket", "/tmp//pg/socket", "/tmp/./pg/socket",
+    "/tmp/a\u0000/pg/socket", "/tmp/a\n/pg/socket", `/${"a".repeat(1100)}/pg/socket`, "file:///tmp/pg/socket"]) {
+    assert.throws(() => privatePgOptions({ ...config, host }), /invalid_private_database_endpoint/u, JSON.stringify(host));
+  }
+});
+
 test("private TLS validates the declared hostname and accepts renewed certificates", () => {
   const options = privatePgOptions(remoteConfiguration());
   assert.notEqual(options.ssl, false);

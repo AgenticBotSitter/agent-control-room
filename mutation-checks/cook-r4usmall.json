@@ -1,0 +1,191 @@
+[
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "r.status===403?",
+    "replace": "false?",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 sign-in' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Paused sign-in must explain the one-minute wait."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "Could not reach Control Room to sign in. Check your connection and try again.",
+    "replace": "Sign-in was not accepted.",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 sign-in' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Failed transport must tell the owner that Control Room could not be reached."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "if(button.disabled)return;",
+    "replace": "",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 sign-in' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Fifty submits while the first is pending must issue one request."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "signal:AbortSignal.timeout(10000)",
+    "replace": "signal:undefined",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 a dropped' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Sign-in must give its request a bounded abort signal."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "finally{button.disabled=false}",
+    "replace": "finally{button.disabled=true}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 sign-in' tests/owner-small-screen-regressions.test.tsx",
+    "why": "A failed sign-in must allow retry after connection recovery."
+  },
+  {
+    "file": "private-app/app/workspace.tsx",
+    "find": " || previous?.code === \"conflict\"",
+    "replace": "",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-14' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Automatic project refresh must retain the stale-action refusal notice."
+  },
+  {
+    "file": "private-app/app/workspace.tsx",
+    "find": "<OwnerName>{project.title}</OwnerName>",
+    "replace": "{project.title}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-14' tests/owner-small-screen-regressions.test.tsx",
+    "why": "The selected project heading must preserve spelling and isolate the name."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "items.slice(currentPage * 25, (currentPage + 1) * 25)",
+    "replace": "items",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 inbox pages' tests/owner-small-screen-regressions.test.tsx",
+    "why": "An attention-first inbox must render at most twenty-five rows per page."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "projectNames.get(item.projectId) ?? \"Loading project name…\"",
+    "replace": "item.projectId",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 inbox pages' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Project labels must use readable names instead of raw identifiers."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "names.set(id, \"Project name unavailable\")",
+    "replace": "names.set(id, id)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 inbox pages' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Missing project names must be disclosed without exposing raw identifiers as labels."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "useEffect(() => { setPage(0); }, [data]);",
+    "replace": "useEffect(() => {}, [data]);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 inbox pages' tests/owner-small-screen-regressions.test.tsx",
+    "why": "A refreshed inbox must return to its most urgent first page."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "controller.abort(); };\n  }, [projectIdsKey, data]);",
+    "replace": "void controller; };\n  }, [projectIdsKey, data]);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 leaving' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Leaving the inbox must abort its slow project-name request."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "if (current) setProjectNames(names);",
+    "replace": "setProjectNames(names);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 a late' tests/owner-small-screen-regressions.test.tsx",
+    "why": "A late response from an earlier read must not overwrite refreshed names."
+  },
+  {
+    "file": "private-app/app/owner-ui.tsx",
+    "find": "children.replace(/[\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]/gu, \"\")",
+    "replace": "children",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Invisible bidi overrides must not reverse owner-supplied displayed names."
+  },
+  {
+    "file": "app/components/project-catalog.tsx",
+    "find": "<OwnerName>{project.title}</OwnerName>",
+    "replace": "{project.title}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Each project-name surface must isolate direction and preserve spelling."
+  },
+  {
+    "file": "private-app/app/home-workspace.tsx",
+    "find": "<OwnerName>{project.title}</OwnerName>",
+    "replace": "{project.title}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Each project-name surface must isolate direction and preserve spelling."
+  },
+  {
+    "file": "private-app/app/private.css",
+    "find": ".private-dashboard-list span { color: var(--muted); font-size: .875rem; }",
+    "replace": ".private-dashboard-list span { color: var(--muted); font-size: .875rem; text-transform: capitalize; }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Home must preserve the owner spelling rather than capitalise names."
+  },
+  {
+    "file": "private-app/app/private.css",
+    "find": "border: 1px solid var(--field-border); border-radius: .5rem; color: var(--text); background: var(--surface-2); font: inherit; }",
+    "replace": "border: 0; border-radius: .5rem; color: var(--text); background: var(--surface-2); font: inherit; }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-15 Reason' tests/owner-small-screen-regressions.test.tsx",
+    "why": "The standalone Reason editor must have a visible border."
+  },
+  {
+    "file": "private-app/app/private.css",
+    "find": ".private-shell input, .private-shell textarea, .private-shell select { min-width: 44px; min-height: 44px; box-sizing: border-box; }",
+    "replace": ".private-shell input, .private-shell textarea, .private-shell select { min-width: 24px; min-height: 24px; box-sizing: border-box; }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Phone-width ordinary inputs must meet the 44-pixel target floor."
+  },
+  {
+    "file": "private-app/app/private.css",
+    "find": ".private-shell input[type=\"checkbox\"], .private-shell input[type=\"radio\"] { width: 44px; height: 44px; flex: none; }",
+    "replace": ".private-shell input[type=\"checkbox\"], .private-shell input[type=\"radio\"] { width: 13px; height: 13px; flex: none; }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Checkbox and radio hit targets must meet the phone-size floor."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "a{display:inline-flex;align-items:center;min-width:44px;min-height:44px;overflow-wrap:anywhere}",
+    "replace": "a{display:inline;align-items:center;min-width:0;min-height:0;overflow-wrap:anywhere}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-17 phone CSS' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Unavailable pages must offer a usable Return to Projects target without the app stylesheet."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "Math.min(page, pageCount - 1)",
+    "replace": "page",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 a shrinking' tests/owner-small-screen-regressions.test.tsx",
+    "why": "A smaller refreshed inbox must clamp its page before painting."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "disabled={currentPage === 0}",
+    "replace": "disabled={false}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 inbox pages' tests/owner-small-screen-regressions.test.tsx",
+    "why": "The first inbox page must disable the previous-page control."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "disabled={currentPage === pageCount - 1}",
+    "replace": "disabled={false}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-16 inbox pages' tests/owner-small-screen-regressions.test.tsx",
+    "why": "The final inbox page must disable the next-page control."
+  },
+  {
+    "file": "private-app/app/needs-me/action-inbox.tsx",
+    "find": "projectNames.get(item.projectId)",
+    "replace": "(Object.fromEntries(projectNames) as Record<string, string>)[item.projectId]",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='inherited properties' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Project identifiers must never select prototype properties as display names."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "navigator.onLine===false?",
+    "replace": "false?",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 sign-in' tests/owner-small-screen-regressions.test.tsx",
+    "why": "Known offline sign-in must say explicitly that the browser is offline."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "r.status===401?",
+    "replace": "true?",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern='R4U-13 sign-in' tests/owner-small-screen-regressions.test.tsx",
+    "why": "A service failure must not be presented as a wrong owner code."
+  }
+]

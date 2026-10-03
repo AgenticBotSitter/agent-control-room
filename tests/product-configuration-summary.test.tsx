@@ -6,7 +6,7 @@ import { PRODUCT_CONFIGURATION_SCHEMA_V1, type ProductConfigurationV1 } from "..
 import { ProductConfigurationSummary } from "../private-app/app/product-configuration-summary";
 import { parseOperatorSurfaceSnapshotV1, operatorSurfaceSnapshotSchemaV1 } from "../src/operator-surfaces/v1/validators";
 import { OPERATOR_SURFACES_CONTRACT_V1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1/types";
-import { COMPARABLE_MINIMUM_V1, projectOperatorCapacityViewV1, summarizeReportedModelOutcomesV1,
+import { CAPACITY_FRESHNESS_MINUTES_V1, COMPARABLE_MINIMUM_V1, projectOperatorCapacityViewV1, summarizeReportedModelOutcomesV1,
   type ReportedModelOutcomeRecordV1 } from "../src/web/v1/operator-capacity-browser-client";
 import { OperatorCapacityWorkspace } from "../private-app/app/operator-capacity-workspace";
 
@@ -162,7 +162,12 @@ test("operator capacity view is read-only and grants no authority", () => {
   assert.equal(Object.isFrozen(view), true);
   assert.equal(Object.isFrozen(view.boundary), true);
   assert.equal(view.schema, "control-room-operator-capacity-view/v1");
-  assert.equal(view.freshnessMinutes, 30);
+  // The view reports the NAMED telemetry lifetime, not a second number the panel
+  // happens to agree with. It is five minutes because that is how long a fleet
+  // telemetry observation survives (`read-service.ts` reads a row only while
+  // `expires_at <= observed_at + INTERVAL '5 minutes'`).
+  assert.equal(view.freshnessMinutes, CAPACITY_FRESHNESS_MINUTES_V1);
+  assert.equal(view.freshnessMinutes, 5);
   // The rendered panel offers no control at all: no form, input or button exists in
   // static markup unless the caller supplies the read-retry handler, so the view
   // cannot offer an operation that assigns, reserves or authorizes work.

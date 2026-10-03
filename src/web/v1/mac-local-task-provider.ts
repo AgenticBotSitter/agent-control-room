@@ -1,3 +1,4 @@
+import { macLocalRuntimeDirectoryV1 } from "../../installer/shared/mac-local-runtime-directory.mjs";
 import { lstat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -6,6 +7,7 @@ import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { DatabaseClient } from "../../persistence/database";
 import type { WorkBatchQueueCatalogV1, WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
+import type { SupervisorOperationsModePortV1 } from "../../supervisor/v1";
 
 export const MAC_LOCAL_TASK_PROVIDER_V1 = "control-room.mac-local-task-provider/v1" as const;
 /** Product worker identities are harness names, not an upstream release. */
@@ -20,6 +22,7 @@ type TaskApplication = Readonly<{
   close(): Promise<void>;
   queueDelivery?: unknown;
   queueRecovery?: unknown;
+  agentReviews?: Readonly<{ createPlan(value: unknown): Promise<unknown>; record(value: unknown): Promise<unknown> }>;
 }>;
 
 /** Owner-held executable configuration for the existing, already-composed task
@@ -37,6 +40,13 @@ export type MacLocalTaskProviderV1 = Readonly<{
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;
     databaseRoles: MacLocalDatabaseRolesV1;
+    /** Supplied by the host once the server-side operations mode exists. Its
+     * server-owned implementation is the only supported way for machine health
+     * to pause new starts: the port never writes an operations record itself.
+     * Omitted when the installation has no operations mode, in which case a
+     * failed health check has no way to pause and the watchdog records an
+     * `operations_pause_unavailable` incident. */
+    supervisor?: Readonly<{ operations: SupervisorOperationsModePortV1; supervisorId: string }>;
     workBatches?: Readonly<{ integrityKey: Uint8Array; queueCatalog: WorkBatchQueueCatalogV1;
       selectionAuthority: WorkBatchQueueSelectionAuthorityV1 }>;
   }>): Promise<TaskApplication> | TaskApplication;
@@ -102,7 +112,7 @@ export function requireMacLocalThreeAgentReadinessV1(provider: MacLocalTaskProvi
 export async function loadMacLocalTaskProviderFromRootV1(protectedRoot: string,
   runtime: Runtime = production): Promise<MacLocalTaskProviderV1> {
   if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot) throw new Error("mac_local_task_provider_root_invalid");
-  const runtimeRoot = join(protectedRoot, "runtime"), path = join(runtimeRoot, "task-provider.mjs");
+  const runtimeRoot = macLocalRuntimeDirectoryV1(protectedRoot), path = join(runtimeRoot, "task-provider.mjs");
   if (resolve(path) !== path) throw new Error("mac_local_task_provider_root_invalid");
   try {
     for (const directory of [protectedRoot, runtimeRoot]) {

@@ -1,0 +1,100 @@
+[
+  {
+    "file": "src/web/v1/task-service.ts",
+    "find": "const authority: AuthorityEnvelope = { ...proposalAuthorityMaterialV1(projectId, actor.now), digest: \"\" };",
+    "replace": "const authority: AuthorityEnvelope = { ...proposalAuthorityMaterialV1(projectId, actor.now), digest: \"\",\n        maxDurationSeconds: 300, expiresAt: new Date(Date.parse(actor.now) + 300_000).toISOString() };",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "an owner-proposed task's authority must not decay five minutes from creation"
+  },
+  {
+    "file": "src/persistence/canonical-store.ts",
+    "find": "if (Date.parse(job.authority.expiresAt) <= Date.parse(validated.createdAt)) throw new JobAuthorityExpiredError();",
+    "replace": "if (Date.parse(job.authority.expiresAt) <= Date.parse(validated.createdAt)) throw new Error(\"Job authority has expired\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "an effect authorization on a lapsed authority must raise a NAMED error a caller can recognise, decided by the test that actually creates an Effect record"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      if (error instanceof JobAuthorityExpiredError) fleetFail(\"expired\");\n      throw error;",
+    "replace": "      throw error;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "the claim boundary must answer a lapsed authority with the fixed expired code, not an anonymous refused"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      if (Date.parse(job.authority.expiresAt) <= Date.parse(now)) return fleetFail(\"expired\");",
+    "replace": "      if (Date.parse(job.authority.expiresAt) <= Date.parse(now)) return fleetFail(\"conflict\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "the lease-window check must read a lapsed authority as expired before the window arithmetic collapses it into a conflict"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "        AND (j.payload#>>'{authority,expiresAt}')::timestamptz>$5::timestamptz",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "an offer no machine can claim must not be listed to any machine"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "            WHEN (j.payload#>>'{authority,expiresAt}')::timestamptz<=$3::timestamptz THEN 'blocked' ELSE 'open' END AS state,",
+    "replace": "            ELSE 'open' END AS state,",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "the owner must be shown that an open offer cannot be taken, not told it is simply open"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "          || prior.safe_metadata.toolName !== toolName) return fleetFail(\"conflict\");\n        await this.#touchPresenceIn(tx, principal, this.#now());",
+    "replace": "          || prior.safe_metadata.toolName !== toolName) return fleetFail(\"conflict\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "a replayed MCP call is still real contact, so it must move last_seen_at too"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      await this.#touchPresenceIn(tx, principal, this.#now());\n      await appendAuditWith(tx, { id: auditId,",
+    "replace": "      await appendAuditWith(tx, { id: auditId,",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "an MCP-only machine's first tool call is its only contact, so that call must record presence"
+  },
+  {
+    "file": "src/fleet/v1/owner-service.ts",
+    "find": "            : seen !== undefined && now - seen < FLEET_PRESENCE_LIFETIME_MS_V1 ? (Number(row.active_claims) > 0 ? \"working\" : \"connected\") : \"offline\";",
+    "replace": "            : seen !== undefined && now - seen < 30 * 60_000 ? (Number(row.active_claims) > 0 ? \"working\" : \"connected\") : \"offline\";",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "the board must read the named five-minute telemetry lifetime, not a private literal beside it"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "            if (error?.code === \"expired\") { expiredOffers += 1; continue; }",
+    "replace": "            if (error?.code === \"expired\") { throw error; }",
+    "test": "node --import tsx --test \"--test-name-pattern=R7C-01c: an expired offer at the head of the list is skipped, and the next one is claimed\" --test tests/fleet-expired-offer-skip.test.mjs",
+    "why": "one unclaimable offer must not wedge a machine for the life of its process"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "            if (error?.code !== \"conflict\" && error?.code !== \"not_found\") throw error;",
+    "replace": "            if (error?.code === \"unavailable\") continue;",
+    "test": "node --import tsx --test \"--test-name-pattern=R7C-01c: a code outside the fixed refusal set still ends the pass\" --test tests/fleet-expired-offer-skip.test.mjs",
+    "why": "the new branch is one named refusal, not a general swallow of unrecognised errors"
+  },
+  {
+    "file": "src/persistence/canonical-store.ts",
+    "find": "        if (Date.parse(job.authority.expiresAt) <= Date.parse(validated.createdAt)) throw new JobAuthorityExpiredError();\n        if (job.authority.networkPolicy === \"allowlist\"",
+    "replace": "        if (job.authority.networkPolicy === \"allowlist\"",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-proposal-authority-postgres.test.ts",
+    "why": "an Effect record must not be created at all for a lapsed authority, decided by the test that creates one"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "\"too_large\", \"rate_limited\", \"expired\", \"unavailable\", \"paused\", \"worker_kind_mismatch\"]);",
+    "replace": "\"too_large\", \"rate_limited\", \"unavailable\", \"paused\", \"worker_kind_mismatch\"]);",
+    "test": "node --import tsx --test \"--test-name-pattern=R7C-01c: the MCP claim tool reports .expired. as a code a bot can act on\" --test tests/fleet-expired-offer-skip.test.mjs",
+    "why": "the gateway's expired code must be in the connector's own vocabulary or the skip above is unreachable"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        if (expiredOffers) {",
+    "replace": "        if (false && expiredOffers) {",
+    "test": "node --import tsx --test \"--test-name-pattern=R7C-01c: an expired offer alone ends the pass idle, having claimed nothing\" --test tests/fleet-expired-offer-skip.test.mjs",
+    "why": "a skipped expired offer must still be reported once, not silently swallowed"
+  }
+]

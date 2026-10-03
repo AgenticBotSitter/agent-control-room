@@ -107,14 +107,22 @@ export class IdeaLabCanonicalTaskLinkStoreV1 {
 
   /** Records or verifies the one ordinary project that owns this discussion.
    * This is intentionally performed before proposing a task, so a conflicting
-   * project cannot receive even one stray proposed task. */
+   * project cannot receive even one stray proposed task.
+   *
+   * No row lock is taken on `control_idea_canonical_task_sessions`. That table
+   * is append-only: reject_append_only_mutation() refuses UPDATE, DELETE and
+   * TRUNCATE, so no concurrent statement can change or remove the binding row
+   * between the read and the insert below. `FOR UPDATE` would add nothing, and
+   * PostgreSQL requires UPDATE on the locked table - which the least-privilege
+   * web login deliberately does not hold on this provenance table. The lock
+   * would make every Idea Lab task proposal fail at the privilege layer. */
   async bindSession(planValue: unknown): Promise<{ replayed: boolean }> {
     const plan = parseIdeaLabCanonicalTaskPlanV1(planValue);
     const binding = bindingDigest(plan);
     return this.#transaction(async (tx) => {
       const session = await tx.query<{ project_id: string; session_digest: string; binding_digest: string; binding_auth_tag: string }>(
         `SELECT project_id,session_digest,binding_digest,binding_auth_tag FROM control_idea_canonical_task_sessions
-         WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, [plan.tenantId, plan.sessionId]);
+         WHERE tenant_id=$1 AND session_id=$2`, [plan.tenantId, plan.sessionId]);
       if (session.rows[0]) {
         const stored = session.rows[0];
         this.#verify("idea_task_session", plan.tenantId, plan.sessionId, stored.binding_digest, stored.binding_auth_tag);
@@ -128,9 +136,12 @@ export class IdeaLabCanonicalTaskLinkStoreV1 {
         binding_digest,binding_auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
         ON CONFLICT (tenant_id,session_id) DO NOTHING`, [plan.tenantId, plan.sessionId, plan.sessionDigest,
         plan.workspaceId, plan.projectId, binding, tag, new Date().toISOString()]);
+      // Re-read after the insert rather than trusting the ON CONFLICT result, so
+      // a concurrent binder's row is verified under the same HMAC check. The
+      // append-only trigger means this row cannot change once visible.
       const inserted = await tx.query<{ project_id: string; session_digest: string; binding_digest: string; binding_auth_tag: string }>(
         `SELECT project_id,session_digest,binding_digest,binding_auth_tag FROM control_idea_canonical_task_sessions
-         WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, [plan.tenantId, plan.sessionId]);
+         WHERE tenant_id=$1 AND session_id=$2`, [plan.tenantId, plan.sessionId]);
       const stored = inserted.rows[0];
       if (!stored) throw new IdeaLabErrorV1("integrity_failed");
       this.#verify("idea_task_session", plan.tenantId, plan.sessionId, stored.binding_digest, stored.binding_auth_tag);
@@ -159,22 +170,43 @@ export class IdeaLabCanonicalTaskLinkStoreV1 {
     const link = buildLink(planValue, receiptValue);
     await this.bindSession(link.plan);
     return this.#transaction(async (tx) => {
-      const existing = await tx.query<{ payload: unknown; link_auth_tag: string }>(
-        `SELECT payload,link_auth_tag FROM control_idea_canonical_task_links WHERE tenant_id=$1 AND task_key=$2 FOR UPDATE`,
-        [link.tenantId, link.taskKey]);
-      if (existing.rows[0]) {
-        const stored = parseLink(existing.rows[0].payload);
-        this.#verify("idea_task_link", stored.tenantId, stored.taskKey, stored.linkDigest, existing.rows[0].link_auth_tag);
-        if (stored.linkDigest !== link.linkDigest) throw new IdeaLabErrorV1("duplicate_record");
-        return { link: stored, replayed: true };
-      }
+      // No row lock here on purpose. `control_idea_canonical_task_links` is
+      // append-only: the reject_append_only_mutation() trigger refuses UPDATE,
+      // DELETE and TRUNCATE, so no concurrent statement can change or remove
+      // the row this transaction reads. `FOR UPDATE` would add nothing, and
+      // PostgreSQL requires UPDATE on the locked table - which the
+      // least-privilege web login deliberately does not hold here, so the lock
+      // would make every Idea Lab task proposal fail.
+      //
+      // The race the lock could have covered is closed by the primary key
+      // instead: a concurrent writer loses the INSERT, and the loser re-reads
+      // the winner's row and applies exactly the same verification. Both paths
+      // converge on the same unique link, so a duplicate can never fork.
       const tag = this.#tag("idea_task_link", link.tenantId, link.taskKey, link.linkDigest);
-      await tx.query(`INSERT INTO control_idea_canonical_task_links(tenant_id,task_key,session_id,session_digest,workspace_id,project_id,
-        participant_id,round,task_plan_digest,task_input_digest,job_id,request_id,link_digest,link_auth_tag,payload,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)`, [link.tenantId, link.taskKey,
-        link.sessionId, link.sessionDigest, link.workspaceId, link.projectId, link.participantId, link.round,
-        link.taskPlanDigest, link.taskInputDigest, link.jobId, link.requestId, link.linkDigest, tag, JSON.stringify(link), link.createdAt]);
-      return { link, replayed: false };
+      // ON CONFLICT DO NOTHING covers every collision on this table: task_key is
+      // the primary key, and link_digest / (session_id, participant_id, round) /
+      // job_id are UNIQUE over a superset of the same links, so a different link
+      // for this task key loses here rather than raising a unique violation that
+      // would escape as a driver error. The loser reads the winner's row below
+      // and the digest comparison refuses it as a duplicate.
+      const inserted = await tx.query<{ payload: unknown; link_auth_tag: string }>(
+        `INSERT INTO control_idea_canonical_task_links(tenant_id,task_key,session_id,session_digest,workspace_id,project_id,
+          participant_id,round,task_plan_digest,task_input_digest,job_id,request_id,link_digest,link_auth_tag,payload,created_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
+         ON CONFLICT DO NOTHING RETURNING payload,link_auth_tag`,
+        [link.tenantId, link.taskKey, link.sessionId, link.sessionDigest, link.workspaceId, link.projectId,
+          link.participantId, link.round, link.taskPlanDigest, link.taskInputDigest, link.jobId, link.requestId,
+          link.linkDigest, tag, JSON.stringify(link), link.createdAt]);
+      // Read back inside this transaction whether or not the INSERT won, so the
+      // stored row - never the caller's own values - is what gets verified.
+      const existing = inserted.rows.length ? inserted
+        : await tx.query<{ payload: unknown; link_auth_tag: string }>(
+          `SELECT payload,link_auth_tag FROM control_idea_canonical_task_links WHERE tenant_id=$1 AND task_key=$2`,
+          [link.tenantId, link.taskKey]);
+      const stored = parseLink(existing.rows[0]!.payload);
+      this.#verify("idea_task_link", stored.tenantId, stored.taskKey, stored.linkDigest, existing.rows[0]!.link_auth_tag);
+      if (stored.linkDigest !== link.linkDigest) throw new IdeaLabErrorV1("duplicate_record");
+      return { link: stored, replayed: inserted.rows.length === 0 };
     });
   }
 

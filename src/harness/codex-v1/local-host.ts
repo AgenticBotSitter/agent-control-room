@@ -3,7 +3,8 @@ import { sha256Digest } from '../../security/canonical-digest';
 import { parseCodexTaskActivationV1 } from './activation-contract';
 import type { WorkspaceIntent } from '../../node-bridge/workspace-intent';
 import type { ObservableGitWorkspacePort } from './git-workspace-port';
-import type { CodexDeliveryBoundWorkspacePolicyV1 } from './delivery-bound-workspace-preparation';
+import type { CodexBuildStagePublicationCompositionV1,
+  CodexDeliveryBoundWorkspacePolicyV1 } from './delivery-bound-workspace-preparation';
 import { createCodexLocalReadCompositionV1, type CodexLocalReadAuthorityV1,
   type CodexLocalReadIdentityV1 } from './local-read-composition';
 import { createCodexLocalStartCompositionV1 } from './local-start-composition';
@@ -36,7 +37,8 @@ export interface CodexLocalInitialHostInputV1 extends CommonHostInputV1 {
   bridgeJournal: BridgeJournal;
   authority: CodexLocalStartAuthorityV1;
   workspacePort: ObservableGitWorkspacePort;
-  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
+  workspacePolicy?: CodexDeliveryBoundWorkspacePolicyV1;
+  buildPublication?: CodexBuildStagePublicationCompositionV1;
   acquireProcess: AcquireCodexAppServerProcessV1;
   startTimeoutMs: number;
   processCleanupTimeoutMs: number;
@@ -73,7 +75,10 @@ function publicIdentity(identity: CodexLocalReadIdentityV1) {
  * exact protected activation/workspace binding and issue thread/start followed
  * by turn/start. Recover can only read the exact durably recorded pair. Neither
  * mode has a canonical writer, retry, resume, new-turn, listener or provider
- * API. Native JSONL ownership and all physical workspace effects are injected.
+ * API. Initial mode may expose the separately configured build-stage PR
+ * publisher; that path has no merge operation and retains its own durable
+ * intent before the effect. Native JSONL ownership and all physical workspace
+ * effects are injected.
  */
 export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
   const input = Object.freeze({ ...inputValue });
@@ -102,7 +107,8 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
       threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
       workspaceIntent: input.workspaceIntent, bridgeJournal: input.bridgeJournal,
       startJournal: input.startJournal, workspacePort: input.workspacePort,
-      workspacePolicy: input.workspacePolicy,
+      ...(input.workspacePolicy ? { workspacePolicy: input.workspacePolicy } : {}),
+      ...(input.buildPublication ? { buildPublication: input.buildPublication } : {}),
       authority, ownedStart, clock: input.clock.bind(input),
     });
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: 'initial' as const,
@@ -116,6 +122,7 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
           activationDigest: activation.activationDigest, activationFrameDigest: sha256Digest(saved.frame) });
       },
       bindDelivery: composition.bindDelivery,
+      publishBuildPullRequest: composition.publishBuildPullRequest,
       async run(signal: AbortSignal) {
         if (attempted || !(signal instanceof AbortSignal) || signal.aborted) return unavailable();
         attempted = true;

@@ -78,7 +78,13 @@ test("compiled pipeline browser workspace contains only browser-safe wire valida
   assert.equal(chunks.length, 1);
   const source = readFileSync(join(chunkDirectory, chunks[0]), "utf8");
   assert.doesNotMatch(source, /isProxy|createHmac|host intrinsics unavailable|HMAC runtime unavailable/);
-  assert.match(source, /control-room\.work-batch-proposal\/v1/);
+  // Vite may share the work-batch-proposal schema module across several
+  // client entry points as its own chunk instead of inlining it into this
+  // one, so the marker is checked against every compiled chunk rather than
+  // assuming this specific chunk still carries the literal string.
+  const allChunks = readdirSync(chunkDirectory).filter(name => name.endsWith(".js"))
+    .map(name => readFileSync(join(chunkDirectory, name), "utf8")).join("\n");
+  assert.match(allChunks, /control-room\.work-batch-proposal\/v1/);
 });
 
 test("compiled startup captures only implemented server assertion profiles before resources open", () => {

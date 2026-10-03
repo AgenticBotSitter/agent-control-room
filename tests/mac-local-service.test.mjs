@@ -1,9 +1,14 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import fsPromises from "node:fs/promises";
+import { constants } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, lstat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { installOrRefreshService, plistPath, SERVICE_LABEL, serviceInstalled, servicePid, servicePlist,
+import { FLEET_GATEWAY_LAUNCHD_HANDOFF, installOrRefreshService, plistPath, SERVICE_LABEL, serviceInstalled, servicePid, servicePlist,
   serviceStatus, serviceUpToDate, stopService, uninstallService } from "../scripts/mac-local/service.mjs";
 import { hostCommand } from "../scripts/mac-local/stack.mjs";
 import { cleanupTestPostgres, DISPOSABLE_POSTGRES_MARKER, parsePostgresProcesses,
@@ -45,6 +50,8 @@ test("plist runs exactly the host command, restarts only after a crash, and carr
   assert.match(plist, /<key>PATH<\/key>/u);
   assert.match(plist, /<key>LANG<\/key>/u);
   assert.doesNotMatch(plist, /SECRET_TOKEN|do-not-copy|<key>HOME<\/key>/u);
+  assert.doesNotMatch(plist, /start-fleet-gateway/u, "cook/daemons owns the separate production service definition");
+  assert.match(FLEET_GATEWAY_LAUNCHD_HANDOFF, /cook\/daemons item 5/u);
 });
 
 test("plist escapes XML and refuses relative or control-character paths", () => {
@@ -188,4 +195,199 @@ test("cleanup dry-run and execution touch only disposable clusters and their una
   const cleaned = await cleanupTestPostgres({}, runtime);
   assert.deepEqual(cleaned.segments.map(value => value.id), ["41"]);
   assert.deepEqual(calls, [`stop:${join(cleanupRoot, "temp/pg")}`, `stop:${marked}`, "remove:41"]);
+});
+
+
+test("R5S-02: leftover temporary symlink cannot overwrite notes or become the published plist", async t => {
+  const f = await fixture(t), path = plistPath(f.home), notes = join(f.home, "owner-notes");
+  await mkdir(join(f.home, "Library/LaunchAgents"), { recursive: true });
+  await writeFile(notes, "keep these notes", { mode: 0o600 });
+  const planted = `${path}.new-${process.pid}`;
+  await symlink(notes, planted);
+  await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
+  assert.equal(await readFile(notes, "utf8"), "keep these notes");
+  assert.equal((await lstat(planted)).isSymbolicLink(), true, "unowned entries are left alone");
+  const entry = await lstat(path);
+  assert.equal(entry.isFile(), true); assert.equal(entry.isSymbolicLink(), false);
+  assert.equal(entry.mode & 0o777, 0o600); assert.equal(entry.nlink, 1);
+  assert.equal(await serviceUpToDate({ protectedRoot: root, logPath, env: {} }, f.runtime), true);
+});
+
+
+test("R5S-02: exclusive temporary collisions refuse without touching the symlink target", async t => {
+  const f = await fixture(t), notes = join(f.home, "owner-notes");
+  await writeFile(notes, "keep these notes", { mode: 0o600 });
+  const original = fsPromises.open; let planted;
+  fsPromises.open = async (path, flags, mode) => {
+    if (String(path).includes(".plist.new-")) {
+      // These independent fences must remain even if a future caller changes its creation flags.
+      assert.ok(flags & constants.O_EXCL); assert.ok(flags & constants.O_NOFOLLOW);
+      planted = path; await symlink(notes, path);
+    }
+    return original(path, flags, mode);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), { code: "EEXIST" });
+    assert.equal(await readFile(notes, "utf8"), "keep these notes");
+    assert.equal((await lstat(planted)).isSymbolicLink(), true, "failed creation did not acquire this entry");
+    assert.equal(await serviceInstalled(f.runtime), false);
+  } finally { fsPromises.open = original; syncBuiltinESMExports(); }
+  await rm(planted);
+  assert.equal(await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), "installed");
+});
+
+test("R5S-02: descriptor refusals and partial write failures remove only owned temporaries", async t => {
+  for (const fault of ["file", "links", "owner", "mode", "write", "sync", "chmod"]) {
+    await t.test(fault, async t => {
+      const f = await fixture(t), path = plistPath(f.home);
+      await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
+      const before = await readFile(path, "utf8"), original = fsPromises.open;
+      let closed = false;
+      fsPromises.open = async (...args) => {
+        const handle = await original(...args);
+        if (String(args[0]).includes(".plist.new-")) {
+          const stat = handle.stat.bind(handle), close = handle.close.bind(handle);
+          handle.close = async () => { await close(); closed = true; };
+          handle.stat = async () => {
+            const entry = await stat();
+            if (fault === "file") entry.isFile = () => false;
+            if (fault === "links") entry.nlink = 2;
+            if (fault === "owner") entry.uid += 1;
+            if (fault === "mode") entry.mode |= 0o020;
+            return entry;
+          };
+          if (["write", "sync", "chmod"].includes(fault)) {
+            const method = { write: "writeFile", sync: "sync", chmod: "chmod" }[fault], write = handle.writeFile.bind(handle);
+            handle[method] = async () => { if (fault === "write") await write("partial");
+              throw Object.assign(new Error("injected_io_failure"), { code: "ENOSPC" }); };
+          }
+        }
+        return handle;
+      };
+      syncBuiltinESMExports();
+      try {
+        await assert.rejects(installOrRefreshService({ protectedRoot: root, logPath, env: { LANG: "C" } }, f.runtime),
+          /mac_local_service_temporary_invalid|injected_io_failure/u);
+        assert.equal(closed, true); assert.equal(await readFile(path, "utf8"), before);
+        assert.deepEqual((await readdir(join(f.home, "Library/LaunchAgents"))).filter(name => name.includes(".new-")), []);
+      } finally { fsPromises.open = original; syncBuiltinESMExports(); }
+      assert.equal(await installOrRefreshService({ protectedRoot: root, logPath, env: { LANG: "C" } }, f.runtime), "refreshed");
+    });
+  }
+});
+
+
+test("R5S-04: fifty competing installs are admitted once or cleanly refused before mutation", async t => {
+  const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const runtime = { ...f.runtime, launchctl: async args => {
+    if (args[0] === "print") { entered(); await gate; }
+    return f.runtime.launchctl(args);
+  } };
+  const first = installOrRefreshService(input, runtime);
+  await started;
+  try {
+    const results = await Promise.allSettled(Array.from({ length: 49 }, () => installOrRefreshService(input, f.runtime)));
+    assert.ok(results.every(result => result.status === "rejected" && result.reason.code === "mac_local_service_busy"));
+    assert.deepEqual(f.calls, [], "contenders do not query or mutate launchd");
+    assert.equal(await serviceInstalled(f.runtime), false);
+  } finally { release(); await first; }
+  assert.equal(await serviceUpToDate(input, f.runtime), true);
+  assert.equal(f.state.loaded, true);
+  await stopService(f.runtime); await installOrRefreshService(input, f.runtime); await stopService(f.runtime);
+});
+
+test("R5S-04: overlapping stop and uninstall refuse, then retry after failed install releases the lock", async t => {
+  const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const runtime = { ...f.runtime, launchctl: async args => {
+    if (args[0] === "bootstrap") { entered(); await gate; throw new Error("dropped_service_connection"); }
+    return f.runtime.launchctl(args);
+  } };
+  const first = installOrRefreshService(input, runtime), failed = assert.rejects(first, /dropped_service_connection/u);
+  await started;
+  try {
+    await assert.rejects(stopService(f.runtime), { code: "mac_local_service_busy" });
+    await assert.rejects(uninstallService(f.runtime), { code: "mac_local_service_busy" });
+    assert.equal(await serviceInstalled(f.runtime), true);
+  } finally { release(); await failed; }
+  assert.equal(await stopService(f.runtime), "not_running");
+  assert.equal(await installOrRefreshService(input, f.runtime), "reloaded");
+  assert.equal(await uninstallService(f.runtime), "stopped_and_removed");
+});
+
+
+test("R5S-04: a separate holder process excludes stop and SIGKILL releases lifecycle authority", async t => {
+  const f = await fixture(t), moduleUrl = new URL("../scripts/mac-local/service.mjs", import.meta.url).href;
+  const program = `import { installOrRefreshService } from ${JSON.stringify(moduleUrl)};
+const runtime={uid:()=>501,home:()=>process.argv[1],launchctl:async()=>{
+  process.stdout.write("HOLDING\\n");await new Promise(()=>{});
+}};
+await installOrRefreshService({protectedRoot:"/protected/root",logPath:"/protected/root/log",env:{}},runtime);`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", program, f.home],
+    { detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" } });
+  const closed = once(child, "close"); let timer;
+  const kill = () => { try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } };
+  try {
+    await Promise.race([once(child.stdout, "data").then(([chunk]) => assert.match(String(chunk), /HOLDING/u)),
+      closed.then(() => { throw new Error("holder_exited_before_lock"); }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("holder_start_timeout")), 5000); })]);
+    await assert.rejects(stopService(f.runtime), { code: "mac_local_service_busy" });
+    assert.deepEqual(f.calls, []);
+    kill(); await closed;
+    assert.equal(await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), "installed");
+    assert.equal(await stopService(f.runtime), "stopped");
+  } finally { clearTimeout(timer); kill(); await closed; }
+});
+
+
+test("R5S-02: rename failure preserves the current plist and removes its owned temporary", async t => {
+  const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
+  await installOrRefreshService(input, f.runtime);
+  const before = await readFile(plistPath(f.home), "utf8"), original = fsPromises.rename;
+  fsPromises.rename = async () => { throw Object.assign(new Error("rename_failed"), { code: "EIO" }); };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(installOrRefreshService({ ...input, env: { LANG: "C" } }, f.runtime), { code: "EIO" });
+    assert.equal(await readFile(plistPath(f.home), "utf8"), before);
+    assert.deepEqual((await readdir(join(f.home, "Library/LaunchAgents"))).filter(name => name.includes(".new-")), []);
+  } finally { fsPromises.rename = original; syncBuiltinESMExports(); }
+  await installOrRefreshService({ ...input, env: { LANG: "C" } }, f.runtime);
+});
+
+test("R5S-02: publication cleanup leaves a replacement at the old temporary name untouched", async t => {
+  const f = await fixture(t), original = fsPromises.rename; let replacement;
+  fsPromises.rename = async (from, to) => {
+    await original(from, to); replacement = from;
+    await writeFile(from, "unowned replacement", { mode: 0o600 });
+  };
+  syncBuiltinESMExports();
+  try {
+    await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
+    assert.equal(await readFile(replacement, "utf8"), "unowned replacement");
+    assert.equal(await serviceInstalled(f.runtime), true);
+  } finally { fsPromises.rename = original; syncBuiltinESMExports(); }
+});
+
+
+test("R5S-02: failed write cleanup preserves a substituted temporary inode", async t => {
+  const f = await fixture(t);
+  const original = fsPromises.open; let replacement;
+  fsPromises.open = async (...args) => {
+    const handle = await original(...args);
+    if (String(args[0]).includes(".plist.new-")) handle.writeFile = async () => {
+      replacement = args[0]; await fsPromises.rename(replacement, `${replacement}.owned`);
+      await writeFile(replacement, "unowned replacement", { mode: 0o600 });
+      throw Object.assign(new Error("partial_disk_full"), { code: "ENOSPC" });
+    };
+    return handle;
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), { code: "ENOSPC" });
+    assert.equal(await readFile(replacement, "utf8"), "unowned replacement");
+  } finally { fsPromises.open = original; syncBuiltinESMExports(); }
 });

@@ -27,22 +27,130 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_task_execution_plans,
   control_artifact_manifests, control_native_artifact_receipts, control_completion_gate_records,
   control_completion_gate_integrity, control_web_task_review_commands, control_native_review_plans,
-  control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_idea_sessions, control_idea_contributions,
+  control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_news_task_proposal_links, control_idea_sessions, control_idea_contributions,
   control_idea_syntheses, control_idea_decisions, control_idea_bot_run_events, control_idea_canonical_task_sessions,
-  control_idea_canonical_task_links, control_policy_decisions,
+  control_idea_canonical_task_links, control_idea_promotion_task_links, control_policy_decisions,
   control_project_coordinator_heads, control_project_coordination_proposals,
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_project_event_stream_heads, control_project_events,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
-  work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
+  work_batches, work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals,
+  control_action_inbox TO control_room_private_web;
+GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
+  control_recurring_rules TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
-  pipeline_ordered_stage_runs TO control_room_private_web;
+  pipeline_ordered_stage_runs, pipeline_unattended_transitions,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations,
+  control_pipeline_build_publications, control_codex_result_publications
+  TO control_room_private_web;
+-- 0298: the owner's run page reads this installation's live position against
+-- every ceiling (runs per hour, runs per agent per day, live agent processes,
+-- spent delegation cost, and the loop round index). It is nine columns and not
+-- the table, because the other columns are the advance's own integrity record:
+-- `auth_tag` is an HMAC over the receipt's canonical material under the
+-- installation key, which `#replayReceipt` re-verifies before treating a row as
+-- a real past advance. This is a SHARED login -- one process, one credential,
+-- every project -- so a table-wide SELECT would hand it the material to mint a
+-- receipt the product would later accept. Column grants have no window: an
+-- ungranted column raises 42501 in the database, every time, for every caller.
+--
+-- `pipeline_stage_loop_counts` is deliberately NOT granted. Nothing in src/ reads
+-- it -- the loop count the page shows is derived from these receipts -- so 0151's
+-- "no shared login is granted this table" still holds.
+GRANT SELECT (tenant_id, pipeline_run_id, stage_ordinal, loop_index, source_job_id,
+  execution_job_id, advanced_at, delegation_cost_state, delegation_cost_microusd)
+  ON pipeline_advance_receipts TO control_room_private_web;
+GRANT SELECT ON control_improvement_requests, control_update_candidates,
+  control_update_candidate_decisions TO control_room_private_web;
+-- 0290: the exact text a worker is handed for this job. Written once, in the
+-- same transaction that creates the job, and never again: there is no UPDATE
+-- grant on it for any role. The private web login authors it for an ordinary
+-- proposal and for each pipeline stage, so each stage keeps its own
+-- instructions instead of the one shared request objective.
+GRANT SELECT ON control_task_handoffs TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
   work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Owner Web Push: browser subscriptions and delivery reservations only. This
+-- does not grant task, approval, scheduler, or configuration authority.
+GRANT SELECT, INSERT, DELETE ON owner_web_push_subscriptions TO control_room_private_web;
+GRANT SELECT, INSERT ON owner_web_push_deliveries TO control_room_private_web;
+GRANT UPDATE (state, status_code, completed_at) ON owner_web_push_deliveries TO control_room_private_web;
+-- EXECUTE on 0227's two functions, because a CHECK constraint runs as the
+-- writer: without this the push-endpoint allow list is unevaluable by the very
+-- role that inserts subscriptions, and every subscribe fails 42501 instead of
+-- 204. This has to live HERE, not only in 0227, because both this file and
+-- production_table_grants.sql run `REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public
+-- FROM PUBLIC` AFTER the migrations, and a privilege granted by a migration
+-- alone does not survive that.
+--
+-- EXECUTE is the whole of it. The functions are pure, reveal nothing, and grant
+-- no authority over any table.
+GRANT EXECUTE ON FUNCTION owner_push_endpoint_host(text) TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION owner_push_endpoint_allowed(text) TO control_room_private_web;
+-- The dispatcher's bounded-retry head, one row per owner attention item. This
+-- is delivery bookkeeping, not attention authority: the link is written once
+-- and never repointed, there is no DELETE, and a delivered head cannot return
+-- to a sendable state (0225's guard).
+GRANT SELECT, INSERT ON control_owner_push_attempt_heads TO control_room_private_web;
+GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,
+  safe_reason_code, updated_at) ON control_owner_push_attempt_heads TO control_room_private_web;
+-- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
+-- web role reads them both for the owner-facing Settings tab and to enforce
+-- eligibility/concurrency during assignment, and writes them only through the
+-- owner-gated settings action.
+GRANT SELECT ON control_project_settings TO control_room_private_web;
+GRANT INSERT ON control_project_settings TO control_room_private_web;
+GRANT UPDATE (eligible_worker_kinds, max_concurrent_tasks, default_worker_kind, default_model,
+  default_effort, version, updated_by_identity_id, updated_at) ON control_project_settings
+  TO control_room_private_web;
+-- MIG-A (0201): the per-project orchestrator selection. Same owner-gated path and
+-- the same reason for a column-scoped grant -- the web login may change WHICH
+-- orchestrator the owner chose, never the row's identity, tenant or version
+-- bookkeeping through this path. Whether that selection still resolves is the
+-- application's check against the protected queue catalog on every run, not this
+-- column's constraint.
+GRANT UPDATE (planner_mode, planner_worker_id, planner_worker_kind, planner_model, planner_effort)
+  ON control_project_settings TO control_room_private_web;
+-- The orchestrator's split suggestions (0200) and its Needs-you ledger (0202).
+-- The web login holds NO table grant on either base table: it reads suggestions
+-- only through a current-revision-only view, because a stale suggestion is history
+-- and offering it would be offering the owner a plan against a revision that no
+-- longer exists. It must never be able to INSERT a suggestion -- a suggestion is an
+-- agent's proposal and this login is the owner's -- and it must never be able to
+-- clear a failure counter or raise an item. 0201's planner selection needs no
+-- grant at all here: 0135's SELECT on control_project_settings already covers the
+-- new columns.
+GRANT SELECT ON work_batch_current_split_suggestions, control_planner_open_needs_you,
+  control_project_planner_selections TO control_room_private_web;
+-- MIG-A 0203: the same EXECUTE the intake login holds, and for the same measured
+-- reason -- a view's WHERE clause is checked against session_user, so the owner
+-- login needs EXECUTE on the visibility predicate to read the current-split view
+-- it already has SELECT on. Without it the owner's own batch page 500s on a
+-- plain SELECT. The predicate is not a widening for this login: it returns one
+-- boolean about values the caller supplied, and its non-intake branch defers, so
+-- the owner's read is unchanged by 0203.
+GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
+  TO control_room_private_web;
+-- MIG-A 0205: the ONE thing the owner may do to a planner failure counter, and
+-- deliberately that and nothing else. The comment above this file says the web
+-- login must "never be able to clear a failure counter or raise an item", and both
+-- still hold: this function cannot lower a count, cannot invent an escalation, and
+-- cannot touch a counter that is not one of the four scopes the requesting
+-- request itself computed. What it does is set a one-shot LATCH on a counter that
+-- is live at 2 or more, which lets the owner's next press run the planner once --
+-- the deliberate way out of an escalation that was otherwise permanent (N-B3).
+--
+-- It is SECURITY DEFINER and takes the scope keys as an argument rather than
+-- deriving them, so it is not a window onto the table: it is a single UPDATE with
+-- no other caller-controlled predicate, guarded by 0205's trigger. EXECUTE alone
+-- grants no SELECT on control_planner_failure_counters, and the preflight's
+-- function allowlist pins this one to the web and coordinator logins.
+GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
+  TO control_room_private_web;
 -- Project coordination page (attentionList, readDependencies): exactly the
 -- read, filter and join columns the composer names. No payload, deep_link or
 -- source columns and no writes; tenant scoping is the composer's WHERE clause.
@@ -55,18 +163,46 @@ GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,
   control_web_project_commands, audit_events, control_audit_chain_heads,
   control_requests, control_workflows, control_jobs, control_web_task_commands,
-  control_idea_canonical_task_sessions, control_idea_canonical_task_links,
+  control_idea_canonical_task_sessions, control_idea_canonical_task_links, control_idea_promotion_task_links,
   control_completion_gate_records, control_web_task_review_commands, control_news_source_settings, control_news_story_archives,
+  control_news_task_proposal_links,
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
-GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
+GRANT INSERT ON control_skills, control_skill_versions, control_task_skill_bindings,
+  control_recurring_rules TO control_room_private_web;
+GRANT UPDATE (current_version,state,updated_at) ON control_skills TO control_room_private_web;
+GRANT UPDATE (state,plain_schedule,cron_expression,timezone,task_template,version,
+  updated_by_identity_id,updated_at) ON control_recurring_rules TO control_room_private_web;
+GRANT INSERT ON control_project_event_stream_heads, control_project_events TO control_room_private_web;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_private_web;
+GRANT INSERT ON work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals TO control_room_private_web;
 GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;
+GRANT INSERT ON control_task_handoffs TO control_room_private_web;
+GRANT INSERT ON control_improvement_requests, control_update_candidate_decisions TO control_room_private_web;
+GRANT UPDATE (state, version, decided_at) ON control_update_candidates TO control_room_private_web;
+-- Module install approvals (0195): the owner's append-only approval of one exact
+-- module bundle. Read to show the current approval; insert only through the
+-- owner-gated approval action. No UPDATE or DELETE: a new approval supersedes.
+GRANT SELECT, INSERT ON control_module_install_approvals TO control_room_private_web;
 -- Owner-authored dependent proposals (pipeline stages, approved batch items)
 -- write the edge between two jobs this role itself inserts. Append-only: no
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
 GRANT INSERT ON control_job_dependencies TO control_room_private_web;
+GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;
+-- The one installation allowance record and the owner-reported cluster count.
+-- The owner sets and re-signs the limits; no other login may raise one.
+GRANT INSERT ON pipeline_installation_allowances, pipeline_machine_capacity_observations
+  TO control_room_private_web;
+GRANT UPDATE (runs_per_hour, runs_per_agent_per_day, machine_max_agent_processes, machine_max_db_clusters,
+  dollar_cap_microusd, owner_identity_id, version, record_digest, auth_tag, updated_at)
+  ON pipeline_installation_allowances TO control_room_private_web;
+GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)
+  ON pipeline_templates TO control_room_private_web;
+GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,
+  record_digest, auth_tag) ON pipeline_runs TO control_room_private_web;
 GRANT UPDATE (stage_kind, stage_ordinal, pipeline_run_id) ON control_jobs TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
@@ -96,5 +232,72 @@ GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, de
   decision_auth_tag, version, updated_at)
   ON work_batches TO control_room_private_web;
 GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO control_room_private_web;
+-- Installation-wide operations mode. The owner session is the only writer, and
+-- 0155's guard trigger refuses any identity that is not a live human owner.
+-- No UPDATE or DELETE: a recorded decision is appended, never rewritten.
+GRANT SELECT, INSERT ON installation_operations_mode_revisions TO control_room_private_web;
+GRANT SELECT ON installation_effective_operations_mode TO control_room_private_web;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
+-- Result-file catalog (0206-0208, "Save to my Mac"). The web login is the
+-- owner-facing reader and the only writer of download grants: it reads the
+-- catalog, records a short-lived grant for the exact file it is about to
+-- serve, and marks that grant spent. It holds no UPDATE on the catalog itself
+-- beyond the retention columns, so it cannot mark bytes stored, quarantine a
+-- file or rewrite a producer.
+GRANT SELECT ON control_result_file_sets, control_result_files, control_result_file_download_grants
+  TO control_room_private_web;
+GRANT INSERT ON control_result_file_download_grants TO control_room_private_web;
+GRANT UPDATE (spent_at) ON control_result_file_download_grants TO control_room_private_web;
+-- The owner's two retention decisions: accept a stored set, or move one on to
+-- trash. 0207's acceptance trigger checks the recorded identity's live owner
+-- grant, so this UPDATE is permission to try, not permission to accept.
+GRANT UPDATE (retention_state, accepted_at, accepted_by_identity_id, retained_until)
+  ON control_result_file_sets TO control_room_private_web;
+-- 0209-0211: the owner's approval artefacts for the upload path. The web login
+-- records the declared outputs and inputs (0209/0211's guards require a live
+-- human owner with a write grant over the project, so INSERT is permission to
+-- try, not permission to declare) and binds an accepted file to the consumer
+-- that declared it, on the same transaction that accepts the producer's result.
+-- It holds no UPDATE on any of them, so it cannot re-point a binding, and no
+-- UPDATE on an upload session, so the owner's Stop decision goes through the
+-- 0209 guard's own check that the installation is actually stopped.
+GRANT SELECT, INSERT ON control_task_declared_outputs, control_task_declared_inputs,
+  control_job_artifact_inputs TO control_room_private_web;
+-- Reusable-skill create action receipts (0246). The private web login writes
+-- one row per owner create action and reads it back on a retry, so a create
+-- whose reply was lost returns the original skill instead of making a second
+-- one. Deliberately no UPDATE and no DELETE: the append-only trigger on
+-- control_skill_create_actions refuses both, and granting a privilege the
+-- schema would reject would be misleading. The role file carries the grant as
+-- well as 0246, because this file is applied AFTER the migration ledger - a
+-- grant that lives only in the migration is skipped for any installation whose
+-- web role does not exist at migration time, which is every install that
+-- applies roles separately. Found on real PostgreSQL: the create path failed
+-- with `database_unavailable` until this was here.
+GRANT SELECT, INSERT ON control_skill_create_actions TO control_room_private_web;
+GRANT SELECT ON control_result_upload_sessions, control_result_upload_chunks,
+  control_result_publications TO control_room_private_web;
+-- 0256: EXECUTE on 0230's clock helper, granted HERE rather than in
+-- production_table_grants.sql or the migration itself -- both were tried and
+-- measured wrong, see fleet_gateway_roles.sql's comment on the same grant. The
+-- retention guard is SECURITY INVOKER and reads it, and on the merged tree its
+-- ACL admitted NO login -- measured on
+-- real PostgreSQL 17, `SELECT result_file_unaccepted_retention_days()` was 42501
+-- for this login, for control_room_native_results and for the fleet gateway. So
+-- the plan's 90-day sweep of unaccepted results could not run for anybody,
+-- including the operator's repair path, and 0230 had turned a safety property
+-- into a permanent lock-out of its own sweeper arm.
+--
+-- This login is the one that moves a set's retention, so it is the sweeper's own
+-- caller. The function is a pure IMMUTABLE constant: nothing to disclose, no
+-- authority over any table, and no way to hurry a sweep.
+GRANT EXECUTE ON FUNCTION result_file_unaccepted_retention_days() TO control_room_private_web;
+-- Text-copy derivations (0212-0213). The owner reads them through the
+-- per-project view rather than the table, so a project-scoped read is the only
+-- shape they get here: the view carries the source file's display name and the
+-- source state, and its own SECURITY INVOKER means the owner's existing
+-- authority still decides which projects it resolves. No INSERT and no UPDATE —
+-- a derivation is written by the publisher and is never rewritten.
+GRANT SELECT ON control_project_text_copy_derivations TO control_room_private_web;
+
 COMMIT;

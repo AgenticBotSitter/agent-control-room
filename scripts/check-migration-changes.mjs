@@ -1,7 +1,9 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { selectMigrationsOutsideBaseline } from "./ci/migration-lint-baseline.mjs";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const squawkBin = "squawk";
@@ -94,7 +96,7 @@ export function classifyMigrationChanges(changes, existsOnBase) {
   return { violations, lint: [...lint].sort() };
 }
 
-export function checkMigrations({ base = "origin/main", runGit = git, runSquawk, cwd = process.cwd() } = {}) {
+export function checkMigrations({ base = "origin/main", runGit = git, runSquawk, cwd = process.cwd(), baselinePath } = {}) {
   const mergeBase = runGit(["merge-base", base, "HEAD"]).trim();
   const violations = [...scanMigrationDirectory(cwd), ...scanBaseMigrationTree(base, runGit)];
   if (violations.length > 0) return { violations, lint: [] };
@@ -106,32 +108,91 @@ export function checkMigrations({ base = "origin/main", runGit = git, runSquawk,
   };
   const result = classifyMigrationChanges(changes, existsOnBase);
   if (result.violations.length > 0) return result;
+  if (baselinePath !== undefined) {
+    result.lint = selectMigrationsOutsideBaseline({ cwd, baselinePath });
+  }
   if (result.lint.length > 0) {
     const resolvedFiles = resolveRegularMigrationFiles(result.lint, cwd);
     const lint = runSquawk
       ? runSquawk(resolvedFiles)
       : spawnSync(squawkBin, ["--config", join(repositoryRoot, ".squawk.toml"), ...resolvedFiles],
         { stdio: "inherit", env: process.env });
+    // A lint that never ran is not a lint that passed. spawnSync reports a
+    // failed exec as `error` with a null status, and `null !== 0`, so the old
+    // check reported "Squawk rejected a changed migration" for a missing
+    // binary and pointed the author at SQL that was never examined. Squawk is
+    // not a dependency -- CI supplies it through `npm exec --package
+    // squawk-cli@2.61.0` -- so this is the ordinary local case, and it hid the
+    // real findings behind a misleading message.
+    if (lint.error) {
+      const code = lint.error.code === "ENOENT" ? "not found on PATH" : lint.error.message;
+      result.violations.push(
+        `Squawk could not run (${code}); install squawk-cli@2.61.0 or put it on PATH before relying on this check`);
+      return result;
+    }
     if ((lint.status ?? lint) !== 0) result.violations.push("Squawk rejected a changed migration");
   }
   return result;
 }
 
+/**
+ * The ref "already shipped" is diffed against.
+ *
+ * `origin/main` is right for a pull request, which is the only place this gate
+ * runs in CI (see .github/workflows/ci.yml, which passes --base explicitly).
+ * It is wrong for cook mode, where a dozen helpers build parallel branches that
+ * are meant to land on the shared `cook/v1` integration trunk: every one of
+ * them carries its own copy of migrations that trunk already has, so the
+ * three-dot diff against main reports them all as newly added and the gate
+ * re-lints the whole shared backlog on every branch. That is how 28 pre-existing
+ * findings in 12 files became "Squawk rejected a changed migration" on a branch
+ * that had not touched a single migration.
+ *
+ * The base is therefore resolved in the order a person would expect, and
+ * MIGRATION_BASE_REF stays the explicit override CI's own invocation relies on.
+ */
+export function resolveMigrationBase({ argv = process.argv, env = process.env, revParse = null } = {}) {
+  const baseIndex = argv.indexOf("--base");
+  if (baseIndex >= 0 && argv[baseIndex + 1]) return { base: argv[baseIndex + 1], source: "--base" };
+  if (env.MIGRATION_BASE_REF) return { base: env.MIGRATION_BASE_REF, source: "MIGRATION_BASE_REF" };
+  // Cook mode: the shared integration trunk, when this checkout has one. Kept
+  // to a ref that is actually present, so a plain clone still gets origin/main
+  // rather than a confusing "not a valid object name".
+  const resolve = revParse ?? (ref => {
+    try {
+      return git(["rev-parse", "--verify", "--quiet", ref]).trim();
+    } catch {
+      return "";
+    }
+  });
+  for (const ref of ["cook/v1", "origin/cook/v1"]) {
+    if (resolve(ref)) return { base: ref, source: "cook integration trunk" };
+  }
+  return { base: "origin/main", source: "default" };
+}
+
 function main() {
-  const baseIndex = process.argv.indexOf("--base");
-  const base = baseIndex >= 0 ? process.argv[baseIndex + 1] : process.env.MIGRATION_BASE_REF || "origin/main";
+  const { base, source } = resolveMigrationBase();
   try {
-    const result = checkMigrations({ base });
+    const baselineIndex = process.argv.indexOf("--baseline");
+    const baselinePath = baselineIndex < 0 ? undefined : process.argv[baselineIndex + 1];
+    if (baselineIndex >= 0 && (!baselinePath || baselinePath.startsWith("--"))) {
+      throw new Error("--baseline requires a file path");
+    }
+    const result = checkMigrations({ base, baselinePath });
+    const where = ` (base ${base}, from ${source}${baselinePath ? ", committed lint baseline" : ""})`;
     if (result.violations.length > 0) {
       for (const violation of result.violations) console.error(violation);
       process.exitCode = 1;
       return;
     }
-    console.log(result.lint.length === 0 ? "no changed migrations to lint" : `Squawk passed ${result.lint.length} new migration(s)`);
+    console.log(result.lint.length === 0
+      ? `no changed migrations to lint${where}`
+      : `Squawk passed ${result.lint.length} new migration(s)${where}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

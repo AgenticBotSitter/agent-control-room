@@ -129,7 +129,7 @@ export function NotificationSettingsSurface({ settings, decisions, pending = fal
  * here: each row names the record, need, severity, outcome and reason.
  */
 export function NotificationDecisionList({ decisions }: { decisions: NotificationDecisionV1[] }) {
-  return <table>
+  return <div className="private-table-scroll" role="region" aria-label="Saved notification records" tabIndex={0}><table>
     <caption>Saved records considered under this policy</caption>
     <thead><tr><th scope="col">Record</th><th scope="col">Need</th><th scope="col">Severity</th>
       <th scope="col">Outcome</th><th scope="col">Reason</th></tr></thead>
@@ -146,5 +146,5 @@ export function NotificationDecisionList({ decisions }: { decisions: Notificatio
     <tfoot><tr><td colSpan={5}>A row marked <code>notify</code> describes a message the product would show in-app.
       No row approves, retries, cancels or dispatches anything. {decisions.length
         ? notificationDecisionTextV1(decisions[0]) : "Nothing is pending."}</td></tr></tfoot>
-  </table>;
+  </table></div>;
 }
