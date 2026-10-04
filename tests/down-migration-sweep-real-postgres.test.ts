@@ -96,21 +96,27 @@ test("every db/down file is either runnable on a full install, or named here as 
       await admin.connect();
       try {
         const unexpected = [];
+        // Install the full ledger ONCE, then clone it per down file. Applying
+        // every migration afresh for each of 67 down files grew past 20 minutes
+        // on a hosted runner; a TEMPLATE copy is the same full install.
+        const template = "down_sweep_template";
+        await admin.query(`DROP DATABASE IF EXISTS ${template} WITH (FORCE)`);
+        await admin.query(`CREATE DATABASE ${template}`);
+        // `target` and `ledgerPath` are plan-mode flags the JSDoc marks
+        // required; tests/helpers/mac-local-disposable-database.ts passes them
+        // for the same reason, to match the repo's own call shape. Supplying
+        // bootstrap+migrate targets is what actually runs.
+        await applyMigrations({
+          target: `host=${postgres.host} port=${postgres.port} dbname=${template} user=fixture_admin`,
+          ledgerPath: "deploy/postgres/migration-ledger.json",
+          bootstrapTarget: { ...postgres.admin(), database: template },
+          migrateTarget: { ...postgres.connection("migrator"), database: template },
+          env: { ...passwords, NODE_ENV: "test" },
+        });
         for (const [index, file] of [...files].sort().entries()) {
           const database = `down_sweep_${file.slice(0, 4)}`;
           await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
-          await admin.query(`CREATE DATABASE ${database}`);
-          // `target` and `ledgerPath` are plan-mode flags the JSDoc marks
-          // required; tests/helpers/mac-local-disposable-database.ts passes them
-          // for the same reason, to match the repo's own call shape. Supplying
-          // bootstrap+migrate targets is what actually runs.
-          await applyMigrations({
-            target: `host=${postgres.host} port=${postgres.port} dbname=${database} user=fixture_admin`,
-            ledgerPath: "deploy/postgres/migration-ledger.json",
-            bootstrapTarget: { ...postgres.admin(), database },
-            migrateTarget: { ...postgres.connection("migrator"), database },
-            env: { ...passwords, NODE_ENV: "test" },
-          });
+          await admin.query(`CREATE DATABASE ${database} TEMPLATE ${template}`);
           const client = new Client({ ...postgres.admin(), database });
           await client.connect();
           let failure = null;
@@ -126,6 +132,7 @@ test("every db/down file is either runnable on a full install, or named here as 
           }
           if (index % 10 === 9) console.log(`  swept ${index + 1}/${files.size} down files`);
         }
+        await admin.query(`DROP DATABASE IF EXISTS ${template} WITH (FORCE)`);
         assert.deepEqual(unexpected, [],
           `these down files now fail on a full install for a reason not named in DELIBERATE_REFUSALS:\n${unexpected.join("\n")}`);
       } finally { await admin.end(); }
