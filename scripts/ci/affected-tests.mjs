@@ -35,6 +35,8 @@ export const skippedTestExemptions = new Map([
   ["tests/install-services-bringup-real-postgres.test.mjs", "needs the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides"],
   ["tests/install-database-phase-real-postgres.test.mjs", "its release-phase cases need the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides; its data, ledger and digest cases still run"],
   ["tests/result-file-upload-race-postgres.test.ts", "upload staging requires the macOS O_EXLOCK directory lock; skips its race test on Linux"],
+  ["tests/pg-runtime-vendor.test.ts", "its vendoring cases need the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides"],
+  ["tests/pg-runtime-vendor-synthetic.test.ts", "its Mach-O signing case needs the real /usr/bin/clang and /usr/bin/codesign, which are macOS-only; its other cases still run"],
   ["tests/mac-local-pg17-rehearsal.test.mjs", "runs in the full-mac-local-rehearsal job, which provides CONTROL_ROOM_MAC_REHEARSAL_ROOT (see PR #429)"],
 ]);
 
