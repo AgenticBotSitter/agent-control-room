@@ -11,6 +11,7 @@ import { FleetOfferControl } from "../private-app/app/workers/fleet-offer";
 import { renderLocalOwnerSignOutPageV1 } from "../src/web/v1/local-owner-session";
 import { createProjectSettingsBrowserClient } from "../src/web/v1/project-settings-browser-client";
 import { createFleetOwnerHttpHandlerV1 } from "../src/web/v1/fleet-owner-http";
+import { FleetErrorV1 } from "../src/fleet/v1";
 import { WebAccessError } from "../src/web/v1/access-verifier";
 
 async function mounted(element: React.ReactNode, fetcher: typeof fetch, run: (dom: JSDOM) => Promise<void>) {
@@ -378,13 +379,18 @@ test("the real claim guard refuses 50 calls by an in-project worker outside the 
 });
 
 test("Offer cannot silently apply new choices to a saved offer on replay", async () => {
-  const handler = createFleetOwnerHttpHandlerV1({ origin: "https://control.example", localOwnerSession: {
-    assertLocalRequest() {}, verify() { return {}; } } as never, service: {
-    offerTask: async () => ({ offerId: `fleet-offer:${"a".repeat(32)}`, replayed: true }),
-  } as never });
-  const response = await handler(new Request("https://control.example/api/v1/fleet/offers", { method: "POST",
-    headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: "project:offer", jobId: "job:offer", capability: "code.change" }) }));
-  assert.equal(response.status, 409);
+  // The service replays only an identical open offer and refuses changed
+  // choices as a conflict; the route must pass both answers through unchanged.
+  for (const [offerTask, status] of [
+    [async () => ({ offerId: `fleet-offer:${"a".repeat(32)}`, replayed: true }), 201],
+    [async () => { throw new FleetErrorV1("conflict"); }, 409],
+  ] as const) {
+    const handler = createFleetOwnerHttpHandlerV1({ origin: "https://control.example", localOwnerSession: {
+      assertLocalRequest() {}, verify() { return {}; } } as never, service: { offerTask } as never });
+    const response = await handler(new Request("https://control.example/api/v1/fleet/offers", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: "project:offer", jobId: "job:offer", capability: "code.change" }) }));
+    assert.equal(response.status, status);
+  }
 });
 for (const workers of [[], null, [{ workerId: "bad" }]]) test(`Offer handles missing or malformed bot data: ${JSON.stringify(workers)}`, async () => {
   let posts = 0;
