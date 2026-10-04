@@ -657,6 +657,11 @@ jobs:
               echo "::group::task host log (last 150 lines, failed journey only)"
               tail -n 150 -- "${rehearsal_root}/protected/runtime/task-host.log" || true
               echo "::endgroup::"
+              if [ -f "${rehearsal_root}/pg.log" ]; then
+                echo "::group::rehearsal PostgreSQL log (last 120 lines, failed journey only)"
+                tail -n 120 -- "${rehearsal_root}/pg.log" || true
+                echo "::endgroup::"
+              fi
               echo "::group::listening TCP ports at failure"
               ss -ltnp || true
               echo "::endgroup::"
