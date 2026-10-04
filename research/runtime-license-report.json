@@ -1,9 +1,9 @@
 {
   "schema": "control-room.runtime-license-report/v1",
-  "manifestSha256": "25460feb5a3200cc712ccfe582b30837de83a9fdbabb953e54e70e7c3cb4495e",
-  "lockSha256": "91d3c1722b19172bb557532621437db05decc058f0e5ebe1ab1a2c5bd7daa7cb",
-  "inventorySha256": "a4ec842fbd10a7932fca526144a71154e69b264c3e5919591e56883b9bb7a76b",
-  "inventoryDigest": "ddb8ecd6cd6b2786144b21307e9a1530997cb2fe256dedd0a636bc4ac27021ce",
+  "manifestSha256": "982c94767ade5137d927679239f76209373658c205311263989a16a9dd528a51",
+  "lockSha256": "5cb33f4048d1ea18ec870721c60e750ca76874e22711c6b84125035e5aa62611",
+  "inventorySha256": "c33ba6935708897e4d25a9e0601d0757e4c285548580779d74d0fefc0be7e000",
+  "inventoryDigest": "80d4d054c95b292572545a1b65771f406191bf132b7c427e429169b2fefa2782",
   "scope": "prepared runtime root texts only; not complete distribution clearance",
   "packages": 225,
   "missing": [
@@ -2331,9 +2331,9 @@
     },
     {
       "name": "react",
-      "version": "19.2.6",
-      "path": "node_modules/.pnpm/react@19.2.6/node_modules/react",
-      "manifestSha256": "e631b6ac066fa758d9b36f226d96e8fc05425d1e8993ffcc99c6de2d6aa7268c",
+      "version": "19.2.8",
+      "path": "node_modules/.pnpm/react@19.2.8/node_modules/react",
+      "manifestSha256": "e40c3ed9b633c9ecf188e09a4be309780a1ea0a9c068278a30ff6a27e7b2dbb6",
       "attachments": [
         {
           "file": "LICENSE",
@@ -2345,9 +2345,9 @@
     },
     {
       "name": "react-dom",
-      "version": "19.2.6",
-      "path": "node_modules/.pnpm/react-dom@19.2.6_react@19.2.6/node_modules/react-dom",
-      "manifestSha256": "2c195b9bfa1b4f7dee5dd6f955c0fbb716e83c3e9c2e7a80b5e19c5a18507718",
+      "version": "19.2.8",
+      "path": "node_modules/.pnpm/react-dom@19.2.8_react@19.2.8/node_modules/react-dom",
+      "manifestSha256": "7c82f0967114d4b5d38b1f07e543af87c9919e8d3243f9604004819319cb2200",
       "attachments": [
         {
           "file": "LICENSE",
@@ -2360,7 +2360,7 @@
     {
       "name": "react-markdown",
       "version": "10.1.0",
-      "path": "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.6_supports-color@10.2.2/node_modules/react-markdown",
+      "path": "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.8_supports-color@10.2.2/node_modules/react-markdown",
       "manifestSha256": "c6b7d280b5e5a6b620ad252abfd318560f2223562e67414fcc3dcd1f784e89c5",
       "attachments": [
         {
@@ -3030,9 +3030,9 @@
     },
     {
       "name": "ws",
-      "version": "8.18.0",
-      "path": "node_modules/.pnpm/ws@8.18.0/node_modules/ws",
-      "manifestSha256": "2325e3ac70900fbbd08f858f6ecb2a7f8a66ead76ad225ac3fd24b992b36e9e4",
+      "version": "8.21.0",
+      "path": "node_modules/.pnpm/ws@8.21.0/node_modules/ws",
+      "manifestSha256": "584ce6e7516587ba249dc910b0c04e2753f6b3f451fc3a5bc324f7735bdacc71",
       "attachments": [
         {
           "file": "LICENSE",

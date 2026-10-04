@@ -8,8 +8,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, realpath, mkdir, writeFile, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { runNightlyBackupV1 } from '../src/installer/v1/nightly-backup.ts';
 import { mainNightlyBackupV1 } from '../src/installer/v1/nightly-backup-entry.ts';
 import { createNightlyBackupConfigurationV1 } from '../src/installer/v1/nightly-backup-configuration.ts';
@@ -28,7 +29,7 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
  * production once R4B-10 lands.
  */
 async function nightlyFixture(t, label) {
-  const root = await mkdtemp(`/private/tmp/bkfix4-${label}-`);
+  const root = await mkdtemp(join(await realpath(tmpdir()), `bkfix4-${label}-`));
   t.after(() => rm(root, { recursive: true, force: true }));
   const configuration = createNightlyBackupConfigurationV1(root);
   await mkdir(join(root, 'Protected/config/database-passwords'), { recursive: true });

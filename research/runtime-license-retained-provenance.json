@@ -343,7 +343,7 @@
     },
     "third_party/react": {
       "packageName": "react",
-      "packageVersion": "19.2.6",
+      "packageVersion": "19.2.8",
       "sourceCommit": null,
       "qualification": "pinned_npm_release_integrity",
       "files": [
@@ -356,7 +356,7 @@
     },
     "third_party/react-dom": {
       "packageName": "react-dom",
-      "packageVersion": "19.2.6",
+      "packageVersion": "19.2.8",
       "sourceCommit": null,
       "qualification": "pinned_npm_release_integrity",
       "files": [

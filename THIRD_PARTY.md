@@ -1,6 +1,6 @@
 # Third-party notices and distribution manifest
 
-Inventory digest: `ddb8ecd6cd6b2786144b21307e9a1530997cb2fe256dedd0a636bc4ac27021ce`
+Inventory digest: `80d4d054c95b292572545a1b65771f406191bf132b7c427e429169b2fefa2782`
 
 This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 
@@ -172,8 +172,8 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `punycode@2.3.1` — installed_root_text; `LICENSE-MIT.txt` (483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a)
 - `pvtsutils@1.3.6` — installed_root_text; `LICENSE` (c620c1d08a47c93ce242914a4269b86e41df5a97845325725a5f83d5d6f9d7fd)
 - `pvutils@1.2.0` — installed_root_text; `LICENSE` (15c88630f1e778db64a446cb31b67362cc9eb7a048fdf5ac7ab51905b74464cd)
-- `react@19.2.6` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
-- `react-dom@19.2.6` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `react@19.2.8` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `react-dom@19.2.8` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
 - `react-markdown@10.1.0` — installed_root_text; `license` (f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef)
 - `reflect-metadata@0.2.2` — installed_root_text; `LICENSE` (c5217b0544ea9c91d010863582d6f6b35ec50e4146c34dee085ddcec5dd92def)
 - `remark-gfm@4.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
@@ -222,7 +222,7 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `whatwg-encoding@3.1.1` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
 - `whatwg-mimetype@4.0.0` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
 - `whatwg-url@14.2.0` — installed_root_text; `LICENSE.txt` (db480f236292a093e77a83c35431a8496624e1e664a3547768a9ce2bdde39877)
-- `ws@8.18.0` — installed_root_text; `LICENSE` (2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef)
+- `ws@8.21.0` — installed_root_text; `LICENSE` (2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef)
 - `xml-name-validator@5.0.0` — installed_root_text; `LICENSE.txt` (a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9)
 - `xml-naming@0.3.0` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
 - `xml2js@0.5.0` — installed_root_text; `LICENSE` (c51452ef1dfd5606c9fe266930fa6bf7e8a534d52973b6475df5bf212cad5b0a)
@@ -252,8 +252,8 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `third_party/pg-types` — npm:pg-types@2.2.0; pinned_npm_release_integrity; `LICENSE.from-README.md` (c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd)
 - `third_party/pgpass` — npm:pgpass@1.0.5; pinned_npm_release_integrity; `LICENSE.from-README.md` (f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4)
 - `third_party/postgres` — reviewed retained exclusion; reviewed exclusion; `NOTICE.md` (3d149888548e267da55a49eb7982417fbd8b420833c276ea8ce45ef8a10cd8e8), `UNLICENSE` (b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c)
-- `third_party/react` — npm:react@19.2.6; pinned_npm_release_integrity; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
-- `third_party/react-dom` — npm:react-dom@19.2.6; pinned_npm_release_integrity; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `third_party/react` — npm:react@19.2.8; pinned_npm_release_integrity; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `third_party/react-dom` — npm:react-dom@19.2.8; pinned_npm_release_integrity; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
 - `third_party/react-markdown` — npm:react-markdown@10.1.0; pinned_npm_release_integrity; `LICENSE` (f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef)
 - `third_party/readability` — npm:@mozilla/readability@0.6.0; pinned_npm_release_integrity; `LICENSE` (a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958)
 - `third_party/remark-gfm` — npm:remark-gfm@4.0.1; pinned_npm_release_integrity; `LICENSE` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)

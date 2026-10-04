@@ -1,7 +1,7 @@
 {
-  "manifestSha256": "25460feb5a3200cc712ccfe582b30837de83a9fdbabb953e54e70e7c3cb4495e",
-  "lockSha256": "91d3c1722b19172bb557532621437db05decc058f0e5ebe1ab1a2c5bd7daa7cb",
-  "source": "pnpm@11.19.0 licenses list --prod --json",
+  "manifestSha256": "982c94767ade5137d927679239f76209373658c205311263989a16a9dd528a51",
+  "lockSha256": "5cb33f4048d1ea18ec870721c60e750ca76874e22711c6b84125035e5aa62611",
+  "source": "offline installed production dependency and peer graph; package manifests checked against pnpm lock",
   "scope": "prepared local production dependency inventory; not bundle coverage",
   "records": [
     {
@@ -1651,20 +1651,20 @@
     {
       "name": "react",
       "versions": [
-        "19.2.6"
+        "19.2.8"
       ],
       "paths": [
-        "node_modules/.pnpm/react@19.2.6/node_modules/react"
+        "node_modules/.pnpm/react@19.2.8/node_modules/react"
       ],
       "license": "MIT"
     },
     {
       "name": "react-dom",
       "versions": [
-        "19.2.6"
+        "19.2.8"
       ],
       "paths": [
-        "node_modules/.pnpm/react-dom@19.2.6_react@19.2.6/node_modules/react-dom"
+        "node_modules/.pnpm/react-dom@19.2.8_react@19.2.8/node_modules/react-dom"
       ],
       "license": "MIT"
     },
@@ -1674,7 +1674,7 @@
         "10.1.0"
       ],
       "paths": [
-        "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.6_supports-color@10.2.2/node_modules/react-markdown"
+        "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.8_supports-color@10.2.2/node_modules/react-markdown"
       ],
       "license": "MIT"
     },
@@ -2143,10 +2143,10 @@
     {
       "name": "ws",
       "versions": [
-        "8.18.0"
+        "8.21.0"
       ],
       "paths": [
-        "node_modules/.pnpm/ws@8.18.0/node_modules/ws"
+        "node_modules/.pnpm/ws@8.21.0/node_modules/ws"
       ],
       "license": "MIT"
     },

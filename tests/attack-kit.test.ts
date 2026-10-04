@@ -1342,7 +1342,7 @@ test("the kit's own sources are all present and the working tree is as it was", 
   const directory = join(REPOSITORY_ROOT, "tests/support/attack-kit");
   const present = (await list(directory)).filter(name => name.endsWith(".ts")).sort();
   assert.deepEqual(present,
-    ["concurrency.ts", "identities.ts", "index.ts", "mutation.ts", "privileges.ts",
+    ["concurrency.ts", "deterministic-lock-interleaving.ts", "identities.ts", "index.ts", "mutation.ts", "privileges.ts",
       "real-postgres.ts", "search-path-audit.ts", "suite-lane.ts"],
     "every kit source file is present");
   const { execFile } = await import("node:child_process");

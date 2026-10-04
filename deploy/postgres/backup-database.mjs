@@ -38,7 +38,7 @@ import { DEFAULT_ACL_ROLES_SNAPSHOT_SQL, MEMBERSHIPS_SNAPSHOT_SQL, ROLES_SNAPSHO
 // `NIGHTLY_DUMP_TIMEOUT_MS_V1` is re-exported because this module is where the
 // deadline is actually handed to `execFile`.
 import { BACKUP_MANIFEST_SCHEMA_V1, NIGHTLY_DUMP_TIMEOUT_MS_V1 }
-  from "../../src/installer/v1/nightly-backup-constants.ts";
+  from "../../src/installer/shared/nightly-backup-constants.mjs";
 export { BACKUP_MANIFEST_SCHEMA_V1, NIGHTLY_DUMP_TIMEOUT_MS_V1 };
 
 import { reserveBackupGenerationV1, consumeBackupGenerationV1, assertBackupGenerationV1, sha256BackupFileV1 as sha256OfFileV1 } from "../../src/installer/shared/backup-files.mjs";

@@ -324,7 +324,7 @@ test("every current program argument exists in an exactly staged release",
     join(installRoot, "runtime", "node-current", "bin", "node"),
     join(installRoot, "updater", "current", "service-output.mjs"),
     "--out", join(installRoot, "logs", "nightly-backup", "out.log"),
-    "--err", join(installRoot, "logs", "nightly-backup", "err.log"), "--shutdown-ms", "115000", "--",
+    "--err", join(installRoot, "logs", "nightly-backup", "err.log"), "--shutdown-ms", "2755000", "--",
   ]);
   const childArguments = nightlyPlistArguments.slice(9);
   assert.deepEqual(childArguments, [
@@ -426,7 +426,7 @@ test("nightly backup accepts only its fixed config form and requires a completed
     return { planned: false, identityDigest: NIGHTLY_IDENTITY_DIGEST }; } }));
   assert.deepEqual(received, { source: { host: `${INSTALL_ROOT}/pg/socket`, port: 5432, database: "control_room",
     user: "control_room_migrator", password: "protected-credential" },
-  out: `${INSTALL_ROOT}/backups/nightly/2026-09-30T02-30-00-000Z`,
+  out: `${INSTALL_ROOT}/backups/nightly/2026-09-30T02-30-00-000Z`, generation: undefined,
   pgBin: `${INSTALL_ROOT}/runtime/pg-current/bin`, ledgerDigest: configuration.ledgerDigest,
   requiredTables: [...configuration.requiredTables], release: "mac-local-nightly" });
   let bypassedConfigurationRead = false, bypassedMissingPath = false;

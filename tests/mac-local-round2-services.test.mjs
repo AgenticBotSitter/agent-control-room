@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readFile, rm, open, lstat, readdir } from 'node:fs/promises';
+import { mkdtemp, realpath, mkdir, writeFile, readFile, rm, open, lstat, readdir } from 'node:fs/promises';
 import { constants, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import { RotatingHostLog, superviseTaskHost } from '../scripts/mac-local/task-host-supervisor.mjs';
 import { runtimePaths } from '../scripts/mac-local/stack.mjs';
 import { runNightlyBackupV1, readNightlyBackupCredentialV1 } from '../src/installer/v1/nightly-backup.ts';
 import { createNightlyBackupConfigurationV1 } from '../src/installer/v1/nightly-backup-configuration.ts';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function rootFor(t) { const root = await mkdtemp('/private/tmp/hard13-services-'); t.after(() => rm(root, { recursive: true, force: true })); return root; }
+async function rootFor(t) { const root = await mkdtemp(join(await realpath(tmpdir()), 'hard13-services-')); t.after(() => rm(root, { recursive: true, force: true })); return root; }
 async function waitFor(predicate) { const until = performance.now() + 3000; while (!predicate()) { if (performance.now() > until) throw Error('fixture_timeout'); await sleep(5); } }
 
 test('R2S-03: FIFO metadata cannot stall retention or fifty subsequent backup callers', async t => {

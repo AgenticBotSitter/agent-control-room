@@ -6,8 +6,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readdir, rm, chmod } from 'node:fs/promises';
+import { mkdtemp, realpath, mkdir, writeFile, readdir, rm, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { runNightlyBackupV1, readNightlyBackupCredentialV1 } from '../src/installer/v1/nightly-backup.ts';
 import { mainNightlyBackupV1 } from '../src/installer/v1/nightly-backup-entry.ts';
 import { createNightlyBackupConfigurationV1 } from '../src/installer/v1/nightly-backup-configuration.ts';
@@ -28,7 +29,7 @@ const LEDGER_HEAD = { filename: '0001_initial.sql', digest: `sha256:${'c'.repeat
  * metadata are bound to a manifest).
  */
 async function nightlyFixture(t, label) {
-  const root = await mkdtemp(`/private/tmp/bkfix4-${label}-`);
+  const root = await mkdtemp(join(await realpath(tmpdir()), `bkfix4-${label}-`));
   t.after(() => rm(root, { recursive: true, force: true }));
   const configuration = createNightlyBackupConfigurationV1(root);
   await mkdir(join(root, 'Protected/config/database-passwords'), { recursive: true });
@@ -205,7 +206,7 @@ for (const script of ['scripts/ops/backup-database.mjs', 'scripts/ops/verify-dat
   test(`rv-bkfix4: bare node ${script} loads and prints its usage`, async () => {
     const { execFile } = await import('node:child_process');
     const result = await new Promise(resolveRun => {
-      execFile(process.execPath, [script], { env: { PATH: process.env.PATH, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' }, timeout: 30_000 },
+      execFile(process.execPath, ["--no-experimental-strip-types", script], { env: { PATH: process.env.PATH, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' }, timeout: 30_000 },
         (error, stdout, stderr) => resolveRun({ code: error?.code ?? 0, output: `${stdout}${stderr}` }));
     });
     assert.doesNotMatch(result.output, /ERR_MODULE_NOT_FOUND|ERR_IMPORT_ATTRIBUTE_MISSING|ERR_UNKNOWN_FILE_EXTENSION/u);

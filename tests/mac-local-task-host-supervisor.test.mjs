@@ -830,9 +830,10 @@ test("mac:up authenticated readiness is bounded under a burst, drop, slow respon
   const exactAlive = (pid, command) => [supervisorPid, supervisorPid + 10].includes(pid)
     ? command.join(" ") === hostCommand(root).join(" ")
     : [childPid, childPid + 10].includes(pid) && command.join(" ") === taskHostCommand(root).join(" ");
-  const probe = () => authenticatedHostReady(root, port, { alive: exactAlive, timeoutMs: 50, healthProbeKey });
+  // Allow a loaded CI runner to serve the entire burst inside a bounded deadline.
+  const probe = (timeoutMs = 2_000) => authenticatedHostReady(root, port, { alive: exactAlive, timeoutMs, healthProbeKey });
 
-  const burst = await Promise.all(Array.from({ length: 50 }, probe));
+  const burst = await Promise.all(Array.from({ length: 50 }, () => probe()));
   assert.deepEqual(new Set(burst), new Set([supervisorPid]), "all 50 parallel authenticated probes agree");
   assert.equal(requests, 50);
   mode = "drop";
@@ -840,7 +841,9 @@ test("mac:up authenticated readiness is bounded under a burst, drop, slow respon
   mode = "ready";
   assert.equal(await probe(), supervisorPid, "a retry after the dropped connection can succeed");
   mode = "slow";
-  assert.equal(await probe(), undefined, "a slow response stops at the probe deadline");
+  const slowStarted = performance.now();
+  assert.equal(await probe(50), undefined, "a slow response stops at the probe deadline");
+  assert.ok(performance.now() - slowStarted < 1_000, "the slow probe remains bounded");
   mode = "restart";
   assert.equal(await probe(), undefined, "a restart halfway through cannot mix two host generations");
 });

@@ -25,6 +25,7 @@ import { createPrivateOwnerBootstrapCommand, type PrivateOwnerBootstrapConfigura
   from "../src/web/v1/private-owner-bootstrap";
 import { createPrivatePostgresDatabase, type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
+import { createProjectOrchestrationServiceV1 } from "../src/web/v1/project-orchestration-composition";
 import { OperatorSurfaceStoreV1 } from "../src/operator-surfaces/v1/store";
 import type { AccessTrust } from "../src/web/v1/access-verifier";
 import { conformanceNow, conformanceSubject, syntheticAccessTrust, syntheticAssertion, syntheticSigningKey }
@@ -179,6 +180,10 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
     database: { client: opened.client, close: async () => {}, isAvailable: () => true }, planning,
     workerReadiness: { read: () => [{ kind: "codex" as const, state: "ready" as const, proof: "proven" as const }] },
     taskWorkersStarted: true,
+    // Match the installed host's durable settings service, without a planner.
+    orchestration: createProjectOrchestrationServiceV1({ db: opened.client,
+      tenantId: configuration.tenantId, workspaceId: configuration.workspaceId,
+      queueCatalog: [], integrityKey: new Uint8Array(32).fill(7), clock: () => nowMs }),
     // The installed host always passes the task application's Action Inbox source
     // (mac-local-task-application.ts), and every page's header now reads it
     // (r6ibfix's shared attention). Built here the same way, over this fixture's
