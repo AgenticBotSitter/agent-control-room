@@ -86,6 +86,28 @@ async function fixture(t, overrides = {}) {
   return { root, config, service, address, token, makeWorktree, call, worktrees };
 }
 
+// Every run is confined by macOS Seatbelt: the service starts a command only
+// through /usr/bin/sandbox-exec (scripts/test-runner/service.mjs). A host with no
+// Seatbelt (Linux) must report that spawn failure and never run the command
+// unconfined, so there each case that needs a confined run proves that instead.
+const SEATBELT_HOST = existsSync("/usr/bin/sandbox-exec");
+function seatbeltTest(name, ...rest) {
+  const body = rest.pop();
+  return test(name, ...rest, SEATBELT_HOST ? body : async t => {
+    const f = await fixture(t);
+    const marker = join(f.root, "ran-unconfined");
+    const worktree = await f.makeWorktree("no-seatbelt", {
+      "tests/unconfined.test.mjs": `import { writeFileSync } from "node:fs";
+        writeFileSync(${JSON.stringify(marker)}, "ran");\n`,
+    });
+    const result = await f.call({ worktree, file: "tests/unconfined.test.mjs" });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.exitCode, null, "no command exit status without a sandbox");
+    assert.match(result.body.spawnError, /sandbox-exec/u, "the missing sandbox is the reported reason");
+    assert.equal(existsSync(marker), false, "the command never ran unconfined");
+  });
+}
+
 test("auth guard refuses missing and incorrect bearer tokens with a loopback-only listener", async t => {
   const f = await fixture(t);
   assert.equal(f.address.address, "127.0.0.1");
@@ -131,7 +153,7 @@ test("command allowlist guard refuses unknown scripts, extra arguments, and test
   assert.deepEqual(escape, { status: 403, body: { error: "command_refused" } });
 });
 
-test("fixed environment guard strips caller variables and assigns ports and a short TMPDIR", async t => {
+seatbeltTest("fixed environment guard strips caller variables and assigns ports and a short TMPDIR", async t => {
   const previous = process.env.TEST_RUNNER_FORBIDDEN_SECRET;
   process.env.TEST_RUNNER_FORBIDDEN_SECRET = "must-not-cross";
   t.after(() => {
@@ -162,7 +184,7 @@ test("fixed environment guard strips caller variables and assigns ports and a sh
   assert.match(result.body.logExcerpt, /ENVIRONMENT_GUARD_OK/u);
 });
 
-test("port lease guard gives overlapping runs disjoint blocks and releases them", async t => {
+seatbeltTest("port lease guard gives overlapping runs disjoint blocks and releases them", async t => {
   const f = await fixture(t, { portPool: { start: 28100, end: 28119, blockSize: 10 } });
   const source = `
     import test from "node:test";
@@ -186,7 +208,7 @@ test("port lease guard gives overlapping runs disjoint blocks and releases them"
   assert.ok([one.body.ports.base, two.body.ports.base].includes(again.body.ports.base));
 });
 
-test("timeout guard kills the complete process group", async t => {
+seatbeltTest("timeout guard kills the complete process group", async t => {
   const f = await fixture(t, { timeoutMs: 150 });
   const worktree = await f.makeWorktree("timeout", {
     "tests/timeout.test.mjs": `
@@ -229,7 +251,7 @@ test("concurrency guard refuses work above the configured limit", async t => {
   assert.deepEqual(simultaneous.map(result => result.status).sort(), [200, 429]);
 });
 
-test("output cap guard bounds the excerpt while retaining TAP results", async t => {
+seatbeltTest("output cap guard bounds the excerpt while retaining TAP results", async t => {
   const f = await fixture(t, { maxOutputBytes: 1_024 });
   const worktree = await f.makeWorktree("output", {
     "tests/output.test.mjs": `
@@ -267,7 +289,7 @@ test("the TAP summary reads both reporter formats Node ships", () => {
   assert.equal(tapSummary("no summary at all\n").tests, 0);
 });
 
-test("happy path returns TAP failures and writes one secret-free audit line", async t => {
+seatbeltTest("happy path returns TAP failures and writes one secret-free audit line", async t => {
   const f = await fixture(t);
   const worktree = await f.makeWorktree("happy", {
     "tests/happy.test.mjs": `
@@ -289,7 +311,7 @@ test("happy path returns TAP failures and writes one secret-free audit line", as
   assert.equal((await stat(f.config.auditLog)).mode & 0o777, 0o600);
 });
 
-test("failing command reports its TAP name and the client exits nonzero", async t => {
+seatbeltTest("failing command reports its TAP name and the client exits nonzero", async t => {
   const f = await fixture(t);
   const worktree = await f.makeWorktree("client", {
     "tests/failing.test.mjs": `
@@ -314,7 +336,7 @@ test("failing command reports its TAP name and the client exits nonzero", async 
   assert.match(result.stdout, /intentional fake failure/u);
 });
 
-test("client waits past several seconds for a long-running command with no timeout of its own", async t => {
+seatbeltTest("client waits past several seconds for a long-running command with no timeout of its own", async t => {
   const f = await fixture(t, { timeoutMs: 8_000 });
   const worktree = await f.makeWorktree("slow-client", {
     "tests/slow.test.mjs": `import test from "node:test"; test("slow", () => new Promise(resolve => setTimeout(resolve, 3000)));`,
@@ -336,7 +358,7 @@ test("client waits past several seconds for a long-running command with no timeo
   assert.ok(elapsedMs >= 3_000, `expected the client to wait for the full run, only waited ${elapsedMs}ms`);
 });
 
-test("sandbox guard blocks writes outside the worktree and this run's temp directory", async t => {
+seatbeltTest("sandbox guard blocks writes outside the worktree and this run's temp directory", async t => {
   const f = await fixture(t);
   const target = join(f.root, "escape-write.txt");
   const worktree = await f.makeWorktree("sandbox-write", {
@@ -355,7 +377,7 @@ test("sandbox guard blocks writes outside the worktree and this run's temp direc
   await assert.rejects(stat(target));
 });
 
-test("sandbox guard blocks reading the private token file", async t => {
+seatbeltTest("sandbox guard blocks reading the private token file", async t => {
   const f = await fixture(t);
   const worktree = await f.makeWorktree("sandbox-read", {
     "tests/read.test.mjs": `
@@ -372,7 +394,7 @@ test("sandbox guard blocks reading the private token file", async t => {
   assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
 });
 
-test("sandbox guard blocks a connection to a port outside this run's assigned block", async t => {
+seatbeltTest("sandbox guard blocks a connection to a port outside this run's assigned block", async t => {
   const f = await fixture(t);
   const blocker = createServer(socket => socket.destroy());
   await new Promise(resolveReady => blocker.listen(0, "127.0.0.1", resolveReady));
@@ -426,7 +448,7 @@ test("pinned script guard refuses a worktree package.json that diverges from the
   assert.deepEqual(result, { status: 403, body: { error: "command_refused" } });
 });
 
-test("pinned script mode runs the exact configured node argv directly, without pnpm", async t => {
+seatbeltTest("pinned script mode runs the exact configured node argv directly, without pnpm", async t => {
   const f = await fixture(t);
   const worktree = await f.makeWorktree("script-happy");
   const result = await f.call({ worktree, script: "test:database" });
@@ -435,7 +457,7 @@ test("pinned script mode runs the exact configured node argv directly, without p
   assert.equal(result.body.command, DATABASE_SCRIPT);
 });
 
-test("bounded pipe guard settles within timeoutMs plus grace even when a detached grandchild under TMPDIR holds the output pipe", async t => {
+seatbeltTest("bounded pipe guard settles within timeoutMs plus grace even when a detached grandchild under TMPDIR holds the output pipe", async t => {
   // node's own `--test` runner does not exit on its own while a detached child
   // still holds its inherited stdout/stderr pipe open, so the fix under test
   // is not "the run finishes quickly" (it cannot, on its own) — it is that our
@@ -486,7 +508,7 @@ test("server aborts a run and frees its slot when the client disconnects before 
   await eventually(() => f.service.activeRuns.size === 0, 3_000);
 });
 
-test("ownership guard reaps a real pg_ctl-started postmaster on timeout, even though setsid removes it from the run's process group", { skip: REAL_PG_BIN ? false : "needs PostgreSQL 17 binaries" }, async t => {
+seatbeltTest("ownership guard reaps a real pg_ctl-started postmaster on timeout, even though setsid removes it from the run's process group", { skip: REAL_PG_BIN ? false : "needs PostgreSQL 17 binaries" }, async t => {
   const f = await fixture(t, { pgBin: REAL_PG_BIN, timeoutMs: 6_000,
     portPool: { start: PG_PORT_BASE, end: PG_PORT_BASE + 1, blockSize: 2 } });
   const worktree = await f.makeWorktree("pgctl-timeout", {
@@ -542,7 +564,7 @@ async function processGone(pid, timeoutMs = 3_000) {
   }, timeoutMs);
 }
 
-test("sandbox guard blocks a Unix-socket connect outside this run's temp directory (S1)", async t => {
+seatbeltTest("sandbox guard blocks a Unix-socket connect outside this run's temp directory (S1)", async t => {
   const f = await fixture(t);
   // Stands in for a local PostgreSQL socket, an ssh-agent, or any other daemon.
   const outside = await unixServer(t, join(f.root, "outside.sock"));
@@ -572,7 +594,7 @@ test("sandbox guard blocks a Unix-socket connect outside this run's temp directo
   assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
 });
 
-test("sandbox guard denies reads under the service account's home and outside the run by default (S2)", async t => {
+seatbeltTest("sandbox guard denies reads under the service account's home and outside the run by default (S2)", async t => {
   const f = await fixture(t);
   const planted = join(f.root, "planted-secret.txt");
   await writeFile(planted, "not for tests");
@@ -593,7 +615,7 @@ test("sandbox guard denies reads under the service account's home and outside th
   assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
 });
 
-test("sandbox guard keeps built-in credential, agent and live-app folders closed even inside an allowed root (S2)", async t => {
+seatbeltTest("sandbox guard keeps built-in credential, agent and live-app folders closed even inside an allowed root (S2)", async t => {
   // Make the worktree itself the "home", so each built-in protected folder
   // lies INSIDE an allowed root and only the built-in deny can stop it.
   const f = await fixture(t, root => ({ sandboxHome: join(root, "worktree-builtin") }));
@@ -646,7 +668,7 @@ test("configuration guard refuses a private folder that contains the worktrees o
     /protectedReadPrefixes\[0\] overlaps a sandbox root/u);
 });
 
-test("sandbox guard refuses exec of launchctl, osascript and open, and signals to processes outside the run (S3)", async t => {
+seatbeltTest("sandbox guard refuses exec of launchctl, osascript and open, and signals to processes outside the run (S3)", async t => {
   const f = await fixture(t);
   const victim = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   t.after(() => { try { victim.kill("SIGKILL"); } catch { /* already gone */ } });
@@ -753,7 +775,7 @@ test("sandbox guard keeps other processes' argv and environment unreadable, even
   assert.doesNotMatch(result.body.logExcerpt, new RegExp(marker, "u"));
 });
 
-test("run-id reaper kills a detached grandchild that kept the worktree as its cwd (S4)", async t => {
+seatbeltTest("run-id reaper kills a detached grandchild that kept the worktree as its cwd (S4)", async t => {
   const f = await fixture(t);
   const worktree = await f.makeWorktree("detached-worktree", {
     "tests/detached.test.mjs": `
@@ -775,7 +797,7 @@ test("run-id reaper kills a detached grandchild that kept the worktree as its cw
   await processGone(pid);
 });
 
-test("port quarantine withholds a block while an escaped process still holds a socket on it (S4)", async t => {
+seatbeltTest("port quarantine withholds a block while an escaped process still holds a socket on it (S4)", async t => {
   const f = await fixture(t, { portPool: { start: PG_PORT_BASE, end: PG_PORT_BASE + 1, blockSize: 2 } });
   const worktree = await f.makeWorktree("quarantine", {
     "tests/hold-port.test.mjs": `
@@ -807,7 +829,7 @@ test("port quarantine withholds a block while an escaped process still holds a s
   assert.equal(third.status, 200, JSON.stringify(third.body));
 });
 
-test("attack-kit socket root guard keeps short sockets inside the run instead of shared /tmp (S6)", async t => {
+seatbeltTest("attack-kit socket root guard keeps short sockets inside the run instead of shared /tmp (S6)", async t => {
   const f = await fixture(t);
   const worktree = await f.makeWorktree("socket-root", {
     "tests/socket-root.test.mjs": `
@@ -825,7 +847,7 @@ test("attack-kit socket root guard keeps short sockets inside the run instead of
   assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
 });
 
-test("ownership guard refuses a registry entry whose data directory resolves outside the run (S7)", { skip: REAL_PG_BIN ? false : "needs PostgreSQL 17 binaries" }, async t => {
+seatbeltTest("ownership guard refuses a registry entry whose data directory resolves outside the run (S7)", { skip: REAL_PG_BIN ? false : "needs PostgreSQL 17 binaries" }, async t => {
   const f = await fixture(t, { pgBin: REAL_PG_BIN, portPool: { start: PG_PORT_BASE, end: PG_PORT_BASE + 1, blockSize: 2 } });
   // A cluster the run did NOT start, on a port inside the run's block.
   const dataDirectory = join(f.root, "outer-data");

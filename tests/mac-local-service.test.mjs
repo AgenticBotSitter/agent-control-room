@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fsPromises from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, lstat, symlink, writeFile } from "node:fs/promises";
@@ -38,6 +38,22 @@ async function fixture(t, { loaded = false, pid = 4242 } = {}) {
   return { home, calls, state, runtime };
 }
 
+// Every lifecycle change holds the updater's local lock, which is macOS
+// `/usr/bin/lockf` (src/updater/v1/fs-safety.mjs). Where lockf does not exist
+// (Linux), install, stop and uninstall all refuse before asking launchd
+// anything, so on such a host each lifecycle case proves that refusal instead.
+const LOCKF_HOST = existsSync("/usr/bin/lockf");
+function lifecycleTest(name, body) {
+  return test(name, LOCKF_HOST ? body : async t => {
+    const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
+    for (const action of [() => installOrRefreshService(input, f.runtime), () => stopService(f.runtime),
+      () => uninstallService(f.runtime)])
+      await assert.rejects(action(), { code: "updater_local_lock_refused" });
+    assert.deepEqual(f.calls, [], "no lifecycle step reaches launchd without the lock");
+    assert.equal(await serviceInstalled(f.runtime), false, "and no plist is published");
+  });
+}
+
 test("plist runs exactly the host command, restarts only after a crash, and carries only PATH and LANG", () => {
   const plist = servicePlist({ protectedRoot: root, logPath,
     env: { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8", SECRET_TOKEN: "do-not-copy", HOME: "/Users/x" } });
@@ -60,7 +76,7 @@ test("plist escapes XML and refuses relative or control-character paths", () => 
   assert.throws(() => servicePlist({ protectedRoot: root, logPath: "/log\nx", env: {} }), /path_invalid/u);
 });
 
-test("first install writes a private plist, enables and bootstraps the agent", async t => {
+lifecycleTest("first install writes a private plist, enables and bootstraps the agent", async t => {
   const f = await fixture(t);
   assert.equal(await serviceInstalled(f.runtime), false);
   assert.equal(await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), "installed");
@@ -71,7 +87,7 @@ test("first install writes a private plist, enables and bootstraps the agent", a
   assert.deepEqual(await servicePid(f.runtime), { loaded: true, pid: 4242 });
 });
 
-test("a changed plist is booted out, rewritten and bootstrapped; an unchanged one is restarted in place", async t => {
+lifecycleTest("a changed plist is booted out, rewritten and bootstrapped; an unchanged one is restarted in place", async t => {
   const f = await fixture(t);
   await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
   f.calls.length = 0;
@@ -83,7 +99,7 @@ test("a changed plist is booted out, rewritten and bootstrapped; an unchanged on
   assert.deepEqual(f.calls, ["print " + target, "kickstart -k " + target]);
 });
 
-test("mac:down stops and disables the agent but keeps its plist; the next mac:up re-enables it", async t => {
+lifecycleTest("mac:down stops and disables the agent but keeps its plist; the next mac:up re-enables it", async t => {
   const f = await fixture(t);
   await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
   assert.equal(await stopService(f.runtime), "stopped");
@@ -95,7 +111,7 @@ test("mac:down stops and disables the agent but keeps its plist; the next mac:up
   assert.equal(f.state.loaded && f.state.enabled, true);
 });
 
-test("uninstall stops the agent, removes the plist and clears the disable override", async t => {
+lifecycleTest("uninstall stops the agent, removes the plist and clears the disable override", async t => {
   const f = await fixture(t);
   await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
   assert.equal(await uninstallService(f.runtime), "stopped_and_removed");
@@ -104,7 +120,7 @@ test("uninstall stops the agent, removes the plist and clears the disable overri
   assert.equal(await uninstallService(f.runtime), "removed");
 });
 
-test("status is read-only, exact, and stable before install, while running, and after stop", async t => {
+lifecycleTest("status is read-only, exact, and stable before install, while running, and after stop", async t => {
   const f = await fixture(t);
   assert.deepEqual(await serviceStatus({ protectedRoot: root, logPath, env: {} }, f.runtime), {
     installed: false, loaded: false, pid: undefined, enabled: true, definition: "absent", state: "not_installed",
@@ -121,7 +137,7 @@ test("status is read-only, exact, and stable before install, while running, and 
   });
 });
 
-test("a failed bootstrap is repeat-safe and uninstall remains idempotent", async t => {
+lifecycleTest("a failed bootstrap is repeat-safe and uninstall remains idempotent", async t => {
   const f = await fixture(t);
   let failed = false;
   const runtime = { ...f.runtime, launchctl: async args => {
@@ -152,7 +168,7 @@ test("a symlinked plist or LaunchAgents directory is refused and never followed"
   assert.deepEqual(g.calls, []);
 });
 
-test("a launchctl failure is reported, not swallowed", async t => {
+lifecycleTest("a launchctl failure is reported, not swallowed", async t => {
   const f = await fixture(t);
   f.state.enabled = false;
   const runtime = { ...f.runtime, launchctl: async args => args[0] === "enable" ? { code: 1, stdout: "" } : f.runtime.launchctl(args) };
@@ -198,7 +214,7 @@ test("cleanup dry-run and execution touch only disposable clusters and their una
 });
 
 
-test("R5S-02: leftover temporary symlink cannot overwrite notes or become the published plist", async t => {
+lifecycleTest("R5S-02: leftover temporary symlink cannot overwrite notes or become the published plist", async t => {
   const f = await fixture(t), path = plistPath(f.home), notes = join(f.home, "owner-notes");
   await mkdir(join(f.home, "Library/LaunchAgents"), { recursive: true });
   await writeFile(notes, "keep these notes", { mode: 0o600 });
@@ -214,7 +230,7 @@ test("R5S-02: leftover temporary symlink cannot overwrite notes or become the pu
 });
 
 
-test("R5S-02: exclusive temporary collisions refuse without touching the symlink target", async t => {
+lifecycleTest("R5S-02: exclusive temporary collisions refuse without touching the symlink target", async t => {
   const f = await fixture(t), notes = join(f.home, "owner-notes");
   await writeFile(notes, "keep these notes", { mode: 0o600 });
   const original = fsPromises.open; let planted;
@@ -237,7 +253,7 @@ test("R5S-02: exclusive temporary collisions refuse without touching the symlink
   assert.equal(await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), "installed");
 });
 
-test("R5S-02: descriptor refusals and partial write failures remove only owned temporaries", async t => {
+lifecycleTest("R5S-02: descriptor refusals and partial write failures remove only owned temporaries", async t => {
   for (const fault of ["file", "links", "owner", "mode", "write", "sync", "chmod"]) {
     await t.test(fault, async t => {
       const f = await fixture(t), path = plistPath(f.home);
@@ -278,7 +294,7 @@ test("R5S-02: descriptor refusals and partial write failures remove only owned t
 });
 
 
-test("R5S-04: fifty competing installs are admitted once or cleanly refused before mutation", async t => {
+lifecycleTest("R5S-04: fifty competing installs are admitted once or cleanly refused before mutation", async t => {
   const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
   let release, entered;
   const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
@@ -299,7 +315,7 @@ test("R5S-04: fifty competing installs are admitted once or cleanly refused befo
   await stopService(f.runtime); await installOrRefreshService(input, f.runtime); await stopService(f.runtime);
 });
 
-test("R5S-04: overlapping stop and uninstall refuse, then retry after failed install releases the lock", async t => {
+lifecycleTest("R5S-04: overlapping stop and uninstall refuse, then retry after failed install releases the lock", async t => {
   const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
   let release, entered;
   const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
@@ -320,7 +336,7 @@ test("R5S-04: overlapping stop and uninstall refuse, then retry after failed ins
 });
 
 
-test("R5S-04: a separate holder process excludes stop and SIGKILL releases lifecycle authority", async t => {
+lifecycleTest("R5S-04: a separate holder process excludes stop and SIGKILL releases lifecycle authority", async t => {
   const f = await fixture(t), moduleUrl = new URL("../scripts/mac-local/service.mjs", import.meta.url).href;
   const program = `import { installOrRefreshService } from ${JSON.stringify(moduleUrl)};
 const runtime={uid:()=>501,home:()=>process.argv[1],launchctl:async()=>{
@@ -344,7 +360,7 @@ await installOrRefreshService({protectedRoot:"/protected/root",logPath:"/protect
 });
 
 
-test("R5S-02: rename failure preserves the current plist and removes its owned temporary", async t => {
+lifecycleTest("R5S-02: rename failure preserves the current plist and removes its owned temporary", async t => {
   const f = await fixture(t), input = { protectedRoot: root, logPath, env: {} };
   await installOrRefreshService(input, f.runtime);
   const before = await readFile(plistPath(f.home), "utf8"), original = fsPromises.rename;
@@ -358,7 +374,7 @@ test("R5S-02: rename failure preserves the current plist and removes its owned t
   await installOrRefreshService({ ...input, env: { LANG: "C" } }, f.runtime);
 });
 
-test("R5S-02: publication cleanup leaves a replacement at the old temporary name untouched", async t => {
+lifecycleTest("R5S-02: publication cleanup leaves a replacement at the old temporary name untouched", async t => {
   const f = await fixture(t), original = fsPromises.rename; let replacement;
   fsPromises.rename = async (from, to) => {
     await original(from, to); replacement = from;
@@ -373,7 +389,7 @@ test("R5S-02: publication cleanup leaves a replacement at the old temporary name
 });
 
 
-test("R5S-02: failed write cleanup preserves a substituted temporary inode", async t => {
+lifecycleTest("R5S-02: failed write cleanup preserves a substituted temporary inode", async t => {
   const f = await fixture(t);
   const original = fsPromises.open; let replacement;
   fsPromises.open = async (...args) => {
