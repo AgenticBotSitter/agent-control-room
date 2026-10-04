@@ -510,6 +510,13 @@ jobs:
       # This lane uses macOS lockf, Developer Tools and BSD file metadata.
       # Default PostgreSQL artifacts are synthetic; live database lanes stay in components.
       # The opt-in HARD7 dump proof needs a separately supplied migrated fixture.
+      - name: Report the macOS tools the updater depends on
+        run: |
+          sw_vers || true
+          for tool in /usr/bin/lockf /usr/bin/xcrun /usr/bin/codesign /usr/sbin/lsof /bin/zsh; do
+            if [ -x "$tool" ]; then ls -l "$tool"; else echo "MISSING: $tool"; fi
+          done
+          umask; id; ls -ld /private/tmp "$TMPDIR" || true
       - name: Updater lane
         run: pnpm run test:updater
 
