@@ -20,9 +20,9 @@
 // a bot cannot be proven able to do something the owner's page cannot do.
 
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import * as connector from "../fleet/connector.mjs";
 
 export const BOT_JOURNEY_PROPOSAL_SCHEMA_V1 = "control-room.work-batch-proposal/v1";
@@ -102,14 +102,19 @@ export const BOT_JOURNEY_EXPECTED_ROWS_V1 = /** @type {Readonly<Record<string, s
   join_with_a_code_made_for_another_kind: "worker_kind_mismatch",
 }));
 
-/** A fresh temp workspace for one bot, removed by `removeBotWorkspaceV1`. */
+/** A fresh temp workspace for one bot, removed by `removeBotWorkspaceV1`.
+ * The connector refuses a credential file inside the workspace, so each bot
+ * gets a sibling `credentials` directory, as a real machine would. */
 export async function makeBotWorkspaceV1(label) {
   if (typeof label !== "string" || !/^[a-z0-9-]{1,32}$/u.test(label)) throw new Error("bot_journey_label_invalid");
-  return mkdtemp(join(tmpdir(), `dogfood-${label}-`));
+  const root = await mkdtemp(join(tmpdir(), `dogfood-${label}-`));
+  await mkdir(join(root, "credentials"), { mode: 0o700 });
+  await mkdir(join(root, "workspace"));
+  return join(root, "workspace");
 }
 
 export async function removeBotWorkspaceV1(path) {
-  await rm(path, { recursive: true, force: true });
+  await rm(basename(path) === "workspace" ? dirname(path) : path, { recursive: true, force: true });
 }
 
 /** The proposal a healthy bot submits. Shaped by the real schema
@@ -208,7 +213,7 @@ export class ScriptedBotV1 {
     this.workspace = workspace;
     this.origin = origin;
     this.workerKind = workerKind;
-    this.configPath = join(workspace, `${name}.json`);
+    this.configPath = join(dirname(workspace), "credentials", `${name}.json`);
     this.mcpId = 0;
     this.client = undefined;
     this.dispatcher = undefined;
