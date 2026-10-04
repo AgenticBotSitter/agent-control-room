@@ -412,7 +412,8 @@ test("the fixed attended release builder emits only its reviewed manifest policy
     "scripts/mac-local/task-host-supervisor.mjs", "scripts/mac-local/stack.mjs",
     "scripts/mac-local/start-task-host.mjs", "scripts/mac-local/start-web-host.mjs",
     "src/installer/shared/is-main-module.mjs", "src/installer/shared/file-custody.mjs", "src/installer/shared/mac-local-runtime-directory.mjs",
-    "src/installer/shared/private-process-lock.mjs"];
+    "src/installer/shared/private-process-lock.mjs", "src/installer/shared/backup-files.mjs",
+    "src/installer/shared/nightly-backup-constants.mjs"];
   for (const name of files) { await mkdir(join(source, name, ".."), { recursive: true });
     await writeFile(join(source, name), name === "package.json" ? '{"name":"control-room","version":"1.2.3"}\n' : `${name}\n`); }
   for (const name of ["db/migrations", "db/roles", "db/setup", "deploy/postgres", "dist-vps/client", "dist-vps/server", "third_party"]) {
