@@ -490,11 +490,10 @@ jobs:
     name: macOS updater tests
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     env:
       CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
-      TMPDIR: /private/tmp
       LC_ALL: C
       LANG: C
     steps:
@@ -516,9 +515,23 @@ jobs:
           for tool in /usr/bin/lockf /usr/bin/xcrun /usr/bin/codesign /usr/sbin/lsof /bin/zsh; do
             if [ -x "$tool" ]; then ls -l "$tool"; else echo "MISSING: $tool"; fi
           done
-          umask; id; ls -ld /private/tmp "$TMPDIR" || true
+          umask; id; ls -ld /private/tmp || true
       - name: Updater lane
-        run: pnpm run test:updater
+        run: |
+          set -euo pipefail
+          # BSD children inherit the containing directory's group. Use the
+          # test login's primary group, not the shared temporary directory's.
+          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          trap 'rm -rf -- "${updater_tmp}"' EXIT
+          chgrp "$(id -g)" "${updater_tmp}"
+          chmod 0700 "${updater_tmp}"
+          export TMPDIR="${updater_tmp}"
+          # The full Xcode image can have writable ancestors. The installed
+          # Command Line Tools use the root-owned path this lane verifies.
+          sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
+          test -x /usr/bin/lockf
+          node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          pnpm run test:updater
 
   test-articles:
     name: Article build lane
@@ -897,7 +910,7 @@ jobs:
             runner: ubuntu-latest
             timeout: 90
           - lane: updater
-            runner: macos-15
+            runner: macos-26
             timeout: 30
           - lane: articles
             runner: ubuntu-latest
@@ -967,11 +980,23 @@ jobs:
         if: ${{ !cancelled() && matrix.lane == 'updater' && needs.route.result == 'success' && needs.route.outputs.updater == 'false' }}
         env:
           CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
-          TMPDIR: /private/tmp
           LC_ALL: C
           LANG: C
         run: |
+          set -euo pipefail
           pnpm install --frozen-lockfile --ignore-scripts
+          # BSD children inherit the containing directory's group. Use the
+          # test login's primary group, not the shared temporary directory's.
+          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          trap 'rm -rf -- "${updater_tmp}"' EXIT
+          chgrp "$(id -g)" "${updater_tmp}"
+          chmod 0700 "${updater_tmp}"
+          export TMPDIR="${updater_tmp}"
+          # The full Xcode image can have writable ancestors. The installed
+          # Command Line Tools use the root-owned path this lane verifies.
+          sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
+          test -x /usr/bin/lockf
+          node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
           pnpm run test:updater
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
