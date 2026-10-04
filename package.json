@@ -181,6 +181,7 @@
     "mac:upgrade": "node --import tsx scripts/mac-local/upgrade.mjs",
     "test:mac-upgrade": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs tests/mac-local-upgrade-recovery.test.mjs && pnpm run test:entry-guards && pnpm run test:mac-upgrade-default-path",
     "mac:remote-access": "node --import tsx scripts/mac-local/remote-access.ts",
+    "test:mac-journey-lifecycle": "node --import tsx --test --experimental-test-isolation=none tests/mac-local-journey-lifecycle.test.mjs",
     "test:mac-host-supervisor": "node --import tsx --test --test-concurrency=1 tests/mac-local-task-host-supervisor.test.mjs tests/mac-local-round2-services.test.mjs tests/nightly-backup-round4.test.mjs tests/nightly-backup-round4b.test.mjs tests/mac-local-full-disk-host.test.mjs tests/mac-local-process-lock-stress.test.mjs",
     "mac:service-status": "node scripts/mac-local/service-status.mjs",
     "mac:uninstall-service": "node scripts/mac-local/uninstall-service.mjs",

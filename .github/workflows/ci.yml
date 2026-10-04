@@ -645,7 +645,7 @@ jobs:
       - name: Build the production application
         run: pnpm build
       - name: Test Mac task host recovery
-        run: pnpm test:mac-host-supervisor
+        run: pnpm test:mac-journey-lifecycle && pnpm test:mac-host-supervisor
       - name: Run both supported full journeys with pinned fakes
         run: |
           set -euo pipefail

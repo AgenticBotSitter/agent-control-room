@@ -13,16 +13,17 @@
 //   [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--browser-phone-width-e2e|--model-allowlists]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { Client } from "pg";
-import { databaseSqlStateIsAnyV1 } from "../../../src/persistence/database";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 import { removeRehearsalConnectorAdvertisementV1, signRehearsalConnectorReleaseV1 } from "./sign-connector-release";
 import { connectBotForJourney, deliverForJourney, removeJourneyConnectorWorkspacesV1 } from "./journey-connector-route";
+import { runMacLocalJourneyV1 } from "./journey-lifecycle";
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
@@ -40,12 +41,19 @@ const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 let verifiedThisRehearsalCluster = false;
 let stackMayBeUp = false;
 let signedConnectorRelease = false;
+let stoppingDatabase = false;
+let journeySignal: AbortSignal;
 
 function invoke(args: string[]) {
+  journeySignal.throwIfAborted();
   return spawnSync(process.execPath, ["--import", "tsx", ...args], {
     cwd: process.cwd(), encoding: "utf8", timeout: 180_000,
     env: { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot },
   });
+}
+function journeyFetch(input: string | URL, init?: RequestInit) {
+  journeySignal.throwIfAborted();
+  return fetch(input, { ...init, signal: journeySignal });
 }
 async function writeJsonPrivate(path: string, value: unknown) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -53,7 +61,11 @@ async function writeJsonPrivate(path: string, value: unknown) {
 }
 
 async function waitFor(check: () => Promise<boolean>, seconds: number) {
-  for (let i = 0; i < seconds * 2; i++) { if (await check()) return true; await new Promise(r => setTimeout(r, 500)); }
+  for (let i = 0; i < seconds * 2; i++) {
+    journeySignal.throwIfAborted();
+    if (await check()) return true;
+    await new Promise(r => setTimeout(r, 500));
+  }
   return false;
 }
 
@@ -123,13 +135,13 @@ async function main() {
 
   // Start with no active project, then create the first project through the
   // real HTTP boundary. The running task host must prepare it without restart.
+  stackMayBeUp = true;
   const start1 = invoke(upArgs);
   assert.equal(start1.status, 0, start1.stderr || start1.stdout);
-  stackMayBeUp = true;
   const ownerCode = (await readFile(join(protectedRoot, "config/owner-sign-in.txt"), "utf8")).trim();
   const origin = `http://127.0.0.1:${config.port}`;
   const signIn = async () => {
-    const response = await fetch(new URL("/api/v1/local-owner-session", origin), {
+    const response = await journeyFetch(new URL("/api/v1/local-owner-session", origin), {
       method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) });
     assert.equal(response.status, 201, "local disposable owner sign-in should succeed");
     const cookie = (response.headers.get("set-cookie") ?? "").split(";", 1)[0];
@@ -149,7 +161,7 @@ async function main() {
     return;
   }
   let cookie = await signIn();
-  const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
+  const projectResponse = await journeyFetch(new URL("/api/v1/projects", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": "journey-rehearsal-project" },
     body: JSON.stringify({ title: "Post-startup journey project", summary: "One task per local agent." }),
   });
@@ -163,7 +175,7 @@ async function main() {
   // worker roster to be "ready" and no /plan route to prepare against, so this
   // journey drives the route the Mac really has -- the same route the browser
   // suites drive -- instead of the removed direct one.
-  const fleetBoardResponse = await fetch(new URL("/api/v1/fleet", origin), { headers: { cookie } });
+  const fleetBoardResponse = await journeyFetch(new URL("/api/v1/fleet", origin), { headers: { cookie } });
   assert.equal(fleetBoardResponse.status, 200, "the connector-only host must serve the fleet board");
   const fleetBoard = await fleetBoardResponse.json() as { workers: unknown[]; pendingCodes: unknown[];
     gatewayConfigured: boolean };
@@ -176,13 +188,13 @@ async function main() {
   // own availability; the assignment and submission routes are not mounted.
   // Probed against the real project and a real proposed task, because a
   // fabricated job id would 404 for a reason that proves nothing here.
-  const probeTask = await require5xxOr201(await fetch(new URL(
+  const probeTask = await require5xxOr201(await journeyFetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json",
       "idempotency-key": "journey-default-probe-0001" },
     body: JSON.stringify({ title: "Journey preflight probe", instructions: "Return one harmless short line." }),
   }), "connector-only preflight probe") as { receipt: { jobId: string } };
-  const planProbe = await requireOk(await fetch(new URL(
+  const planProbe = await requireOk(await journeyFetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(probeTask.receipt.jobId)}/plan`, origin),
     { headers: { cookie } }), 200, "connector-only plan probe") as { availability: string; templates?: unknown[] };
   assert.equal(planProbe.availability, "not_configured");
@@ -192,13 +204,13 @@ async function main() {
     ["assignment", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(probeTask.receipt.jobId)}/assignment`],
     ["submission", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(probeTask.receipt.jobId)}/submission`],
   ] as const) {
-    const gone = await fetch(new URL(path, origin), { headers: { cookie } });
+    const gone = await journeyFetch(new URL(path, origin), { headers: { cookie } });
     assert.ok(gone.status >= 400, `${label} must not be served on a connector-only host: ${await gone.text()}`);
   }
 
   if (mode === "--browser-proof") {
     process.stdout.write(`Isolated built-page browser proof ready at ${origin}/projects. Press Return in this runner after the proof to shut down its host and database.\n`);
-    await new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+    await once(process.stdin, "data", { signal: journeySignal });
     return;
   }
 
@@ -209,7 +221,7 @@ async function main() {
   // the owner decides on it. This is the same chain the browser suites drive, so
   // this mode is not a second opinion about a route that no longer exists.
   const firstBot = await connectBotForJourney({ origin, cookie, projectId, name: "Journey default bot" });
-  const defaultTask = await require5xxOr201(await fetch(new URL(
+  const defaultTask = await require5xxOr201(await journeyFetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json",
       "idempotency-key": "journey-default-source-0001" },
@@ -220,7 +232,7 @@ async function main() {
   // route is mounted and reports its own availability honestly; the assignment
   // and submission routes are not mounted at all. What must never happen is one
   // of them offering a choice the owner could take.
-  const planOptions = await requireOk(await fetch(new URL(
+  const planOptions = await requireOk(await journeyFetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(defaultJobId)}/plan`, origin), { headers: { cookie } }),
     200, "connector journey plan options") as { availability: string; templates?: unknown[] };
   assert.equal(planOptions.availability, "not_configured",
@@ -231,15 +243,15 @@ async function main() {
     ["assignment", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(defaultJobId)}/assignment`],
     ["submission", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(defaultJobId)}/submission`],
   ] as const) {
-    const gone = await fetch(new URL(path, origin), { headers: { cookie } });
+    const gone = await journeyFetch(new URL(path, origin), { headers: { cookie } });
     assert.ok(gone.status >= 400, `${label} must not be served on a connector-only host: ${await gone.text()}`);
   }
-  const offered = await requireOk(await fetch(new URL("/api/v1/fleet/offers", origin), {
+  const offered = await requireOk(await journeyFetch(new URL("/api/v1/fleet/offers", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json" },
     body: JSON.stringify({ projectId, jobId: defaultJobId, capability: "code.change" }),
   }), 201, "connector journey offer") as { offerId: string };
   // A replay of the same offer is the same offer, not a second one.
-  const offerReplay = await requireOk(await fetch(new URL("/api/v1/fleet/offers", origin), {
+  const offerReplay = await requireOk(await journeyFetch(new URL("/api/v1/fleet/offers", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json" },
     body: JSON.stringify({ projectId, jobId: defaultJobId, capability: "code.change" }),
   }), 201, "connector journey offer replay") as { offerId: string; replayed: boolean };
@@ -278,11 +290,11 @@ const probeJobState = async (jobId: string): Promise<string | undefined> => {
   const waitingForOwner = await waitFor(async () =>
     (await probeJobState(defaultJobId)) === "waiting_approval", 90);
   assert.ok(waitingForOwner, "a returned result must reach the owner");
-  const board = await requireOk(await fetch(new URL("/api/v1/fleet", origin), { headers: { cookie } }),
+  const board = await requireOk(await journeyFetch(new URL("/api/v1/fleet", origin), { headers: { cookie } }),
     200, "connector journey board") as { results: { resultId: string; jobId: string; decision: string | null }[] };
   const result = board.results.find(item => item.jobId === defaultJobId);
   assert.ok(result, `the owner's result list must show the returned result: ${JSON.stringify(board.results)}`);
-  const reviewed = await requireOk(await fetch(new URL(
+  const reviewed = await requireOk(await journeyFetch(new URL(
     `/api/v1/fleet/results/${idOf(result.resultId)}/review`, origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
     body: JSON.stringify({ decision: "accepted" }),
@@ -290,7 +302,7 @@ const probeJobState = async (jobId: string): Promise<string | undefined> => {
   assert.equal(reviewed.decision, "accepted");
   assert.equal(reviewed.replayed, false);
   // The same decision again is a replay of one row, not a second decision.
-  const reviewReplay = await requireOk(await fetch(new URL(
+  const reviewReplay = await requireOk(await journeyFetch(new URL(
     `/api/v1/fleet/results/${idOf(result.resultId)}/review`, origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
     body: JSON.stringify({ decision: "accepted" }),
@@ -403,35 +415,10 @@ async function require5xxOr201(response: Response, label: string) {
   return JSON.parse(text);
 }
 
-// The journey stops its own disposable cluster in the finally below. A pg client
-// whose connection the OS then tears down emits an 'error' event; a client with
-// no listener turns that into an unhandled exception that fails the process after
-// the assertions have already reported. Every client this file opens is closed in
-// a finally of its own, so this listener is only a backstop for the window
-// between them. It handles exactly the teardown artefacts and nothing else: any
-// other error is re-thrown, so a real fault still fails the run.
-const isTornDownConnection = (error: unknown): boolean => {
-  const code = (error as { code?: string } | null)?.code;
-  const message = (error as { message?: string } | null)?.message ?? "";
-  // 57P01 through the shared reader (cook/sqlstate), the errno by name.
-  return databaseSqlStateIsAnyV1(error, ["57P01"]) || code === "ECONNRESET" || code === "EPIPE"
-    || /terminating connection|Connection terminated|Client has encountered a connection error/u.test(message);
-};
-// Registered before the argument guard, so it also covers the paths above. A
-// torn-down connection is a fact about teardown and exits 0; anything else is
-// reported in full and exits 1, so a real fault is never silent.
-const reportAndExit = (error: unknown, code: number) => {
-  if (isTornDownConnection(error)) process.exit(0);
-  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exit(code);
-};
-process.on("uncaughtException", (error: Error) => reportAndExit(error, 1));
-process.on("unhandledRejection", (error: Error) => reportAndExit(error, 1));
-
-try {
+await runMacLocalJourneyV1(async signal => {
+  journeySignal = signal;
   await main();
-} finally {
+}, async settleWork => {
   try {
     if (verifiedThisRehearsalCluster) {
       if (stackMayBeUp) {
@@ -440,6 +427,7 @@ try {
         });
         if (downHost.status !== 0) throw new Error("rehearsal_mac_stack_stop_failed");
       }
+      stoppingDatabase = true;
       const down = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/rehearsal/setup.ts", "down", root], {
         cwd: process.cwd(), encoding: "utf8", timeout: 120_000,
       });
@@ -449,6 +437,7 @@ try {
         throw new Error("rehearsal_cluster_stop_failed");
     }
   } finally {
+    await settleWork();
     // The advertisement is signed by this rehearsal's throwaway key. Left in
     // the shared release directory, it would make a later `mac:up` on any other
     // protected root refuse its connector release outright.
@@ -457,4 +446,4 @@ try {
     // connector leg or not, is removed before the process exits.
     await removeJourneyConnectorWorkspacesV1();
   }
-}
+}, { isStoppingDatabase: () => stoppingDatabase });
