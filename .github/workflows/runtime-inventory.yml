@@ -10,12 +10,14 @@ on:
       - src/updater/v1/policy/runtime-inventory.json
       - src/updater/v1/trusted-runtime.mjs
       - scripts/ci/verify-runtime-inventory.mjs
+      - tests/runtime-inventory-ci.test.mjs
       - .github/workflows/runtime-inventory.yml
   pull_request:
     paths:
       - src/updater/v1/policy/runtime-inventory.json
       - src/updater/v1/trusted-runtime.mjs
       - scripts/ci/verify-runtime-inventory.mjs
+      - tests/runtime-inventory-ci.test.mjs
       - .github/workflows/runtime-inventory.yml
 
 permissions:
@@ -37,4 +39,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      - name: Test runtime inventory verification without publisher downloads
+        run: node --test tests/runtime-inventory-ci.test.mjs
       - run: node scripts/ci/verify-runtime-inventory.mjs

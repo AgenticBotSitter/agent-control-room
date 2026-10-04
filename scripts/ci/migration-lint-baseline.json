@@ -615,5 +615,56 @@
       "file": "db/migrations/0238_artifact_input_completeness_reads.sql",
       "sha256": "652f8fabf4ee6bc9370613a61fcccc4b733c136d3f13d05fa08a75a3778b5d11"
     }
+  ],
+  "findings": [
+    {
+      "file": "db/migrations/0246_skill_create_idempotency.sql",
+      "sha256": "7c163c8e7b6ed90409fb895493293bf1db8fea18d215234ac4775b23f95d3bbd",
+      "line": 30,
+      "rule": "require-lock-timeout",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration."
+    },
+    {
+      "file": "db/migrations/0246_skill_create_idempotency.sql",
+      "sha256": "7c163c8e7b6ed90409fb895493293bf1db8fea18d215234ac4775b23f95d3bbd",
+      "line": 30,
+      "rule": "require-statement-timeout",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration."
+    },
+    {
+      "file": "db/migrations/0255_result_file_storage_key_unique.sql",
+      "sha256": "6a4f8e20ecfe99fe78298a1c5777e14fa42d7832e8d0d49b9cb02f95309a990d",
+      "line": 85,
+      "rule": "constraint-missing-not-valid",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration. The transactional applier cannot build an index concurrently; this migration sets local lock and statement timeouts."
+    },
+    {
+      "file": "db/migrations/0255_result_file_storage_key_unique.sql",
+      "sha256": "6a4f8e20ecfe99fe78298a1c5777e14fa42d7832e8d0d49b9cb02f95309a990d",
+      "line": 85,
+      "rule": "disallowed-unique-constraint",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration. The transactional applier cannot build an index concurrently; this migration sets local lock and statement timeouts."
+    },
+    {
+      "file": "db/migrations/0256_result_upload_cleanup_indexes_and_expiry_void.sql",
+      "sha256": "a5a504ecf0245abf215853ea2eaa75f3c9ea3e136afecd662e2f3d14801dd26e",
+      "line": 115,
+      "rule": "require-concurrent-index-deletion",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration. Concurrent index operations cannot run in the transactional applier; this migration sets local lock and statement timeouts."
+    },
+    {
+      "file": "db/migrations/0256_result_upload_cleanup_indexes_and_expiry_void.sql",
+      "sha256": "a5a504ecf0245abf215853ea2eaa75f3c9ea3e136afecd662e2f3d14801dd26e",
+      "line": 116,
+      "rule": "require-concurrent-index-creation",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration. Concurrent index operations cannot run in the transactional applier; this migration sets local lock and statement timeouts."
+    },
+    {
+      "file": "db/migrations/0256_result_upload_cleanup_indexes_and_expiry_void.sql",
+      "sha256": "a5a504ecf0245abf215853ea2eaa75f3c9ea3e136afecd662e2f3d14801dd26e",
+      "line": 121,
+      "rule": "require-concurrent-index-creation",
+      "reason": "Applied by the attended installer/upgrader to a fresh or drained database during maintenance; blocking catalog locks are accepted for this pinned migration. Concurrent index operations cannot run in the transactional applier; this migration sets local lock and statement timeouts."
+    }
   ]
 }

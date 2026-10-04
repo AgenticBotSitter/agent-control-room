@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { selectMigrationsOutsideBaseline } from "./ci/migration-lint-baseline.mjs";
+import { readAcceptedFindings, selectMigrationsOutsideBaseline, unacceptedFindings } from "./ci/migration-lint-baseline.mjs";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const squawkBin = "squawk";
@@ -111,12 +111,15 @@ export function checkMigrations({ base = "origin/main", runGit = git, runSquawk,
   if (baselinePath !== undefined) {
     result.lint = selectMigrationsOutsideBaseline({ cwd, baselinePath });
   }
+  const accepted = baselinePath === undefined ? [] : readAcceptedFindings({ cwd, baselinePath });
   if (result.lint.length > 0) {
     const resolvedFiles = resolveRegularMigrationFiles(result.lint, cwd);
     const lint = runSquawk
       ? runSquawk(resolvedFiles)
-      : spawnSync(squawkBin, ["--config", join(repositoryRoot, ".squawk.toml"), ...resolvedFiles],
-        { stdio: "inherit", env: process.env });
+      : spawnSync(squawkBin, ["--config", join(repositoryRoot, ".squawk.toml"),
+        ...(accepted.length ? ["--reporter", "json"] : []), ...resolvedFiles],
+        { ...(accepted.length ? { encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 } : { stdio: "inherit" }),
+          env: process.env });
     // A lint that never ran is not a lint that passed. spawnSync reports a
     // failed exec as `error` with a null status, and `null !== 0`, so the old
     // check reported "Squawk rejected a changed migration" for a missing
@@ -130,7 +133,18 @@ export function checkMigrations({ base = "origin/main", runGit = git, runSquawk,
         `Squawk could not run (${code}); install squawk-cli@2.61.0 or put it on PATH before relying on this check`);
       return result;
     }
-    if ((lint.status ?? lint) !== 0) result.violations.push("Squawk rejected a changed migration");
+    if ((lint.status ?? lint) !== 0) {
+      if (accepted.length && lint.status === 1 && !lint.signal) {
+        // A failed parse, empty rejection or execution failure must never become
+        // an exemption. Only known JSON findings can settle accepted lint debt.
+        try {
+          const remaining = unacceptedFindings(lint.stdout, accepted, cwd);
+          if (JSON.parse(lint.stdout).length > 0 && remaining.length === 0) return result;
+          for (const row of remaining) result.violations.push(`${row.file}:${row.line + 1}: ${row.rule_name}`);
+        } catch { result.violations.push("Squawk finding output invalid"); }
+      }
+      result.violations.push("Squawk rejected a changed migration");
+    }
   }
   return result;
 }

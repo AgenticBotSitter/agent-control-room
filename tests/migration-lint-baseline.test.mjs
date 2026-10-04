@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { checkMigrations } from "../scripts/check-migration-changes.mjs";
 import { ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import {
-  BASELINE_PATH, selectMigrationsOutsideBaseline, validateAcceptedBaseline,
+  BASELINE_PATH, readAcceptedFindings, selectMigrationsOutsideBaseline, unacceptedFindings, validateAcceptedBaseline,
 } from "../scripts/ci/migration-lint-baseline.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -30,7 +30,7 @@ function fixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), "migration-lint-baseline-"));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   mkdirSync(join(cwd, BASELINE_PATH, ".."), { recursive: true });
-  cpSync(join(root, BASELINE_PATH), join(cwd, BASELINE_PATH));
+  writeJson(cwd, BASELINE_PATH, { ...baseline, findings: [] });
   mkdirSync(join(cwd, "db/migrations"), { recursive: true });
   mkdirSync(join(cwd, "deploy/postgres"), { recursive: true });
   for (const { file } of baseline.entries) cpSync(join(root, file), join(cwd, file));
@@ -251,4 +251,90 @@ test("workflow uses the committed baseline and runs this selection test lane", (
   assert.match(job, /npm exec --yes --package=squawk-cli@2\.61\.0 -- node --test tests\/migration-lint-baseline\.test\.mjs/);
   assert.match(job, /npm exec --yes --package=squawk-cli@2\.61\.0 -- node scripts\/check-migration-changes\.mjs --base origin\/main --baseline scripts\/ci\/migration-lint-baseline\.json/);
   assert.equal(readFileSync(join(root, ".squawk.toml"), "utf8"), 'pg_version = "17.0"\nassume_in_transaction = true\n');
+});
+
+
+test("maintenance exceptions bind seven findings to exact pinned SQL without exempting files", t => {
+  const accepted = readAcceptedFindings({ cwd: root });
+  assert.equal(accepted.length, 7);
+  assert.equal(new Set(accepted.map(row => `${row.file}:${row.line}:${row.rule}`)).size, 7);
+  for (const row of accepted) assert.ok(select(root).includes(row.file));
+  const rows = accepted.map(row => ({ file: join(root, row.file), line: row.line - 1, rule_name: row.rule }));
+  assert.deepEqual(unacceptedFindings(JSON.stringify(rows), accepted, root), []);
+  for (const change of [row => { row.file += ".other"; }, row => { row.line++; }, row => { row.rule_name += "-new"; }]) {
+    const changed = structuredClone(rows); change(changed[0]);
+    assert.deepEqual(unacceptedFindings(JSON.stringify(changed), accepted, root), [changed[0]]);
+  }
+  assert.throws(() => unacceptedFindings("{", accepted, root), SyntaxError);
+  for (const invalid of ["{}", "[null]", '[{"file":"sql","line":-1,"rule_name":"rule"}]']) {
+    assert.throws(() => unacceptedFindings(invalid, accepted, root), /migration_lint_output_invalid/);
+  }
+  const cwd = fixture(t);
+  for (const { file } of accepted) cpSync(join(root, file), join(cwd, file));
+  writeJson(cwd, BASELINE_PATH, baseline);
+  assert.deepEqual(readAcceptedFindings({ cwd }), accepted);
+  for (const change of [
+    value => { value.findings = {}; },
+    value => { value.findings.push(value.findings[0]); },
+    value => { delete value.findings[0].reason; },
+    value => { value.findings[0].extra = true; },
+    value => { value.findings[0].file = "../escape.sql"; },
+    value => { value.findings[0].sha256 = "invalid"; },
+    value => { value.findings[0].sha256 = "0".repeat(64); },
+    value => { value.findings[0].line = 0; },
+    value => { value.findings[0].rule = "invalid rule"; },
+    value => { value.findings[0].reason = ""; },
+    value => { value.findings[0].file = "db/migrations/9999_absent.sql"; },
+  ]) {
+    const value = clone(baseline); change(value); writeJson(cwd, BASELINE_PATH, value);
+    const expected = !Array.isArray(value.findings) ? /migration_lint_findings_invalid/
+      : value.findings[0].sha256 === "0".repeat(64) ? /migration_lint_finding_ledger_digest/ : undefined;
+    assert.throws(() => readAcceptedFindings({ cwd }), expected);
+  }
+  writeJson(cwd, BASELINE_PATH, baseline);
+  const file = accepted[0].file, original = readFileSync(join(cwd, file));
+  writeFileSync(join(cwd, file), "SELECT 1;\n");
+  assert.throws(() => readAcceptedFindings({ cwd }), /finding_file_changed/);
+  writeFileSync(join(cwd, file), original);
+  assert.doesNotThrow(() => readAcceptedFindings({ cwd }));
+  const roles = clone(currentLedger);
+  roles.entries.find(row => row.file === file).kind = "grants";
+  writeJson(cwd, ledgerPath, refreshDigest(roles));
+  assert.throws(() => readAcceptedFindings({ cwd }), /finding_ledger_entry/);
+  const ledger = clone(currentLedger);
+  ledger.entries.push(ledger.entries.find(row => row.file === file));
+  writeJson(cwd, ledgerPath, refreshDigest(ledger));
+  assert.throws(() => readAcceptedFindings({ cwd }), /finding_ledger_entry/);
+});
+
+test("real Squawk accepts only the seven maintenance findings and refuses extra SQL debt", t => {
+  const cwd = fixture(t);
+  for (const { file } of baseline.findings) cpSync(join(root, file), join(cwd, file));
+  writeJson(cwd, BASELINE_PATH, baseline);
+  assert.equal(cli(cwd).status, 0);
+  addNew(cwd, "9999_future.sql", "ALTER TABLE public.base_records ADD COLUMN owner_id bigint NOT NULL;\n");
+  const refused = cli(cwd);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /adding-required-field/);
+  addNew(cwd);
+  assert.equal(cli(cwd).status, 0);
+  const reduced = clone(baseline); reduced.findings.pop(); writeJson(cwd, BASELINE_PATH, reduced);
+  const missing = cli(cwd);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /require-concurrent-index-creation/);
+});
+
+test("accepted findings cannot turn malformed, empty, interrupted or failed lint into a pass", t => {
+  const cwd = fixture(t);
+  for (const { file } of baseline.findings) cpSync(join(root, file), join(cwd, file));
+  writeJson(cwd, BASELINE_PATH, baseline);
+  const known = JSON.stringify(baseline.findings.map(row => ({ file: join(cwd, row.file), line: row.line - 1, rule_name: row.rule })));
+  for (const result of [
+    { status: 1, stdout: "{" }, { status: 1, stdout: "[]" },
+    { status: 2, stdout: "[]" }, { status: null, signal: "SIGTERM", stdout: "[]" },
+    { status: null, error: { code: "ENOENT" } },
+    { status: 2, stdout: known }, { status: 1, signal: "SIGTERM", stdout: known },
+  ]) {
+    assert.ok(checkMigrations({ ...options(cwd), runSquawk: () => result }).violations.length > 0);
+  }
 });

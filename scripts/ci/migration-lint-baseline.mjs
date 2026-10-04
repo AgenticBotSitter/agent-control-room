@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ledgerDigest } from "../generate-migration-ledger.mjs";
 
 // This is the installed backlog accepted for lint debt by the owner. Never derive
@@ -53,4 +53,45 @@ export function selectMigrationsOutsideBaseline({ cwd, baselinePath = BASELINE_P
     .map(name => `db/migrations/${name}`)
     .filter(file => !acceptedPaths.has(file))
     .sort();
+}
+
+// Unlike the installed backlog, new maintenance exceptions accept only a
+// specific finding, on one line, in one exact ledger-pinned file.
+export function readAcceptedFindings({ cwd, baselinePath = BASELINE_PATH }) {
+  const baseline = JSON.parse(readFileSync(join(cwd, baselinePath), "utf8"));
+  const ledger = JSON.parse(readFileSync(join(cwd, LEDGER_PATH), "utf8"));
+  validateAcceptedBaseline(baseline, ledger);
+  const findings = baseline.findings ?? [];
+  assert.ok(Array.isArray(findings), "migration_lint_findings_invalid");
+  const seen = new Set();
+  for (const finding of findings) {
+    assert.ok(finding && Object.keys(finding).sort().join(",") === "file,line,reason,rule,sha256"
+      && /^db\/migrations\/[0-9]{4}_[a-z0-9_]+\.sql$/u.test(finding.file)
+      && /^[a-f0-9]{64}$/u.test(finding.sha256)
+      && Number.isSafeInteger(finding.line) && finding.line > 0
+      && /^[a-z][a-z-]+$/u.test(finding.rule)
+      && typeof finding.reason === "string" && finding.reason.trim().length >= 20,
+    "migration_lint_finding_invalid");
+    const key = `${finding.file}:${finding.line}:${finding.rule}`;
+    assert.ok(!seen.has(key), "migration_lint_finding_duplicate");
+    seen.add(key);
+    const matches = ledger.entries.filter(entry => entry.file === finding.file && entry.kind === "migrate");
+    assert.equal(matches.length, 1, "migration_lint_finding_ledger_entry");
+    assert.equal(matches[0].sha256, finding.sha256, "migration_lint_finding_ledger_digest");
+    const actual = createHash("sha256").update(readFileSync(join(cwd, finding.file))).digest("hex");
+    assert.equal(actual, finding.sha256, "migration_lint_finding_file_changed");
+  }
+  return findings;
+}
+
+export function unacceptedFindings(output, accepted, cwd) {
+  const rows = JSON.parse(output);
+  assert.ok(Array.isArray(rows), "migration_lint_output_invalid");
+  return rows.filter(row => {
+    // Squawk's JSON locations are zero-based; the baseline uses SQL line numbers.
+    assert.ok(row && typeof row.file === "string" && Number.isSafeInteger(row.line) && row.line >= 0
+      && typeof row.rule_name === "string", "migration_lint_output_invalid");
+    return !accepted.some(finding => resolve(cwd, finding.file) === resolve(cwd, row.file)
+      && finding.line === row.line + 1 && finding.rule === row.rule_name);
+  });
 }

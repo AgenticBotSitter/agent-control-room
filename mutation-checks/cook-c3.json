@@ -141,22 +141,22 @@
   },
   {
     "file": "scripts/ci/verify-runtime-inventory.mjs",
-    "find": "|| actual.sha256 !== artifact.archiveSha256) refuse();",
-    "replace": "|| false) refuse();",
+    "find": "|| actual.sha256 !== artifact.archiveSha256) refuse(artifact.tool, \"archive_digest_or_size_mismatch\");",
+    "replace": "|| false) refuse(artifact.tool, \"archive_digest_or_size_mismatch\");",
     "test": "node --import tsx --test --test-name-pattern='one-byte archive change' tests/updater-runtime-vendor.test.mjs",
     "why": "the network verifier refuses a one-byte archive change"
   },
   {
     "file": "scripts/ci/verify-runtime-inventory.mjs",
-    "find": "await nodeVerifier({ artifact, proof: artifact.publisherProof, workDirectory: artifactRoot, download });",
+    "find": "await nodeVerifier({ artifact, proof: artifact.publisherProof,\n        workDirectory: artifactRoot, download: artifactDownload, execute: runtime.run ?? run });",
     "replace": "await Promise.resolve();",
     "test": "node --import tsx --test --test-name-pattern='bad Node GPG signature' tests/updater-runtime-vendor.test.mjs",
     "why": "Node pinning requires a valid publisher GPG signature"
   },
   {
     "file": "scripts/ci/verify-runtime-inventory.mjs",
-    "find": "if (metadata?.dist?.integrity !== `sha512-${proof.sha512}` || archiveSha512 !== proof.sha512) refuse();",
-    "replace": "if (false) refuse();",
+    "find": "if (metadata?.dist?.integrity !== `sha512-${proof.sha512}` || archiveSha512 !== proof.sha512) refuse(artifact.tool, \"npm_integrity_mismatch\");",
+    "replace": "if (false) refuse(artifact.tool, \"npm_integrity_mismatch\");",
     "test": "node --import tsx --test --test-name-pattern='npm registry integrity proof' tests/updater-runtime-vendor.test.mjs",
     "why": "esbuild bytes must match both the checked-in and live npm integrity values"
   }

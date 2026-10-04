@@ -19,6 +19,9 @@
 // a runtime parameter uses only startAndWait's existing liveness seam, to reach
 // the same failure on a timed-out attempt.
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { once } from "node:events";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,11 +32,11 @@ import { MAC_LOCAL_CONNECTOR_RELEASE_MISSING_V1, MAC_LOCAL_GATEWAY_ERROR_PREFIX_
   "../scripts/mac-local/stack.mjs";
 import { releaseKeyIdV1 } from "../scripts/release-signing.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
-  "../src/web/v1/mac-local-database-roles";
+  "../src/web/v1/mac-local-database-roles.ts";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1, captureMacLocalProtectedConfigurationV1 } from
-  "../src/web/v1/mac-local-protected-configuration";
-import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
-import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
+  "../src/web/v1/mac-local-protected-configuration.ts";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session.ts";
+import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements.ts";
 
 async function writePrivate(path, value) {
   await writeFile(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
@@ -81,14 +84,39 @@ async function protectedRootFixture(t) {
   const trustPath = join(config, "release-trust.json");
   await writePrivate(trustPath, { schema: "control-room.release-trust/v1", epoch: 1,
     keyId: releaseKeyIdV1(publicKeyValue), publicKey: publicKeyValue, versionFloor: "0.0.1", revokedKeyIds: [] });
+  // Adapt the reviewed child-lifetime patch to this tree: every launched child
+  // stays attached to the test, and idle fixtures exit when the stdin pipe closes.
+  const children = new Set();
+  const original = childProcess.spawn;
+  const execFileSync = childProcess.execFileSync;
+  // Observe only this fixture's direct children. This preserves the exact
+  // command comparison while avoiding an OS process-listing permission.
+  const observed = t.mock.method(childProcess, "execFileSync", (file, args, options) => {
+    const child = file === "/bin/ps" && args.join(" ").startsWith("-ww -o command= -p ")
+      ? [...children].find(value => String(value.pid) === args.at(-1)) : undefined;
+    if (!child) return execFileSync(file, args, options);
+    return child.exitCode === null && child.signalCode === null ? child.spawnargs.join(" ") : "";
+  });
+  const mocked = t.mock.method(childProcess, "spawn", (file, args, options) => {
+    const child = original(file, args, { ...options, detached: false,
+      stdio: ["pipe", ...options.stdio.slice(1)] });
+    children.add(child);
+    child.once("close", () => children.delete(child));
+    child.stdin.on("error", () => {});
+    child.unref = () => {};
+    return child;
+  });
+  syncBuiltinESMExports();
   t.after(async () => {
-    // Only a pid this fixture's own attempt recorded is signalled, and only as
-    // its own process group; startAndWait removes the pid file on a failed start.
+    mocked.mock.restore(); observed.mock.restore(); syncBuiltinESMExports();
     try {
-      const recorded = (await readFile(runtimePaths(root).fleetGatewayPid, "utf8")).trim();
-      if (/^[0-9]+$/u.test(recorded)) { try { process.kill(-Number(recorded), "SIGKILL"); } catch {} }
-    } catch {}
-    await rm(root, { recursive: true, force: true });
+      await Promise.all([...children].map(async child => {
+        const closed = once(child, "close");
+        child.stdin.end(); child.kill("SIGKILL");
+        await closed;
+        assert.throws(() => process.kill(child.pid, 0), error => error.code === "ESRCH");
+      }));
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
   return { root, paths: runtimePaths(root), config };
 }
@@ -151,7 +179,7 @@ test("a tolerated refusal in an earlier run cannot excuse this run's real fault 
 function aliveButNotServingCommand(lines) {
   return [process.execPath, "-e", [
     ...lines.map(line => `process.stderr.write(${JSON.stringify(`${line}\n`)});`),
-    "setInterval(() => {}, 1000);",
+    "process.stdin.resume(); process.stdin.once('end', () => process.exit(0));",
   ].join("\n")];
 }
 
@@ -167,6 +195,7 @@ test("the same-attempt fault is still classified when this attempt writes no lin
     `${MAC_LOCAL_GATEWAY_ERROR_PREFIX_V1}${MAC_LOCAL_CONNECTOR_RELEASE_MISSING_V1}\n`, { mode: 0o600 });
   await assert.rejects(
     startFleetGatewayForOwnerV1(root, paths, { command: aliveButNotServingCommand([]), alive: () => true,
+      stopRecorded: async () => { await rm(paths.fleetGatewayPid, { force: true }); },
       fleetGatewayReady: async () => false }),
     /did not start within 30s/u,
     "a stale marker from an earlier run must not excuse an unexplained failure now");
@@ -184,7 +213,8 @@ test("a real fault rethrows even when the gateway is alive and never becomes rea
   await assert.rejects(
     startFleetGatewayForOwnerV1(root, paths, {
       command: aliveButNotServingCommand([marker, `${MAC_LOCAL_GATEWAY_ERROR_PREFIX_V1}listen EADDRINUSE:3212`]),
-      alive: () => true, fleetGatewayReady: async () => false }),
+      alive: () => true, stopRecorded: async () => { await rm(paths.fleetGatewayPid, { force: true }); },
+      fleetGatewayReady: async () => false }),
     /did not start within 30s/u,
   );
   const body = await readFile(paths.fleetGatewayLog, "utf8");
@@ -199,7 +229,8 @@ test("the tolerance still holds when the attempt times out rather than failing f
   const { root, paths } = await protectedRootFixture(t);
   const marker = `${MAC_LOCAL_GATEWAY_ERROR_PREFIX_V1}${MAC_LOCAL_CONNECTOR_RELEASE_MISSING_V1}`;
   const pid = await startFleetGatewayForOwnerV1(root, paths, {
-    command: aliveButNotServingCommand([marker]), alive: () => true, fleetGatewayReady: async () => false });
+    command: aliveButNotServingCommand([marker]), alive: () => true, stopRecorded: async () => { await rm(paths.fleetGatewayPid, { force: true }); },
+    fleetGatewayReady: async () => false });
   assert.equal(pid, undefined, "only the missing-release refusal is tolerated, including on the timeout path");
 });
 
