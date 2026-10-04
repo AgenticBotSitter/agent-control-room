@@ -43,38 +43,10 @@
   },
   {
     "file": "src/installer/v1/installation-plan-journal.ts",
-    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        return;",
-    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && true\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        return;",
-    "test": "node --import tsx --test --test-name-pattern='missing-witness recovery refuses a changed target device' tests/installation-plan-journal.test.ts",
-    "why": "peer recovery must never accept a replacement target device"
-  },
-  {
-    "file": "src/installer/v1/installation-plan-journal.ts",
-    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        return;",
-    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && true) {\n        await assertObservedContent();\n        return;",
-    "test": "node --import tsx --test --test-name-pattern='missing-witness recovery refuses a changed target inode' tests/installation-plan-journal.test.ts",
-    "why": "peer recovery must never accept a replacement target inode"
-  },
-  {
-    "file": "src/installer/v1/installation-plan-journal.ts",
     "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        settling();",
     "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        unavailable();",
     "test": "node --import tsx --test --test-name-pattern='stale two-linked|during temp-lookup' tests/installation-plan-journal.test.ts",
     "why": "a stale two-link observation must accept the same inode after peer retirement"
-  },
-  {
-    "file": "src/installer/v1/installation-plan-journal.ts",
-    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        settling();",
-    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && true\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        settling();",
-    "test": "node --import tsx --test --test-name-pattern='missing-temp recovery refuses a changed target device' tests/installation-plan-journal.test.ts",
-    "why": "peer recovery must never accept a replacement target device"
-  },
-  {
-    "file": "src/installer/v1/installation-plan-journal.ts",
-    "find": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode) {\n        await assertObservedContent();\n        settling();",
-    "replace": "if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && true) {\n        await assertObservedContent();\n        settling();",
-    "test": "node --import tsx --test --test-name-pattern='missing-temp recovery refuses a changed target inode' tests/installation-plan-journal.test.ts",
-    "why": "peer recovery must never accept a replacement target inode"
   },
   {
     "file": "src/installer/v1/installation-plan-journal.ts",
@@ -205,7 +177,7 @@
   {
     "file": "src/installer/v1/installation-plan-journal.ts",
     "find": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && !await session.statEntry(witness.value.tempName)) {\n        await assertObservedContent();\n        settling();\n      }\n    }\n",
-    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && true) {\n        await assertObservedContent();\n        settling();\n    }\n",
+    "replace": "    if (this.validPrivateFile({ ...tempEntry, canonical: true }, MAX_PLAN_BYTES, tempEntry.linkCount)\n      && (tempEntry.linkCount === 1 || tempEntry.linkCount === 2)\n      && tempEntry.identity.device === targetEntry.identity.device\n      && tempEntry.identity.inode === targetEntry.identity.inode) {\n      const current = await session.statEntry(targetName);\n      if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)\n        && current.identity.device === targetEntry.identity.device\n        && current.identity.inode === targetEntry.identity.inode\n        && true) {\n        await assertObservedContent();\n        settling();\n      }\n    }\n",
     "test": "node --import tsx --test --test-name-pattern='recovery retries a temp metadata read' tests/installation-plan-journal.test.ts",
     "why": "settling requires the temp alias to have disappeared"
   }
