@@ -31,7 +31,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext, type TestOptions } from "node:test";
 import {
   PG_RUNTIME_PIN_V1, vendorPgRuntimeV1, PG_RUNTIME_MAX_UNCOMPRESSED_BYTES_V1,
   validatePgRuntimePinV1, type PgRuntimeVendorResultV1,
@@ -408,7 +408,25 @@ async function vendor(built: Readonly<{ archivePath: string; sha256: string; byt
   }).then(value => value, (error: unknown) => error as PgRuntimeVendorResultV1);
 }
 
-test("a complete synthetic archive vendors, so the refusal tests below are reaching a live path", { timeout: 120_000 }, async () => {
+// The seal sets each file's final mode with `lchmod` (pg-runtime-vendor.ts),
+// which Node implements only on macOS. Elsewhere the vendor cannot seal a
+// runtime, so it must refuse and leave neither a runtime nor its staging
+// behind; off macOS each case that needs a sealed runtime proves that instead.
+const SEAL_HOST = process.platform === "darwin";
+async function assertVendorRefusesWithoutLchmod(): Promise<void> {
+  const built = buildArchive(COMPLETE_MEMBERS);
+  const result = await vendor(built);
+  assert.notEqual(result.status, "pg_runtime_vendored", "no runtime is sealed without lchmod");
+  assert.equal(existsSync(built.runtimeDirectory), false, "and no runtime is left behind");
+  assert.deepEqual(readdirSync(join(built.runtimeDirectory, "..")).filter(name => name.startsWith(".pg-runtime")), [],
+    "and no staging is left behind");
+}
+function sealTest(name: string, ...rest: [(t: TestContext) => unknown] | [TestOptions, (t: TestContext) => unknown]) {
+  const [options, body] = rest.length === 2 ? rest : [{}, rest[0]];
+  return test(name, options, SEAL_HOST ? body : assertVendorRefusesWithoutLchmod);
+}
+
+sealTest("a complete synthetic archive vendors, so the refusal tests below are reaching a live path", { timeout: 120_000 }, async () => {
   const built = buildArchive(COMPLETE_MEMBERS);
   const result = await vendor(built);
   // Without this, every refusal below could pass because the step always refuses.
@@ -426,7 +444,7 @@ test("a complete synthetic archive vendors, so the refusal tests below are reach
   assert.equal(result.manifestPath, "manifest.json");
 });
 
-test("step 18 default path passes the inventory Team ID to the real PostgreSQL vendor", { timeout: 120_000 }, async () => {
+sealTest("step 18 default path passes the inventory Team ID to the real PostgreSQL vendor", { timeout: 120_000 }, async () => {
   const built = buildArchive(COMPLETE_MEMBERS);
   const root = realpathSync(mkdtempSync(join(LANE_ROOT, "install-")));
   RUNS.push(root);
@@ -471,7 +489,7 @@ test("the real vendor returns a typed, actionable refusal when the pin has no Te
   assert.equal(existsSync(built.runtimeDirectory), false, "a rejected pin must write no runtime tree");
 });
 
-test("the seal sets a DATA file to 0444 and an executable to 0555, and a directory to 0555", { timeout: 180_000 }, async () => {
+sealTest("the seal sets a DATA file to 0444 and an executable to 0555, and a directory to 0555", { timeout: 180_000 }, async () => {
   // MUST-FIX 1, and the test the review asked for by name: "the second loop
   // should touch directories only (`entry.isDirectory()`), and a test should
   // assert a data file is 0444."
@@ -524,7 +542,7 @@ test("the seal sets a DATA file to 0444 and an executable to 0555, and a directo
     `every non-program file must be 0444; these are not: ${wrongMode.slice(0, 5).join(", ")}`);
 });
 
-test("lchmod remains observable for a non-root archive member without owner-write permission", async () => {
+sealTest("lchmod remains observable for a non-root archive member without owner-write permission", async () => {
   const built = buildArchive(COMPLETE_MEMBERS, { modes: { "pgsql/share/postgresql/postgres.bki": 0o400 } });
   await assert.rejects(vendorPgRuntimeV1({
     archivePath: built.archivePath, runtimeDirectory: built.runtimeDirectory, opensslConf: "",
@@ -533,7 +551,7 @@ test("lchmod remains observable for a non-root archive member without owner-writ
   }), (error: NodeJS.ErrnoException) => error.code === "EACCES");
 });
 
-test("every Mach-O in the tree must be signed by the pin's Team Identifier", { timeout: 180_000 }, async () => {
+sealTest("every Mach-O in the tree must be signed by the pin's Team Identifier", { timeout: 180_000 }, async () => {
   // FINDING 9. The pin is self-attested — the digest is of bytes this Mac
   // downloaded, the URL may be any https host, and MEASURED, EDB publishes no
   // sidecar checksum for this archive — so a pin bump could carry any archive at
@@ -767,7 +785,7 @@ test("the required-library floor refuses an archive whose closure is incomplete"
   }
 });
 
-test("lib/postgresql is a CLOSED list, so a module that dlopens /Library cannot ride in", { timeout: 180_000 }, async () => {
+sealTest("lib/postgresql is a CLOSED list, so a module that dlopens /Library cannot ride in", { timeout: 180_000 }, async () => {
   // FINDING 6's second half, and it is the one the review ranked MEDIUM. The
   // allow-list was `lib/postgresql/*.dylib`, which admits 89 modules, and
   // MEASURED on the pinned archive nine of them link outside any system prefix:
@@ -847,7 +865,7 @@ test("a symlinked directory member is refused BEFORE extraction, so nothing is w
     "a refusal before extraction must still clean up staging");
 });
 
-test("a symlink FILE member is refused too, so no link survives into the sealed tree", { timeout: 180_000 }, async () => {
+sealTest("a symlink FILE member is refused too, so no link survives into the sealed tree", { timeout: 180_000 }, async () => {
   // FINDING 4, the second consequence of the same root cause. A symlink member
   // lands in the runtime as a symlink, is SKIPPED by the digest loop — so it
   // appears in neither `manifest.json` nor `result.files` — and is then
