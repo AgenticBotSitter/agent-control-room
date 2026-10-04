@@ -74,7 +74,8 @@ const MANIFEST_ROLES = Object.freeze([
  * already long enough that a per-test subdirectory would cross the budget, so
  * the root is under the system temp directory.
  */
-const LANE_ROOT = "/private/tmp";
+// macOS keeps the short /private/tmp root; the Linux runner has no such path.
+const LANE_ROOT = existsSync("/private/tmp") ? "/private/tmp" : "/tmp";
 
 const RUNS = [];
 /** Children of a killed kill-test driver, recorded by pid so a failing run can still clean them up. */
