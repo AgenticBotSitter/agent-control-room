@@ -518,13 +518,16 @@ test("the Mac-local pipeline consent port survives concurrent callers, bursts an
         body: JSON.stringify({ runId: runs[1]!.runId, templateId: fresh.templateId, policyId: "policy:absent",
           enabled: false, expectedRunVersion: fresh.runVersion + 1, expectedTemplateVersion: fresh.templateVersion }) });
       // A missing policy is refused by the service's own `policy_inactive`
-      // refusal, which is NOT a WebAccessError, so `webFailure` reports it as
-      // `service_unavailable`. That is pre-existing and identical on the hosted
-      // site, and this change did not touch it: it is asserted as a refusal
-      // that writes nothing rather than as a specific status, and the status is
-      // pinned so a future change to it is a deliberate one.
-      assert.equal(noPolicy.status, 503,
+      // refusal (a PipelineAdvanceErrorV1). The consent route maps that to a
+      // 409 `pipeline_advance_refused` carrying the safe reason, deliberately:
+      // the route's own handler does so, and tests/linear-pipeline.test.ts pins
+      // the same mapping. Any other unmapped error would surface as a 503
+      // `service_unavailable`, so the status and reason are pinned here: a
+      // future change to either is a deliberate one.
+      assert.equal(noPolicy.status, 409,
         "an absent delegation policy is the service's own refusal, not a validation error");
+      assert.deepEqual(await noPolicy.json(), { error: "pipeline_advance_refused", safeReason: "policy_inactive" },
+        "the refusal names the policy_inactive reason, not a generic service failure");
       const afterNoPolicy = await pipelines.view(identity, OWN_PROJECT, runs[1]!.runId);
       assert.equal(afterNoPolicy.unattended, true,
         "the refusal above was for the OTHER run's route; this one already holds its own consent");
