@@ -44,7 +44,7 @@ export async function assertResultStoresRefuseWithoutKernelOpenLockV1(): Promise
   }
 }
 
-type CaseBody = (t: TestContext) => unknown;
+type CaseBody = (t: TestContext) => void | Promise<void>;
 
 /** `test(name, [options], body)` for a case that needs an open store or staging
  * area: the body on a kernel-lock host, the refusal proof everywhere else. */

@@ -421,7 +421,8 @@ async function assertVendorRefusesWithoutLchmod(): Promise<void> {
   assert.deepEqual(readdirSync(join(built.runtimeDirectory, "..")).filter(name => name.startsWith(".pg-runtime")), [],
     "and no staging is left behind");
 }
-function sealTest(name: string, ...rest: [(t: TestContext) => unknown] | [TestOptions, (t: TestContext) => unknown]) {
+function sealTest(name: string,
+  ...rest: [(t: TestContext) => void | Promise<void>] | [TestOptions, (t: TestContext) => void | Promise<void>]) {
   const [options, body] = rest.length === 2 ? rest : [{}, rest[0]];
   return test(name, options, SEAL_HOST ? body : assertVendorRefusesWithoutLchmod);
 }
