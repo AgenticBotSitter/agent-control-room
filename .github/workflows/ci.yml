@@ -530,6 +530,8 @@ jobs:
           # Command Line Tools use the root-owned path this lane verifies.
           sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
           test -x /usr/bin/lockf
+          for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
+          pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
           node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
           pnpm run test:updater
 
@@ -996,6 +998,8 @@ jobs:
           # Command Line Tools use the root-owned path this lane verifies.
           sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
           test -x /usr/bin/lockf
+          for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
+          pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
           node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
           pnpm run test:updater
       - name: Article build lane (merge gate)
