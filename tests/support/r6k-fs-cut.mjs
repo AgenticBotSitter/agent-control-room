@@ -1,3 +1,4 @@
+import childProcess from "node:child_process";
 import { writeSync } from "node:fs";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -46,4 +47,13 @@ fs.open = async (...args) => {
   }
   return handle;
 };
+// Linux's exclusion is flock(1) on the open descriptor
+// (src/installer/shared/private-process-lock.mjs), not an open flag, so there
+// a volume that ignores exclusion is one that grants every flock request.
+if (process.env.R6K_IGNORE_KERNEL === "1" && process.platform === "linux") {
+  const originalSpawnSync = childProcess.spawnSync;
+  childProcess.spawnSync = (file, ...args) => file === "/usr/bin/flock"
+    ? { pid: 0, output: [], stdout: null, stderr: null, status: 0, signal: null }
+    : originalSpawnSync(file, ...args);
+}
 syncBuiltinESMExports();

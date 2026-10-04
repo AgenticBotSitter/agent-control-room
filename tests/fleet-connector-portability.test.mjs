@@ -197,8 +197,14 @@ test("R5V-02: 50 repoints and a queued rotation serialize without losing the new
       return reply(me());
     } finally { active--; }
   };
+  // All 51 contenders share THIS process. Off macOS each lock attempt runs
+  // flock(1) synchronously (src/installer/shared/private-process-lock.mjs), so
+  // 51 pollers at the 25 ms default starve the holder of its own event loop;
+  // separate processes, as in production, do not. Polling at 100 ms keeps the
+  // same contention and deadline.
+  const lock = { deadlineMs: 30_000, ...(process.platform === "darwin" ? {} : { waitMs: 100 }) };
   await Promise.all([...Array.from({ length: 50 }, () => c.setServer({ server: "https://new.example", configPath,
-    fetcher, lock: { deadlineMs: 30_000 } })), c.rotate({ configPath, fetcher, lock: { deadlineMs: 30_000 } })]);
+    fetcher, lock })), c.rotate({ configPath, fetcher, lock })]);
   const current = await c.loadConfig(configPath);
   assert.equal(peak, 1);
   assert.equal(current.server, "https://new.example");
