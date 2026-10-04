@@ -19,6 +19,7 @@
 // digests describe a binary that actually came from `native/pg-clone-probe-v1.c`
 // on this machine, and a hand-written manifest would prove nothing.
 
+import { fileURLToPath } from "node:url";
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -34,7 +35,7 @@ import { pgCloneReservationMultiplierV1, PG_CLONE_PROBE_BYTES_V1 } from "../src/
 const LANE_ROOT = process.env.CONTROL_ROOM_PGRT_TMPDIR
   ? join(process.env.CONTROL_ROOM_PGRT_TMPDIR, `pg-sidecar-${process.pid}`)
   : join(tmpdir(), `pg-sidecar-${process.pid}`);
-const REPO = join(new URL("..", import.meta.url).pathname);
+const REPO = join(fileURLToPath(new URL("..", import.meta.url)));
 const SOURCE = join(REPO, "native", "pg-clone-probe-v1.c");
 const ARTIFACT_DIRECTORY = join(LANE_ROOT, "artifact");
 const SIDECAR = join(ARTIFACT_DIRECTORY, "pg-clone-probe-v1");

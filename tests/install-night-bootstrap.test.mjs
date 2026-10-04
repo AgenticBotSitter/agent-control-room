@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -10,7 +11,7 @@ import {
 } from "../src/updater/v1/install/bootstrap.mjs";
 import { loadRuntimeInventoryV1, vendorRuntimeV1 } from "../src/updater/v1/install/runtime.mjs";
 
-const repository = resolve(dirname(new URL(import.meta.url).pathname), "..");
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bootstrapSource = join(repository, "scripts/install-night/bootstrap.sh");
 const commit = "a".repeat(40);
 const sha256 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;

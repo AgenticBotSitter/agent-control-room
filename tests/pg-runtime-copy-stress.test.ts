@@ -53,7 +53,11 @@ const PORT_BASE = Number(process.env.CONTROL_ROOM_PGRT_PORT_BASE ?? 59500);
 // `sun_path` is 104 bytes and a postmaster that overruns it fails deep inside
 // the server, after initdb has written the data directory. A test harness that
 // overruns the same budget is a harness that cannot test the thing.
-const LANE_ROOT = join(process.env.TMPDIR ?? "/tmp", `p${process.pid.toString(36)}`);
+// The socket path must fit the 100-byte budget. CONTROL_ROOM_PGRT_TMPDIR lets a
+// lane on a deep temp directory (macOS DARWIN_USER_TEMP_DIR) root itself short,
+// the same override the sibling pg-runtime lanes read.
+const LANE_ROOT = join(process.env.CONTROL_ROOM_PGRT_TMPDIR ?? (process.platform === "darwin" ? "/private/tmp" : process.env.TMPDIR ?? "/tmp"),
+  `p${process.pid.toString(36)}`);
 
 function laneRun(label: string): string {
   mkdirSync(LANE_ROOT, { recursive: true, mode: 0o700 });

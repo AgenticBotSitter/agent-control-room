@@ -75,6 +75,7 @@
 //
 // Skips without `PG_RUNTIME_ARCHIVE`, the sibling lanes' convention.
 
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -104,7 +105,7 @@ import { installServicesV1 } from "../src/updater/v1/services/installer.mjs";
 import { signAttendedConnectorReleaseV1 } from "../src/updater/v1/install/connector-release.mjs";
 import { generateInstallationReleaseKeyV1 } from "../scripts/release-signing.mjs";
 
-const REPO = resolve(join(dirname(new URL(import.meta.url).pathname), ".."));
+const REPO = resolve(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const ARCHIVE = process.env.PG_RUNTIME_ARCHIVE;
 const needsArchive = ARCHIVE !== undefined && existsSync(ARCHIVE) ? false : "needs the pinned archive (PG_RUNTIME_ARCHIVE)";
 const PORT = Number(process.env.CONTROL_ROOM_PGRT_PORT_BASE ?? 59880);

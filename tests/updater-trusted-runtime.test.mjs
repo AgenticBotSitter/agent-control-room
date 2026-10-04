@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -30,7 +31,7 @@ import { CORE_SERVICE_ROLES_V1, SERVICE_BATCH_ROLES_V1,
   composeServiceBundleV1 } from "../src/updater/v1/services/bundle.mjs";
 import { assertRuntimeTreeRootMetadataV1, vendorTrustedRuntime } from "../scripts/updater/vendor-trusted-runtime.mjs";
 
-const repositoryRoot = dirname(dirname(new URL(import.meta.url).pathname));
+const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const policyRoot = join(repositoryRoot, "src/updater/v1/policy");
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const readJson = async name => JSON.parse(await readFile(join(policyRoot, name), "utf8"));
@@ -351,7 +352,13 @@ test("macOS loads every service profile and denied trees fail closed at run time
       continue;
     }
     assert.equal(okay.status, 0, `${role}: ${okay.stderr}`);
-    for (const denied of [repositoryRoot, "/usr/local", "/opt/homebrew"]) {
+    // The profile denies reads under /Users, /opt/homebrew and /usr/local, the
+    // owner-writable trees. A checkout outside those trees (an external volume)
+    // is not denied by the profile, so the checkout is asserted only when it is
+    // under one of them. The fixed trees are always asserted.
+    const ownerTrees = ["/Users", "/opt/homebrew", "/usr/local"];
+    const checkoutIsDenied = ownerTrees.some(tree => repositoryRoot === tree || repositoryRoot.startsWith(`${tree}/`));
+    for (const denied of [...(checkoutIsDenied ? [repositoryRoot] : []), "/usr/local", "/opt/homebrew"]) {
       const result = spawnSync("/usr/bin/sandbox-exec", [...args, "-f", profile, "/bin/ls", denied], { encoding: "utf8", env: {} });
       assert.notEqual(result.status, 0, `${role} read ${denied}`);
     }

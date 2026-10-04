@@ -31,6 +31,7 @@
 // The lane skips when `PG_RUNTIME_ARCHIVE` is absent, the same convention its
 // sibling uses: a lane that fetched 437 MB on every run is a lane nobody ran.
 
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -65,7 +66,7 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { privateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
 import { FIRST_OWNER_OWNER_V1 } from "../src/updater/v1/install/install-steps.mjs";
 
-const REPO = resolve(join(dirname(new URL(import.meta.url).pathname), ".."));
+const REPO = resolve(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const ARCHIVE = process.env.PG_RUNTIME_ARCHIVE;
 const hasArchive = ARCHIVE !== undefined && existsSync(ARCHIVE);
 const needsArchive = hasArchive ? false : "needs the pinned archive (PG_RUNTIME_ARCHIVE)";

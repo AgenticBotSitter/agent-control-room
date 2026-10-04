@@ -1,4 +1,5 @@
 // R2C-10 probe: can two waiters both "remove the stale update lock" and both enter the protected section?
+import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile, realpath } from 'node:fs/promises';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
@@ -44,7 +45,7 @@ try {
     const old = new Date(Date.now() - 120_000); await utimes(lock, old, old);
     const startAt = Date.now() + 400;
     await Promise.all(Array.from({ length: workers }, () => new Promise(done => {
-      const child = spawn(process.execPath, [new URL(import.meta.url).pathname, 'child', installRoot, journal, String(startAt)], { stdio: 'ignore' });
+      const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'child', installRoot, journal, String(startAt)], { stdio: 'ignore' });
       children.push(child); child.once('error', done); child.once('close', done);
     })));
     const lines = (await readFile(journal, 'utf8')).trim().split('\n');

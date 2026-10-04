@@ -25,7 +25,7 @@ import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn, type SpawnOptions } from "node:child_process";
 import { join } from "node:path";
 import test from "node:test";
-import { SandboxedTextCopyService, TEXT_COPY_LIMITS } from "../src/converter/v1/text-copy-service.ts";
+import { SandboxedTextCopyService, TEXT_COPY_ADMISSION_LIMITS, TEXT_COPY_LIMITS } from "../src/converter/v1/text-copy-service.ts";
 
 // /usr/bin/sandbox-exec is a macOS-only primitive; every test here invokes it
 // for real (see the file header), so there is no portable way to exercise this
@@ -158,9 +158,19 @@ nativeTest("the memory monitor does not fail a conversion that has already finis
   // 13 of 50 here, because `ps` returns RSS 0 for a group that is exiting and a
   // non-zero exit for a group that already exited, and both were treated as a
   // broken monitor.
+  // The service admits TEXT_COPY_ADMISSION_LIMITS.activeConversions at a time and
+  // refuses the rest as memory_limit before any work starts (FILES3-U1 pins that
+  // refusal). So the burst runs in admitted-size waves: every conversion still
+  // overlaps its neighbours, and the monitor still samples each live group.
   const service = productionService();
-  const results = await Promise.all(Array.from({ length: 50 }, (_, index) =>
-    service.convert({ format: "html", sourceBytes: bytes(`<article>Burst body ${index}.</article>`) })));
+  const wave = TEXT_COPY_ADMISSION_LIMITS.activeConversions;
+  const results = [];
+  for (let start = 0; start < 50; start += wave) {
+    results.push(...await Promise.all(Array.from({ length: wave }, (_, offset) => {
+      const index = start + offset;
+      return service.convert({ format: "html", sourceBytes: bytes(`<article>Burst body ${index}.</article>`) });
+    })));
+  }
   const failed = results.filter(result => result.status !== "succeeded");
   assert.deepEqual(failed.map(result => result.diagnosticCategory), [],
     "concurrent conversions must not be failed by the memory monitor");

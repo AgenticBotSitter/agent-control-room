@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -53,7 +54,7 @@ test("editing a shipped migration fails and adding a new migration is linted", (
 });
 
 test("Squawk flags adding a NOT NULL column to an existing table", () => {
-  const fixture = new URL("fixtures/migrations/dangerous.sql", import.meta.url).pathname;
+  const fixture = fileURLToPath(new URL("fixtures/migrations/dangerous.sql", import.meta.url));
   const result = spawnSync("squawk", [fixture], { encoding: "utf8" });
   assert.notEqual(result.status, 0, "dangerous fixture unexpectedly passed Squawk");
   assert.match(result.stdout + result.stderr, /adding-required-field/);
@@ -94,7 +95,7 @@ test("the migration checker rejects every symlink under db/migrations", async t 
 });
 
 test("the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection", async t => {
-  const checker = new URL("../scripts/check-migration-changes.mjs", import.meta.url).pathname;
+  const checker = fileURLToPath(new URL("../scripts/check-migration-changes.mjs", import.meta.url));
   const edited = await repository(t);
   await writeFile(join(edited.root, "db/migrations/0001_base.sql"), "SELECT 1;\n");
   command("git", ["add", "."], edited.root);

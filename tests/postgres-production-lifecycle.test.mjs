@@ -174,7 +174,9 @@ function postgresDatabase(target, hooks = {}) {
 
 before(async () => {
   if (!PG_AVAILABLE) return;
-  run = await mkdtemp(join(tmpdir(), "cr-pg63-"));
+  // Socket paths must fit the Unix-socket budget (about 100 bytes on macOS). The
+  // deep per-user temp directory overruns it, so the run root is short on macOS.
+  run = await mkdtemp(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "cr-pg63-"));
   socket = join(run, "socket");
   data = join(run, "data");
   await mkdir(socket, { mode: 0o700 });

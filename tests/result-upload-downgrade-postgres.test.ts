@@ -428,6 +428,11 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     const client = new Client(postgres.admin());
     await client.connect();
     try {
+      // Production runs this file BEFORE the ledger, as postgres (the queue owner
+      // on a Mac install; apply-release-schema.mjs preLedgerPrivilegeFiles). The
+      // 0285 migration refuses without the grant it makes, and the downgrade above
+      // revoked it, so the retry has to restore it the same way.
+      await client.query(await readFile(join(REPOSITORY_ROOT, "db", "roles", "queue_backup_read_roles.sql"), "utf8"));
       await applyMigrations({
         target: postgres.admin(),
         bootstrapTarget: postgres.admin(),

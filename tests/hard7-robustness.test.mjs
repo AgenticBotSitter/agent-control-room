@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
@@ -397,7 +398,7 @@ test("F3-10: real CLI refusal preserves the first supervisor's state and log", a
   await writeFile(paths.hostState,"first-supervisor-state\n",{mode:0o600});
   await writeFile(paths.hostLog,"first-supervisor-log\n",{mode:0o600});
   try {
-    assert.throws(()=>execFileSync(process.execPath,[new URL("../scripts/mac-local/task-host-supervisor.mjs",import.meta.url).pathname,
+    assert.throws(()=>execFileSync(process.execPath,[fileURLToPath(new URL("../scripts/mac-local/task-host-supervisor.mjs", import.meta.url)),
       "--protected-root",f.root],{stdio:"pipe",timeout:5000}),error=>error.status===1 && error.stderr.toString().trim()==="mac_local_supervisor_busy");
     assert.equal(await readFile(paths.hostState,"utf8"),"first-supervisor-state\n");
     assert.equal(await readFile(paths.hostLog,"utf8"),"first-supervisor-log\n");
@@ -472,7 +473,7 @@ test("F3-09: private child identity and kill(0) work in the installed service Se
       assert.equal(privateProcessLeaseAliveV1(path,child.pid,command,lock.identity),false);console.log("sandbox lease verified");
     }finally{if(child){try{process.kill(-child.pid,"SIGKILL");}catch{}await closed;}lock.release();}`;
   await build({stdin:{contents:source,resolveDir:process.cwd(),sourcefile:"hard7-seatbelt.mjs"},bundle:true,format:"esm",platform:"node",outfile:script,logLevel:"silent"});
-  const profile=new URL("../src/updater/v1/policy/service-supervisor.sb",import.meta.url).pathname;
+  const profile=fileURLToPath(new URL("../src/updater/v1/policy/service-supervisor.sb", import.meta.url));
   const args=["-f",profile,...Object.entries({RUNTIME_STATE:f.root,RUNTIME_ROOT:f.root,RELEASE_ROOT:f.root,UPDATER_ROOT:f.root,
     WORKING_DIRECTORY:f.root,OUT_LOG:join(f.root,"out.log"),ERR_LOG:join(f.root,"err.log")}).flatMap(([k,v])=>["-D",`${k}=${v}`]),
     "--",node,script,join(f.root,"sandbox.lock")];

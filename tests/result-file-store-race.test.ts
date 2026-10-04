@@ -24,6 +24,7 @@
 // Against the store as it stood before this fix the review measured 375 / 242 /
 // 2 / 73 over 40 seconds. All four are zero now, and the assertions below are
 // what a reviewer reruns.
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -486,7 +487,7 @@ test("N-4c: a root whose volume honours O_EXLOCK is accepted and the probe is re
         } finally { fs.open = original; syncBuiltinESMExports(); if (collision) await fs.unlink(collision); }
 
       `;
-      unsupportedChild = spawn(process.execPath, ["--import", "tsx", "--import", helper.pathname,
+      unsupportedChild = spawn(process.execPath, ["--import", "tsx", "--import", fileURLToPath(helper),
         "--input-type=module", "-e", script], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
       let output = "";
       unsupportedChild.stdout!.on("data", chunk => { output += String(chunk); });
@@ -544,7 +545,7 @@ test("R5V-01: ignored O_EXLOCK refuses 50 openers without deleting a live upload
       }
     `;
     child = spawn(process.execPath, ["--import", "tsx", "--import",
-      new URL("./support/result-file-ignored-exlock.mjs", import.meta.url).pathname,
+      fileURLToPath(new URL("./support/result-file-ignored-exlock.mjs", import.meta.url)),
       "--input-type=module", "-e", script], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout!.on("data", chunk => { output += String(chunk); });

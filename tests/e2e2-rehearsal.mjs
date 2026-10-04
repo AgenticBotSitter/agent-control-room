@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -20,7 +21,7 @@ import { checkOwnerBotsStoppedV1, readSipEnabledV1, trustedExecutableV1, parseKe
 const parseKernelFactsFixture = lines => parseKernelFactsV1(`${lines.join("\n")}\n`);
 
 const nativeRunFile = promisify(execFile);
-const runFile = (file, args, options = {}) => nativeRunFile(file, args, { timeout: 20_000, killSignal: "SIGKILL", ...options }), repository = resolve(new URL("..", import.meta.url).pathname);
+const runFile = (file, args, options = {}) => nativeRunFile(file, args, { timeout: 20_000, killSignal: "SIGKILL", ...options }), repository = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const configCli = join(repository, "scripts/install/rehearsal/config.mjs"), snapshotCli = join(repository, "scripts/install/rehearsal/snapshot.mjs");
 const liveSnapshotCli = join(repository, "scripts/install/rehearsal/live-snapshot.mjs");
 const collectorCli = join(repository, "scripts/install/rehearsal/collect-results.mjs"), capabilityCli = join(repository, "scripts/install/rehearsal/verify-capabilities.mjs");

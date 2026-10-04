@@ -1,5 +1,6 @@
 // Effect-free tests for the #63 PostgreSQL production package: no database, no
 // binaries, no network. Live-cluster behavior lives in postgres-production-lifecycle.
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, cp, readFile, writeFile } from "node:fs/promises";
@@ -13,7 +14,7 @@ import { backupDatabase } from "../deploy/postgres/backup-database.mjs";
 import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { computeDatabaseRestoreIdentity, parseArtifactSetDigest, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // The number of files the ledger covers, derived so adding a migration never needs this test edited.
 const MIGRATION_FILES = (await collectLedgerEntries(ROOT)).length;
 

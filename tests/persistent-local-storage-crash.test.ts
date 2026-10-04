@@ -132,7 +132,7 @@ test("R6K-01: unknown entry preserves the entire identified recovery set", async
 
 test("R6K-01: recovery refuses writer replacement at open and retirement", async () => {
   const { PersistentLocalArtifactStorageV1 } = await import("../src/artifacts/v1/persistent-local-storage.ts");
-  const { readFile, unlink, writeFile, lstat } = await import("node:fs/promises");
+  const { readFile, unlink, writeFile, lstat, open } = await import("node:fs/promises");
   const root = await realpath(await mkdtemp(join(tmpdir(), "r6k-writer-recheck-")));
   try {
     for (const at of ["recovery_open", "recovery_stat"] as const) {
@@ -140,6 +140,13 @@ test("R6K-01: recovery refuses writer replacement at open and retirement", async
       await killAtBoundary(child("artifact-write", state, "lock_sync"));
       const path = join(state, ".control-room-persistent-artifact.lock"), record = await readFile(path);
       const before = await lstat(path); let seen = 0;
+      // Keep the original lock open for the whole replacement. Unlinking a file
+      // whose inode is still referenced cannot free its inode number, so the
+      // replacement is a different inode on every filesystem. Without this pin,
+      // Linux (ext4, tmpfs) may hand the freed number straight back to the new
+      // lock, and the replacement reads as the same writer rather than as a
+      // changed one. The assertion below stays exactly as strict.
+      const pinned = await open(path, "r");
       const replacement = at === "recovery_open" ? Buffer.from(JSON.stringify({ schema: "foreign" })) : record;
       await assert.rejects(PersistentLocalArtifactStorageV1.createForTest({ rootPath: state, maximumArtifacts: 100,
         maximumFileBytes: 65536, maximumTotalBytes: 1000000, operationTimeoutMs: 2000 }, {
@@ -150,8 +157,10 @@ test("R6K-01: recovery refuses writer replacement at open and retirement", async
           return operation();
         },
       }), (error: unknown) => (error as { safeReasonCode?: string }).safeReasonCode === "storage_writer_changed");
-      assert.notEqual((await lstat(path)).ino, before.ino);
-      assert.deepEqual(await readFile(path), replacement);
+      try {
+        assert.notEqual((await lstat(path)).ino, before.ino);
+        assert.deepEqual(await readFile(path), replacement);
+      } finally { await pinned.close(); }
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

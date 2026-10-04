@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
@@ -172,7 +173,7 @@ test('canary secrets and raw input text never appear in explanations', () => {
 });
 
 test('explain CLI helps, explains a document, and refuses generically', () => {
-  const script = new URL('../scripts/explain-worker-preparation.mjs', import.meta.url).pathname;
+  const script = fileURLToPath(new URL('../scripts/explain-worker-preparation.mjs', import.meta.url));
   const run = args => execFileSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8' });
   const help = run(['--help']);
   assert.match(help, /--input <facts\.json>/);
@@ -299,7 +300,7 @@ test('bounded reader opens with O_NONBLOCK and refuses FIFOs without blocking', 
 });
 
 test('explain CLI refuses oversized files and directories without echoing data', () => {
-  const script = new URL('../scripts/explain-worker-preparation.mjs', import.meta.url).pathname;
+  const script = fileURLToPath(new URL('../scripts/explain-worker-preparation.mjs', import.meta.url));
   const run = args => execFileSync(process.execPath, ['--import', 'tsx', script, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const dir = mkdtempSync(join(tmpdir(), 'prep-bounded-'));

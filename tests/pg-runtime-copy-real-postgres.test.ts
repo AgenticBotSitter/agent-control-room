@@ -88,9 +88,10 @@ const portFor = (offset: number) => PORT_BASE + offset;
 
 const RUNS: string[] = [];
 /** Keep every cluster under one root so the teardown can remove it in one call. */
-const LANE_ROOT = process.env.CONTROL_ROOM_PGRT_TMPDIR
-  ? join(process.env.CONTROL_ROOM_PGRT_TMPDIR, `pg-runtime-${process.pid}`)
-  : join(tmpdir(), `pg-runtime-${process.pid}`);
+// macOS per-user temp directories are too deep for the Unix-socket path budget;
+// /private/tmp is the short, canonical root (realpath must equal the path).
+const LANE_TEMP = process.env.CONTROL_ROOM_PGRT_TMPDIR ?? (process.platform === "darwin" ? "/private/tmp" : tmpdir());
+const LANE_ROOT = join(LANE_TEMP, `pg-runtime-${process.pid}`);
 
 function laneRun(label: string): string {
   mkdirSync(LANE_ROOT, { recursive: true, mode: 0o700 });

@@ -1,4 +1,5 @@
 // Same stale-lock pattern in scripts/release-signing.mjs withTrustLock (installer-side trust floor).
+import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFile, chmod, mkdtemp, readFile, rm, writeFile, realpath } from 'node:fs/promises';
 import { generateKeyPairSync } from 'node:crypto';
@@ -28,7 +29,7 @@ try {
     await writeFile(`${trustPath}.lock`, `${JSON.stringify({ pid: dead, token: 'f'.repeat(32) })}\n`, { mode: 0o600 });
     const startAt = Date.now() + 400;
     await Promise.all(Array.from({ length: workers }, () => new Promise(done => {
-      const child = spawn(process.execPath, [new URL(import.meta.url).pathname, 'child', trustPath, journal, String(startAt)], { stdio: 'ignore' }); children.push(child); child.once('error', done); child.once('close', done); })));
+      const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'child', trustPath, journal, String(startAt)], { stdio: 'ignore' }); children.push(child); child.once('error', done); child.once('close', done); })));
     for (const line of (await readFile(journal, 'utf8')).trim().split('\n')) { const key = line.split(' ').filter((_, i) => i !== 1).join(' '); tally[key] = (tally[key] ?? 0) + 1; }
     await rm(`${trustPath}.lock`, { recursive: true, force: true });
   }

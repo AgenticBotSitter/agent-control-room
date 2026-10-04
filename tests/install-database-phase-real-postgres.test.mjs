@@ -26,6 +26,7 @@
 // is absent, the same convention the sibling real-PostgreSQL lane uses for
 // `PG_BIN`: a lane that fetched 437 MB on every run would be a lane nobody ran.
 
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -52,7 +53,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { buildInitDependenciesV1 } from "../src/updater/v1/pg/init-database.mjs";
 import { buildReleaseDependenciesV1, earlyPrivilegeFileScopeV1 } from "../src/updater/v1/pg/apply-release-schema.mjs";
 
-const REPO = resolve(join(dirname(new URL(import.meta.url).pathname), ".."));
+const REPO = resolve(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const ARCHIVE = process.env.PG_RUNTIME_ARCHIVE;
 const hasArchive = ARCHIVE !== undefined && existsSync(ARCHIVE);
 const needsArchive = hasArchive ? false : "needs the pinned archive (PG_RUNTIME_ARCHIVE)";

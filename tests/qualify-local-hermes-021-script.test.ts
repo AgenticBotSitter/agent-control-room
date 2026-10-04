@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const script = join(root, "scripts", "qualify-local-hermes-021.mjs");
 
 async function run(args: readonly string[], environment: Record<string, string | undefined> = {}) {

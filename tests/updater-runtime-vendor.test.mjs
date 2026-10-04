@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -15,7 +16,7 @@ import { adoptBootstrapV1 } from "../src/updater/v1/install/bootstrap.mjs";
 import { abortAttendedV1, fetchVerifiedSourceV1 } from "../src/updater/v1/attended-source.mjs";
 import { verifyRuntimeInventoryV1 } from "../scripts/ci/verify-runtime-inventory.mjs";
 
-const repositoryRoot = dirname(dirname(new URL(import.meta.url).pathname));
+const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const sha256 = value => createHash("sha256").update(value).digest("hex");
 const sha512 = value => createHash("sha512").update(value).digest("base64");
 

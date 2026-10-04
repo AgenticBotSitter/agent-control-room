@@ -28,6 +28,7 @@
 // created is still there. A teardown nobody checks is a teardown that silently
 // stops working.
 
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { strict as assert } from "node:assert";
 import { copyFileSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -47,7 +48,7 @@ const LANE_ROOT = process.env.CONTROL_ROOM_PGRT_TMPDIR
   ? join(process.env.CONTROL_ROOM_PGRT_TMPDIR, `pg-clone-${process.pid}`)
   : join(tmpdir(), `pg-clone-${process.pid}`);
 const SIDECAR = join(LANE_ROOT, "pg-clone-probe-v1");
-const REPO = join(dirname(new URL(import.meta.url).pathname), "..");
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 let buildError: string | null = null;
 let mountedDevices: string[] = [];

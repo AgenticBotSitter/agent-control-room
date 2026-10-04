@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   SandboxedTextCopyService,
+  TEXT_COPY_ADMISSION_LIMITS,
   TEXT_COPY_LIMITS,
 } from "../src/converter/v1/text-copy-service.ts";
 
@@ -432,8 +433,14 @@ test("twenty parallel derived-output reads keep allocation bounded", async () =>
   }) as typeof Buffer.alloc;
   try {
     const converter = service({ limits: { markdownBytes: 1024 * 1024 } });
-    const results = await Promise.all(Array.from({ length: 20 }, () =>
-      converter.convert({ format: "pdf", sourceBytes: bytes("BIG") })));
+    // Admission lets two conversions run at once; the other eighteen are refused
+    // as memory_limit (FILES3-U1). Running in admitted-size waves keeps all twenty
+    // successful, so every result still exercises the output read allocation.
+    const results = [];
+    for (let wave = 0; wave < 20; wave += TEXT_COPY_ADMISSION_LIMITS.activeConversions) {
+      results.push(...await Promise.all(Array.from({ length: TEXT_COPY_ADMISSION_LIMITS.activeConversions }, () =>
+        converter.convert({ format: "pdf", sourceBytes: bytes("BIG") }))));
+    }
     for (const converted of results) {
       assert.equal(converted.status, "succeeded");
       assert.equal(converted.markdownBytes.length, 16 * 1024);

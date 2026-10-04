@@ -609,7 +609,7 @@ test("FILES3-03: swapping the root after the helper's check cannot redirect unli
     const name = stagedChunkNameV1(TENANT, PROJECT, UPLOAD, 1);
     await staging.stage(id, bytes("original"));
     await writeFile(join(outside, name), "victim", { mode: 0o600 });
-    process.env.NODE_OPTIONS = `${previous.NODE_OPTIONS ?? ""} --require=${join(process.cwd(), "tests/fixtures/staging-cleanup-root-swap.cjs")}`;
+    process.env.NODE_OPTIONS = `${previous.NODE_OPTIONS ?? ""} --require="${join(process.cwd(), "tests/fixtures/staging-cleanup-root-swap.cjs")}"`;
     process.env.FILES3_SWAP_ROOT = root; process.env.FILES3_SWAP_OLD = join(base.path, "old-staging");
     process.env.FILES3_SWAP_OUTSIDE = outside;
     assert.equal(await staging.discardChunk(id), true);
@@ -818,7 +818,7 @@ test("FILES3-04 FILES3-03: child scratch cleanup proves writer, ownership and ma
     const name = `.staging-${"d".repeat(64)}-${process.pid.toString(36)}-1024.part`;
     await writeFile(join(root, name), "live", { mode: 0o600 });
     assert.equal(await cleanupProbe(staging, [name], true), 0, "the child independently retains a live writer");
-    process.env.NODE_OPTIONS = `${previous.NODE_OPTIONS ?? ""} --require=${join(process.cwd(), "tests/fixtures/staging-cleanup-faults.cjs")}`;
+    process.env.NODE_OPTIONS = `${previous.NODE_OPTIONS ?? ""} --require="${join(process.cwd(), "tests/fixtures/staging-cleanup-faults.cjs")}"`;
     process.env.FILES3_CLEANUP_FAULT = "writer_inaccessible";
     assert.equal(await cleanupProbe(staging, [name], true), 0, "inaccessible is not proof of death");
     delete process.env.FILES3_CLEANUP_FAULT;
@@ -845,7 +845,7 @@ test("FILES3-03: cleanup refuses an entry replaced between its inode checks", as
   try {
     const staging = await openWith(base.path, 1024), name = `${"d".repeat(64)}.chunk`;
     await writeFile(join(base.path, name), "original", { mode: 0o600 });
-    process.env.NODE_OPTIONS = `${previous.NODE_OPTIONS ?? ""} --require=${join(process.cwd(), "tests/fixtures/staging-cleanup-faults.cjs")}`;
+    process.env.NODE_OPTIONS = `${previous.NODE_OPTIONS ?? ""} --require="${join(process.cwd(), "tests/fixtures/staging-cleanup-faults.cjs")}"`;
     process.env.FILES3_CLEANUP_FAULT = "entry_replaced"; process.env.FILES3_CLEANUP_FAULT_NAME = name;
     await assert.rejects(cleanupProbe(staging, [name]));
     assert.equal(await readFile(join(base.path, name), "utf8"), "replacement");

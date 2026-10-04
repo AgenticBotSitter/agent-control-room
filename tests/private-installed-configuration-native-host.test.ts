@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import childProcess from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -32,7 +33,7 @@ async function compile(output: string, input = source, additions: string[] = [])
   const environment = { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", TMPDIR: await realpath(tmpdir()), NODE_ENV: "test" as const };
   const sdk = (await run("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"],
     { env: environment })).stdout.trim();
-  await run("/usr/bin/clang", [...flags, ...additions, "-isysroot", sdk, input.pathname, "-o", output],
+  await run("/usr/bin/clang", [...flags, ...additions, "-isysroot", sdk, fileURLToPath(input), "-o", output],
     { env: environment });
   await chmod(output, 0o500);
 }

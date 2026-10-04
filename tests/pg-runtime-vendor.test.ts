@@ -18,6 +18,7 @@
 // of the sibling lane; `assertNoDiskImagesRemain` is what makes that class of
 // leak a test failure instead of a surprise somebody finds in /Volumes.
 
+import { fileURLToPath } from "node:url";
 import { execFileSync, execFile, spawnSync } from "node:child_process";
 import { strict as assert } from "node:assert";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -38,7 +39,7 @@ import { classifyPgRuntimeArchiveEntryV1 } from "../src/updater/v1/pg/pg-runtime
 import { planPgClusterLayoutV1 } from "../src/pg-runtime/v1/pg-cluster-layout";
 
 const exec = promisify(execFile);
-const REPO = join(dirname(new URL(import.meta.url).pathname), "..");
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LANE_ROOT = process.env.CONTROL_ROOM_PGRT_TMPDIR
   ? join(process.env.CONTROL_ROOM_PGRT_TMPDIR, `pg-vendor-${process.pid}`)
   : join(tmpdir(), `pg-vendor-${process.pid}`);

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -27,7 +28,7 @@ test("an absent binding is distinguished from an invalid binding", () => {
 test("mac:up refuses an artifact built from different tracked source", async () => {
   assert.match(up, /verifyMacLocalBuildCurrentV1/);
   assert.match(up, /release build stale: run pnpm build first/);
-  const current = await macLocalBuildSourceV1(new URL("..", import.meta.url).pathname);
+  const current = await macLocalBuildSourceV1(fileURLToPath(new URL("..", import.meta.url)));
   assert.equal(current.schema, MAC_LOCAL_BUILD_SOURCE_V1);
   assert.match(current.commit, /^[a-f0-9]{40}$/);
   assert.match(current.sourceDigest, /^sha256:[a-f0-9]{64}$/);

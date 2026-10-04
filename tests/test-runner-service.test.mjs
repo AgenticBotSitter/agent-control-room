@@ -721,9 +721,10 @@ test("sandbox guard keeps other processes' argv and environment unreadable, even
     "tests/procargs.test.mjs": `
       import assert from "node:assert/strict";
       import { spawnSync } from "node:child_process";
+      import { fileURLToPath } from "node:url";
       import test from "node:test";
       test("native code reads only its own process details", () => {
-        const probe = new URL("../node_modules/@esbuild/darwin-probe/bin/esbuild", import.meta.url).pathname;
+        const probe = fileURLToPath(new URL("../node_modules/@esbuild/darwin-probe/bin/esbuild", import.meta.url));
         const run = spawnSync(probe, ${JSON.stringify([String(victim.pid), `${marker}=secret`, String(process.pid)])}, { encoding: "utf8" });
         assert.equal(run.status, 0, run.stderr);
         const seen = Object.fromEntries(run.stdout.trim().split("\\n").map(line => line.split("=")));
@@ -828,8 +829,11 @@ test("ownership guard refuses a registry entry whose data directory resolves out
   const f = await fixture(t, { pgBin: REAL_PG_BIN, portPool: { start: PG_PORT_BASE, end: PG_PORT_BASE + 1, blockSize: 2 } });
   // A cluster the run did NOT start, on a port inside the run's block.
   const dataDirectory = join(f.root, "outer-data");
-  const socketDirectory = join(f.root, "outer-sock");
-  await mkdir(socketDirectory);
+  // The socket directory must fit the Unix-socket path budget (about 100 bytes on
+  // macOS). A directory under the fixture root inherits the temp directory's depth
+  // and overruns it, so this one lives directly under /tmp.
+  const socketDirectory = await mkdtemp("/tmp/s7-outer-sock-");
+  t.after(() => rm(socketDirectory, { recursive: true, force: true }));
   const run = (program, args) => new Promise(resolveResult => {
     const child = spawn(join(REAL_PG_BIN, program), args, { stdio: "ignore", env: { ...process.env, LC_ALL: "C", LANG: "C" } });
     child.once("close", resolveResult);

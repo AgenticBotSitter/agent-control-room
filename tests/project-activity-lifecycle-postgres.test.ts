@@ -16,6 +16,7 @@
 // at "main" (every migration except this head's) with the main-era role files,
 // then applies this head's migration and re-checks -- so a fresh install, which
 // would pass from the role files alone, cannot mask a broken upgrade path.
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -32,7 +33,7 @@ import { isPrivilegeDenied, requiresRealPostgres, realPostgresSkipMessage, split
 import { DEFAULT_ROLE_FILES } from "./support/attack-kit/real-postgres.ts";
 import { applicableStatements } from "./support/applicable-statements";
 
-const REPOSITORY_ROOT = new URL("..", import.meta.url).pathname;
+const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 // The ports this job is authorized for. The kit REFUSES any port outside it
 // before it so much as probes the port, so a typo cannot start a cluster
 // somewhere another job owns. The base is configurable so a lane can be given

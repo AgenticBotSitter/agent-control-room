@@ -146,8 +146,11 @@ test('project Settings renders saved and empty values, and keeps failed reads un
     await act(async () => root.render(React.createElement(PrivateProjectWorkspace,
       { key: 'unavailable', projectId: 'project:unavailable', section: 'settings' })));
     await act(async () => requests[2].resolve(new Response('', { status: 503 })));
-    assert.match(document.body.textContent, /saved database or service is unavailable/i);
-    assert.match(document.body.textContent, /no sample data was substituted/i);
+    // The first-read failure copy is "Couldn't read saved state" (private-app/app/workspace.tsx).
+    // It no longer uses the browser-client's "saved database or service" wording, so the
+    // pin follows the rendered copy. "No sample data" is enforced by the doesNotMatch below,
+    // which fails if any saved project value is shown in its place.
+    assert.match(document.body.textContent, /Couldn't read saved state\. Reconnect and check again\./);
     assert.doesNotMatch(document.body.textContent, /Project status|No summary added|Real saved purpose/);
     assert.equal(requests.every(item => item.options.method === 'GET'), true, 'Settings reads must not emit commands');
   } finally {
