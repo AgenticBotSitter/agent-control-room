@@ -533,6 +533,11 @@ jobs:
           for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
           pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
           node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          # The guard's control socket lives under the worktree's .test-tmp and
+          # macOS caps a socket path at 104 bytes; the hosted checkout path is
+          # far longer than a developer's, so run the lane from a short copy.
+          short_root="${HOME}/acr"
+          rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
           pnpm run test:updater
 
   test-articles:
@@ -1001,6 +1006,11 @@ jobs:
           for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
           pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
           node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          # The guard's control socket lives under the worktree's .test-tmp and
+          # macOS caps a socket path at 104 bytes; the hosted checkout path is
+          # far longer than a developer's, so run the lane from a short copy.
+          short_root="${HOME}/acr"
+          rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
           pnpm run test:updater
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}

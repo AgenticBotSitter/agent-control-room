@@ -272,7 +272,8 @@ test("the worktree test-root gate rejects outside-prefix, traversal, aliases and
 
 macTest("the native lock excludes a fifty-caller burst and releases after a stopped holder", async t => {
   const fixture = await guardRootV1(t, "burst");
-  await executable(join(fixture.bin, "clock"), 'printf entered > "$CONTROL_ROOM_GUARD_ROOT/entered"\n/bin/sleep 0.5\necho "test-boot 20000"');
+  // The holder must outlast all fifty spawns; half a second did not on a slow hosted runner.
+  await executable(join(fixture.bin, "clock"), 'printf entered > "$CONTROL_ROOM_GUARD_ROOT/entered"\n/bin/sleep 5\necho "test-boot 20000"');
   const settled = await Promise.allSettled(Array.from({ length: 50 }, () => runGuardV1(fixture, "watch")));
   assert.equal(settled.filter(result => result.status === "fulfilled").length, 1);
   const rejected = settled.filter(result => result.status === "rejected");

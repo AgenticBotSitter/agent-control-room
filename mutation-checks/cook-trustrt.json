@@ -232,7 +232,7 @@
   },
   {
     "file": "src/updater/v1/trusted-runtime.mjs",
-    "find": "  if (!/^\\S.*:$/u.test(rows[0] ?? \"\")) refuse(\"t1_otool_output_invalid\");",
+    "find": "  if (!first) refuse(\"t1_otool_output_invalid\");",
     "replace": "  if (false) refuse(\"t1_otool_output_invalid\");",
     "test": "node --test --test-name-pattern='otool parser' tests/updater-trusted-runtime.test.mjs",
     "why": "garbage otool library output must not be accepted as an empty dependency closure"
