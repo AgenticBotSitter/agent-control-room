@@ -385,13 +385,30 @@ export async function assertT1Path(path, { allowedRoots = [], executable = false
 export function parseOtoolLibraries(output) {
   if (typeof output !== "string" || output.includes("\0")) refuse("t1_otool_output_invalid");
   const rows = output.split(/\r?\n/u);
-  if (!/^\S.*:$/u.test(rows[0] ?? "")) refuse("t1_otool_output_invalid");
-  const lines = rows.slice(1).filter(line => line.trim().length > 0);
-  return Object.freeze(lines.map(line => {
-    const match = /^\s+(.+?) \(compatibility version [^)]+\)$/u.exec(line);
+  // A universal image (Command Line Tools 26.x ship x86_64+arm64) prints one
+  // "<path> (architecture <arch>):" section per slice; a thin image prints one
+  // "<path>:" header. Every section must name the same image and link exactly
+  // the same libraries, or the image is refused as not one program.
+  const header = /^(\S.*?)(?: \(architecture [A-Za-z0-9_]+\))?:$/u;
+  const first = header.exec(rows[0] ?? "");
+  if (!first) refuse("t1_otool_output_invalid");
+  const sections = [];
+  for (const row of rows) {
+    if (row.trim().length === 0) continue;
+    const section = /^\s/u.test(row) ? null : header.exec(row);
+    if (section) {
+      if (section[1] !== first[1]) refuse("t1_otool_output_invalid");
+      sections.push([]);
+      continue;
+    }
+    const match = /^\s+(.+?) \(compatibility version [^)]+\)$/u.exec(row);
     if (!match) refuse("t1_otool_output_invalid");
-    return match[1];
-  }));
+    sections.at(-1).push(match[1]);
+  }
+  const [libraries, ...slices] = sections;
+  if (slices.some(slice => slice.length !== libraries.length || slice.some((name, index) => name !== libraries[index])))
+    refuse("t1_otool_output_invalid");
+  return Object.freeze(libraries);
 }
 
 export function parseOtoolRpaths(output) {

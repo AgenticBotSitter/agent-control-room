@@ -171,6 +171,17 @@ test("otool parser accepts exact dependency rows and refuses ambiguous output", 
   assert.deepEqual(parseOtoolLibraries("/runtime/node:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n"),
     ["/usr/lib/libSystem.B.dylib"]);
   assert.throws(() => parseOtoolLibraries("image:\n  hostile\n"), /t1_otool_output_invalid/u);
+  // Command Line Tools 26.x ship universal binaries: one section per slice.
+  const lib = name => `\t${name} (compatibility version 1.0.0, current version 1.0.0)`;
+  const universal = (x86, arm, path = "/clt/strip") => [`/clt/strip (architecture x86_64):`, ...x86.map(lib),
+    `${path} (architecture arm64):`, ...arm.map(lib), ""].join("\n");
+  assert.deepEqual(parseOtoolLibraries(universal(["/usr/lib/libc++.1.dylib", "@rpath/libcodedirectory.dylib"],
+    ["/usr/lib/libc++.1.dylib", "@rpath/libcodedirectory.dylib"])), ["/usr/lib/libc++.1.dylib", "@rpath/libcodedirectory.dylib"]);
+  assert.throws(() => parseOtoolLibraries(universal(["/usr/lib/libc++.1.dylib"], ["/usr/lib/libc++.1.dylib", "/tmp/evil.dylib"])),
+    /t1_otool_output_invalid/u, "a slice that links an extra library is refused");
+  assert.throws(() => parseOtoolLibraries(universal(["/usr/lib/a.dylib"], ["/usr/lib/b.dylib"])), /t1_otool_output_invalid/u);
+  assert.throws(() => parseOtoolLibraries(universal(["/usr/lib/a.dylib"], ["/usr/lib/a.dylib"], "/clt/other")),
+    /t1_otool_output_invalid/u, "a section naming another image is refused");
   assert.deepEqual(parseOtoolRpaths("/runtime/node:\nLoad command 1\n          cmd LC_RPATH\n      cmdsize 40\n         path @executable_path/../lib (offset 12)\n"),
     ["@executable_path/../lib"]);
   assert.throws(() => parseOtoolRpaths("cmd LC_RPATH\nmissing\n"), /t1_otool_output_invalid/u);
