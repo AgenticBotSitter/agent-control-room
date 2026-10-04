@@ -51,13 +51,63 @@ export interface CoordinationHttpHandlerOptions {
   isCoordinationEnabled?: () => Promise<boolean>;
   /**
    * In-flight request coalescing, shared across handler invocations within one
-   * process. Two simultaneous POSTs carrying the same Idempotency-Key run the
-   * engine once; both callers receive the same recorded outcome. This is a
-   * performance optimization only — durability comes from the coordinator
-   * service's PostgreSQL receipt (control_idempotency): sequential retries
-   * and reconstructed handlers are answered from the saved receipt.
+   * process. Two simultaneous POSTs carrying the same Idempotency-Key AND the
+   * same verified caller run the engine once; both callers receive the same
+   * recorded outcome. This is a performance optimization only — durability
+   * comes from the coordinator service's PostgreSQL receipt
+   * (control_idempotency): sequential retries and reconstructed handlers are
+   * answered from the saved receipt.
+   *
+   * It authorizes nothing on its own. `authorizeCaller` runs for every request
+   * before the map is consulted, so joining an in-flight promise never hands a
+   * caller a result no check of its own credential produced.
    */
   inflight?: Map<string, Promise<unknown>>;
+  /**
+   * Required. Runs for EVERY write request, leader and follower alike, and must
+   * refuse an expired, revoked or otherwise unauthorized caller by throwing
+   * `WebAccessError`. `projectId` is the route's own decoded project segment,
+   * passed so the check can be scoped to the same project the write targets —
+   * not re-derived by the caller from the URL.
+   *
+   * In production this is the session/grant authority itself
+   * (`WebSessionAuthority.authenticated` over the same database the service
+   * uses), so a follower is held to the same durable revocation check the
+   * leader ran. Omitting it is a construction error, not a degraded mode.
+   */
+  authorizeCaller?: (identity: Identity, projectId: string) => Promise<void>;
+}
+
+/**
+ * The exact verified credential issuance a request was authorized as.
+ *
+ * `binding` is a digest, never a raw credential or subject: it appears in the
+ * in-flight map key, which is process memory but is also reachable from a
+ * crash dump or a heap snapshot, so it carries no more than the digests that
+ * already identify the session in the database.
+ */
+export interface VerifiedCallerBinding {
+  readonly provider: string;
+  readonly subject: string;
+  readonly tokenDigest: string;
+  readonly issuedAt: string;
+  readonly binding: string;
+}
+
+/**
+ * Bind one verified identity to the credential issuance that produced it.
+ *
+ * Provider + subject identify WHO; tokenDigest + issuedAt identify WHICH
+ * credential. Requiring all four is what keeps two live sessions of the same
+ * subject — or the same session under a different provider profile — out of each
+ * other's in-flight slot.
+ */
+export function callerBinding(identity: Identity): VerifiedCallerBinding {
+  const binding = sha256Digest({ schema: "control-room.coordination-inflight-caller/v1",
+    provider: identity.provider, subject: identity.subject, tokenDigest: identity.tokenDigest,
+    issuedAt: identity.issuedAt });
+  return Object.freeze({ provider: identity.provider, subject: identity.subject,
+    tokenDigest: identity.tokenDigest, issuedAt: identity.issuedAt, binding });
 }
 
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9:_-]{8,160}$/;
@@ -143,17 +193,35 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
   const verifyIdentity = localOwnerSession ? undefined : options.trust === undefined ? undefined
     : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   if (!localOwnerSession && !verifyIdentity) throw new Error("coordination_http_authentication_not_configured");
+  // A coalescing map with no per-caller authorization is exactly the defect
+  // this option exists to close: a follower would be handed another caller's
+  // receipt without its own credential ever being checked. Refuse to build the
+  // handler rather than serve that.
+  const authorizeCaller = options.authorizeCaller;
+  if (!authorizeCaller) throw new Error("coordination_http_caller_authorizer_missing");
   const clock = options.clock ?? Date.now;
   const isCoordinationEnabled = options.isCoordinationEnabled ?? (() => Promise.resolve(true));
   const inflight = options.inflight ?? new Map<string, Promise<unknown>>();
-  // Composite in-flight key. Identity subject is included so one owner's retry
-  // can never be answered with another owner's outcome. The canonical body
-  // digest is included so two simultaneous requests with the same key but
-  // different content never share one outcome: each runs, and the PG
-  // idempotency ledger (the durable authority) refuses the changed content
+  // Composite in-flight key, and what "the same caller" means here.
+  //
+  // The key binds the EXACT verified caller, not a subject. Two sessions of the
+  // same subject are two credentials with independent lifetimes: one can be
+  // revoked in PostgreSQL while the other stays live, and the revoked one must
+  // never be answered with the live one's receipt. `tokenDigest` is the exact
+  // credential's digest and `issuedAt` is the exact credential issuance, so
+  // {provider, subject, tokenDigest, issuedAt} together identify one verified
+  // credential issuance — and no other. Provider is in the key so two sites
+  // sharing one in-flight map (the hosted process builds one per process, and
+  // the map is handed in rather than created per site) can never answer each
+  // other's requests.
+  //
+  // The canonical body digest is included so two simultaneous requests with the
+  // same key but different content never share one outcome: each runs, and the
+  // PG idempotency ledger (the durable authority) refuses the changed content
   // under the same key with coordinator_replay_conflict.
-  const inflightKey = (idempotencyKey: string, projectId: string, subaction: string, identitySubject: string, bodyDigest: string) =>
-    `${idempotencyKey}\n${projectId}\n${subaction}\n${identitySubject}\n${bodyDigest}`;
+  const inflightKey = (idempotencyKey: string, projectId: string, subaction: string,
+    caller: VerifiedCallerBinding, bodyDigest: string) =>
+    `${idempotencyKey}\n${projectId}\n${subaction}\n${caller.binding}\n${bodyDigest}`;
   return async (request: Request): Promise<Response> => {
     try {
         if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
@@ -180,7 +248,22 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
         const body = await readJsonBody(request);
         await ensureEnabledOrRefuse(isCoordinationEnabled);
 
-        const key = inflightKey(idempotencyKey, projectId, subaction, identity.subject, sha256Digest(body));
+        // Binding the caller is NOT enough on its own: a follower must still be
+        // AUTHORIZED before it receives the shared result. Binding only proves
+        // the two requests were made with the same credential -- it says nothing
+        // about whether that credential is still usable, which is the question
+        // that matters when the leader has already been authorized and this
+        // follower has not.
+        //
+        // `authorizeCaller` answers exactly that, and runs BEFORE the in-flight
+        // map is consulted, so a session revoked in PostgreSQL refuses here even
+        // though a live session of the same subject is mid-flight. It also throws
+        // into this request's own catch, so a refused follower never reaches the
+        // leader's promise at all -- which is stronger than filtering its reply.
+        const caller = callerBinding(identity);
+        await authorizeCaller(identity, projectId);
+
+        const key = inflightKey(idempotencyKey, projectId, subaction, caller, sha256Digest(body));
         // Atomic check-and-register: no await sits between get and set, so two
         // simultaneous same-key requests cannot both miss.
         const running = inflight.get(key);

@@ -26,6 +26,7 @@ const planSchema = z.object({
   participantIdentityDigest: ideaDigestSchemaV1,
   perspective: z.string().min(1).max(40),
   round: z.number().int().min(1).max(3),
+  ownerFollowUp: z.string().min(1).max(300).optional(),
   dependsOnTaskKeys: z.array(ideaIdSchemaV1).max(6),
   taskDraft: taskDraftSchema,
   inputDigest: ideaDigestSchemaV1,
@@ -66,6 +67,7 @@ export function buildIdeaLabCanonicalTaskPlanV1(input: {
   round: number;
   ownerPrompt: string;
   contributions: readonly unknown[];
+  followUp?: string;
 }): IdeaLabCanonicalTaskPlanV1 {
   const session = parseIdeaLabSessionV1(input.session);
   if (!ideaIdSchemaV1.safeParse(input.projectId).success
@@ -75,13 +77,14 @@ export function buildIdeaLabCanonicalTaskPlanV1(input: {
   const participant = session.participants.find((item) => item.participantId === input.participantId);
   if (!participant) throw new IdeaLabErrorV1("scope_mismatch");
   const prompt = buildIdeaLabDiscussionPromptV1({ session, participantId: participant.participantId,
-    round: input.round, prompt: input.ownerPrompt, contributions: input.contributions });
+    round: input.round, prompt: input.ownerPrompt, contributions: input.contributions, followUp: input.followUp });
   const dependencyKeys = input.round === 1 ? [] : session.participants
     .map((item) => taskKey(session.sessionDigest, item.participantId, input.round - 1)).sort();
   const draft = taskDraft(session.title, participant.perspective, input.round, prompt);
   const inputDigest = sha256Digest({ sessionDigest: session.sessionDigest, projectId: input.projectId,
     participantId: participant.participantId, participantIdentityDigest: participant.identityDigest,
-    round: input.round, dependsOnTaskKeys: dependencyKeys, taskDraft: draft });
+    round: input.round, ...(input.followUp ? { ownerFollowUp: input.followUp.trim() } : {}),
+    dependsOnTaskKeys: dependencyKeys, taskDraft: draft });
   const unsigned = {
     contractVersion: IDEA_LAB_CANONICAL_TASK_PLAN_V1,
     taskKey: taskKey(session.sessionDigest, participant.participantId, input.round),
@@ -94,6 +97,7 @@ export function buildIdeaLabCanonicalTaskPlanV1(input: {
     participantIdentityDigest: participant.identityDigest,
     perspective: participant.perspective,
     round: input.round,
+    ...(input.followUp ? { ownerFollowUp: input.followUp.trim() } : {}),
     dependsOnTaskKeys: dependencyKeys,
     taskDraft: draft,
     inputDigest,
@@ -111,7 +115,8 @@ export function parseIdeaLabCanonicalTaskPlanV1(value: unknown): IdeaLabCanonica
     || plan.taskKey !== taskKey(plan.sessionDigest, plan.participantId, plan.round)
     || plan.inputDigest !== sha256Digest({ sessionDigest: plan.sessionDigest, projectId: plan.projectId,
       participantId: plan.participantId, participantIdentityDigest: plan.participantIdentityDigest,
-      round: plan.round, dependsOnTaskKeys: plan.dependsOnTaskKeys, taskDraft: plan.taskDraft })
+      round: plan.round, ...(plan.ownerFollowUp ? { ownerFollowUp: plan.ownerFollowUp } : {}),
+      dependsOnTaskKeys: plan.dependsOnTaskKeys, taskDraft: plan.taskDraft })
     || (plan.round === 1 && plan.dependsOnTaskKeys.length !== 0)
     || (plan.round > 1 && (plan.dependsOnTaskKeys.length < 3
       || new Set(plan.dependsOnTaskKeys).size !== plan.dependsOnTaskKeys.length))) {

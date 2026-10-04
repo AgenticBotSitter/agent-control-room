@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { cloudflareAccessGatewayAssertionProfileV1, createAccessVerifier,
   type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { readBoundedJson } from "./http-common";
@@ -19,7 +20,7 @@ export function createAccessKeyLoader(issuer: string, transport: typeof fetch): 
       method: "GET", redirect: "error", credentials: "omit", signal, headers: { accept: "application/json" },
     });
     if (!response.ok || !response.body) throw new Error("access_keys_unavailable");
-    const payload = z.object({ keys: z.array(publicKeySchema).min(1).max(8) }).passthrough()
+    const payload = upstreamObjectV1({ keys: z.array(publicKeySchema).min(1).max(8) })
       .parse(await readBoundedJson(response.body, 32768));
     return payload.keys.map(key => ({ kid: key.kid, jwk: key }));
   };
@@ -92,6 +93,9 @@ export function createAccessKeyCache(options: {
       })();
       return loading;
     },
+    /** Drops the cached key set so the next get() loads again. It does not
+     * bypass the post-failure backoff; callers rate-limit their own use. */
+    expire() { cached = undefined; },
     close() { closed = true; cached = undefined; controller?.abort(); },
   };
 }

@@ -56,6 +56,25 @@ allowlist with the workflow. Use targeted local checks during work, normal CI on
 PRs, and combined integration checks before release. Do not suppress code verification
 with skip-ci. No automatic deployment or branch-protection requirements were added.
 
+## Amendment: runtime inventory publisher proof (install composition C3)
+
+The accepted install-composition design adds
+`.github/workflows/runtime-inventory.yml`. It runs weekly, by manual dispatch,
+and when the runtime inventory or its verifier changes. A run downloads the four
+pinned public runtime archives (about 534 MB total) on one standard public
+`ubuntu-latest` runner, with a 30-minute timeout and superseded-run cancellation.
+It uses only the already-approved pinned checkout and setup-node actions, has
+read-only contents permission, persists no credential, uses no secret, cache,
+artifact upload, deployment, or private runner, and installs no dependencies.
+
+The lane checks archive size and SHA-256 before publisher proof. It verifies
+Node's signed SHASUMS file with `gpgv` and an allowlisted signer fingerprint,
+checks esbuild against npm's SHA-512 integrity value, and records that pnpm and
+EDB publish no proof for these exact archives. Pull requests can change the
+verifier they run, as with every repository test, so maintainer approval and
+review of workflow changes remain the boundary; the weekly main-branch run is
+the independent recurring check.
+
 ## Amendment: feedback path versus merge gate (issue #201)
 
 Added September 14, 2026 by worker `hermes-worker-project-templates-01`. Everything above still

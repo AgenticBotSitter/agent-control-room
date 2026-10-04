@@ -33,8 +33,28 @@ export async function nativeTaskFixture(pgliteOptions: { dataDir?: string; input
   const repositorySimulation = pgliteOptions.exactRepositorySimulation
     ? await createRepositorySimulationDatabaseV1({ testOnly: true }) : undefined;
   const raw = repositorySimulation ?? pgliteOptions.database ?? new PGlite(pgliteOptions.dataDir);
+  // Applied under SET ROLE control_room_schema_owner, exactly as
+  // apply-migrations.mjs runs them in production. Replaying the files raw leaves
+  // every object owned by PGlite's `postgres` superuser, and the private startup
+  // preflight refuses that: its SECURITY DEFINER allowlist requires the shipped
+  // functions to be owned by control_room_schema_owner, so a database whose
+  // functions a superuser owns is one an operator could replace. The real-cluster
+  // lanes already prove this shape (the applier's own path); this keeps the
+  // PGlite fixtures agreeing with them. See also web-foundation.ts and web-task.ts.
+  if (!repositorySimulation) {
+    await raw.exec(`CREATE ROLE control_room_schema_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS`);
+    // The same grant apply-migrations.mjs issues after the migrate phase
+    // (line 328): without CREATE on the schema the very first migration fails
+    // with 42501 permission denied for schema public.
+    await raw.exec(`GRANT CREATE, USAGE ON SCHEMA public TO control_room_schema_owner`);
+  }
   for (const name of (await readdir(resolve("db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
+    if (repositorySimulation) { await raw.exec(await readFile(resolve("db/migrations", name), "utf8")); continue; }
+    await raw.exec("BEGIN");
+    await raw.exec("SET LOCAL ROLE control_room_schema_owner");
     await raw.exec(await readFile(resolve("db/migrations", name), "utf8"));
+    await raw.exec("COMMIT");
   }
   await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:test','Synthetic task'),('tenant:other','Other')`);
   const db = repositorySimulation?.client ?? adaptPglite(raw as PGlite), canonical = new CanonicalStore(db);
@@ -63,6 +83,7 @@ export async function nativeTaskFixture(pgliteOptions: { dataDir?: string; input
   const ready = await canonical.transition({ tenantId: job.tenantId, kind: "job", entityId: job.id, expectedVersion: 0, toState: "ready",
     transitionId: "transition:job", idempotencyKey: "native-fixture-job-ready", actor, occurredAt: at() });
   await canonical.claimReadyJob({ tenantId: job.tenantId, jobId: job.id, expectedJobVersion: ready.entity.version, nodeId: node.id,
+    workerId: "worker:fixture",
     attemptId: binding.attemptId, leaseId: "lease:test", transitionId: "transition:claim", idempotencyKey: "native-fixture-job-claim",
     actor, acquiredAt: at(), expiresAt: at(300_000) });
   const keys = generateKeyPairSync("ed25519"), spki = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");

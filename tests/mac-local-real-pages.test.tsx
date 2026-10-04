@@ -25,6 +25,10 @@ import { createPrivateOwnerBootstrapCommand, type PrivateOwnerBootstrapConfigura
   from "../src/web/v1/private-owner-bootstrap";
 import { createPrivatePostgresDatabase, type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
+import { createProjectOrchestrationServiceV1 } from "../src/web/v1/project-orchestration-composition";
+import { OperatorSurfaceStoreV1 } from "../src/operator-surfaces/v1/store";
+import type { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
+import { UPDATER_HOME_STATUS_SCHEMA_V1 } from "../src/web/v1/updater-home-status";
 import type { AccessTrust } from "../src/web/v1/access-verifier";
 import { conformanceNow, conformanceSubject, syntheticAccessTrust, syntheticAssertion, syntheticSigningKey }
   from "./helpers/private-owner-bootstrap-conformance";
@@ -123,6 +127,33 @@ type LocalStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string;
 type Journey = Readonly<{ app: ReturnType<typeof createMacLocalWebProcessV1>; cookie: string; status: LocalStatus;
   request(path: string, init?: RequestInit): Promise<Response>; fetch: typeof fetch }>;
 
+/**
+ * Reads a page may legitimately get a 404 for, because the route is mounted only
+ * when the installation has that capability and the caller degrades on a
+ * non-ok answer. Every entry names the component and what it does with the 404.
+ *
+ * A test that adds to this list has to name both, or it has quietly stopped
+ * proving that page -- which is the whole point of the guard.
+ */
+const OPTIONAL_CAPABILITY_PROBES: ReadonlyMap<string, string> = new Map([
+  // private-app/app/workers/fleet-offer.tsx -- `setEnabled(response.ok)`, hides
+  // itself. Mounted only when `options.fleet` configures the gateway.
+  ["/api/v1/fleet", "FleetOfferControl reads response.ok"],
+  // src/web/v1/worker-scorecard-browser-client.ts -- returns
+  // `{ state: "unavailable" }` for any non-ok response.
+  ["/api/v1/workers-scorecard", "readWorkerScorecardV1 returns state: unavailable"],
+  // private-app/app/update-candidates-home.tsx -- `status === 404` throws
+  // NotConfigured and the desk reports "not_configured".
+  ["/api/v1/update-candidates", "update-candidates-home reports not_configured"],
+  // src/web/v1/operations-mode-browser-client.ts -- a 404 maps to
+  // BrowserRequestError("not_found"). Mounted only with an operations-mode key.
+  ["/api/v1/operations-mode", "operations-mode browser client maps 404 to not_found"],
+  // src/web/v1/updater-owner-ui-browser.ts -- `status === 404` returns
+  // `{ state: "not_configured" }`. Mounted only with `options.updaterOwnerUi`,
+  // which the installed updater supplies and this page-journey fixture does not.
+  ["/api/v1/updater-owner-ui", "readUpdaterOwnerUiV1 returns state: not_configured"],
+]);
+
 async function journeyFixture(t: TestContext): Promise<Journey> {
   const active = cluster!;
   const database = await openDisposableMacLocalDatabase({ run: active.run, port: PORT, name: "realpages",
@@ -152,9 +183,31 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
   const app = createMacLocalWebProcessV1({ origin, workspaceId: configuration.workspaceId, clock: () => nowMs,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.tenantId,
       provider: trust.issuer, subject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: opened.client, close: async () => {} }, planning,
+    database: { client: opened.client, close: async () => {}, isAvailable: () => true }, planning,
     workerReadiness: { read: () => [{ kind: "codex" as const, state: "ready" as const, proof: "proven" as const }] },
     taskWorkersStarted: true,
+    // The installed host always mounts the updater status card's route. A fixture
+    // reader keeps this test off the owner's real status file (the default reader
+    // reads UPDATER_PUBLIC_ROOT_V1) and reports an idle, healthy updater, so the
+    // home page has no "Self-update needs your attention" alert to excuse.
+    updaterHomeStatus: { read: async () => ({ schema: UPDATER_HOME_STATUS_SCHEMA_V1, state: "healthy" as const }) },
+    // Mount the installed host's DB-backed catalog. This journey publishes no
+    // file bytes; the byte-store port stays empty on both macOS and Linux.
+    resultFileStore: { read: async () => undefined } as unknown as ResultFileStoreV1,
+    taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(7) },
+    // Match the installed host's durable settings service, without a planner.
+    orchestration: createProjectOrchestrationServiceV1({ db: opened.client,
+      tenantId: configuration.tenantId, workspaceId: configuration.workspaceId,
+      queueCatalog: [], integrityKey: new Uint8Array(32).fill(7), clock: () => nowMs }),
+    // The installed host always passes the task application's Action Inbox source
+    // (mac-local-task-application.ts), and every page's header now reads it
+    // (r6ibfix's shared attention). Built here the same way, over this fixture's
+    // real database, so the header reads a real, empty, complete inbox rather than
+    // a 404 the installed product never answers.
+    actionInboxSource: { read: async scope => {
+      const items = await new OperatorSurfaceStoreV1(opened.client).listInbox({ tenantId: scope.tenantId, state: "open", limit: 500 });
+      return { observedAt: scope.now, items, truncated: items.length === 500 };
+    } },
   });
   t.after(async () => { await app.close(); await opened.close(); await database.drop(); });
   const request = (path: string, init: RequestInit = {}) => app.handle(new Request(`${origin}${path}`, init),
@@ -173,7 +226,26 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
     const response = await app.handle(new Request(url, { method: source.method, headers,
       body: ["GET", "HEAD"].includes(source.method) ? undefined : source.body, duplex: source.body ? "half" : undefined,
       signal: source.signal } as RequestInit), () => new Response("page"));
-    assert.ok(response.status < 400, `${source.method} ${url.pathname}${url.search} returned ${response.status}: ${await response.clone().text()}`);
+    // A 404 is a legitimate answer on an OPTIONAL capability, and the two the
+    // product ships both read the route on mount precisely to find out whether the
+    // installation has it, then hide themselves when it does not:
+    //
+    //  - `/api/v1/fleet` (FleetOfferControl) checks `response.ok`. The route is
+    //    only mounted when the gateway is configured
+    //    (mac-local-web-process.ts: `options.fleet ? createFleetOwnerHttpHandlerV1
+    //    (...) : undefined`), and this fixture builds the host without it.
+    //  - `/api/v1/workers-scorecard` (readWorkerScorecardV1) returns
+    //    `{ state: "unavailable" }` for any non-ok response, including 404 and
+    //    also 401, so it degrades by design.
+    //
+    // What this guard is FOR is everything else: a page that fetches a route the
+    // installation does serve, or that gets a 500, is a hidden failure. The
+    // exemption is exactly these two paths, read-only, and only for 404 -- a typo
+    // in any other path, or a 500 on either of these, still trips it.
+    const optionalCapabilityProbe = OPTIONAL_CAPABILITY_PROBES.has(url.pathname)
+      && ["GET", "HEAD"].includes(source.method);
+    assert.ok(response.status < 400 || (optionalCapabilityProbe && response.status === 404),
+      `${source.method} ${url.pathname}${url.search} returned ${response.status}: ${await response.clone().text()}`);
     return response;
   };
   return { app, cookie, status, request, fetch: browserFetch };
@@ -230,8 +302,25 @@ function assertHealthyPage(page: MountedPage, expected: readonly RegExp[]) {
   assert.deepEqual(page.errors, [], `uncaught jsdom errors: ${page.errors.map(String).join("\n")}`);
   const text = page.dom.window.document.body.textContent ?? "";
   for (const pattern of expected) assert.match(text, pattern);
-  assert.doesNotMatch(text, /not available|page unavailable|application error|error boundary/i);
-  assert.equal(page.dom.window.document.querySelector('[role="alert"]'), null, text);
+  // A page that failed to render is the thing this is for. An HONEST capability
+  // message is not: `OperationsControlPanel` is mounted unconditionally and
+  // reads `/api/v1/operations-mode` on mount, and that route is only mounted when
+  // the installation supplies the service (mac-local-host.ts: `...(service ?
+  // { operationsMode: service } : {})`). Without it the panel says it could not
+  // read the state and offers only "read it again" -- a deliberate refusal to
+  // show a mode it did not read, and the correct answer for this fixture, which
+  // builds the host without that service.
+  //
+  // So the patterns are about the PAGE, not about any one panel's honest wording.
+  // "not available" as a bare phrase was matching "This project is not
+  // available.", which is the browser client's 404 text for a genuine missing
+  // route -- which the 404 exemption above already covers deliberately.
+  assert.doesNotMatch(text, /page unavailable|application error|error boundary|this page (?:is|could not)/i);
+  // The alert TEXTS, not the elements: a failing `assert.equal` on a live JSDOM
+  // element makes node format the element and its whole window, which grew to
+  // ~15 GB here before macOS killed the lane.
+  const alerts = [...page.dom.window.document.querySelectorAll('[role="alert"]')].map(alert => alert.textContent ?? "");
+  assert.deepEqual(alerts, [], `${page.dom.window.location.pathname} shows role=alert: ${text.slice(0, 300)}`);
 }
 
 test("real Mac-local pages complete the signed-in project and task journey without hidden HTTP failures", { skip: needsPg }, async t => {
@@ -272,8 +361,14 @@ test("real Mac-local pages complete the signed-in project and task journey witho
   const task = await mountPage(journey, taskPath,
     await TaskPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId), jobId: encodeURIComponent(receipt.jobId) }) }));
   try {
-    assertHealthyPage(task, [/Real-page task/, /Prepare task/, /Task assignment/, /Execution approval/]);
-    assert.ok(task.requests.some(value => value.endsWith("/plan")), "the real preparation panel must execute its client read");
+    // The installed Mac host is connector-only: its task routes answer
+    // dispatch "not_connected", so the page offers work to connected bots and
+    // must not show the hosted Prepare / Assign / Approve dead ends.
+    assertHealthyPage(task, [/Real-page task/, /Send this task to a bot/, /Offer to other machines/]);
+    assert.doesNotMatch(task.dom.window.document.body.textContent ?? "", /Task assignment|Execution approval/u,
+      "the connector-only Mac must not show hosted planning panels");
+    assert.ok(task.requests.includes(`GET /api/v1/projects/${encodeURIComponent(project.projectId)}/result-files?job=${encodeURIComponent(receipt.jobId)}`),
+      "the task page must read the installed result-file catalog route");
   } finally { await task.close(); }
 
   assert.equal((await journey.request("/workers", { headers: { cookie: journey.cookie } })).status, 200);

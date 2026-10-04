@@ -1,3 +1,4 @@
+import { OwnerName } from "../../private-app/app/owner-ui";
 import { ConfiguredTimestamp } from "../../private-app/app/configured-timestamp";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount } from "../../private-app/app/owner-ui";
 
@@ -24,7 +25,7 @@ export function ProjectCatalog({ state, projects, selectedProjectId, paginated,
       </PanelHeading>
       <ul className="private-project-grid">{entries.map(project => <li key={project.projectId}>
         <a href={projectHref(project.projectId)} aria-current={selectedProjectId === project.projectId ? "page" : undefined}>
-          <StateChip state={project.lifecycle} /><h3>{project.title}</h3><p>{project.summary || "No summary added."}</p>
+          <StateChip state={project.lifecycle} /><h3><OwnerName>{project.title}</OwnerName></h3><p>{project.summary || "No summary added."}</p>
           {project.origin && <span className="private-note">{project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span>}
           <span className="private-note"><ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></span>
           <span className="private-open">Open project →</span>

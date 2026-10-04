@@ -29,7 +29,7 @@ function config(db: Awaited<ReturnType<typeof nativeTaskFixture>>["db"], state: 
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { return accepted(value); } },
     async assertCurrent() { state.checks++; if (state.revoke) throw new Error("lease_revoked"); },
     async execute() { state.executions++; return state.fail ? { kind: "failed" as const, reason: "cli_failed" } : { kind: "completed" as const, text: "bounded local result" }; },
-    async recordFailure() { state.failures++; },
+    async recordFailure() { state.failures++; }, async recordWait() {},
     async publish() { state.publishes++; },
   };
 }

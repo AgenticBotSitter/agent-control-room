@@ -27,6 +27,7 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 // `.ts` module could not be imported by one of its own callers.
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { privateWebInsertColumns } from "../src/web/v1/private-database-preflight.ts";
+import { databaseSqlStateV1 } from "../src/persistence/database.ts";
 import { sha256Digest } from "../src/security/digest.ts";
 import {
   ProjectCoordinationHttpService,
@@ -47,7 +48,7 @@ const BIN = CANDIDATE_BINS.find((dir) => existsSync(join(dir, "initdb")) && exis
   ?? "/usr/lib/postgresql/17/bin";
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
-const PORT = 65437;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 65437);
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
@@ -160,6 +161,30 @@ before(async () => {
      VALUES('tenant:test',$1,'identity:pg-owner',$2,$3)`, [PAGE_TOKEN_DIGEST, issued, expires]);
   pageIdentity.issuedAt = issued;
   pageIdentity.expiresAt = expires;
+  // The author-chosen ERRCODE probe, owned by the schema owner and executable by
+  // the production web login and nothing else. The parameter is what makes it
+  // worth having: one function raises with any code the caller names, so the
+  // test drives the whole E-prefixed class through it rather than one literal.
+  //
+  // SECURITY INVOKER on purpose. A DEFINER probe would report the owner's
+  // authority on a refusal the production login caused on its own, which is the
+  // opposite of what is being proved.
+  await query(target("cr_prod_coord200"),
+    `CREATE FUNCTION public.raise_author_errcode(text) RETURNS void LANGUAGE plpgsql SECURITY INVOKER
+     SET search_path = pg_catalog, public AS $probe$
+       BEGIN RAISE EXCEPTION 'author chosen' USING ERRCODE = $1; END $probe$`);
+  await query(target("cr_prod_coord200"),
+    `REVOKE ALL ON FUNCTION public.raise_author_errcode(text) FROM PUBLIC`);
+  await query(target("cr_prod_coord200"),
+    `GRANT EXECUTE ON FUNCTION public.raise_author_errcode(text) TO control_room_private_web`);
+  // Asserted on the catalog, so a grant that silently did not apply cannot make
+  // every check below pass for the wrong reason.
+  assert.equal((await query(target("cr_prod_coord200"),
+    `SELECT has_function_privilege('control_room_private_web','public.raise_author_errcode(text)','EXECUTE')
+     AS can`)).rows[0].can, true);
+  assert.equal((await query(target("cr_prod_coord200"),
+    `SELECT has_function_privilege('control_room_migrator','public.raise_author_errcode(text)','EXECUTE')
+     AS can`)).rows[0].can, false, "no other role may reach the probe");
 });
 
 after(async () => {
@@ -410,7 +435,7 @@ test("page composition holds its authorization locks: a concurrent revocation bl
       scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
       clock: Date.now,
       store: createProjectCoordinationCanonicalStoreAdapterV1({
-        database: clientFor(connA), tenantId: "tenant:test", now: Date.now,
+        database: clientFor(connA), tenantId: "tenant:test", workspaceId: "workspace:test", now: Date.now,
       }),
       readProbe: { beforeSnapshot: async () => {
         entered = true;
@@ -464,7 +489,7 @@ test("page composition holds its authorization locks: a concurrent revocation bl
       scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
       clock: Date.now,
       store: createProjectCoordinationCanonicalStoreAdapterV1({
-        database: clientFor(connC), tenantId: "tenant:test", now: Date.now,
+        database: clientFor(connC), tenantId: "tenant:test", workspaceId: "workspace:test", now: Date.now,
       }),
     });
     assert.equal((await fresh.read(pageIdentity, "project:alpha")).attention.length, 2);
@@ -482,7 +507,7 @@ test("page composition holds its authorization locks: a concurrent revocation bl
       scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
       clock: Date.now,
       store: createProjectCoordinationCanonicalStoreAdapterV1({
-        database: clientFor(connD), tenantId: "tenant:test", now: Date.now,
+        database: clientFor(connD), tenantId: "tenant:test", workspaceId: "workspace:test", now: Date.now,
       }),
     });
     await assert.rejects(revoked.read(pageIdentity, "project:alpha"), /authentication_required/);
@@ -615,4 +640,154 @@ test("ownership-scope trigger gives exactly one winner under concurrent transact
   } finally {
     await Promise.all([a.end(), b.end()]);
   }
+});
+
+// The E-prefix class, on the production login, against a real cluster, through
+// the real bounded driver. This is the assertion the review asked for and the
+// one that would have caught the prefix rule.
+//
+// MEASURED on real PostgreSQL 17.11 while writing this: the server accepts and
+// transmits ANY five-character ERRCODE a function author chose — E1234, E0001,
+// EXX99 and also EPERM and EBADF, which are Node errno names. So "no SQLSTATE
+// begins with E" is true of errcodes.h and false of the wire, and a reader that
+// refuses the prefix converts a clean, definite, server-side rejection into a
+// pool-wide quarantine.
+test("an E-prefixed ERRCODE from the production login is a definite refusal, pool still serving", needsPg, async () => {
+  const raw = await open(webTarget());
+  const wireCodes = [];
+  try {
+    for (const code of ["E1234", "E0001", "EXX99", "EZZZZ", "EPERM"]) {
+      try { await raw.query("SELECT public.raise_author_errcode($1)", [code]); assert.fail(`${code} raised no error`); }
+      catch (error) {
+        if (error?.code === undefined) throw error;
+        wireCodes.push(error.code);
+      }
+    }
+    // The fixture itself is the precondition: if these did not reach the client
+    // verbatim, the rest of the test would be measuring a fiction.
+    assert.deepEqual(wireCodes, ["E1234", "E0001", "EXX99", "EZZZZ", "EPERM"],
+      "the server must transmit the author's ERRCODE unchanged");
+  } finally { await raw.end(); }
+
+  // The production path: bindPrivatePgPool over a real Pool at the real web
+  // login, so qualification, the bounded wrapper and the sanitizing driver are
+  // all the shipped ones. No injected port, tool or fake.
+  //
+  // One pool per quarantine case, because a quarantine is the POINT of the
+  // uncertain cases and a quarantined pool refuses everything after it. The four
+  // definite codes share a single pool on purpose: "the pool stays available" is
+  // only a claim if it survives four refusals in a row on one pool.
+  const openDatabase = () => bindPrivatePgPool(new Pool({ ...webTarget(),
+    options: "-c search_path=pg_catalog,\\ public -c timezone=UTC -c transaction_timeout=10000",
+    statement_timeout: 5_000, lock_timeout: 2_000, idle_in_transaction_session_timeout: 5_000, max: 4 }));
+  const raiseWith = (database, code) => database.client.query("SELECT public.raise_author_errcode($1)", [code])
+    .then(() => undefined, error => error);
+  const authorCodes = ["E1234", "E0001", "EXX99", "EZZZZ"];
+
+  const definite = openDatabase();
+  const definitePids = [];
+  try {
+    for (const code of authorCodes) {
+      const refusal = await raiseWith(definite, code);
+      assert.equal(refusal?.message, "database_unavailable",
+        `${code} must be a definite refusal, not an unknown outcome`);
+      assert.equal(refusal?.sqlState, code, `${code} must reach the caller with its own state`);
+      assert.equal(definite.isAvailable(), true, `${code} must not quarantine the pool`);
+      // The pool really serves the next request, on one of its own connections.
+      const next = await definite.client.query("SELECT pg_backend_pid()::text AS pid");
+      definitePids.push(next.rows[0]?.pid);
+      // And the FIRST refusal's connection was returned rather than destroyed: a
+      // pool that quietly replaces the backend it poisoned is not a pool that
+      // survived four refusals, it is a new pool each time. Asserted every round
+      // because the first round is where a destroyed connection still leaves
+      // `definitePids[0]` populated with the pid it USED to have.
+      assert.equal(definitePids[0], next.rows[0]?.pid,
+        "every refusal must return the same reusable backend");
+    }
+    assert.equal(definitePids.length, 4, "the four refusals all ran");
+    assert.equal(definite.isAvailable(), true);
+  } finally { await definite.close().catch(() => {}); }
+
+  // Under load, because the failure this fixes was pool-wide: concurrent
+  // author-chosen refusals on ONE pool, so a single unlucky caller quarantining
+  // it would be visible to all the others. A sequential loop cannot see that.
+  //
+  // Sixteen is this wrapper's own documented burst -- `connections` (8) plus the
+  // same number queued (private-pg-driver.test.ts pins both), which is what
+  // `boundPrivateDatabase` admits. More callers than that are refused at ADMISSION
+  // with a bare `database_unavailable` and no state, by design and before any SQL
+  // is sent, so asserting on them would be asserting on the admission budget and
+  // not on the reader. Measured: 30 concurrent callers gave exactly 16 states and
+  // 14 admission refusals.
+  const burstPool = openDatabase();
+  try {
+    const outcomes = await Promise.all(Array.from({ length: 16 },
+      (_unused, index) => raiseWith(burstPool, authorCodes[index % authorCodes.length])));
+    assert.ok(outcomes.every(outcome => outcome?.message === "database_unavailable"
+      && authorCodes.includes(outcome.sqlState)),
+      `all 16 concurrent refusals must keep their own state: ${JSON.stringify(
+        outcomes.map(outcome => [outcome?.message, outcome?.sqlState]))}`);
+    assert.deepEqual(outcomes.map(outcome => outcome.sqlState),
+      Array.from({ length: 16 }, (_unused, index) => authorCodes[index % authorCodes.length]),
+      "and each caller must get ITS OWN code back, not a shared one");
+    assert.equal(burstPool.isAvailable(), true, "16 refusals must not quarantine the pool");
+    // And it still serves, which is the whole claim.
+    assert.deepEqual(await burstPool.client.query("SELECT 1 AS ok"), { rows: [{ ok: 1 }] });
+  } finally { await burstPool.close().catch(() => {}); }
+
+  // One past the burst, which is the documented admission refusal: no state, and
+  // crucially the pool is still SERVING afterwards, because an admission refusal
+  // is not a database fault. This is the unhappy path next to the happy one.
+  const overPool = openDatabase();
+  try {
+    const admitted = await Promise.all(Array.from({ length: 17 },
+      (_unused, index) => raiseWith(overPool, authorCodes[index % authorCodes.length])));
+    const refusedAtAdmission = admitted.filter(outcome => outcome?.sqlState === undefined);
+    assert.equal(refusedAtAdmission.length, 1,
+      `exactly one caller must exceed the admission burst: ${JSON.stringify(
+        admitted.map(outcome => [outcome?.message, outcome?.sqlState]))}`);
+    assert.ok(refusedAtAdmission.every(outcome => outcome.message === "database_unavailable"));
+    assert.equal(overPool.isAvailable(), true,
+      "an admission refusal must not quarantine the pool either");
+    assert.deepEqual(await overPool.client.query("SELECT 1 AS ok"), { rows: [{ ok: 1 }] });
+  } finally { await overPool.close().catch(() => {}); }
+
+  // An XX class is still uncertain whatever it is spelled like. Its own pool,
+  // because it quarantines.
+  const uncertainPool = openDatabase();
+  try {
+    const uncertain = await raiseWith(uncertainPool, "XX000");
+    assert.equal(uncertain?.message, "database_outcome_uncertain",
+      "an XX class is still uncertain whatever it is spelled like");
+    assert.equal(uncertainPool.isAvailable(), false);
+    await assert.rejects(uncertainPool.client.query("SELECT 1 AS ok"), { code: "database_unavailable" });
+  } finally { await uncertainPool.close().catch(() => {}); }
+
+  // THE KNOWN RESIDUAL, pinned so it reads as known rather than unknown.
+  // EPERM is BOTH a Node errno name and a code a function author may choose, and
+  // the two are the same five characters on the same field. The closed set is by
+  // name, so the reader refuses it -- and the driver, told nothing usable,
+  // honestly reports the outcome as uncertain and quarantines.
+  //
+  // This is NOT a regression from the prefix rule: EPERM began with E, so the old
+  // reader refused it identically. The name set is strictly wider, never
+  // narrower. The residual is the price of answering "is this spelling a Node
+  // errno" from a spelling, and it is 15 names wide rather than the whole
+  // E-prefix. The alternative -- reading object shape instead -- is a second
+  // mechanism, deliberately not added here: it would make the reader answer
+  // differently depending on which object it was handed, which is the one
+  // divergence the single-reader guard exists to prevent.
+  const collisionPool = openDatabase();
+  try {
+    const collision = await raiseWith(collisionPool, "EPERM");
+    assert.equal(collision?.message, "database_outcome_uncertain",
+      "EPERM is in the errno set, so it is refused as a Node errno");
+    assert.equal(collision?.sqlState, undefined);
+    assert.equal(collisionPool.isAvailable(), false,
+      "and a refusal the reader cannot read still quarantines, as it must");
+    assert.equal(databaseSqlStateV1({ code: "EPERM" }), undefined,
+      "the reader refuses the name whatever object it arrives on");
+    assert.equal(databaseSqlStateV1({ sqlState: "E1234" }), "E1234",
+      "and reads the author-chosen code the moment it is not an errno name");
+  } finally { await collisionPool.close().catch(() => {}); }
 });

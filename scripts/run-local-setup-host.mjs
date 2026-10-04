@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
 const shippedReleaseRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
@@ -98,5 +99,5 @@ export async function runLocalSetupHost(args, runtime = installedRuntime) {
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runLocalSetupHost(process.argv.slice(2));

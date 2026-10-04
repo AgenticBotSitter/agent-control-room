@@ -1,0 +1,44 @@
+[
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "      store: createProjectCoordinationCanonicalStoreAdapterV1({ database: options.database.client, tenantId: profile.tenantId,\n        workspaceId: options.workspaceId, now: clock }) });",
+    "replace": "      store: createProjectCoordinationCanonicalStoreAdapterV1({ database: options.database.client, tenantId: profile.tenantId,\n        now: clock }) });",
+    "test": "node --import tsx --test --test-name-pattern='R7W-02: composed' tests/website-round7.test.ts",
+    "why": "int10: the Mac host's coordination store must carry the deployment workspace, or every coordination read answers 503."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "      authorizeCaller: async (verified, project) => { await coordination.authorizeCaller(verified, project); } });",
+    "replace": " });",
+    "test": "node --import tsx --test --test-name-pattern='R7W-02: composed' tests/website-round7.test.ts",
+    "why": "int10: the Mac coordination handler must authorize each caller before joining in-flight work; without it the handler refuses to build."
+  },
+  {
+    "file": "private-app/app/workers/fleet-offer.tsx",
+    "find": "const eligible = workers.filter(worker => worker.capabilities.includes(skill));",
+    "replace": "const eligible = workers;",
+    "test": "node --import tsx --test tests/fleet-offer-control.test.tsx",
+    "why": "int10 (D1 + taskwire): the offer picker lists and posts only bots with the chosen skill."
+  },
+  {
+    "file": "private-app/app/workers/connect/connect-bot-workspace.tsx",
+    "find": "        setSignInRequired(refused && status === 401);",
+    "replace": "        setSignInRequired(false);",
+    "test": "node --import tsx --test --test-name-pattern='R6C-04: expired sign-in' tests/connect-bot-page.test.tsx",
+    "why": "int10 (D9): a 401 refusal links the owner to session controls."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "    if (pendingLf) { if (text.startsWith(\"\\n\")) text = text.slice(1); pendingLf = false; }",
+    "replace": "    if (pendingLf) { pendingLf = false; }",
+    "test": "node --import tsx --test --test-name-pattern='R5S-05' tests/updater-cli-flip.test.mjs",
+    "why": "int10 (D10): one LF completing a CR from the previous chunk is dropped once, so split CRLF never spends a phantom answer."
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-read.ts",
+    "find": "          ORDER BY rt.occurred_at, rt.id LIMIT 1\n        ) root_target ON true",
+    "replace": "        ) root_target ON true",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=59300 node --import tsx --test --test-concurrency=1 tests/worker-scorecard-read-postgres.test.ts",
+    "why": "int10 (D12): the root-target lookup is one bounded LATERAL probe per stage, which keeps it on the subject index (R7-PERF) and yields at most one root per stage."
+  }
+]

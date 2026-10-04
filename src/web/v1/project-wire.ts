@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { isPostgresTextV1 } from "../../persistence/postgres-text";
 import { PRODUCT_CONFIGURATION_MODULES_V1 } from "../../config/v1/product-configuration";
 import { PROJECT_PRESENTATION_SCHEMA_V1, projectTemplateSelectionSchemaV1 } from "../../config/v1/project-presentation";
 
-const text = (max: number, multiline = false) => z.string().trim().max(max).refine(value => ![...value].some(char =>
+const text = (max: number, multiline = false) => z.string().refine(isPostgresTextV1).transform(value => value.trim())
+  .pipe(z.string().max(max)).refine(value => ![...value].some(char =>
   (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) && !(multiline && ["\n", "\r", "\t"].includes(char))));
 const moduleName = z.enum(PRODUCT_CONFIGURATION_MODULES_V1);
 

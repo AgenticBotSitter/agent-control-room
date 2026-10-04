@@ -1,6 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -26,4 +27,4 @@ function main() {
   process.exitCode = result.status ?? 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

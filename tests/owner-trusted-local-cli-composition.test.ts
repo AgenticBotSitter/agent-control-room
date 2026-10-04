@@ -24,7 +24,7 @@ function receipt(value: ControllerWorkerDeliveryV1) {
 function base(f: Awaited<ReturnType<typeof nativeTaskFixture>>, workerId: string, adapterId: string, state: { published: number }) {
   return { db: f.db, integrityKey: key, binding: { workerId, adapterId, adapterRevision: "00570550" },
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { return receipt(value); } },
-    async assertCurrent() {}, async publish() { state.published++; }, async recordFailure() {} };
+    async assertCurrent() {}, async publish() { state.published++; }, async recordFailure() {}, async recordWait() {} };
 }
 
 test("the composed Codex delivery reaches the common receipt and publisher exactly once", async t => {
@@ -46,6 +46,17 @@ test("the composed Claude delivery keeps a nonzero CLI outcome out of publicatio
   } }, { ...baseConfiguration, model: "sonnet", effort: "high", supportsEffort: true });
   const result = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
   assert.equal(result.state, "execution_failed"); assert.equal(state.published, 0);
+});
+
+test("explicit provider backpressure becomes a retryable wait instead of a failure", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { published: 0 }, waits:string[]=[];
+  const workerId="worker:codex-wait",adapterId="connector:codex-wait-v1";
+  const configured={...base(f,workerId,adapterId,state),async recordWait(value:{reason:string}){waits.push(value.reason);}};
+  const delivery=createOwnerTrustedLocalCodexDeliveryV1(configured,{async execute(){
+    return{status:"failed" as const,reason:"rate_limited"};}},
+  {...baseConfiguration,model:"gpt-test",effort:"high"});
+  const result=await delivery.deliver(packet(workerId,adapterId),{kind:"local",workerId},at(2000));
+  assert.equal(result.state,"execution_waiting");assert.deepEqual(waits,["rate_limited"]);assert.equal(state.published,0);
 });
 
 test("a composed delivery snapshots its host-owned binding before future calls", async t => {

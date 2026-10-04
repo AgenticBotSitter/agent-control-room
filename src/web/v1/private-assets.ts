@@ -7,7 +7,7 @@ import { privateResponseHeaders } from "./http-common";
 const types: Readonly<Record<string, string>> = Object.freeze({
   ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".woff": "font/woff", ".woff2": "font/woff2", ".png": "image/png",
-  ".svg": "image/svg+xml", ".ico": "image/x-icon",
+  ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json; charset=utf-8",
 });
 const maxFileBytes = 4 * 1024 * 1024, maxTotalBytes = 32 * 1024 * 1024;
 export interface PrivateClientAssets {
@@ -72,6 +72,8 @@ async function loadClientAssets(clientDirectory: string, demo: boolean): Promise
     // Never traverse the server tree or treat the whole release/public directory as public.
     await visit("_next/static", 0);
     await visit("favicon.svg", 0);
+    await visit("service-worker.js", 0);
+    await visit("manifest.webmanifest", 0);
     if (demo) await visit("index.html", 0);
     if (assets.size < 2) throw new Error();
     const hash = createHash("sha256");
@@ -83,6 +85,7 @@ async function loadClientAssets(clientDirectory: string, demo: boolean): Promise
         if (!asset || !["GET", "HEAD"].includes(method)) return undefined;
         return new Response(method === "HEAD" ? null : new Uint8Array(asset.bytes), { headers: {
           ...privateResponseHeaders, "content-type": asset.type, "content-length": String(asset.bytes.length),
+          ...(pathname === "/service-worker.js" ? { "service-worker-allowed": "/" } : {}),
         } });
       } });
   } catch { throw new Error("private_assets_invalid"); }

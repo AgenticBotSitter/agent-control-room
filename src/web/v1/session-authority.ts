@@ -109,6 +109,66 @@ export class WebSessionAuthority {
     }, () => { assertFresh(); for (const check of grantChecks) check(); });
   }
 
+  /**
+   * Refuse a caller whose own credential is no longer usable, WITHOUT taking a
+   * lock and WITHOUT waiting behind one.
+   *
+   * This is the check a coalescing follower needs, and it is deliberately not
+   * `authenticated`: the follower has not been authorized for anything yet, and
+   * `FOR UPDATE` on the identity row would make it block behind the leader's
+   * own in-flight write — turning "is your session still live?" into a lock
+   * convoy on the very transaction the follower is waiting to join. A read-only
+   * snapshot is enough here, because the answer to "was this session revoked
+   * before I asked?" needs no mutual exclusion: a revocation that commits after
+   * this read is a revocation that had not happened yet when the follower
+   * asked, and the follower's own subsequent work is still re-checked inside
+   * the operation's own transaction.
+   *
+   * It also checks the caller still holds the action's grant, so a follower
+   * cannot read a receipt the action itself would refuse.
+   */
+  async probeCaller(identity: VerifiedWebIdentity, action: string, projectId: string): Promise<void> {
+    identity = { ...identity };
+    const nowMs = this.clock();
+    const now = new Date(nowMs).toISOString();
+    const current = nowMs;
+    const fresh = () => {
+      const value = this.clock();
+      if (!Number.isSafeInteger(value) || value < nowMs || Date.parse(identity.issuedAt) > current
+        || !Number.isFinite(Date.parse(identity.expiresAt)) || Date.parse(identity.expiresAt) <= current
+        || !Number.isFinite(Date.parse(identity.verificationExpiresAt)) || Date.parse(identity.verificationExpiresAt) <= current)
+        throw new WebAccessError("authentication_required");
+    };
+    fresh();
+    const subjectDigest = sha256Digest({ provider: identity.provider, subject: identity.subject });
+    await this.db.transactionWithPreCommitCheck(async tx => {
+      // No lock clause on either read: the point is to answer without queueing.
+      const row = (await tx.query<{ id: string }>(`SELECT id FROM control_identities
+        WHERE tenant_id=$1 AND auth_provider=$2 AND auth_subject_digest=$3 AND actor_type='human' AND state='active'`,
+      [this.scope.tenantId, identity.provider, subjectDigest])).rows[0];
+      if (!row) throw new WebAccessError("access_denied");
+      const session = (await tx.query<{ identity_id: string; revoked_at: string | null; expires_at: string; issued_at: string }>(
+        `SELECT identity_id,revoked_at,expires_at,issued_at FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2`,
+      [this.scope.tenantId, identity.tokenDigest])).rows[0];
+      if (!session || session.identity_id !== row.id || session.revoked_at || Date.parse(session.expires_at) <= nowMs
+        || iso(session.issued_at) !== identity.issuedAt) throw new WebAccessError("authentication_required");
+      const grants = (await tx.query<{ id: string; role_key: string; allowed_actions: string[]; project_ids: string[];
+        risk_ceiling: RoleGrant["riskCeiling"]; allow_external_effects: boolean; require_strong_factor: boolean;
+        expires_at: string | null; revoked_at: string | null }>(
+        `SELECT * FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`, [this.scope.tenantId, row.id])).rows
+        .filter(g => g.role_key === "owner" || g.role_key === "operator").map(g => ({ id: g.id,
+          roleKey: g.role_key, allowedActions: g.allowed_actions, projectIds: g.project_ids, riskCeiling: g.risk_ceiling,
+          allowExternalEffects: g.allow_external_effects, requireStrongFactor: g.require_strong_factor,
+          ...(g.expires_at ? { expiresAt: iso(g.expires_at) } : {}), ...(g.revoked_at ? { revokedAt: iso(g.revoked_at) } : {}) }));
+      const principal = { tenantId: this.scope.tenantId, identityId: row.id, actorType: "human" as const,
+        authenticatedAt: identity.issuedAt, expiresAt: new Date(Math.min(Date.parse(session.expires_at), Date.parse(identity.expiresAt))).toISOString() };
+      const decision = evaluatePolicy(principal, grants, { tenantId: this.scope.tenantId, action,
+        resourceType: this.resourceType, resourceId: projectId ?? this.scope.workspaceId, projectId,
+        risk: "low", externalEffect: false, occurredAt: now });
+      if (!decision.allowed) throw new WebAccessError("access_denied");
+    }, fresh);
+  }
+
   async logout(identity: VerifiedWebIdentity): Promise<void> {
     const started = this.clock();
     const assertFresh = () => {

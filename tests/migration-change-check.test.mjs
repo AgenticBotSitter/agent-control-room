@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkMigrations, classifyMigrationChanges } from "../scripts/check-migration-changes.mjs";
+import { checkMigrations, classifyMigrationChanges, resolveMigrationBase } from "../scripts/check-migration-changes.mjs";
 
 function command(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" });
@@ -129,4 +129,56 @@ test("the migration CLI rejects a shipped edit, a symlink, and a real Squawk rej
   const accepted = spawnSync(process.execPath, [checker, "--base", added.base], { cwd: added.root, encoding: "utf8" });
   assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
   assert.match(accepted.stdout, /Squawk passed 1 new migration/);
+});
+
+test("the base ref follows the integration trunk in cook mode and the explicit override wins", () => {
+  // A flag is the strongest statement of intent, then the env var CI uses.
+  assert.deepEqual(resolveMigrationBase({ argv: ["node", "c", "--base", "origin/main"], env: { MIGRATION_BASE_REF: "other" }, revParse: () => "x" }),
+    { base: "origin/main", source: "--base" });
+  assert.deepEqual(resolveMigrationBase({ argv: ["node", "c"], env: { MIGRATION_BASE_REF: "other" }, revParse: () => "x" }),
+    { base: "other", source: "MIGRATION_BASE_REF" });
+  // With neither, a checkout that has the cook trunk diffs against it. This is
+  // the case that was broken: cook branches carry their own copy of migrations
+  // cook/v1 already has, so diffing them against main re-lints the shared
+  // backlog and fails on findings the branch never introduced.
+  assert.deepEqual(resolveMigrationBase({ argv: ["node", "c"], env: {}, revParse: ref => (ref === "cook/v1" ? "abc" : "") }),
+    { base: "cook/v1", source: "cook integration trunk" });
+  assert.deepEqual(resolveMigrationBase({ argv: ["node", "c"], env: {}, revParse: ref => (ref === "origin/cook/v1" ? "abc" : "") }),
+    { base: "origin/cook/v1", source: "cook integration trunk" });
+  // A plain clone with no cook trunk still gets origin/main, not a bad ref.
+  assert.deepEqual(resolveMigrationBase({ argv: ["node", "c"], env: {}, revParse: () => "" }),
+    { base: "origin/main", source: "default" });
+});
+
+test("a Squawk that never ran is reported as a missing tool, not as a rejected migration", async t => {
+  // spawnSync reports a failed exec as `error` with a null status. `null !== 0`
+  // used to read as "Squawk rejected a changed migration", so a developer with
+  // no squawk on PATH -- the ordinary local case, since it is not a dependency
+  // and CI supplies it through `npm exec --package` -- was told their SQL was
+  // wrong when it had never been looked at. Built on a real repository so the
+  // lint set is genuinely non-empty and the branch is genuinely reached.
+  const repo = await repository(t);
+  await writeFile(join(repo.root, "db/migrations/0002_additive.sql"),
+    "CREATE TABLE public.additive_records (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY);\n");
+  await commit(t, repo.root, "add migration");
+  const missing = Object.assign(new Error("spawnSync squawk ENOENT"), { code: "ENOENT" });
+  const result = checkMigrations({ base: repo.base, cwd: repo.root, runGit: checkerGit(repo.root),
+    runSquawk: () => ({ status: null, error: missing }) });
+  assert.ok(result.lint.length > 0, "the fixture must actually reach the lint");
+  assert.match(result.violations.join("\n"), /Squawk could not run \(not found on PATH\)/);
+  assert.doesNotMatch(result.violations.join("\n"), /Squawk rejected a changed migration/,
+    "a lint that never ran must not be reported as a lint that failed");
+});
+
+test("a Squawk that ran and rejected the SQL still reports a rejection", async t => {
+  // The other half of the pair: a real non-zero exit must keep saying so, or
+  // the new message would swallow genuine findings.
+  const repo = await repository(t);
+  await writeFile(join(repo.root, "db/migrations/0002_dangerous.sql"),
+    "ALTER TABLE public.base_records ADD COLUMN owner_id bigint NOT NULL;\n");
+  await commit(t, repo.root, "add dangerous migration");
+  const result = checkMigrations({ base: repo.base, cwd: repo.root, runGit: checkerGit(repo.root),
+    runSquawk: () => ({ status: 1, stdout: "", stderr: "" }) });
+  assert.match(result.violations.join("\n"), /Squawk rejected a changed migration/);
+  assert.doesNotMatch(result.violations.join("\n"), /could not run/);
 });

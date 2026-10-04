@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+set timeout 2
+set node [lindex $argv 0]
+set helper [lindex $argv 1]
+set mode [lindex $argv 2]
+spawn $node $helper $mode
+expect_before timeout { exit 2 }
+if {$mode eq "wrong-right"} {
+  expect "Type the 6-character code shown on the registration page: "
+  send "bad\r"
+  expect "WRONG:updater_passkey_code_refused"
+  expect "Type the 6-character code shown on the registration page: "
+  send "ABC123\r"
+  expect "RIGHT:ABC123"
+  send "later\r"
+  expect "LATER:later"
+} else {
+  expect "Type the 6-character code shown on the registration page: "
+  send "\003"
+  expect "INTERRUPTED:updater_passkey_code_interrupted"
+  expect "RAW_MODE:false"
+}
+expect eof
+set result [wait]
+exit [lindex $result 3]

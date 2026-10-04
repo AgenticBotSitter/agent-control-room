@@ -3,6 +3,15 @@
 An optional, removable voice-input and read-aloud module behind a strict
 adapter boundary. The product remains fully usable without voice.
 
+## What changed — 2026-10-02
+
+In the reviewed phone update, **Stop listening** ends dictation and keeps the
+words already heard in the preview. Read them, then choose **Confirm** to add
+them to your unsent draft, or **Cancel** to discard them. Confirm adds to an
+existing draft; it does not submit anything. Stopping without any words returns
+to idle with nothing to confirm. This change must be included in your installed
+update before you can rely on it.
+
 ## Authority
 
 - Disabled by default (`VoiceSettingsV1.enabled === false`). While disabled the

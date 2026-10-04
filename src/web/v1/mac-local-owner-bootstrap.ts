@@ -158,7 +158,7 @@ export async function bootstrapMacLocalOwnerV1(db: DatabaseClient, configuration
   const workspaceId = configuration.workspaceId;
   const digest = sha256Digest({ provider, subject });
   return db.transaction(async tx => {
-    const tenant = (await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId])).rows;
+    const tenant = (await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [tenantId])).rows;
     if (tenant.length === 1) {
       const owner = (await tx.query<{ id: string }>(`SELECT i.id FROM control_identities i
         JOIN control_role_grants g ON g.identity_id=i.id AND g.tenant_id=i.tenant_id AND g.role_key='owner'

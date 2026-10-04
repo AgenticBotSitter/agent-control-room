@@ -1,0 +1,149 @@
+[
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "const key = createECDH(\"prime256v1\");",
+    "replace": "const key = createECDH(\"secp256k1\");",
+    "test": "node --test --test-name-pattern='VAPID generation' tests/control-room-native-install-ports.test.mjs",
+    "why": "VAPID keys must use the Web Push P-256 curve without a package dependency"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const freshInstall = completedInstalls.find(entry => actionFor(priorEntries, entry.transactionId, \"create-accounts\"));",
+    "replace": "const freshInstall = installed;",
+    "test": "node --test --test-name-pattern='three repeat installs' tests/control-room-installer.test.mjs",
+    "why": "every repeat must recover accounts from the original fresh-install transaction"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await ports.switchPairV1({ root, restore: switchResult });\n      if (!fresh) await ports.restartServices",
+    "replace": "await ports.switchPairV1({ root, restore: switchResult });\n      if (false) await ports.restartServices",
+    "test": "node --test --test-name-pattern='restart that throws' tests/control-room-installer.test.mjs",
+    "why": "rollback must restart the old release even when the forward restart throws part-way"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (hasInstalled && options.bootstrap !== undefined) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='installed Mac refuses a bootstrap replay' tests/control-room-installer.test.mjs",
+    "why": "an installed Mac must refuse the stage B bootstrap and direct the owner to passkey add"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "undo.push(async () => {\n      await ports.recoverServices({ root, roles: DATABASE_SERVICE_ROLES_V1 });",
+    "replace": "if (false) undo.push(async () => {\n      await ports.recoverServices({ root, roles: DATABASE_SERVICE_ROLES_V1 });",
+    "test": "node --test --test-name-pattern='failed database init rolls back before retry' tests/control-room-installer.test.mjs",
+    "why": "database cleanup must be registered before initialization can leave a postmaster behind"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "if (entries.length !== 1) throw new Error(\"live_serve_port_refused\");",
+    "replace": "if (entries.length > 2) throw new Error(\"live_serve_port_refused\");",
+    "test": "node --test --test-name-pattern='live Serve reader' tests/control-room-native-install-ports.test.mjs",
+    "why": "the managed 443 Serve handler must be unique even when unrelated Serve entries exist"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "entry.uid !== 0",
+    "replace": "entry.uid !== 501",
+    "test": "node --test --test-name-pattern='Tailscale exchange parent' tests/control-room-native-install-ports.test.mjs",
+    "why": "the Serve exchange directory stays below a verified root-owned non-writable parent"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "refuse(\"database_port_not_yet_supplied\", { port, schema: DB_PORT_SCHEMA,",
+    "replace": "refuse(\"database_port_dependency_unavailable\", { port, schema: DB_PORT_SCHEMA,",
+    "test": "node --import tsx --test --test-name-pattern='database-authority default port' tests/updater-stage-one-ports.test.mjs",
+    "why": "every database-owned stage-one port must fail with the database worker's typed not-yet-supplied contract"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (active) refuse(\"builder_launch_domain_refused\");",
+    "replace": "if (false) refuse(\"builder_launch_domain_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='account sweep is bounded' tests/updater-stage-one-ports.test.mjs",
+    "why": "recovery must refuse while launchd still has the detached builder user domain"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (JSON.stringify(current) !== JSON.stringify(input.expected)) refuse(\"known_good_remove_refused\");",
+    "replace": "if (false) refuse(\"known_good_remove_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='Serve and known-good records' tests/updater-stage-one-ports.test.mjs",
+    "why": "known-good rollback must not remove a record that no longer matches its transaction receipt"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "&& sha256(await boundedBytesFile(target, 1024 * 1024, \"guard_remove_refused\")) !== input.receipt.digest)",
+    "replace": "&& false)",
+    "test": "node --import tsx --test --test-name-pattern='guard install is no-follow' tests/updater-stage-one-ports.test.mjs",
+    "why": "guard rollback must not remove bytes that no longer match its transaction receipt"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (exists && JSON.stringify(await boundedJsonFile(path, \"known_good_seed_refused\")) !== JSON.stringify(value)) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='Serve and known-good records' tests/updater-stage-one-ports.test.mjs",
+    "why": "known-good seeding is retry-idempotent but never overwrites a different accepted release"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "if (installed.ownerCodeDigest !== previous.ownerCodeDigest) refuse(\"owner_code_refused\");",
+    "replace": "if (false) refuse(\"owner_code_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='owner-code remint' tests/updater-stage-one-ports.test.mjs",
+    "why": "owner-code remint must not overwrite a service-changed session profile"
+  },
+  {
+    "file": "src/updater/v1/install/stage-one-ports.mjs",
+    "find": "|| inside(input.root, input.bootstrapRoot) || inside(input.bootstrapRoot, input.root)) refuse(\"bootstrap_cleanup_refused\");",
+    "replace": "|| false) refuse(\"bootstrap_cleanup_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='bootstrap cleanup accepts' tests/updater-stage-one-ports.test.mjs",
+    "why": "bootstrap cleanup must reject roots nested inside either side of the live install boundary"
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "if (length > limit) { await reader.cancel(); refuse(\"health_web_response_too_large\"); }",
+    "replace": "if (false) { await reader.cancel(); refuse(\"health_web_response_too_large\"); }",
+    "test": "node --test --test-name-pattern='web health refuses' tests/updater-health-terminal.test.mjs",
+    "why": "the HTTP health half must bound a successful peer that streams an oversized response"
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "if (current !== input.expectedRelease) refuse(\"health_release_mismatch\");",
+    "replace": "if (false) refuse(\"health_release_mismatch\");",
+    "test": "node --test --test-name-pattern='checkHealthV1 uses the existing web route' tests/updater-health-terminal.test.mjs",
+    "why": "health must bind the running release pointer to the release selected by the transaction"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "if (error?.code === \"ENOTEMPTY\" || error?.code === \"EEXIST\") throw new Error(\"tailscale_temp_directory_not_empty\");",
+    "replace": "if (false) throw new Error(\"tailscale_temp_directory_not_empty\");",
+    "test": "node --test --test-name-pattern='Tailscale cleanup' tests/control-room-native-install-ports.test.mjs",
+    "why": "root must report and retain an owner-planted extra entry instead of recursively deleting it"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "[\"RELEASE_ROOT\", servicePath(root, \"releases\")]",
+    "replace": "[\"RELEASE_ROOT\", servicePath(root, \"current\")]",
+    "test": "node --test --test-name-pattern='service profile parameters' tests/updater-trusted-runtime.test.mjs",
+    "why": "Seatbelt native-executable roots must name the canonical releases directory rather than a pointer symlink"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "[\"UPDATER_ROOT\", servicePath(root, \"updater\")]",
+    "replace": "[\"UPDATER_ROOT\", servicePath(root, \"updater/current\")]",
+    "test": "node --test --test-name-pattern='service profile parameters' tests/updater-trusted-runtime.test.mjs",
+    "why": "Seatbelt native-executable roots must name the canonical updater directory rather than a pointer symlink"
+  },
+  {
+    "file": "src/updater/v1/policy/service-builder.sb",
+    "find": "(allow file-map-executable (subpath (param \"JOB_ROOT\")))",
+    "replace": "(deny file-map-executable (subpath (param \"JOB_ROOT\")))",
+    "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
+    "why": "the attended builder must be able to map reviewed native addons only inside its own job root"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "RELEASE_ROOT: join(parsed.installRoot, \"releases\"), UPDATER_ROOT: join(parsed.installRoot, \"updater\")",
+    "replace": "RELEASE_ROOT: join(parsed.installRoot, \"current\"), UPDATER_ROOT: join(parsed.installRoot, \"updater/current\")",
+    "test": "pnpm exec tsx --test --test-name-pattern='wraps postgres' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "generated launch daemons must pass canonical real executable directories to Seatbelt"
+  }
+]

@@ -68,7 +68,7 @@ export interface FleetWorkerSummaryV1 {
   platform: "macos" | "windows" | "linux" | "cloud";
   state: "online" | "idle" | "busy" | "draining" | "degraded" | "offline" | "maintenance";
   stateReasonCode?: string;
-  lastObservedAt: string;
+  lastObservedAt: string | null;
   capacityState: "reported" | "unavailable";
   availableSlots?: number;
   totalSlots?: number;

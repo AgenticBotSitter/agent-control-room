@@ -1,0 +1,37 @@
+[
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "passkeys[0].status === \"registered\"",
+    "replace": "true",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern=\"collector requires one bound\" tests/e2e2-rehearsal.test.mjs",
+    "why": "Failed passkey status must fail the results row."
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "passkeys.length === 1 &&",
+    "replace": "passkeys.length >= 1 &&",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern=\"collector requires one bound\" tests/e2e2-rehearsal.test.mjs",
+    "why": "Duplicate registration evidence must fail."
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "const passkeyPassed = correlation &&",
+    "replace": "const passkeyPassed =",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern=\"collector requires one bound\" tests/e2e2-rehearsal.test.mjs",
+    "why": "Unbound registration evidence must fail the row."
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "rows.push(tableRow(\"practice passkey registered\", passkeyPassed, passkeys.length === 1\n    ? String(passkeys[0].status ?? \"missing\") : `${passkeys.length} evidence records`));",
+    "replace": "",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern=\"collector requires one bound\" tests/e2e2-rehearsal.test.mjs",
+    "why": "Missing registration must fail the overall table."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "      await writeEvidence(\"passkey\", passkey);",
+    "replace": "",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern=\"rehearsal exports a stopped\" tests/control-room-installer.test.mjs",
+    "why": "Owner evidence must contain the final failed or registered passkey outcome."
+  }
+]

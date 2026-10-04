@@ -1,0 +1,44 @@
+[
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "if (!within(join(parsed.installRoot, \"runtime\"), parsed.postgresExecutable)\n    || !parsed.postgresExecutable.endsWith(\"/bin/postgres\")) {",
+    "replace": "if (false) {",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/macos-launch-daemon-bundle.test.ts",
+    "why": "postgres must execute only from the root-owned trusted runtime"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "const retired = spendable.filter(generation => !kept.has(generation));",
+    "replace": "const retired = [];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly backup accepts' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "successful backups must apply the configured retention count"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | kernelLock, 0o600);",
+    "replace": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+    "test": "CONTROL_ROOM_SKIP_DAEMON_RELEASE_STAGE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='fifty processes' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "The descriptor must hold the kernel exclusion across backup processes"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const kernelLock = process.platform === \"darwin\" ? 0x20 | constants.O_NONBLOCK : 0;",
+    "replace": "const kernelLock = 0;",
+    "test": "node --import tsx --test --test-name-pattern='empty and recycled' tests/hard7-robustness.test.mjs",
+    "why": "Mac kernel ownership must recover empty stamps and recycled PIDs while preserving a live owner"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | kernelLock, 0o600);",
+    "replace": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Exclusive descriptor ownership must survive signing until publication ends"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  \"src/installer/shared/jsonl-prefix.mjs\",\n]);",
+    "replace": "  \"src/installer/shared/jsonl-prefix.mjs\",\n  \"package.json\",\n]);",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the fixed bundle builder receives exactly its approved candidate inputs and no broader candidate tree"
+  }
+]

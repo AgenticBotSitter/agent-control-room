@@ -1,16 +1,74 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test, { after } from "node:test";
-import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { hmacSha256Tag, InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
+import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 import { nodeExchange } from "./helpers/web-node";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
+test("an uncertain write makes health unready and a supervised replacement serves later requests", async () => {
+  const statements: string[] = [], releases: boolean[] = [];
+  let commitAttempts = 0, poolEnds = 0;
+  const failed = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "COMMIT") { commitAttempts += 1; throw new Error("lost acknowledgement"); }
+      return { rows: [] };
+    },
+    release(destroy) { releases.push(!!destroy); },
+  }; }, async end() { poolEnds += 1; } }));
+  const origin = "http://127.0.0.1:3210", startedAt = "2026-09-30T00:00:00.000Z";
+  const key = new Uint8Array(32).fill(8), pid = 4_244;
+  const createApp = (database: typeof failed) => createMacLocalWebProcessV1({ origin, workspaceId: "workspace:dbready",
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:dbready", provider: "local",
+      subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode: "dbready-owner-code-long-enough" }), sessionSeconds: 900 },
+    database, hostProcessId: pid, healthProbeKey: key, healthReleaseId: "dev", healthStartedAt: startedAt });
+  const app = createApp(failed);
+  assert.equal(app.isReady(), true);
+  await assert.rejects(failed.client.transaction(session => session.query("INSERT INTO synthetic VALUES (1)")),
+    { message: "database_outcome_uncertain" });
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"],
+    "an uncertain write is attempted once and is never rolled back or replayed");
+  assert.equal(commitAttempts, 1); assert.deepEqual(releases, [true]); assert.equal(poolEnds, 1);
+  assert.equal(app.isReady(), false, "the application must become unready with its quarantined database binding");
+  const refusedRetries = await Promise.allSettled(Array.from({ length: 20 }, () => failed.client.query("SELECT retry")));
+  assert.equal(refusedRetries.every(result => result.status === "rejected"
+    && result.reason instanceof Error && result.reason.message === "database_unavailable"), true,
+  "concurrent callers after the uncertain write must fail closed without reaching the old pool");
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"]);
+
+  const nonces = Array.from({ length: 50 }, (_, index) => Buffer.alloc(32, index + 1).toString("base64url"));
+  const health = await Promise.all(nonces.map(nonce => app.handle(new Request(`${origin}/api/v1/local-host-health`, {
+    method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
+  }), () => new Response("unused"))));
+  assert.equal(health.every(response => response.status === 200), true);
+  const bodies = await Promise.all(health.map(response => response.json())) as Array<Record<string, unknown>>;
+  assert.equal(bodies.every(body => body.ready === false), true, "a health-probe burst must expose the outage");
+  assert.equal(bodies[0]?.tag, hmacSha256Tag(key,
+    { purpose: "local-host-health/v1", nonce: nonces[0], pid, ready: false, releaseId: "dev", startedAt }));
+  await app.close();
+
+  let laterQueries = 0;
+  const replacement = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) { laterQueries += 1; return { rows: statement === "SELECT later" ? [{ ok: true }] : [] }; },
+    release() {},
+  }; }, async end() {} }));
+  const restarted = createApp(replacement);
+  assert.deepEqual(await replacement.client.query("SELECT later"), { rows: [{ ok: true }] });
+  assert.equal(laterQueries, 1); assert.equal(restarted.isReady(), true,
+    "a restarted host owns a fresh binding and can serve a later request");
+  await restarted.close();
+});
 test("the real Mac-local wrapper signs in locally and reaches the existing project service", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-web" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
@@ -18,46 +76,93 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   });
   const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
   const ownerCode = "mac-local-owner-code-long-enough";
-  let actionInboxReads = 0;
+  let actionInboxReads = 0; const passkeyCalls: unknown[] = [];
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
       trustedOrigin },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
+    hostProcessId: 4_243,
+    healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev", healthStartedAt: "2026-09-30T00:00:00.000Z",
     workBatchIntegrityKey: new Uint8Array(32).fill(7),
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true,
     actionInboxSource: { read: async () => { actionInboxReads += 1; return {
-      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } } });
+      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } },
+    passkeyRegistration: {
+      options: async input => { passkeyCalls.push(input); return { publicKey: { challenge: "A".repeat(43) } }; },
+      insert: async input => { passkeyCalls.push(input); return { accepted: true }; },
+    } });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
   const signedOutInbox = await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("unused"));
   assert.equal(signedOutInbox.status, 401);
+  const signedOutPasskey = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }),
+  () => new Response("unused"));
+  assert.equal(signedOutPasskey.status, 401);
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
-  for (const path of ["/", "/projects", "/projects/project:unknown/tasks"]) {
+  for (const path of ["/", "/morning", "/projects", "/projects/project:unknown/tasks"]) {
     const signedOutPage = await app.handle(request(path), () => { throw new Error("must not render signed-out page"); });
     assert.equal(signedOutPage.status, 303);
-    assert.equal(signedOutPage.headers.get("location"), `${origin}/session`);
+    assert.equal(signedOutPage.headers.get("location"), `${origin}/session${["/", "/morning"].includes(path) ? `?next=${encodeURIComponent(path)}` : ""}`);
     assert.equal(signedOutPage.headers.get("cache-control"), "no-store");
   }
   const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
   assert.equal(signedOutWrite.status, 401);
+  const nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const wrongHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce: "short" }) }),
+  () => new Response("unused"));
+  assert.equal(wrongHealth.status, 400); assert.equal(wrongHealth.headers.get("set-cookie"), null);
+  const unsignedHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(unsignedHealth.status, 403, "even the correct code needs the exact loopback Origin");
+  const remoteHealth = await app.handle(new Request(`${trustedOrigin}/api/v1/local-host-health`, { method: "POST", headers: {
+    origin: trustedOrigin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(remoteHealth.status, 403, "the readiness oracle exists only on the loopback origin");
+  const health = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
+  assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
+    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
+      { purpose: "local-host-health/v1", nonce, pid: 4_243, ready: true,
+        releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
+  const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
+  assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const passkeyHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  const passkeyOptions = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }), () => new Response("unused"));
+  assert.equal(passkeyOptions.status, 200);
+  const passkeyResponse = { id: "B".repeat(43), rawId: "B".repeat(43), type: "public-key", response: {} };
+  const passkeyInsert = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: passkeyResponse, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(passkeyInsert.status, 201); assert.deepEqual(await passkeyInsert.json(), { accepted: true });
+  assert.equal(passkeyCalls.length, 2);
+  assert.match((passkeyCalls[0] as { ownerSessionDigest: string }).ownerSessionDigest, /^sha256:[a-f0-9]{64}$/);
+  const oversizedPasskey = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: { value: "x".repeat(21_000) }, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(oversizedPasskey.status, 400); assert.equal(passkeyCalls.length, 2);
   const actionInboxResponse = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(actionInboxResponse.status, 200, await actionInboxResponse.clone().text());
   assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
-    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "files", "settings"],
+    // No `projectEvents` source in this composition, as in the installed
+    // connector-only host: Activity is absent rather than a permanent 503.
+    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "automations", "files", "settings"],
     workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
@@ -65,10 +170,23 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const home = await app.handle(request("/", { headers: { cookie: cookie! } }), () => new Response("real home shell"));
   assert.equal(home.status, 200);
   assert.equal(await home.text(), "real home shell");
+  const morning = await app.handle(request("/morning", { headers: { cookie: cookie! } }), () => new Response("real morning shell"));
+  assert.equal(morning.status, 200); assert.equal(await morning.text(), "real morning shell");
+  const morningWithQuery = await app.handle(request("/morning?unexpected=value", { headers: { cookie: cookie! } }),
+    () => { throw new Error("the morning page must reject query strings before it renders"); });
+  assert.equal(morningWithQuery.status, 400);
   const foreignPort = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin: "http://127.0.0.1:1", "content-type": "application/json",
     "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
   () => new Response("unused"));
   assert.equal(foreignPort.status, 403);
+  // The push subscribe route is only mounted when push is configured, so
+  // without it the route is a 404 -- which is itself worth asserting, because a
+  // push install must not silently accept a subscribe it cannot honour.
+  const pushWithoutConfig = await app.handle(request("/api/v1/owner-web-push", { method: "POST", headers: {
+    cookie: cookie!, origin, "content-type": "application/json" },
+  body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/x", expirationTime: null,
+    keys: { p256dh: "A".repeat(87), auth: "B".repeat(22) } }) }), () => new Response("unused"));
+  assert.equal(pushWithoutConfig.status, 404, "an install with no push configuration does not accept subscriptions");
   const created = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin, "content-type": "application/json",
     "idempotency-key": "mac-local-project-create-001" }, body: JSON.stringify({ title: "Local wrapper project", summary: "Disposable route proof" }) }),
   () => new Response("unused"));
@@ -91,6 +209,29 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     () => new Response("unused"));
   assert.equal(detailApi.status, 200);
   assert.equal((await detailApi.json() as { project: { projectId: string } }).project.projectId, projectId);
+  const mutationHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  // Skill creation is one idempotent owner action (misc3all 0246): the browser
+  // client sends a per-action `idempotency-key`, so the wrapper proof does too.
+  const skillResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/skills`, {
+    method: "POST", headers: { ...mutationHeaders, "idempotency-key": "mac-local-skill-create-001" }, body: JSON.stringify({ name: "Evidence review",
+      instructions: "Cite the retained evidence and state uncertainty." }) }), () => new Response("unused"));
+  assert.equal(skillResponse.status, 201); const skill = await skillResponse.json() as { skillId: string; version: number };
+  const recurringInput = { schedule: "every Monday at 9", timezone: "UTC", title: "Weekly dependency check",
+    instructions: "Review dependency updates and propose a report.", requiredCapability: "dependency.review",
+    acceptanceCriteria: "The report cites its evidence.", acceptanceTests: "The owner reviews the cited evidence.",
+    skillRefs: [{ skillId: skill.skillId, version: skill.version }] };
+  const ruleResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify(recurringInput) }), () => new Response("unused"));
+  assert.equal(ruleResponse.status, 201); const rule = await ruleResponse.json() as { ruleId: string; version: number };
+  const edited = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules/${encodeURIComponent(rule.ruleId)}`, {
+    method: "PUT", headers: mutationHeaders, body: JSON.stringify({ ...recurringInput,
+      instructions: "Review dependency updates and propose an evidence-backed report.", expectedVersion: rule.version })
+  }), () => new Response("unused"));
+  assert.equal(edited.status, 200); const editedRule = await edited.json() as { version: number };
+  const paused = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules/${encodeURIComponent(rule.ruleId)}/pause`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify({ paused: true, expectedVersion: editedRule.version })
+  }), () => new Response("unused"));
+  assert.equal(paused.status, 200); assert.equal((await paused.json() as { state: string }).state, "paused");
   for (const lifecycle of ["active", "paused", "completed", "archived"]) {
     const filtered = await app.handle(request(`/projects?lifecycle=${lifecycle}`, { headers: { cookie: cookie! } }),
       () => new Response("filtered project shell"));
@@ -207,6 +348,44 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.doesNotMatch(missingHtml, /\{"error"/);
   const workersShell = await app.handle(request("/workers", { headers: { cookie: cookie! } }), () => new Response("real workers shell"));
   assert.equal(workersShell.status, 200); assert.equal(await workersShell.text(), "real workers shell");
+  // R4U-05: "Connect a bot" on Workers links to /workers/connect, and the
+  // Mac-local route table had no entry for it, so the only link to the main job
+  // on a connector-only Mac host was a 404 "Page unavailable". The page itself
+  // has existed in private-app/app/workers/connect since it was written; the
+  // route table is what omitted it. /settings and /setup are the same defect:
+  // both pages exist, the registry lists them, and the notification on/off
+  // screen lives on /settings, so phone alerts could not be switched on from
+  // this website either.
+  //
+  // Every route the owner can actually link to must resolve, because a link the
+  // owner can tap is a promise. The list is derived rather than restated: the
+  // two system pages come from the registry's own `href` values, and the Connect
+  // link is read out of the component that renders it, so renaming either cannot
+  // quietly turn this test into a green test about the wrong address.
+  const { pageRegistry } = await import("../private-app/app/page-registry");
+  const registryHrefs = pageRegistry.map(entry => entry.href)
+    .filter(href => ["/settings", "/setup"].includes(href));
+  assert.deepEqual(registryHrefs.sort(), ["/settings", "/setup"],
+    "the two owner pages this route table must serve are no longer in the registry, so the list below is restating a stale set");
+  const fleetWorkersSource = await readFile(join(import.meta.dirname, "..", "private-app", "app", "workers", "fleet-workers.tsx"), "utf8");
+  const connectedHref = /<a href="(\/[^"]+)">Connect a bot<\/a>/.exec(fleetWorkersSource)?.[1];
+  assert.equal(connectedHref, "/workers/connect",
+    "the Connect a bot link is gone or moved, so this test no longer covers R4U-05");
+  for (const page of [connectedHref!, ...registryHrefs]) {
+    const pageShell = await app.handle(request(page, { headers: { cookie: cookie! } }),
+      () => new Response(`real ${page} shell`));
+    assert.equal(pageShell.status, 200, `${page} is reachable from the owner's own site but the local route table refuses it`);
+    assert.equal(await pageShell.text(), `real ${page} shell`);
+    // ...and no query string is accepted on it, matching every other page route:
+    // a link with a stale cursor must not render a different page silently.
+    const withQuery = await app.handle(request(`${page}?unexpected=value`, { headers: { cookie: cookie! } }),
+      () => { throw new Error(`${page} must reject query strings before it renders`); });
+    assert.equal(withQuery.status, 400, `${page}?unexpected=value was accepted`);
+    // ...and signed out, it must not render the shell at all.
+    const signedOutPage = await app.handle(request(page),
+      () => { throw new Error(`${page} must not render signed out`); });
+    assert.ok([303, 401].includes(signedOutPage.status), `signed-out ${page}: ${signedOutPage.status}`);
+  }
   const sessionWatchShell = await app.handle(request("/session-watch", { headers: { cookie: cookie! } }),
     () => new Response("real session watch shell"));
   assert.equal(sessionWatchShell.status, 200); assert.equal(await sessionWatchShell.text(), "real session watch shell");
@@ -280,7 +459,7 @@ test("the Mac-local needs-me route composes saved-plan verification into the tas
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     taskReadKeys: { taskPlanIntegrityKey: new Uint8Array(32).fill(3), reviews: {
       integrityKey: new Uint8Array(32).fill(4), checkpoints: new InMemoryRollbackCheckpointStoreV1({ testOnly: true }) } } });
   t.after(() => app.close());
@@ -301,7 +480,7 @@ test("the Mac-local wrapper does not accept a forwarded or foreign request", asy
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow });
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow });
   const response = await app.handle(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST", headers: {
     origin, forwarded: "for=192.0.2.1", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(response.status, 403);
@@ -321,7 +500,7 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     assignment: { tenantId: fixture.configuration.tenantId, workspaceId: fixture.configuration.workspaceId,
       async projectOptions(...input) {
         projectReads.push(input);
@@ -336,7 +515,7 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
         candidates: [], recommendation: { state: "not_available", availability: "unknown", startsWork: false, grantsExecutionAuthority: false },
         receipt: null, startsWork: false, candidateEvidence: "configured_routes_only" };
     }, async assign() { commandCalls += 1; throw new Error("not used"); }, async expire() { throw new Error("not used"); },
-      async revoke() { throw new Error("not used"); } },
+      async revoke() { throw new Error("not used"); }, async cancel() { throw new Error("not used"); } },
   });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
@@ -412,4 +591,133 @@ test("the Mac-local transport stays loopback-only and admits only one configured
   const foreignDone = new Promise<void>((resolve, reject) => { foreign.output.once("finish", resolve); foreign.output.once("error", reject); });
   void handler.handle(foreign.input, foreign.output); await foreignDone;
   assert.equal(foreign.output.statusCode, 403);
+});
+
+// ---------------------------------------------------------------------------
+// Readiness must fold in the database. This is the review's N1 follow-up: the
+// process reported ready for the whole life of a database client that had been
+// closed underneath it, so the host never restarted it and every page failed.
+// ---------------------------------------------------------------------------
+
+test("a closed database client makes the process NOT ready", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-readiness" }); t.after(fixture.close);
+  const origin = "http://127.0.0.1:3210";
+  const ownerCode = "mac-local-owner-code-long-enough";
+  const build = (database: { client: typeof fixture.client; close: () => Promise<void>; isAvailable: () => boolean }) =>
+    createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+        provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }),
+        sessionSeconds: 900 },
+      database, clock: () => conformanceNow, hostProcessId: 4_243,
+      healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev",
+      healthStartedAt: "2026-09-30T00:00:00.000Z" });
+
+  // A live client: ready.
+  let available = true;
+  const live = build({ client: fixture.client, close: async () => {}, isAvailable: () => available });
+  assert.equal(live.isReady(), true, "a live database client is ready");
+
+  // The same client, closed underneath the process — which is exactly what
+  // `bindPrivatePgPool` does permanently on an uncertain outcome.
+  available = false;
+  assert.equal(live.isReady(), false,
+    "N1: a process whose database client has been closed is NOT ready, so something restarts it");
+
+  // Back to live, and back to not: the answer tracks the client rather than
+  // latching.
+  available = true;
+  assert.equal(live.isReady(), true, "and it recovers when the client is available again");
+
+  // `isAvailable` is REQUIRED, not optional. This test used to assert the
+  // opposite — that a host supplying no `isAvailable` kept the old answer — and
+  // the strict type is the better contract: a host that cannot say whether its
+  // database is alive cannot be told apart from a host whose database is gone,
+  // which is the review's N1 in its original shape. The case is now that a host
+  // MUST provide it, proved by the type rather than by a runtime branch, and the
+  // runtime half is the `isReady` assertions above.
+  //
+  // An explicit close still reports not-ready, which is the older half of the
+  // rule and must not have been lost.
+  await live.close();
+  assert.equal(live.isReady(), false, "an explicitly closed process is still not ready");
+});
+
+// R6P-06's second guard: the Mac-local composition must be able to build the
+// owner's consent/history port WITHOUT an execution capability, and there must
+// be no path by which one can appear.
+//
+// The real-PostgreSQL proof (mac-local-pipeline-owner-consent-postgres) proves
+// history answers 200 and consent is recorded, but it cannot see the composed
+// service: the handler closes over it privately. So the observable property is
+// checked here, on the composition itself, by driving the SAME code path a
+// Mac-local installation drives and asserting the port the handler received is
+// capability-free. `advance()` checks the capability as its very first
+// statement, before any query, so its refusal reason distinguishes a
+// capability-free port from a capable one exactly.
+test("the Mac-local pipeline consent port is capability-free: consent cannot execute", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-consent-port" });
+  t.after(fixture.close);
+  const origin = "http://127.0.0.1:3210", now = Date.now();
+  const key = new Uint8Array(32).fill(7);
+  // Compose the real process, then reach the SAME service instance the handler
+  // was given by rebuilding it through the module the composition uses. This is
+  // not a tautology: the assertion below is about the capability argument the
+  // composition passes, which a test-owned `{}` could never contradict. What
+  // makes it bite is the SOURCE assertion that follows.
+  const app = createMacLocalWebProcessV1({
+    origin, workspaceId: fixture.configuration.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+      provider: "local", subject: conformanceSubject,
+      ownerCodeDigest: sha256Digest({ ownerCode: "mac-local-consent-port-owner-code" }), sessionSeconds: 900 },
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true },
+    workBatchIntegrityKey: key, clock: () => now });
+  // The composition built and mounted a pipeline handler: the run and template
+  // routes exist only with an installation key, and both answer a refusal
+  // rather than throwing, which proves the handler was constructed.
+  const call = (path: string) => app.handle(new Request(`${origin}${path}`, { headers: { origin } }),
+    () => new Response("unused"));
+  assert.equal((await call(`/api/v1/projects/project%3Ano/pipeline-templates`)).status, 401,
+    "the composed pipeline routes require the owner session before anything else");
+  await app.close();
+
+  // The load-bearing guard: read the composition and require that the advance
+  // service it constructs is given NO capability and NO enablement. A future
+  // edit that handed the Mac-local web login an execution capability would
+  // otherwise turn every owner consent into unattended execution on the very
+  // login that owns the browser surface, and no service-level test would see
+  // it -- the hosted site has the same shape and a different answer.
+  //
+  // Balanced-parenthesis extraction, not a non-greedy regex: a nested call or a
+  // default argument would truncate the read and silently narrow the guard to
+  // the first few characters.
+  const source = readFileSync("src/web/v1/mac-local-web-process.ts", "utf8");
+  const construction = "new PipelineAdvanceServiceV1(";
+  const start = source.indexOf(construction);
+  assert.notEqual(start, -1, "the Mac-local composition must construct the pipeline consent/history port");
+  let depth = 0, end = -1;
+  for (let index = start + construction.length - 1; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") { depth -= 1; if (depth === 0) { end = index; break; } }
+  }
+  assert.notEqual(end, -1, "the advance service construction must be a balanced call this guard can read whole");
+  const argumentsText = source.slice(start, end + 1);
+  // Read the WHOLE call, so an extra later argument cannot hide past the read.
+  assert.match(argumentsText, /pipelineKey/, "the port must be built with the installation's own pipeline key");
+  assert.doesNotMatch(argumentsText, /capability|unattendedEnabled/,
+    "the Mac-local owner consent/history port must be built with NO execution capability: "
+      + "consent records owner authorization, it must never be able to start a stage");
+  // And no Mac-local option may accept one either: the capability must be
+  // unreachable from outside the composition, not merely omitted inside it.
+  const optionsStart = source.indexOf("export interface MacLocalWebProcessOptionsV1 {");
+  assert.notEqual(optionsStart, -1, "the Mac-local web process options must be readable");
+  const optionsEnd = source.indexOf("\n}", optionsStart);
+  assert.notEqual(optionsEnd, -1, "the Mac-local web process options must be a brace-balanced interface");
+  const optionsText = source.slice(optionsStart, optionsEnd);
+  assert.doesNotMatch(optionsText, /PipelineAdvanceCapabilityV1|capability\s*[:?]/,
+    "no Mac-local option may accept an advance capability: the port is built capability-free");
+  // Nor may the host composition forward one: the capability has no path from
+  // the protected configuration to this process at all.
+  for (const file of ["src/web/v1/mac-local-host.ts", "src/web/v1/mac-local-serving.ts"])
+    assert.doesNotMatch(readFileSync(file, "utf8"), /PipelineAdvanceCapabilityV1|pipelineAdvance\s*[:?]\s*\{/,
+      `${file} must not offer a Mac-local host a way to inject an advance capability`);
 });

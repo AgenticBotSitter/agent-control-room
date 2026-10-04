@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { PRODUCT_CONFIGURATION_MODULES_V1 } from "../../config/v1/product-configuration";
+import {
+  PORTABLE_PRINTABLE_TEXT_V1,
+  assertNoPortablePrototypePollutionV1,
+  assertPortableGuardedTextV1,
+  assertPortableInputSizeV1,
+} from "../../security/inert-portable-input";
 
 /**
  * Portable project packs (v1): effect-free, inert descriptors.
@@ -28,7 +34,7 @@ const GUIDANCE_ITEMS_MAX = 10;
 const GUIDANCE_ITEM_MIN = 1;
 const GUIDANCE_ITEM_MAX = 1000;
 /** Raw-input ceiling: the field ceilings bound legitimate packs near ~13KB. */
-const MAX_PACK_BYTES = 65536;
+export const PROJECT_PACK_MAX_BYTES_V1 = 65536;
 /** SPDX-expression shape: starts alnum, then alnum and . + - : markers. */
 const LICENSE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.+:-]{0,39}$/;
 const ATTRIBUTION_MIN = 1;
@@ -36,73 +42,24 @@ const ATTRIBUTION_MAX = 120;
 
 const moduleName = z.enum(PRODUCT_CONFIGURATION_MODULES_V1);
 
-/** Printable text: no C0/C1 control characters except newline and tab. */
-/* eslint-disable no-control-regex */
-const PRINTABLE_TEXT = /^[^\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]*$/;
-
-const CREDENTIAL_PATTERNS: RegExp[] = [
-  /BEGIN [A-Z0-9 ]*PRIVATE KEY/,
-  /:\/\/[^/\s]*:[^/\s]*@/,
-  /(api[_-]?key|secret|passwd|password|bearer|session[_-]?token)\s*[:=]/i,
-];
-
-const AUTHORITY_PATTERNS: RegExp[] = [
-  /(grant|revoke|allow|deny|permit)\s+(access|permission|role|rights)/i,
-  /\b(sudo|chmod|chown|setuid)\b/i,
-  /\brole\s*[:=]/i,
-];
-
-const EXECUTABLE_PATTERNS: RegExp[] = [
-  /<script[\s>]/i,
-  /javascript:/i,
-  /\son[a-z]+\s*=/i,
-  /\$\(/,
-];
-
-const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-
 function assertGuardedText(field: string, value: string): void {
-  if (!PRINTABLE_TEXT.test(value)) throw new Error(`project_pack_${field}_not_printable`);
-  for (const pattern of CREDENTIAL_PATTERNS) {
-    if (pattern.test(value)) throw new Error(`project_pack_${field}_credential_shaped`);
-  }
-  for (const pattern of AUTHORITY_PATTERNS) {
-    if (pattern.test(value)) throw new Error(`project_pack_${field}_authority_shaped`);
-  }
-  for (const pattern of EXECUTABLE_PATTERNS) {
-    if (pattern.test(value)) throw new Error(`project_pack_${field}_executable_content`);
-  }
-}
-
-/** Visible refusal for prototype-pollution keys at any depth of the raw input. */
-function assertNoPrototypePollutionKeys(value: unknown, depth: number): void {
-  if (depth > 8) throw new Error("project_pack_input_too_deep");
-  if (Array.isArray(value)) {
-    for (const item of value) assertNoPrototypePollutionKeys(item, depth + 1);
-    return;
-  }
-  if (value !== null && typeof value === "object") {
-    for (const key of Object.keys(value)) {
-      if (PROTOTYPE_POLLUTION_KEYS.has(key)) throw new Error("project_pack_prototype_pollution_key");
-      assertNoPrototypePollutionKeys((value as Record<string, unknown>)[key], depth + 1);
-    }
-  }
+  assertPortableGuardedTextV1("project_pack", field, value);
 }
 
 const projectPackSchemaV1 = z
   .object({
     schema: z.literal(PROJECT_PACK_SCHEMA_V1),
-    title: z.string().min(TITLE_MIN).max(TITLE_MAX).refine((value) => PRINTABLE_TEXT.test(value), "project_pack_title_not_printable"),
-    summary: z.string().min(SUMMARY_MIN).max(SUMMARY_MAX).refine((value) => PRINTABLE_TEXT.test(value), "project_pack_summary_not_printable"),
+    title: z.string().min(TITLE_MIN).max(TITLE_MAX).refine((value) => PORTABLE_PRINTABLE_TEXT_V1.test(value), "project_pack_title_not_printable"),
+    summary: z.string().min(SUMMARY_MIN).max(SUMMARY_MAX).refine((value) => PORTABLE_PRINTABLE_TEXT_V1.test(value), "project_pack_summary_not_printable"),
     optionalModules: z.array(moduleName).max(PRODUCT_CONFIGURATION_MODULES_V1.length),
     setupGuidance: z
-      .array(z.string().min(GUIDANCE_ITEM_MIN).max(GUIDANCE_ITEM_MAX).refine((value) => PRINTABLE_TEXT.test(value), "project_pack_guidance_not_printable"))
+      .array(z.string().min(GUIDANCE_ITEM_MIN).max(GUIDANCE_ITEM_MAX).refine((value) => PORTABLE_PRINTABLE_TEXT_V1.test(value), "project_pack_guidance_not_printable"))
       .max(GUIDANCE_ITEMS_MAX),
     attribution: z
       .string()
       .min(ATTRIBUTION_MIN)
       .max(ATTRIBUTION_MAX)
-      .refine((value) => PRINTABLE_TEXT.test(value), "project_pack_attribution_not_printable")
+      .refine((value) => PORTABLE_PRINTABLE_TEXT_V1.test(value), "project_pack_attribution_not_printable")
       .optional(),
     license: z
       .string()
@@ -140,27 +97,16 @@ function guardAllText(pack: ProjectPackV1): void {
   if (pack.license !== undefined) assertGuardedText("license", pack.license);
 }
 
-/** Visible refusal for raw inputs over the byte ceiling (a DoS guard at the door). */
-function assertInputSize(value: unknown): void {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value) ?? "";
-  } catch {
-    throw new Error("project_pack_malformed");
-  }
-  if (Buffer.byteLength(serialized, "utf8") > MAX_PACK_BYTES) throw new Error("project_pack_input_oversized");
-}
-
 /**
  * Parse untrusted input into an isolated, immutable pack.  Unknown schema
  * versions are refused visibly and never reinterpreted as v1.
  */
 export function parseProjectPackV1(value: unknown): Readonly<ProjectPackV1> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("project_pack_malformed");
-  assertInputSize(value);
+  assertPortableInputSizeV1("project_pack", value, PROJECT_PACK_MAX_BYTES_V1);
   const schema = (value as Record<string, unknown>)["schema"];
   if (schema !== PROJECT_PACK_SCHEMA_V1) throw new Error("project_pack_unknown_version");
-  assertNoPrototypePollutionKeys(value, 0);
+  assertNoPortablePrototypePollutionV1("project_pack", value, 8);
   const parsed = projectPackSchemaV1.parse(value);
   guardAllText(parsed);
   const canonicalModules = PRODUCT_CONFIGURATION_MODULES_V1.filter((module) => parsed.optionalModules.includes(module));

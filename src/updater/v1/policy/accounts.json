@@ -1,0 +1,8 @@
+{
+  "schema": "control-room.accounts/v1",
+  "accounts": {
+    "service": "_controlroom",
+    "database": "_crdb",
+    "builder": "_crbuild"
+  }
+}

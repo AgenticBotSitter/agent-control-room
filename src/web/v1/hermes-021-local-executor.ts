@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from "zod";
 import { executeAndPublishAssignedHermes021MacosTaskV1 } from "../../harness/hermes-021-v1/completed-task-publication";
 import type { Hermes021MacosAssignedTaskExecutionV1 } from "../../harness/hermes-021-v1/assigned-task-execution";
@@ -15,7 +16,7 @@ const unresolved = (): never => { throw new Error("hermes_021_local_queue_delive
  * reply, or incomplete publication remains visible for recovery or owner
  * attention; it must never look like successful queue delivery. */
 export function requireHermes021LocalQueuePublicationV1(value: unknown): void {
-  const publication = z.object({ publication: z.object({}).passthrough().optional() }).passthrough().parse(value).publication;
+  const publication = upstreamObjectV1({ publication: upstreamObjectV1({}).optional() }).parse(value).publication;
   // `executeAndPublishAssignedHermes021MacosTaskV1` creates this member only
   // after the existing durable publisher has accepted the exact terminal
   // evidence and produced its review target. The queue boundary intentionally

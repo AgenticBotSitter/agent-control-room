@@ -1,0 +1,86 @@
+[
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "              await handle.truncate(0); await handle.sync();\n            }\n            return { handle, owned, path };",
+    "replace": "            }\n            return { handle, owned, path };",
+    "test": "node --import tsx --test --test-name-pattern='reclaimed PID stamp' tests/updater-file-hardening.test.mjs",
+    "why": "a reclaimed PID stamp must be emptied under the kernel lock so a later kill cannot strand the journal behind a reused PID"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (performance.now() >= deadline) throw journalErrorV1(\"updater_journal_busy\");",
+    "replace": "throw journalErrorV1(\"updater_journal_busy\");",
+    "test": "node --test --test-name-pattern='eight journal processes' tests/updater-robustness.test.mjs",
+    "why": "contending writers wait a bounded time for the transaction lock instead of failing at once (F3-19)"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (bytesRead) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='journal: dead' tests/updater-file-hardening.test.mjs",
+    "why": "lock content from a PID-stamp writer is never overwritten unless well formed and dead (A1-06)"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!owned.isFile() || owned.nlink !== 1 || (owned.mode & 0o077) !== 0 || owned.uid !== uid)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='unsafe transaction lock' tests/updater-file-hardening.test.mjs",
+    "why": "a loose, linked or special transaction lock file is refused and left in place"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "      await unlink(path);\n    } finally { await handle.close(); }",
+    "replace": "    } finally { await handle.close(); }",
+    "test": "node --import tsx --test --test-name-pattern='interrupted append releases' tests/updater-file-hardening.test.mjs",
+    "why": "the transaction lock file is removed on release, while the kernel lock is still held"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  \"src/installer/shared/jsonl-prefix.mjs\",\n]);",
+    "replace": "  \"src/installer/shared/jsonl-prefix.mjs\",\n  \"package.json\",\n]);",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "the fixed bundle builder receives exactly its approved candidate inputs and no broader candidate tree"
+  },
+  {
+    "file": "scripts/updater/build-fixed-updater-bundle.mjs",
+    "find": "[\"is-main-module\", \"strict-json\", \"rehearsal-hostname\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\"]",
+    "replace": "[\"is-main-module\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\"]",
+    "test": "node --import tsx --test --test-name-pattern='fixed step builds updater' tests/updater-fixed-bundle.test.mjs",
+    "why": "Isolated updater bundles include the shared validation dependencies."
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "const next = this.#tail.then(locked, locked);",
+    "replace": "const next = this.#tail.then(work, work);",
+    "test": "node --import tsx --test --test-name-pattern='A1-06' tests/updater-file-hardening.test.mjs",
+    "why": "independent journal instances cannot acknowledge a broken chain"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (bytesRead > 256 || !Number.isSafeInteger(owner?.pid) || owner.pid < 1 || owner.pid > 0x7fffffff)",
+    "replace": "if (bytesRead > 256)",
+    "test": "node --import tsx --test --test-name-pattern='journal: dead' tests/updater-file-hardening.test.mjs",
+    "why": "malformed lock PIDs must not authorize stale-lock removal"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "process.kill(owner.pid, 0); throw journalErrorV1(\"updater_journal_busy\");",
+    "replace": "throw Object.assign(new Error(\"dead\"),{code:\"ESRCH\"});",
+    "test": "node --import tsx --test --test-name-pattern='journal: dead' tests/updater-file-hardening.test.mjs",
+    "why": "never reclaim a live writer lock"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!current || !sameIdentityV1(owned, current)) throw journalErrorV1(\"updater_journal_owner_refused\");",
+    "replace": "if (!current) throw journalErrorV1(\"updater_journal_owner_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='journal: replaced' tests/updater-file-hardening.test.mjs",
+    "why": "journal cleanup must not remove a replacement lock"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "const KERNEL_LOCK_V1 = 0x20;",
+    "replace": "const KERNEL_LOCK_V1 = 0;",
+    "test": "node --test --test-name-pattern='eight journal processes' tests/updater-robustness.test.mjs",
+    "why": "writers in different processes must share a kernel lock"
+  }
+]

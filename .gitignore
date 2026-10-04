@@ -1,5 +1,6 @@
 # Local dependencies and generated output are not release source.
 node_modules/
+scripts/fleet/release/
 /.next/
 /dist/
 /dist-vps/
@@ -69,3 +70,11 @@ node_modules/
 # The CI workflow is reviewed in docs/ci-budget-security-review.md. Anything
 # further needs its own review; this line no longer blocks the directory, so the
 # rule above is the guard.
+
+# supfix4 scratch probes (copied from the round-4 QA worktree; never committed).
+/.sf4qa/
+# Local reproduction and probe scripts. Evidence for the reviewer, never product code.
+.qa/
+
+# m-r5brest local reproduction scratch (never committed).
+.bk4-repro/

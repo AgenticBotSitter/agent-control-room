@@ -1,10 +1,10 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Removes the local files this tool created for one worker.
 //
 // The runtime directory must carry this tool's ownership marker, or nothing is removed.
 // Unrecognised files inside an owned directory are preserved and reported, so a stray file
 // an operator put there by hand is never destroyed by cleanup.
 import { basename, dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { assertWorkerId, recordedExternalSignals, removeOwnedFiles, workerDirectory, workerSlug } from "./lib/runtime.mjs";
 
@@ -105,7 +105,7 @@ function main(argv) {
   return result.refused ? EXIT_REFUSED : EXIT_OK;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (error) {

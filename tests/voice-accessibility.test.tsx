@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import React, { act } from "react";
 import { VoiceControlsSurface } from "../private-app/app/voice-controls.tsx";
+import { VoiceControlsWorkspace } from "../private-app/app/voice-controls-workspace";
 import type {
   VoiceRecognitionAdapterV1,
   VoiceRecognitionErrorV1,
@@ -42,14 +43,15 @@ async function mount(ui: React.ReactElement) {
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
     html: string, options?: { url?: string; pretendToBeVisual?: boolean },
   ) => TestDom;
-  const { createRoot } = await import("react-dom/client");
   const dom = new JSDOM("<div id='root'></div>", { url: "https://control.invalid/", pretendToBeVisual: true });
   const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const { createRoot } = await import("react-dom/client");
   const root = createRoot(dom.window.document.getElementById("root")!);
   await act(async () => root.render(ui));
   return {
     dom,
+    render: async (next: React.ReactElement) => { await act(async () => root.render(next)); },
     text: () => dom.window.document.body.textContent ?? "",
     cleanup: async () => {
       await act(async () => root.unmount());
@@ -296,6 +298,49 @@ function makeFakeRecognitionCtor(options?: { startThrows?: boolean }) {
   }
   return { instances, ctor: FakeSpeechRecognition as unknown };
 }
+
+test("R6PH-03 Stop retains heard words until explicit Confirm or Cancel in the actual workspace", { timeout: 5000 }, async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  const h = await mount(React.createElement(VoiceControlsWorkspace));
+  const button = (name: string) => [...h.dom.window.document.querySelectorAll("button")].find(b => b.textContent === name)!;
+  const draft = () => (h.dom.window.document.getElementById("voice-local-draft") as HTMLTextAreaElement).value;
+  const click = async (name: string) => act(async () => button(name).click());
+  const say = async (text: string) => act(async () => fake.instances.at(-1)!.onresult?.({ results: [[{ transcript: text }]] }));
+  try {
+    await act(async () => h.dom.window.document.getElementById("voice-controls-enabled")!.click());
+    await click("Start dictation");
+    await say("remember the phone draft");
+    await click("Stop listening");
+    assert.match(h.text(), /Heard: remember the phone draft/);
+    assert.ok(button("Confirm: use these words"));
+    assert.equal(draft(), "", "Stop never commits words");
+    assert.equal(fake.instances.at(-1)!.onresult, null, "the production adapter detached the stopped engine");
+    await click("Confirm: use these words");
+    assert.equal(draft(), "remember the phone draft");
+    await click("Start dictation");
+    await say("discard these words");
+    await click("Stop listening");
+    await click("Cancel: discard");
+    assert.doesNotMatch(h.text(), /discard these words/);
+    assert.equal(draft(), "remember the phone draft");
+    await click("Start dictation");
+    await click("Stop listening");
+    assert.match(h.text(), /Nothing is listening/);
+    assert.equal(Boolean(button("Confirm: use these words")), false, "empty Stop has nothing to confirm");
+    for (const error of ["not-allowed", "network"]) {
+      await click("Start dictation");
+      await act(async () => fake.instances.at(-1)!.onerror?.({ error }));
+      assert.match(h.text(), error === "network" ? /hit an error and stopped/ : /Microphone permission was denied/);
+      assert.equal(draft(), "remember the phone draft");
+    }
+    await click("Start dictation");
+    await say("retry draft");
+    await click("Stop listening");
+    await click("Confirm: use these words");
+    assert.equal(draft(), "remember the phone draft\nretry draft");
+  } finally { await h.cleanup(); restore(); }
+});
 
 test("recognition adapter reports unsupported without throwing when the API is missing", async () => {
   const restore = withBrowserGlobals({}); // no SpeechRecognition globals at all
@@ -549,4 +594,176 @@ test("unsupported detection is read lazily at call time, not at adapter creation
   } finally {
     restore();
   }
+});
+
+function voiceButton(h: Awaited<ReturnType<typeof mount>>, name: string) {
+  const button = [...h.dom.window.document.querySelectorAll('button')].find(b => b.textContent === name);
+  assert.ok(button, `missing ${name}`);
+  return button;
+}
+
+test('R5A-01 disabling voice stops both engines and fences old callbacks in 50 sessions', async () => {
+  const rec = makeRecognition(), syn = makeSynthesis();
+  const committed: string[] = [];
+  const surface = (enabled: boolean) => <VoiceControlsSurface settings={{ enabled }} recognition={rec.adapter}
+    synthesis={syn.adapter} readContent={{ text: 'Safe update' }} onTranscriptCommitted={t => committed.push(t)} />;
+  const h = await mount(surface(true));
+  try {
+    for (let i = 0; i < 50; i++) {
+      await act(async () => voiceButton(h, 'Start dictation').click());
+      const old = rec.state.callbacks!;
+      if (i % 2) await act(async () => old.onEvent({ eventId: 'final', transcript: 'pending words', isFinal: true }));
+      await act(async () => voiceButton(h, 'Read aloud').click());
+      const stops = rec.state.stops, cancels = syn.state.cancels;
+      await h.render(surface(false));
+      assert.equal(rec.state.stops, stops + 1);
+      assert.equal(syn.state.cancels, cancels + 1);
+      assert.equal(h.dom.window.document.querySelector('button'), null);
+      await act(async () => {
+        old.onEvent({ eventId: 'late', transcript: 'late words', isFinal: true });
+        old.onError('denied', 'old error');
+      });
+      await h.render(surface(true));
+      assert.doesNotMatch(h.text(), /Heard:|pending words|late words|permission was denied/);
+      assert.equal(voiceButton(h, 'Read aloud').disabled, false);
+      await act(async () => voiceButton(h, 'Start dictation').click());
+      await act(async () => old.onEvent({ eventId: 'new-late', transcript: 'old session', isFinal: true }));
+      assert.doesNotMatch(h.text(), /old session/);
+      await act(async () => voiceButton(h, 'Cancel: discard').click());
+    }
+    assert.deepEqual(committed, []);
+  } finally { await h.cleanup(); }
+});
+
+test('R5A-01 workspace disabling stops browser engines while listening or confirming', async () => {
+  const fake = makeFakeRecognitionCtor(); let stops = 0, cancels = 0;
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor,
+    SpeechSynthesisUtterance: class { constructor(public text: string) {} },
+    speechSynthesis: { speak: () => {}, cancel: () => { cancels++; } } });
+  const h = await mount(<VoiceControlsWorkspace />);
+  try {
+    for (const confirming of [false, true]) {
+      await act(async () => click(h.dom, '#voice-controls-enabled'));
+      await act(async () => voiceButton(h, 'Start dictation').click());
+      const engine = fake.instances.at(-1)! as FakeRecognitionInstance & { stop: () => void };
+      engine.stop = () => { stops++; };
+      const oldResult = engine.onresult, oldError = engine.onerror;
+      if (confirming) await act(async () => engine.onresult?.({ results: [[{ transcript: 'pending' }]] }));
+      await act(async () => voiceButton(h, 'Read aloud').click());
+      const before = cancels;
+      await act(async () => click(h.dom, '#voice-controls-enabled'));
+      assert.equal(stops, confirming ? 2 : 1);
+      assert.equal(cancels, before + 1);
+      await act(async () => { oldResult?.({ results: [[{ transcript: 'late' }]] }); oldError?.({ error: 'not-allowed' }); });
+      await act(async () => click(h.dom, '#voice-controls-enabled'));
+      assert.doesNotMatch(h.text(), /Heard:|permission was denied/);
+      assert.equal((h.dom.window.document.querySelector('#voice-local-draft') as HTMLTextAreaElement).value, '');
+      await act(async () => click(h.dom, '#voice-controls-enabled'));
+    }
+  } finally { await h.cleanup(); restore(); }
+});
+
+test('R5A-02 result then natural end retains confirmation in 50 composed sessions; empty and error ends recover', async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  const h = await mount(<VoiceControlsWorkspace />);
+  try {
+    await act(async () => click(h.dom, '#voice-controls-enabled'));
+    for (let i = 0; i < 50; i++) {
+      await act(async () => voiceButton(h, 'Start dictation').click());
+      const engine = fake.instances.at(-1)!;
+      await act(async () => engine.onresult?.({ results: [[{ transcript: `words ${i}` }]] }));
+      await act(async () => engine.onend?.());
+      assert.match(h.text(), new RegExp(`Heard: words ${i}`));
+      assert.equal((h.dom.window.document.querySelector('#voice-local-draft') as HTMLTextAreaElement).value, '');
+      await act(async () => voiceButton(h, 'Confirm: use these words').click());
+      assert.equal((h.dom.window.document.querySelector('#voice-local-draft') as HTMLTextAreaElement).value, `words ${i}`);
+      await act(async () => voiceButton(h, 'Clear local draft').click());
+    }
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    await act(async () => fake.instances.at(-1)!.onresult?.({ results: [[{}], [{ transcript: '' }]] }));
+    await act(async () => fake.instances.at(-1)!.onend?.());
+    assert.match(h.text(), /cancelled/i);
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    await act(async () => fake.instances.at(-1)!.onerror?.({ error: 'not-allowed' }));
+    assert.match(h.text(), /permission was denied/);
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    await act(async () => voiceButton(h, 'Cancel: discard').click());
+    assert.equal((h.dom.window.document.querySelector('#voice-local-draft') as HTMLTextAreaElement).value, '');
+  } finally { await h.cleanup(); restore(); }
+});
+
+test('R5A-03 dictation moves owned focus to replacements without stealing focus elsewhere', async () => {
+  const rec = makeRecognition(), syn = makeSynthesis();
+  const h = await mount(<><input id='elsewhere' /><VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter} synthesis={syn.adapter} /></>);
+  try {
+    const doc = h.dom.window.document;
+    voiceButton(h, 'Start dictation').focus();
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    assert.ok(doc.activeElement === voiceButton(h, 'Stop listening'), 'focus reaches Stop listening');
+    await act(async () => rec.state.callbacks!.onEvent({ eventId: 'final', transcript: 'words', isFinal: true }));
+    voiceButton(h, 'Confirm: use these words').focus();
+    await act(async () => voiceButton(h, 'Confirm: use these words').click());
+    assert.ok(doc.activeElement === voiceButton(h, 'Start dictation'), 'focus reaches Start dictation');
+    doc.getElementById('elsewhere')!.focus();
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    assert.ok(doc.activeElement === doc.getElementById('elsewhere'), 'focus stays elsewhere');
+    await act(async () => voiceButton(h, 'Cancel: discard').click());
+    assert.ok(doc.activeElement === doc.getElementById('elsewhere'), 'focus stays elsewhere');
+  } finally { await h.cleanup(); }
+});
+
+test('R5A-01 adapter rejects captured result and error callbacks after stop and restart', async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  try {
+    const { recognition } = (await import('../private-app/app/voice-browser-adapters')).voiceBrowserAdaptersV1();
+    const events: VoiceTranscriptEventV1[] = [], errors: VoiceRecognitionErrorV1[] = [];
+    const callbacks = { onEvent: (e: VoiceTranscriptEventV1) => events.push(e), onError: (e: VoiceRecognitionErrorV1) => errors.push(e) };
+    recognition.start(callbacks);
+    const oldResult = fake.instances[0]!.onresult, oldError = fake.instances[0]!.onerror;
+    recognition.stop(); recognition.start(callbacks);
+    for (let i = 0; i < 50; i++) {
+      oldResult?.({ results: [[{ transcript: 'late' }]] }); oldError?.({ error: 'network' });
+    }
+    assert.equal(events.length, 0); assert.equal(errors.length, 0);
+    fake.instances[1]!.onresult?.({ results: [[{ transcript: 'current' }]] });
+    assert.equal(events[0]!.transcript, 'current');
+    recognition.stop();
+  } finally { restore(); }
+});
+
+test('R5A-01 stopped, cancelled, confirmed and unmounted sessions reject late speech', async () => {
+  for (const action of ['Stop listening', 'Cancel: discard', 'Confirm: use these words', 'unmount']) {
+    const rec = makeRecognition(), syn = makeSynthesis(); const committed: string[] = [];
+    const h = await mount(<VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter}
+      synthesis={syn.adapter} onTranscriptCommitted={t => committed.push(t)} />);
+    try {
+      await act(async () => voiceButton(h, 'Start dictation').click());
+      const old = rec.state.callbacks!;
+      if (action === 'Confirm: use these words') await act(async () => old.onEvent({ eventId: 'final', transcript: 'confirmed', isFinal: true }));
+      if (action === 'unmount') await h.unmountOnly();
+      else await act(async () => voiceButton(h, action).click());
+      const stops = rec.state.stops;
+      await act(async () => { old.onEvent({ eventId: 'late', transcript: 'late speech', isFinal: true }); old.onError('denied', 'late error'); });
+      assert.equal(rec.state.stops, stops, 'late errors cannot touch the stopped adapter');
+      assert.doesNotMatch(h.text(), /late speech|permission was denied/);
+      assert.deepEqual(committed, action === 'Confirm: use these words' ? ['confirmed'] : []);
+    } finally { await h.cleanup(); }
+  }
+});
+
+test('R5A-02 Stop listening keeps final words available for explicit confirmation', async () => {
+  const rec = makeRecognition(), syn = makeSynthesis(); const committed: string[] = [];
+  const h = await mount(<VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter}
+    synthesis={syn.adapter} onTranscriptCommitted={t => committed.push(t)} />);
+  try {
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    await act(async () => rec.state.callbacks!.onEvent({ eventId: 'final', transcript: 'review these words', isFinal: true }));
+    await act(async () => voiceButton(h, 'Stop listening').click());
+    assert.match(h.text(), /Heard: review these words/);
+    assert.equal(committed.length, 0);
+    await act(async () => voiceButton(h, 'Confirm: use these words').click());
+    assert.deepEqual(committed, ['review these words']);
+  } finally { await h.cleanup(); }
 });

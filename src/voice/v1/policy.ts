@@ -12,6 +12,7 @@ export const DEFAULT_VOICE_SETTINGS_V1: VoiceSettingsV1 = { enabled: false };
  * Secrets and hidden content are always refused — never read, never logged.
  */
 export function canReadAloudV1(content: ReadAloudContentV1): boolean {
+  if (!content || typeof content !== "object" || typeof content.text !== "string") return false;
   if (content.isSecret === true) return false;
   if (content.isHidden === true) return false;
   return content.text.trim().length > 0;
@@ -24,7 +25,10 @@ export function canReadAloudV1(content: ReadAloudContentV1): boolean {
 export function dedupeTranscriptEventsV1(events: VoiceTranscriptEventV1[]): VoiceTranscriptEventV1[] {
   const seen = new Set<string>();
   const out: VoiceTranscriptEventV1[] = [];
+  if (!Array.isArray(events)) return out;
   for (const event of events) {
+    if (!event || typeof event !== "object" || typeof event.eventId !== "string"
+      || typeof event.transcript !== "string" || typeof event.isFinal !== "boolean") continue;
     if (seen.has(event.eventId)) continue;
     seen.add(event.eventId);
     out.push(event);

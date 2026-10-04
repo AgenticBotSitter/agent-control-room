@@ -24,6 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { Client } from "pg";
+import { privilegeClassMarkerTables, revokeMarkerClassesSql } from "./support/privilege-class-markers";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivatePgDatabase } from "../src/web/v1/private-pg-database";
 import {
@@ -41,7 +42,7 @@ const BIN = CANDIDATE_BINS.find(dir => existsSync(join(dir, "initdb")) && exists
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
 // Reserved disposable-cluster lane: 56220-56229.
-const PORT = 56220;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 56220);
 const exec = promisify(execFile);
 const native = (name: string, args: string[]) => exec(join(BIN, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", LANG: "C", TMPDIR: run, NODE_ENV: "test" }, timeout: 120000, maxBuffer: 1 << 26 });
@@ -114,6 +115,12 @@ before(async () => {
     PASSWORD 'ccwrite'`);
   await admin.query(`GRANT ALL ON ALL TABLES IN SCHEMA public TO cc_writer`);
   await admin.query(`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO cc_writer`);
+  // Holding SELECT on a privilege-class marker table IS membership of that
+  // class, so GRANT ALL ON ALL TABLES has just made this fixture login a fleet
+  // gateway and a work-intake login. The guards would then refuse the
+  // coordination fixtures' own writes. Production reaches a marker only by
+  // inheriting the single group its role file names.
+  await admin.query(revokeMarkerClassesSql("cc_writer", await privilegeClassMarkerTables(ROOT)));
 
   writer = new Client(WRITER);
   await writer.connect();
@@ -191,7 +198,8 @@ async function refuses(promise: Promise<unknown>, code: "authentication_required
 test("coordination read: an owner identity reads the project page over a real cluster", async t => {
   if (needsPg) { t.skip(needsPg.skip); return; }
   const scope = { tenantId: TENANT_ID, workspaceId: WORKSPACE_ID };
-  const store = createProjectCoordinationCanonicalStoreAdapterV1({ database: web.client, tenantId: TENANT_ID });
+  const store = createProjectCoordinationCanonicalStoreAdapterV1({
+    database: web.client, tenantId: TENANT_ID, workspaceId: WORKSPACE_ID });
   const service = new ProjectCoordinationHttpService({ database: web.client, scope, clock: () => Date.now(), store });
   const page = await service.read(identity("owner"), PROJECT_ID);
   assert.equal(page.project.projectId, PROJECT_ID);
@@ -219,7 +227,8 @@ test("revocation between the setup and page transactions is refused", async t =>
     } as DatabaseClient);
   };
   const scope = { tenantId: TENANT_ID, workspaceId: WORKSPACE_ID };
-  const store = createProjectCoordinationCanonicalStoreAdapterV1({ database: web.client, tenantId: TENANT_ID });
+  const store = createProjectCoordinationCanonicalStoreAdapterV1({
+    database: web.client, tenantId: TENANT_ID, workspaceId: WORKSPACE_ID });
 
   // A session revoked in the gap is refused as authentication_required. The
   // fresh token is inserted by the setup transaction itself (first use), so

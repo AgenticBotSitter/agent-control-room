@@ -167,8 +167,30 @@ export function PanelHeading({ id, children, count }:
 /** The count pill on its own, for a panel whose heading is already composed. It
  * takes the number explicitly and has no zero default, so a panel that was never
  * read shows no count rather than an invented one. */
-export function PrivateCount({ value }: { value: number }) {
+export function PrivateCount({ value }: { value: number | string }) {
   return <span className="private-count">{value}</span>;
+}
+
+/**
+ * What a count of a PAGINATED read may honestly claim (R4U-11).
+ *
+ * `readTaskAttention` returns one bounded page plus a `nextCursor` when more
+ * exist, so `items.length` on a tenant with more attention than a page holds is
+ * a specific smaller number than the truth. The owner read "25" on Home and
+ * Morning while the header badge beside it said "25+" -- the same saved page,
+ * presented two different ways, on two screens read side by side.
+ *
+ * So the rule lives here rather than as a "+" typed at each call site: the
+ * honest claim is a function of the page, and three copies of that function
+ * would drift exactly the way the three copies of the bug did. A complete page
+ * gets NO "+", because a "+" there would claim work that does not exist.
+ *
+ * A cursor or an explicit omitted-record flag supplies the pagination evidence.
+ * Only a count is given this treatment. A count of a non-paginated read, or of
+ * anything the app did not read, keeps the plain `PrivateCount` above.
+ */
+export function pagedCount(count: number, more: string | boolean | null | undefined): string {
+  return more ? `${count}+` : `${count}`;
 }
 
 /** Recognises a `<PrivateCount>` child so `PanelHeading` can hoist it out of the
@@ -177,4 +199,9 @@ export function PrivateCount({ value }: { value: number }) {
  * author put it, and only the component is relocated. */
 function isPrivateCount(node: ReactNode): boolean {
   return isValidElement(node) && node.type === PrivateCount;
+}
+
+/** Preserve spelling and isolate direction without letting invisible overrides alter it. */
+export function OwnerName({ children }: { children: string }) {
+  return <bdi>{children.replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "")}</bdi>;
 }

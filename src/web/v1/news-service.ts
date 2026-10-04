@@ -14,6 +14,7 @@ import { PostgresNewsSourceSettings, newsSourceSettingSchema } from "../../proje
 import { appendAuditWith } from "../../audit/audit-store";
 import { PostgresNewsStoryArchives } from "../../project-adapters/news/v1/story-archives";
 import { PostgresArticleDetails } from "../../project-adapters/news/v1/article-store";
+import type { ProductConfigurationV1 } from "../../config/v1/product-configuration";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx),
   transaction: async work => work(tx), transactionWithPreCommitCheck: async (work, check) => {
@@ -26,14 +27,19 @@ export class WebNewsService {
   private readonly authority: WebSessionAuthority;
   private readonly projects: WebProjectService;
   private readonly key?: Uint8Array;
+  private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    options: { integrityKey?: Uint8Array; ideaIntegrityKey?: Uint8Array } = {}, clock: () => number = Date.now) {
+    options: { integrityKey?: Uint8Array; ideaIntegrityKey?: Uint8Array; productConfiguration?: Readonly<ProductConfigurationV1> } = {}, clock: () => number = Date.now) {
     this.authority = new WebSessionAuthority(db, scope, clock, "news");
-    this.projects = new WebProjectService(db, scope, clock, options.ideaIntegrityKey);
+    this.productConfiguration = options.productConfiguration;
+    this.projects = new WebProjectService(db, scope, clock, options.ideaIntegrityKey, undefined, options.productConfiguration);
     if (options.integrityKey !== undefined) {
       if (!(options.integrityKey instanceof Uint8Array) || options.integrityKey.length !== 32) throw new Error("news_key_invalid");
       this.key = Uint8Array.from(options.integrityKey);
     }
+  }
+  private requireAvailable(project: Awaited<ReturnType<WebProjectService["getView"]>>) {
+    if (this.productConfiguration && !project.presentation?.availableModules.includes("news")) throw new WebAccessError("not_found");
   }
   async sourceSettings(identity: VerifiedWebIdentity, projectId: string, after?: string) {
     if (!catalogProjectIdSchema.safeParse(projectId).success || after !== undefined && !catalogProjectIdSchema.safeParse(after).success)
@@ -41,6 +47,7 @@ export class WebNewsService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("projects.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
+      this.requireAvailable(project);
       if (!this.key) return { projectId, configured: false, sources: [], nextCursor: null, canEdit: false };
       const page = await new PostgresNewsSourceSettings(joined(tx), { ...this.scope, projectId }, this.key).list(after);
       return { ...page, projectId, configured: true, canEdit: project.lifecycle === "active" && actor.can("news.sources.manage", projectId, true) };
@@ -54,7 +61,7 @@ export class WebNewsService {
     if (!input.success || !catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
-      await this.projects.getViewInSession(tx, actor, projectId);
+      this.requireAvailable(await this.projects.getViewInSession(tx, actor, projectId));
       if (!this.key) throw new WebAccessError("not_found");
       const store = new PostgresArticleDetails(joined(tx), { ...this.scope, projectId }, this.key);
       const record = await store.get(input.data.storyId, input.data.storyDigest, input.data.detailDigest);
@@ -68,6 +75,7 @@ export class WebNewsService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("news.sources.manage", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
+      this.requireAvailable(project);
       if (!this.key || project.lifecycle !== "active") throw new WebAccessError("conflict");
       const settings = new PostgresNewsSourceSettings(joined(tx), { ...this.scope, projectId }, this.key);
       const { source, expectedRevision } = parsed.data, previous = await settings.get(source.id);
@@ -93,6 +101,7 @@ export class WebNewsService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
+      this.requireAvailable(project);
       if (!this.key) return { project, availability: "not_configured" as const, stories: [], nextCursor: null,
         observedAt: actor.now, canPrepare: false, canArchive: false, sources: [], sourcesNextCursor: null };
       const store = new PostgresNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
@@ -118,6 +127,7 @@ export class WebNewsService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("news.archive.manage", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
+      this.requireAvailable(project);
       if (!this.key || project.lifecycle !== "active") throw new WebAccessError("conflict");
       const store = new PostgresNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       if (!await store.getStory(input.data.storyId)) throw new WebAccessError("not_found");
@@ -141,6 +151,7 @@ export class WebNewsService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.propose", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
+      this.requireAvailable(project);
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
       if (!this.key) throw new Error("news_not_configured");
       const input = parsed.data;
@@ -154,7 +165,7 @@ export class WebNewsService {
       let draft;
       try { draft = newsResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
       return newsResearchPreviewSchema.parse({ projectId, storyId: story.storyId, storyDigest: story.storyDigest,
-        draft, saved: false, dispatch: "not_requested" });
+        proposal, draft, saved: false, dispatch: "not_requested" });
     });
   }
 }

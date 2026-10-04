@@ -27,6 +27,7 @@ export {
   sharedMemorySegments,
   shutdownLadder,
   shortSocketDirectories,
+  shortSocketRoot,
   socketClaimed,
   withRealPostgres,
 } from "./real-postgres";

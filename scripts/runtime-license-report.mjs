@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { collectLicenseEvidence } from './license-evidence.mjs';
 import { collectBundledRows, readExceptions } from './runtime-license-bundled-collector.mjs';
 import { buildInventoryDigestPayload, computeInventoryDigest } from './runtime-license-digest.mjs';
@@ -67,6 +67,6 @@ export function runtimeLicenseReport(input, repository = process.cwd()) {
     scope: 'prepared runtime root texts only; not complete distribution clearance',
     packages: results.length, missing: results.filter(value => value.status === 'missing_root_text').map(({ name, version }) => ({ name, version })), results };
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   console.log(JSON.stringify(runtimeLicenseReport(JSON.parse(fs.readFileSync('research/runtime-license-input.json', 'utf8'))), null, 2));
 }

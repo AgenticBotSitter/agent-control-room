@@ -1,0 +1,65 @@
+[
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "const [supported, setSupported] = useState(false);",
+    "replace": "const [supported, setSupported] = useState(typeof window !== \"undefined\" && \"serviceWorker\" in navigator && \"PushManager\" in window && \"Notification\" in window);",
+    "test": "node --import tsx --test --test-timeout=30000 tests/settings-hydration.test.tsx",
+    "why": "Browser-only capabilities must not add the retry button during initial hydration."
+  },
+  {
+    "file": "private-app/app/owner-web-push.tsx",
+    "find": "setSupported(\"serviceWorker\" in navigator && \"PushManager\" in window && \"Notification\" in window);",
+    "replace": "setSupported(!(\"serviceWorker\" in navigator && \"PushManager\" in window && \"Notification\" in window));",
+    "test": "node --import tsx --test --test-timeout=30000 tests/settings-hydration.test.tsx",
+    "why": "Supported and unsupported notification environments must settle to their actual capability status."
+  },
+  {
+    "file": "docs/OWNER_GUIDE_MAC.md",
+    "find": "**Rejected by you**",
+    "replace": "**Cancelled by you**",
+    "test": "node --import tsx --test --test-timeout=30000 tests/owner-guide-status-labels.test.tsx",
+    "why": "Every corrected guide must reject an outcome label the product does not render."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "**Rejected by you**",
+    "replace": "**Cancelled by you**",
+    "test": "node --import tsx --test --test-timeout=30000 tests/owner-guide-status-labels.test.tsx",
+    "why": "Every corrected guide must reject an outcome label the product does not render."
+  },
+  {
+    "file": "docs/FLEET_GUIDE.md",
+    "find": "**Rejected by you**",
+    "replace": "**Cancelled by you**",
+    "test": "node --import tsx --test --test-timeout=30000 tests/owner-guide-status-labels.test.tsx",
+    "why": "Every corrected guide must reject an outcome label the product does not render."
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "if (code !== \"ESRCH\" && code !== \"EPERM\") throw safe(error);",
+    "replace": "if (code !== \"ESRCH\") throw safe(error);",
+    "test": "node --import tsx --test --test-timeout=30000 --test-name-pattern='cleanup tolerates EPERM|cleanup deadline signal failures' tests/result-upload-staging.test.ts",
+    "why": "Inject EPERM through the real signal seam after actual cleanup; the helper is reaped and unrelated bytes survive."
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "timer = setTimeout(() => { try { kill(\"SIGKILL\"); } catch { /* the close/exit result decides */ } },",
+    "replace": "timer = setTimeout(() => { kill(\"SIGKILL\"); },",
+    "test": "node --import tsx --test --test-timeout=30000 --test-name-pattern='cleanup tolerates EPERM|cleanup deadline signal failures' tests/result-upload-staging.test.ts",
+    "why": "Inject EIO at the deadline signal call so removing the timer catch produces an uncaught exception independently of the EPERM guard."
+  },
+  {
+    "file": "private-app/app/owner-status-labels.ts",
+    "find": "ownerRejected: \"Rejected by you\"",
+    "replace": "ownerRejected: \"Cancelled by you\"",
+    "test": "node --import tsx --test --test-timeout=30000 tests/owner-guide-status-labels.test.tsx",
+    "why": "Changing the shared product outcome label must invalidate the guide contract, even when the renderer and catalog still agree."
+  },
+  {
+    "file": "private-app/app/owner-status-labels.ts",
+    "find": "cancelled: \"Job cancelled\"",
+    "replace": "cancelled: \"Cancelled\"",
+    "test": "node --import tsx --test --test-timeout=30000 tests/owner-guide-status-labels.test.tsx",
+    "why": "Changing the shared product outcome label must invalidate the guide contract, even when the renderer and catalog still agree."
+  }
+]

@@ -1,0 +1,18 @@
+BEGIN;
+REVOKE SELECT ON control_service_incident_heads, control_service_incidents FROM control_room_task_coordinator;
+REVOKE INSERT (tenant_id,correlation_key), UPDATE (next_generation)
+  ON control_service_incident_heads FROM control_room_task_coordinator;
+REVOKE INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at),
+  UPDATE (severity,safe_reason_code,safe_remedy_code,state,last_observed_at,resolved_at)
+  ON control_service_incidents FROM control_room_task_coordinator;
+REVOKE UPDATE (version,last_started_at,last_completed_at,state)
+  ON control_supervisor_loop_heads FROM control_room_task_coordinator;
+REVOKE SELECT, INSERT ON control_supervisor_loop_heads, control_supervisor_health_observations
+  FROM control_room_task_coordinator;
+DROP INDEX control_supervisor_health_unhealthy;
+DROP TRIGGER control_supervisor_health_observations_no_truncate ON control_supervisor_health_observations;
+DROP TRIGGER control_supervisor_health_observations_immutable ON control_supervisor_health_observations;
+DROP FUNCTION reject_supervisor_health_observation_mutation();
+DROP TABLE control_supervisor_health_observations;
+DROP TABLE control_supervisor_loop_heads;
+COMMIT;

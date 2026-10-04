@@ -135,7 +135,7 @@ test('owned private Codex construction is inert in initial and recover modes and
     async close() { initialEvents.push('acquisition-close'); } };
   const initialOwner = await openOwnedPrivateCodexConfigurationV1(initialInput(initial.paths), initialPorts(),
     initialAcquisition, new AbortController().signal);
-  assert.deepEqual(Object.keys(initialOwner).sort(), ['bindDelivery', 'close', 'harness', 'mode', 'run']);
+  assert.deepEqual(Object.keys(initialOwner).sort(), ['bindDelivery', 'close', 'harness', 'mode', 'publishBuildPullRequest', 'run']);
   assert.deepEqual(initialEvents, []); await initialOwner.close(); await initialOwner.close();
   assert.deepEqual(initialEvents, ['acquisition-close']);
   await assert.rejects(initialOwner.run(new AbortController().signal), /private_codex_configuration_unavailable/);

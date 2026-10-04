@@ -25,6 +25,38 @@ export const MEMBERSHIPS_SNAPSHOT_SQL =
    WHERE member.rolname LIKE 'control@_room@_%' ESCAPE '@' OR role.rolname LIKE 'control@_room@_%' ESCAPE '@'
    ORDER BY 1, 2`;
 
+// R5B-10: the roles that own a DEFAULT ACL, which is what `pg_dump` replays as
+// `ALTER DEFAULT PRIVILEGES FOR ROLE <name>`.
+//
+// WHY IT EXISTS. A default ACL is a per-ROLE setting (`pg_default_acl.defaclrole`),
+// so the role that ISSUED the `ALTER DEFAULT PRIVILEGES` owns it — and that is
+// whichever role the release's own role file happened to run as. The eight
+// Mac-local privilege files run as the BOOTSTRAP SUPERUSER
+// (`scripts/mac-local/narrow-role-provision.mjs` and `apply-release-schema.mjs`
+// both apply them as `postgres`), and a bare `ALTER DEFAULT PRIVILEGES … FROM
+// PUBLIC` therefore records the SUPERUSER as the owner. MEASURED on PostgreSQL
+// 17: on a cluster whose superuser is `fixture_admin`, applying
+// `db/roles/private_web_roles.sql` as that superuser left `fixture_admin` as the
+// defacl owner, and the dump carried a `DEFAULT ACL` TOC entry for it.
+//
+// `pg_dump` then emits that entry as `ALTER DEFAULT PRIVILEGES FOR ROLE
+// fixture_admin`, and `pg_restore` answers `role "fixture_admin" does not exist`
+// on a target whose superuser is named `postgres`. Harmless on the Mac install,
+// where both sides are `postgres`; it bites on the planned managed-VPS move,
+// where the superuser has whatever name the provider chose.
+//
+// The dump is not optional — a restore must reproduce what was backed up — so
+// the role is recorded here, from the SAME snapshot as every other piece of
+// evidence, and the restore creates it before `pg_restore` replays the
+// statement. Restoring the backup's own record is the same rule the restore
+// already follows for the canonical owner and the recorded database owner.
+//
+// Cluster-global (`pg_default_acl` has no per-database namespace), so this is
+// the whole cluster's default ACLs, exactly like `ROLES_SNAPSHOT_SQL`.
+export const DEFAULT_ACL_ROLES_SNAPSHOT_SQL =
+  `SELECT pg_get_userbyid(defaclrole) AS owner, defaclobjtype::text AS objectType
+   FROM pg_default_acl ORDER BY 1, 2`;
+
 /**
  * Accepts a postgres URL string (operator CLI) or a node-postgres config object
  * (tests and embedding tools). Keyword-style `host=… dbname=…` strings are NOT
@@ -83,7 +115,40 @@ export async function readSchemaDigest(client) {
  * @param {string | Record<string, any>} target
  */
 export function targetCli(target) {
-  if (typeof target === "string") return { args: ["--dbname", target], env: {} };
+  if (typeof target === "string") {
+    if (!/^\w+:\/\//u.test(target.trim())) {
+      const config = parseKeywordValueTarget(target);
+      const password = config.password;
+      delete config.password;
+      const text = Object.entries(config).map(([key, value]) =>
+        `${key === "database" ? "dbname" : key}='${String(value).replace(/\\/gu, "\\\\").replace(/'/gu, "\\'")}'`).join(" ");
+      return { args: ["--dbname", text], env: password === undefined ? {} : { PGPASSWORD: String(password) } };
+    }
+    // Preserve libpq's URI syntax, including multiple hosts and encoded socket
+    // paths. A web URL parser rejects those; query '+' is literal in libpq.
+    const match = /^(postgres(?:ql)?:\/\/)([^/?#]*)(.*)$/u.exec(target.trim());
+    if (!match) throw new Error("target_connection_string_invalid");
+    let [, prefix, authority, suffix] = match, password;
+    const decode = value => {
+      try { return decodeURIComponent(value); } catch { throw new Error("target_connection_string_invalid"); }
+    };
+    const at = authority.lastIndexOf("@"), colon = authority.slice(0, at).indexOf(":");
+    if (at >= 0 && colon >= 0) {
+      password = decode(authority.slice(colon + 1, at));
+      authority = authority.slice(0, colon) + authority.slice(at);
+    }
+    const query = suffix.indexOf("?");
+    if (query >= 0) {
+      const kept = suffix.slice(query + 1).split("&").filter(part => {
+        const equals = part.indexOf("=");
+        if (equals < 0 || decode(part.slice(0, equals)) !== "password") return true;
+        password = decode(part.slice(equals + 1));
+        return false;
+      });
+      suffix = suffix.slice(0, query) + (kept.length ? "?" + kept.join("&") : "");
+    }
+    return { args: ["--dbname", prefix + authority + suffix], env: password === undefined ? {} : { PGPASSWORD: password } };
+  }
   const { host, port, database, user, password } = target;
   return { args: ["-h", String(host), "-p", String(port), "-U", String(user), "-d", String(database)],
     env: password === undefined ? {} : { PGPASSWORD: String(password) } };

@@ -56,6 +56,19 @@ export function buildIdeaLabFixtureV1(): IdeaLabFixtureV1 {
     buildIdeaLabContributionV1(session, { participantId: "bot:market", round: 1, safeOpinion: "The market is crowded with generic assistants, but a narrow operations service can differentiate through trade-specific intake and measurable recovery.", opportunityCode: "vertical_focus", primaryRiskCode: "crowded_market", suggestedExperiment: "Compare five existing services and define one workflow they do not complete end to end.", confidencePercent: 74, contributedAt: "2026-08-31T16:02:00.000Z" }),
     buildIdeaLabContributionV1(session, { participantId: "bot:skeptic", round: 1, safeOpinion: "Bad estimates or invented commitments could damage trust quickly, so the first version must never quote price or schedule work without owner confirmation.", opportunityCode: "human_control", primaryRiskCode: "unsafe_commitment", suggestedExperiment: "Run a red-team script against fifty ambiguous customer messages and require safe escalation every time.", confidencePercent: 91, contributedAt: "2026-08-31T16:03:00.000Z" }),
     buildIdeaLabContributionV1(session, { participantId: "bot:operations", round: 1, safeOpinion: "A service is workable if every request becomes a visible queue item with an owner, a deadline, and a complete audit trail.", opportunityCode: "managed_queue", primaryRiskCode: "service_overhead", suggestedExperiment: "Operate one synthetic week and measure minutes of human review per recovered lead.", confidencePercent: 79, contributedAt: "2026-08-31T16:04:00.000Z" }),
+    // Round 2. The session declares maxRounds 2, so the fixture owes eight
+    // contributions, one per participant per round. It previously supplied only
+    // the four round-1 ones and still built a synthesis, because the contract
+    // builder asked only that every participant appear at least once. That
+    // fixture is the reachability evidence QA cited for M3-IDEA-U02: a recap
+    // covering half the planned discussion, with an accepted owner decision on
+    // it. The builder now requires the complete tuple set, and the fixture
+    // supplies it - these round-2 opinions are the same participants narrowing
+    // the same first-round experiments, not new claims.
+    buildIdeaLabContributionV1(session, { participantId: "bot:customer", round: 2, safeOpinion: "After the interviews, the callback promise is only credible if a human can take over mid-conversation, so the first release must show that handoff rather than promise it.", opportunityCode: "lead_response", primaryRiskCode: "trust_gap", suggestedExperiment: "Run five live handoff drills and record the time from customer request to a named human taking the conversation.", confidencePercent: 86, contributedAt: "2026-08-31T16:11:00.000Z" }),
+    buildIdeaLabContributionV1(session, { participantId: "bot:market", round: 2, safeOpinion: "The differentiator is the recovery measurement rather than the assistant itself, because generic assistants are already widely available and the retained evidence is what a trade owner can act on.", opportunityCode: "vertical_focus", primaryRiskCode: "crowded_market", suggestedExperiment: "Publish the missed-lead measurement for ten anonymised trades and confirm owners will pay for continued reporting.", confidencePercent: 79, contributedAt: "2026-08-31T16:12:00.000Z" }),
+    buildIdeaLabContributionV1(session, { participantId: "bot:skeptic", round: 2, safeOpinion: "The remaining risk is an invented commitment in an estimate, so the service must never state a price or a schedule the owner has not already recorded.", opportunityCode: "human_control", primaryRiskCode: "unsafe_commitment", suggestedExperiment: "Red-team one hundred ambiguous messages and require a refusal or an owner confirmation on every one.", confidencePercent: 92, contributedAt: "2026-08-31T16:13:00.000Z" }),
+    buildIdeaLabContributionV1(session, { participantId: "bot:operations", round: 2, safeOpinion: "Operating cost is the constraint that decides scope, so each retained item needs a stated review budget and an owner before it is accepted into the queue.", opportunityCode: "managed_queue", primaryRiskCode: "service_overhead", suggestedExperiment: "Set a per-item review budget and measure the share of items that exceed it over one synthetic month.", confidencePercent: 81, contributedAt: "2026-08-31T16:14:00.000Z" }),
   ];
 
   const synthesis = buildIdeaLabSynthesisV1(session, contributions, {
@@ -68,7 +81,9 @@ export function buildIdeaLabFixtureV1(): IdeaLabFixtureV1 {
     executiveSummary: "The panel sees a promising narrow service if it begins with lead recovery, keeps the business owner in control, and proves the workflow before broader automation.",
     nextExperiment: "Complete ten owner interviews and a fifty-message safety rehearsal, then decide whether to run a two-customer concierge pilot.",
     dissentingPerspectiveCodes: ["unsafe_commitment", "service_overhead"],
-    synthesizedAt: "2026-08-31T16:06:00.000Z",
+    // After the LAST contribution: the recap cannot predate evidence it summarises,
+    // and round 2 now runs to 16:14.
+    synthesizedAt: "2026-08-31T16:20:00.000Z",
   });
 
   const decision = buildIdeaLabDecisionV1(session, synthesis, contributions, {
@@ -83,7 +98,8 @@ export function buildIdeaLabFixtureV1(): IdeaLabFixtureV1 {
       projectKind: "business_validation",
       priority: 72,
     },
-    decidedAt: "2026-08-31T16:08:00.000Z",
+    // After the recap it decides on, which is now stamped 16:20.
+    decidedAt: "2026-08-31T16:25:00.000Z",
   });
 
   const project: ProjectSnapshotMaterialV1 = {

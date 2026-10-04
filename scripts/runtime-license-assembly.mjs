@@ -4,8 +4,29 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runtimeLicenseReport } from './runtime-license-report.mjs';
 import { collectLicenseEvidence } from './license-evidence.mjs';
+import { collectBundledRows } from './runtime-license-bundled-collector.mjs';
 import { assertInsideRepository } from './runtime-license-repository-guard.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+
+export function findRetainedMissingRootEvidence(record, bundledRows) {
+  if (!record || typeof record.name !== 'string' || typeof record.version !== 'string'
+    || !Array.isArray(bundledRows)) return undefined;
+  return bundledRows.find(row => /^third_party\/[^/]+$/.test(row.root)
+    && row.provenance.source === `npm:${record.name}@${record.version}`
+    && typeof row.provenance.distributionIntegrity === 'string'
+    && row.provenance.distributionIntegrity.length > 0
+    && typeof row.provenance.qualification === 'string'
+    && row.provenance.qualification.length > 0
+    && row.evidenceFiles.length > 0
+    && row.mismatches.length === 0);
+}
+
+export function assertRetainedAttachments(attachments, expectedAttachments) {
+  assert.deepEqual(
+    attachments.map(({ base64, ...metadata }) => metadata), expectedAttachments,
+    'retained license evidence changed',
+  );
+}
 
 /** Current-platform root-text assembly. Not a bundle/vendor/asset clearance. */
 export function assembleRuntimeLicenses(repository = process.cwd()) {
@@ -16,9 +37,10 @@ export function assembleRuntimeLicenses(repository = process.cwd()) {
   const report = runtimeLicenseReport(json('research/runtime-license-input.json'), repository);
   assert.deepEqual(report, json('research/runtime-license-report.json'), 'license report changed; review before assembly');
   const readme = json('research/runtime-license-exceptions.json').entries;
+  const bundledRows = collectBundledRows(repository);
   const entries = report.results.map(record => {
     let directory = path.join(repository, record.path), root = path.join(repository, 'node_modules');
-    let provenance = 'installed_root_text', qualification = null, expected;
+    let provenance = 'installed_root_text', qualification = null, expected, expectedAttachments;
     if (record.status === 'missing_root_text') {
       const exception = readme.find(value => value.name === record.name && value.version === record.version);
       if (exception) {
@@ -46,12 +68,20 @@ export function assembleRuntimeLicenses(repository = process.cwd()) {
         directory = path.join(repository, 'third_party/nodable-entities');
         expected = '750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40';
         provenance = 'pinned_upstream_matching_code'; qualification = 'source manifest 2.2.0 differs from installed 3.0.0; not resolved';
-      } else throw new Error('license_exception_missing');
+      } else {
+        const retained = findRetainedMissingRootEvidence(record, bundledRows);
+        if (!retained) throw new Error('license_exception_missing');
+        directory = path.join(repository, retained.root);
+        expectedAttachments = retained.evidenceFiles;
+        provenance = 'pinned_npm_release_integrity';
+        qualification = retained.provenance.qualification;
+      }
       root = path.join(repository, 'third_party');
     }
     const attachments = collectLicenseEvidence(directory, root);
     assert.ok(attachments.length, 'license text missing');
     if (expected) { assert.equal(attachments.length, 1); assert.equal(attachments[0].sha256, expected); }
+    else if (expectedAttachments) assertRetainedAttachments(attachments, expectedAttachments);
     else assert.deepEqual(attachments.map(({ base64, ...metadata }) => metadata), record.attachments);
     return { name: record.name, version: record.version, path: record.path, provenance, qualification, attachments };
   });

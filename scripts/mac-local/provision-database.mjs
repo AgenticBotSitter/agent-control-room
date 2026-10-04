@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /**
  * Owner-authorized Mac-local database provisioner.
  *
@@ -12,7 +13,7 @@
  * Re-runs reuse protected password files, so provisioning converges.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -52,7 +53,9 @@ export function renewRetainedWorkIntakeCredentialsV1(existing, prospective, now)
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
-  results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" });
+  results: "control_room_results", publisher: "control_room_publisher",
+  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker",
+  fleetGateway: "control_room_fleet", fleetOwner: "control_room_fleet_owner" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
   scheduler: "control_room_scheduler", workIntake: "control_room_work_intake_agent" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
@@ -65,6 +68,16 @@ const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 // has a slightly shorter independent deadline so a dropped SSH client cannot
 // leave a second password-changing provision running remotely.
 const remoteProvisionTimeoutMs = 5 * 60_000;
+let upgradeHandoffTail = Promise.resolve();
+
+async function serializeUpgradeHandoffV1(operation) {
+  const previous = upgradeHandoffTail;
+  let release;
+  upgradeHandoffTail = new Promise(resolveTail => { release = resolveTail; });
+  await previous;
+  try { return await operation(); }
+  finally { release(); }
+}
 
 function usage() {
   return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST --work-intake-cli-worker codex|claude-code|hermes [--work-intake-project PROJECT_ID ...] [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
@@ -118,6 +131,22 @@ async function writePrivate(path, content) {
     await chmod(path, privateFileMode);
   } finally {
     try { await unlink(temporary); } catch {}
+  }
+}
+
+/** Creates the independent readiness key once. Re-provisioning deliberately
+ * preserves it, so an in-flight host and its launcher retain one identity. */
+export async function ensureHealthProbeKeyV1(protectedRoot) {
+  const serviceRoot = join(protectedRoot, "service");
+  await privateDirectory(serviceRoot);
+  const path = join(serviceRoot, "health-probe.key");
+  try {
+    const handle = await open(path, "wx", privateFileMode);
+    try { await handle.writeFile(`${randomBytes(32).toString("base64url")}\n`, "utf8"); }
+    finally { await handle.close(); }
+    await chmod(path, privateFileMode);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
   }
 }
 
@@ -215,8 +244,12 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
     || roles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
     || roles.web.username !== roleNames.web || roles.coordinator.username !== roleNames.coordinator
     || roles.results.username !== roleNames.results || roles.publisher.username !== roleNames.publisher
+    || roles.agentReviewer.username !== roleNames.agentReviewer
     || roles.queueWorker.username !== roleNames.queueWorker
-    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.queueWorker].some(role => role.database !== "control_room")
+    || roles.fleetGateway && roles.fleetGateway.username !== roleNames.fleetGateway
+    || roles.fleetOwner && roles.fleetOwner.username !== roleNames.fleetOwner
+    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.agentReviewer, roles.queueWorker]
+      .some(role => role.database !== "control_room")
     || (intake !== undefined && (intake.database.database !== "control_room"
       || intake.database.username !== bootstrapRoles.workIntake)))
     throw new Error("provision_existing_configuration_refused");
@@ -225,7 +258,10 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
     privateEndpoint: endpoint });
   const nextMacDatabase = update(mac.database);
   const nextRoleConfigurations = { web: update(roles.web), coordinator: update(roles.coordinator),
-    results: update(roles.results), publisher: update(roles.publisher), queueWorker: update(roles.queueWorker) };
+    results: update(roles.results), publisher: update(roles.publisher), agentReviewer: update(roles.agentReviewer),
+    queueWorker: update(roles.queueWorker),
+    ...(roles.fleetGateway && roles.fleetOwner
+      ? { fleetGateway: update(roles.fleetGateway), fleetOwner: update(roles.fleetOwner) } : {}) };
   const nextIntakeDatabase = intake === undefined ? undefined : update(intake.database);
   captureMacLocalProtectedConfigurationV1({ ...macOriginal, database: nextMacDatabase });
   captureMacLocalDatabaseRolesV1({ ...rolesOriginal, ...nextRoleConfigurations });
@@ -482,7 +518,8 @@ async function existingUpgradeConfiguration(protectedRoot) {
   const oldRoles = await readProtectedJson(roleFile);
   const existingNames = ["schema", "web", "coordinator", "results", "queueWorker"];
   if (oldRoles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
-    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher"].includes(key))
+    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher", "agentReviewer", "fleetGateway", "fleetOwner"].includes(key))
+    || (Object.hasOwn(oldRoles, "fleetGateway") !== Object.hasOwn(oldRoles, "fleetOwner"))
     || existingNames.some(key => !Object.hasOwn(oldRoles, key))) throw new Error("upgrade_role_config_refused");
   const sameEndpoint = role => role.host === mac.database.host && role.port === mac.database.port
     && role.database === mac.database.database && role.majorVersion === mac.database.majorVersion
@@ -502,8 +539,21 @@ async function existingUpgradeConfiguration(protectedRoot) {
     if (publisher.username !== roleNames.publisher || publisher.database !== "control_room" || !sameEndpoint(publisher)
       || publisher.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`)))
       throw new Error("upgrade_role_config_refused");
-    captureMacLocalDatabaseRolesV1(oldRoles);
   }
+  if (oldRoles.agentReviewer) {
+    const reviewer = validatePrivatePostgresConfiguration(oldRoles.agentReviewer);
+    if (reviewer.username !== roleNames.agentReviewer || reviewer.database !== "control_room" || !sameEndpoint(reviewer)
+      || reviewer.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.agentReviewer}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  for (const [key, username] of [["fleetGateway", roleNames.fleetGateway], ["fleetOwner", roleNames.fleetOwner]]) {
+    if (!oldRoles[key]) continue;
+    const fleetRole = validatePrivatePostgresConfiguration(oldRoles[key]);
+    if (fleetRole.username !== username || fleetRole.database !== "control_room" || !sameEndpoint(fleetRole)
+      || fleetRole.password !== await readPrivatePassword(join(passwordRoot, `${username}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  if (oldRoles.publisher && oldRoles.agentReviewer) captureMacLocalDatabaseRolesV1(oldRoles);
   let workIntake;
   try { workIntake = await readProtectedJson(join(configRoot, "work-intake-server.json")); }
   catch (error) { if ((error && typeof error === "object" && error.code) !== "ENOENT") throw error; }
@@ -518,8 +568,9 @@ async function existingUpgradeConfiguration(protectedRoot) {
 
 /** Builds one bearer client per roster worker, reusing a client already on
  * disk so an interrupted finish converges instead of rotating secrets on
- * every retry. Read-only: the caller writes the returned clients once every
- * other check for this run has passed. */
+ * every retry. `created` is true only for a secret minted by this call, which
+ * is what tells a repair apart from a reuse. Read-only: the caller writes the
+ * returned clients once every other check for this run has passed. */
 async function workIntakeRosterClientsV1(clientRoot, workers) {
   const clients = [];
   for (const worker of workers) {
@@ -527,9 +578,10 @@ async function workIntakeRosterClientsV1(clientRoot, workers) {
     let client;
     try { client = captureWorkIntakeClientConfigurationV1(await readProtectedJson(path)); }
     catch (error) { if (error?.code !== "ENOENT") throw error; }
+    const created = client === undefined;
     client ??= captureWorkIntakeClientConfigurationV1({ schema: WORK_INTAKE_CLIENT_CONFIGURATION_V1,
       origin: "http://127.0.0.1:3211", bearerSecret: newPassword() });
-    clients.push({ worker, client });
+    clients.push({ worker, client, created });
   }
   return clients;
 }
@@ -545,14 +597,49 @@ function workIntakeRosterCredentialsV1(clients, now) {
 }
 
 /** A login the role manifest marks `newLogin: true` is "missing" until its own
- * local record exists: `database-roles.json`'s `publisher` entry, or a
- * `work-intake-server.json` at all. Both are checked here, in the one place
- * that decides what `--prepare`/`--finish` still have to do. */
+ * local record exists: `database-roles.json`'s `publisher` or `agentReviewer`
+ * entry, or a `work-intake-server.json` at all. All are checked here, in the
+ * one place that decides what `--prepare`/`--finish` still have to do. */
 function missingNewLoginRolesV1({ oldRoles, workIntake }) {
   const missing = [];
   if (!oldRoles.publisher) missing.push(roleNames.publisher);
+  if (!oldRoles.agentReviewer) missing.push(roleNames.agentReviewer);
   if (workIntake === undefined) missing.push(bootstrapRoles.workIntake);
+  if (!oldRoles.fleetGateway) missing.push(roleNames.fleetGateway);
+  if (!oldRoles.fleetOwner) missing.push(roleNames.fleetOwner);
   return missing;
+}
+
+/** Recreates the per-worker bearer client files an interrupted finish left
+ * behind, and re-points the intake record's credentials at them. Runs on every
+ * finish whose logins already exist, so the retry after a kill is the same
+ * command the owner already knows; when there is nothing to recreate it
+ * returns `nothingToFinish` without writing.
+ *
+ * It acts only on a record already bound to this Mac's enabled roster, the
+ * same condition `verifyIntakeRoster` checks before the host will start. A
+ * record that fails that check is the owner's own state -- an older record with
+ * no roster, or one naming a worker this Mac has not enabled -- and a finish
+ * leaves it exactly as it found it rather than rewriting credentials nobody
+ * asked it to change. A client file that survives is never re-minted, so its
+ * secret, and the digest the server already holds for it, both stand. */
+async function repairWorkIntakeClientsV1({ configRoot, workIntake, workers, mainCommit }) {
+  const done = { finished: true, mainCommit, nothingToFinish: true };
+  if (workIntake === undefined) return done;
+  const roster = new Map(workers.map(worker => [worker.workerId, worker.kind]));
+  if (workIntake.credentials.length !== roster.size
+    || workIntake.credentials.some(entry => roster.get(entry.workerId) !== entry.workerKind)) return done;
+  const clientRoot = join(configRoot, "work-intake-clients");
+  await privateDirectory(clientRoot);
+  const clients = await workIntakeRosterClientsV1(clientRoot, workers);
+  const missing = clients.filter(({ created }) => created);
+  if (!missing.length) return done;
+  for (const { worker, client } of missing)
+    await writePrivate(join(clientRoot, workIntakeClientFileNameV1(worker.workerId)), `${JSON.stringify(client)}\n`);
+  const repaired = captureWorkIntakeServerConfigurationV1({ ...workIntake,
+    credentials: workIntakeRosterCredentialsV1(clients, new Date()) });
+  await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(repaired)}\n`);
+  return { finished: true, mainCommit, repairedIntakeClients: missing.map(({ worker }) => worker.workerId).sort() };
 }
 
 export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMainCommit) {
@@ -579,23 +666,36 @@ export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMai
  * apply step's login-code reader accepts; only that code, never a password,
  * leaves the protected root. Nothing is missing on a later upgrade, so a
  * repeat run needs no code at all. */
-export async function prepareMacLocalDatabaseUpgradeV1(options) {
+async function prepareMacLocalDatabaseUpgradeInnerV1(options) {
   const { configRoot, passwordRoot, oldRoles, workIntake } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   if (!/^[a-f0-9]{40}$/u.test(mainCommit)) throw new Error("upgrade_main_commit_refused");
   const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
   if (!missing.length) return { mainCommit, nothingToPrepare: true };
+  const preparedFile = join(configRoot, "database-upgrade-prepare.json");
+  let retained;
+  try { retained = await readProtectedJson(preparedFile); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
   const logins = {}, codes = {};
   for (const role of missing) {
     const password = await privateText(join(passwordRoot, `${role}.txt`), newPassword);
-    const salt = randomBytes(16);
+    const retainedEntry = retained?.schema === "control-room.mac-database-upgrade-prepare/v2"
+      && retained.mainCommit === mainCommit && retained.logins && typeof retained.logins === "object"
+      ? retained.logins[role] : undefined;
+    const retainedSalt = typeof retainedEntry?.salt === "string" && /^[A-Za-z0-9+/=]{24}$/u.test(retainedEntry.salt)
+      ? Buffer.from(retainedEntry.salt, "base64") : undefined;
+    const salt = retainedSalt?.length === 16 ? retainedSalt : randomBytes(16);
     const verifier = postgresScramVerifierV1(password, salt);
     logins[role] = { salt: salt.toString("base64"), verifierDigest: createHash("sha256").update(verifier).digest("hex") };
     codes[role] = verifier;
   }
-  await writePrivate(join(configRoot, "database-upgrade-prepare.json"),
+  await writePrivate(preparedFile,
     `${JSON.stringify({ schema: "control-room.mac-database-upgrade-prepare/v2", mainCommit, logins })}\n`);
   return { mainCommit, code: JSON.stringify(codes) };
+}
+
+export function prepareMacLocalDatabaseUpgradeV1(options) {
+  return serializeUpgradeHandoffV1(() => prepareMacLocalDatabaseUpgradeInnerV1(options));
 }
 
 async function verifyRoleLogin(configuration, expectedUsername) {
@@ -618,12 +718,20 @@ async function verifyRoleLogin(configuration, expectedUsername) {
  * local record is written, so a record is never created for a login that
  * cannot actually be reached yet. Roles already finished (by a previous,
  * interrupted run) are left alone: only the roles still missing are read out
- * of the prepared record, so a partial retry converges instead of refusing. */
-export async function finishMacLocalDatabaseUpgradeV1(options) {
+ * of the prepared record, so a partial retry converges instead of refusing.
+ *
+ * The work-intake client files are written BEFORE `work-intake-server.json`,
+ * never after. The server record holds only the secrets' digests, so it is
+ * the file whose presence says the intake login is "finished"; if it landed
+ * first and the process died, every worker would be unable to sign in. With
+ * that order, a kill in between leaves a record that names digests nothing on
+ * disk matches, which `repairWorkIntakeClientsV1` below mints and repairs on
+ * the next run of this same command. */
+async function finishMacLocalDatabaseUpgradeInnerV1(options) {
   const { configRoot, passwordRoot, roleFile, oldRoles, workIntake, workers } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
-  if (!missing.length) return { finished: true, mainCommit, nothingToFinish: true };
+  if (!missing.length) return await repairWorkIntakeClientsV1({ configRoot, workIntake, workers, mainCommit });
   const preparedFile = join(configRoot, "database-upgrade-prepare.json");
   let prepared;
   try { prepared = await readProtectedJson(preparedFile); }
@@ -654,6 +762,19 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
     await verify(publisher, roleNames.publisher);
     nextRoles = { ...nextRoles, publisher };
   }
+  if (missing.includes(roleNames.agentReviewer)) {
+    const agentReviewer = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+      username: roleNames.agentReviewer, password: passwords[roleNames.agentReviewer] });
+    await verify(agentReviewer, roleNames.agentReviewer);
+    nextRoles = { ...nextRoles, agentReviewer };
+  }
+  for (const [key, role] of [["fleetGateway", roleNames.fleetGateway], ["fleetOwner", roleNames.fleetOwner]]) {
+    if (!missing.includes(role)) continue;
+    const configuration = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+      username: role, password: passwords[role] });
+    await verify(configuration, role);
+    nextRoles = { ...nextRoles, [key]: configuration };
+  }
   if (missing.includes(bootstrapRoles.workIntake)) {
     const database = validatePrivatePostgresConfiguration({ ...oldRoles.web,
       username: bootstrapRoles.workIntake, password: passwords[bootstrapRoles.workIntake] });
@@ -670,11 +791,19 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
     await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
   }
   if (nextWorkIntake !== workIntake) {
-    await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(nextWorkIntake)}\n`);
+    // Client files first: `work-intake-server.json` is the file whose presence
+    // makes the intake login look finished, so it must never be the first of
+    // the two to land. A kill in between then leaves a re-run that mints the
+    // missing clients again, which is a no-op for a file that already exists.
     for (const { worker, client } of nextIntakeClients)
       await writePrivate(join(clientRoot, workIntakeClientFileNameV1(worker.workerId)), `${JSON.stringify(client)}\n`);
+    await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(nextWorkIntake)}\n`);
   }
   return { finished: true, mainCommit };
+}
+
+export function finishMacLocalDatabaseUpgradeV1(options) {
+  return serializeUpgradeHandoffV1(() => finishMacLocalDatabaseUpgradeInnerV1(options));
 }
 
 /** The protected `mac-local.json` record the provisioner writes. Pure: it
@@ -751,7 +880,8 @@ export async function provisionMacLocalDatabaseV1(options) {
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
   const role = username => Object.freeze({ ...database, username, password: allPasswords[Object.keys(roleNames).find(key => roleNames[key] === username)] });
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
-    results: role(roleNames.results), publisher: role(roleNames.publisher), queueWorker: role(roleNames.queueWorker) });
+    results: role(roleNames.results), publisher: role(roleNames.publisher), agentReviewer: role(roleNames.agentReviewer),
+    queueWorker: role(roleNames.queueWorker), fleetGateway: role(roleNames.fleetGateway), fleetOwner: role(roleNames.fleetOwner) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers, workIntakeProjectIds });
   const clientRoot = join(configRoot, "work-intake-clients");
@@ -779,6 +909,7 @@ export async function provisionMacLocalDatabaseV1(options) {
     database: { ...database, username: bootstrapRoles.workIntake, password: allPasswords.workIntake },
     integrityKey: existingWorkIntake?.integrityKey ?? randomBytes(32).toString("base64url"), credentials });
   if (!options.dryRun) {
+    await ensureHealthProbeKeyV1(protectedRoot);
     const selectedClient=selectProvisionedWorkIntakeClientV1(clients,options.workIntakeCliWorkerKind);
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);
@@ -790,7 +921,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: workers.map(worker => worker.kind) });
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     const supplied = process.argv.slice(2);
     const args = supplied[0] === "--" ? supplied.slice(1) : supplied;

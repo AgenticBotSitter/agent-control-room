@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Generates scheduler definitions for the worker inbox watcher.
 //
 // Generation only. This command does not install, enable, load, or start anything: it writes
@@ -6,7 +7,7 @@
 // here.
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { PLATFORMS, artifactsFor } from "./lib/artifacts.mjs";
 import { instructionsFor } from "./lib/instructions.mjs";
@@ -207,6 +208,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main().then(code => { process.exitCode = code; });
 }

@@ -1,9 +1,9 @@
-// Creates <protected>/config/task-runtime.json once, with fresh role keys and the owner's chosen Hermes
-// run settings. An existing valid file is kept unchanged; an invalid one is refused. Prints no key.
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
+// Creates <protected>/config/task-runtime.json once, with the owner's chosen Hermes
+// run settings. Installed <root>/Protected adopts <root>/updater-state/first-owner.json's review key.
+// Development roots mint their own keys for their fresh database. Existing keys are never replaced. Prints no key.
 // Usage: pnpm mac:prepare-task-runtime -- --protected-root ABS_PATH --hermes-profile P --hermes-provider P --hermes-model M
 //          --hermes-destination https://HOST:PORT   (the provider origin the chosen Hermes profile uses)
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createMacLocalTaskRuntimeFileV1 } from "../../src/web/v1/mac-local-task-runtime";
 
 const flags = ["--protected-root", "--hermes-profile", "--hermes-provider", "--hermes-model", "--hermes-destination"] as const;
@@ -22,14 +22,7 @@ export function parsePrepareTaskRuntimeArgumentsV1(args: readonly string[]) {
     provider: found.get("--hermes-provider")!, model: found.get("--hermes-model")!, destination: found.get("--hermes-destination")! } };
 }
 
-/** Compares real file paths, not a URL path: a checkout path with a space (URL-encoded as %20)
- * or a symlink would otherwise never match, and the command would silently do nothing. */
-function invokedDirectly() {
-  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]!) === realpathSync(fileURLToPath(import.meta.url)); }
-  catch { return false; }
-}
-
-if (invokedDirectly()) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     const { protectedRoot, hermes } = parsePrepareTaskRuntimeArgumentsV1(process.argv.slice(2));
     process.stdout.write(`mac:prepare-task-runtime ${await createMacLocalTaskRuntimeFileV1(protectedRoot, hermes)}\n`);

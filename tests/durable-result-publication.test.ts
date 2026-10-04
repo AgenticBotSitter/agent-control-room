@@ -4,9 +4,9 @@ import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultReservationCrashV1,
-  type DurableResultBindingV1 } from "../src/artifacts/v1/durable-result-publication";
-import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
+import { durableResultReservationSchemaV1, publishDurableResultV1, readDurableResultV1,
+  reconcileDurableResultReservationCrashV1, type DurableResultBindingV1, type DurableResultReservationV1 } from "../src/artifacts/v1/durable-result-publication";
+import { durableResultArtifactIdV1, durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { publishHermesSessionResultV1,
   type HermesSessionResultOutcomeV1 } from "../src/harness/hermes-gpt-v1/result-publication";
 import { publishHermes021MacosTerminalResultV1, publishCompletedHermes021MacosOutcomeV1,
@@ -21,11 +21,12 @@ import { readDurableResultReviewPlanV1, verifyReviewPlanAgainstReceiptV1 } from 
 import { openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
-import { sha256Digest } from "../src/security";
+import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { createDurableReservationPostgresPortV1 } from "../src/artifacts/v1/neutral-reservation-postgres";
 import { createInMemoryNeutralReservationPort, createPersistentNeutralReservationPort,
   createPersistentNeutralReservationStore,
   type NeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
+import { createResultWriteReservationMachine, resultBytesVerificationDigestV1 } from "../src/artifacts/v1/result-write-reservation";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
@@ -51,16 +52,34 @@ class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
    *  enforced by the public storage adapters and the publisher's
    *  `durableStorageIo`. Cleared only when a fresh storage port is constructed. */
   isStorageUncertain = false;
+  // Synchronous busy-wait inside `put`, in ms. Starves the event loop so the
+  // publisher's `setTimeout(storageIoMs)` cannot fire until the write has
+  // already settled, reproducing a CI scheduler stall deterministically.
+  stallPutMs = 0;
+  hangPutUntilAbort = false;
+  abortObserved = false;
   private enteredResolve!: () => void;
   private releaseResolve!: () => void;
   readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
   private readonly released = new Promise<void>(resolve => { this.releaseResolve = resolve; });
   release(): void { this.releaseResolve(); }
+  private untilAbort(signal?: AbortSignal): Promise<never> {
+    return new Promise((_, reject) => {
+      const aborted = () => { this.abortObserved = true; reject(new Error("synthetic_storage_aborted")); };
+      if (signal?.aborted) aborted(); else signal?.addEventListener("abort", aborted, { once: true });
+    });
+  }
   async put(input: { artifactId: string; bytes: Uint8Array; signal?: AbortSignal }) {
     if (this.isStorageUncertain) throw new Error("synthetic_storage_uncertain");
     input.signal?.throwIfAborted();
     this.putCalls++;
     this.enteredResolve();
+    if (this.stallPutMs > 0) {
+      // Synchronous: no await, so the timer phase cannot run until this returns.
+      const until = performance.now() + this.stallPutMs;
+      while (performance.now() < until) { /* starve the event loop on purpose */ }
+    }
+    if (this.hangPutUntilAbort) await this.untilAbort(input.signal);
     if (this.waitForRelease) await this.released;
     const bytes = Uint8Array.from(input.bytes);
     this.artifacts.set(input.artifactId, bytes);
@@ -140,6 +159,47 @@ function configAfterRestart(f: Awaited<ReturnType<typeof setup>>, storage: Contr
   return configOf(f, storage, createPersistentNeutralReservationPort(f.restartStore));
 }
 
+/**
+ * Write a committed reservation exactly as the content-addressed publisher
+ * did before the run-scoped upgrade.  This deliberately uses the production
+ * reservation machine and HMAC primitive; it does not bypass row validation
+ * by planting an unsigned object in the test port.
+ */
+function legacyContentFormReservationWriter() {
+  return createResultWriteReservationMachine<DurableResultReservationV1["identity"]>({
+    reservationSchema: durableResultReservationSchemaV1,
+    materialize: ({ reservationId, identity: value, identityDigest, state, ...fields }) => ({
+      schema: "control-room.durable-result-write-reservation/v1", reservationId, identity: value, identityDigest, state,
+      ...fields, canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+      grantsStorageWriteAuthority: false, permitsRetry: false, permitsCleanup: false, deletesArtifact: false,
+    }),
+    bytesVerificationDigest: resultBytesVerificationDigestV1,
+    reservationId: identityDigest => `reservation:durable:${identityDigest.slice(7)}`,
+    unavailable: () => { throw new Error("durable_result_publication_unavailable"); },
+    conflict: () => { throw new Error("durable_result_reservation_conflict"); },
+    compareReplayDigests: true,
+  });
+}
+
+function replaceWithCommittedContentFormReservation(f: Awaited<ReturnType<typeof setup>>, runId: string, receivedAt: string) {
+  const row = f.restartReservations.peek(binding.tenantId, runId);
+  assert.ok(row);
+  const current = durableResultReservationSchemaV1.parse(row.reservation);
+  const identity = { ...current.identity, artifactId: durableResultArtifactIdV1(current.identity.contentHash) };
+  const writer = legacyContentFormReservationWriter();
+  const committed = writer.commitMetadata(
+    writer.verifyBytes(writer.buildReserved(identity), bytesOf("legacy-content-form"), () => {}),
+    current.manifestDigest, current.receiptDigest,
+  ) as DurableResultReservationV1;
+  const key = `${binding.tenantId}\n${runId}`;
+  f.restartStore.records.set(key, { ...row, artifact_id: committed.identity.artifactId,
+    identity_digest: committed.identityDigest, state: committed.state, contract_digest: committed.contractDigest,
+    reservation: committed, auth_tag: hmacSha256Tag(f.resultKey,
+      { purpose: "durable-result-write-reservation/v1", reservation: committed }), updated_at: receivedAt });
+  f.restartStore.artifactIndex.delete(`${binding.tenantId}\n${row.artifact_id}`);
+  f.restartStore.artifactIndex.set(`${binding.tenantId}\n${committed.identity.artifactId}`, key);
+}
+
 function thirdPartyBinding(runId: string): DurableResultBindingV1 {
   // A future connector: no snapshot, no publication contract, no
   // thread/turn/item IDs. The publisher contract must accept this without
@@ -149,6 +209,40 @@ function thirdPartyBinding(runId: string): DurableResultBindingV1 {
     harness: "third-party", connectorProfileDigest: digest("c"),
     acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("p") };
 }
+
+test("a committed pre-upgrade content-form reservation replays once, while another run remains fenced", async t => {
+  const runId = "run:durable-legacy-content-form";
+  const f = await setupWithProvision(runId); t.after(f.close);
+  const storage = new ControlledStorage(), receivedAt = at(9250), bytes = bytesOf("legacy-content-form");
+  const first = await publishDurableResultV1(configOf(f, storage),
+    { binding: nativeBinding(runId), bytes, receivedAt, assertAuthority: () => {} });
+  assert.equal(first.replayed, false);
+  assert.equal(storage.putCalls, 1);
+
+  // Simulate the row produced before the artifact id became run-scoped, then
+  // reconstruct the publisher over the same committed row and storage.
+  replaceWithCommittedContentFormReservation(f, runId, receivedAt);
+  const replay = await publishDurableResultV1(configAfterRestart(f, storage),
+    { binding: nativeBinding(runId), bytes, receivedAt, assertAuthority: () => {} });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.receipt, first.receipt);
+  assert.equal(storage.putCalls, 1, "replay never puts a second copy");
+
+  const otherRun = "run:durable-legacy-content-form-other";
+  const stored = f.restartReservations.peek(binding.tenantId, runId);
+  assert.ok(stored);
+  // The legacy content form still has its historical uniqueness fence: a
+  // second run cannot reserve the same content-derived artifact id.
+  const previous = durableResultReservationSchemaV1.parse(stored.reservation);
+  const reservation = legacyContentFormReservationWriter().buildReserved({ ...previous.identity,
+    runId: otherRun, jobId: `job:${otherRun}`, attemptId: `attempt:${otherRun}` }) as DurableResultReservationV1;
+  const conflicting = { ...stored, run_id: otherRun, job_id: `job:${otherRun}`, attempt_id: `attempt:${otherRun}`,
+    identity_digest: reservation.identityDigest, state: reservation.state, contract_digest: reservation.contractDigest,
+    reservation, auth_tag: hmacSha256Tag(f.resultKey,
+      { purpose: "durable-result-write-reservation/v1", reservation }) };
+  assert.equal(await f.restartReservations.insertFresh(undefined as never, conflicting), "conflict");
+  assert.equal(storage.putCalls, 1, "the conflicting legacy reservation cannot put bytes");
+});
 
 test("third-party harness: a non-native/non-codex connector can publish with only a connector profile digest", async t => {
   const f = await setupWithProvision("run:durable-third-party", digest("c")); t.after(f.close);
@@ -314,6 +408,59 @@ test("revoked authority refuses before any reservation or byte write", async t =
   /authority_revoked/);
   assert.ok(calls >= 1);
   assert.equal(storage.putCalls, 0);
+});
+
+test("a storage stall that lets the write settle after its bound still commits the verified durable result", async t => {
+  // The regression this file's shared `durableStorageIo()` helper used to
+  // have: `io()` re-checked elapsed wall-clock time AFTER the race settled
+  // and re-poisoned the port, so a write that genuinely succeeded and
+  // verified was reported as `durable_result_storage_uncertain` whenever a
+  // scheduler/GC stall made the elapsed time exceed the bound.
+  //
+  // Deterministic reproduction, no timing luck required: a SYNCHRONOUS
+  // busy-wait inside `put` starves the event loop, so the
+  // `setTimeout(storageIoMs)` timer cannot fire until the operation has
+  // already settled. The race is therefore won by the operation even though
+  // wall-clock time exceeds the bound.
+  const f = await setupWithProvision("run:durable-stall"); t.after(f.close);
+  const storage = new ControlledStorage();
+  storage.stallPutMs = 40;
+  const runId = "run:durable-stall";
+  const receivedAt = at(9550);
+  const captured = await publishDurableResultV1({ ...configOf(f, storage), storageIoMs: 5 },
+    { binding: nativeBinding(runId), bytes: bytesOf("stall"), receivedAt, assertAuthority: () => {} });
+  assert.equal(captured.replayed, false);
+  assert.equal(storage.putCalls, 1);
+  // No live abort listener existed when the write finished, so the port was
+  // never aborted - proof this is not the timer branch.
+  assert.equal(storage.abortObserved, false);
+  const row = f.restartReservations.peek(binding.tenantId, runId);
+  assert.equal(row?.state, "metadata_committed");
+});
+
+test("a genuine storage hang through publishDurableResultV1 still poisons terminally and is never retried", async t => {
+  // The other half of the guarantee the stall case above must not weaken: a
+  // real hang still times out, still aborts, and still records terminal
+  // uncertainty so no later caller can retry the write.
+  const f = await setupWithProvision("run:durable-hang"); t.after(f.close);
+  const storage = new ControlledStorage();
+  storage.hangPutUntilAbort = true;
+  const runId = "run:durable-hang";
+  const receivedAt = at(9560);
+  const config = { ...configOf(f, storage), storageIoMs: 5 };
+  await assert.rejects(() => publishDurableResultV1(config,
+    { binding: nativeBinding(runId), bytes: bytesOf("hang"), receivedAt, assertAuthority: () => {} }),
+  /durable_result_storage_uncertain/);
+  assert.equal(storage.abortObserved, true);
+  const row = f.restartReservations.peek(binding.tenantId, runId);
+  assert.equal(row?.state, "storage_uncertain");
+  // Terminal: the poisoned reservation refuses before touching storage again,
+  // so the ambiguous write is never retried against the same bytes.
+  const callsBefore = storage.putCalls;
+  await assert.rejects(() => publishDurableResultV1(config,
+    { binding: nativeBinding(runId), bytes: bytesOf("hang"), receivedAt, assertAuthority: () => {} }),
+  /durable_result_manual_reconciliation_required/);
+  assert.equal(storage.putCalls, callsBefore);
 });
 
 test("oversize, non-UTF8 and tampered readback all fail closed", async t => {
@@ -739,7 +886,8 @@ test("reconstructing over the same persistent directory and database returns the
   assert.equal(first.calls.put, 1);
 
   // The bytes are on disk, and their exact on-disk identity is recorded.
-  const entries = await readdir(root);
+  const allEntries = await readdir(root);
+  const entries = allEntries.filter(name => name.endsWith(".artifact"));
   assert.equal(entries.length, 1);
   const before = await stat(join(root, entries[0]));
 
@@ -759,7 +907,7 @@ test("reconstructing over the same persistent directory and database returns the
   // untouched: same inode, size and modification time.
   assert.equal(second.calls.put, 0);
   const after = await stat(join(root, entries[0]));
-  assert.deepEqual(await readdir(root), entries);
+  assert.deepEqual(await readdir(root), allEntries);
   assert.equal(after.ino, before.ino);
   assert.equal(after.size, before.size);
   assert.equal(after.mtimeMs, before.mtimeMs);
@@ -1285,4 +1433,73 @@ test("a claimed resultSubtypeCode that disagrees with the raw material is refuse
 
   // The honest pairing (raw subtype and claimed code agree) is unaffected.
   assert.equal(claudeEvidenceFor().kind, "claude_terminal_result");
+});
+
+/**
+ * Two runs whose result BYTES are identical must both publish. Content-scoped
+ * artifact identity made the second run's reservation insert collide on
+ * `UNIQUE (tenant_id, artifact_id)`, so its delivery could never complete —
+ * which is how real task delivery failed 60 times in 63 on a throwaway install
+ * (see cook-mdelivery). Two short answers to the same question are the ordinary
+ * case, not an edge case, so identity is per run and content is carried
+ * separately.
+ */
+test("two runs with byte-identical results both publish, and each artifact stays distinct", async t => {
+  const storage = new ControlledStorage();
+  const firstRun = "run:durable-identical-a", secondRun = "run:durable-identical-b";
+  const fa = await setupWithProvision(firstRun); t.after(fa.close);
+  const fb = await setupWithProvision(secondRun); t.after(fb.close);
+  // The same text, byte for byte, from two different runs.
+  const shared = bytesOf("identical-result");
+  const first = await publishDurableResultV1(configOf(fa, storage),
+    { binding: nativeBinding(firstRun), bytes: shared, receivedAt: at(9000), assertAuthority: () => {} });
+  const second = await publishDurableResultV1(configOf(fb, storage),
+    { binding: nativeBinding(secondRun), bytes: shared, receivedAt: at(9100), assertAuthority: () => {} });
+
+  assert.equal(first.replayed, false);
+  assert.equal(second.replayed, false);
+  // Content identity is preserved exactly: both recorded the same hash.
+  assert.equal(first.receipt.contentHash, second.receipt.contentHash);
+  // Run identity is what separates them, so the artifact ids differ. If they
+  // ever matched again the second publish would refuse exactly as it did.
+  assert.notEqual(first.receipt.artifactId, second.receipt.artifactId);
+  assert.match(first.receipt.artifactId, /^artifact:result:[a-f0-9]{64}$/);
+  assert.match(second.receipt.artifactId, /^artifact:result:[a-f0-9]{64}$/);
+  // Both artifacts exist and both hold the shared bytes.
+  assert.equal(storage.artifacts.size, 2);
+  assert.deepEqual(storage.artifacts.get(first.receipt.artifactId), shared);
+  assert.deepEqual(storage.artifacts.get(second.receipt.artifactId), shared);
+  // Each is readable under its own job only.
+  const readFirst = await fa.db.transaction(tx => readDurableResultV1(tx, fa.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal), binding.tenantId, binding.projectId,
+    nativeBinding(firstRun).jobId, first.receipt.artifactId));
+  assert.equal(readFirst?.text, text("identical-result"));
+});
+
+test("a replay still returns the same receipt, and a second run cannot read the first run's artifact", async t => {
+  const storage = new ControlledStorage();
+  const firstRun = "run:durable-isolation-a", secondRun = "run:durable-isolation-b";
+  const fa = await setupWithProvision(firstRun); t.after(fa.close);
+  const fb = await setupWithProvision(secondRun); t.after(fb.close);
+  const first = await publishDurableResultV1(configOf(fa, storage),
+    { binding: nativeBinding(firstRun), bytes: bytesOf("isolation"), receivedAt: at(9000), assertAuthority: () => {} });
+  const second = await publishDurableResultV1(configOf(fb, storage),
+    { binding: nativeBinding(secondRun), bytes: bytesOf("isolation"), receivedAt: at(9100), assertAuthority: () => {} });
+
+  // Run-scoped ids keep replay stable for the run that already published.
+  const replayed = await publishDurableResultV1(configAfterRestart(fa, storage),
+    { binding: nativeBinding(firstRun), bytes: bytesOf("isolation"), receivedAt: at(9000), assertAuthority: () => {} });
+  assert.equal(replayed.replayed, true);
+  assert.deepEqual(replayed.receipt, first.receipt);
+
+  // The other run's artifact is not reachable through this job's result.
+  const crossRead = await fb.db.transaction(tx => readDurableResultV1(tx, fb.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal), binding.tenantId, binding.projectId,
+    nativeBinding(secondRun).jobId, first.receipt.artifactId));
+  assert.equal(crossRead ?? null, null);
+  // Its own artifact still reads back correctly.
+  const ownRead = await fb.db.transaction(tx => readDurableResultV1(tx, fb.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal), binding.tenantId, binding.projectId,
+    nativeBinding(secondRun).jobId, second.receipt.artifactId));
+  assert.equal(ownRead?.text, text("isolation"));
 });

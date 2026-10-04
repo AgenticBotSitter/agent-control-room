@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Verifies the working tree matches the committed deploy/postgres/migration-ledger.json.
 // Fails on altered, missing, reordered or extra files. Run: pnpm db:verify.
 // Accepts --ledger <path> and --root <dir> so tests can exercise refusal paths.
@@ -39,7 +40,7 @@ export async function verifyMigrationLedger({ rootDir = root, ledgerPath } = {})
     entries: Object.freeze(entries.map(entry => Object.freeze({ ...entry, kind: entry.kind ?? "migrate" }))) };
 }
 
-const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   try {
     const result = await verifyMigrationLedger({

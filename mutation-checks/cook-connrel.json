@@ -1,0 +1,114 @@
+[
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || entry.uid !== expectedUid\n      || (entry.mode & 0o777) !== 0o400 || entry.size > maximum) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (!entry.isFile()"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!entry.isDirectory() || entry.isSymbolicLink() || entry.uid !== expectedUid\n      || (entry.mode & 0o022) !== 0 || await realpath(directory) !== directory) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (!entry.isDirectory()"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!plain(manifest) || Object.keys(manifest).sort().join(\",\") !== \"builtFrom,file,schema,sha256,size,version\"\n    || manifest.schema !== \"control-room.fleet-connector-release/v1\" || manifest.builtFrom !== commit\n    || !/^\\d+\\.\\d+\\.\\d+$/u.test(manifest.version ?? \"\") || manifest.file !== `connector-${manifest.version}.mjs`\n    || !Number.isSafeInteger(manifest.size) || manifest.size < 0 || !/^[a-f0-9]{64}$/u.test(manifest.sha256 ?? \"\")) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: the whole manifest-shape statement (R4C-08 added the size and sha256 members); the whole statement is the anchor so the mutant still parses"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (bundle.length !== manifest.size || digest(bundle) !== manifest.sha256\n    || /^\\/\\/ Control Room embedded release key ID: (sha256:[a-f0-9]{64})$/mu.exec(\n      bundle.subarray(0, 16 * 1024).toString(\"utf8\"))?.[1] !== trust.keyId) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (bundle.length"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (existing && !(await heldFile(target, expectedUid)).equals(signedBytes)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (existing &&"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!plain(buildManifest) || buildManifest.schema !== \"control-room.attended-build-manifest/v1\" || buildManifest.commit !== commit\n    || !Array.isArray(buildManifest.files) || buildManifest.files.some(item => !plain(item)\n      || typeof item.path !== \"string\" || !item.path || !/^sha256:[a-f0-9]{64}$/u.test(item.sha256 ?? \"\")\n      || !Number.isSafeInteger(item.bytes) || item.bytes < 0\n      || !Number.isInteger(item.mode) || item.mode < 0 || item.mode > 0o7777)\n    || !Number.isSafeInteger(buildManifest.fileCount) || buildManifest.fileCount !== buildManifest.files.length\n    || !Number.isSafeInteger(buildManifest.byteCount) || buildManifest.byteCount < 0\n    || buildManifest.byteCount !== buildManifest.files.reduce((sum, item) => sum + item.bytes, 0)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Build-manifest refusal: the whole statement (R4C-08 member checks + exact file/byte counts); the whole statement is the anchor so the mutant still parses"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (prior.length > 1 || prior.length === 1 && JSON.stringify(prior[0]) !== JSON.stringify(record)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "duplicate or mismatched connector advertisement records must be refused even when aggregate counts are consistent"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (prior.length && !existing) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Connector refusal: if (prior.length &&"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (!isAbsolute(input.output ?? \"\") || resolve(input.output) !== input.output || input.output === \"/\"\n    || !entry.isDirectory() || entry.isSymbolicLink() || entry.uid !== expectedUid\n    || (entry.mode & 0o022) !== 0 || await realpath(input.output) !== input.output) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Output custody before lock acquisition"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "  verifyConnectorReleaseAdvertisementV1(signed, trust);",
+    "replace": "",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "The private key must match installation trust before publication"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | kernelLock, 0o600);",
+    "replace": "fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);",
+    "test": "node --import tsx --test tests/installer-connector-release.test.mjs",
+    "why": "Exclusive descriptor ownership must survive signing until publication ends"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (persistedTrust !== undefined) await statRegular(join(session.root, \"Protected/config/release-trust.json\"),\n    \"updater_release_trust_refused\", { uid: identity.rootUid, mode: 0o640 });",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern=connrel tests/updater-attended-source.test.mjs",
+    "why": "Persisted installation trust custody"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (persistedTrust !== undefined && input.releaseTrust !== undefined\n    && JSON.stringify(captureReleaseTrustV1(JSON.parse(persistedTrust))) !== JSON.stringify(captureReleaseTrustV1(input.releaseTrust)))\n    refuse(\"updater_release_trust_refused\");",
+    "replace": "  if (false) refuse(\"updater_release_trust_refused\");",
+    "test": "node --import tsx --test --test-name-pattern=connrel tests/updater-attended-source.test.mjs",
+    "why": "Generated and persisted trust must agree"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (trust) {\n    await signAttendedConnectorReleaseV1",
+    "replace": "  if (false) {\n    await signAttendedConnectorReleaseV1",
+    "test": "node --import tsx --test --test-name-pattern=connrel tests/updater-attended-source.test.mjs",
+    "why": "Root phase must sign before staging"
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "  if (releaseTrust !== undefined) {",
+    "replace": "  if (false) {",
+    "test": "node --import tsx --test --test-name-pattern=connrel tests/control-room-installer.test.mjs",
+    "why": "Attended builder must produce the connector from its sources"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "...effectiveOptions, releaseTrust, inventoryDigest, toolRoot: seed.dir, onSpawn",
+    "replace": "...effectiveOptions, inventoryDigest, toolRoot: seed.dir, onSpawn",
+    "test": "node --import tsx --test --test-name-pattern=connrel tests/control-room-installer.test.mjs",
+    "why": "Installer forwards generated public trust into attended build"
+  }
+]

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { WebTaskService } from "../src/web/v1/task-service";
+import { PipelineAdvanceErrorV1, PipelineAdvanceServiceV1 } from "../src/pipelines/v1/advance-service";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
-import { sha256Digest } from "../src/security";
+import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { createLinearPipelineHttpHandlerV1 } from "../src/web/v1/linear-pipeline-http";
 import { TaskAssignmentCoordinator, type TaskAssignmentRoute,
   type WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
@@ -14,11 +16,13 @@ import { TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { binding, instant } from "./hermes-native-fixture";
 import { nativeQualityCompletionFixture, qualityText } from "./helpers/native-quality-completion";
+import { ReusableSkillServiceV1 } from "../src/skills/v1";
 
 const key = new Uint8Array(32).fill(12);
 const template = { name: "Build, check, validate", description: "Complete one bounded change and review it.",
   stages: [
     { ordinal: 0, stageKind: "build", role: "builder", description: "Build the bounded change.",
+      allowedPaths: ["src/**"], maximumChangedFiles: 20, maximumChangedBytes: 262144,
       requiredCapability: "code.change", workerId: "worker:codex:one", workerKind: "codex", nodeId: "node:codex:one",
       selectionKey: "codex.standard", model: "gpt-test", effort: "medium", maxLoops: 3 },
     { ordinal: 1, stageKind: "check", role: "checker", description: "Check the bounded change.",
@@ -39,6 +43,7 @@ async function fixture() {
 
 async function completedPredecessorFixture(options: { productionCoordinatorLogin?: boolean } = {}) {
   let runJobIds: readonly string[] = [];
+  let pipelineRunId = "";
   const pipelineKey = new Uint8Array(32).fill(55);
   const quality = await nativeQualityCompletionFixture(qualityText, async base => {
     const service = new LinearPipelineServiceV1(base.db, base.scope, pipelineKey,
@@ -48,7 +53,7 @@ async function completedPredecessorFixture(options: { productionCoordinatorLogin
     const saved = await service.createTemplate(base.identity, binding.projectId, { ...template, stages });
     const run = await service.instantiate(base.identity, binding.projectId,
       { templateId: saved.templateId, title: "Authenticated predecessor" }, "linear-completed-predecessor-0001");
-    runJobIds = run.jobIds;
+    runJobIds = run.jobIds; pipelineRunId = run.runId;
     // Stage zero keeps its lineage and runs the whole native lifecycle through
     // the real pipeline gate; its retained completion proof is what the
     // stage-one admission below consumes.
@@ -74,7 +79,7 @@ async function completedPredecessorFixture(options: { productionCoordinatorLogin
     [], undefined, undefined, undefined, undefined, authority);
   const assign = () => coordinator.assign(base.identity, binding.projectId, prepared.receipt.jobId,
     binding.nodeId, prepared.receipt.inputDigest);
-  return { quality, base, runJobIds, prepared, assign, acceptedChecks: () => acceptedChecks };
+  return { quality, base, runJobIds, pipelineRunId, prepared, assign, acceptedChecks: () => acceptedChecks };
 }
 
 test("a linear pipeline materializes one canonical request/workflow and three inert dependent jobs", async t => {
@@ -121,6 +126,94 @@ test("pipeline instantiation replays exactly and changed content under one key i
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int count FROM pipeline_runs")).rows[0]!.count, 1);
 });
 
+test("pipeline stages bind the exact reusable skill version they reference", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const skills = new ReusableSkillServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => now);
+  const skill = await skills.create(f.identity, f.project.projectId,
+    { name: "Build evidence", instructions: "Retain the focused test evidence with the change." }, "action:linear-build-evidence");
+  const stages = template.stages.map((stage, index) => index === 0
+    ? { ...stage, skillRefs: [{ skillId: skill.skillId, version: 1 }] } : stage);
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, { ...template, stages });
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Exact skill pipeline" }, "linear-skill-version-0001");
+  const bindings = await f.db.query<{ job_id: string; skill_version: number; content_digest: string }>(`SELECT
+    job_id,skill_version,content_digest FROM control_task_skill_bindings WHERE tenant_id='tenant:web' ORDER BY job_id`);
+  assert.deepEqual(bindings.rows.map(row => [row.job_id, Number(row.skill_version), row.content_digest]),
+    [[run.jobIds[0], 1, skill.contentDigest]]);
+  const missing = template.stages.map((stage, index) => index === 1
+    ? { ...stage, skillRefs: [{ skillId: skill.skillId, version: 99 }] } : stage);
+  await assert.rejects(f.service.createTemplate(f.identity, f.project.projectId, { ...template, stages: missing }), /conflict/u);
+});
+
+test("pre-0098 authenticated pipelines remain readable but cannot publish or instantiate without owner revision", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Legacy upgrade fixture" }, "linear-legacy-upgrade-0001");
+  const templateRow = (await f.db.query<{ id: string; project_id: string; name: string; description: string;
+    stages: Array<Record<string, unknown>>; max_stages: number; max_total_loops: number;
+    may_advance_unattended: boolean; max_duration_seconds: number; version: number;
+    created_at: string | Date; updated_at: string | Date }>(`SELECT id,project_id,name,description,stages,max_stages,
+      max_total_loops,may_advance_unattended,max_duration_seconds,version,created_at,updated_at
+      FROM pipeline_templates WHERE id=$1`, [saved.templateId])).rows[0]!;
+  const legacyStages = templateRow.stages.map(stage => {
+    if (stage.stageKind !== "build") return stage;
+    const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = stage;
+    return legacy;
+  });
+  const templateMaterial = { id: templateRow.id, tenantId: "tenant:web", projectId: templateRow.project_id,
+    name: templateRow.name, description: templateRow.description, stages: legacyStages,
+    maxStages: Number(templateRow.max_stages), maxTotalLoops: Number(templateRow.max_total_loops),
+    mayAdvanceUnattended: false, maxDurationSeconds: Number(templateRow.max_duration_seconds),
+    version: Number(templateRow.version), createdAt: new Date(templateRow.created_at).toISOString(),
+    updatedAt: new Date(templateRow.updated_at).toISOString() };
+  const legacyTemplateDigest = sha256Digest(templateMaterial);
+  await f.db.query(`UPDATE pipeline_templates SET stages=$1::jsonb,record_digest=$2,auth_tag=$3 WHERE id=$4`,
+    [JSON.stringify(legacyStages), legacyTemplateDigest,
+      hmacSha256Tag(key, { purpose: "pipeline-template/v1", record: templateMaterial }), saved.templateId]);
+
+  const runRow = (await f.db.query<{ id: string; project_id: string; request_id: string; template_id: string;
+    template_version: number; workflow_id: string; title: string; state: string; started_at: string | Date | null;
+    updated_at: string | Date; completed_at: string | Date | null; current_stage_ordinal: number | null;
+    unattended: boolean; version: number }>(`SELECT id,project_id,request_id,template_id,template_version,workflow_id,title,
+      state,started_at,updated_at,completed_at,current_stage_ordinal,unattended,version FROM pipeline_runs WHERE id=$1`,
+  [run.runId])).rows[0]!;
+  const runMaterial = { id: runRow.id, tenantId: "tenant:web", projectId: runRow.project_id,
+    requestId: runRow.request_id, templateId: runRow.template_id, templateVersion: Number(runRow.template_version),
+    templateDigest: legacyTemplateDigest, workflowId: runRow.workflow_id, title: runRow.title, state: runRow.state,
+    startedAt: runRow.started_at ? new Date(runRow.started_at).toISOString() : null,
+    updatedAt: new Date(runRow.updated_at).toISOString(),
+    completedAt: runRow.completed_at ? new Date(runRow.completed_at).toISOString() : null,
+    currentStageOrdinal: runRow.current_stage_ordinal === null ? null : Number(runRow.current_stage_ordinal),
+    unattended: runRow.unattended, version: Number(runRow.version) };
+  await f.db.query(`UPDATE pipeline_runs SET template_digest=$1,record_digest=$2,auth_tag=$3 WHERE id=$4`,
+    [legacyTemplateDigest, sha256Digest(runMaterial),
+      hmacSha256Tag(key, { purpose: "pipeline-run/v1", record: runMaterial }), run.runId]);
+
+  const stage = (await f.db.query<Record<string, unknown>>(`SELECT * FROM pipeline_stage_runs
+    WHERE pipeline_run_id=$1 AND stage_ordinal=0`, [run.runId])).rows[0]!;
+  const stageMaterial = { id: stage.id, tenantId: "tenant:web", projectId: stage.project_id,
+    pipelineRunId: stage.pipeline_run_id, stageOrdinal: Number(stage.stage_ordinal), stageKind: stage.stage_kind,
+    role: stage.role, workerId: stage.worker_id, workerKind: stage.worker_kind, nodeId: stage.node_id,
+    selectionKey: stage.selection_key, model: stage.model, effort: stage.effort, provider: stage.provider,
+    profile: stage.profile, currentJobId: stage.current_job_id, currentAttemptId: stage.current_attempt_id,
+    currentLeaseId: stage.current_lease_id, state: stage.state, maxLoops: Number(stage.max_loops),
+    handoffFromResultDigest: stage.handoff_from_result_digest, signoffReviewId: stage.signoff_review_id,
+    startedAt: stage.started_at ? new Date(stage.started_at as string | Date).toISOString() : null,
+    finishedAt: stage.finished_at ? new Date(stage.finished_at as string | Date).toISOString() : null,
+    version: Number(stage.version) };
+  await f.db.exec("ALTER TABLE pipeline_stage_runs DISABLE TRIGGER pipeline_stage_runs_guard");
+  await f.db.query(`UPDATE pipeline_stage_runs SET allowed_paths=NULL,maximum_changed_files=NULL,
+    maximum_changed_bytes=NULL,record_digest=$1,auth_tag=$2 WHERE pipeline_run_id=$3 AND stage_ordinal=0`,
+  [sha256Digest(stageMaterial), hmacSha256Tag(key, { purpose: "pipeline-stage-run/v1", record: stageMaterial }), run.runId]);
+  await f.db.exec("ALTER TABLE pipeline_stage_runs ENABLE TRIGGER pipeline_stage_runs_guard");
+
+  const view = await f.service.view(f.identity, f.project.projectId, run.runId);
+  assert.equal(view.stages[0]?.writePolicy, null, "the authenticated legacy row is readable without invented bounds");
+  await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Legacy must be revised" }, "linear-legacy-upgrade-0002"), /conflict/u);
+});
+
 test("pipeline instantiation screens secret-shaped titles before persistence", async t => {
   const f = await fixture(); t.after(() => void f.db.close());
   const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
@@ -154,7 +247,8 @@ test("pipeline reads fail closed on template, run, or stage tampering and displa
   const service = new LinearPipelineServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
     { assertCurrent: () => true, isAcceptedResultCurrent: () => true,
       acceptedResultProof: (_tx, selection) => selection.sourceJobId.endsWith(":0")
-        ? { contentHash: exact, revision: 7 } : null }, () => now);
+        ? { executionJobId: "job:execution:0", attemptId: "attempt:0", harnessRunId: "run:0",
+          artifactId: "artifact:0", contentHash: exact, revision: 7 } : null }, () => now);
   const saved = await service.createTemplate(f.identity, f.project.projectId, template);
   const run = await service.instantiate(f.identity, f.project.projectId,
     { templateId: saved.templateId, title: "Authenticated read" }, "linear-authenticated-read-0001");
@@ -273,6 +367,23 @@ test("pipeline HTTP route requires gateway authentication", async t => {
   assert.equal((await handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipeline-runs`))).status, 200);
 });
 
+test("pipeline unattended and history HTTP routes are owner-service operations on runs only", async t=>{
+  const f=await fixture();t.after(()=>void f.db.close());let transitions=0,histories=0;
+  const advance={setUnattended:async()=>{transitions++;return{replayed:false}},
+    historyForOwner:async()=>{histories++;return{runId:"pipeline-run:test"}}};
+  const handler=createLinearPipelineHttpHandlerV1({origin,trust,service:f.service,advance:advance as never,clock:()=>now});
+  const project=encodeURIComponent(f.project.projectId),run=encodeURIComponent("pipeline-run:test");
+  const history=await handler(request(`/api/v1/projects/${project}/pipeline-runs/${run}/history`));
+  assert.equal(history.status,200);assert.equal(histories,1);
+  const unattended=await handler(request(`/api/v1/projects/${project}/pipeline-runs/${run}/unattended`,"POST",
+    {runId:"pipeline-run:test"},"pipeline-consent-0001"));
+  assert.equal(unattended.status,201);assert.equal(transitions,1);
+  assert.equal((await handler(request(`/api/v1/projects/${project}/pipeline-templates/${run}/history`))).status,404);
+  assert.ok((await handler(request(`/api/v1/projects/${project}/pipeline-templates/${run}/unattended`,"POST",
+    {runId:"pipeline-run:test"}))).status>=400);
+  assert.equal(histories,1);assert.equal(transitions,1);
+});
+
 test("schema constraints refuse partial pipeline columns, unknown kinds and cross-job attempt lineage", async t => {
   const f = await fixture(); t.after(() => void f.db.close());
   const task = await f.tasks.propose(f.identity, f.project.projectId,
@@ -313,18 +424,63 @@ test("pipeline projection fails closed when the run no longer has exactly three 
   await assert.rejects(f.service.view(f.identity, f.project.projectId, run.runId), /pipeline_integrity_failed/u);
 });
 
-test("0105 down migration refuses retained pipeline records and removes all owned objects when empty", async t => {
+test("0109, 0108 and 0105 down migrations refuse retained policy/history and remove owned objects only when empty", async t => {
   const populated = await fixture(); t.after(() => void populated.db.close());
-  await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
+  const populatedTemplate = await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
+  await populated.service.instantiate(populated.identity, populated.project.projectId,
+    { templateId: populatedTemplate.templateId, title: "Retained down guard" }, "linear-down-guard-0001");
+  const unattendedDown = await readFile("db/down/0109_pipeline_unattended_advance.sql", "utf8");
   const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
+  const agentReviewDown = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
+  const publicationDown = await readFile("db/down/0108_pipeline_build_publications.sql", "utf8");
+  // S7b's 0151 and 0153 build append-only triggers on the history guard 0109 owns,
+  // so 0109's down refuses while they exist. Reverse the later slice first, which is the
+  // real order a down path has to be taken in.
+  const s7bDowns = ["0154_pipeline_advance_round_receipts.sql", "0153_pipeline_machine_capacity_observations.sql",
+    "0152_pipeline_advance_unknown_cost.sql", "0151_pipeline_stage_loop_counts.sql",
+    "0150_pipeline_installation_allowances.sql"];
+  // 0160 (cook/v1) also points tables at pipeline_runs, so 0105 refuses while it
+  // is installed. Same rule as S7b above: reverse the later slice first.
+  const deskDown = await readFile("db/down/0160_improve_control_room_desk.sql", "utf8");
+  for (const file of s7bDowns) await populated.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  await populated.db.exec(deskDown);
+  await populated.db.exec(unattendedDown);
+  await assert.rejects(populated.db.exec(publicationDown), /0108 down migration refused/u);
+  await populated.db.exec("ROLLBACK");
+  await populated.db.exec(`ALTER TABLE pipeline_stage_runs DISABLE TRIGGER pipeline_stage_runs_guard;
+    UPDATE pipeline_stage_runs SET allowed_paths=NULL,maximum_changed_files=NULL,maximum_changed_bytes=NULL;
+    ALTER TABLE pipeline_stage_runs ENABLE TRIGGER pipeline_stage_runs_guard;`);
+  await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await assert.rejects(empty.db.exec(unattendedDown), /a later migration depends on its history guard/u);
+  await empty.db.exec("ROLLBACK");
+  // 0105 refuses while 0160 still points at pipeline_runs, for the same reason.
+  await assert.rejects(empty.db.exec(down), /a later migration depends on its tables/u);
+  await empty.db.exec("ROLLBACK");
+  for (const file of s7bDowns) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  // 0160's improvement desk and 0161's candidate evidence reference pipeline_runs,
+  // so the reviewed recovery order takes 0162-0160 off first, newest first.
+  for (const file of ["0162_validate_update_candidate_evidence.sql", "0161_update_candidate_evidence.sql",
+    "0160_improve_control_room_desk.sql"]) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  await empty.db.exec(unattendedDown);
+  await empty.db.exec(publicationDown);
+  await empty.db.exec(agentReviewDown);
   await empty.db.exec(down);
   assert.deepEqual((await empty.db.query<{ templates: string | null; runs: string | null; stages: string | null }>(`SELECT
     to_regclass('pipeline_templates')::text templates,to_regclass('pipeline_runs')::text runs,
     to_regclass('pipeline_stage_runs')::text stages`)).rows[0], { templates: null, runs: null, stages: null });
   assert.deepEqual((await empty.db.query<{ guard: string | null }>(
     "SELECT to_regproc('guard_control_job_pipeline_lineage')::text guard")).rows[0], { guard: null });
+  // S7b's own tables went with their own down files, and the guard 0109 owned
+  // is gone because nothing was left pointing at it.
+  assert.deepEqual((await empty.db.query<{ allowance: string | null; loops: string | null; observed: string | null }>(
+    `SELECT to_regclass('pipeline_installation_allowances')::text allowance,
+      to_regclass('pipeline_stage_loop_counts')::text loops,
+      to_regclass('pipeline_machine_capacity_observations')::text observed`)).rows[0],
+  { allowance: null, loops: null, observed: null });
+  assert.deepEqual((await empty.db.query<{ history: string | null }>(
+    "SELECT to_regproc('reject_pipeline_unattended_history_mutation')::text history")).rows[0], { history: null });
 });
 
 /** Stage zero planned through the real planner with a coordinator that holds the
@@ -514,4 +670,145 @@ test("pipeline HTTP route refuses cross-origin requests", async t => {
   assert.equal((await handler(crossSite)).status, 403);
   assert.equal((await f.db.query("SELECT 1 FROM pipeline_templates")).rows.length, 0);
   assert.equal((await handler(request(path, "POST", template))).status, 201);
+});
+
+
+test("R7L-06: run stages read authenticated task usage, including reported zero cache", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const saved = await f.service.createTemplate(f.identity,f.project.projectId,template);
+  const run = await f.service.instantiate(f.identity,f.project.projectId,{templateId:saved.templateId,title:"Stage usage"},"stage-usage-regression-0001");
+  const reader = { detail:async (identity: typeof f.identity,projectId:string,jobId:string) => {
+    assert.equal(identity,f.identity); assert.equal(projectId,f.project.projectId); assert.ok(run.jobIds.includes(jobId));
+    return { usageRollup:{runs:1,inputTokens:25,outputTokens:7,totalTokens:32,wallTimeMs:300,
+      knownCostNanoUsd:"1200000",knownCostRuns:1,subscriptionRuns:0,unknownCostRuns:0,unknownCostReasons:[]},
+      attempts:[{additionalRunsOmitted:false,runs:[{runId:"run:usage",usage:{inputTokens:25,outputTokens:7,totalTokens:32,
+        wallTimeMs:300},cost:{kind:"known",nanoUsd:"1200000",priceEntryId:"price:test",tableId:"table:test"}}]}],
+      earlierAttemptsOmitted:false };
+  } };
+  const service = new LinearPipelineServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,
+    undefined,()=>now,undefined,reader as any);
+  const view = await service.view(f.identity,f.project.projectId,run.runId);
+  for (const stage of view.stages) {
+    assert.notEqual(stage.usage,"unknown");
+    if (stage.usage !== "unknown") {
+      assert.equal(stage.usage.totals.inputTokens,25);
+      assert.equal(stage.usage.reports[0]?.usage?.cachedInputTokens,0);
+      assert.equal(stage.usage.totals.knownCostNanoUsd,"1200000");
+    }
+  }
+  const unavailable = new LinearPipelineServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,
+    undefined,()=>now,undefined,{detail:async()=>{throw new Error("usage reader unavailable");}});
+  await assert.rejects(unavailable.view(f.identity,f.project.projectId,run.runId),/usage reader unavailable/);
+});
+
+
+test("R7L-06: signed harness reports reach the stage through the real authenticated task reader", async t => {
+  const f=await completedPredecessorFixture(); t.after(()=>f.quality.close());
+  const runtime=f.quality.f;
+  const tasks=new WebTaskService(runtime.db,runtime.scope,runtime.clock,{harnessIntegrityKey:runtime.harnessKey});
+  const service=new LinearPipelineServiceV1(runtime.db,runtime.scope,new Uint8Array(32).fill(55),
+    undefined,runtime.clock,undefined,tasks);
+  const view=await service.view(f.base.identity,binding.projectId,f.pipelineRunId);
+  const usage=view.stages[0]!.usage;
+  assert.notEqual(usage,"unknown");
+  if(usage!=="unknown") {
+    assert.equal(usage.totals.inputTokens,12);assert.equal(usage.totals.outputTokens,5);
+    assert.equal(usage.reports[0]?.usage?.cachedInputTokens,0);
+  }
+  assert.equal(view.stages[2]?.usage,"unknown","a stage with no harness report remains unknown");
+});
+
+
+test("R7L-13: the authenticated HTTP boundary exposes only the typed safe refusal", async t => {
+  const f=await fixture();t.after(()=>f.db.close());
+  const advance={setUnattended:async()=>{throw new PipelineAdvanceErrorV1("selection_not_current");},historyForOwner:async()=>{throw new Error("unused");}};
+  const handler=createLinearPipelineHttpHandlerV1({origin,trust,service:f.service,advance:advance as never,clock:()=>now});
+  const response=await handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipeline-runs/pipeline-run:test/unattended`,
+    "POST",{runId:"pipeline-run:test"},"pipeline-safe-refusal-0001"));
+  assert.equal(response.status,409);
+  assert.deepEqual(await response.json(),{error:"pipeline_advance_refused",safeReason:"selection_not_current"});
+});
+
+
+test("R7L-06: the allowance projection reads real counters without claiming work", async t => {
+  const f=await fixture();t.after(()=>f.db.close());
+  const saved=await f.service.createTemplate(f.identity,f.project.projectId,template);
+  const run=await f.service.instantiate(f.identity,f.project.projectId,{templateId:saved.templateId,title:"Read allowance"},"read-allowance-regression-0001");
+  const advance=new PipelineAdvanceServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,{},()=>now);
+  assert.equal(await advance.loopAllowanceForOwner(f.identity,f.project.projectId,run.runId),null);
+  await advance.setAllowance(f.identity,{runsPerHour:6,runsPerAgentPerDay:12,machineMaxAgentProcesses:12,
+    machineMaxDbClusters:6,dollarCapMicroUsd:null,observedDbClusters:1});
+  const values=await Promise.all(Array.from({length:20},()=>advance.loopAllowanceForOwner(f.identity,f.project.projectId,run.runId)));
+  for(const value of values) {
+    assert.equal(value?.usedThisHour,0);assert.equal(value?.usedByAgentToday,0);
+    assert.equal(value?.recordedDbClusters,1);assert.equal(value?.startedWork,false);assert.equal(value?.startsWork,false);
+  }
+  await assert.rejects(advance.loopAllowanceForOwner(f.identity,"project:missing",run.runId),/not_found/);
+  await assert.rejects(advance.loopAllowanceForOwner(f.identity,f.project.projectId,"pipeline-run:missing"),/not_found/);
+});
+
+
+test("R7L-06: allowance read refusal degrades only that field, with a named bounded reason", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Run survives allowance outage" }, "allowance-outage-run-0001");
+  const advance = new PipelineAdvanceServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, {}, () => now);
+  await advance.setAllowance(f.identity, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const { pipelineRunViewSchemaV1 } = await import("../src/pipelines/v1/schemas");
+  const view = await f.service.view(f.identity, f.project.projectId, run.runId);
+  let failure: unknown = Object.assign(new Error("database_unavailable: private diagnostic"), { sqlState: "42501" });
+  let reads = 0;
+  let release: (() => void) | undefined;
+  let slowRead: Promise<void> | undefined;
+  let enteredSlowRead: (() => void) | undefined;
+  let slowReads = 0;
+  const handler = createLinearPipelineHttpHandlerV1({ origin, trust, service: f.service, clock: () => now,
+    advance: { setUnattended: advance.setUnattended.bind(advance), historyForOwner: advance.historyForOwner.bind(advance),
+      loopAllowanceForOwner: async (...args) => {
+        reads++; if (slowRead) { if (++slowReads === 50) enteredSlowRead!(); await slowRead; }
+        if (failure !== undefined) throw failure;
+        return advance.loopAllowanceForOwner(...args);
+      } } });
+  const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipeline-runs/${encodeURIComponent(run.runId)}`;
+  for (const [error, reason] of [
+    [failure, "read_permission_denied"], [Object.assign(new Error("private diagnostic"), { code: "42501" }), "read_permission_denied"],
+    [new Error("private diagnostic"), "read_failed"], [null, "read_failed"],
+  ] as const) {
+    failure = error;
+    const response = await handler(request(path));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body, { ...view, loopAllowance: { status: "unavailable", reason } });
+    assert.equal(pipelineRunViewSchemaV1.safeParse(body).success, true);
+    assert.doesNotMatch(JSON.stringify(body), /private diagnostic|42501|database_unavailable/);
+  }
+  failure = Object.assign(new Error("private diagnostic"), { sqlState: "42501" });
+  slowRead = new Promise<void>(resolve => { release = resolve; });
+  const allEntered = new Promise<void>(resolve => { enteredSlowRead = resolve; });
+  const burst = Promise.all(Array.from({ length: 50 }, () => handler(request(path))));
+  // A pending allowance read resumes into a failure; all concurrent run reads still return the run.
+  await allEntered;
+  release!();
+  const responses = await burst;
+  for (const response of responses) {
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ...view, loopAllowance: { status: "unavailable", reason: "read_permission_denied" } });
+  }
+  slowRead = undefined; failure = undefined;
+  const recovered = await handler(request(path));
+  assert.equal(recovered.status, 200);
+  assert.deepEqual(await recovered.json(), { ...view, loopAllowance: await advance.loopAllowanceForOwner(f.identity, f.project.projectId, run.runId) });
+  const priorReads = reads;
+  assert.equal((await handler(request(path.replace(encodeURIComponent(run.runId), "pipeline-run:missing")))).status, 404);
+  assert.equal((await handler(new Request(`${origin}${path}`, { headers: { origin } }))).status, 401);
+  assert.equal((await handler(request(`${path}?bad=1`))).status, 400);
+  assert.equal(reads, priorReads, "failed authentication, invalid input or missing run never reaches the allowance reader");
+  const withoutReader = createLinearPipelineHttpHandlerV1({ origin, trust, service: f.service, clock: () => now });
+  assert.deepEqual(await (await withoutReader(request(path))).json(), { ...view, loopAllowance: null });
+  const failedView = createLinearPipelineHttpHandlerV1({ origin, trust, service: { view: async () => {
+    throw new Error("run read failed");
+  } } as unknown as LinearPipelineServiceV1, clock: () => now });
+  assert.equal((await failedView(request(path))).status, 503, "a failed main run read is still a page failure");
 });

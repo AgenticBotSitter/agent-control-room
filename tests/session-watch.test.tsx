@@ -134,7 +134,8 @@ test("owner session reads stay tenant-bound and emit no task commands", async t 
   const page = await service.read(fixture.identity);
   assert.equal(page.sessions.length, 1); assert.equal(page.sessions[0]!.state, "running");
   assert.equal(page.sessions.some(value => value.sessionId === "attempt:other"), false, "a second tenant's active session is never rendered");
-  assert.equal(page.sessions[0]!.worker, null); assert.equal(page.startsWork, false);
+  // The shared fixture claims as a named worker, as every S5 result producer must.
+  assert.equal(page.sessions[0]!.worker, "worker:fixture"); assert.equal(page.startsWork, false);
   assert.deepEqual((await service.read(fixture.identity, page.sessions[0]!.sessionId)).sessions, [],
     "the stable cursor advances beyond the current page");
   await assert.rejects(service.read(fixture.identity, "attempt:missing"), /invalid_request/,

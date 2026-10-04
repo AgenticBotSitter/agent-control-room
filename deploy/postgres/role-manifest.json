@@ -1,0 +1,128 @@
+{
+  "schema": "control-room.database-role-manifest/v1",
+  "migratorLogin": "control_room_migrator",
+  "migratorGroup": "control_room_schema_owner",
+  "deployerLogin": "control_room_deployer",
+  "database": "control_room",
+  "port": 5432,
+  "macRolePlan": {
+    "control_room_web": "control_room_private_web",
+    "control_room_coordinator": "control_room_task_coordinator",
+    "control_room_results": "control_room_native_results",
+    "control_room_publisher": "control_room_local_result_publisher",
+    "control_room_agent_reviewer_login": "control_room_agent_reviewer",
+    "control_room_queue_worker": "control_room_native_queue_worker",
+    "control_room_fleet": "control_room_fleet_gateway",
+    "control_room_fleet_owner": "control_room_fleet_owner_authority"
+  },
+  "roles": [
+    {
+      "name": "control_room_schema_owner",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_application",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_reader",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_backup",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_schedule_admissions",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_github_broker",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_work_intake",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_private_web",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_task_coordinator",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_native_results",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_local_result_publisher",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_agent_reviewer",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_native_queue_worker",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_fleet_gateway",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_fleet_owner_authority",
+      "attributes": "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_migrator",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_app",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_scheduler",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_work_intake_agent",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_web",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_coordinator",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_results",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_publisher",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_agent_reviewer_login",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_queue_worker",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_fleet",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    },
+    {
+      "name": "control_room_fleet_owner",
+      "attributes": "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    }
+  ]
+}

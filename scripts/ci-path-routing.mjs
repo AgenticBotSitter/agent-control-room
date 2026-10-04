@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Decides which verification lanes a change must run, from the paths it touches.
 //
 // Two properties matter more here than precision:
@@ -20,7 +21,6 @@
 // allowed a narrow lane list when nothing under it is read by another lane's tests.
 
 import { readFileSync, appendFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 
 export const LANES = ["demo", "server", "components", "articles"];
 
@@ -291,4 +291,4 @@ function main() {
   target.write(rendered);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

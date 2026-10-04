@@ -44,7 +44,8 @@ test("runs fixed arguments once, closes stdin, and exposes only the allowed envi
 
 test("coding mode is active-lease bound and gives workspace-write only to the exact worktree", async () => {
   const cwd = await taskDirectory(), captured: { args?: readonly string[] } = {};
-  const leaseMaterial = { runId: "run:coding", repositoryRealPath: join(root, "source"), checkoutPath: cwd,
+  const leaseMaterial = { deliveryDigest: sha256Digest("delivery:coding"), runId: "run:coding",
+    repositoryRealPath: join(root, "source"), repositoryDevice: "1", repositoryInode: "3", checkoutPath: cwd,
     revision: "a".repeat(40), device: "1", inode: "2" };
   const lease = { ...leaseMaterial, leaseId: sha256Digest(leaseMaterial) };
   const executor = createOwnerTrustedLocalCodexCodingExecV1({ lease, requireActiveCodingLease(value) {
@@ -66,7 +67,8 @@ test("qualified Codex workspace-write sandbox refuses an attempted write outside
     const scenario = await mkdtemp(join(root, "real-sandbox-"));
     const worktree = join(scenario, "worktree"), outside = join(scenario, "outside"), attempted = join(outside, "blocked.txt");
     await mkdir(worktree); await mkdir(outside);
-    const leaseMaterial = { runId: "run:real-sandbox", repositoryRealPath: join(scenario, "source"),
+    const leaseMaterial = { deliveryDigest: sha256Digest("delivery:real-sandbox"), runId: "run:real-sandbox",
+      repositoryRealPath: join(scenario, "source"), repositoryDevice: "1", repositoryInode: "3",
       checkoutPath: worktree, revision: "a".repeat(40), device: "1", inode: "2" };
     const lease = { ...leaseMaterial, leaseId: sha256Digest(leaseMaterial) };
     const executor = createOwnerTrustedLocalCodexCodingExecV1({ lease,

@@ -37,7 +37,7 @@ function verifyRow(key: Uint8Array, value: Row): VerifiedRevision {
 }
 
 async function lockTenant(tx: DatabaseSession, tenantId: string): Promise<void> {
-  if ((await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId])).rows.length !== 1) unavailable();
+  if ((await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [tenantId])).rows.length !== 1) unavailable();
 }
 
 async function revisions(tx: DatabaseSession, key: Uint8Array, tenantId: string, workerId: string,

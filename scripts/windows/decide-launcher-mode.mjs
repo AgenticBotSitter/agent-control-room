@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /**
  * Windows launcher-mode decision.
  *
@@ -85,9 +86,8 @@ export function runLauncherModeCli(argv = process.argv.slice(2)) {
 }
 
 // Direct invocation: when this module is the entry point, run the CLI.
-// `import.meta.url === pathToFileURL(process.argv[1]).href` is true only when
+// `isMainModuleV1(process.argv[1], import.meta.url)` is true only when
 // the module is the entry script, not when imported by another module.
-import { pathToFileURL } from "node:url";
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   runLauncherModeCli();
 }

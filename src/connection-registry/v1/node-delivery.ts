@@ -623,7 +623,7 @@ implements ConnectionEnrollmentProtectedDeliverySourceV1 {
     };
     try {
       result = await this.#transaction(async (tx) => {
-        const tenantRows = await safeQuery(tx, `SELECT id AS tenant_id FROM tenants WHERE id=$1 FOR UPDATE`,
+        const tenantRows = await safeQuery(tx, `SELECT id AS tenant_id FROM tenants WHERE id=$1 FOR NO KEY UPDATE`,
           [frame.tenantId], 1);
         if (tenantRows.length !== 1 || ownDataPropertyValueV1(tenantRows[0], "tenant_id") !== frame.tenantId) {
           throw new ConnectionEnrollmentNodeDeliveryErrorV1("integrity_failed");

@@ -1,0 +1,240 @@
+[
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "normalize(path).normalize(\"NFC\").toLowerCase()",
+    "replace": "normalize(path)",
+    "test": "node --import tsx --test --test-name-pattern='A2-01' tests/control-room-installer.test.mjs",
+    "why": "Rehearsal paths must compare case-insensitively after Unicode normalization."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "for (const live of roots) if (rootsOverlap(root, live)) refuse(\"rehearsal_config_refused\");",
+    "replace": "for (const live of roots) if (false) refuse(\"rehearsal_config_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-01' tests/control-room-installer.test.mjs",
+    "why": "Default live paths and all ancestor or child paths must be refused before reading live files."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "    if (candidate.identities.some(left => existing.identities.some(right => left.dev === right.dev && left.ino === right.ino\n      && rootsOverlap(`/${left.remainder}`, `/${right.remainder}`)))) refuse(\"rehearsal_config_refused\");\n    if (rootsOverlap(canonical, liveCanonical) || rootsOverlap(root, liveCanonical)\n      || rootsOverlap(canonical, live)) refuse(\"rehearsal_config_refused\");",
+    "replace": "    // Both equivalent canonical overlap refusals disabled for this mutation.",
+    "test": "node --import tsx --test --test-name-pattern='A2-01' tests/control-room-installer.test.mjs",
+    "why": "canonical aliases and missing descendants must be refused by the inode or canonical-path checks; both equivalent checks are disabled together"
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (entry) refuse(\"rehearsal_config_refused\");",
+    "replace": "if (false) refuse(\"rehearsal_config_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-01' tests/control-room-installer.test.mjs",
+    "why": "Dangling aliases cannot be treated as absent path components."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "if (error?.code !== \"ENOENT\" || current === \"/\") refuse(\"rehearsal_config_refused\");",
+    "replace": "if (error?.code === \"ENOENT\" || current === \"/\") refuse(\"rehearsal_config_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-01' tests/control-room-installer.test.mjs",
+    "why": "Only genuine missing path components may be carried forward during canonicalization."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "await assertRootsDisjoint(value.root, live.roots, liveRoot);\n  if (Object.values",
+    "replace": "// mutant omits discovered roots\n  if (Object.values",
+    "test": "node --import tsx --test --test-name-pattern='A2-01' tests/control-room-installer.test.mjs",
+    "why": "Roots discovered in live JSON must also remain disjoint."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "entry.depth > 64",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-10' tests/control-room-installer.test.mjs",
+    "why": "Live identity discovery bounds nesting independently of JSON syntax parsing."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "++nodes > 100000",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-10' tests/control-room-installer.test.mjs",
+    "why": "Live identity discovery refuses excessive node count."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "parseStrictJsonV1((await handle.readFile()).toString(\"utf8\"))",
+    "replace": "JSON.parse((await handle.readFile()).toString(\"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 installer' tests/control-room-installer.test.mjs",
+    "why": "Live JSON must reject duplicate decoded keys."
+  },
+  {
+    "file": "src/updater/v1/install/rehearsal-config.mjs",
+    "find": "value = parseStrictJsonV1(bytes.toString(\"utf8\"))",
+    "replace": "value = JSON.parse(bytes.toString(\"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 installer' tests/control-room-installer.test.mjs",
+    "why": "The installer rehearsal configuration must reject duplicate decoded keys."
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "names.some(key => !Object.hasOwn(value, key))",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-13' tests/updater-rehearsal.test.mjs",
+    "why": "Each account, port and top-level field must be present as an own key."
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "parseStrictJsonV1(await readFile(path, \"utf8\"))",
+    "replace": "JSON.parse(await readFile(path, \"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 updater' tests/updater-rehearsal.test.mjs",
+    "why": "Updater rehearsal configuration rejects duplicate keys."
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "parseStrictJsonV1(await readFile(markerPath, \"utf8\"))",
+    "replace": "JSON.parse(await readFile(markerPath, \"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 updater' tests/updater-rehearsal.test.mjs",
+    "why": "Rehearsal root markers reject duplicate keys before reuse."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (flags[\"--web-port\"] !== undefined && (!/^\\d{1,5}$/u.test(flags[\"--web-port\"])\n      || !Number.isSafeInteger(Number(flags[\"--web-port\"]))\n      || Number(flags[\"--web-port\"]) < 1024 || Number(flags[\"--web-port\"]) > 65535))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='A2-03' tests/control-room-installer.test.mjs",
+    "why": "CLI rejects short, out-of-range and arbitrarily large port inputs before conversion."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \").slice(0, 200)",
+    "replace": "message",
+    "test": "node --import tsx --test --test-name-pattern='A2-11 CLI' tests/control-room-installer.test.mjs",
+    "why": "The actual CLI error sink must strip terminal controls and bound output."
+  },
+  {
+    "file": "src/updater/v1/pg/init-database.mjs",
+    "find": "(cause ?? lines.at(-1) ?? \"\").replace(/[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]/gu, \" \").slice(0, 200)",
+    "replace": "(cause ?? lines.at(-1) ?? \"\").slice(0, 200)",
+    "test": "node --import tsx --test --test-name-pattern='A2-11 PostgreSQL' tests/control-room-installer.test.mjs",
+    "why": "Selected process diagnostics must not preserve terminal controls."
+  },
+  {
+    "file": "scripts/install/make-owner-paste-file.mjs",
+    "find": "if (!isRehearsalHostnameV1(input.rehearsalTailnetName)) refuse('rehearsal_tailnet_refused');",
+    "replace": "if (false) refuse('rehearsal_tailnet_refused');",
+    "test": "node --import tsx --test --test-name-pattern='A2-04' tests/owner-paste-file.test.mjs",
+    "why": "Owner paste instructions require the exact downstream DNS validation."
+  },
+  {
+    "file": "scripts/install/make-owner-paste-file.mjs",
+    "find": "parseStrictJsonV1(await readFile(argv[1], 'utf8'))",
+    "replace": "JSON.parse(await readFile(argv[1], 'utf8'))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06' tests/owner-paste-file.test.mjs",
+    "why": "Owner paste inputs must refuse duplicate JSON keys before publishing output."
+  },
+  {
+    "file": "src/installer/shared/rehearsal-hostname.mjs",
+    "find": "hostname.test(value)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='A2-04' tests/owner-paste-file.test.mjs",
+    "why": "Hostname labels and total DNS length must validate before paste generation."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (keys.has(key)) invalid(\"json_duplicate_key\");",
+    "replace": "if (false) invalid(\"json_duplicate_key\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "Duplicate detection compares decoded names within each individual object."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (depth > maxDepth) invalid(\"json_depth_refused\");",
+    "replace": "if (false) invalid(\"json_depth_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "JSON parsing must bound depth before recursive descent can exhaust the stack."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (++nodes > maxNodes) invalid(\"json_nodes_refused\");",
+    "replace": "if (false) invalid(\"json_nodes_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "JSON parsing must bound total work on wide inputs."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "typeof text !== \"string\" || Buffer.byteLength(text, \"utf8\") > maxBytes",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "JSON input must fit its explicit byte bound, including multi-byte Unicode."
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "parseStrictJsonV1(await readFile(path, \"utf8\"))",
+    "replace": "JSON.parse(await readFile(path, \"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06' tests/e2e2-rehearsal.test.mjs",
+    "why": "Rehearsal generation rejects duplicate live JSON keys before identity discovery."
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "snapshot = parseStrictJsonV1(bytes.toString(\"utf8\"))",
+    "replace": "snapshot = JSON.parse(bytes.toString(\"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06' tests/e2e2-rehearsal.test.mjs",
+    "why": "A correct digest does not authorize ambiguous snapshot JSON."
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "parseStrictJsonV1(Buffer.concat(chunks.map(value => Buffer.from(value)), length).toString(\"utf8\"))",
+    "replace": "JSON.parse(Buffer.concat(chunks.map(value => Buffer.from(value)), length).toString(\"utf8\"))",
+    "test": "node --import tsx --test --test-name-pattern='A2-06' tests/updater-health-terminal.test.mjs",
+    "why": "Health response validation rejects conflicting or escaped duplicate readiness names."
+  },
+  {
+    "file": "tests/updater-protected-config.test.mjs",
+    "find": "banner: { js: 'import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);' }",
+    "replace": "banner: {}",
+    "test": "node --import tsx --test --test-name-pattern='svc2 real composer' tests/updater-protected-config.test.mjs",
+    "why": "The real composer round trip must actually import the ESM test bundle and reach loader assertions."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (text[index++] !== character) invalid(\"json_invalid\");",
+    "replace": "if (text[index++] === character) invalid(\"json_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "The JSON scanner must consume the expected structural delimiters."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (!primitive.exec(text)) invalid(\"json_invalid\");",
+    "replace": "if (primitive.exec(text)) invalid(\"json_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "Valid primitive tokens must be recognized during bounded scanning."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (index !== text.length) invalid(\"json_invalid\");",
+    "replace": "if (index === text.length) invalid(\"json_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "The scanner must distinguish complete JSON from trailing material."
+  },
+  {
+    "file": "src/installer/shared/strict-json.mjs",
+    "find": "if (character === '\"') return JSON.parse(text.slice(start, index));",
+    "replace": "if (character !== '\"') return JSON.parse(text.slice(start, index));",
+    "test": "node --import tsx --test --test-name-pattern='A2-06 strict' tests/updater-rehearsal.test.mjs",
+    "why": "Strings terminate only at an unescaped quote before duplicate names are compared."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \").slice(0, 200)",
+    "replace": "message.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \")",
+    "test": "node --import tsx --test --test-name-pattern='A2-11 CLI' tests/control-room-installer.test.mjs",
+    "why": "Public CLI failure lines must remain bounded after controls are sanitized."
+  },
+  {
+    "file": "scripts/updater/build-fixed-updater-bundle.mjs",
+    "find": "[\"is-main-module\", \"strict-json\", \"rehearsal-hostname\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\"]",
+    "replace": "[\"is-main-module\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\"]",
+    "test": "node --import tsx --test --test-name-pattern='fixed step builds updater' tests/updater-fixed-bundle.test.mjs",
+    "why": "Isolated updater bundles include the shared validation dependencies."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  \"src/installer/shared/strict-json.mjs\",\n  \"src/installer/shared/rehearsal-hostname.mjs\",",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "The production attended staging path must supply all reviewed fixed-bundle inputs."
+  }
+]

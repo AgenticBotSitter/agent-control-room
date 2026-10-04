@@ -32,7 +32,7 @@ function capturePrincipal(value: unknown): AuthenticatedPrincipal {
   return Object.freeze({ tenantId:String(p.tenantId), identityId:String(p.identityId), actorType:"agent",
     authenticatedAt:String(p.authenticatedAt), expiresAt:String(p.expiresAt) });
 }
-export function captureWorkIntakeServerConfigurationV1(value: unknown): WorkIntakeServerConfigurationV1 {
+export function captureWorkIntakeServerConfigurationV1(value: unknown, context?: Readonly<{ installRoot?: string }>): WorkIntakeServerConfigurationV1 {
   try {
     if (!value || typeof value!=="object" || Array.isArray(value)) throw new Error();
     const input=value as Record<string,unknown>;
@@ -41,7 +41,7 @@ export function captureWorkIntakeServerConfigurationV1(value: unknown): WorkInta
       || (input.port as number)<1 || (input.port as number)>65535 || !token.test(String(input.integrityKey))
       || !Number.isSafeInteger(input.queueDepthLimit) || (input.queueDepthLimit as number)<1
       || (input.queueDepthLimit as number)>20 || !Array.isArray(input.credentials) || input.credentials.length>20) throw new Error();
-    const database=validatePrivatePostgresConfiguration(input.database as PrivatePostgresConfiguration);
+    const database=validatePrivatePostgresConfiguration(input.database as PrivatePostgresConfiguration, context);
     if (database.username!=="control_room_work_intake_agent") throw new Error();
     const credentials=input.credentials.map(value=>{ if(!value||typeof value!=="object"||Array.isArray(value)) throw new Error();
       const entry=value as Record<string,unknown>; if(!exact(entry,["workerId","workerKind","credentialDigest","principal"])

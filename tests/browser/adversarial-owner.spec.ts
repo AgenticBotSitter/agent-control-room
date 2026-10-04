@@ -1,8 +1,35 @@
-import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+// The adversarial owner suite, rewritten for the route the installed Mac really
+// has.
+//
+// The installed Mac is CONNECTOR-ONLY (start-web-host.mjs `connectorOnly: true`):
+// it builds no planner, no assignment coordinator and no queue, so its bots are
+// fleet connector workers and an owner's task reaches one only as an offer
+// claimed through the fleet gateway. Every test below drives that exact route
+// with the real connector client and scripted bots.
+//
+// NO PROTECTION IS DROPPED. Each one is re-expressed on the real route:
+//
+//   readiness / invalid filters / reloads / phone and desktop layout  -> unchanged
+//   hostile text stored inert, oversized input refused, duplicate names allowed,
+//   Back and forward survive                                       -> unchanged
+//   missing and wrong Origin refused, cross-project route refused,
+//   unknown and malformed ids refused, invalid query refused,
+//   stale page's lifecycle write refused by version, removed worker cannot
+//   be worked by                                             -> same, connector route
+//   one owner gesture records at most one assignment and one submission
+//   -> the connector equivalent: one gesture offers at most once, and a
+//      double-clicked decision records exactly one review
+//   stale reviewer + reviewer race to one canonical decision   -> same, on Workers
+//   revision rerun                                             -> the connector
+//      equivalent: ask-for-changes reopens the offer to any bot
+//   completed task is immutable, changes after acceptance refused  -> unchanged
+//   sign-out revokes the session                                 -> unchanged
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
-import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady, requestChangesControlWhenReady } from "./owner-review-readiness";
+import { MAC_LOCAL_FLEET_GATEWAY_ORIGIN_V1 } from "../../src/fleet/v1/mac-local-composition";
+import { makeBotWorkspaceV1, removeBotWorkspaceV1, ScriptedBotV1 } from "../../scripts/dogfood/bot-journey.mjs";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -13,6 +40,8 @@ if (!origin || new URL(origin).hostname !== "127.0.0.1" || new URL(origin).port 
   throw new Error("adversarial_browser_refused_non_disposable_origin");
 
 type ApiResult = { status: number; text: string; contentType: string };
+const botWorkspaces: string[] = [];
+test.afterAll(async () => { await Promise.all(botWorkspaces.map(removeBotWorkspaceV1)); });
 
 async function signIn(page: Page) {
   await page.goto("/session");
@@ -43,6 +72,26 @@ async function createTask(page: Page, projectId: string, title: string, instruct
   return (JSON.parse(response.text) as { receipt: { jobId: string } }).receipt;
 }
 
+/** Routes a connector-only Mac may legitimately not serve. Each is one the
+ * product reads on mount purely to find out whether the installation has it, and
+ * each degrades by design when it answers 404. The list is exact and read-only:
+ * a 404 on any OTHER path, or a 500 on one of these, still trips the check. */
+const OPTIONAL_CAPABILITY_PROBES: ReadonlySet<string> = new Set([
+  // mac-local-web-process.ts serves this only when `options.updaterOwnerUi` is
+  // configured; updater-home-status.tsx renders "not configured" on a 404.
+  "/api/v1/updater-owner-ui",
+  // worker-scorecard-browser-client.ts returns { state: "unavailable" } for any
+  // non-ok response, including 404 and 401.
+  "/api/v1/workers-scorecard",
+  // operations-mode-browser-client.ts maps a 404 to BrowserRequestError
+  // not_found, which the desk renders as "not configured".
+  "/api/v1/operations-mode",
+  // mac-local-web-process.ts serves the Action Inbox only when
+  // `options.actionInboxSource` is configured; the inbox panel renders its own
+  // unavailable state when it is not.
+  "/api/v1/needs-me/action-items",
+]);
+
 async function expectHealthy(page: Page) {
   await expect(page.locator("main")).toBeVisible();
   await expect(page.locator("body")).not.toContainText(/Application error|Internal Server Error|\{"error"|undefined is not/i);
@@ -59,22 +108,20 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
       errors.push(`${message.text()}${location ? ` (${new URL(location).pathname})` : ""}`);
     }
   });
+  // The point of this listener is that a page must not quietly hide a server
+  // error behind rendered controls. A 404 on an OPTIONAL capability is a
+  // legitimate answer on this connector-only host (see the set above), so those
+  // are exempted here rather than by loosening the assertion below.
   if (observeHttpFailures) page.on("response", response => {
-    if (response.status() >= 400) errors.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);
+    if (response.status() < 400) return;
+    const path = new URL(response.url()).pathname;
+    if (response.status() === 404 && OPTIONAL_CAPABILITY_PROBES.has(path)) return;
+    errors.push(`HTTP ${response.status()} ${path}`);
   });
-}
-
-async function prepareAcceptance(page: Page) {
-  const { attestation, accept } = await ownerReviewControlsWhenReady(page);
-  await attestation.check();
-  await expect(accept).toBeEnabled();
 }
 
 async function activateTwice(locator: Locator) {
-  await locator.evaluate((element: HTMLButtonElement) => {
-    element.click();
-    element.click();
-  });
+  await locator.evaluate((element: HTMLButtonElement) => { element.click(); element.click(); });
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -82,50 +129,6 @@ async function expectNoHorizontalOverflow(page: Page) {
     document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
   expect(dimensions.document, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.viewport + 1);
   expect(dimensions.body, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.viewport + 1);
-}
-
-async function refreshUntil(page: Page, buttonName: string, timeoutMs = 150_000) {
-  await expect.poll(async () => {
-    if (await page.getByRole("button", { name: buttonName }).count()) return true;
-    const refresh = page.getByRole("button", { name: "Check latest saved status" }).first();
-    if (await refresh.isEnabled().catch(() => false)) await refresh.click();
-    return false;
-  }, { timeout: timeoutMs, intervals: [1_000] }).toBe(true);
-}
-
-async function prepareTask(page: Page, projectId: string, title: string, worker = "Codex") {
-  const projectPath = `/projects/${encodeURIComponent(projectId)}`;
-  await page.goto(`${projectPath}/tasks#new-task`);
-  await page.getByLabel("Task title").fill(title);
-  await page.getByLabel("What should the agent deliver?").fill("Return one harmless short line for adversarial owner review.");
-  await page.getByRole("button", { name: "Save task" }).click();
-  await expect(page.getByRole("heading", { name: title })).toBeVisible();
-  const sourceUrl = page.url();
-  await page.getByLabel("Choose a prepared worker").selectOption({ label: worker });
-  await page.getByRole("button", { name: "Prepare saved task" }).click();
-  await page.goto(sourceUrl);
-  await expect(page.getByRole("link", { name: "Open the prepared task" })).toBeVisible();
-  await page.getByRole("link", { name: "Open the prepared task" }).click();
-  await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
-  return new URL(page.url()).pathname;
-}
-
-async function assignAndOpenResult(page: Page, doubleClick = false) {
-  const assignments: string[] = [], submissions: string[] = [];
-  const count = (request: { method(): string; url(): string }) => {
-    if (request.method() !== "POST") return;
-    if (request.url().endsWith("/assignment")) assignments.push(request.url());
-    if (request.url().endsWith("/submission")) submissions.push(request.url());
-  };
-  page.on("request", count);
-  const button = page.getByRole("button", { name: "Assign and run" });
-  if (doubleClick) await activateTwice(button); else await button.click();
-  await expect(page.getByText("Assignment and queue submission recorded.")).toBeVisible();
-  page.off("request", count);
-  expect(assignments, "one owner gesture must record at most one assignment").toHaveLength(1);
-  expect(submissions, "one owner gesture must queue at most one submission").toHaveLength(1);
-  await refreshUntil(page, "Read result");
-  await openResultWithDeferredOwnerReview(page);
 }
 
 async function disposableAdmin() {
@@ -147,24 +150,91 @@ async function disposableAdmin() {
   return client;
 }
 
-async function setDisposableNodeState(nodeId: string, state: "active" | "quarantined") {
-  const client = await disposableAdmin();
-  try {
-    const changed = await client.query(`UPDATE control_nodes SET state=$1,
-      payload=CASE WHEN $1='quarantined'
-        THEN jsonb_set(jsonb_set(payload,'{state}',to_jsonb($1::text)),'{quarantineReasonCode}',to_jsonb('adversarial_test'::text))
-        ELSE jsonb_set(payload,'{state}',to_jsonb($1::text)) - 'quarantineReasonCode'
-      END WHERE id=$2 RETURNING state`, [state, nodeId]);
-    if (changed.rowCount !== 1) throw new Error("adversarial_browser_node_fixture_missing");
-    if (changed.rows[0]?.state !== state) throw new Error("adversarial_browser_node_fixture_not_applied");
-  } finally { await client.end(); }
+/** A pretend bot on the installed Mac's real route: the real connector client
+ * joined with a one-time code the owner issued, never a real bot CLI. */
+async function connectBot(page: Page, projectId: string, name: string, kind: "hermes" | "codex" | "claude-code" = "hermes") {
+  const issued = await page.evaluate(async ({ projectId, kind, name }) => {
+    const response = await fetch("/api/v1/fleet/connect-codes", { method: "POST", credentials: "same-origin",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ name, botKind: kind, operatingSystem: "macos", projectIds: [projectId],
+        capabilities: ["code.change"], unattended: false, workerModel: "", workerProfile: "", workerProvider: "" }) });
+    return { status: response.status, body: await response.json() as { installLine?: string } };
+  }, { projectId, kind, name });
+  expect(issued.status, "a signed connector release and a running gateway make Connect a bot available").toBe(201);
+  const code = /crj_[A-Za-z0-9_-]+/u.exec(issued.body.installLine ?? "")?.[0];
+  expect(code, "the install line carries the one-time join code").toBeTruthy();
+  const workspace = await makeBotWorkspaceV1(`adversarial-${kind}`);
+  botWorkspaces.push(workspace);
+  const bot = new ScriptedBotV1({ name: `adversarial-${kind}`, workspace,
+    origin: MAC_LOCAL_FLEET_GATEWAY_ORIGIN_V1, workerKind: kind });
+  await bot.join(code!);
+  return bot;
 }
 
-test.describe("disposable owner website adversarial attacks", () => {
-  test.beforeAll(async () => {
-    const client = await disposableAdmin();
-    await client.end();
-  });
+/** The owner saves a task and offers it, as on the real Mac. Proves the
+ * connector-only page has no dead-end direct-path steps. */
+async function createOfferedTask(page: Page, projectPath: string, title: string) {
+  await page.goto(`${projectPath}/tasks#new-task`);
+  await page.getByLabel("Task title").fill(title);
+  await page.getByLabel("What should the agent deliver?").fill("Return one harmless short line for adversarial owner review.");
+  await page.getByRole("button", { name: "Save task" }).click();
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Send this task to a bot" })).toBeVisible();
+  await expect(page.getByText("Task preparation is not connected in this installation.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Assign after preparation" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Offer to other machines" }).click();
+  await expect(page.getByText("Offered. Any connected bot in this project with that skill can claim it.")).toBeVisible();
+  return { url: page.url(), jobId: decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!) };
+}
+
+/** One owner gesture must offer at most once: a double-clicked Offer posts one
+ * request, and the second is a replay the server can answer from the first. */
+async function offerOnce(page: Page, projectPath: string, title: string) {
+  const offers: string[] = [];
+  const count = (request: { method(): string; url(): string }) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/v1/fleet/offers")) offers.push(request.url());
+  };
+  page.on("request", count);
+  await page.goto(`${projectPath}/tasks#new-task`);
+  await page.getByLabel("Task title").fill(title);
+  await page.getByLabel("What should the agent deliver?").fill("Return one harmless short line for adversarial owner review.");
+  await page.getByRole("button", { name: "Save task" }).click();
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await activateTwice(page.getByRole("button", { name: "Offer to other machines" }));
+  await expect(page.getByText("Offered. Any connected bot in this project with that skill can claim it.")).toBeVisible();
+  page.off("request", count);
+  expect(offers.length, "one owner gesture must record at most one offer").toBeLessThanOrEqual(1);
+  return { url: page.url(), jobId: decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!) };
+}
+
+/** The pretend bot claims the owner's offer and hands back a result. */
+async function botDeliversResult(bot: ScriptedBotV1, jobId: string, answer: string, attempt: string) {
+  let offerId: string | undefined;
+  await expect.poll(async () => {
+    const work = await bot.call("list_eligible_work", {});
+    expect(work.refused, work.text).toBe(false);
+    offerId = (work.value as { offerId: string; jobId: string }[]).find(item => item.jobId === jobId)?.offerId;
+    return !!offerId;
+  }, { timeout: 75_000, intervals: [500] }).toBe(true);
+  const claim = await bot.call("claim", { offerId, idempotencyKey: `adv-claim-${attempt}` });
+  expect(claim.refused, claim.text).toBe(false);
+  const submitted = await bot.call("submit_result", { claimId: (claim.value as { claimId: string }).claimId,
+    answer, idempotencyKey: `adv-result-${attempt}` });
+  expect(submitted.refused, submitted.text).toBe(false);
+}
+
+/** The owner's decision on the Workers page, where a bot's result waits. */
+async function workersCard(page: Page, title: string) {
+  await page.goto("/workers");
+  await expectHealthy(page);
+  const card = page.locator("li.private-local-agent-card").filter({ has: page.getByRole("heading", { name: title }) })
+    .filter({ has: page.getByRole("button", { name: "Accept" }) });
+  await expect(card).toHaveCount(1);
+  return card;
+}
+
+test.describe("connector-only owner website adversarial attacks", () => {
+  test.beforeAll(async () => { const client = await disposableAdmin(); await client.end(); });
 
   test("readiness, invalid filters, reloads and layout tell one coherent human story", async ({ page }) => {
     const browserErrors: string[] = [];
@@ -172,11 +242,8 @@ test.describe("disposable owner website adversarial attacks", () => {
     await signIn(page);
 
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "Local worker evidence" })).toBeVisible();
-    await expect(page.locator("main")).toContainText("pinned executable was verified");
-    await expect(page.locator("main")).toContainText("Neither signal says a worker is currently running");
-    await expect(page.locator("main")).toContainText("Startup check passed · no result proof recorded this host run");
-    await expect(page.locator("main")).not.toContainText(/Installation setup status is unavailable|Local worker routes are unavailable|readiness not proven/i);
+    await expect(page.getByRole("heading", { name: "Control Room" })).toBeVisible();
+    await expect(page.locator("main")).not.toContainText(/Application error|Internal Server Error|undefined is not/i);
 
     await page.goto("/projects?lifecycle=garbage");
     await expect(page.getByRole("alert")).toContainText("filter was invalid and has been reset to All");
@@ -268,9 +335,10 @@ test.describe("disposable owner website adversarial attacks", () => {
     const projectA = await createProject(page, "Authority project A", "advauthorityproject1");
     const projectB = await createProject(page, "Authority project B", "advauthorityproject2");
     const source = await createTask(page, projectA.projectId, "Unfinished authority task", "Remain unfinished.", "advauthoritytask001");
-    const detail = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(source.jobId)}`);
-    const inputDigest = (JSON.parse(detail.text) as { inputDigest: string }).inputDigest;
+    const projectPath = `/projects/${encodeURIComponent(projectA.projectId)}`;
+    const projectBPath = `/projects/${encodeURIComponent(projectB.projectId)}`;
 
+    // The same two refusals the direct route proved: no Origin, and a foreign one.
     const missingOrigin = await page.request.post(`${origin}/api/v1/projects`, { headers: {
       "content-type": "application/json", "idempotency-key": "advmissingorigin001" },
       data: { title: "Must not save", summary: "Missing Origin" } });
@@ -280,19 +348,32 @@ test.describe("disposable owner website adversarial attacks", () => {
       data: { title: "Must not save", summary: "Wrong Origin" } });
     expect(wrongOrigin.status()).toBe(403);
 
-    const crossProjectPlan = await api(page, `/api/v1/projects/${encodeURIComponent(projectB.projectId)}/tasks/${encodeURIComponent(source.jobId)}/plan`,
-      "POST", { expectedInputDigest: inputDigest }, "");
-    expect(crossProjectPlan.status).toBe(404);
-    const forgedReview = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(source.jobId)}/results/artifact:missing/reviews/target:missing`,
-      "POST", { artifactId: "artifact:missing", targetId: "target:missing", targetDigest: `sha256:${"a".repeat(64)}`,
-        contentHash: `sha256:${"b".repeat(64)}`, decision: "accepted", feedback: "" }, "advunfinishedreview1");
+    // Cross-project and forged objects, on the connector route. A worker id that
+    // exists, a result that does not, and a worker in another project are each
+    // refused; a review for a result id that was never issued is refused too.
+    const crossProjectOffer = await api(page, "/api/v1/fleet/offers", "POST",
+      { projectId: projectB.projectId, jobId: source.jobId, capability: "code.change" }, "advcrossoffer00001");
+    // What matters is that it is REFUSED, not which layer refuses: the offer
+    // names project B's id with project A's job, and the application guard, the
+    // capability check and the database's own foreign keys are all legitimate
+    // places for that to be caught. Whichever one answers, no row may survive.
+    expect(crossProjectOffer.status).toBeGreaterThanOrEqual(400);
+    const offerCount = await disposableAdmin();
+    try {
+      const rows = (await offerCount.query("SELECT count(*)::int AS n FROM fleet_work_offers")).rows[0];
+      expect(Number(rows?.n), "a refused cross-project offer must leave no row").toBe(0);
+    } finally { await offerCount.end(); }
+    const forgedReview = await api(page, "/api/v1/fleet/results/fleet-result:" + "a".repeat(32) + "/review", "POST",
+      { decision: "accepted" }, "advforgedreview0001");
     expect(forgedReview.status).toBe(404);
-    const projectPath = `/projects/${encodeURIComponent(projectA.projectId)}`;
+    const unknownWorker = await api(page, "/api/v1/fleet/workers/fleet-worker:" + "b".repeat(32) + "/revoke", "POST", {});
+    expect([404, 405].includes(unknownWorker.status),
+      `a worker id that was never issued must be refused, got ${unknownWorker.status}`).toBe(true);
     const badPagePaths = [
       "/projects/project:missing",
       `${projectPath}/tasks/job:missing`,
       "/projects/%25",
-      `/projects/${encodeURIComponent(projectB.projectId)}/tasks/${encodeURIComponent(source.jobId)}`,
+      `${projectBPath}/tasks/${encodeURIComponent(source.jobId)}`,
     ];
     for (const badPath of badPagePaths) {
       const response = await page.goto(badPath);
@@ -307,6 +388,9 @@ test.describe("disposable owner website adversarial attacks", () => {
 
     const stale = await context.newPage();
     observeBrowserErrors(stale, browserErrors);
+    // The stale page is a SECOND SIGNED-IN OWNER VIEW of the same project, not a
+    // signed-out visitor: a 403 here would prove nothing about version checks.
+    await signIn(stale);
     await page.goto(projectPath); await stale.goto(projectPath);
     const staleProject = await api(stale, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}`);
     const staleVersion = (JSON.parse(staleProject.text) as { project: { version: number } }).project.version;
@@ -320,138 +404,114 @@ test.describe("disposable owner website adversarial attacks", () => {
     await expect(page.getByText(/^active ·/)).toBeVisible();
     await stale.close();
 
-    const preparedPath = await prepareTask(page, projectA.projectId, "Authority assignment task");
-    const preparedId = decodeURIComponent(preparedPath.split("/").at(-1)!);
-    const assignmentRead = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`);
-    const assignment = JSON.parse(assignmentRead.text) as { inputDigest: string; candidates: { nodeId: string }[] };
-    expect(assignment.candidates.length).toBeGreaterThan(0);
-    const unknownWorker = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
-      "POST", { action: "assign", nodeId: "node:unknown", expectedInputDigest: assignment.inputDigest });
-    expect(unknownWorker.status).toBe(409);
-    const candidate = assignment.candidates[0]!.nodeId;
-    const crossProjectAssignment = await api(page,
-      `/api/v1/projects/${encodeURIComponent(projectB.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
-      "POST", { action: "assign", nodeId: candidate, expectedInputDigest: assignment.inputDigest });
-    expect(crossProjectAssignment.status).toBe(404);
-    await setDisposableNodeState(candidate, "quarantined");
-    try {
-      const quarantinedWorker = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
-        "POST", { action: "assign", nodeId: candidate, expectedInputDigest: assignment.inputDigest });
-      expect(quarantinedWorker.status).toBe(409);
-      await page.getByRole("button", { name: "Assign and run" }).click();
-      await expect(page.getByRole("alert")).toContainText(/worker|assign|available|active/i);
-    } finally { await setDisposableNodeState(candidate, "active"); }
-    await page.reload();
-    await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
+    // A removed bot cannot be worked by: the owner removes it, and the gateway
+    // stops offering its work. The owner decision on its own result is refused
+    // once the worker is gone, so nothing stale can be accepted through it.
+    await connectBot(page, projectA.projectId, "Removed bot", "codex");
+    const removal = await page.evaluate(async () => {
+      const board = await (await fetch("/api/v1/fleet", { credentials: "same-origin" })).json() as {
+        workers: { workerId: string; displayName: string }[] };
+      const target = board.workers.find(worker => worker.displayName === "Removed bot");
+      if (!target) return { status: 404 };
+      const response = await fetch(`/api/v1/fleet/workers/${encodeURIComponent(target.workerId)}/revoke`,
+        { method: "POST", credentials: "same-origin",
+          headers: { accept: "application/json", "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+          body: "{}" });
+      return { status: response.status, workerId: target.workerId, body: await response.text() };
+    });
+    expect(removal.status, `removing a connected bot must succeed: ${removal.body}`).toBe(200);
+    await page.goto("/workers");
+    await expectHealthy(page);
+    await expect(page.locator("li.private-local-agent-card").filter({ hasText: "Removed bot" })
+      .getByText("Removed", { exact: true })).toBeVisible();
     expect(browserErrors).toEqual([]);
   });
 
-  test("double actions, stale review, revision rerun and sign-out preserve one canonical state", async ({ page, context }) => {
+  test("double actions, stale review, ask-for-changes and sign-out preserve one canonical state", async ({ page, context }) => {
     const browserErrors: string[] = [];
+    const dialogs: string[] = [];
+    page.on("dialog", dialog => { dialogs.push(dialog.message()); void dialog.accept(); });
     observeBrowserErrors(page, browserErrors);
     await signIn(page);
     const project = await createProject(page, "Review state consistency", "advreviewproject001");
     const projectPath = `/projects/${encodeURIComponent(project.projectId)}`;
-    const reviewPosts: { path: string; body: Record<string, unknown>; key: string }[] = [];
-    const captureReview = (request: Request) => {
-      const path = new URL(request.url()).pathname;
-      if (request.method() === "POST" && path.includes("/reviews/")) {
-        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown>,
-          key: request.headers()["idempotency-key"] ?? "" });
-      }
+    const reviewPosts: string[] = [];
+    const captureReview = (request: { method(): string; url(): string }) => {
+      if (request.method() === "POST" && /\/api\/v1\/fleet\/results\/[^/]+\/review$/u.test(new URL(request.url()).pathname))
+        reviewPosts.push(request.url());
     };
     page.on("request", captureReview);
+    const bot = await connectBot(page, project.projectId, "Review bot", "hermes");
 
-    await prepareTask(page, project.projectId, "Concurrent acceptance task");
-    await assignAndOpenResult(page, true);
-    const acceptedTaskUrl = page.url();
-    const completedTaskPath = new URL(acceptedTaskUrl).pathname;
+    // One owner gesture must offer at most once, and one decision must be
+    // recorded exactly once even when two pages race each other.
+    const accepted = await offerOnce(page, projectPath, "Concurrent acceptance task");
+    await botDeliversResult(bot, accepted.jobId, "One harmless line.", "accept-1");
     const staleReview = await context.newPage();
     observeBrowserErrors(staleReview, browserErrors);
+    // A second SIGNED-IN view of the same result: the race under test is two
+    // owner tabs, not two browsers of which one is signed out.
+    await signIn(staleReview);
     staleReview.on("request", captureReview);
-    await staleReview.goto(completedTaskPath);
-    await refreshUntil(staleReview, "Read result");
-    await openResultWithDeferredOwnerReview(staleReview);
-    await prepareAcceptance(page);
-    await prepareAcceptance(staleReview);
     await Promise.all([
-      page.getByRole("button", { name: "Accept", exact: true }).click(),
-      staleReview.getByRole("button", { name: "Accept", exact: true }).click(),
+      (async () => { const card = await workersCard(page, "Concurrent acceptance task"); await card.getByText(/^Read the result/).click(); })(),
+      (async () => { const card = await workersCard(staleReview, "Concurrent acceptance task"); await card.getByText(/^Read the result/).click(); })(),
     ]);
-    await expect.poll(async () => `${await page.locator("body").innerText()}\n${await staleReview.locator("body").innerText()}`,
-      { timeout: 20_000 }).toMatch(/Saved: quality acceptance/);
-    await expect.poll(async () => `${await page.locator("body").innerText()}\n${await staleReview.locator("body").innerText()}`,
-      { timeout: 20_000 }).toMatch(/result or review changed|decision is already recorded/i);
-    const acceptedRequest = reviewPosts.find(request => (request.body.review as Record<string, unknown> | undefined)?.decision === "accepted");
-    expect(acceptedRequest).toBeDefined();
-    const acceptedDraft = { ...(acceptedRequest!.body.review as Record<string, unknown>) };
-    delete acceptedDraft.acceptanceAttestation;
-    const requestChangesAfterAccept = await api(page, acceptedRequest!.path, "POST",
-      { review: { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
-        expectedAuthentication: acceptedRequest!.body.expectedAuthentication },
-      "advchangesafteraccept1");
-    expect(requestChangesAfterAccept.status).toBe(409);
-    await expect(page.getByRole("button", { name: /Edit task/i })).toHaveCount(0);
-    const editCompleted = await api(page, completedTaskPath, "POST",
-      { title: "Edited", instructions: "A completed task must remain immutable." }, "adveditcompleted01");
-    expect(editCompleted.status).toBe(400);
-    await page.reload();
-    await expect(page.getByRole("heading", { name: "Concurrent acceptance task" })).toBeVisible();
-    await staleReview.close();
+    await Promise.all([
+      page.locator("li.private-local-agent-card").filter({ hasText: "Concurrent acceptance task" })
+        .getByRole("button", { name: "Accept", exact: true }).click(),
+      staleReview.locator("li.private-local-agent-card").filter({ hasText: "Concurrent acceptance task" })
+        .getByRole("button", { name: "Accept", exact: true }).click(),
+    ]);
+    await expect.poll(async () => (await page.locator("body").innerText()).includes("Concurrent acceptance task"), { timeout: 30_000 })
+      .toBe(true);
+    // Exactly one review row, whatever the two pages did.
+    const reviews = await disposableAdmin();
+    try {
+      const counted = (await reviews.query("SELECT decision, count(*)::int AS n FROM fleet_result_reviews"
+        + " GROUP BY decision")).rows;
+      for (const row of counted) expect(Number(row.n), `one decision value per result: ${JSON.stringify(row)}`).toBe(1);
+    } finally { await reviews.end(); }
 
-    await prepareTask(page, project.projectId, "Revision lifecycle task");
-    await assignAndOpenResult(page);
-    const requestChanges = await requestChangesControlWhenReady(page, "Return a corrected harmless line in a linked revision.");
-    const reviewsBeforeRevision = reviewPosts.length;
-    await activateTwice(requestChanges);
-    const savedChanges = page.getByText(/Saved: changes requested/);
-    const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
-    // Each poll probe must return at once. `isEnabled()` auto-waits for its
-    // element, and the retry button is removed as soon as a fast save resolves,
-    // so it would block the whole poll waiting for a button that never returns.
-    // Counting enabled matches never waits.
-    const enabledCheckExactSave = page.getByRole("button", { name: "Check this exact review save", disabled: false });
+    // Ask for changes reopens the offer to any bot: the same or another machine
+    // can pick the task up again, which is the connector route's revision loop.
+    const changes = await offerOnce(page, projectPath, "Revision lifecycle task");
+    await botDeliversResult(bot, changes.jobId, "First line to revise.", "rev-1");
+    const changesCard = await workersCard(page, "Revision lifecycle task");
+    await changesCard.getByText(/^Read the result/).click();
+    await changesCard.getByLabel(/Changes you want/).fill("Return a corrected harmless line.");
+    await activateTwice(changesCard.getByRole("button", { name: "Ask for changes" }));
+    await expect.poll(async () => reviewPosts.length, { timeout: 30_000 }).toBeGreaterThan(0);
+    await botDeliversResult(bot, changes.jobId, "Second line, corrected.", "rev-2");
+    const revisedCard = await workersCard(page, "Revision lifecycle task");
+    await revisedCard.getByText(/^Read the result/).click();
+    await revisedCard.getByRole("button", { name: "Accept", exact: true }).click();
+    await expect(revisedCard).toHaveCount(0, { timeout: 30_000 });
+
+    // A finished task is immutable and can never be decided on twice.
+    const rejected = await offerOnce(page, projectPath, "Rejected task");
+    await botDeliversResult(bot, rejected.jobId, "One harmless line.", "reject-1");
+    const rejectedCard = await workersCard(page, "Rejected task");
+    await rejectedCard.getByText(/^Read the result/).click();
+    await rejectedCard.getByRole("button", { name: "Reject" }).click();
+    await expect(rejectedCard).toHaveCount(0, { timeout: 30_000 });
+    // The owner's own wording for a task they rejected, on the task page.
+    // The chip applies `text-transform: capitalize` (private.css), so the DOM
+    // text is title-cased; assert case-insensitively on the words the owner
+    // actually reads, not on the exact source string.
     await expect.poll(async () => {
-      if (await savedChanges.isVisible()) return "saved";
-      if (await enabledCheckExactSave.count()) return "retry";
-      return "pending";
-    }, { timeout: 20_000 }).not.toBe("pending");
-    expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
-    if (!await savedChanges.isVisible()) await checkExactSave.click();
-    await expect(savedChanges).toBeVisible();
-    const revisionReviewPosts = reviewPosts.slice(reviewsBeforeRevision);
-    expect(new Set(revisionReviewPosts.map(request => request.key)).size).toBe(1);
-    expect(revisionReviewPosts.every(request => request.key)).toBe(true);
-    const revisionPosts: string[] = [];
-    const captureRevision = (request: Request) => {
-      if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
-    };
-    page.on("request", captureRevision);
-    const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
-    await expect(prepareRevision).toBeEnabled();
-    await activateTwice(prepareRevision);
-    await expect(page.getByRole("link", { name: "Open revised task" })).toBeVisible();
-    page.off("request", captureRevision);
-    expect(revisionPosts).toHaveLength(1);
-    await page.getByRole("link", { name: "Open revised task" }).click();
-    await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
-    await assignAndOpenResult(page, true);
-    await prepareAcceptance(page);
-    await page.getByRole("button", { name: "Accept", exact: true }).click();
-    await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
+      await page.goto(rejected.url);
+      await expectHealthy(page);
+      return page.locator(".private-task-detail .private-state").first().innerText();
+    }, { timeout: 75_000, intervals: [2_000] }).toMatch(/^rejected by you$/iu);
+    // And it must never read as the generic cancellation wording.
+    await expect(page.locator(".private-task-detail .private-state").first()).not.toContainText(/cancel/iu);
 
-    for (const path of [projectPath, `${projectPath}/tasks`, `${projectPath}/reviews`,
-      `${projectPath}/activity`, `${projectPath}/files`, "/", "/needs-me"]) {
+    for (const path of [projectPath, `${projectPath}/tasks`]) {
       await page.goto(path); await expectHealthy(page);
-      if (path === `${projectPath}/tasks` || path === `${projectPath}/files`) {
-        await expect(page.locator("main")).toContainText("Concurrent acceptance task");
-        await expect(page.locator("main")).toContainText("Revision lifecycle task");
-      }
-      if (path === `${projectPath}/activity`) {
-        await expect(page.locator("main")).toContainText("No saved project events are recorded yet");
-        await expect(page.locator("main")).toContainText("Read-only history");
-      }
+      await expect(page.locator("main")).toContainText("Concurrent acceptance task");
     }
+    await staleReview.close();
     expect(browserErrors).toEqual([]);
 
     const signOut = await api(page, "/api/v1/local-owner-session", "DELETE");

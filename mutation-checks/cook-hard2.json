@@ -1,0 +1,310 @@
+[
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "| (fsConstants.O_NOFOLLOW ?? 0) | fsConstants.O_NONBLOCK;",
+    "replace": "| (fsConstants.O_NOFOLLOW ?? 0);",
+    "test": "node --import tsx --test --test-name-pattern='A1-09' tests/updater-file-hardening.test.mjs",
+    "why": "a swapped FIFO must refuse without waiting for a writer"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (publishing) await removeOwnedFileV1(path, owned);",
+    "replace": "if (false) await removeOwnedFileV1(path, owned);",
+    "test": "node --import tsx --test --test-name-pattern='A1-07' tests/updater-file-hardening.test.mjs",
+    "why": "a failed lock initialization must remove only its owned inode so later updates can retry"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (publishing) await removeOwnedFileV1(path, owned);",
+    "replace": "if (publishing) await import(\"node:fs/promises\").then(fs => fs.rm(path, { force: true }));",
+    "test": "node --import tsx --test --test-name-pattern='trust lock:' tests/updater-file-hardening.test.mjs",
+    "why": "failed initialization must not remove a replacement lock"
+  },
+  {
+    "file": "scripts/mac-local/stack.mjs",
+    "find": "const bytes = await stableFileBytesV1(path, 32, entry => {",
+    "replace": "const bytes = await stableFileBytesV1(path, 1024, entry => {",
+    "test": "node --import tsx --test --test-name-pattern='PID:' tests/updater-file-hardening.test.mjs",
+    "why": "PID files have a small byte cap"
+  },
+  {
+    "file": "scripts/mac-local/stack.mjs",
+    "find": "if ((entry.mode & 0o022) !== 0 || entry.uid !== process.getuid?.() && entry.uid !== 0) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "node --import tsx --test --test-name-pattern='PID:' tests/updater-file-hardening.test.mjs",
+    "why": "a writable PID file cannot supply a signal target"
+  },
+  {
+    "file": "scripts/mac-local/stack.mjs",
+    "find": "if (!/^[0-9]{1,16}$/u.test(text)) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "node --import tsx --test --test-name-pattern='PID:' tests/updater-file-hardening.test.mjs",
+    "why": "PID input must be decimal text"
+  },
+  {
+    "file": "src/updater/v1/pg/first-owner-state.mjs",
+    "find": "await requireStateDirectory(directory, runtime);\n  await check().catch(() => refuse(\"first_owner_state_refused\"));",
+    "replace": "await requireStateDirectory(directory, runtime);",
+    "test": "node --import tsx --test --test-name-pattern='A1-02' tests/updater-file-hardening.test.mjs",
+    "why": "a replaced first-owner directory must fail closed before opening its state"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "} finally { await removeOwnedFileV1(temporary, owned); }",
+    "replace": "} finally {}",
+    "test": "node --import tsx --test --test-name-pattern='A1-04' tests/updater-file-hardening.test.mjs",
+    "why": "partial status files are cleaned after storage failure"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o022) !== 0\n      || entry.uid !== process.geteuid?.()) refuse(\"passkey_status_write_refused\");",
+    "replace": "if (false) refuse(\"passkey_status_write_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='status: writable' tests/updater-file-hardening.test.mjs",
+    "why": "status directories must not be writable by other accounts"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "const next = this.#tail.then(locked, locked);",
+    "replace": "const next = this.#tail.then(work, work);",
+    "test": "node --import tsx --test --test-name-pattern='A1-06' tests/updater-file-hardening.test.mjs",
+    "why": "independent journal instances cannot acknowledge a broken chain"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (bytesRead > 256 || !Number.isSafeInteger(owner?.pid) || owner.pid < 1 || owner.pid > 0x7fffffff)",
+    "replace": "if (bytesRead > 256)",
+    "test": "node --import tsx --test --test-name-pattern='journal: dead' tests/updater-file-hardening.test.mjs",
+    "why": "malformed lock PIDs must not authorize stale-lock removal"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "process.kill(owner.pid, 0); throw journalErrorV1(\"updater_journal_busy\");",
+    "replace": "throw Object.assign(new Error(\"dead\"),{code:\"ESRCH\"});",
+    "test": "node --import tsx --test --test-name-pattern='journal: dead' tests/updater-file-hardening.test.mjs",
+    "why": "never reclaim a live writer lock"
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "const path = join(source, \"package.json\"), before = await regular(path, source);",
+    "replace": "const path = join(source, \"package.json\"), before = await lstat(path);",
+    "test": "node --import tsx --test --test-name-pattern='A1-11' tests/updater-file-hardening.test.mjs",
+    "why": "the attended seed refuses a FIFO before reading metadata"
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "if (before.size > 256 * 1024) refuse(\"updater_build_input_refused\");",
+    "replace": "if (false) refuse(\"updater_build_input_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='builder: package' tests/updater-file-hardening.test.mjs",
+    "why": "package metadata has a bounded read budget"
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "if (position !== before.size || !same(await handle.stat()) || !same(await lstat(path))\n      || !parent.isDirectory() || parent.dev !== sourceEntry.dev || parent.ino !== sourceEntry.ino)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='builder: package' tests/updater-file-hardening.test.mjs",
+    "why": "a package swapped after opening must not become builder metadata"
+  },
+  {
+    "file": "src/installer/shared/file-custody.mjs",
+    "find": "if (entry.isSymbolicLink() && (![\"/var\", \"/tmp\", \"/etc\"].includes(current)\n      || await realpath(current) !== `/private${current}`)) refused();",
+    "replace": "if (false) refused();",
+    "test": "node --import tsx --test --test-name-pattern='custody: static' tests/updater-file-hardening.test.mjs",
+    "why": "only fixed OS filesystem aliases may occur above a protected file"
+  },
+  {
+    "file": "src/installer/shared/file-custody.mjs",
+    "find": "if (position !== before.size || !sameFileV1(before, await handle.stat())\n      || !sameFileV1(before, await lstat(path))) refused();",
+    "replace": "if (false) refused();",
+    "test": "node --import tsx --test --test-name-pattern='custody: bounded' tests/updater-file-hardening.test.mjs",
+    "why": "the returned bytes must belong to the unchanged checked inode"
+  },
+  {
+    "file": "src/installer/shared/file-custody.mjs",
+    "find": "if (current && sameIdentityV1(current, owned)) await unlink(path);",
+    "replace": "if (current) await unlink(path);",
+    "test": "node --import tsx --test --test-name-pattern='status: failed' tests/updater-file-hardening.test.mjs",
+    "why": "cleanup must preserve a substituted temporary file"
+  },
+  {
+    "file": "src/installer/shared/file-custody.mjs",
+    "find": "if (current && sameIdentityV1(current, owned)) await unlink(path);",
+    "replace": "if (false) await unlink(path);",
+    "test": "node --import tsx --test --test-name-pattern='A1-04' tests/updater-file-hardening.test.mjs",
+    "why": "cleanup must remove the invocation-owned partial file"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "typeof value.name !== \"string\" || !accountPattern.test(value.name)",
+    "replace": "!accountPattern.test(value.name)",
+    "test": "node --import tsx --test --test-name-pattern='A2-09' tests/updater-config-hardening.test.mjs",
+    "why": "account names must be string scalars"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "typeof input.installationId !== \"string\" || !safeIdPattern.test(input.installationId)",
+    "replace": "!safeIdPattern.test(input.installationId)",
+    "test": "node --import tsx --test --test-name-pattern='A2-09' tests/updater-config-hardening.test.mjs",
+    "why": "installation IDs must be string scalars"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "typeof input.rpId !== \"string\" || !rpIdPattern.test(input.rpId)",
+    "replace": "!rpIdPattern.test(input.rpId)",
+    "test": "node --import tsx --test --test-name-pattern='A2-09' tests/updater-config-hardening.test.mjs",
+    "why": "RP IDs must be string scalars"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "typeof input.ownerCodeDigest !== \"string\" || !digestPattern.test(input.ownerCodeDigest)",
+    "replace": "!digestPattern.test(input.ownerCodeDigest)",
+    "test": "node --import tsx --test --test-name-pattern='A2-09' tests/updater-config-hardening.test.mjs",
+    "why": "owner-code digests must be string scalars"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "typeof value.webHmac.value !== \"string\" || !secretPattern.test(value.webHmac.value)",
+    "replace": "!secretPattern.test(value.webHmac.value)",
+    "test": "node --import tsx --test --test-name-pattern='A2-09' tests/updater-config-hardening.test.mjs",
+    "why": "HMAC values must be string scalars"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "typeof value.workIntake.integrityKey !== \"string\" || !secretPattern.test(value.workIntake.integrityKey)",
+    "replace": "!secretPattern.test(value.workIntake.integrityKey)",
+    "test": "node --import tsx --test --test-name-pattern='A2-09' tests/updater-config-hardening.test.mjs",
+    "why": "work-intake keys must be string scalars"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "Object.keys(input).some(key => !allowed.includes(key))",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-02' tests/updater-config-hardening.test.mjs",
+    "why": "unknown gateway configuration keys must be refused"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "!FLEET_PROJECT_ID_PATTERN_V1.test(input.tenantId)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-02' tests/updater-config-hardening.test.mjs",
+    "why": "gateway tenants obey the store identity grammar"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "Object.getPrototypeOf(input) !== Object.prototype",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='configuration: exact' tests/updater-config-hardening.test.mjs",
+    "why": "gateway fields must be own JSON object members"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).some(key => !allowed.includes(key))",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='A2-02|configuration: exact' tests/updater-config-hardening.test.mjs",
+    "why": "owner profiles require exact own fields"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "&& item.length <= 512 && !/[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]/u.test(item)",
+    "replace": "&& true",
+    "test": "node --import tsx --test --test-name-pattern='A2-02' tests/updater-config-hardening.test.mjs",
+    "why": "owner identities must be bounded and free of controls"
+  },
+  {
+    "file": "src/updater/v1/pg/first-owner-ports.mjs",
+    "find": "await check().catch(() => refuse(\"database_logins_write_refused\"));\n  const references",
+    "replace": "await Promise.resolve();\n  const references",
+    "test": "node --import tsx --test --test-name-pattern='A1-05' tests/updater-file-hardening.test.mjs",
+    "why": "password custody is checked before any temporary file is opened"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const captured = await loadMacLocalProtectedConfigurationV1(path, runtime, { installRoot: dirname(protectedRoot) });\n    await owner.check();",
+    "replace": "    const captured = await loadMacLocalProtectedConfigurationV1(path, runtime, { installRoot: dirname(protectedRoot) });",
+    "test": "node --import tsx --test --test-name-pattern='web custody: parent' tests/updater-file-hardening.test.mjs",
+    "why": "a moved configuration parent must fail closed even if its leaf inode is unchanged"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 64 * 1024 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    return captureMacLocalProtectedConfigurationV1(parseStrictJsonV1(bytes), context);",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (false) throw new Error();\n    return captureMacLocalProtectedConfigurationV1(parseStrictJsonV1(bytes), context);",
+    "test": "node --import tsx --test --test-name-pattern='web custody: leaf' tests/updater-file-hardening.test.mjs",
+    "why": "a reader seam cannot bypass leaf identity or byte bounds"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "if (!intake || typeof intake !== \"object\" || Array.isArray(intake)\n      || Object.keys(intake).sort().join(\",\") !== \"database,integrityKey\") throw new Error(\"fleet_gateway_configuration_refused\");",
+    "replace": "if (false) throw new Error(\"fleet_gateway_configuration_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='A2-02|configuration: exact' tests/updater-config-hardening.test.mjs",
+    "why": "nested gateway data must have the declared object shape"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "  const checkCustody = async () => { for (const check of checks) await check(); };",
+    "replace": "  const checkCustody = async () => {};",
+    "test": "node --import tsx --test --test-name-pattern='signing custody:' tests/updater-file-hardening.test.mjs",
+    "why": "signing must retain checked parent directory identities"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!current || !sameIdentityV1(owned, current)) throw journalErrorV1(\"updater_journal_owner_refused\");",
+    "replace": "if (!current) throw journalErrorV1(\"updater_journal_owner_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='journal: replaced' tests/updater-file-hardening.test.mjs",
+    "why": "journal cleanup must not remove a replacement lock"
+  },
+  {
+    "file": "src/updater/v1/pg/first-owner-state.mjs",
+    "find": "  const value = await readStateFile(join(directory, \"first-owner.json\"), runtime);\n  await check().catch(() => refuse(\"first_owner_state_refused\"));",
+    "replace": "  const value = await readStateFile(join(directory, \"first-owner.json\"), runtime);",
+    "test": "node --import tsx --test --test-name-pattern='first-owner custody' tests/updater-file-hardening.test.mjs",
+    "why": "first-owner state cannot be returned after its parent changes"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 64 * 1024 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    await owner.check();\n    return captureWorkIntakeServerConfigurationV1(parseStrictJsonV1(bytes), { installRoot: dirname(protectedRoot) });",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    await owner.check();\n    return captureWorkIntakeServerConfigurationV1(parseStrictJsonV1(bytes), { installRoot: dirname(protectedRoot) });",
+    "test": "node --import tsx --test --test-name-pattern='optional installed' tests/updater-file-hardening.test.mjs",
+    "why": "optional installed files retain identity and byte bounds after reading"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 4096 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    await owner.check();\n    return captureOwnerWebPushConfigV1(parseStrictJsonV1(bytes));",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    await owner.check();\n    return captureOwnerWebPushConfigV1(parseStrictJsonV1(bytes));",
+    "test": "node --import tsx --test --test-name-pattern='optional installed' tests/updater-file-hardening.test.mjs",
+    "why": "optional installed files retain identity and byte bounds after reading"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    if (Buffer.byteLength(bytes) > 64 * 1024 || !sameFileV1(entry, await runtime.lstat(path))) throw new Error();\n    await owner.check();\n    return parseStrictJsonV1(bytes) as Record<string, unknown>;",
+    "replace": "    const bytes = await runtime.readFile(path, \"utf8\", entry);\n    await owner.check();\n    return parseStrictJsonV1(bytes) as Record<string, unknown>;",
+    "test": "node --import tsx --test --test-name-pattern='optional installed' tests/updater-file-hardening.test.mjs",
+    "why": "optional installed files retain identity and byte bounds after reading"
+  },
+  {
+    "file": "src/installer/shared/file-custody.mjs",
+    "find": "if (!opened.isFile() || !sameFileV1(before, opened)) refused();",
+    "replace": "if (false) refused();",
+    "test": "node --import tsx --test --test-name-pattern='custody: opened' tests/updater-file-hardening.test.mjs",
+    "why": "an unsafe opened descriptor is refused before any bytes are read"
+  },
+  {
+    "file": "src/web/v1/mac-local-protected-loader.ts",
+    "find": "  const check = await directoryCustodyV1(protectedRoot, runtime.lstat);\n  const checkConfig = await directoryCustodyV1(join(protectedRoot, \"config\"), runtime.lstat);\n  const root = await runtime.lstat(protectedRoot);",
+    "replace": "  const root = await runtime.lstat(protectedRoot);\n  const check = await directoryCustodyV1(protectedRoot, runtime.lstat);\n  const checkConfig = await directoryCustodyV1(join(protectedRoot, \"config\"), runtime.lstat);",
+    "test": "node --import tsx --test --test-name-pattern='root replacement' tests/updater-file-hardening.test.mjs",
+    "why": "directory identity must be retained before policy inspection can race"
+  },
+  {
+    "file": "src/installer/shared/file-custody.mjs",
+    "find": "const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);",
+    "replace": "const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);",
+    "test": "node --import tsx --test --test-name-pattern='FIFO substituted' tests/updater-file-hardening.test.mjs",
+    "why": "protected descriptor opens must not block on a replaced FIFO"
+  },
+  {
+    "file": "src/updater/v1/pg/initial-passkey-ports.mjs",
+    "find": "  const check = await directoryCustodyV1(dirname(path)).catch(() => refuse(\"passkey_status_write_refused\"));\n  for (const directory of [input.root, dirname(path)]) {\n    const entry = await lstat(directory).catch(() => refuse(\"passkey_status_write_refused\"));",
+    "replace": "  let check;\n  for (const directory of [input.root, dirname(path)]) {\n    const entry = await lstat(directory).catch(() => refuse(\"passkey_status_write_refused\"));\n    if (directory === dirname(path)) check = await directoryCustodyV1(dirname(path));",
+    "test": "node --import tsx --test --test-name-pattern='status custody' tests/updater-file-hardening.test.mjs",
+    "why": "status parent identity must predate policy inspection"
+  }
+]

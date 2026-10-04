@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { StateChip, chipToneForStateV1, stateLabelV1, stateToneKeysV1, EmptyState, UnavailableState, LoadingState,
   PanelHeading, PrivateCount, workerChipToneV1 } from "../private-app/app/owner-ui";
 import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
+import { installationModeLine } from "../private-app/app/home-workspace";
 import { PrivateNeedsMe } from "../private-app/app/needs-me/workspace";
 import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import { artifactStates, approvalStates, attemptStates, checkpointStates, effectIntentStates, jobStates, leaseStates,
@@ -18,6 +19,10 @@ import { effectClaimStates } from "../src/node-policy/v1/effect-claim";
 import { lifecycleSchema } from "../src/web/v1/project-wire";
 import { nativeRunStateValues } from "../src/web/v1/task-wire";
 import { taskReviewEvidenceSchema } from "../src/web/v1/task-result-wire";
+import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
+import type { TaskAttentionPage } from "../src/web/v1/task-attention-wire";
+import { operationsModeViewSchemaV1, type OperationsModeV1 } from "../src/web/v1/operations-mode-wire";
+import type { HomeOperationsModeState } from "../private-app/app/home-workspace";
 
 /** The project lifecycle values the wire schema accepts, read from the schema
  * itself rather than copied, so this test cannot drift from the contract. */
@@ -381,6 +386,155 @@ const allLoading: HomeDashboardState = { projects: { state: "loading" }, activit
 const allUnavailable: HomeDashboardState = { projects: { state: "unavailable" }, activity: { state: "unavailable" },
   attention: { state: "unavailable" }, connections: { state: "unavailable" } };
 
+// R4U-11, Home half. `readTaskAttention` returns ONE bounded page plus a
+// `nextCursor`, and Home's "Needs attention" chip rendered `items.length` with no
+// reference to the cursor -- so on a tenant with more attention than one page
+// holds, the loudest number on the page was a specific smaller number than the
+// truth. The header badge already reported "N+"; Home and Morning did not, so the
+// owner read two different numbers for the same saved page on two screens.
+test("Home's attention count is 25+ on a truncated page and exact only on a complete one", () => {
+  const item = (index: number) => ({
+    task: { projectId: "project:alpha", requestId: `request:${index}`, jobId: `job:${index}`,
+      title: `Waiting item ${index}`, state: "waiting_approval" as const, version: 1,
+      createdAt: "2026-09-29T02:00:00.000Z", updatedAt: "2026-09-29T03:00:00.000Z" },
+    // The presentation fields are DERIVED from the reasons by the wire's own
+    // function rather than hand-written here. Two earlier attempts at a literal
+    // fixture failed check:demo and were the fixture's fault, not the code's:
+    // the item is a discriminated union whose `category`/`urgency`/
+    // `ownerQuestion` must match exactly what `reasons` implies, and only the
+    // product knows that mapping. Reading it from the one function that owns it
+    // makes the fixture correct by construction.
+    inputDigest: `sha256:${"b".repeat(64)}`,
+    reasons: ["review"] as TaskAttentionPage["items"][number]["reasons"],
+    ...taskAttentionPresentation(["review"]),
+  });
+  const ready = (items: number, nextCursor: string | null) => ({
+    projects: { state: "unavailable" as const }, activity: { state: "unavailable" as const },
+    // Workers READ and healthy: Home adds worker warnings into this same count and
+    // claims no count while the worker read is unsettled, so the attention number
+    // is only asserted against a settled worker read with nothing stuck.
+    connections: { state: "ready" as const, value: { source: "local" as const,
+      value: { taskWorkersStarted: true, projectSections: [], workers: [] } } },
+    // Parsed by the wire's OWN schema rather than assembled as an object
+    // literal. The Home read type and `TaskAttentionPage` are two structurally
+    // identical but nominally distinct types, and check:demo rejects the
+    // literal between them. Letting the schema produce the value settles the
+    // question of which shape is the real one instead of picking one: this way
+    // the fixture is by definition what the wire accepts.
+    attention: { state: "ready" as const, value: taskAttentionPageSchema.parse({
+      items: Array.from({ length: items }, (_, index) => item(index)), nextCursor,
+      examined: items, observedAt: "2026-09-29T07:00:00.000Z", startsWork: false,
+      planningSource: "configured", deliverySource: "configured",
+      sources: { ordinary: "included", ideas: "not_configured" } }) },
+  });
+  const chipOf = (data: HomeDashboardState) => {
+    const document = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data })));
+    const box = document.querySelector(".private-attention-box")!;
+    return { chip: box.querySelector(".private-count")?.textContent ?? null,
+      heading: box.querySelector("h2")?.textContent ?? "", items: box.querySelectorAll("li").length };
+  };
+  const truncated = chipOf(ready(25, "project:alpha"));
+  assert.equal(truncated.chip, "25+",
+    "Home claimed an exact count on a page with a next cursor, so it told the owner fewer items are waiting than are");
+  assert.equal(truncated.items, 5, "the list still shows the five it shows; only the number changed");
+
+  const complete = chipOf(ready(3, null));
+  assert.equal(complete.chip, "3",
+    "a complete page has no more items, so a '+' on it would claim work that does not exist");
+
+  // ZERO is the case that matters most for the owner: an empty COMPLETE page
+  // must read as a real zero, not as an unreadable one.
+  const empty = chipOf(ready(0, null));
+  assert.equal(empty.chip, "0", "a checked empty page must show a real zero");
+  assert.match(empty.heading, /Needs attention/);
+});
+
+// A real operations-mode view, parsed by the wire's own schema so the fixture is
+// correct by construction: revision 0 is only legal for a running installation
+// with no `setAt`, which the browser client also enforces and a hand-written
+// literal kept getting wrong.
+const operationsModeView = (mode: OperationsModeV1) => operationsModeViewSchemaV1.parse({
+  schema: "control-room.installation-operations-mode-view/v1", mode,
+  reason: mode === "running" ? "" : "owner asked for it",
+  setByIdentityId: "identity:owner", setAt: mode === "running" ? "" : "2026-09-29T07:00:00.000Z",
+  revision: mode === "running" ? 0 : 2, replayed: false,
+  admitsNewWork: mode === "running", stopRequests: mode === "stopped" ? { requested: 2, revoked: 1, uncertainJobIds: [] } : null,
+  startsWork: false, grantsExecutionAuthority: false });
+
+// R4U-08: after tapping Paused, the ONLY mention of the paused installation was
+// at y=3,118px of a 4,394px Home page, and the red attention box was unchanged.
+// "Paused" is not a detail -- it means no new work will start on this
+// installation at all -- and the owner had to scroll past six panels to find out
+// on the page whose whole job is to say what needs them.
+//
+// So the mode joins the attention box. Three states are distinguished and none of
+// them is silence:
+//
+//   * a read mode that admits no new work says so, in the box, in the words the
+//     mode itself already uses;
+//   * a RUNNING mode changes nothing about the box, so a healthy installation
+//     still reads as healthy;
+//   * a FAILED mode read says it could not be checked and infers nothing, rather
+//     than letting the absence of a paused line look like "running".
+test("the attention box states a non-running installation, and never infers one from silence", () => {
+  const settled: HomeDashboardState = {
+    projects: { state: "unavailable" }, activity: { state: "unavailable" },
+    // A settled, healthy worker read: an unreadable one is itself a warning in this
+    // box and would (rightly) withhold "All clear."
+    connections: { state: "ready", value: { source: "local",
+      value: { taskWorkersStarted: true, projectSections: [], workers: [] } } },
+    attention: { state: "ready", value: taskAttentionPageSchema.parse({
+      items: [], nextCursor: null, examined: 0, observedAt: "2026-09-29T07:00:00.000Z", startsWork: false,
+      planningSource: "configured", deliverySource: "configured",
+      sources: { ordinary: "included", ideas: "not_configured" } }) },
+  };
+  const boxText = (mode: HomeOperationsModeState) => {
+    const document = documentFor(renderToStaticMarkup(createElement(HomeDashboard,
+      { data: settled, operationsMode: mode })));
+    return (document.querySelector(".private-attention-box")?.textContent ?? "").replace(/\s+/g, " ");
+  };
+  // The CONSEQUENCE leads the sentence, so assert on that rather than on the mode
+    // name alone: an owner who pressed Paused needs to read what it means for
+    // their work, and a box that only said "Paused" would leave them to remember
+    // which of four states admits new work.
+    //
+    // The consequence is asserted STRUCTURALLY -- the sentence must contain
+    // "new work" and must say it is not claimed or started -- rather than against
+    // a transcribed list of phrasings. Three hand-written variants were tried and
+    // the third one failed on the product's own correct sentence, which is the
+    // argument for asking the question the assertion actually cares about.
+    for (const [mode, opening] of [["paused", "Paused"], ["draining", "Draining"], ["stopped", "Stopped"]] as const) {
+      const value = operationsModeView(mode);
+      const line = installationModeLine(value)!;
+      assert.ok(line.startsWith(`${opening} — `), `${mode} must lead with its own name: ${line}`);
+      assert.match(line, /\bnew\b/i, `${mode}'s sentence must be about new work; got: ${line}`);
+      assert.match(line, /(?:no|nothing) new (?:work )?(?:will be |is )?claimed or started/i,
+        `${mode}'s sentence must state that new work is not claimed or started; got: ${line}`);
+      assert.ok(boxText({ state: "ready", value }).includes(line),
+        `the red box must carry the installation's own mode sentence, verbatim: ${line}`);
+    }
+  // A failed mode read must not leave the box looking like a running install.
+  assert.match(boxText({ state: "unavailable" }), /could not be checked/,
+    "an unreadable mode must say so; silence in the box reads as 'running'");
+  assert.match(boxText({ state: "loading" }), /Checking/,
+    "a mode read in progress must say it is being checked");
+  // ...and a RUNNING installation must add NO mode line at all, so a healthy page
+  // stays a healthy page. Asserted as the ABSENCE of the element, not as the
+  // absence of one phrase: an earlier version matched /No new work/ and passed
+  // against a mutation that swapped the running branch for the generic
+  // "Work proceeds as normal." sentence, which says nothing about new work. The
+  // question is "is there a mode line in the red box at all", so that is the
+  // question asked.
+  const running = boxText({ state: "ready", value: operationsModeView("running") });
+  assert.equal(documentFor(renderToStaticMarkup(createElement(HomeDashboard,
+    { data: settled, operationsMode: { state: "ready", value: operationsModeView("running") } })))
+    .querySelectorAll(".private-attention-mode").length, 0,
+  "a running installation must carry no mode line in the attention box");
+  assert.match(running, /All clear\./);
+  assert.doesNotMatch(running, /could not be checked/,
+    "a successfully read running mode must not claim the read failed");
+});
+
 test("the real Home panels announce loading politely and a failed read as its own thing", () => {
   // Home renders the shared vocabulary, but it wraps `UnavailableState` in its
   // own `Unavailable`, and it is `UnavailableState` (role="status") rather than
@@ -389,8 +543,11 @@ test("the real Home panels announce loading politely and a failed read as its ow
   // renders them.
   const loading = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allLoading })));
   const loadingRegions = liveRegions(loading);
-  assert.equal(loadingRegions.length, 5,
-    `every one of the five Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
+  // Six panels: "Stuck, blocked or offline" shares the `connections` state with
+  // "Worker status". "Update ready" stays hidden until a candidate waits (its
+  // own tests cover it), so its read never adds a loading region to Home.
+  assert.equal(loadingRegions.length, 6,
+    `every one of the six Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
   for (const region of loadingRegions) {
     assert.equal(region.role, "status", "a load in progress is new but not urgent");
     assert.ok(region.text.length > 0, "a status region with no text announces nothing");
@@ -401,7 +558,7 @@ test("the real Home panels announce loading politely and a failed read as its ow
 
   const failed = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allUnavailable })));
   const failedRegions = liveRegions(failed);
-  assert.equal(failedRegions.length, 5, `each failed panel announces once: ${JSON.stringify(failedRegions)}`);
+  assert.equal(failedRegions.length, 6, `each failed panel announces once: ${JSON.stringify(failedRegions)}`);
   for (const region of failedRegions) {
     assert.equal(region.role, "status", "one unread section is a polite report, not an interruption");
     // Each carries its OWN sentence, so an owner can tell which read failed and
@@ -410,11 +567,12 @@ test("the real Home panels announce loading politely and a failed read as its ow
       `the unavailable treatment must name the failure and refuse an all-clear: ${region.text}`);
   }
   const unavailable = failed.querySelectorAll(".private-state-unavailable");
-  assert.equal(unavailable.length, 5, "a failed read is visibly distinct from an empty one");
-  // The four different sentences, so a glance can tell which panel failed.
+  assert.equal(unavailable.length, 6, "a failed read is visibly distinct from an empty one");
+  // The six different sentences, so a glance can tell which panel failed.
   const texts = new Set([...unavailable].map(node => (node.textContent ?? "").split(" No zero")[0]));
   assert.deepEqual([...texts].sort(), ["Attention items are unavailable.", "Projects are unavailable.",
-    "Running work is unavailable.", "Verified result records are unavailable.", "Worker status is unavailable."],
+    "Running work is unavailable.", "Verified result records are unavailable.", "Worker signals are unavailable.",
+    "Worker status is unavailable."],
     "each Home panel must name its own failed read");
 });
 
@@ -454,45 +612,47 @@ test("the real Needs-attention read failure keeps role=alert, and the loading st
     Object.assign(globalThis, { fetch: async () => { throw new TypeError("network"); } });
     const failed = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://control.invalid/", pretendToBeVisual: true });
     const failedRoot = createRoot(failed.window.document.getElementById("root")!);
-    failed.window.document.body.id = "failed-root";
-    await act(async () => { root.render(createElement("div", { hidden: true })); });
-    await act(async () => { failedRoot.render(createElement(LocalRuntimeContextV1.Provider, { value: { mode: "hosted" } },
-      createElement(PrivateNeedsMe))); });
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await act(async () => { await new Promise(resolve => failed.window.setTimeout(resolve, 5)); });
-      if (/Recovery status is unavailable/.test(failed.window.document.body.textContent ?? "")) break;
-    }
-    const failedDocument = failed.window.document;
-    const alert = failedDocument.querySelector('[role="alert"].private-state-unavailable');
-    assert.ok(alert, `a failed recovery read keeps the interrupted alert, not a quiet status: ${failedDocument.body.textContent}`);
-    assert.match(alert.textContent ?? "", /Recovery status is unavailable or not configured\. No all-clear is claimed\./);
-    assert.equal(failedDocument.querySelectorAll('[role="alert"].private-state-unavailable').length, 1,
-      "the failure is announced once, not once per re-render");
-    assert.equal(failedDocument.querySelector('[role="status"].private-state-unavailable'), null,
-      "it must not also be a polite status region");
-    // The pipeline inbox and the saved-task inbox are both rendered on this
-    // page alongside the Action Inbox, and all three must be interrupted: a
-    // page that quietly swallowed one of them would pass an assertion on the
-    // others. Every failure sentence is asserted here, each from its own
-    // role=alert element, rather than one of them being left unchecked.
-    const savedTaskAlerts = [...failedDocument.querySelectorAll('[role="alert"]')]
-      .map(node => node.textContent ?? "")
-      .filter(text => /could not be checked\./.test(text))
-      .sort();
-    assert.equal(savedTaskAlerts.length, 3,
-      `the pipeline inbox and both Action Inbox sources announce their own failed read, not just one: ${JSON.stringify(savedTaskAlerts)}`);
-    assert.match(savedTaskAlerts.find(text => text.startsWith("The protected pipeline inbox")) ?? "",
-      /^The protected pipeline inbox could not be checked\. No empty inbox or owner decision is inferred\./);
-    assert.match(savedTaskAlerts.find(text => text.startsWith("Saved task attention")) ?? "",
-      /^Saved task attention could not be checked\. No empty inbox or all-clear is inferred\./);
-    assert.match(savedTaskAlerts.find(text => text.startsWith("Saved attention notifications")) ?? "",
-      /^Saved attention notifications could not be checked\. No empty inbox or all-clear is inferred\./);
-    assert.doesNotMatch(failedDocument.body.textContent ?? "", /No actions are waiting in the sources you can access\./,
-      "failed reads must never be rendered as an empty inbox");
-    assert.doesNotMatch(failedDocument.body.textContent ?? "", /No pipeline proposals are waiting for your decision\./,
-      "a failed pipeline read must never be rendered as an empty inbox");
-    await act(async () => { failedRoot.unmount(); });
-    failed.window.close();
+    try {
+      failed.window.document.body.id = "failed-root";
+      await act(async () => { root.render(createElement("div", { hidden: true })); });
+      await act(async () => { failedRoot.render(createElement(LocalRuntimeContextV1.Provider, { value: { mode: "hosted" } },
+        createElement(PrivateNeedsMe))); });
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await act(async () => { await new Promise(resolve => failed.window.setTimeout(resolve, 5)); });
+        if (/Recovery status is unavailable/.test(failed.window.document.body.textContent ?? "")) break;
+      }
+      const failedDocument = failed.window.document;
+      const alert = failedDocument.querySelector('[role="alert"].private-state-unavailable');
+      assert.ok(alert, `a failed recovery read keeps the interrupted alert, not a quiet status: ${failedDocument.body.textContent}`);
+      assert.match(alert.textContent ?? "", /Recovery status is unavailable or not configured\. No all-clear is claimed\./);
+      assert.equal(failedDocument.querySelectorAll('[role="alert"].private-state-unavailable').length, 1,
+        "the failure is announced once, not once per re-render");
+      assert.equal(failedDocument.querySelector('[role="status"].private-state-unavailable'), null,
+        "it must not also be a polite status region");
+      // The pipeline inbox and the saved-task inbox are both rendered on this
+      // page alongside the Action Inbox, and all three must be interrupted: a
+      // page that quietly swallowed one of them would pass an assertion on the
+      // others. Every failure sentence is asserted here, each from its own
+      // role=alert element, rather than one of them being left unchecked.
+      const savedTaskAlerts = [...failedDocument.querySelectorAll('[role="alert"]')]
+        .map(node => node.textContent ?? "")
+        .filter(text => /could not be checked\./.test(text))
+        .sort();
+      assert.equal(savedTaskAlerts.length, 4,
+        `the shared header, pipeline inbox and both Action Inbox sources announce their own failed read, not just one: ${JSON.stringify(savedTaskAlerts)}`);
+      assert.match(savedTaskAlerts.find(text => text.startsWith("Attention could not")) ?? "",
+        /^Attention could not be checked\. No all-clear is assumed\./);
+      assert.match(savedTaskAlerts.find(text => text.startsWith("The protected pipeline inbox")) ?? "",
+        /^The protected pipeline inbox could not be checked\. No empty inbox or owner decision is inferred\./);
+      assert.match(savedTaskAlerts.find(text => text.startsWith("Saved task attention")) ?? "",
+        /^Saved task attention could not be checked\. No empty inbox or all-clear is inferred\./);
+      assert.match(savedTaskAlerts.find(text => text.startsWith("Saved attention notifications")) ?? "",
+        /^Saved attention notifications could not be checked\. No empty inbox or all-clear is inferred\./);
+      assert.doesNotMatch(failedDocument.body.textContent ?? "", /No actions are waiting in the sources you can access\./,
+        "failed reads must never be rendered as an empty inbox");
+      assert.doesNotMatch(failedDocument.body.textContent ?? "", /No pipeline proposals are waiting for your decision\./,
+        "a failed pipeline read must never be rendered as an empty inbox");
+    } finally { await act(async () => { failedRoot.unmount(); }); failed.window.close(); }
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();

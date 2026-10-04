@@ -13,6 +13,7 @@ import {
 } from "../../domain/v1";
 import { CanonicalStore, type ProposedWorkBundle } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { admitsNewAutomaticWorkV1, readAdmissibleProjectLifecycleInSessionV1 } from "../../persistence/project-admissible-lifecycle";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "../../security";
 import { ScheduleOccurrenceStore } from "./occurrence-store";
 
@@ -139,6 +140,7 @@ export class ScheduledTaskAdmissionError extends Error {
     | "recovery_window_expired"
     | "admission_conflict"
     | "admission_already_committed"
+    | "project_inactive"
     | "outbox_not_delivered") {
     super(safeCode);
   }
@@ -351,11 +353,20 @@ function validateStoredReceipt(row: AdmissionRow, input: ScheduledTaskAdmissionI
 }
 
 async function verifyDestination(tx: DatabaseSession, receipt: ScheduledTaskAdmissionReceiptV1): Promise<void> {
-  const [requestRow, workflowRow, jobRow] = await Promise.all([
-    tx.query<{ payload: unknown }>("SELECT payload FROM control_requests WHERE tenant_id=$1 AND id=$2", [receipt.tenantId, receipt.destination.requestId]),
-    tx.query<{ payload: unknown }>("SELECT payload FROM control_workflows WHERE tenant_id=$1 AND id=$2", [receipt.tenantId, receipt.destination.workflowId]),
-    tx.query<{ payload: unknown }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2", [receipt.tenantId, receipt.destination.jobId]),
-  ]);
+  // SEQUENTIAL, and the order is the point. These are three reads of three rows this
+  // transaction already locks on its new-admission path, and they used to be issued as
+  // one `Promise.all` on ONE connection: the production bounded driver permits one
+  // statement at a time per lease, so the second overlapping query hit its own `busy`
+  // guard and the transaction was refused as `database_outcome_uncertain` with no
+  // SQLSTATE. Sequencing them keeps one statement in flight, and pinning the order
+  // makes the lock order request -> workflow -> job the same on every run rather than
+  // whichever row the planner happened to reach first.
+  const requestRow = await tx.query<{ payload: unknown }>(
+    "SELECT payload FROM control_requests WHERE tenant_id=$1 AND id=$2", [receipt.tenantId, receipt.destination.requestId]);
+  const workflowRow = await tx.query<{ payload: unknown }>(
+    "SELECT payload FROM control_workflows WHERE tenant_id=$1 AND id=$2", [receipt.tenantId, receipt.destination.workflowId]);
+  const jobRow = await tx.query<{ payload: unknown }>(
+    "SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2", [receipt.tenantId, receipt.destination.jobId]);
   let bundle: ProposedWorkBundle;
   try {
     bundle = {
@@ -432,11 +443,25 @@ export class ScheduledTaskAdmissionServiceV1 {
         || occurrence.occurrence_key !== input.occurrenceKey || occurrence.target_type !== "job"
         || occurrence.target_id !== input.source.jobId || occurrence.definition_digest !== input.scheduleDefinitionDigest
         || definitionDigest !== input.scheduleDefinitionDigest) fail("occurrence_conflict");
-      const project = (await tx.query<{ id: string }>(
-        "SELECT id FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR UPDATE",
-        [input.tenantId, input.workspaceId, input.projectId],
-      )).rows[0];
-      if (!project) fail("binding_mismatch");
+      // Fence the project's lifecycle on the SAME row the owner's archive transition
+      // locks, and read the head that transition writes. `projects` alone is not enough
+      // -- it carries no lifecycle column -- and the head cannot be locked here:
+      // PostgreSQL refuses a row lock over the nullable side of an outer join, and this
+      // login holds SELECT on the head but no UPDATE, so locking it would be a 42501 on
+      // every admission. The `projects` lock is still a real fence, because the archive
+      // cannot reach the head row without first taking that lock, and the head is read
+      // in a SECOND statement while that lock is held so the read cannot keep a
+      // pre-archive head tuple. Measured on PostgreSQL 17, twenty deterministic
+      // two-connection runs per ordering; see
+      // src/persistence/project-admissible-lifecycle.ts.
+      //
+      // This is on the NEW-admission path only. The exact-replay branch above returned
+      // before this point, so a receipt that was already committed stays valid after an
+      // archive, exactly as the intake store's replay path does.
+      const project = await readAdmissibleProjectLifecycleInSessionV1(
+        tx, input.tenantId, input.projectId, "FOR UPDATE");
+      if (!project || project.workspaceId !== input.workspaceId) fail("binding_mismatch");
+      if (!admitsNewAutomaticWorkV1(project.lifecycle)) fail("project_inactive");
       const recoveryEndsAt = Date.parse(new Date(occurrence.scheduled_for).toISOString())
         + schedule.idempotencyWindowSeconds * 1_000;
       if (Date.parse(admittedAt) >= recoveryEndsAt || Date.parse(new Date(occurrence.created_at).toISOString()) >= recoveryEndsAt) {
@@ -452,13 +477,18 @@ export class ScheduledTaskAdmissionServiceV1 {
         FOR UPDATE`, [input.tenantId, input.occurrenceKey, input.scheduleId, input.source.jobId,
         occurrence.scheduled_for, input.scheduleDefinitionDigest]);
       if (!delivered.rows[0]) fail("outbox_not_delivered");
-      const sources = await Promise.all([
-        tx.query<{ payload: unknown }>("SELECT payload FROM control_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.source.requestId]),
-        tx.query<{ payload: unknown }>("SELECT payload FROM control_workflows WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.source.workflowId]),
-        tx.query<{ payload: unknown }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.source.jobId]),
-      ]);
+      // SEQUENTIAL, in the same request -> workflow -> job order as the replay path
+      // above, for the same reason: one statement at a time per connection, so the
+      // production bounded driver can run this transaction as shipped.
+      const sourceRequest = await tx.query<{ payload: unknown }>(
+        "SELECT payload FROM control_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.source.requestId]);
+      const sourceWorkflow = await tx.query<{ payload: unknown }>(
+        "SELECT payload FROM control_workflows WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.source.workflowId]);
+      const sourceJob = await tx.query<{ payload: unknown }>(
+        "SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.source.jobId]);
       let source: ProposedWorkBundle;
-      try { source = validateSource(input, sources[0].rows[0]?.payload, sources[1].rows[0]?.payload, sources[2].rows[0]?.payload); }
+      try { source = validateSource(input, sourceRequest.rows[0]?.payload,
+        sourceWorkflow.rows[0]?.payload, sourceJob.rows[0]?.payload); }
       catch (error) { if (error instanceof ScheduledTaskAdmissionError) throw error; fail("source_bundle_conflict"); }
       const bundle = destinationBundle(input, schedule, occurrence, source);
       await new CanonicalStore(joined(tx)).createProposedWorkBundle(bundle);

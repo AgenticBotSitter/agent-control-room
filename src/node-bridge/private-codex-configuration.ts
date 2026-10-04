@@ -20,7 +20,7 @@ interface PrivateCodexInitialConfigurationInputV1 {
   threadStartRequestId: number;
   turnStartRequestId: number;
   workspaceIntent: unknown;
-  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
+  workspacePolicy?: CodexDeliveryBoundWorkspacePolicyV1;
   startTimeoutMs: number;
   processCleanupTimeoutMs: number;
 }
@@ -40,7 +40,7 @@ export type PrivateCodexConfigurationInputV1 = PrivateCodexInitialConfigurationI
   | PrivateCodexRecoverConfigurationInputV1;
 
 type PrivateCodexInitialConfigurationPortsV1 = Pick<CodexLocalInitialHostInputV1,
-  'authority' | 'workspacePort' | 'acquireProcess' | 'clock'>;
+  'authority' | 'workspacePort' | 'buildPublication' | 'acquireProcess' | 'clock'>;
 type PrivateCodexRecoverConfigurationPortsV1 = Pick<CodexLocalRecoverHostInputV1,
   'authority' | 'acquireProcess'>;
 export type PrivateCodexConfigurationPortsV1 = PrivateCodexInitialConfigurationPortsV1
@@ -123,7 +123,8 @@ function constructPrivateCodexResourcesV1(input: PrivateCodexConfigurationInputV
       threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
       workspaceIntent, bridgeJournal: resources.bridge!, startJournal: resources.starts!, authority: selected.authority,
       workspacePort: selected.workspacePort, acquireProcess: selected.acquireProcess.bind(selected),
-      workspacePolicy: input.workspacePolicy,
+      ...(input.workspacePolicy ? { workspacePolicy: input.workspacePolicy } : {}),
+      ...(selected.buildPublication ? { buildPublication: selected.buildPublication } : {}),
       startTimeoutMs: input.startTimeoutMs, processCleanupTimeoutMs: input.processCleanupTimeoutMs,
       clock: selected.clock });
   })() : (() => {
@@ -167,7 +168,8 @@ export function openPrivateCodexConfigurationV1(input: PrivateCodexConfiguration
       if (failed) cleanupUncertain();
     };
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: input.mode,
-      ...(input.mode === 'initial' && host.mode === 'initial' ? { bindDelivery: host.bindDelivery } : {}),
+      ...(input.mode === 'initial' && host.mode === 'initial' ? { bindDelivery: host.bindDelivery,
+        publishBuildPullRequest: host.publishBuildPullRequest } : {}),
       run: host.run, close });
   } catch {
     closePrivateCodexJournalsV1(resources);
@@ -226,7 +228,8 @@ export async function openOwnedPrivateCodexConfigurationV1(input: PrivateCodexCo
     cleanupStepMs = input.mode === 'initial' ? input.processCleanupTimeoutMs
       : Math.min(10_000, input.cleanupTimeoutMs + input.processCleanupTimeoutMs);
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: input.mode,
-      ...(input.mode === 'initial' && host.mode === 'initial' ? { bindDelivery: host.bindDelivery } : {}),
+      ...(input.mode === 'initial' && host.mode === 'initial' ? { bindDelivery: host.bindDelivery,
+        publishBuildPullRequest: host.publishBuildPullRequest } : {}),
       async run(runSignal: AbortSignal) {
         if (closePromise || runController || !(runSignal instanceof AbortSignal) || runSignal.aborted) unavailable();
         runController = new AbortController();

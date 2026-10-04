@@ -60,7 +60,8 @@ export function createLocalPilotProjectTasksV1(
     async getSyntheticResult(request: Request, projectId: string, jobId: string, artifactId: string) {
       return tasks.readScopedResult(await verify(request, "GET"), projectId, jobId, async scope => {
         if (!source) throw new Error("synthetic_results_not_configured");
-        const result = await readSyntheticResultV1({ ...scope, artifactId }, source, request.signal);
+        const result = await readSyntheticResultV1({ tenantId: scope.tenantId, projectId: scope.projectId, jobId: scope.jobId,
+          artifactId }, source, request.signal);
         if (!result) throw new WebAccessError("not_found");
         return result;
       });

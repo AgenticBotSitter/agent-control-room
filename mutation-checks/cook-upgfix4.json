@@ -1,0 +1,212 @@
+[
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "const resume = prior &&",
+    "replace": "const resume = false && prior &&",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 a retry must preserve the original previous commit"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "await writeRecord(record);\n  try { await git",
+    "replace": "// omitted pre-checkout journal\n  try { await git",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 a checkout interruption must retain the original recovery identity"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "if ([\"checkout_pending\", \"upgrading\"].includes(prior?.phase) && !resume)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 unresolved transactions must refuse a replacement target"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "if (prior?.phase === \"rolling_back\")",
+    "replace": "if (false)",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 a pending rollback must finish before another upgrade"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "|| value.phase !== undefined && ![\"checkout_pending\", \"upgrading\", \"upgraded\", \"rolling_back\", \"rolled_back\"].includes(value.phase)",
+    "replace": "",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 corrupt journal phases must refuse before service effects"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "const resuming = [\"rolling_back\", \"rolled_back\"].includes(record.phase)",
+    "replace": "const resuming = false && [\"rolling_back\", \"rolled_back\"].includes(record.phase)",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 rollback must resume from its journaled previous checkout"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "&& branch === \"\" && current === record.previousCommit;",
+    "replace": "&& current === record.previousCommit;",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 unrelated branches must not gain rollback resume authority"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "&& branch === \"\" && current === record.previousCommit;",
+    "replace": "&& branch === \"\";",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 only the exact recorded previous commit may resume"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "if (dirty || !commitPattern.test(current))",
+    "replace": "if (!commitPattern.test(current))",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 rollback resume still refuses dirty files"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "if (!resuming && current !== record.targetCommit)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 a new rollback requires the exact target checkout"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "const lock = acquirePrivateProcessLockV1(join(runtime.runtime, \"upgrade.lock\"),\n    { busyCode: \"upgrade_busy\", unusableCode: \"upgrade_lock_unusable\" });",
+    "replace": "const lock = { close() {}, release() {} };",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-05 a burst admits exactly one upgrade owner"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "if (process.platform === \"darwin\") lock.close(); else lock.release();",
+    "replace": "",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-05 failure must release descriptor ownership for retry"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "await writeRecord(captureRecord({ ...record, phase: \"rolling_back\" }));",
+    "replace": "",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 rollback intent must be durable before changing checkout"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "await writeRecord(captureRecord({ ...record, phase: \"rolled_back\" }));",
+    "replace": "",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 completed rollback must allow a deliberate new upgrade"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "await writeRecord(captureRecord({ ...record, phase: \"upgraded\" }));",
+    "replace": "",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 completed upgrade must allow the next distinct target"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "digest: record.ledgerHead.digest",
+    "replace": "digest: targetHead.digest",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 checkout resume must never recapture a changed schema digest"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "if (!commitPattern.test(targetCommit)) failure(\"upgrade_main_moved_refused\");",
+    "replace": "",
+    "test": "node --import tsx --test tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-03 fetched malformed commit must refuse before journaling or services"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const checks = [await directoryCustodyV1(root), await directoryCustodyV1(join(root, \"updater\"))];",
+    "replace": "const checks = [];",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-06 every parent must be validated before any app pointer changes"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await assertPointerLeaf(join(root, name));",
+    "replace": "",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-06 every leaf must be validated before any pointer changes"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (target !== null) checks.push(await directoryCustodyV1(join(dirname(join(root, name)), target)));",
+    "replace": "",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-07 restoration targets must be existing directories with no symlink ancestors"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": " && ![\"releases/.\", \"releases/..\"].includes(target)",
+    "replace": "",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-07 app restoration refuses dot and parent targets"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": " && ![\".\", \"..\"].includes(target)",
+    "replace": "",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-07 updater restoration refuses dot and parent targets"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await custody();\n    await assertPointerLeaf(path);\n    await rename(temporary, path);",
+    "replace": "await assertPointerLeaf(path);\n    await rename(temporary, path);",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-06 link publication rechecks parent identity immediately before rename"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await custody();\n    await rm(path, { force: true }); return;",
+    "replace": "await rm(path, { force: true }); return;",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-06 removal must not follow a substituted parent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await removeOwnedFileV1(temporary, owned);",
+    "replace": "await rm(temporary, { force:true });",
+    "test": "node --import tsx --test tests/updater-pair-restore.test.mjs",
+    "why": "R4B-06 failed publication must retain somebody elses replacement temporary inode"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "stdio: [\"inherit\", \"inherit\", \"inherit\", lockFd]",
+    "replace": "stdio: \"inherit\"",
+    "test": "node --import tsx --test --test-name-pattern='surviving default pnpm effect' tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-05 a surviving pnpm effect must keep the descriptor locked after coordinator death"
+  },
+  {
+    "file": "src/installer/v1/local-release-assembly.mjs",
+    "find": "    \"src/installer/shared\",\n",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern=every\\ current\\ program\\ argument tests/macos-launch-daemon-bundle.test.ts",
+    "why": "R4B-11 the inherited release closure must load its shipped supervisor"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "  await directoryCustodyV1(path);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='runtime symlinks' tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-05 runtime ancestry must refuse before chmod follows a foreign symlink"
+  },
+  {
+    "file": "scripts/mac-local/upgrade.mjs",
+    "find": "resuming ? record.ledgerHead.digest !== head.digest : !sameHead(record.ledgerHead, head)",
+    "replace": "resuming ? false : !sameHead(record.ledgerHead, head)",
+    "test": "node --import tsx --test --test-name-pattern='previous-build ledger identity' tests/mac-local-upgrade-recovery.test.mjs",
+    "why": "R4B-04 resumed rollback must still refuse a changed live database schema digest"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "for (const check of checks) await check();",
+    "replace": "// omit captured directory identity rechecks",
+    "test": "node --import tsx --test --test-name-pattern='replacing a saved release' tests/updater-pair-restore.test.mjs",
+    "why": "R4B-06 a replaced saved release directory must refuse before further pointer changes"
+  }
+]

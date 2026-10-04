@@ -1,0 +1,135 @@
+[
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "const release = verifyConnectorReleaseAdvertisementV1(advertised, trust);",
+    "replace": "const release = advertised;",
+    "test": "node --test --test-name-pattern \"real update path verifies\" tests/fleet-connector-update.test.mjs",
+    "why": "the real update path must verify the signed advertisement before downloading"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (!sameTrustExceptFloor(transitioned, proposed)) refused(\"machine_trust_mismatch\");",
+    "replace": "if (false) refused(\"machine_trust_mismatch\");",
+    "test": "node --test --test-name-pattern \"one machine-wide trust refuses\" tests/fleet-connector-update.test.mjs",
+    "why": "a second profile cannot replace the machine-wide release key"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (bytes.length !== release.size || createHash(\"sha256\").update(bytes).digest(\"hex\") !== release.sha256)\n    refused(\"installed_digest\");",
+    "replace": "if (false) refused(\"installed_digest\");",
+    "test": "node --test --test-name-pattern \"launch never waits\" tests/fleet-connector-update.test.mjs",
+    "why": "launch verifies the digest of the exact connector file before spawning it"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "deadlineTimer = setTimer(() => reject(Object.assign(new Error(\"download deadline\"), { code: \"DOWNLOAD_TIMEOUT\" })), remaining);",
+    "replace": "deadlineTimer = setTimer(() => reject(Object.assign(new Error(\"download deadline\"), { code: \"DOWNLOAD_TIMEOUT\" })), remaining + 2_000);",
+    "test": "node --test --test-name-pattern \"stalled body hits\" tests/fleet-connector-update.test.mjs",
+    "why": "a stalled response body is bounded by a held real deadline"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "    if (clock() - started >= deadlineMs) throw rotationBusy();\n    await sleep(",
+    "replace": "    if (clock() - started >= deadlineMs) { await sleep(2_000); throw rotationBusy(); }\n    await sleep(",
+    "test": "node --test --test-name-pattern \"launch never waits\" tests/fleet-connector-update.test.mjs",
+    "why": "launch never waits for an updater that holds the machine lock"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (code === 75 && args[0] === \"run\") continue;",
+    "replace": "if (false) continue;",
+    "test": "node --test --test-name-pattern \"run launch relaunches\" tests/fleet-connector-update.test.mjs",
+    "why": "a successful run-mode update relaunches the newly selected version"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (current.installation?.updates && env.CONTROL_ROOM_CONNECTOR_LAUNCHED !== \"1\")",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern \"run mode checks\" tests/fleet-connector-update.test.mjs",
+    "why": "an installed unattended worker refuses direct run because only the launcher can relaunch an update"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const trusted = expectedReleaseTrust === null ? gatewayTrust : captureReleaseTrustV1(expectedReleaseTrust);",
+    "replace": "const trusted = gatewayTrust;",
+    "test": "node --import tsx --test --test-name-pattern \"cannot substitute\" tests/fleet-connector-bundle.test.ts",
+    "why": "the gateway enrollment response cannot choose a different release key than the verified bundle"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (priorState?.failedVersion === release.version && sinceFailure !== null && sinceFailure < FAILED_RELEASE_BACKOFF_MS)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern \"crashing candidate auto-reverts\" tests/fleet-connector-update.test.mjs",
+    "why": "a failed signed release is backed off instead of downloaded on every poll"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (rotation !== undefined) refused(\"key_rotation_requires_reinstall\");",
+    "replace": "if (false) refused(\"key_rotation_requires_reinstall\");",
+    "test": "node --test --test-name-pattern \"machine-side key rotation\" tests/fleet-connector-update.test.mjs",
+    "why": "v1 refuses machine-side key rotation before changing a runnable machine pin"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "return compareConnectorVersionsV1(left.versionFloor, right.versionFloor) >= 0 ? left\n    : captureReleaseTrustV1({ ...left, versionFloor: right.versionFloor });",
+    "replace": "return right;",
+    "test": "node --test --test-name-pattern \"keeps the highest floor\" tests/fleet-connector-update.test.mjs",
+    "why": "joining another profile can never lower the machine-wide version floor"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (ownerPid !== null && !await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) {",
+    "replace": "if (ownerPid !== null) {",
+    "test": "node --test --test-name-pattern \"second process never breaks\" tests/fleet-connector-update.test.mjs",
+    "why": "an old lock is never broken while its owning process is still alive"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: \"1\", CONTROL_ROOM_CONNECTOR_INSTALL_ROOT: installRoot }",
+    "replace": "env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: \"1\" }",
+    "test": "node --test --test-name-pattern \"passes its root\" tests/fleet-connector-update.test.mjs",
+    "why": "the launcher passes its exact install root to every selected connector child"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (expectedReleaseTrust !== null && (gatewayTrust.keyId !== trusted.keyId || gatewayTrust.publicKey !== trusted.publicKey))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"cannot substitute\" tests/fleet-connector-bundle.test.ts",
+    "why": "join pins the embedded key identity while allowing the gateway floor to rise"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "await assertConnectorReleaseTrustCompatibleV1({ installRoot: paths.installRoot, trust: embeddedTrust });",
+    "replace": "void embeddedTrust;",
+    "test": "node --import tsx --test --test-name-pattern \"before its join code\" tests/fleet-connector-bundle.test.ts",
+    "why": "a bundle for another Control Room is rejected against machine trust before enrollment spends its code"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "if (embeddedKeyId !== trust.keyId) throw new Error(\"fleet_connector_release_refused\");",
+    "replace": "if (false) throw new Error(\"fleet_connector_release_refused\");",
+    "test": "node --import tsx --test --test-name-pattern \"gateway serves only\" tests/fleet-connector-bundle.test.ts",
+    "why": "gateway startup refuses a signed bundle that embeds another installation key"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "return [nodePath, paths.connectorPath, \"launch\", \"run\", \"--profile\", basename(paths.configPath, \".json\"),",
+    "replace": "return [nodePath, paths.connectorPath, \"run\", \"--profile\", basename(paths.configPath, \".json\"),",
+    "test": "node --test --test-name-pattern \"macOS, Linux and Windows definitions\" tests/fleet-connector-install.test.mjs",
+    "why": "every unattended service enters through the verified update launcher before run mode"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "await writePrivate(paths.configPath, { ...config, installation: { ...config.installation,\n        bot, name, workspace: paths.workspace, state: \"registering\", unattended: true } });",
+    "replace": "await writePrivate(paths.configPath, { ...config, installation: {\n        bot, name, workspace: paths.workspace, state: \"registering\", unattended: true } });",
+    "test": "node --test --test-name-pattern \"service-manager failure leaves\" tests/fleet-connector-install.test.mjs",
+    "why": "adding unattended service state preserves the joined release-update trust and floor"
+  },
+  {
+    "file": "src/fleet/v1/mac-local-composition.ts",
+    "find": "if (embeddedKeyId !== trust.keyId) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "node --import tsx --test --test-name-pattern \"Mac-local release loading\" tests/fleet-connector-bundle.test.ts",
+    "why": "the Mac-local web and gateway paths refuse a connector that embeds another release key"
+  }
+]

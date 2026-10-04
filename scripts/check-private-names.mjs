@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 export function configuredPrivateNameTerms(env = process.env) {
   let source = env.CONTROL_ROOM_PRIVATE_NAMES;
@@ -173,4 +173,4 @@ export function main() {
   process.exitCode = 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

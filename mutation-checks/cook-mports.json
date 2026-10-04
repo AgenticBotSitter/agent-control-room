@@ -1,0 +1,51 @@
+[
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "|| max - min + 1 > MAX_PORT_RANGE_SPAN",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "a port range wider than an assigned block must be refused"
+  },
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "|| min < MIN_UNPRIVILEGED_PORT",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "a privileged port range must be refused"
+  },
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "|| min > max",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "a descending port range must be refused"
+  },
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "if (typeof value !== \"string\") throw new Error(PORT_RANGE_REFUSED);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "a non-string port range must be refused rather than coerced"
+  },
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "if (portRange !== undefined) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "a caller-supplied port range must be honoured"
+  },
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "if (raw === undefined || raw.trim() === \"\") return DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1;",
+    "replace": "return DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1;",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "the port range environment override must be honoured"
+  },
+  {
+    "file": "scripts/ops/verify-database-backup.mjs",
+    "find": "min: 15620, max: 15649",
+    "replace": "min: 15621, max: 15649",
+    "test": "node --import tsx --test --test-name-pattern 'accepted port range' tests/local-backup-restore-readiness.test.ts",
+    "why": "the default port range must stay the documented block"
+  }
+]

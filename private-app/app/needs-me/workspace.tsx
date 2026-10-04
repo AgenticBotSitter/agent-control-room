@@ -40,9 +40,17 @@ export function PrivateNeedsMe() {
     return () => { live = false; };
   }, [refresh, runtime.mode]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
+    {/* The Action Inbox is what this page is FOR, so it leads. Measured in real
+        Chromium at 375x812: with the pipeline and recovery sections first, the
+        first inbox status sat at 917px -- 105px below the fold -- because two
+        section headings and a "check again" button stood between the page title
+        and the first item that reports whether anything needs the owner. The
+        two lower sections move below the inbox; nothing is removed and the
+        reading order is the same for a keyboard, a screen reader and the eye,
+        because this is a DOM reorder and not a CSS `order`. */}
     <h1>Action Inbox</h1><p>Owner-only decisions, reviews, blocked work, failures and attention notifications.</p>
-    <PipelineAttention />
     <PrivateActionInbox />
+    <PipelineAttention />
     {runtime.mode !== "local" ? <><button type="button" disabled={loading} onClick={() => {
       setLoading(true); setData(undefined); setError(undefined); setRefresh(value => value + 1);
     }}>Check recovery status</button>

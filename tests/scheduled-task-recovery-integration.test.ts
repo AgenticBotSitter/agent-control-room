@@ -65,8 +65,14 @@ async function fixture(options: { windowSeconds?: number; now?: number } = {}) {
     'control_room_native','disabled','v1',30)`, [tenantId]);
   await db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
     normalized_state,domain_state,health,authority_mode,observed_at,payload)
-    VALUES($1,$2,$3,'adapter:schedule-recovery',$1,'1','Synthetic','planned','synthetic','healthy',
+    VALUES($1,$2,$3,'adapter:schedule-recovery',$1,'1','Synthetic','planned','manual_project_active','healthy',
     'control_room_native',$4,'{}'::jsonb)`, [projectId, tenantId, workspaceId, createdAt]);
+  // The lifecycle a real project creation persists (see src/web/v1/project-service.ts
+  // create()). Proposal admission reads it and refuses a project whose lifecycle it
+  // cannot establish, so an intended-active fixture has to carry the head row rather
+  // than rely on a bare `projects` row. Fail-closed guard unchanged.
+  await db.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    VALUES($1,$2,'active',1,$3,$3)`, [tenantId, projectId, createdAt]);
   await new CanonicalStore(db).createProposedWorkBundle(sourceBundle());
   const schedule: ScheduleRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, id: scheduleId, tenantId,
     version: 0, createdAt, updatedAt: createdAt, kind: "schedule", projectId, state: "active",

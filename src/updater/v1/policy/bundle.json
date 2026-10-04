@@ -1,0 +1,50 @@
+{
+  "schema": "control-room.updater-bundle-policy/v1",
+  "tool": "runtime/esbuild-current/esbuild",
+  "packageManager": "runtime/pnpm-current/pnpm",
+  "arguments": [
+    "--bundle",
+    "--platform=node",
+    "--format=esm",
+    "--target=node22",
+    "--packages=bundle",
+    "--log-level=warning",
+    "--loader:.ts=ts",
+    "--banner:js=import { createRequire as __controlRoomCreateRequire } from \"node:module\"; const require = __controlRoomCreateRequire(import.meta.url);"
+  ],
+  "entries": [
+    {
+      "input": "updater.mjs",
+      "output": "updater.mjs"
+    },
+    {
+      "input": "service-output.mjs",
+      "output": "service-output.mjs"
+    },
+    {
+      "input": "cli.mjs",
+      "output": "bin/control-room.mjs"
+    },
+    {
+      "input": "build-attended-release.mjs",
+      "output": "bin/build-attended-release.mjs"
+    },
+    {
+      "input": "fixed-bundle.mjs",
+      "output": "bin/build-fixed-bundle.mjs"
+    },
+    {
+      "input": "install/install-steps.mjs",
+      "output": "lib/install-steps.mjs"
+    },
+    {
+      "input": "pg/init-database.mjs",
+      "output": "bin/init-database.mjs"
+    },
+    {
+      "input": "pg/apply-release-schema.mjs",
+      "output": "bin/apply-release-schema.mjs"
+    }
+  ],
+  "candidateBuildOutputAccepted": false
+}

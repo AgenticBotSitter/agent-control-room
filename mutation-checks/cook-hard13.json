@@ -1,0 +1,303 @@
+[
+  {
+    "file": "src/installer/v1/local-release-assembly.mjs",
+    "find": "    \"src/installer/shared\",\n",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='every current program argument' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "R2S-09 local assembly includes the shared-helper directory, which replaced the manual file list"
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "\"src/installer/shared/file-custody.mjs\", ",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='every release program composed' tests/updater-attended-release-programs.test.mjs",
+    "why": "R2S-09 attended assembly must carry the same import closure"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);\n  try {\n    const entry = await handle.stat();",
+    "replace": "const handle = await open(path, constants.O_RDONLY);\n  try {\n    const entry = await handle.stat();",
+    "test": "node --import tsx --test --test-name-pattern='FIFO metadata' tests/mac-local-round2-services.test.mjs",
+    "why": "R2S-03 a FIFO cannot block the descriptor open (O_NONBLOCK)"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (!entry.isFile())",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='metadata and credential reads' tests/mac-local-round2-services.test.mjs",
+    "why": "R2S-03 descriptor shape is checked before reading"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (size > maxBytes)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='metadata and credential reads' tests/mac-local-round2-services.test.mjs",
+    "why": "R2S-03 metadata reads are bounded"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "if (entry?.isDirectory())",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='directories in all diagnostic' tests/mac-local-round2-services.test.mjs",
+    "why": "R2S-04 old directories are quarantined without recursive removal"
+  },
+  {
+    "file": "scripts/mac-local/start-task-host.mjs",
+    "find": "runtime.on(\"SIGTERM\", onStop);",
+    "replace": "runtime.once(\"SIGTERM\", onStop);",
+    "test": "node --import tsx --test --test-name-pattern='repeated real task-host' tests/mac-local-round2-services.test.mjs",
+    "why": "R2S-08 repeated TERM remains handled during close"
+  },
+  {
+    "file": "scripts/mac-local/start-task-host.mjs",
+    "find": "runtime.on(\"SIGINT\", onStop);",
+    "replace": "runtime.once(\"SIGINT\", onStop);",
+    "test": "node --import tsx --test --test-name-pattern='repeated real task-host' tests/mac-local-round2-services.test.mjs",
+    "why": "R2S-08 repeated INT remains handled during close"
+  },
+  {
+    "file": "src/updater/v1/owner-action.mjs",
+    "find": "if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='invalid action deadline' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-01 and R2S-02 invalid deadlines refuse before dispatch"
+  },
+  {
+    "file": "src/updater/v1/owner-action.mjs",
+    "find": "controller.signal.throwIfAborted();",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='cancellation before dispatch' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-01 and R2S-02 canceled queued work cannot begin effects"
+  },
+  {
+    "file": "src/updater/v1/owner-action.mjs",
+    "find": "controller.abort(updaterRefuseV1(timeoutCode));",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='fifty stalled control' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-01 stalled complete requests request cancellation at the separate deadline"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "(!action || action.settled)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='noncooperative control work' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-01 unfinished effects retain action capacity after disconnect"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (!this.#server) { socket.destroy(); return; }",
+    "replace": "if (false) { socket.destroy(); return; }",
+    "test": "node --import tsx --test --test-name-pattern='stop cancels control actions' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 shutdown does not admit another control action"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "for (const action of this.#actions) action.cancel();",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='stop cancels control actions' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 stop requests cancellation of active control work"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "await Promise.all([...this.#actions].map(action => action.completion));",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='noncooperative control work' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 control ownership lasts until real action settlement"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (this.#ownerAction) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='a stalled owner action publishes' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-02 a timed-out owner request cannot start overlapping actions"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (!requestsSettled || this.#stopping)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='a stalled owner action publishes' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-02 unsettled work holds updates and publishes uncertainty"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "this.#ownerAction?.cancel();",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='drains an active owner action' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 shutdown requests cancellation before draining loop work"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "await Promise.allSettled([this.#activeTick, this.#ownerAction?.completion, this.#watching]);",
+    "replace": "void Promise.allSettled([this.#activeTick, this.#ownerAction?.completion, this.#watching]);",
+    "test": "node --import tsx --test --test-name-pattern='drains an active owner action' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 shutdown retains ownership until active work settles"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "try { await drainUpdaterWorkV1(loop, control); }\n      finally",
+    "replace": "try { void drainUpdaterWorkV1(loop, control); }\n      finally",
+    "test": "node --import tsx --test --test-name-pattern='drains an active owner action' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 composed stop waits for the drain before dropping its local lock"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "requires_passkey: request.verb === \"rollback\", source: \"root\" }, context);",
+    "replace": "requires_passkey: request.verb === \"rollback\", source: \"root\" });",
+    "test": "node --import tsx --test --test-name-pattern='composed stop cancels root' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 composed control actions receive cancellation"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "const deadline = performance.now() + TRANSACTION_LOCK_WAIT_MS_V1;",
+    "replace": "const deadline = Date.now() + TRANSACTION_LOCK_WAIT_MS_V1;",
+    "test": "node --import tsx --test --test-name-pattern='R2S-05' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-05 contention starts its deadline on a monotonic clock"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (performance.now() >= deadline)",
+    "replace": "if (Date.now() >= deadline)",
+    "test": "node --import tsx --test --test-name-pattern='R2S-05' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-05 contention checks the deadline using the same monotonic clock"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "throw journalErrorV1(\"updater_journal_compaction_pending\");",
+    "replace": "return;",
+    "test": "node --import tsx --test --test-name-pattern='R2S-07' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-07 pending compaction forbids all writers until recovery"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "async quarantineCorrupt() {\n    return this.#serialized(async () => {\n      await this.#assertNoPendingCompaction();\n",
+    "replace": "async quarantineCorrupt() {\n    return this.#serialized(async () => {\n",
+    "test": "node --import tsx --test --test-name-pattern='R2S-07' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-07 quarantineCorrupt cannot mutate pending compaction authority"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "async #append(kind, record) {\n    return this.#serialized(async () => {\n      await this.#assertNoPendingCompaction();\n",
+    "replace": "async #append(kind, record) {\n    return this.#serialized(async () => {\n",
+    "test": "node --import tsx --test --test-name-pattern='R2S-07' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-07 #append cannot mutate pending compaction authority"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "async compact({ now = Date.now(), checkpoint = this.checkpoint } = {}) {\n    return this.#serialized(async () => {\n      await this.#assertNoPendingCompaction();\n",
+    "replace": "async compact({ now = Date.now(), checkpoint = this.checkpoint } = {}) {\n    return this.#serialized(async () => {\n",
+    "test": "node --import tsx --test --test-name-pattern='R2S-07' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-07 compact cannot mutate pending compaction authority"
+  },
+  {
+    "file": "tests/support/release-import-graph.mjs",
+    "find": "for (const name of required) await access(join(shipped, name)).catch(() => assert.fail(`release dependency missing: ${name}`));",
+    "replace": "for (const name of required) void name;",
+    "test": "node --import tsx --test --test-name-pattern='release closure follows' tests/release-import-graph.test.mjs",
+    "why": "R2S-09 the graph proof checks every required shipped path"
+  },
+  {
+    "file": "tests/support/release-import-graph.mjs",
+    "find": "for (const dependency of dependencies) await visit(dependency);",
+    "replace": "for (const dependency of dependencies) void dependency;",
+    "test": "node --import tsx --test --test-name-pattern='release closure follows' tests/release-import-graph.test.mjs",
+    "why": "R2S-09 the graph proof follows transitive imports"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (actionTimeoutMs !== undefined) assertOwnerActionTimeoutV1(actionTimeoutMs);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='invalid action deadline' tests/updater-round2-robustness.test.mjs",
+    "why": "Invalid action deadlines must refuse at construction"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "assertOwnerActionTimeoutV1(ownerActionTimeoutMs);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='invalid action deadline' tests/updater-round2-robustness.test.mjs",
+    "why": "Invalid action deadlines must refuse at construction"
+  },
+  {
+    "file": "src/updater/v1/owner-action.mjs",
+    "find": "  assertOwnerActionTimeoutV1(timeoutMs);",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='invalid action deadline' tests/updater-round2-robustness.test.mjs",
+    "why": "Direct action dispatch also validates the deadline"
+  },
+  {
+    "file": "src/updater/v1/owner-action.mjs",
+    "find": "action.settled = true;",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='fifty stalled control' tests/updater-round2-robustness.test.mjs",
+    "why": "Completion must release capacity only once the action has settled"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (socket.destroyed) finish();",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='noncooperative control work' tests/updater-round2-robustness.test.mjs",
+    "why": "Dropped clients release capacity after their canceled handlers settle"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "await Promise.allSettled([loop.shutdown(), control.stop()]);",
+    "replace": "await Promise.all([loop.shutdown(), control.stop()]);",
+    "test": "node --import tsx --test --test-name-pattern='control cleanup failure' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 one failed cleanup cannot release ownership while another drain is pending"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "requestsSettled && !this.#stopping && flag === \"On\" && this.watcher",
+    "replace": "requestsSettled && flag === \"On\" && this.watcher",
+    "test": "node --import tsx --test --test-name-pattern='shutdown between request' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 shutdown cannot start a watcher after request work has just settled"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (failed) throw failed.reason;",
+    "replace": "if (false) throw failed.reason;",
+    "test": "node --import tsx --test --test-name-pattern='control cleanup failure' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 a completed drain still reports its actual cleanup failure"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (this.#stopping) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='drains an active owner action' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 shutdown cannot dispatch the next queued owner action"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (this.#stopping) return Promise.resolve({ status: \"stopped\" });",
+    "replace": "if (false) return Promise.resolve({ status: \"stopped\" });",
+    "test": "node --import tsx --test --test-name-pattern='drains an active owner action' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-06 a permanently shut-down loop refuses further ticks"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "return !this.#stopping;",
+    "replace": "return this.#stopping;",
+    "test": "node --import tsx --test --test-name-pattern='settled owner failures' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-02 request settlement permits ordinary loop progress only while running"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (outcome.pending) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='a stalled owner action publishes' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-02 deadline expiry holds the runner until actual action settlement"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (outcome.error) throw outcome.error;",
+    "replace": "if (false) throw outcome.error;",
+    "test": "node --import tsx --test --test-name-pattern='failed result recording' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-02 a failed completion record cannot permit an update"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (outcome.pending) reply(",
+    "replace": "if (false) reply(",
+    "test": "node --import tsx --test --test-name-pattern='an attached stalled client' tests/updater-round2-robustness.test.mjs",
+    "why": "R2S-01 complete slow requests receive the separate action timeout refusal"
+  }
+]

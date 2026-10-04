@@ -1439,7 +1439,7 @@ test("claim, inbox, submit, correction and resubmit stay consistent across both 
         user: { login, type: "User" } });
       return { action: "created", sender: { login }, issue: { number: 125 }, comment };
     };
-    const run = event => runHandoff({ event, repository, api: handoffApi, maintainers: [maintainer] });
+    const run = event => runHandoff({ event, repository, api: handoffApi, maintainers: [maintainer], now });
     let result = await run(handoffEvent("submit", actor, 0));
     assert.equal(result.status, "recorded");
     assert.equal(result.state, "in-review");

@@ -1,8 +1,8 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { parseMacLocalWebHostArguments, startMacLocalTaskHost } from "./start-web-host.mjs";
-import { pathToFileURL } from "node:url";
 
 export function monitorActiveTaskHost(active, runtime = process, timers = globalThis, supervisor = undefined) {
-  let closed = false, supervisorLost = false, boundedStop;
+  let closed = false, supervisorLost = false, boundedStop, readinessTimer;
   let onSupervisorLost;
   const releaseSupervisor = () => {
     if (!supervisor) return;
@@ -13,9 +13,11 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
   const stop = async (code = 0) => {
     if (closed) return;
     closed = true;
+    if (readinessTimer !== undefined) timers.clearInterval(readinessTimer);
     releaseSupervisor();
     try { await active.close(); runtime.exitCode = code; }
     catch { runtime.exitCode = 1; }
+    finally { runtime.removeListener("SIGINT", onStop); runtime.removeListener("SIGTERM", onStop); }
   };
   const stopWithinBound = (code = 0) => {
     if (boundedStop) return boundedStop;
@@ -27,8 +29,9 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
     });
     return boundedStop;
   };
-  runtime.once("SIGINT", () => { void stopWithinBound(); });
-  runtime.once("SIGTERM", () => { void stopWithinBound(); });
+  const onStop = () => { void stopWithinBound(); };
+  runtime.on("SIGINT", onStop);
+  runtime.on("SIGTERM", onStop);
   if (supervisor) {
     onSupervisorLost = () => {
       if (supervisorLost || closed) return;
@@ -47,6 +50,16 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
     runtime.exitCode = 1;
     void stopWithinBound(1);
   });
+  if (typeof active.isReady === "function" && typeof timers.setInterval === "function") {
+    readinessTimer = timers.setInterval(() => {
+      let ready = false;
+      try { ready = active.isReady() === true; } catch {}
+      if (ready || closed) return;
+      runtime.stderr.write("host stopped because application readiness failed\n");
+      void stopWithinBound(1);
+    }, 1_000);
+    readinessTimer.unref?.();
+  }
   return Object.freeze({ stop });
 }
 
@@ -57,12 +70,12 @@ async function main() {
     return;
   }
   const active = await startMacLocalTaskHost(parsed);
-  console.log("Control Room local task host is running. Press Control-C to stop.");
+  console.log("Control Room connector-only host is running. Press Control-C to stop.");
   const supervisor = process.env.CONTROL_ROOM_TASK_HOST_SUPERVISED === "1" ? process.stdin : undefined;
   monitorActiveTaskHost(active, process, globalThis, supervisor);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void main().catch(error => {
     console.error(`host stopped because startup failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
     process.exitCode = 1;

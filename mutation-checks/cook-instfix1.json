@@ -1,0 +1,156 @@
+[
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "          const targetMode = modeForFile(local, expected.mode);",
+    "replace": "          const targetMode = expected.type === \"file\" ? 0o500 : expected.mode;",
+    "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
+    "why": "staged updater files retain the exact fixed-bundle manifest mode through hand-off"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "  const gitPath = absolute(runtime.gitPath ?? input.gitPath ?? \"/usr/bin/git\", \"bootstrap_source_git_refused\");",
+    "replace": "  const gitPath = runtime.gitPath ?? input.gitPath ?? \"/usr/bin/git\";",
+    "test": "node --test --test-name-pattern='stage 0 rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "stage 0 accepts only an absolute resolved Git executable path from stage B"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "  if (!github && !localFixture) refuse(\"bootstrap_adoption_refused\");",
+    "replace": "  if (false) refuse(\"bootstrap_adoption_refused\");",
+    "test": "node --test --test-name-pattern='stage 0 rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "source configuration accepts only the confirmed GitHub repository shape outside the explicit local test seam"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "  try { await move(source, target); return; } catch (error) { if (error?.code !== \"EXDEV\") throw error; }",
+    "replace": "  try { await move(source, target); return; } catch (error) { throw error; }",
+    "test": "node --test --test-name-pattern='falls back to no-follow copying' tests/install-night-bootstrap.test.mjs",
+    "why": "cross-volume bootstrap adoption takes the verified no-follow copy fallback"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "    if (path.includes(\".github-read.token-\") || path.includes(\".source.json-\")) await rm(path, { force: true });",
+    "replace": "    if (path.includes(\".source.json-\")) await rm(path, { force: true });",
+    "test": "node --test --test-name-pattern='stage 0 rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "a replaced read token is removed instead of retained in a moved-aside file"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "  if (!versionEntry.isDirectory() || versionEntry.isSymbolicLink() || versionEntry.uid !== expectedUid",
+    "replace": "  if (!versionEntry.isDirectory() || versionEntry.isSymbolicLink() || false",
+    "test": "node --test --test-name-pattern='version directory owned by a different uid' tests/install-night-bootstrap.test.mjs",
+    "why": "the updater version directory is owned by the expected root identity before import"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "  const manifest = Object.freeze({ schema: \"control-room.installed-runtime/v1\", tool: artifact.tool,",
+    "replace": "  const manifest = Object.freeze({ schema: \"control-room.installed-trusted-runtime/v1\", tool: artifact.tool,",
+    "test": "node --import tsx --test --test-name-pattern='real vendoring feeds' tests/updater-runtime-vendor.test.mjs",
+    "why": "the production runtime vendor emits the per-tool manifest schema consumed by the verifier"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "      || !exactKeys(installed, [\"schema\", \"tool\", \"version\", \"executable\", \"archiveSha256\", \"executableSha256\", \"files\"])",
+    "replace": "      || false",
+    "test": "node --import tsx --test --test-name-pattern='real vendoring feeds' tests/updater-runtime-vendor.test.mjs",
+    "why": "installed per-tool runtime manifests refuse undeclared fields"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "      if (Buffer.byteLength(line, \"utf8\") > 1024) failure = updaterRefuseV1(\"updater_terminal_input_refused\");",
+    "replace": "      if (false) failure = updaterRefuseV1(\"updater_terminal_input_refused\");",
+    "test": "node --test --test-name-pattern='single oversized line' tests/updater-cli-flip.test.mjs",
+    "why": "each terminal line is limited before it can become a prompt answer"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "    if (queuedBytes + Buffer.byteLength(buffer, \"utf8\") > 8192)",
+    "replace": "    if (false)",
+    "test": "node --test --test-name-pattern='oversized queue of individually valid lines' tests/updater-cli-flip.test.mjs",
+    "why": "the shared terminal reader has a bounded queued-input budget"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "      terminal, authorize: async () => authorizeAttendedInstallV1(parsed.root, context), ports });",
+    "replace": "      authorize: async () => authorizeAttendedInstallV1(parsed.root, context), ports });",
+    "test": "node --test --test-name-pattern='single CLI sends install' tests/control-room-installer.test.mjs",
+    "why": "the installer receives the same terminal reader for the later six-character code"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "        fresh: false, write, ports, options: { ...effectiveOptions, inventoryDigest, onSpawn }, undo });",
+    "replace": "        fresh: false, write, ports, options: { ...effectiveOptions, onSpawn }, undo });",
+    "test": "node --test --test-name-pattern='an installed commit runs only' tests/control-room-installer.test.mjs",
+    "why": "repeat-install confirmation prints the pinned runtime inventory digest"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "      fresh: true, write, ports, options: { ...effectiveOptions, releaseTrust, inventoryDigest, toolRoot: seed.dir, onSpawn }, undo });",
+    "replace": "      fresh: true, write, ports, options: { ...effectiveOptions, releaseTrust, toolRoot: seed.dir, onSpawn }, undo });",
+    "test": "node --test --test-name-pattern='an installed commit runs only' tests/control-room-installer.test.mjs",
+    "why": "fresh-install confirmation prints the pinned runtime inventory digest"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "      await ports.verifyBootstrapSourceV1({ bootstrapRoot: options.bootstrap, commit: options.commit,",
+    "replace": "      await Promise.resolve({ bootstrapRoot: options.bootstrap, commit: options.commit,",
+    "test": "node --test --test-name-pattern='fresh recovery follows bootstrap' tests/control-room-installer.test.mjs",
+    "why": "fresh-install recovery starts only after the bootstrap source is re-verified"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "refuse_dotdot() { case \"$1\" in ..|../*|*/../*|*/..) refuse \"$2\" ;; esac; }",
+    "replace": "refuse_dotdot() { :; }",
+    "test": "node --test --test-name-pattern='refuses dot-dot path' tests/install-night-bootstrap.test.mjs",
+    "why": "stage B rejects dot-dot path components before using a supplied path"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "cleanup=1",
+    "replace": "cleanup=0",
+    "test": "node --test --test-name-pattern='failed stage-0 child removes' tests/install-night-bootstrap.test.mjs",
+    "why": "a failed stage-0 child cannot leave a private bootstrap tree under the root temp directory"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "  --max-time 1800 --max-filesize \"$NODE_ARCHIVE_BYTES\" --output \"$node_archive\" \"$NODE_ARCHIVE_URL\" \\",
+    "replace": "  --max-filesize \"$NODE_ARCHIVE_BYTES\" --output \"$node_archive\" \"$NODE_ARCHIVE_URL\" \\",
+    "test": "node --test --test-name-pattern='real bootstrap is POSIX' tests/install-night-bootstrap.test.mjs",
+    "why": "the stage B Node download has a finite wall-clock limit"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "    [ \"$protocol\" = https ] && [ \"$host\" = github.com ] || exit 0",
+    "replace": "    :",
+    "test": "node --test --test-name-pattern='stage B rejects pin' tests/install-night-bootstrap.test.mjs",
+    "why": "the one-use credential helper answers only an HTTPS github.com challenge"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "  -c transfer.fsckObjects=true -c http.followRedirects=false fetch --force --no-tags --no-write-fetch-head \"$REMOTE_URL\" \\",
+    "replace": "  -c transfer.fsckObjects=true -c http.followRedirects=true fetch --force --no-tags --no-write-fetch-head \"$REMOTE_URL\" \\",
+    "test": "node --test --test-name-pattern='stage B rejects pin' tests/install-night-bootstrap.test.mjs",
+    "why": "the authenticated bootstrap fetch cannot follow a redirect to another host"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "  || refuse 'bootstrap_git_config_refused'",
+    "replace": "  || :",
+    "test": "node --test --test-name-pattern='stage B rejects pin' tests/install-night-bootstrap.test.mjs",
+    "why": "failure to enumerate local repository configuration is a refusal"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "|ident([=[:space:]]|$)",
+    "replace": "",
+    "test": "node --test --test-name-pattern='stage B rejects pin' tests/install-night-bootstrap.test.mjs",
+    "why": "Git ident attributes are included in the refused archive-transforming attributes"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "  \"$commit\" \"$REMOTE_URL\" \"$GIT\" \"$NODE_VERSION\" \"$NODE_ARCHIVE_NAME\" \"$NODE_ARCHIVE_SHA256\" \"$NODE_ARCHIVE_BYTES\" \\\n  > \"$d/bootstrap.json\"",
+    "replace": "  \"$commit\" \"$REMOTE_URL\" \"/usr/bin/git\" \"$NODE_VERSION\" \"$NODE_ARCHIVE_NAME\" \"$NODE_ARCHIVE_SHA256\" \"$NODE_ARCHIVE_BYTES\" \\\n  > \"$d/bootstrap.json\"",
+    "test": "node --test --test-name-pattern='real bootstrap is POSIX' tests/install-night-bootstrap.test.mjs",
+    "why": "stage 0 receives the exact resolved Git executable used by stage B"
+  }
+]

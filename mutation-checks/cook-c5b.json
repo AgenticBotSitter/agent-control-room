@@ -1,0 +1,128 @@
+[
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "if (!exactKeys(input, [\"root\", \"accounts\", \"installationId\", \"rpId\", \"webPort\", \"gatewayPort\", \"tenant\",",
+    "replace": "if (false && !exactKeys(input, [\"root\", \"accounts\", \"installationId\", \"rpId\", \"webPort\", \"gatewayPort\", \"tenant\",",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "the pure composer must reject unknown top-level input fields"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "|| !Number.isSafeInteger(input.webPort) || input.webPort < 1024 || input.webPort > 65535",
+    "replace": "|| false",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "the protected web port must stay in the non-privileged bounded range"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "if (!exactKeys(value, [\"tenantId\", \"workspaceId\", \"provider\", \"subject\"])",
+    "replace": "if (false && !exactKeys(value, [\"tenantId\", \"workspaceId\", \"provider\", \"subject\"])",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "M4 identity data must have exactly the accepted four-field shape"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "|| Object.values(value).some(item => typeof item !== \"string\"))",
+    "replace": "|| false)",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "M4 identity values are shape-only inputs but every field must still have the declared string type"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "|| entry.passwordDigest !== sha256(entry.password) || !digestPattern.test(entry.passwordDigest)",
+    "replace": "|| !digestPattern.test(entry.passwordDigest)",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "an inline gateway password must match its captured database-login digest"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "if (byName.size !== captured.length || requiredDatabaseLogins.some(name => !byName.has(name))) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "all release and updater production logins needed by the rendered files must be present once"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "if (value[name] !== path) refuse(\"protected_configuration_input_refused\");",
+    "replace": "if (false) refuse(\"protected_configuration_input_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='bad, missing' tests/updater-protected-config.test.mjs",
+    "why": "key references are fixed beneath the protected installation root"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "function resource(path, value, accountName, groupName, fileMode = \"0600\") {",
+    "replace": "function resource(path, value, accountName, groupName, fileMode = \"0644\") {",
+    "test": "node --import tsx --test --test-name-pattern='secrets only' tests/updater-protected-config.test.mjs",
+    "why": "every composed configuration resource must remain private even when it contains a release-required secret"
+  },
+  {
+    "file": "src/updater/v1/services/protected-config.mjs",
+    "find": "`sha256:c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03`;",
+    "replace": "`sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;",
+    "test": "node --import tsx --test --test-name-pattern='release parsers accept' tests/updater-protected-config.test.mjs",
+    "why": "the updater-owned backup golden must remain byte-compatible with the release migration ledger"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "|| typeof input.tenantId !== \"string\" || !FLEET_PROJECT_ID_PATTERN_V1.test(input.tenantId) || !Number.isSafeInteger(input.port)",
+    "replace": "|| typeof input.tenant !== \"string\" || !FLEET_PROJECT_ID_PATTERN_V1.test(input.tenantId) || !Number.isSafeInteger(input.port)",
+    "test": "node --import tsx --test --test-name-pattern='release parsers accept' tests/updater-protected-config.test.mjs",
+    "why": "a release-side field rename must break the updater golden contract before install night"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "export async function loadUpdaterConfigurationV1(root, args = []) {\n  if (typeof root !== \"string\" || !isAbsolute(root) || resolve(root) !== root || root === \"/\") {",
+    "replace": "export async function loadUpdaterConfigurationV1(root, args = []) {\n  if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='config loader refuses' tests/updater-protected-config.test.mjs",
+    "why": "the root daemon must only resolve its protected configuration beneath a canonical absolute install root"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (!exactKeys(value, [\"schema\", \"database\"]) || value.schema !== UPDATER_CONFIGURATION_SCHEMA_V1",
+    "replace": "if (false && !exactKeys(value, [\"schema\", \"database\"]) || value.schema !== UPDATER_CONFIGURATION_SCHEMA_V1",
+    "test": "node --import tsx --test --test-name-pattern='config loader refuses' tests/updater-protected-config.test.mjs",
+    "why": "the root daemon must reject extra updater configuration keys"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "|| database.host !== join(root, \"pg\", \"socket\") || database.port !== 5432",
+    "replace": "|| false || database.port !== 5432",
+    "test": "node --import tsx --test --test-name-pattern='config loader refuses' tests/updater-protected-config.test.mjs",
+    "why": "the updater database host must be the fixed socket below the install root"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o022) !== 0) throw new Error();",
+    "replace": "if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error();",
+    "test": "node --import tsx --test --test-name-pattern='config loader refuses' tests/updater-protected-config.test.mjs",
+    "why": "root must not read updater authority from a group-writable state directory"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (!entry.isFile() || entry.nlink !== 1 || (entry.mode & 0o077) !== 0 || entry.size < 2 || entry.size > 16_384) {",
+    "replace": "if (!entry.isFile() || entry.nlink !== 1 || entry.size < 2 || entry.size > 16_384) {",
+    "test": "node --import tsx --test --test-name-pattern='config loader refuses' tests/updater-protected-config.test.mjs",
+    "why": "updater.json must not be readable by a service group or other users"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "args.length !== 0 && (args.length !== 2 || args[0] !== \"--configuration\" || args[1] !== expected)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='config loader refuses' tests/updater-protected-config.test.mjs",
+    "why": "the daemon may read only the production-default updater.json path"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "client = new pg.Client({ host: configuration.database.host, port: configuration.database.port,",
+    "replace": "client = new pg.Client({ host: env.PGHOST, port: configuration.database.port,",
+    "test": "node --import tsx --test --test-name-pattern='daemon reads updater.json' tests/updater-protected-config.test.mjs",
+    "why": "ambient PG variables must not override the root-owned updater configuration"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0) refuse(\"services_batch_uncertain\");",
+    "replace": "  if (!stat.isDirectory() || stat.isSymbolicLink()) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='group-writable target parent' tests/updater-protected-config.test.mjs",
+    "why": "the protected-file parent mode check moved to assertLayoutDirectory, which preserves layout ownership"
+  }
+]

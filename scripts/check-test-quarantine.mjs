@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const ISSUE = /^#[1-9][0-9]*$/;
@@ -63,4 +63,4 @@ function main() {
   console.log(`quarantine list valid (${entries.length} entries)`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

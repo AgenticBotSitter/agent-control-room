@@ -9,11 +9,21 @@
 
 import { ProjectCoordinationWorkspace } from "../../../project-coordination-workspace";
 import { decodePrivateRouteSegment } from "../../../route-segment";
+import { PrivateHeader } from "../../../private-header";
+import { ProjectNavigation } from "../../../project-navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectCoordinationPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId: rawProjectId } = await params;
   const projectId = decodePrivateRouteSegment(rawProjectId);
-  return <ProjectCoordinationWorkspace projectId={projectId} />;
+  return <div className="private-shell">
+    <PrivateHeader />
+    <main id="private-main" tabIndex={-1}>
+      <a className="private-back" href={`/projects/${encodeURIComponent(projectId)}`}>Back to project</a>
+      <div className="private-heading"><h1>Coordination</h1></div>
+      <ProjectNavigation projectId={projectId} current="coordination" />
+      <ProjectCoordinationWorkspace key={projectId} projectId={projectId} />
+    </main>
+  </div>;
 }

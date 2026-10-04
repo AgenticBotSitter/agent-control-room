@@ -5,10 +5,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import SetupPage from "../private-app/app/setup/page";
 
-test("standalone setup page is source-only and starts conservatively", async () => {
+test("standalone setup page is installer-link-bound and starts conservatively", async () => {
   const html = renderToStaticMarkup(createElement(SetupPage));
-  assert.match(html, /Source-only setup preview/);
-  assert.match(html, /macOS bundle source exists, but a public release and live installation do not/);
+  assert.match(html, /Owner setup/);
+  assert.match(html, /passkey can be registered only from a fresh link printed by the installer/);
   assert.match(html, /Refresh saved setup status/);
   assert.match(html, /refreshes its saved setup status while it is visible/);
   assert.match(html, /Reading saved installation proof/);

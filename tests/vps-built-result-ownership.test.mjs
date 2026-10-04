@@ -124,6 +124,10 @@ test("compiled three-role startup registers and submits separately captured synt
   await startup.raw.exec("SET SESSION AUTHORIZATION postgres");
   const subject = await x.f.reviewStore.inspectSubject(x.registration.tenantId, input.projectId, input.jobId);
   assert.equal(subject.targets.length, 1); assert.equal(subject.targets[0].snapshot.target.id, submitted.receipt.targetId);
+  const producingAttempt = await x.f.canonical.get(x.registration.tenantId, "attempt", x.registration.attemptId);
+  assert.deepEqual(subject.targets[0].snapshot.target.producer, { actorId: x.registration.nodeId, actorType: "agent",
+    workerId: producingAttempt.workerId, agentProfileId: "agent-profile:profile:test", harness: "hermes",
+    adapterId: x.registration.adapterId, modelFamily: "model-family:openai" });
   assert.equal((await startup.coordinator.client.query(
     "SELECT 1 AS present FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [x.registration.tenantId, input.runId])).rows.length, 1);
   assert.equal((await startup.coordinator.client.query(

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { newsResearchTaskDraft } from "./news-research-draft";
 import { parseNewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/proposal";
+import { PostgresNewsTaskProposalLinksV1 } from "../../project-adapters/news/v1/task-proposal-links";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { CanonicalStore, type ProposedWorkBundle } from "../../persistence/canonical-store";
 import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, jobRecordSchema,
-  attemptRecordSchema, type AuthorityEnvelope } from "../../domain/v1";
+  attemptRecordSchema, proposalAuthorityMaterialV1, type AuthorityEnvelope } from "../../domain/v1";
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "../../security";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
@@ -25,6 +26,7 @@ import { taskProjectAttentionPageSchema, taskProjectResultAttentionReasons,
   type TaskProjectAttentionPage } from "./task-project-attention-wire";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
+import { composeWorkerInstructionsV1, recordTaskHandoffInSession } from "./task-handoff";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
   taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt, type TaskSummary } from "./task-wire";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
@@ -41,10 +43,12 @@ import { taskModelOptionsV1, validateRequestedTaskModelV1, type TaskModelCatalog
 import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanProfileIdsV1,
   type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
-import { projectTaskDisplayStateV1 } from "./task-display-state";
-import { costForUsageV1, rollupUsageV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
-  type UsagePriceTableV1 } from "../../usage/v1/usage-cost";
+import { projectOwnerRejectionV1, projectTaskDisplayStateV1 } from "./task-display-state";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
+import { costForUsageV1, rollupUsageGroupsV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
+  type UsagePriceTableV1, type UsageRollupV1 } from "../../usage/v1/usage-cost";
 import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
+import type { ProductConfigurationV1 } from "../../config/v1/product-configuration";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -65,6 +69,145 @@ type TaskRow = { id: string; state: string; version: number; project_id: string;
 const selection = `j.id,j.state,j.version,j.project_id,j.workflow_id,j.payload AS job,w.payload AS workflow,r.payload AS request
   FROM control_jobs j JOIN control_workflows w ON w.tenant_id=j.tenant_id AND w.id=j.workflow_id AND w.project_id=j.project_id
   JOIN control_requests r ON r.tenant_id=w.tenant_id AND r.id=w.request_id AND r.project_id=j.project_id`;
+const hasArtifactReceipt = (alias: string) => `EXISTS (SELECT 1 FROM control_native_artifact_receipts ${alias}
+  WHERE ${alias}.tenant_id=j.tenant_id AND ${alias}.project_id=j.project_id AND ${alias}.job_id=j.id)`;
+
+/**
+ * "This job's returned result raised no review reason": the exact complement of
+ * what `CompletionGateStoreV1.inspectTargetFromRecords` reports as a reason.
+ *
+ * The reason set comes from a target's snapshot status: `pending` -> `review`,
+ * and `changes_requested` / `verification_blocked` / `revision_limit_reached` /
+ * `superseded` -> itself. `ready` raises nothing, and a `ready` status is the
+ * ONLY one that proves the owner is done with that result.
+ *
+ * The status is computed over gate records, so the predicate below reproduces
+ * all four of the gate's non-ready reasons, including the two fields that live on
+ * the PROFILE rather than on the target -- `minimumIndependentReviews` and
+ * `requiredVerificationScenarioIds`. An earlier draft of this predicate asked
+ * only "is there an accepted review?", which is WRONG on the production profile:
+ * it requires two verification scenarios, so a single accepted review with the
+ * human-verification scenario still outstanding leaves the status `pending` and
+ * the job DOES raise `review`. Trusting the accepted review alone would have
+ * hidden exactly the pending review this inbox exists to surface, so the profile
+ * is joined in and the full status is reproduced.
+ *
+ * The two JSON reads that are CAST are guarded by one `CASE`.
+ * `minimumIndependentReviews` is a JSON number and
+ * `requiredVerificationScenarioIds` a JSON array, and neither is CHECK-constrained,
+ * so each is matched against its shape in the `WHEN` and the one `::int` cast plus
+ * the `jsonb_array_elements_text` calls sit inside the `THEN`. A payload that does
+ * not look like the profile it claims therefore evaluates to `false` -- the job
+ * stays a CANDIDATE, the safe direction -- instead of raising and turning a readable
+ * inbox into an error.
+ *
+ * Every branch here is index-probed: the target by
+ * idx_control_completion_gate_subject, its profile by primary key, and its
+ * reviews, verifications, findings and revisions by
+ * idx_control_completion_gate_parent / _subject. No new index, and no new
+ * migration, is needed for this.
+ */
+const settledResultAttention = `EXISTS (
+  SELECT 1 FROM control_completion_gate_records t
+  JOIN control_completion_gate_records p
+    ON p.tenant_id=t.tenant_id AND p.project_id=t.project_id AND p.kind='profile'
+    AND p.id=t.payload->>'acceptanceProfileId'
+  WHERE t.tenant_id=j.tenant_id AND t.project_id=j.project_id AND t.kind='target' AND t.subject_id=j.id
+    AND CASE WHEN (p.payload->>'minimumIndependentReviews') ~ '^[0-9]{1,3}$'
+      AND jsonb_typeof(p.payload->'requiredVerificationScenarioIds')='array'
+      THEN (SELECT count(*) FROM control_completion_gate_records x
+        WHERE x.tenant_id=t.tenant_id AND x.project_id=t.project_id AND x.kind='review' AND x.parent_id=t.id
+          AND x.payload->>'authority'='completion_gate'
+          AND x.payload->>'decision' IN ('accepted','accepted_with_exceptions'))
+        >= (p.payload->>'minimumIndependentReviews')::int
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(p.payload->'requiredVerificationScenarioIds') required(scenario_id)
+        WHERE NOT EXISTS (SELECT 1 FROM control_completion_gate_records v
+          WHERE v.tenant_id=t.tenant_id AND v.project_id=t.project_id AND v.kind='verification' AND v.parent_id=t.id
+            AND v.payload->>'outcome'='passed' AND v.payload->>'scenarioId'=required.scenario_id))
+      AND NOT EXISTS (SELECT 1 FROM control_completion_gate_records v
+        WHERE v.tenant_id=t.tenant_id AND v.project_id=t.project_id AND v.kind='verification' AND v.parent_id=t.id
+          AND v.payload->>'outcome'<>'passed'
+          AND v.payload->>'scenarioId' IN (SELECT jsonb_array_elements_text(p.payload->'requiredVerificationScenarioIds')))
+      -- The remaining two reasons the gate itself computes (store.ts:384-387),
+      -- INSIDE the THEN so that ELSE false END still closes this EXISTS. Both
+      -- are reachable: an accepted review on a target that has findings is
+      -- refused (store.ts:207), but the REVERSE order is accepted, so
+      -- accepted-AND-has-a-finding is ordinary. Each is one indexed NOT EXISTS:
+      -- findings by idx_control_completion_gate_subject (subject_id = target id),
+      -- the revision by idx_control_completion_gate_parent (parent_id =
+      -- fromTargetId). The revision clause is what stops a SUPERSEDED target
+      -- settling its subject -- the revision keeps the same subject id, so
+      -- without it the superseded target alone satisfies this EXISTS and hides a
+      -- job whose revision is still pending.
+      AND NOT EXISTS (SELECT 1 FROM control_completion_gate_records f
+        WHERE f.tenant_id=t.tenant_id AND f.project_id=t.project_id AND f.kind='finding' AND f.subject_id=t.id)
+      AND NOT EXISTS (SELECT 1 FROM control_completion_gate_records rv
+        WHERE rv.tenant_id=t.tenant_id AND rv.project_id=t.project_id AND rv.kind='revision' AND rv.parent_id=t.id)
+      ELSE false END)`;
+
+/**
+ * A task-attention candidate: a job the owner still has to do something about.
+ *
+ * This predicate is the SOURCE of the read's cost, so it must be an indexed
+ * question about live work rather than a description of every job that has ever
+ * run. Before (R7I-01) the candidate set was every `proposed`/`waiting_approval`/
+ * `failed`/`orphaned` job, every running Hermes job and EVERY job that ever
+ * produced a result -- and nothing ever left it. A planned proposal stays
+ * `proposed` forever with its execution plan on disk, and an accepted result
+ * keeps its artifact receipt forever, so both are candidates for the life of the
+ * installation. The browser reads 25 at a time and stops after 40 pages, so once
+ * the settled history passed 1,000 rows each new approval had roughly a 1,000/N
+ * chance of being read at all, while the page said "some attention could not be
+ * checked completely" forever.
+ *
+ * So settled work is excluded HERE, by an indexed test each:
+ *
+ *   * a `task.proposal` that already has an execution plan is prepared, and the
+ *     reason logic already decided (`plannedSources`) that it raises nothing;
+ *   * a job whose result the owner already accepted raises nothing either.
+ *
+ * The plan exclusion is scoped to `task.proposal` exactly as the reason logic was,
+ * because a `proposed` job of any other type is an ASSIGNMENT and always needs
+ * attention.
+ *
+ * The direction of error is deliberate. Every branch may admit a job the reason
+ * logic later drops -- that costs one page slot -- and none may hide one it
+ * would have kept: a target with any required-scenario verification that did not
+ * pass, or fewer accepted reviews than its profile demands, or an open finding,
+ * or a revision away, is NOT settled.
+ *
+ * The "has an open finding" and "was superseded" clauses were REMOVED from an
+ * earlier draft of this predicate on the claim that
+ * `CompletionGateStoreV1` cannot produce those states, and that claim was
+ * WRONG. `recordReview` refuses an accepted review only when the NEW review is
+ * `accepted` (store.ts:207), so the reverse order -- accept first, then a
+ * second reviewer sends it back with a finding -- is accepted by the store and
+ * leaves a target that is both accepted and open-finding. A revision is then
+ * allowed on it, because `recordRevision` only requires a real prior finding
+ * (store.ts:269). Both clauses are in `settledResultAttention` and both are
+ * proven on real PostgreSQL by
+ * tests/task-attention-settled-candidates-postgres.test.ts.
+ *
+ * The rule is therefore stated once, in the store's own terms: a target is
+ * settled when the gate would report its status as `ready`, and the gate's
+ * status is derived from every reason `snapshotWith` computes. Everything the
+ * gate could still call `pending`, `changes_requested`, `verification_blocked`,
+ * `revision_limit_reached` or `superseded` stays a candidate.
+ *
+ * This is the WHOLE candidate set, and it is the single definition: the
+ * workspace-wide reader writes it into the three bounded arms of `attention`
+ * (perf2's shape, MLOAD-01), and `projectAttention` uses it verbatim for its
+ * `inbox` mode. Two copies of one rule is how the project page ends up
+ * excluding something the workspace page still admits.
+ */
+const attentionCandidate = `(
+  j.state IN ('waiting_approval','failed','orphaned')
+  OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running'))
+  OR (j.state='proposed' AND (COALESCE(j.payload->>'jobType','')<>'task.proposal'
+    OR NOT EXISTS (SELECT 1 FROM control_task_execution_plans ep
+      WHERE ep.tenant_id=j.tenant_id AND ep.source_job_id=j.id)))
+  OR (${hasArtifactReceipt("a")} AND NOT ${settledResultAttention})
+)`;
 function validated(row: TaskRow, tenantId: string, projectId: string) {
   const job = jobRecordSchema.parse(row.job), workflow = workflowRecordSchema.parse(row.workflow), request = requestRecordSchema.parse(row.request);
   if (job.tenantId !== tenantId || workflow.tenantId !== tenantId || request.tenantId !== tenantId
@@ -88,6 +231,10 @@ export interface WebTaskKeys {
   taskPlanIntegrityKey?: Uint8Array;
   harnessIntegrityKey?: Uint8Array;
   ideaIntegrityKey?: Uint8Array;
+  /** Retained-news provenance key. Without it the news-to-task endpoint is unavailable. */
+  newsIntegrityKey?: Uint8Array;
+  /** Trusted optional-module configuration, captured at process startup. */
+  productConfiguration?: Readonly<ProductConfigurationV1>;
   results?: NativeResultReadConfiguration;
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
@@ -124,10 +271,14 @@ export class WebTaskService {
   private readonly taskPlanIntegrityKey?: Uint8Array;
   private readonly usagePriceTable?: UsagePriceTableV1;
   private readonly fileAccessKey?: Uint8Array;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
+  private readonly newsIntegrityKey?: Uint8Array;
+  private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.modelCatalog = keys?.modelCatalog;
+    this.productConfiguration = keys?.productConfiguration;
     this.usagePriceTable = keys?.usagePriceTable ? usagePriceTableSchemaV1.parse(keys.usagePriceTable) : undefined;
     if (keys?.taskPlanIntegrityKey !== undefined) {
       if (!(keys.taskPlanIntegrityKey instanceof Uint8Array) || keys.taskPlanIntegrityKey.length !== 32)
@@ -145,10 +296,16 @@ export class WebTaskService {
     if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
       || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
       || keys.ownerReviews.integrityKey.some((byte, index) => byte !== keys.reviews!.integrityKey[index]))) throw new Error("task_key_invalid");
-    this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey);
+    this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey, undefined, this.productConfiguration);
+    if (keys?.newsIntegrityKey !== undefined) {
+      if (!(keys.newsIntegrityKey instanceof Uint8Array) || keys.newsIntegrityKey.length !== 32) throw new Error("task_key_invalid");
+      this.newsIntegrityKey = Uint8Array.from(keys.newsIntegrityKey);
+    }
     if (keys?.harnessIntegrityKey !== undefined) {
       if (!(keys.harnessIntegrityKey instanceof Uint8Array) || keys.harnessIntegrityKey.length !== 32) throw new Error("task_key_invalid");
       this.harnessKey = new Uint8Array(keys.harnessIntegrityKey);
+      this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+        deriveProjectEventIntegrityKeyV1(this.harnessKey), () => new Date(this.clock()).toISOString()));
     }
     if (keys?.results) {
       if (!this.harnessKey) throw new Error("task_key_invalid");
@@ -197,7 +354,8 @@ export class WebTaskService {
             ? usageEvent.payload.inputTokens + usageEvent.payload.outputTokens : null),
         cachedInputTokens: usageEvent.payload.cachedInputTokens, wallTimeMs: usageEvent.payload.wallTimeMs ?? wallTimeMs })
       : nativeUsage ? usageMeasurementSchemaV1.parse({ inputTokens: nativeUsage.inputTokens,
-        outputTokens: nativeUsage.outputTokens, totalTokens: nativeUsage.totalTokens, wallTimeMs })
+        outputTokens: nativeUsage.outputTokens, totalTokens: nativeUsage.totalTokens,
+        cachedInputTokens: nativeUsage.cachedInputTokens, wallTimeMs })
         : wallTimeMs === null ? null : usageMeasurementSchemaV1.parse({ inputTokens: null, outputTokens: null,
           totalTokens: null, wallTimeMs });
     return { usage, cost: costForUsageV1({ harness: run.harness, model: run.modelSelection?.model,
@@ -257,9 +415,23 @@ export class WebTaskService {
     catch { throw new WebAccessError("invalid_request"); }
     if (proposal.tenantId !== this.scope.tenantId || proposal.workspaceId !== this.scope.workspaceId
       || proposal.projectId !== projectId) throw new WebAccessError("invalid_request");
+    const newsIntegrityKey = this.newsIntegrityKey;
+    if (!newsIntegrityKey) throw new WebAccessError("not_found");
     let draft: ReturnType<typeof newsResearchTaskDraft>;
     try { draft = newsResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
-    return this.propose(identity, projectId, draft, key);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (this.productConfiguration && !project.presentation?.availableModules.includes("news")) throw new WebAccessError("not_found");
+      const result = await this.proposeWithDependenciesInSession(tx, actor, projectId, draft, key, []);
+      try {
+        await new PostgresNewsTaskProposalLinksV1(joined(tx), { ...this.scope, projectId }, newsIntegrityKey)
+          .saveInSession(tx, result.receipt.jobId, proposal, actor.now);
+      } catch (error) {
+        if (error instanceof Error && error.message === "news_task_proposal_link_story_not_found") throw new WebAccessError("not_found");
+        throw error;
+      }
+      return result;
+    });
   }
 
   async propose(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
@@ -328,10 +500,13 @@ export class WebTaskService {
       }
       const requestId = `request:${randomUUID()}`, workflowId = `workflow:${randomUUID()}`, jobId = `job:${randomUUID()}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
-      const authority: AuthorityEnvelope = { projectId, allowedExecutor: "executor:unassigned", allowedOperations: ["task.propose"],
-        credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
-        maxRisk: "low", maxDurationSeconds: 300, maxConcurrentEffects: 0,
-        expiresAt: new Date(Date.parse(actor.now) + 300_000).toISOString(), digest: "" };
+      // The proposal authority is the owner's CONSENT to propose, not a short
+      // lease: it names one no-effect operation and no executor, and nothing
+      // re-stamps it. The horizon therefore comes from the one named helper
+      // (`proposalAuthorityMaterialV1`) rather than from a literal here, because
+      // a five-minute stamp from creation is what made every offer made later
+      // unclaimable and cut a real claim short at creation+5min.
+      const authority: AuthorityEnvelope = { ...proposalAuthorityMaterialV1(projectId, actor.now), digest: "" };
       authority.digest = computeAuthorityDigest(authority);
       const bundle: ProposedWorkBundle = {
         request: { ...base, id: requestId, kind: "request", projectId, title: parsed.data.title, objective: parsed.data.instructions,
@@ -346,6 +521,15 @@ export class WebTaskService {
             retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } },
       };
       await new CanonicalStore(joined(tx)).createProposedWorkBundle(bundle);
+      // 0290: the text a worker is handed for THIS job. The request objective is
+      // one row per workflow, so it cannot carry a skill block or any other
+      // per-job instruction; it stays exactly as the proposal digest was
+      // computed, and the worker's text is recorded beside it, once.
+      await recordTaskHandoffInSession(tx, { tenantId: this.scope.tenantId, projectId, jobId,
+        authoredByIdentityId: actor.id, title: parsed.data.title,
+        instructions: composeWorkerInstructionsV1({ instructions: parsed.data.instructions,
+          acceptanceCriteria: parsed.data.acceptanceCriteria ?? null,
+          acceptanceTests: parsed.data.acceptanceTests ?? null }), now: actor.now });
       await tx.query(`INSERT INTO control_task_model_selections
         (tenant_id,project_id,job_id,selection_key,effort,created_at) VALUES($1,$2,$3,$4,$5,$6)`,
       [this.scope.tenantId, projectId, jobId, parsed.data.model ?? null, parsed.data.effort ?? null, actor.now]);
@@ -361,6 +545,8 @@ export class WebTaskService {
         safeMetadata: { inputDigest: bundle.job.inputDigest, state: "proposed" } });
       await tx.query(`INSERT INTO control_web_task_commands(tenant_id,identity_id,idempotency_key,project_id,job_id,request_digest,result,occurred_at)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`, [this.scope.tenantId, actor.id, key, projectId, jobId, digest, JSON.stringify(receipt), actor.now]);
+      if (this.projectEvents) await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: jobId,
+        action: "task_created", sourceId: jobId, sourceVersion: "task-created-v1", occurredAt: actor.now });
       return { receipt, replayed: false };
   }
 
@@ -402,12 +588,42 @@ export class WebTaskService {
       [this.scope.tenantId, jobId])).rows;
       const store = this.harnessKey ? new HarnessRunStoreV1(joined(tx), this.harnessKey) : undefined;
       const boundedAttempts = attemptRows.slice(0, 10);
-      const allInspectedRuns = store ? await store.inspectUsageScope(this.scope.tenantId, projectId, jobId) : [];
-      const inspectedRuns = new Map<string, typeof allInspectedRuns>();
-      for (const value of allInspectedRuns) inspectedRuns.set(value.run.attemptId,
-        [...(inspectedRuns.get(value.run.attemptId) ?? []), value]);
-      const allEvidence = allInspectedRuns.map(value => ({ attemptId: value.run.attemptId, ...this.usageEvidence(value.run, value.events) }));
+      // Two bounded reads, not one unbounded one. The rows the page displays come
+      // from the per-attempt reader (11 per attempt = 10 shown + 1 to detect
+      // `additionalRunsOmitted`), and the TOTALS come from a SQL aggregate over
+      // every run in the job — so the cost is bounded by the page's display
+      // bound and by the number of priceable shapes, never by run history.
+      const inspectedRuns = store ? await store.inspectAttempts(this.scope.tenantId, projectId, jobId,
+        boundedAttempts.map(attempt => attempt.id)) : new Map<string, readonly { run: HarnessRunV1;
+          events: HarnessRunEventV1[] }[]>();
+      // TWO aggregates, because they answer different questions about different
+      // sets. The page's headline total covers EVERY run the job has ever
+      // recorded, including the attempts it does not display, so it reads the
+      // whole job and does not group by attempt. Each displayed attempt's own
+      // rollup covers only that attempt, so it reads only the ten attempt ids the
+      // page renders. Reading one set and splitting it in the application could
+      // not give both: the per-attempt read would have to include every attempt
+      // to make the headline total exact, and a group per attempt ever recorded
+      // is a read that grows with retries.
+      //
+      // Both are still aggregates, so both are bounded by shapes rather than by
+      // runs; the second is additionally bounded by the page's attempt display
+      // bound, which is what makes it independent of the job's retry history.
+      const attemptIds = boundedAttempts.map(attempt => attempt.id);
+      const rollupGroups = store ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId) : [];
+      const price = this.usagePriceTable;
+      const rollup = rollupUsageGroupsV1(rollupGroups, price);
+      const attemptGroups = store
+        ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId, attemptIds) : [];
+      const rollupByAttempt = new Map<string, UsageRollupV1>();
+      for (const attempt of boundedAttempts)
+        rollupByAttempt.set(attempt.id, rollupUsageGroupsV1(
+          attemptGroups.filter(group => group.attemptId === attempt.id), price));
       const attempts = [];
+      // The newest attempt's own recorded reason, for the owner-facing wording
+      // only. `attemptNumber DESC` above already put the latest first, so the
+      // first parsed record IS the latest attempt.
+      let latestFailureCodeForProjection: string | undefined;
       for (const a of boundedAttempts) {
         const attempt = attemptRecordSchema.parse(a.payload);
         if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== jobId || attempt.id !== a.id
@@ -434,7 +650,8 @@ export class WebTaskService {
         }
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
           runs, additionalRunsOmitted: inspected.length > 10,
-          usageRollup: rollupUsageV1(allEvidence.filter(value => value.attemptId === attempt.id)) });
+          usageRollup: rollupByAttempt.get(attempt.id)! });
+        if (latestFailureCodeForProjection === undefined) latestFailureCodeForProjection = attempt.safeFailureCode;
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       const revisionLinks = this.taskPlanIntegrityKey
@@ -443,13 +660,17 @@ export class WebTaskService {
       const latestAttempt = attempts[0], latestRun = latestAttempt?.runs[0];
       return taskDetailSchema.parse({ project, task: await this.withDisplayedState(tx, actor, summary,
         latestAttempt && latestRun ? { attemptId: latestAttempt.attemptId, attemptState: latestAttempt.state,
-          runId: latestRun.runId, runState: latestRun.state } : undefined),
+          runId: latestRun.runId, runState: latestRun.state } : undefined,
+        // The canonical attempt record's own recorded reason, read from the
+        // authenticated payload this page already parsed -- not a second query
+        // and never inferred from the job state.
+        latestFailureCodeForProjection),
         instructions: request.objective, inputDigest: job.inputDigest,
         modelSelection: modelRow ? { workerKind: modelRow.worker_kind, selectionKey: modelRow.selection_key,
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
           inheritedFromJobId: modelRow.inherited_from_job_id } : null,
         ownershipLeases: [...leaseGroups.values()],
-        observedAt: actor.now, attempts, usageRollup: rollupUsageV1(allEvidence), priceTable: this.priceTableEvidence(),
+        observedAt: actor.now, attempts, usageRollup: rollup, priceTable: this.priceTableEvidence(),
         earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
@@ -459,9 +680,18 @@ export class WebTaskService {
     });
   }
 
-  /** Trusted server composition, never a browser-supplied callback. */
+  /** Trusted server composition, never a browser-supplied callback.
+   *
+   * The scope carries `identityId` — the RESOLVED `control_identities.id` from
+   * the authenticated transaction, not the caller's asserted subject. A caller
+   * that needs to name the identity in a database row (the download grant does,
+   * and 0208's guard compares it to the session row) must be given the value the
+   * authentication actually resolved, because the two differ on a Mac-local
+   * install: the session's subject is `owner:local` and the identity id is
+   * `macLocalOwnerIdentityIdV1(tenant)`. */
   async readScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    read: (scope: { tenantId: string; projectId: string; jobId: string }) => Promise<T>) {
+    read: (scope: { tenantId: string; projectId: string; jobId: string; identityId: string },
+      tx: DatabaseSession) => Promise<T>) {
     this.id(projectId); this.id(jobId);
     return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
@@ -470,7 +700,59 @@ export class WebTaskService {
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       validated(row, this.scope.tenantId, projectId);
-      return read({ tenantId: this.scope.tenantId, projectId, jobId });
+      // The transaction is handed to the callback, and that is the whole point
+      // of the second argument. The pool the web process binds is eight
+      // connections wide, and this transaction holds one of them for its whole
+      // life. A callback that answered its queries with the CLIENT instead
+      // asked the same eight-connection pool for a second connection while
+      // holding the first: at eight such callers the pool was exhausted, the
+      // server's `idle_in_transaction_session_timeout` killed every one of them,
+      // and `bindPrivatePgPool` closed the database client permanently. The
+      // whole app then failed every page with no restart — the review measured
+      // it at eight parallel downloads and at the briefed 50.
+      //
+      // So work inside this boundary runs on `tx` and only on `tx`, and the
+      // service is written so that it has nothing to ask the pool for after
+      // this returns. A caller that genuinely needs to WRITE takes
+      // `writeScopedResult` below, which opens the transaction itself and
+      // commits it before returning.
+      return read({ tenantId: this.scope.tenantId, projectId, jobId, identityId: actor.id }, tx);
+    });
+  }
+
+  /**
+   * The same boundary over a WRITABLE transaction the callback owns.
+   *
+   * `readScopedResult` is deliberately read-only: it takes `FOR SHARE` locks so
+   * that many readers can share a connection pool while revocation still waits
+   * for the reads already under way. A caller that must WRITE inside the same
+   * authorisation — the download-grant mint, whose row 0208's guard demands an
+   * accepted file and a live session — cannot do that on a read-only
+   * transaction, and asking the pool for a second connection is the N1 outage
+   * above.
+   *
+   * So the write happens in the same transaction, on the same connection, and
+   * the whole point of the signature change is that the callback is given `tx`
+   * to do it with. The alternative — commit the authorisation and write
+   * afterwards on a fresh connection — was the other half of the review's fix,
+   * and it is a real option for a spend; it is NOT acceptable for the mint,
+   * because 0208's guard compares the new row against the session row that
+   * this very transaction has just inserted and not yet committed (the
+   * review's R1a: a session's first ever request was a mint, and it was
+   * refused 42501 because a second connection cannot see an uncommitted row).
+   */
+  async writeScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
+    write: (scope: { tenantId: string; projectId: string; jobId: string; identityId: string },
+      tx: DatabaseSession) => Promise<T>) {
+    this.id(projectId); this.id(jobId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      validated(row, this.scope.tenantId, projectId);
+      return write({ tenantId: this.scope.tenantId, projectId, jobId, identityId: actor.id }, tx);
     });
   }
 
@@ -599,20 +881,25 @@ export class WebTaskService {
    * Execution success alone remains "Completed". Omitted result or review rows
    * fail closed so a partial projection can never overstate acceptance. */
   private async withDisplayedState(tx: DatabaseSession, actor: WebActor, summary: TaskSummary,
-    knownLatestAttemptOutcome?: { attemptId: string; attemptState: string; runId: string; runState: string }): Promise<TaskSummary> {
-    if (!["leased", "running", "waiting_approval", "succeeded"].includes(summary.state) || !this.resultStore
-      || !actor.can("tasks.results.read", summary.projectId)) return summary;
+    knownLatestAttemptOutcome?: { attemptId: string; attemptState: string; runId: string; runState: string },
+    knownLatestAttemptFailureCode?: string): Promise<TaskSummary> {
+    // The owner's own Reject is proved by the canonical attempt's recorded
+    // reason, which every Mac has, so this projection is applied before and
+    // independently of the result-store gate below.
+    const marked = projectOwnerRejectionV1(summary, knownLatestAttemptFailureCode);
+    if (!["leased", "running", "waiting_approval", "succeeded"].includes(marked.state) || !this.resultStore
+      || !actor.can("tasks.results.read", marked.projectId)) return marked;
     try {
-      const evidence = await this.batchResultEvidence(tx, actor, [summary]);
-      const page = evidence.get(taskReviewPlanKeyV1(summary.projectId, summary.jobId));
-      if (!page) return summary;
-      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome: knownLatestAttemptOutcome ?? page.latestAttemptOutcome,
+      const evidence = await this.batchResultEvidence(tx, actor, [marked]);
+      const page = evidence.get(taskReviewPlanKeyV1(marked.projectId, marked.jobId));
+      if (!page) return marked;
+      return projectTaskDisplayStateV1(marked, { latestAttemptOutcome: knownLatestAttemptOutcome ?? page.latestAttemptOutcome,
         results: page.items, reviews: page.reviews, additionalResultsOmitted: page.additionalResultsOmitted,
         additionalTargetsOmitted: page.additionalTargetsOmitted });
     } catch {
       // Display completion and acceptance are optional enrichment. Failure to
       // authenticate either retains the canonical task state.
-      return summary;
+      return marked;
     }
   }
 
@@ -677,14 +964,54 @@ export class WebTaskService {
   }
 
   private async withDisplayedStates(tx: DatabaseSession, actor: WebActor, summaries: readonly TaskSummary[]): Promise<TaskSummary[]> {
-    const eligible = summaries.filter(summary => ["leased", "running", "waiting_approval", "succeeded"].includes(summary.state)
+    // One bounded read for every cancelled task on this page, so the list says
+    // "Rejected by you" too. It reads only the newest attempt per task and only
+    // the reason that projection needs. This is deliberately NOT gated on the
+    // result store: a connector-only Mac records the owner's Reject in the
+    // canonical attempt and configures no result store at all.
+    const rejectionCodes = await this.latestFailureCodes(tx, summaries).catch(() => new Map<string, string>());
+    const marked = summaries.map(summary => projectOwnerRejectionV1(summary, rejectionCodes.get(summary.jobId)));
+    const eligible = marked.filter(summary => ["leased", "running", "waiting_approval", "succeeded"].includes(summary.state)
       && this.resultStore
       && actor.can("tasks.results.read", summary.projectId));
-    if (!eligible.length) return [...summaries];
+    if (!eligible.length) return marked;
     let evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>;
     try { evidence = await this.batchResultEvidence(tx, actor, eligible); }
-    catch { return [...summaries]; }
-    return this.applyDisplayEvidence(summaries, evidence);
+    catch { return marked; }
+    return this.applyDisplayEvidence(marked, evidence);
+  }
+
+  /** The newest attempt's recorded safe failure code per task, read only for
+   * tasks that are actually cancelled. Anything that cannot be read yields no
+   * entry, and a task with no entry keeps the plain cancelled wording. */
+  private async latestFailureCodes(tx: DatabaseSession,
+    summaries: readonly TaskSummary[]): Promise<Map<string, string>> {
+    const cancelled = summaries.filter(summary => summary.state === "cancelled");
+    const codes = new Map<string, string>();
+    if (!cancelled.length) return codes;
+    const rows = await tx.query<{ id: string; job_id: string; payload: unknown }>(`SELECT DISTINCT ON (a.job_id) a.id,a.job_id,
+      a.payload FROM control_attempts a WHERE a.tenant_id=$1 AND a.job_id=ANY($2::text[])
+      ORDER BY a.job_id,a.attempt_number DESC`,
+    [this.scope.tenantId, cancelled.map(summary => summary.jobId)]);
+    for (const row of rows.rows) {
+      const attempt = attemptRecordSchema.parse(row.payload);
+      // A record that disagrees with the row it was read from is corruption and
+      // fails closed, exactly as the detail page's own parse does. A record that
+      // agrees and simply records NO reason is not corruption: an owner who
+      // cancels a task directly while it is leased or running reaches "cancelled"
+      // through CanonicalStore.revokeLease, which never sets a safe failure code.
+      // That is the ordinary shape of a plain cancel, and it is why "nothing
+      // recorded" contributes no entry instead of throwing: one plainly cancelled
+      // task used to empty this map for every task on the page, so a genuinely
+      // rejected task on the same page silently lost "Rejected by you".
+      if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== row.job_id || attempt.id !== row.id)
+        throw new Error("task_attempt_unavailable");
+      if (attempt.safeFailureCode === undefined) continue;
+      // Keyed by the job, the one identifier the canonical attempt record and
+      // the job row both carry, rather than by a project the attempt does not.
+      codes.set(attempt.jobId, attempt.safeFailureCode);
+    }
+    return codes;
   }
 
   private applyDisplayEvidence(summaries: readonly TaskSummary[],
@@ -785,7 +1112,92 @@ export class WebTaskService {
         prepared_job_payload: unknown; prepared_job_state: string | null; prepared_job_version: number | null;
         prepared_job_workflow_id: string | null; prepared_job_created_at: string | Date | null;
         prepared_job_updated_at: string | Date | null; prepared_workflow_payload: unknown; prepared_request_payload: unknown };
-      const rows = (await tx.query<AttentionRow>(`SELECT EXISTS(
+      // TWO PHASES, and the split is the bound rather than an optimisation.
+      // Before R7I-01 this read was ONE statement that selected the wide
+      // `selection` (three canonical jsonb payloads) plus two PREPARED payloads
+      // and an execution plan for every candidate row, to return at most 25. The
+      // settled predicate made the candidate set cheap but did NOT bound the read:
+      // the planner still walked every workflow and probed `control_jobs` per
+      // row, measured at 3,256-3,627 ms and ~1.47M buffer hits at 5,000 settled
+      // rows, and it failed outright with `database_outcome_uncertain` at 10,000
+      // (privateDatabaseLimits: statementMs 5000). The inbox therefore went
+      // UNAVAILABLE at about 10k rather than blind at about 1k.
+      //
+      // The shape is taken from cook/perf2's MLOAD-01 work, commit c6d8c1178
+      // ("split the Needs-me candidate filter into three bounded arms") over its
+      // parent beb7f6cfa, measured there at the 200,000-job growth estate as
+      // 415 ms / 696,349 buffers / 179,984 receipts probes for one OR against
+      // 73 ms / 58,356 buffers / 251 probes for three arms UNIONed, returning
+      // byte-identical id lists. What this branch adds is that the arms carry
+      // R7I-01's own settled predicate rather than the pre-fix `EXISTS(receipt)`
+      // the perf2 arms ended on, so the arm that walks the whole estate is the
+      // one that excludes settled work.
+      //
+      // TWO DETAILS THAT ARE NOT INTERCHANGEABLE, both measured by perf2 and
+      // both reproduced here:
+      //
+      //   1. EACH ARM CARRIES ITS OWN LIMIT 26. Without it the receipts arm stops
+      //      being bounded and its predicate is evaluated across the whole
+      //      estate: perf2 measured 6,424 ms instead of 717 ms, returning the
+      //      SAME 26 ids. The LIMIT buys the bound, not de-duplication.
+      //
+      //   2. UNION, NOT UNION ALL, and not for a plan-dependent reason: the arms
+      //      overlap (a `proposed` task.proposal with a receipt matches two), and
+      //      `rows.length !== candidates.length` below refuses the page when a
+      //      candidate comes back twice. UNION returns each candidate exactly
+      //      once at any size, which is the property relied on.
+      //
+      // Phase 2 then reads the payloads for those candidates alone -- at most 26
+      // wide rows addressed through control_jobs_tenant_id_id_key. `selection`
+      // carries its own FROM/JOIN clause, so these LEFT JOINs extend that clause
+      // rather than starting a second one.
+      const attentionScope = `j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
+          AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
+            WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))`;
+      // WHAT IS PERF2'S AND WHAT IS OURS, precisely, because the two are easy to
+      // confuse and the difference is the whole point.
+      //
+      // perf2's arm 1 was `j.state IN ('proposed','waiting_approval','failed',
+      // 'orphaned')` -- it took `proposed` wholesale. That is correct for
+      // perf2's question (which jobs could need attention) and WRONG for ours,
+      // because a `proposed` task.proposal with an execution plan is settled
+      // work and would otherwise make arm 1 admit the entire settled history on
+      // its own. So the plan exclusion is written INSIDE this arm here. perf2 did
+      // not have it because perf2 did not have the settled predicate at all.
+      //
+      // perf2's arm 3 was `EXISTS(receipt)`; ours carries
+      // `EXISTS(receipt) AND NOT settledResultAttention`, so the arm that walks
+      // the whole estate is the one that excludes settled results.
+      const stateCandidates = `(j.state IN ('waiting_approval','failed','orphaned')
+        OR (j.state='proposed' AND (COALESCE(j.payload->>'jobType','')<>'task.proposal'
+          OR NOT EXISTS (SELECT 1 FROM control_task_execution_plans ep
+            WHERE ep.tenant_id=j.tenant_id AND ep.source_job_id=j.id))))`;
+      const candidates = (await tx.query<{ id: string }>(`SELECT id FROM (
+        (SELECT j.id
+        FROM control_jobs j
+        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+        WHERE ${attentionScope}
+          AND ${stateCandidates}
+        ORDER BY j.id COLLATE "C" LIMIT 26)
+      UNION
+        (SELECT j.id
+        FROM control_jobs j
+        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+        WHERE ${attentionScope}
+          AND j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')
+        ORDER BY j.id COLLATE "C" LIMIT 26)
+      UNION
+        (SELECT j.id
+        FROM control_jobs j
+        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+        WHERE ${attentionScope}
+          AND ${hasArtifactReceipt("a")} AND NOT ${settledResultAttention}
+        ORDER BY j.id COLLATE "C" LIMIT 26)
+      ) attention_candidates ORDER BY id COLLATE "C" LIMIT 26`,
+      [this.scope.tenantId, this.scope.workspaceId, after ?? null,
+        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1,
+        sources.ordinary === "included", sources.ideas === "included"])).rows;
+      const rows: AttentionRow[] = candidates.length ? (await tx.query<AttentionRow>(`SELECT EXISTS(
         SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts,
         j.created_at AS source_job_created_at,j.updated_at AS source_job_updated_at,
         ep.tenant_id AS plan_tenant_id,ep.project_id AS plan_project_id,ep.source_job_id AS plan_source_job_id,
@@ -797,15 +1209,32 @@ export class WebTaskService {
         LEFT JOIN control_jobs pj ON pj.tenant_id=ep.tenant_id AND pj.project_id=ep.project_id AND pj.id=ep.job_id
         LEFT JOIN control_workflows pw ON pw.tenant_id=pj.tenant_id AND pw.id=pj.workflow_id
         LEFT JOIN control_requests pr ON pr.tenant_id=pw.tenant_id AND pr.id=pw.request_id
-        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
-        WHERE j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
-          AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
-            WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
-          AND (j.state IN ('proposed','waiting_approval','failed','orphaned')
-            OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR EXISTS(
-            SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
-        ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
-        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"])).rows;
+        WHERE j.tenant_id=$1 AND j.id=ANY($2::text[])
+        -- The SAME order the candidate query returned, because this row set is
+        -- consumed positionally: rows[24].id is the page's nextCursor and
+        -- rows.slice(0, 25) is what the page examines. An =ANY (...) list has no
+        -- defined order, so without this the cursor could advance past a task the
+        -- owner never saw. At most 26 rows, so this sort is free.
+        ORDER BY j.id COLLATE "C"`, [this.scope.tenantId, candidates.map(candidate => candidate.id)])).rows
+        // Fail closed if a candidate does not come back: reporting fewer
+        // examined rows than the cursor implies would advance the owner's cursor
+        // past work nobody looked at.
+        //
+        // WHAT THIS ACTUALLY GUARDS, measured rather than assumed, because the
+        // obvious explanation for it is wrong. This read is REPEATABLE READ
+        // (session-authority.ts:72), so a concurrent DELETE cannot be observed
+        // by the second phase, and nothing in the product, the migrations or
+        // the deploy scripts DELETEs from control_jobs, control_workflows or
+        // control_requests -- so a candidate cannot vanish today. Removing this
+        // line leaves the whole attention lane GREEN.
+        //
+        // It is kept because the alternative is a cursor that silently skips
+        // work if any of that ever changes: a purge, a retention job, a future
+        // delete path, or a broken lineage JOIN. It costs one comparison on at
+        // most 26 rows, and it is asserted to execute by a mutation that
+        // tightens the inequality (tests/task-attention-settled-candidates-postgres.test.ts).
+        : [];
+      if (rows.length !== candidates.length) throw new Error("task_attention_candidate_unavailable");
       await this.projects.getViewsInSession(tx, actor, rows.slice(0, 25).map(row => row.project_id));
       for (const row of rows.slice(0, 25)) actor.require("tasks.read", row.project_id, true);
       const pageRows = rows.slice(0, 25).map(row => ({ row, ...validated(row, this.scope.tenantId, row.project_id) }));
@@ -881,10 +1310,19 @@ export class WebTaskService {
     return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
-      const hasArtifact = `EXISTS(SELECT 1 FROM control_native_artifact_receipts a
-        WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id)`;
-      const candidate = mode === "reviews" ? hasArtifact : `(j.state IN ('proposed','waiting_approval','failed','orphaned')
-        OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR ${hasArtifact})`;
+      const hasArtifact = hasArtifactReceipt("a");
+      // Same settled-work exclusion as the workspace-wide reader (R7I-01), and
+      // for the same reason: a project with 1,000 finished tasks would push its
+      // live approvals past the same 20-row page bound. `reviews` mode is a
+      // deliberately different question -- it exists to list RETURNED results
+      // awaiting a decision, so it keeps every artifact-bearing job and lets the
+      // reason filter below decide.
+      // `attentionCandidate` verbatim, NOT a second copy of it: this used to
+      // restate the whole rule inline, which is exactly how a project page ends
+      // up excluding something the workspace page still admits. The workspace
+      // reader now writes the same predicate into perf2's bounded arms, and
+      // both readers must agree on what settled means.
+      const candidate = mode === "reviews" ? hasArtifact : attentionCandidate;
       const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT ${hasArtifact} AS has_artifacts, ${selection}
         WHERE j.tenant_id=$1 AND j.project_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") AND ${candidate}
         ORDER BY j.id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId, after ?? null])).rows;
@@ -1019,9 +1457,10 @@ export class WebTaskService {
       const projectedReviews = this.applyDisplayEvidence(reviewSummaries, displayEvidence)
         .filter(task => task.state === "waiting_approval");
       const projectedRecent = this.applyDisplayEvidence(recentSummaries, displayEvidence);
-      const usageRuns = this.harnessKey ? await new HarnessRunStoreV1(joined(tx), this.harnessKey)
-        .inspectUsageScope(this.scope.tenantId, projectId) : [];
-      const usageRollup = rollupUsageV1(usageRuns.map(value => this.usageEvidence(value.run, value.events)));
+      const usageRollup = this.harnessKey ? rollupUsageGroupsV1(
+        await new HarnessRunStoreV1(joined(tx), this.harnessKey)
+          .inspectUsageRollup(this.scope.tenantId, projectId), this.usagePriceTable)
+        : rollupUsageGroupsV1([], this.usagePriceTable);
       return taskProjectOverviewSchema.parse({ projectId, current: projectedCurrent.slice(0, 10),
         awaitingReview: projectedReviews.slice(0, 5), recent: projectedRecent,
         additionalCurrentOmitted: projectedCurrent.length > 10 || currentRows.length > 250,

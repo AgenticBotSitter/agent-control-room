@@ -97,7 +97,15 @@ export async function shutdownLadder(options) {
       // the reason is kept because it is the only thing that says why.
       error = `${thrown instanceof Error ? thrown.message : String(thrown)}`.split("\n")[0].slice(0, 200);
     }
-    const stopped = !options.alive();
+    // `pg_ctl -w` reports success once postmaster.pid is gone, and the
+    // postmaster unlinks that file on its exit path just BEFORE the process
+    // ends (it is then reaped by launchd/init, not by us). On a loaded machine
+    // the pid is still alive for a moment after a SUCCESSFUL stop; judging it at
+    // once sent a needless `-m immediate`, which can only fail ("PID file does
+    // not exist") while the pid lingers, and a clean shutdown was reported as
+    // attack_kit_cluster_stop_degraded. A stop that returned success gets the
+    // same grace a signal does to finish exiting.
+    const stopped = error === undefined ? await waitForExit() : !options.alive();
     steps.push({ action: "cooperative", mode, stopped, failed: error !== undefined && !stopped,
       ...(error === undefined ? {} : { error }) });
     if (stopped) return { steps, stopped: true, forced: false };

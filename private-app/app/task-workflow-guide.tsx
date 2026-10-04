@@ -1,5 +1,13 @@
 /** Navigation and explanation only; never infers permission or execution from task state. */
-export function TaskWorkflowGuide({ local = false, prepared = false }: { local?: boolean; prepared?: boolean }) {
+export function TaskWorkflowGuide({ local = false, prepared = false, connectorOnly = false }: { local?: boolean; prepared?: boolean;
+  connectorOnly?: boolean }) {
+  if (connectorOnly) return <nav className="private-panel" aria-label="Task workflow"><h2>How this task moves forward</h2>
+    <ol>
+      <li><a href="#task-planning">Offer</a>: let a connected bot with the chosen skill pick up this task. This does not choose or start a bot by itself.</li>
+      <li><a href="/workers">Review results</a>: a bot’s result waits for you on the Workers page. Accept it, ask for changes, or reject it.</li>
+    </ol>
+    <p>Checking or refreshing only reads status. If an outcome is uncertain, inspect its existing receipt rather than creating replacement work.</p>
+  </nav>;
   return <nav className="private-panel" aria-label="Task workflow"><h2>How this task moves forward</h2>
     <ol>
       {(!local || !prepared) && <li><a href="#task-planning">Prepare</a>: turn a saved proposal into a separate prepared task. Open that task to continue.</li>}

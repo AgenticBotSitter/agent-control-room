@@ -41,7 +41,9 @@ async function setup(t: { after(fn: () => unknown): void }, runId: string) {
   const publication = { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage, storageClass: "local" as const,
     reservations: createInMemoryNeutralReservationPort(), reviewSubmission };
   const publish = createOwnerTrustedLocalCliPublishV1({ db: f.db, runIntegrityKey: f.harnessKey, publication,
-    registerRun: (deliveryValue, createdAt) => codexOwnerTrustedLocalRunRegistrationV1(deliveryValue, createdAt, "codex-cli-0.99.1") });
+    registerRun: (deliveryValue, createdAt, modelSelection) => codexOwnerTrustedLocalRunRegistrationV1(
+      deliveryValue, createdAt, "codex-cli-0.99.1", modelSelection),
+    resolveModelSelection: async () => ({ model: "gpt-test", effort: "medium" }) });
 
   const delivery = createControllerWorkerDeliveryV1({
     identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId, attemptId, runId, nodeId: binding.nodeId },
@@ -86,8 +88,8 @@ test("published producer provenance enforces agent independence without blocking
   const snapshot = await f.reviewStore.snapshot(binding.tenantId, plan.targetId);
   assert.deepEqual(snapshot.target.producer, { actorId: binding.nodeId, actorType: "agent",
     workerId: delivery.worker.workerId,
-    agentProfileId: `agent-profile:${delivery.connectorProfileDigest.slice("sha256:".length)}`,
-    harness: "codex", adapterId: delivery.worker.adapterId, modelFamily: "model-family:codex" });
+    agentProfileId: "agent-profile:gpt-test",
+    harness: "codex", adapterId: delivery.worker.adapterId, modelFamily: "model-family:openai" });
 
   const review = (id: string, modelFamily: string): CompletionReviewV1 => ({
     schemaVersion: "control-room-completion-gate/v1", id, tenantId: binding.tenantId,
@@ -99,9 +101,9 @@ test("published producer provenance enforces agent independence without blocking
     evidenceDigests: [snapshot.target.subjectDigest], findingIds: [], reviewedAt: at(3_000),
     grantsApproval: false, grantsExecutionAuthority: false,
   });
-  await assert.rejects(() => f.reviewStore.recordReview(review("review:same-family", "model-family:codex")),
+  await assert.rejects(() => f.reviewStore.recordReview(review("review:same-family", "model-family:openai")),
     (error: unknown) => error instanceof CompletionGateErrorV1 && error.safeCode === "reviewer_not_independent");
-  await assert.doesNotReject(() => f.reviewStore.recordReview(review("review:different-family", "model-family:claude")));
+  await assert.doesNotReject(() => f.reviewStore.recordReview(review("review:different-family", "model-family:anthropic")));
 });
 
 test("replays cleanly on a retry with the exact same text, and refuses an aborted signal without writing anything", async t => {
@@ -116,6 +118,36 @@ test("replays cleanly on a retry with the exact same text, and refuses an aborte
 
   const controller = new AbortController(); controller.abort();
   await assert.rejects(publish({ delivery, receipt, text: "unreachable", signal: controller.signal }));
+});
+
+test("a harness that reports tokens but no cache count records an explicit zero", async t => {
+  // The generic publisher is the third producer, and the one every owner-trusted
+  // local CLI run goes through. Its `usage` arriving without `cachedInputTokens`
+  // means the CLI reported no cache tokens, not that the count is unknown: a
+  // missing key here previously wrote null and refused to price the run.
+  const { f, publish, delivery, receipt } = await setup(t, "run:cli-publish-cache-absent");
+  await publish({ delivery, receipt, text: "The task completed successfully.", signal: new AbortController().signal,
+    usage: { inputTokens: 1_000, outputTokens: 40, totalTokens: 1_040 } });
+  const rows = await f.db.query<{ payload: { cachedInputTokens: number | null; inputTokens: number | null } }>(
+    `SELECT payload->'payload' AS payload FROM control_harness_run_events
+      WHERE tenant_id=$1 AND run_id=$2 AND payload->'payload'->>'category'='usage'`,
+  [binding.tenantId, delivery.identity.runId]);
+  assert.equal(rows.rows.length, 1, "exactly one usage event must be recorded");
+  assert.equal(rows.rows[0]?.payload.inputTokens, 1_000);
+  assert.equal(rows.rows[0]?.payload.cachedInputTokens, 0,
+    "a reported usage event with no cache key records zero, never an unknown");
+});
+
+test("a run that reports no usage at all keeps its cache count unknown", async t => {
+  // The counterpart that must survive the fix: with no usage event's worth of
+  // tokens there is no report of anything, so nothing may be invented.
+  const { f, publish, delivery, receipt } = await setup(t, "run:cli-publish-no-usage");
+  await publish({ delivery, receipt, text: "The task completed successfully.", signal: new AbortController().signal });
+  const events = await f.db.query<{ state: string }>(
+    "SELECT payload->'payload'->>'state' AS state FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 ORDER BY sequence",
+  [binding.tenantId, delivery.identity.runId]);
+  assert.deepEqual(events.rows.map(row => row.state), ["starting", "running", "succeeded"],
+    "no usage was reported, so no usage event is invented");
 });
 
 test("carries the cache token count through to the persisted usage event, never hard-coding it null", async t => {

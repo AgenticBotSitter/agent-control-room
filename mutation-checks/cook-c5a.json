@@ -1,0 +1,191 @@
+[
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "!within(join(input.root, \"runtime\"), input.pgRuntime)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "the PostgreSQL daemon must execute only from the root-owned runtime"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "if (!coreBatch && protectedConfig.length !== 0) refuse(\"services_batch_uncertain\");",
+    "replace": "if (false) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "only the core batch may write application protected configuration"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "if (coreBatch && canonicalJsonV1(protectedConfig.map(resource => resource.path).sort())\n    !== canonicalJsonV1(expectedProtectedPaths.sort())) refuse(\"services_batch_uncertain\");",
+    "replace": "if (false) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "the core service batch must not start without protected configuration"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "args: [join(root, \"updater\", \"current\", \"updater.mjs\"), \"--configuration\", join(root, \"updater-state\", \"updater.json\")],",
+    "replace": "args: [join(root, \"updater\", \"current\", \"updater.mjs\")],",
+    "test": "node --import tsx --test --test-name-pattern='byte-identical' tests/updater-services.test.mjs",
+    "why": "the updater daemon must receive its protected configuration path"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "keepAlive: \"failed\", exitTimeOut: 45 },",
+    "replace": "keepAlive: true, exitTimeOut: 45 },",
+    "test": "node --import tsx --test --test-name-pattern='byte-identical' tests/updater-services.test.mjs",
+    "why": "a known gateway configuration refusal must not enter an unconditional crash loop"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "const target = runtime.pathFor(resource.path);\n  const handle = await runtime.open(target, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY\n    | fsConstants.O_NOFOLLOW",
+    "replace": "const target = runtime.pathFor(resource.path);\n  const handle = await runtime.open(target, fsConstants.O_CREAT | fsConstants.O_WRONLY",
+    "test": "node --import tsx --test --test-name-pattern='fake launchctl installs' tests/updater-services.test.mjs",
+    "why": "privileged resources must be exclusively created without following the final path"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (active) refuse(\"services_batch_uncertain\");",
+    "replace": "if (false) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='forty-caller burst' tests/updater-services.test.mjs",
+    "why": "a second in-process caller must not observe a half-installed batch as complete"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (existing.some((entry, index) => entry && !exactResource(entry, bundle.resources[index]))) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "an interrupted retry may reuse only resources whose bytes still match the bundle"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (await runtime.isServiceLoaded(service.label).catch(() => refuse(\"services_batch_uncertain\"))) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "an ambiguous launchctl reply must still roll back a service that actually loaded"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "        if (signal.aborted) refuse(\"services_batch_uncertain\");\n        return Object.freeze({ outcome: \"completed\", receipt });",
+    "replace": "        return Object.freeze({ outcome: \"completed\", receipt });",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "a stop arriving after the final bootstrap must roll the completed launch back"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "        if (failures.length) throw Object.assign(new Error(\"services_batch_uncertain\", { cause }),\n          { code: \"services_batch_uncertain\", failures: failures.length });\n        for (const entry of [...createdFiles].reverse())",
+    "replace": "        if (false) throw Object.assign(new Error(\"services_batch_uncertain\", { cause }),\n          { code: \"services_batch_uncertain\", failures: failures.length });\n        for (const entry of [...createdFiles].reverse())",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "rollback must retain recovery resources if a possibly loaded service cannot be booted out"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "Object.freeze({ role: \"updater-guard\", label: \"xyz.agentcontrolroom.updater-guard\",",
+    "replace": "Object.freeze({ role: \"updater\", label: \"xyz.agentcontrolroom.updater-guard\",",
+    "test": "node --import tsx --test --test-name-pattern='every launch position' tests/updater-services.test.mjs",
+    "why": "all rollback paths must derive shutdown order from the one complete fixed label policy"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "await bootout(runtime, service.label);\n      if (service.role === \"postgresql17\") await verifyPostgres(runtime, root);",
+    "replace": "if (service.role === \"postgresql17\") await verifyPostgres(runtime, root);\n      await bootout(runtime, service.label);",
+    "test": "node --import tsx --test --test-name-pattern='uninstall boots PostgreSQL out before' tests/updater-services.test.mjs",
+    "why": "PostgreSQL must be booted out before clean-shutdown proof or resource removal"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "value.resources.some(resource => resource.kind === \"launchd_plist\" && !expectedPlists.has(resource.path))",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='changed receipt' tests/updater-services.test.mjs",
+    "why": "a self-consistent forged receipt must not retarget privileged removal"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "canonicalJsonV1(protectedPaths) !== canonicalJsonV1(expectedProtectedPaths.sort())",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='changed receipt' tests/updater-services.test.mjs",
+    "why": "a self-consistent forged receipt must not retarget protected configuration removal"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (current.sha256 !== resource.sha256) refuse(\"services_batch_uncertain\");",
+    "replace": "if (false) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='changed receipt' tests/updater-services.test.mjs",
+    "why": "uninstall must not delete a receipt path whose bytes have changed"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "[\"kickstart\", \"-k\", `system/${service.label}`]",
+    "replace": "[\"kickstart\", `system/${service.label}`]",
+    "test": "node --import tsx --test --test-name-pattern='kickstart -k' tests/updater-services.test.mjs",
+    "why": "restart must force only each explicitly requested role"
+  },
+  {
+    "file": "src/updater/v1/services/installer.mjs",
+    "find": "if (!result || ![\"completed\", \"unchanged\"].includes(result.outcome)) refuse(\"services_batch_uncertain\");",
+    "replace": "if (!result) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='fake launchctl installs' tests/updater-services.test.mjs",
+    "why": "the install wrapper must accept only a confirmed completed or unchanged elevated outcome"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "if (!result || !digestPattern.test(result.bundleDigest ?? \"\") || !result.receipt\n    || !digestPattern.test(result.receipt.receiptDigest ?? \"\")\n    || result.receipt.roles?.join(\"\\0\") !== roles.join(\"\\0\")) refuse(\"services_batch_uncertain\");",
+    "replace": "if (false) refuse(\"services_batch_uncertain\");",
+    "test": "node --test --test-name-pattern='unproved service-batch' tests/control-room-installer.test.mjs",
+    "why": "the install journal must not record an unproved service step as done"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "if (batch && !SERVICE_BATCH_ROLES_V1.some(expected => canonicalJsonV1(roles) === canonicalJsonV1(expected))) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='bad input' tests/updater-services.test.mjs",
+    "why": "installation accepts only the database, core, or post-health policy batch"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "args: [\"-p\", join(root, \"guard\", \"guard.sh\"), \"watch\"]",
+    "replace": "args: [\"-p\", join(root, \"guard\", \"guard.sh\"), \"tick\"]",
+    "test": "node --import tsx --test --test-name-pattern='real script parser' tests/updater-services.test.mjs",
+    "why": "the generated guard verb must be accepted by the shipped guard parser"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "args: [\"-p\", join(parsed.installRoot, \"guard\", \"guard.sh\"), \"watch\"]",
+    "replace": "args: [\"-p\", join(parsed.installRoot, \"guard\", \"guard.sh\"), \"tick\"]",
+    "test": "node --import tsx --test --test-name-pattern='byte-identical' tests/updater-services.test.mjs",
+    "why": "the TypeScript authority must retain the same accepted guard verb during the transition"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "    \"$LAUNCHCTL\" bootout system/xyz.agentcontrolroom.updater-guard >/dev/null 2>&1 || :",
+    "replace": "    : # updater-guard bootout deliberately omitted",
+    "test": "node --test --test-name-pattern='pair-aware rescue' tests/updater-guard.test.mjs",
+    "why": "rescue must boot out updater-guard before reverting code and database links; the bootstrap plist path did not test this"
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (receipt && receipt.roles.join(\"\\0\") !== roles.join(\"\\0\")) refuse(\"services_batch_uncertain\");",
+    "replace": "if (false) refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='fixed complete policy labels' tests/updater-services.test.mjs",
+    "why": "recovery may remove receipt resources only for the exact journaled batch"
+  },
+  {
+    "file": "src/updater/v1/services/installer.mjs",
+    "find": "|| options.healthAccepted !== true || options.knownGoodAccepted !== true) refuse(\"services_batch_uncertain\");",
+    "replace": ") refuse(\"services_batch_uncertain\");",
+    "test": "node --import tsx --test --test-name-pattern='step 27b' tests/updater-services.test.mjs",
+    "why": "step 27b must not start updater authority before both health and known-good acceptance"
+  },
+  {
+    "file": "src/updater/v1/services/installer.mjs",
+    "find": "heartbeat?.schema === \"control-room.updater-heartbeat/v1\" && Number.isFinite(at) && at >= after",
+    "replace": "heartbeat?.schema === \"control-room.updater-heartbeat/v1\" && Number.isFinite(at)",
+    "test": "node --import tsx --test --test-name-pattern='step 27b' tests/updater-services.test.mjs",
+    "why": "step 27b must reject a stale heartbeat left by an earlier updater process"
+  },
+  {
+    "file": "src/updater/v1/services/installer.mjs",
+    "find": "try { await uninstallServicesV1({ root: input.root, receipt: installed.receipt,",
+    "replace": "try { if (false) await uninstallServicesV1({ root: input.root, receipt: installed.receipt,",
+    "test": "node --import tsx --test --test-name-pattern='step 27b' tests/updater-services.test.mjs",
+    "why": "a missing heartbeat must boot out and remove the post-health batch before refusing"
+  }
+]

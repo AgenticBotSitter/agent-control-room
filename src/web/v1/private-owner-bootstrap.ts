@@ -68,7 +68,7 @@ export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfigur
         // installation. A concurrent first setup loses the insert race and
         // fails closed for the same reason.
         const tenant = (await tx.query<{ id: string; display_name: string }>(
-          "SELECT id,display_name FROM tenants WHERE id=$1 FOR UPDATE", [config.tenantId])).rows;
+          "SELECT id,display_name FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [config.tenantId])).rows;
         if (tenant.length !== 0) return fail();
         const createdTenant = (await tx.query<{ id: string }>(`INSERT INTO tenants(id,display_name) VALUES($1,$2)
           ON CONFLICT(id) DO NOTHING RETURNING id`, [config.tenantId, config.tenantDisplayName])).rows;

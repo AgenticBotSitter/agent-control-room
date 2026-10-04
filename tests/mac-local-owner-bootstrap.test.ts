@@ -9,7 +9,7 @@ import { DatabaseNodeKeyResolver, DatabaseReplayGuard, FixedWindowProtocolRateLi
   NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame } from "../src/node-protocol/v1";
 import { captureOwnerTrustedLocalEnablementV1, OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
-import { sha256Digest } from "../src/security";
+import { evaluatePolicy, sha256Digest } from "../src/security";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
 import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
@@ -31,8 +31,21 @@ test("creates the fixed local owner once and re-runs as a no-op", async t => {
   assert.equal(await bootstrapMacLocalOwnerV1(fixture.client, config, clock), "created");
   assert.equal(await bootstrapMacLocalOwnerV1(fixture.client, config, clock), "already_present");
   assert.deepEqual(await fixture.counts(), { identities: 1, grants: 1 });
-  const grant = await fixture.client.query<{ role_key: string }>("SELECT role_key FROM control_role_grants WHERE tenant_id=$1", ["tenant:mac-owner-a"]);
+  const grant = await fixture.client.query<{ id: string; role_key: string; allowed_actions: string[]; project_ids: string[];
+    risk_ceiling: "low" | "medium" | "high" | "critical"; allow_external_effects: boolean; require_strong_factor: boolean }>(
+    "SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor FROM control_role_grants WHERE tenant_id=$1",
+    ["tenant:mac-owner-a"]);
   assert.equal(grant.rows[0]?.role_key, "owner");
+  const ownerGrant = grant.rows[0]; assert.ok(ownerGrant);
+  const principal = { tenantId: "tenant:mac-owner-a", identityId: `identity:tenant:mac-owner-a:owner`, actorType: "human" as const,
+    authenticatedAt: new Date(conformanceNow).toISOString(), expiresAt: new Date(conformanceNow + 60_000).toISOString() };
+  const policyGrant = { id: ownerGrant.id, allowedActions: ownerGrant.allowed_actions, projectIds: ownerGrant.project_ids,
+    riskCeiling: ownerGrant.risk_ceiling, allowExternalEffects: ownerGrant.allow_external_effects,
+    requireStrongFactor: ownerGrant.require_strong_factor };
+  for (const action of ["tasks.reviews.record", "tasks.propose"]) assert.equal(evaluatePolicy(principal, [policyGrant], {
+    tenantId: principal.tenantId, action, resourceType: "task", resourceId: "job:owner-default", projectId: "project:owner-default",
+    risk: "low", externalEffect: false, occurredAt: principal.authenticatedAt,
+  }).allowed, true, `the default Mac owner grant includes ${action}`);
 });
 
 test("never adopts an existing tenant owned by someone else", async t => {

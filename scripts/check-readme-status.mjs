@@ -1,6 +1,6 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const requiredClaims = Object.freeze([
   ["status heading", /^## Current product status$/mu],
@@ -47,4 +47,4 @@ function main() {
   process.exitCode = 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

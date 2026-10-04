@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
-import { taskCommandSchema } from "./task-wire";
-import { ideaOwnerIntentSchemaV1 } from "../../idea-lab/v1/schemas";
+import { taskCommandSchema, taskDraftSchema } from "./task-wire";
+import { ideaOwnerIntentSchemaV1, ideaCodeSchemaV1 } from "../../idea-lab/v1/schemas";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), text = z.string().min(1).max(2000);
 export const ideaParticipantSelectionSchema = z.array(z.object({ participantId: id, participantDigest: digest }).strict())
   .min(3).max(6).refine(values => new Set(values.map(value => value.participantId)).size === values.length);
@@ -41,7 +41,9 @@ export type IdeaStartReceipt = z.infer<typeof ideaStartReceiptSchema>;
  * Preparing an Idea Lab round only creates ordinary proposed tasks. It never
  * contacts a provider, assigns a worker, or starts work from the browser.
  */
-export const ideaRoundProposalDraftSchema = z.object({ sessionDigest: digest, projectId: id, round: z.number().int().min(1).max(3) }).strict();
+export const ideaRoundProposalDraftSchema = z.object({ sessionDigest: digest, projectId: id,
+  round: z.number().int().min(1).max(3), followUp: z.string().trim().min(1).max(300).optional(),
+}).strict().refine(value => (value.round === 1) === (value.followUp === undefined));
 export const ideaRoundProposalReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, projectId: id,
   round: z.number().int().min(1).max(3), receipts: z.array(taskCommandSchema).min(3).max(6), startsWork: z.literal(false),
 }).strict().refine(value => value.receipts.every(item => item.receipt.projectId === value.projectId));
@@ -62,10 +64,15 @@ export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDiges
   (value.mode === "legacy_panel") === (value.runId !== null));
 export type IdeaSynthesisReceipt = z.infer<typeof ideaSynthesisReceiptSchema>;
 export const ideaDecisionDraftSchema = z.object({ sessionDigest: digest, synthesisDigest: digest,
-  intent: ideaOwnerIntentSchemaV1 }).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project);
+  intent: ideaOwnerIntentSchemaV1, promotionTask: taskDraftSchema.optional(),
+}).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project
+  && (v.intent.decision === "create_project") === !!v.promotionTask);
 export const ideaDecisionReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decisionDigest: digest, decision: z.enum(["create_project", "save", "reject"]), projectId: id.nullable(),
-  replayed: z.boolean(), startsWork: z.literal(false) }).strict().refine(v => (v.decision === "create_project") === !!v.projectId);
+  firstTask: taskCommandSchema.nullable(), replayed: z.boolean(), startsWork: z.literal(false),
+}).strict().refine(v => (v.decision === "create_project") === !!v.projectId
+  && (v.decision === "create_project") === !!v.firstTask
+  && (!v.firstTask || v.firstTask.receipt.projectId === v.projectId && !v.firstTask.receipt.startsWork));
 export type IdeaDecisionReceipt = z.infer<typeof ideaDecisionReceiptSchema>;
 const summary = z.object({ sessionId: id, sessionDigest: digest, title: z.string().min(1).max(120),
   ideaSummary: text, targetCustomer: z.string().min(1).max(300), createdAt: z.string().datetime({ offset: true }) });
@@ -91,7 +98,7 @@ synthesis: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: dig
 run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
   state: z.enum(["prepared", "running", "completed", "cancelled", "failed_definite", "ambiguous"]),
   messagesUsed: z.number().int().min(0).max(18), maxMessages: z.number().int().min(3).max(18),
-  costUsd: z.number().min(0).max(25), providerContacted: z.boolean(), updatedAt: z.string().datetime({ offset: true }),
+  costUsd: z.number().min(0).max(450).nullable(), safeCode: ideaCodeSchemaV1.optional(), providerContacted: z.boolean(), updatedAt: z.string().datetime({ offset: true }),
   cancellationRequestedAt: z.string().datetime({ offset: true }).nullable(),
   retryPermitted: z.literal(false), attempts: z.array(z.object({ participantId: id, round: z.number().int().min(1).max(3),
     state: z.enum(["provider_marked", "completed", "failed_definite", "ambiguous"]),
@@ -99,13 +106,29 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 }).strict().nullable(),
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
-}).nullable(), canSynthesize: z.boolean(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
-canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max(18), preparedRounds: z.array(z.number().int().min(1).max(3)).min(1).max(3),
+}).nullable(), promotionTask: z.object({ projectId: id, jobId: id, requestId: id, startsWork: z.literal(false) }).strict().nullable(),
+canSynthesize: z.boolean(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
+canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(1).max(18), preparedRounds: z.array(z.number().int().min(1).max(3)).min(1).max(3),
+  // A round interrupted part-way through preparation holds fewer tasks than it
+  // has participants, and that partial state has to be readable: the owner can
+  // only finish the round if they can see it. The floor is 1, not one per
+  // participant, and the completeness rule below is what the product itself
+  // relies on (below, `canSynthesize` still requires a full task count).
   tasks: z.array(z.object({ taskKey: id, participantId: id, round: z.number().int().min(1).max(3),
-    contributionRecorded: z.boolean() }).strict()).min(3).max(18),
+    contributionRecorded: z.boolean() }).strict()).min(1).max(18),
 }).strict().nullable(), canProjectResults: z.boolean(), nextCanonicalRound: z.number().int().min(2).max(3).nullable(), canPrepareNextRound: z.boolean(),
+  // An interrupted round is resumable, and the owner is told which round is
+  // unfinished. `canFinishRound` is the single action that can complete it; it
+  // is false unless an unfinished round exists, so the UI cannot offer a
+  // control that the operation would refuse.
+  canFinishRound: z.boolean(), unfinishedRound: z.number().int().min(1).max(3).nullable(),
+  // Whether the preparation window has closed. Shown so an owner who finds a
+  // saved round with no action available is told WHY, rather than being left
+  // to infer a missing control. Derived by the server from the same rule the
+  // operation enforces; never a client assertion.
+  preparationExpired: z.boolean(),
 }).strict().refine(value => {
-  const { session, contributions, synthesis, decision, run, canonicalTasks } = value;
+  const { session, contributions, synthesis, decision, run, canonicalTasks, promotionTask } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
     && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length && !canonicalTasks)
     && (!value.canSynthesize || !synthesis && !decision && (run
@@ -127,19 +150,54 @@ canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max
       : c.sourceMode === "canonical_task_result" ? !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "reviewed_control_room_task"
       : !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "none")
     && (!canonicalTasks || !run
-      && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxRounds * session.participants.length
+      // At most one task per participant per round, and at most one per turn
+      // overall. A PARTIAL round is legal here (1..max turns) so an
+      // interrupted preparation stays readable; completeness is not assumed by
+      // this schema. Every consumer that needs a whole round still asks for
+      // one explicitly - `canSynthesize` above compares taskCount against
+      // `maxRounds * participants.length`, and the round operation refills the
+      // missing turns - so relaxing this bound admits no new promotion,
+      // synthesis or cross-project path.
+      && canonicalTasks.taskCount >= 1
+      && canonicalTasks.taskCount <= session.maxRounds * session.participants.length
       && canonicalTasks.preparedRounds.every(round => round <= session.maxRounds)
       && canonicalTasks.tasks.length === canonicalTasks.taskCount
       && new Set(canonicalTasks.tasks.map(task => task.taskKey)).size === canonicalTasks.tasks.length
+      && new Set(canonicalTasks.tasks.map(task => `${task.round}:${task.participantId}`)).size === canonicalTasks.tasks.length
+      && canonicalTasks.preparedRounds.every(round => canonicalTasks.tasks.some(task => task.round === round))
       && canonicalTasks.tasks.every(task => task.round <= session.maxRounds && session.participants.some(participant => participant.participantId === task.participantId)))
     && (!value.canProjectResults || !!canonicalTasks && !run && !synthesis && !decision)
     && (value.nextCanonicalRound === null || !!canonicalTasks && !run && !synthesis && !decision
       && value.nextCanonicalRound <= session.maxRounds && canonicalTasks.preparedRounds.includes(value.nextCanonicalRound - 1)
       && canonicalTasks.tasks.filter(task => task.round === value.nextCanonicalRound! - 1).every(task => task.contributionRecorded))
     && (!value.canPrepareNextRound || value.nextCanonicalRound !== null && value.execution === "authorization_required")
+    // An elapsed window can never authorise NEW work, on either control. An
+    // action offered while expired is exactly the strand M3-IDEA-U03 reported:
+    // a visible control whose POST the operation refuses.
+    && (!value.preparationExpired || (!value.canPrepareNextRound && !value.canFinishRound))
+    // The resume action is offered only for a genuinely unfinished round, and
+    // never together with a "next round" action: they are the same control on
+    // different states, and offering both would leave the owner unsure which
+    // one to press. An unfinished round also cannot be offered once any result
+    // has been recorded against it - that is a reviewed round, not an
+    // interrupted one.
+    && (value.unfinishedRound === null ? !value.canFinishRound
+      : !!canonicalTasks && !run && !synthesis && !decision && !value.canPrepareNextRound
+        && value.nextCanonicalRound === null
+        && canonicalTasks.preparedRounds.includes(value.unfinishedRound)
+        && canonicalTasks.tasks.filter(task => task.round === value.unfinishedRound!).length < session.participants.length
+        && !canonicalTasks.tasks.some(task => task.round === value.unfinishedRound! && task.contributionRecorded)
+        // canFinishRound is DERIVED by the server from the same deadline rule,
+        // so this schema forbids the impossible pair - an action offered after
+        // the window closed - rather than re-deriving the window a second time
+        // and risking a second copy drifting from the operation's rule.
+        && (value.canFinishRound === !value.preparationExpired
+          || (!value.canFinishRound && value.execution !== "authorization_required")))
     && (!synthesis || synthesis.sessionId === session.sessionId && synthesis.sessionDigest === session.sessionDigest)
     && (!decision || !!synthesis && decision.sessionId === session.sessionId && decision.sessionDigest === session.sessionDigest
-      && decision.synthesisDigest === synthesis.synthesisDigest && (decision.decision === "create_project") === !!decision.project);
+      && decision.synthesisDigest === synthesis.synthesisDigest && (decision.decision === "create_project") === !!decision.project)
+    && (!promotionTask || !!decision?.project && decision.decision === "create_project"
+      && promotionTask.projectId === decision.project.projectId && !promotionTask.startsWork);
 });
 export type IdeaPage = z.infer<typeof ideaPageSchema>;
 export type IdeaDetail = z.infer<typeof ideaDetailSchema>;

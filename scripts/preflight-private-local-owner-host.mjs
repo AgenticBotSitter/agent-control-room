@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
+import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { verifyInstalledPreparedOperatorReleaseV1 } from
   "./run-private-local-installation-operator.mjs";
@@ -60,5 +61,5 @@ export async function preflightPrivateLocalOwnerHostV1(args, ports = runtime) {
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await preflightPrivateLocalOwnerHostV1(process.argv.slice(2));

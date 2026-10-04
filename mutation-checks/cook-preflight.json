@@ -1,0 +1,14 @@
+[
+  { "file": "scripts/install/preflight.mjs", "find": "if (ports.geteuid() === 0) {", "replace": "if (false) {", "test": "pnpm test:install-preflight", "why": "root must be refused before a preflight command runs" },
+  { "file": "scripts/install/preflight.mjs", "find": "atLeast(macVersion, [14, 0, 0]) ?", "replace": "true ?", "test": "pnpm test:install-preflight", "why": "an unsupported macOS version cannot pass" },
+  { "file": "scripts/install/preflight.mjs", "find": "short(arch.stdout) === \"arm64\" ?", "replace": "true ?", "test": "pnpm test:install-preflight", "why": "the install requires Apple Silicon" },
+  { "file": "scripts/install/preflight.mjs", "find": "Number.isSafeInteger(freeBytes) && freeBytes >= RESCUE_RESERVE_BYTES", "replace": "true", "test": "pnpm test:install-preflight", "why": "the rescue reserve cannot be bypassed" },
+  { "file": "scripts/install/preflight.mjs", "find": "clt.code === 0 && /^\\//u.test(short(clt.stdout))", "replace": "true", "test": "pnpm test:install-preflight", "why": "missing command-line tools must block install night" },
+  { "file": "scripts/install/preflight.mjs", "find": "pgVersion === 17 ?", "replace": "true ?", "test": "pnpm test:install-preflight", "why": "only PostgreSQL 17 can satisfy the runtime requirement" },
+  { "file": "scripts/install/preflight.mjs", "find": "loggedIn ?", "replace": "true ?", "test": "pnpm test:install-preflight", "why": "Tailscale login and MagicDNS must be verified" },
+  { "file": "scripts/install/preflight.mjs", "find": "else if (details.funnelOn)", "replace": "else if (false)", "test": "pnpm test:install-preflight", "why": "Funnel must be off" },
+  { "file": "scripts/install/preflight.mjs", "find": ": busy.length ?", "replace": ": false ?", "test": "pnpm test:install-preflight", "why": "occupied required ports must block install night" },
+  { "file": "scripts/install/preflight.mjs", "find": "accountIds && !nameTaken", "replace": "true", "test": "pnpm test:install-preflight", "why": "service account names and IDs must be acceptable to the installer allocator" },
+  { "file": "scripts/install/preflight.mjs", "find": "checks.push(warned(\"github-read-token\"", "replace": "checks.push(passed(\"github-read-token\"", "test": "pnpm test:install-preflight", "why": "the dedicated token remains an explicit owner-attendance reminder" },
+  { "file": "scripts/install/preflight.mjs", "find": "checks.push(warned(\"phone\"", "replace": "checks.push(passed(\"phone\"", "test": "pnpm test:install-preflight", "why": "the phone step remains an explicit owner reminder" }
+]

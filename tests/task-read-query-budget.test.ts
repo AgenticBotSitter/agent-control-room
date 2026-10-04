@@ -39,6 +39,22 @@ const injectedLatencyMs = 50;
 // deadlock/runaway sanity check, so allow a full second for loaded CI runners
 // beyond the worst case where every allowed injected delay is sequential.
 const wallClockMarginMs = 1_000;
+// needs-me is 10, not 9, because R7I-01 split its read into the two-phase
+// bounded candidate shape (perf2 MLOAD-01, c6d8c1178): one narrow candidate
+// query and one payload query for the at most 26 ids it returned. That is one
+// extra round trip and it is the price of the bound -- the single wide query it
+// replaced spent 3,256-3,627 ms at 5,000 settled rows and died on the 5s
+// statement_timeout at 10,000. The count is asserted EXACTLY rather than as a
+// ceiling, so the next extra round trip still fails here.
+//
+// MEASURED, not assumed: cook/perf2's own tip carries this same +1 (its
+// two-phase shape measures 10 against a budget of 9, and 30 against a burst
+// budget of 27) and perf2 did NOT raise these numbers, so that lane was red on
+// perf2 before this branch touched it. Verified by installing
+// cook/perf2:src/web/v1/task-service.ts here unchanged and running this file:
+// the same three tests fail with the same counts and messages. That is why the
+// numbers are raised here, with the measurement recorded, rather than left to
+// fail as if this branch had introduced them.
 const assertInjectedLatencyBudget = (label: string, measured: { queries: number; elapsedMs: number },
   allowedRoundTrips: number) => {
   assert.equal(measured.queries, allowedRoundTrips,
@@ -108,7 +124,7 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   const attention = await measure(injectedLatencyMs, reads.attention);
   assert.equal(attention.queries, one.attention.queries,
     `needs-me query count grew: ${JSON.stringify({ one: one.attention, ten: attention })}`);
-  assertInjectedLatencyBudget("needs-me", attention, 9);
+  assertInjectedLatencyBudget("needs-me", attention, 10);
 
   await state(f.db, extra, "running", 5);
   const home = await measure(injectedLatencyMs, reads.home);
@@ -164,7 +180,7 @@ test("needs-me suppresses authentic saved plans in-session without hiding unplan
   assert.deepEqual(many.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"]);
   assert.equal(many.queries, one.queries,
     `saved-plan attention query count grew with proposal count: ${JSON.stringify({ one: one.queries, many: many.queries })}`);
-  assertInjectedLatencyBudget("saved-plan attention", many, 9);
+  assertInjectedLatencyBudget("saved-plan attention", many, 10);
   t.diagnostic(JSON.stringify({ injectedLatencyMs, oneSavedPlanQueries: one.queries,
     fiveSavedPlans: { queries: many.queries, elapsedMs: many.elapsedMs } }));
 });
@@ -212,7 +228,9 @@ test("three concurrent Home reads stay inside the injected remote-latency target
     home: await measure(tasks => tasks.home(f.identity)),
     projects: await measure((_tasks, projects) => projects.listPage(f.identity)),
   };
-  const allowedBurstRoundTrips = { list: 27, attention: 27, home: 27, projects: 15 } as const;
+  // The burst is three concurrent reads, so it inherits the same +1 from needs-me:
+  // 3 x 10. `list`, `home` and `projects` are unchanged at 9 / 9 / 5 each.
+  const allowedBurstRoundTrips = { list: 27, attention: 30, home: 27, projects: 15 } as const;
   for (const [name, result] of Object.entries(burst))
     assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name as keyof typeof allowedBurstRoundTrips]);
   t.diagnostic(JSON.stringify({ injectedLatencyMs, concurrentReads: 3, burst }));
@@ -254,7 +272,14 @@ test("task detail and result-open reads stay within fixed remote-query budgets",
     return Object.fromEntries(entries) as Record<keyof typeof reads, { queries: number; elapsedMs: number }>;
   };
   const baseline = await collect(0), delayed = await collect(injectedLatencyMs);
-  const allowedRoundTrips = { detail: 12, results: 12, content: 7, review: 12, verification: 11 } as const;
+  // `detail` is 14, not 12: it now makes THREE bounded usage reads instead of
+  // one — `inspectAttempts` for the rows the page shows (the reader #412
+  // replaced), and two aggregates: one over the whole job for the headline
+  // total, and one over just the ten displayed attempts for the per-attempt
+  // rollups. All three are fixed regardless of history; the row VOLUME they
+  // return is what #412 raised, and it is asserted on a real cluster in
+  // tests/bounded-usage-read-postgres.test.ts.
+  const allowedRoundTrips = { detail: 14, results: 12, content: 7, review: 12, verification: 11 } as const;
   for (const name of Object.keys(allowedRoundTrips) as (keyof typeof allowedRoundTrips)[]) {
     assert.equal(delayed[name]!.queries, baseline[name]!.queries, `${name} query count changed under latency`);
     assertInjectedLatencyBudget(name, delayed[name]!, allowedRoundTrips[name]);
@@ -300,10 +325,12 @@ test("verification options stay fixed-query as reviews and configured scenarios 
 
 test("attempt, run and artifact aggregate readers stay one-query as cardinality grows", async () => {
   let queries = 0;
-  const db: DatabaseClient = { query: async () => { queries++; return { rows: [] }; },
-    transaction: async work => work({ query: async () => { queries++; return { rows: [] }; } }),
+  const statements: string[] = [];
+  const record = async (sql: string) => { queries++; statements.push(sql); return { rows: [] as never[] }; };
+  const db: DatabaseClient = { query: record,
+    transaction: async work => work({ query: record }),
     transactionWithPreCommitCheck: async (work, check) => {
-      const value = await work({ query: async () => { queries++; return { rows: [] }; } }); await check(); return value;
+      const value = await work({ query: record }); await check(); return value;
     } };
   const runs = new HarnessRunStoreV1(db, new Uint8Array(32).fill(17));
   const count = async (read: () => Promise<unknown>) => { queries = 0; await read(); return queries; };
@@ -311,6 +338,41 @@ test("attempt, run and artifact aggregate readers stay one-query as cardinality 
   const manyAttempts = await count(() => runs.inspectAttempts(binding.tenantId, binding.projectId, binding.jobId,
     Array.from({ length: 20 }, (_, index) => `attempt:budget:${index}`)));
   assert.equal(oneAttempt, 1); assert.equal(manyAttempts, oneAttempt);
+  // The usage aggregate is the other read on the task-detail and project-overview
+  // paths, and it replaced a reader that returned one row per RUN. Query COUNT
+  // alone is not what #412 raised — it was row volume — so this asserts the
+  // aggregate is a SINGLE grouped query by construction, and the real-cluster
+  // test asserts the row volume against 5,000 runs. Here the shape is checked:
+  // grouping is present, and it groups by the pricing shape, not by run.
+  statements.length = 0;
+  await runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId);
+  const shape = statements.join("\n");
+  assert.match(shape, /GROUP BY [^`]*harness,model,input_tokens IS NULL/,
+    "the usage aggregate must group in SQL by pricing shape, never return one row per run");
+  // The per-attempt grouping is opt-in AND bounded by the ids the page passes,
+  // because attempts are retry history: a project-wide read must not scale its
+  // row count with them at all, and even the per-attempt read must not see more
+  // attempts than the page renders. Both halves are asserted on the statement.
+  assert.doesNotMatch(shape, /GROUP BY attempt_id/,
+    "a project-wide rollup must not group by attempt, or its row count tracks project age");
+  assert.doesNotMatch(shape, /attempt_id=ANY/,
+    "a project-wide rollup must not filter by attempt either; it covers the whole project");
+  statements.length = 0;
+  await runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId, [binding.attemptId]);
+  const byAttempt = statements.join("\n");
+  assert.match(byAttempt, /GROUP BY attempt_id,harness,model,input_tokens IS NULL/,
+    "a per-attempt rollup must group by attempt so each attempt can be totalled on its own");
+  assert.match(byAttempt, /r\.attempt_id=ANY\(\$\d+::text\[\]\)/,
+    "a per-attempt rollup must be bounded by the attempt ids it was given, not by the job's whole retry history");
+  // An empty set is the page displaying no attempts: answered without a
+  // statement, so it cannot become a read that costs a round trip to return
+  // nothing.
+  assert.equal(await count(() => runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId, [])), 0,
+    "a per-attempt rollup over an empty set must not issue a statement at all");
+  assert.doesNotMatch(shape, /harnessRunProjectionV1|event_rows/,
+    "the usage aggregate must not materialise event payloads it never verifies");
+  assert.equal(await count(() => runs.inspectUsageRollup(binding.tenantId, binding.projectId)), 1,
+    "the project-wide usage aggregate must stay one query whatever the scope");
   const oneRun = await count(() => runs.inspectMany(binding.tenantId, [binding.runId]));
   const manyRuns = await count(() => runs.inspectMany(binding.tenantId, Array.from({ length: 50 }, (_, index) => `run:budget:${index}`)));
   assert.equal(oneRun, 1); assert.equal(manyRuns, oneRun);

@@ -1,4 +1,5 @@
-import { lstat, open, readFile, unlink } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { link, lstat, open, readFile, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { DatabaseClient } from "../../persistence/database";
 import { publicKeyFingerprint } from "../../node-protocol/v1";
@@ -12,6 +13,19 @@ async function privateDirectory(path: string) {
   const entry = await lstat(path).catch(refused);
   if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0
     || entry.uid !== process.getuid?.()) refused();
+}
+
+async function acceptExistingPin(file: string, nodeIds: readonly string[], fingerprints: Readonly<Record<string, string>>) {
+  const entry = await lstat(file);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0
+    || entry.uid !== process.getuid?.() || entry.size > 4096) refused();
+  try {
+    const parsed = JSON.parse(await readFile(file, "utf8"));
+    if (Object.keys(parsed).length !== 2 || parsed.schema !== MAC_LOCAL_NODE_KEYS_V1
+      || !parsed.fingerprints || typeof parsed.fingerprints !== "object" || Array.isArray(parsed.fingerprints)
+      || Object.keys(parsed.fingerprints).length !== 3
+      || nodeIds.some(id => parsed.fingerprints[id] !== fingerprints[id])) refused();
+  } catch { refused(); }
 }
 
 /** The VPS public keys are pinned in a private file on the Mac. No signing key is
@@ -39,31 +53,32 @@ export async function checkMacLocalNodeKeyPinV1(db: DatabaseClient, root: string
     fingerprints[nodeId] = key.fingerprint;
   }
   const expected = { schema: MAC_LOCAL_NODE_KEYS_V1, fingerprints };
-  let existing: string | undefined;
   try {
-    const entry = await lstat(file);
-    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0
-      || entry.uid !== process.getuid?.() || entry.size > 4096) refused();
-    existing = await readFile(file, "utf8");
+    await acceptExistingPin(file, nodeIds, fingerprints);
+    return;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") refused();
   }
-  if (existing !== undefined) {
-    try {
-      const parsed = JSON.parse(existing);
-      if (Object.keys(parsed).length !== 2 || parsed.schema !== MAC_LOCAL_NODE_KEYS_V1
-        || Object.keys(parsed.fingerprints).length !== 3
-        || nodeIds.some(id => parsed.fingerprints[id] !== fingerprints[id])) refused();
-      return;
-    } catch { refused(); }
-  }
   if (!initialize) refused();
-  const handle = await open(file, "wx", 0o600).catch(refused);
+  // Publish only fully written bytes. A direct open("wx") on the final path
+  // exposes an empty/partial file and makes identical concurrent initializers
+  // fail. A private temporary inode plus atomic hard-link lets one caller win;
+  // losers validate the exact winner instead of overwriting it.
+  const temporary = `${file}.new-${process.pid}-${randomBytes(8).toString("hex")}`;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    handle = await open(temporary, "wx", 0o600);
     await handle.writeFile(`${JSON.stringify(expected)}\n`);
     await handle.sync();
-  } catch { await unlink(file).catch(() => {}); refused(); }
-  finally { await handle.close(); }
+    await handle.close(); handle = undefined;
+    try { await link(temporary, file); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") refused();
+      await acceptExistingPin(file, nodeIds, fingerprints);
+      return;
+    }
+  } catch { refused(); }
+  finally { await handle?.close().catch(() => {}); await unlink(temporary).catch(() => {}); }
   const parent = await open(directory, "r").catch(refused);
   try { await parent.sync(); } finally { await parent.close(); }
 }

@@ -21,7 +21,7 @@ export function captureNewsStartupConfiguration(input: NewsStartupConfiguration,
   web: { tenantId: string; workspaceId: string; news?: { integrityKey: Uint8Array } },
   existing: readonly PrivatePostgresConfiguration[]) {
   const configuration = captureNewsDiscoveryConfiguration(input.configuration);
-  const databases = [input.coordinatorDatabase, input.ingestionDatabase, input.workerDatabase].map(validatePrivatePostgresConfiguration);
+  const databases = [input.coordinatorDatabase, input.ingestionDatabase, input.workerDatabase].map(database => validatePrivatePostgresConfiguration(database));
   const all = [...existing, ...databases], primary = existing[0];
   if (!primary || configuration.tenantId !== web.tenantId || configuration.workspaceId !== web.workspaceId
     || all.some(db => db.host !== primary.host || db.port !== primary.port || db.database !== primary.database

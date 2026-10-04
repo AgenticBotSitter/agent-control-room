@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 export function parseArguments(args) {
   if (args.length === 1 && args[0] === "--help") return { help: true };
@@ -90,7 +90,7 @@ export async function runGitHubWorkerBroker(args, runtime = installedRuntime) {
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { process.exitCode = await runGitHubWorkerBroker(process.argv.slice(2)); }
   catch { console.error("Control Room GitHub worker broker launcher refused setup."); process.exitCode = 1; }
 }

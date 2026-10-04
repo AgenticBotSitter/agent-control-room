@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ReadAloudContentV1,
   VoiceInputStateV1,
@@ -40,16 +40,46 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
   const [readState, setReadState] = useState<VoiceReadStateV1>("idle");
   const [heard, setHeard] = useState("");
   const seenIds = useRef<Set<string>>(new Set());
+  const session = useRef(0);
+  const wasEnabled = useRef(settings.enabled);
+  const inputGroup = useRef<HTMLDivElement>(null);
+  const startButton = useRef<HTMLButtonElement>(null);
+  const stopButton = useRef<HTMLButtonElement>(null);
+  const focusReplacement = useRef(false);
+  const preserveInputFocus = () => {
+    focusReplacement.current = inputGroup.current?.contains(document.activeElement)
+      === true && document.activeElement?.tagName === "BUTTON";
+  };
   const recognitionRef = useRef(recognition);
   const synthesisRef = useRef(synthesis);
   recognitionRef.current = recognition;
   synthesisRef.current = synthesis;
 
+  useLayoutEffect(() => {
+    if (wasEnabled.current && !settings.enabled) {
+      session.current += 1;
+      cleanupVoiceV1({
+        stopRecognition: () => { try { recognitionRef.current.stop(); } catch { /* already stopped */ } },
+        cancelSynthesis: () => { try { synthesisRef.current.cancel(); } catch { /* already idle */ } },
+      });
+      setInputState("idle"); setReadState("idle"); setHeard("");
+      seenIds.current.clear();
+      focusReplacement.current = false;
+    }
+    wasEnabled.current = settings.enabled;
+  }, [settings.enabled]);
+
+  useLayoutEffect(() => {
+    if (!focusReplacement.current) return;
+    focusReplacement.current = false;
+    (inputState === "listening" || inputState === "confirming" ? stopButton : startButton).current?.focus();
+  }, [inputState]);
+
   useEffect(() => {
-    return () => cleanupVoiceV1({
+    return () => { session.current += 1; cleanupVoiceV1({
       stopRecognition: () => { try { recognitionRef.current.stop(); } catch { /* already stopped */ } },
       cancelSynthesis: () => { try { synthesisRef.current.cancel(); } catch { /* already idle */ } },
-    });
+    }); };
   }, []);
 
   if (!settings.enabled) {
@@ -70,17 +100,23 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
   const synthesisSupported = synthesis.isSupported();
 
   const handleRecognitionError = (kind: VoiceRecognitionErrorV1) => {
+    session.current += 1;
+    preserveInputFocus();
     try { recognition.stop(); } catch { /* best effort */ }
+    setHeard("");
     setInputState(kind === "denied" ? "denied" : kind === "unsupported" ? "unsupported" : kind === "cancelled" ? "cancelled" : "error");
   };
 
   const startDictation = () => {
     if (!recognitionSupported) { setInputState("unsupported"); return; }
+    preserveInputFocus();
+    const generation = ++session.current;
     seenIds.current = new Set();
     setHeard("");
     setInputState("listening");
     recognition.start({
       onEvent: (event: VoiceTranscriptEventV1) => {
+        if (generation !== session.current) return;
         if (seenIds.current.has(event.eventId)) return;
         seenIds.current.add(event.eventId);
         if (!event.isFinal) return;
@@ -88,17 +124,21 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
         setHeard(prev => (prev + " " + (merged[0]?.transcript ?? "")).trim());
         setInputState("confirming");
       },
-      onError: (kind) => handleRecognitionError(kind),
+      onError: (kind) => { if (generation === session.current) handleRecognitionError(kind); },
     });
   };
 
   const cancelDictation = () => {
+    session.current += 1;
+    preserveInputFocus();
     try { recognition.stop(); } catch { /* best effort */ }
     setHeard("");
     setInputState("cancelled");
   };
 
   const confirmTranscript = () => {
+    session.current += 1;
+    preserveInputFocus();
     const text = heard.trim();
     try { recognition.stop(); } catch { /* best effort */ }
     if (text.length === 0) { setInputState("idle"); return; }
@@ -136,17 +176,23 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
       Enable voice controls (optional)
     </label>
 
+    <div ref={inputGroup} role="group" aria-labelledby="voice-input-heading">
     <h3 id="voice-input-heading">Voice input</h3>
     <p data-field="voice-input-status" aria-live="polite">{voiceInputStateTextV1(inputState)}</p>
     {inputState === "listening" || inputState === "confirming" ? <>
       {heard.trim().length > 0 && <p data-field="voice-heard-preview">Heard: {heard}</p>}
       <button type="button" onClick={confirmTranscript} disabled={heard.trim().length === 0}>Confirm: use these words</button>
       <button type="button" onClick={cancelDictation}>Cancel: discard</button>
-      <button type="button" onClick={() => { try { recognition.stop(); } catch { /* best effort */ } setInputState("idle"); }}>Stop listening</button>
+      <button ref={stopButton} type="button" onClick={() => {
+        session.current += 1; preserveInputFocus();
+        try { recognition.stop(); } catch { /* best effort */ }
+        setInputState(heard.trim() ? "confirming" : "idle");
+      }}>Stop listening</button>
     </> : <>
-      <button type="button" onClick={startDictation} disabled={!recognitionSupported}>Start dictation</button>
+      <button ref={startButton} type="button" onClick={startDictation} disabled={!recognitionSupported}>Start dictation</button>
       {!recognitionSupported && <p data-field="voice-unsupported-note">Dictation needs a browser with speech recognition; this one has none.</p>}
     </>}
+    </div>
 
     <h3 id="voice-read-heading">Read aloud</h3>
     <p data-field="voice-read-status" aria-live="polite">{voiceReadStateTextV1(readState)}</p>

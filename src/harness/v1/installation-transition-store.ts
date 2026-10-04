@@ -30,7 +30,7 @@ function verifyRow(key: Uint8Array, tenantId: string, value: unknown): Installat
 }
 
 async function lockTenant(tx: DatabaseSession, tenantId: string): Promise<void> {
-  const locked = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+  const locked = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [tenantId]);
   if (locked.rows.length !== 1) fail();
 }
 

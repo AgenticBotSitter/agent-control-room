@@ -7,6 +7,8 @@ import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssig
   type CodexOwnerTrustedLocalQueueDeliveryTarget, type RemoteControllerWorkerQueueDeliveryTarget,
   type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
 import { isInstallationTransitionAdmissionPausedV1 } from "../../harness/v1/installation-transition-store";
+import { ImproveControlRoomDeskServiceV1, UpdateCandidatePublisherV1,
+  type UpdateCandidatePublisherConfigurationV1 } from "../../improve-control-room/v1";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -44,6 +46,9 @@ import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import type { CoordinationCostEvidencePortV1 } from "../../project-coordination/v1/schemas";
+import { PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  ProductionPipelineAdvanceCapabilityV1 } from "../../pipelines/v1";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -105,6 +110,10 @@ export type TaskCoordinatorConfiguration = {
    * Requires quality/result configuration so predecessor acceptance is checked
    * from retained bytes and checkpoint-authenticated Completion Gate state. */
   workBatches?: { integrityKey: Uint8Array; selectionAuthority: WorkBatchQueueSelectionAuthorityV1 };
+  /** Explicit installation-owned unattended continuation. Absent is disabled;
+   * a configured callback still defaults operationally off until it returns true. */
+  pipelineAdvance?: { enabled: () => boolean; costEvidence: CoordinationCostEvidencePortV1;
+    candidatePublisher?: UpdateCandidatePublisherConfigurationV1 };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** Installation-owned, authenticated result reader for a supported local adapter.
@@ -126,6 +135,26 @@ export type TaskCoordinatorConfiguration = {
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
 
+/** Adds candidate publication after durable pipeline completion without turning a
+ * publisher outage into a false pipeline failure; the periodic sweep retries it. */
+export function bindCandidatePublisherToPipelineAdvanceV1(
+  pipelineAdvance: Pick<PipelineAdvanceServiceV1, "advance" | "advanceReady">,
+  candidatePublisher?: Pick<UpdateCandidatePublisherV1, "publishRun" | "sweep">) {
+  return Object.freeze({
+    advance: async (...args: Parameters<PipelineAdvanceServiceV1["advance"]>) => {
+      const result = await pipelineAdvance.advance(...args);
+      if ("state" in result && result.state === "succeeded")
+        await candidatePublisher?.publishRun(result.runId).catch(() => undefined);
+      return result;
+    },
+    sweep: async (limit: number) => {
+      const result = await pipelineAdvance.advanceReady(limit);
+      await candidatePublisher?.sweep(limit).catch(() => undefined);
+      return result;
+    },
+  });
+}
+
 /** Takes ownership only after synchronous construction succeeds. No pool opening, role verification,
  * listener, credential loading, approval or dispatch. The supplying bootstrap must verify the pool.
  */
@@ -142,6 +171,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.workBatches && (!(input.workBatches.integrityKey instanceof Uint8Array)
     || input.workBatches.integrityKey.length !== 32 || !input.quality
     || typeof input.workBatches.selectionAuthority?.assertCurrent !== "function"))
+    throw new Error("task_coordinator_config_invalid");
+  if (input.pipelineAdvance && (!input.workBatches || !input.approvals || !input.nativeSubmission
+    || typeof input.pipelineAdvance.enabled!=="function"||typeof input.pipelineAdvance.costEvidence?.currentCost!=="function"))
     throw new Error("task_coordinator_config_invalid");
   if (input.ensurePlanningProject !== undefined && typeof input.ensurePlanningProject !== "function")
     throw new Error("task_coordinator_config_invalid");
@@ -332,33 +364,54 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         throw new Error("work_batch_result_unavailable");
       return proof;
     };
+    type AcceptedSelection = Readonly<{ sourceJobId: string; workerId: string; nodeId: string }>;
+    const acceptedProofIn = async (tx: DatabaseSession, selection: AcceptedSelection) => {
+      const proof = await proofForSource(tx, selection);
+      await assertAcceptedResultCurrent(tx, proof);
+      const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
+      return Object.freeze({ executionJobId: proof.executionJobId, attemptId: proof.attemptId,
+        harnessRunId: proof.runId, artifactId: proof.artifactId,
+        contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
+    };
+    // Transaction-bound: each read runs on the caller's session, where
+    // acceptedContextInSession takes the Completion Gate tenant lock and keeps
+    // it until that caller commits. Build publication's creation, currentness
+    // and retention and the unattended advance depend on that: a review,
+    // verification or revision cannot supersede the accepted target between
+    // this proof and the caller's write.
     const ownerAuthority = Object.freeze({
+      binding: "caller_transaction" as const,
       assertCurrent: (selection: WorkBatchQueueSelectionV1) => assertSelection(selection) === true,
-      async isAcceptedResultCurrent(tx: DatabaseSession, selection: Readonly<{
-        sourceJobId: string; workerId: string; nodeId: string }>) {
+      async isAcceptedResultCurrent(tx: DatabaseSession, selection: AcceptedSelection) {
         try { await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true; }
         catch { return false; }
       },
-      async acceptedResultRevision(tx: DatabaseSession, selection: Readonly<{
-        sourceJobId: string; workerId: string; nodeId: string }>) {
-        try {
-          const proof = await proofForSource(tx, selection);
-          await assertAcceptedResultCurrent(tx, proof);
-          const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
-          return accepted.target.revisionNumber;
-        } catch { return null; }
+      async acceptedResultRevision(tx: DatabaseSession, selection: AcceptedSelection) {
+        try { return (await acceptedProofIn(tx, selection)).revision; } catch { return null; }
       },
-      async acceptedResultProof(tx: DatabaseSession, selection: Readonly<{
-        sourceJobId: string; workerId: string; nodeId: string }>) {
-        try {
-          const proof = await proofForSource(tx, selection);
-          await assertAcceptedResultCurrent(tx, proof);
-          const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
-          return Object.freeze({ contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
-        } catch { return null; }
+      async acceptedResultProof(tx: DatabaseSession, selection: AcceptedSelection) {
+        try { return await acceptedProofIn(tx, selection); } catch { return null; }
       },
     });
-    return Object.freeze({ integrityKey, ownerAuthority,
+    // Presentation-only snapshot for the private-web login. The proof joins
+    // control_transition_events, which that login may not read, and a
+    // permission error aborts the caller's transaction even when the JavaScript
+    // error is caught. So the view takes no session at all: each answer is
+    // resolved in its own short transaction on this pool and only the minimal
+    // proof crosses back. The lock is released when that transaction commits,
+    // which is why this form must never gate a write.
+    const snapshotOnOwnPool = async <T>(work: (tx: DatabaseSession) => Promise<T>): Promise<T | null> => {
+      try { return await db.transaction(work); } catch { return null; }
+    };
+    const viewAuthority = Object.freeze({
+      binding: "coordinator_snapshot" as const,
+      assertCurrent: ownerAuthority.assertCurrent,
+      isAcceptedResultCurrent: async (selection: AcceptedSelection) => await snapshotOnOwnPool(async tx => {
+        await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true;
+      }) === true,
+      acceptedResultProof: (selection: AcceptedSelection) => snapshotOnOwnPool(tx => acceptedProofIn(tx, selection)),
+    });
+    return Object.freeze({ integrityKey, ownerAuthority, viewAuthority,
       assignmentAuthority: Object.freeze({ integrityKey,
         assertCurrent: async (_tx: DatabaseSession, selection: WorkBatchQueueSelectionV1) => {
           if (assertSelection(selection) !== true) throw new Error("work_batch_selection_unavailable");
@@ -395,6 +448,19 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
     input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission,
     workBatchAuthority?.assignmentAuthority);
+  const pipelineAdvance = input.pipelineAdvance && workBatchAuthority ? (() => {
+    const supporting=new ProductionPipelineAdvanceAuthorityV1(scope,input.workBatches!.selectionAuthority,
+      workBatchAuthority.ownerAuthority,input.pipelineAdvance!.costEvidence,input.clock);
+    const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,assignment,{
+      enqueueAssignedInSession:(tx,value,authority)=>assignment.enqueuePipelineHermes021InSession(tx,value,authority),
+    });
+    return new PipelineAdvanceServiceV1(db,scope,workBatchAuthority.integrityKey,
+      {unattendedEnabled:input.pipelineAdvance.enabled,capability},input.clock);
+  })():undefined;
+  const candidatePublisher = input.pipelineAdvance?.candidatePublisher && pipelineAdvance && input.workBatches
+    ? new UpdateCandidatePublisherV1(db, scope,
+      new ImproveControlRoomDeskServiceV1(db, scope, input.workBatches.integrityKey, undefined, input.clock),
+      input.pipelineAdvance.candidatePublisher) : undefined;
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -538,6 +604,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
     revoke: (...args) => run(() => assignment.revoke(...args)),
+    cancel: (...args) => run(() => assignment.cancel(...args)),
     options: (...args) => run(() => assignment.options(...args)),
     projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,
@@ -622,7 +689,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
-    ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority } : {}),
+    ...(pipelineAdvance?{pipelineAdvance:bindCandidatePublisherToPipelineAdvanceV1(pipelineAdvance,candidatePublisher)}:{}),
+    ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority,
+      workBatchView: workBatchAuthority.viewAuthority } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
     ...(nativeSubmission && (sessions || hermes021Local || hermesLocal || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {

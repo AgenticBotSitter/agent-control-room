@@ -14,6 +14,7 @@ export type GitHubInstallationToken = Readonly<{
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 const ID_PATTERN = /^[1-9][0-9]{0,19}$/u;
+const TOKEN_EXCHANGE_TIMEOUT_MS = 20_000;
 const GITHUB_API = "https://api.github.com";
 
 function base64Url(value: string | Buffer): string {
@@ -49,6 +50,7 @@ export class GitHubAppInstallationAuth {
   readonly #credentials: GitHubAppInstallationCredentials;
   readonly #fetch: FetchLike;
   readonly #now: () => number;
+  #generation = 0;
   #cached?: GitHubInstallationToken;
   #inFlight?: Promise<GitHubInstallationToken>;
 
@@ -69,27 +71,45 @@ export class GitHubAppInstallationAuth {
       return this.#cached;
     }
     if (this.#inFlight) return this.#inFlight;
-    const request = this.#requestToken();
+    const generation = this.#generation;
+    const controller = new AbortController();
+    let timeout!: ReturnType<typeof setTimeout>;
+    // Race the entire exchange, including body consumption. Some injected
+    // transports may ignore abort, so cancellation alone cannot bound callers.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        const error = new Error("github_app_token_exchange_timeout");
+        reject(error);
+        controller.abort(error);
+      }, TOKEN_EXCHANGE_TIMEOUT_MS);
+    });
+    const request = Promise.race([this.#requestToken(controller.signal), deadline]);
     this.#inFlight = request;
     try {
       const token = await request;
-      this.#cached = token;
+      if (this.#generation === generation) this.#cached = token;
       return token;
     } finally {
+      clearTimeout(timeout);
       if (this.#inFlight === request) this.#inFlight = undefined;
     }
   }
 
   clear(): void {
+    this.#generation++;
     this.#cached = undefined;
+    // Existing callers can finish, but callers after clear start a fresh
+    // exchange and an invalidated completion can never refill the cache.
+    this.#inFlight = undefined;
   }
 
-  async #requestToken(): Promise<GitHubInstallationToken> {
+  async #requestToken(signal: AbortSignal): Promise<GitHubInstallationToken> {
     const jwt = createGitHubAppJwt(this.#credentials, this.#now());
     const response = await this.#fetch(
       `${GITHUB_API}/app/installations/${this.#credentials.installationId}/access_tokens`,
       {
         method: "POST",
+        signal,
         headers: {
           accept: "application/vnd.github+json",
           authorization: `Bearer ${jwt}`,

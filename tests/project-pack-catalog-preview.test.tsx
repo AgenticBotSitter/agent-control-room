@@ -4,7 +4,9 @@
 // panel's distinct rendering of every refusal class and its inert preview.
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { createElement } from "react";
+import React, { createElement } from "react";
+import { JSDOM } from "jsdom";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 // The browser prerequisite: no Node Buffer global while the canonical parser
@@ -46,11 +48,8 @@ test("valid pack: canonical parser runs unmodified without Buffer, end to end", 
   assert.deepEqual(outcome.preview.supportedModules, ["ideaLab"]);
   assert.deepEqual(outcome.preview.unsupportedModules, []);
   assert.deepEqual(outcome.preview.warnings, []);
-  // Canonical functions used directly, unmodified, through the same exported
-  // bridge the panel uses: the bridge is transparent to the parser's own
-  // contract. (Without the bridge these calls throw: Buffer is absent here,
-  // which is exactly what makes the bridge load-bearing rather than
-  // decorative — see the zz-buffer-absent proof below.)
+  // Canonical functions also run through the existing call-scoped compatibility
+  // bridge. The portable parser now measures UTF-8 without a Node global.
   const pack = withParserByteLengthV1(() => parseProjectPackV1(JSON.parse(VALID_PACK_TEXT)));
   const preview = withParserByteLengthV1(() => previewProjectPackV1(pack, LOCAL_CONFIG));
   assert.equal(preview.title, "Book club kit");
@@ -160,12 +159,19 @@ test("the global Buffer restoration survives a refusal path exactly", () => {
   assert.equal(typeof globalThis.Buffer, "undefined");
 });
 
-test("buffer-absent proof: the bridge is load-bearing, not decorative", () => {
+test("buffer-absent proof: the canonical parser preserves its byte ceiling without Node globals", () => {
   // Buffer is genuinely absent in this file (typeof check, accessor-proof).
   assert.equal(typeof globalThis.Buffer, "undefined");
-  // The canonical parser cannot run here without the bridge: direct call
-  // throws a bare TypeError, never a pack reason.
-  assert.throws(() => parseProjectPackV1(JSON.parse(VALID_PACK_TEXT)), TypeError);
+  assert.equal(parseProjectPackV1(JSON.parse(VALID_PACK_TEXT)).title, "Book club kit");
+  assert.throws(() => parseProjectPackV1({ ...JSON.parse(VALID_PACK_TEXT), summary: "é".repeat(65536) }), /project_pack_input_oversized/);
+});
+
+test("R7L-08: the canonical parser works directly without Buffer", () => {
+  // Buffer is genuinely absent in this file (typeof check, accessor-proof).
+  assert.equal(typeof globalThis.Buffer, "undefined");
+  // The canonical parser now counts bytes without installing a host global.
+  assert.equal(parseProjectPackV1(JSON.parse(VALID_PACK_TEXT)).title, "Book club kit");
+  assert.equal(typeof globalThis.Buffer, "undefined", "parsing does not install a host global");
 });
 
 // Restore the real Node Buffer AFTER every test in this file. This must be
@@ -174,4 +180,77 @@ test("buffer-absent proof: the bridge is load-bearing, not decorative", () => {
 after(() => {
   Object.defineProperty(globalThis, "Buffer", savedBuffer);
   assert.equal(typeof globalThis.Buffer, "function");
+});
+
+test("R5I-05: raw whitespace counts toward the ceiling before JSON parsing", () => {
+  for (const rawText of [" ".repeat(65536) + VALID_PACK_TEXT, "\t".repeat(65537), " ".repeat(65536) + "{broken"]) {
+    assert.deepEqual(browseProjectPackV1({ rawText }, LOCAL_CONFIG), { status: "refused", reason: "project_pack_input_oversized" });
+  }
+  const exact = " ".repeat(65536 - VALID_PACK_TEXT.length) + VALID_PACK_TEXT;
+  assert.equal(browseProjectPackV1({ rawText: exact }, LOCAL_CONFIG).status, "ready");
+  assert.deepEqual(browseProjectPackV1({ rawText: exact + " " }, LOCAL_CONFIG), { status: "refused", reason: "project_pack_input_oversized" });
+});
+
+test("R5I-05: raw UTF-8 bytes count without TextEncoder", () => {
+  const prior = Object.getOwnPropertyDescriptor(globalThis, "TextEncoder")!;
+  const text = JSON.stringify({ schema: PROJECT_PACK_SCHEMA_V1, title: "Reading", summary: "é雪😀", optionalModules: [], setupGuidance: [] });
+  const byteLength = new TextEncoder().encode(text).length;
+  const exact = " ".repeat(65536 - byteLength) + text;
+  try {
+    Object.defineProperty(globalThis, "TextEncoder", { configurable: true, value: undefined });
+    assert.equal(browseProjectPackV1({ rawText: exact }, LOCAL_CONFIG).status, "ready");
+    assert.deepEqual(browseProjectPackV1({ rawText: exact + " " }, LOCAL_CONFIG), { status: "refused", reason: "project_pack_input_oversized" });
+  } finally { Object.defineProperty(globalThis, "TextEncoder", prior); }
+});
+
+
+test("R5I-05: oversized file is refused without constructing or reading FileReader, then recovers", async () => {
+  // jsdom itself needs Node Buffer; parsing still runs with Buffer absent.
+  Object.defineProperty(globalThis, "Buffer", savedBuffer);
+  const dom = new JSDOM("<div id='root'></div>");
+  Object.defineProperty(globalThis, "Buffer", { configurable: true, value: undefined });
+  const keys = ["window", "document", "FileReader", "IS_REACT_ACT_ENVIRONMENT"];
+  const saved = keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  let readers = 0, reads = 0;
+  let nextText = VALID_PACK_TEXT;
+  class FakeReader {
+    result = nextText;
+    onload?: () => void;
+    constructor() { readers++; }
+    readAsText() { reads++; this.onload?.(); }
+  }
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, FileReader: FakeReader, IS_REACT_ACT_ENVIRONMENT: true });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await React.act(async () => root.render(createElement(ProjectPackCatalogPreview, { localConfiguration: LOCAL_CONFIG })));
+    const input = dom.window.document.querySelector<HTMLInputElement>("#pack-file-input")!;
+    const choose = async (size: number) => {
+      Object.defineProperty(input, "files", { configurable: true, value: [{ size }] });
+      await React.act(async () => input.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
+    };
+    await choose(65536);
+    assert.equal(reads, 1, "exact ceiling is allowed");
+    assert.match(dom.window.document.body.textContent ?? "", /Book club kit/);
+    for (let i = 0; i < 50; i++) await choose(65537);
+    assert.equal(readers, 1, "oversized selections never construct a reader");
+    assert.equal(reads, 1);
+    assert.match(dom.window.document.body.textContent ?? "", /project_pack_input_oversized/);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Book club kit/);
+    await choose(100);
+    assert.equal(reads, 2);
+    assert.match(dom.window.document.body.textContent ?? "", /Book club kit/);
+    nextText = " ".repeat(65536);
+    await choose(65536);
+    assert.match(dom.window.document.body.textContent ?? "", /project_pack_empty/);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /No pack loaded yet/);
+  } finally {
+    await React.act(async () => root.unmount());
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+    Object.defineProperty(globalThis, "Buffer", savedBuffer);
+    dom.window.close();
+    Object.defineProperty(globalThis, "Buffer", { configurable: true, value: undefined });
+  }
 });

@@ -65,12 +65,12 @@ test("owner acceptance presents the configured read-and-correct attestation besi
   // session hands it. What the gesture MEANS — that it belongs to exactly this
   // result and never to another one — is proven in tests/review-memory.test.tsx
   // against the real workspace rather than a prop supplied here.
-  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" attested={false}
-    pending={false} held={false} onFeedback={() => {}} onAttest={() => {}} onRecord={() => {}} />);
+  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" exceptionsText="" attested={false}
+    pending={false} held={false} onFeedback={() => {}} onExceptionsText={() => {}} onAttest={() => {}} onRecord={() => {}} />);
   assert.match(markup, /data-state="ready"/);
   assert.match(markup, /I read it and it’s correct/);
   assert.match(markup, />Accept</);
-  assert.match(markup, /Request changes/);
+  assert.match(markup, /Send back/);
 });
 
 test("a delayed revised-target read binds the newest revision and enables Accept after attestation", async () => {
@@ -167,13 +167,13 @@ test("failed review and verification refreshes remove stale owner actions until 
     await flushRead();
     assert.equal(action("Accept")?.disabled, false, "the successful review read enables its action");
     assert.equal(action("I read it and it’s correct")?.disabled, false, "the successful verification read enables its action");
-    assert.equal(action("Request changes")?.disabled, false, "the successful review read enables its change-request action");
+    assert.equal(action("Send back")?.disabled, false, "the successful review read enables its change-request action");
 
     reviewMode = "fail"; verificationMode = "fail";
     await React.act(async () => { dom.window.dispatchEvent(new dom.window.Event("focus")); });
     await flushRead();
     assert.equal(action("Accept"), undefined, "a failed review refresh removes stale acceptance actions");
-    assert.equal(action("Request changes"), undefined, "a failed review refresh removes stale change-request actions");
+    assert.equal(action("Send back"), undefined, "a failed review refresh removes stale change-request actions");
     assert.equal(action("I read it and it’s correct"), undefined, "a failed verification refresh removes stale verification actions");
     assert.match(dom.window.document.body.textContent ?? "", /current access does not permit/);
 
@@ -181,7 +181,7 @@ test("failed review and verification refreshes remove stale owner actions until 
     await React.act(async () => { action("Refresh recorded review")?.click(); action("Refresh human verification")?.click(); });
     await flushRead();
     assert.equal(action("Accept")?.disabled, false, "a fresh review success restores its action");
-    assert.equal(action("Request changes")?.disabled, false, "a fresh review success restores its change-request action");
+    assert.equal(action("Send back")?.disabled, false, "a fresh review success restores its change-request action");
     assert.equal(action("I read it and it’s correct")?.disabled, false, "a fresh verification success restores its action");
   } finally {
     await React.act(async () => { root.unmount(); }); dom.window.close();

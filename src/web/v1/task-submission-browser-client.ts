@@ -47,7 +47,7 @@ export function createTaskSubmissionBrowserClient(transport: typeof fetch = fetc
             || packetDigest !== undefined && result.receipt.packetDigest !== packetDigest)
           || result.preview && packetDigest !== undefined && result.preview.packetDigest !== packetDigest) throw new Error();
         if (result.receipt && pending?.projectId === projectId && pending.jobId === jobId
-          && pending.inputDigest === inputDigest && pending.packetDigest === packetDigest) pending = undefined;
+          && pending.inputDigest === inputDigest && pending.packetDigest === result.receipt.packetDigest) pending = undefined;
         return result;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },

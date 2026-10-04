@@ -49,7 +49,7 @@ test("approved collection reuses bounded reader and saves articles only when opt
   // Continue the real saved-service path, not a preconstructed draft fixture.
   const webScope = { tenantId: scope.tenantId, workspaceId: scope.workspaceId };
   const news = new WebNewsService(f.client, webScope, { integrityKey: key }, () => now);
-  const tasks = new WebTaskService(f.client, webScope, () => now);
+  const tasks = new WebTaskService(f.client, webScope, () => now, { newsIntegrityKey: key });
   const selected = { storyId: reference.storyId, storyDigest: reference.storyDigest,
     action: "research_brief", goal: "Verify the claims and return a source-backed research report." };
   const draft = await news.prepare(identity, project.projectId, selected);

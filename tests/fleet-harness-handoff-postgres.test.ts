@@ -1,0 +1,250 @@
+// Real-PostgreSQL proof of the fleet harness hand-off, run AS the production
+// logins that execute each step, with only the grants the real db/roles files
+// give them:
+// - owner actions (join code, offer, reading the result): the fleet owner-authority login;
+// - the connector gateway (enroll, claim, progress, blocker, result): the fleet gateway login;
+// - checks on what the owner's pages read: the private web login.
+// The worker machine runs the real standalone connector with a deterministic
+// fake harness adapter speaking the shared local CLI delivery contract.
+// The attack kit provisions a disposable socket-only cluster on this file's
+// reserved port lane (59200-59209 by default; CONTROL_ROOM_PG_TEST_PORT_BASE
+// moves it, as in linear-pipeline-postgres) and destroys it afterwards.
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import test from "node:test";
+import { Client, Pool } from "pg";
+import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
+import { privatePgOptions } from "../src/web/v1/private-pg-options";
+import type { DatabaseClient } from "../src/persistence/database";
+import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
+import { ProjectEventStoreV1 } from "../src/project-events/v1/store";
+import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycle";
+import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
+import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
+import * as connector from "../scripts/fleet/connector.mjs";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
+import * as fake from "./support/fleet-fake-harness-adapter.mjs";
+
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59200);
+const PG = requiresRealPostgres();
+
+function pool(postgres: RealPostgres, role: string) {
+  const login = postgres.connection(role);
+  const config = { host: "127.0.0.1", port: postgres.port, database: postgres.database,
+    username: login.user, password: login.password, majorVersion: 17 as const };
+  const bound = bindPrivatePgPool(new Pool({ ...privatePgOptions(config), host: login.host }));
+  return { client: bound.client as DatabaseClient, close: () => bound.close() };
+}
+function adminPool(postgres: RealPostgres) {
+  const admin = postgres.admin({ database: postgres.database });
+  const config = { host: "127.0.0.1", port: postgres.port, database: postgres.database, username: admin.user,
+    password: admin.password, majorVersion: 17 as const };
+  const bound = bindPrivatePgPool(new Pool({ ...privatePgOptions(config), host: admin.host }));
+  return { client: bound.client as DatabaseClient, close: () => bound.close() };
+}
+
+test("harness hand-off end to end as the production logins: join, offer, run, result visible to the owner", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = adminPool(postgres), fleet = pool(postgres, "fleet"), fleetOwner = pool(postgres, "fleetOwner");
+    const dir = await mkdtemp(join(tmpdir(), "fleet-handoff-pg-"));
+    let mode: FleetOperationsModeV1 = "running";
+    const projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(fleet.client,
+      deriveProjectEventIntegrityKeyV1(new Uint8Array(32).fill(11)), () => new Date().toISOString()));
+    const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT, operationsMode: async () => mode, projectEvents });
+    const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
+      afterDecision: () => gateway.reconcile() });
+    const unexpected: unknown[] = [];
+    // The connector refuses enrollment unless the gateway advertises a release
+    // signed by the trust it hands out, so this gateway must carry one.
+    const release = await buildSignedFleetConnectorReleaseForTestV1({ root: resolve(dir, "fleet"),
+      builtFrom: "0".repeat(40) });
+    const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: release.releaseTrust,
+      connectorRelease: release.connectorRelease,
+      onUnexpectedError: error => { unexpected.push(error); } });
+    const server = createServer((request, response) => { void handler.handle(request, response); });
+    await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const asWeb = async (sql: string, params: unknown[] = []) => {
+      const client = new Client(postgres.connection("web")); await client.connect();
+      try { return (await client.query(sql, params)).rows; } finally { await client.end(); }
+    };
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => { requests.push(String(input)); return fetch(input, init); };
+    try {
+      await seedFleetTenant((sql, params) => admin.client.query(sql, params));
+      const task = await seedProposedTask(admin.client, PROJECT_A, "handoff-pg");
+      const failing = await seedProposedTask(admin.client, PROJECT_A, "handoff-pg-fail");
+
+      // --- The owner adds a Codex machine; the machine joins with the one-time code.
+      const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG Codex box", workerKind: "codex",
+        projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+      const configPath = join(dir, "worker.json");
+      await connector.join({ server: origin, code: code.code, workerKind: "codex", configPath, fetcher });
+      const settings = async (fakeBehaviour: string) => {
+        const path = join(dir, `harnesses-${fakeBehaviour}.json`);
+        await writeFile(path, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
+          adapterModule: resolve("tests/support/fleet-fake-harness-adapter.mjs"),
+          harnesses: { codex: { enabled: true, deadlineMs: 5000, fakeBehaviour } } }), { mode: 0o600 });
+        return path;
+      };
+      const run = async (fakeBehaviour: string) => connector.runWorker({ configPath, harnessesPath: await settings(fakeBehaviour),
+        fetcher, once: true, log: () => {}, progressIntervalMs: 50 });
+
+      // --- Paused: the machine takes nothing, and the production gateway refuses a direct claim.
+      await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: task.jobId, capability: "writing" });
+      mode = "paused";
+      assert.equal((await run("success")).state, "paused");
+      assert.equal((await asWeb("SELECT count(*)::int AS count FROM fleet_claims"))[0].count, 0);
+      mode = "running";
+
+      // --- Running: run claims, the fake Codex adapter answers, the result reaches the owner.
+      fake.calls.length = 0;
+      const pass = await run("success");
+      assert.equal(pass.state, "ran");
+      assert.equal(pass.outcome, "submitted", JSON.stringify(pass));
+      assert.equal(fake.calls.length, 1);
+      const shown = await owner.listResults(ownerIdentity(), { awaitingOnly: true });
+      assert.equal(shown.length, 1);
+      assert.equal(shown[0]!.jobId, task.jobId);
+      assert.equal(shown[0]!.workerName, "PG Codex box");
+      assert.match(shown[0]!.summary,
+        /^Done by fake codex: <<<CONTROL_ROOM_TASK_DATA_V1>>>\n\{"title":"Task handoff-pg"/u);
+      assert.equal(shown[0]!.taskState, "waiting_approval");
+      assert.equal(shown[0]!.decision, null);
+      // What the owner's pages read with the private web login agrees.
+      const [job] = await asWeb("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
+      assert.equal(job.state, "waiting_approval");
+      const progress = await asWeb(`SELECT e.kind,e.message FROM fleet_worker_events e JOIN fleet_claims c
+        ON c.tenant_id=e.tenant_id AND c.claim_id=e.claim_id WHERE c.job_id=$1`, [task.jobId]);
+      assert.deepEqual(progress.map(row => [row.kind, row.message]), [["progress", "Started on Codex on this machine."]]);
+      const audit = await asWeb(`SELECT action FROM audit_events WHERE target_id=$1 ORDER BY chain_sequence`, [task.jobId]);
+      assert.deepEqual(audit.map(row => row.action), ["fleet.task.offered", "fleet.task.claimed", "fleet.result.submitted"]);
+
+      // --- The owner accepts through the owner path; only then is the task done.
+      await owner.review(ownerIdentity(), { resultId: shown[0]!.resultId, decision: "accepted" });
+      assert.equal((await asWeb("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]))[0].state, "succeeded");
+
+      // --- A failing harness is a blocker as the production login, never a result.
+      await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: failing.jobId, capability: "writing" });
+      const failed = await run("failure");
+      assert.equal(failed.outcome, "blocked");
+      assert.equal((await asWeb("SELECT count(*)::int AS count FROM fleet_results WHERE job_id=$1", [failing.jobId]))[0].count, 0);
+      assert.equal((await asWeb("SELECT state FROM control_jobs WHERE id=$1", [failing.jobId]))[0].state, "ready");
+      const blocker = await asWeb(`SELECT e.message FROM fleet_worker_events e JOIN fleet_claims c ON c.tenant_id=e.tenant_id
+        AND c.claim_id=e.claim_id WHERE c.job_id=$1 AND e.kind='blocker'`, [failing.jobId]);
+      assert.match(blocker[0].message, /^The Codex run did not finish/u);
+      const note = (await owner.listWorkers(ownerIdentity())).workers[0]!.latestNote;
+      assert.equal(note?.kind, "blocker", "the owner-authority login sees the blocker on the Workers page");
+      assert.equal(note?.taskTitle, "Task handoff-pg-fail");
+      // The required hand-off note also reaches the task timeline, not only
+      // the audit log and fleet_worker_events, as the real least-privilege
+      // fleet gateway login (0111's grant) and the private web login that
+      // presents it.
+      const timeline = await asWeb(`SELECT event_kind,payload->>'safeSummary' AS summary,payload->>'safeDetail' AS detail
+        FROM control_project_events WHERE project_id=$1 AND source_id=$2 ORDER BY sequence DESC LIMIT 1`,
+      [PROJECT_A, failing.jobId]);
+      assert.equal(timeline[0].event_kind, "attention");
+      assert.equal(timeline[0].summary, "Worker handed this task back");
+      assert.match(timeline[0].detail, /^The Codex run did not finish/u);
+
+      // --- Stress: three independent bots make ten simultaneous passes each
+      // over ten same-project jobs. The lease-scope exclusion means most
+      // simultaneous claims collide with SQLSTATE 23P01. Those are ordinary
+      // 409 conflicts: each bot continues its offer list/pass, and later
+      // rounds drain every job without a double claim or abandonment.
+      const bots = await Promise.all(Array.from({ length: 3 }, async (_, index) => {
+        const burstCode = await owner.createEnrollmentCode(ownerIdentity(), { displayName: `Burst bot ${index + 1}`,
+          workerKind: "codex", projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+        const burstConfig = join(dir, `burst-${index + 1}.json`);
+        await connector.join({ server: origin, code: burstCode.code, workerKind: "codex", configPath: burstConfig, fetcher });
+        return burstConfig;
+      }));
+      const burstSettings = join(dir, "harnesses-burst.json");
+      await writeFile(burstSettings, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
+        adapterModule: resolve("tests/support/fleet-fake-harness-adapter.mjs"),
+        harnesses: { codex: { enabled: true, deadlineMs: 5_000, fakeBehaviour: "success", delayMs: 75 } } }),
+      { mode: 0o600 });
+      const burstTasks = [];
+      for (let index = 0; index < 10; index += 1) {
+        const burstTask = await seedProposedTask(admin.client, PROJECT_A, `burst-${index + 1}`);
+        await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: burstTask.jobId, capability: "writing" });
+        burstTasks.push(burstTask);
+      }
+      const passes: any[] = [];
+      for (let round = 0; round < 10; round += 1) passes.push(...await Promise.all(bots.map(configPath =>
+        connector.runWorker({ configPath, harnessesPath: burstSettings, fetcher, once: true,
+          log: () => {}, progressIntervalMs: 25 }))));
+      const burstIds = burstTasks.map(taskRow => taskRow.jobId);
+      // The failing-harness task above is released back to `ready` with an open
+      // offer in the SAME project, so a burst bot legitimately claims and runs
+      // it. Counting every submitted pass therefore sees that eleventh job, so
+      // the count is scoped to the burst ids exactly as the three assertions
+      // below it already are.
+      const burstSubmits = passes.filter(pass => pass.outcome === "submitted" && burstIds.includes(pass.jobId));
+      assert.equal(burstSubmits.length, 10, JSON.stringify(passes));
+      assert.equal(new Set(burstSubmits.map(pass => pass.jobId)).size, 10, "each burst job is submitted exactly once");
+      assert.equal(passes.filter(pass => pass.state === "unreachable" || pass.outcome === "abandoned").length, 0,
+        `no bot abandons its pass: ${JSON.stringify(passes)}`);
+      const doubled = await asWeb(`SELECT job_id,count(*)::int AS claims FROM fleet_claims
+        WHERE job_id=ANY($1::text[]) GROUP BY job_id HAVING count(*) > 1`, [burstIds]);
+      assert.deepEqual(doubled, [], "the burst creates zero double claims");
+      const burstResults = await owner.listResults(ownerIdentity(), { awaitingOnly: true });
+      const byBurstJob = burstResults.filter(row => burstIds.includes(row.jobId));
+      assert.equal(byBurstJob.length, 10, "every burst job reaches owner review");
+      for (const row of byBurstJob)
+        await owner.review(ownerIdentity(), { resultId: row.resultId, decision: "accepted" });
+      const completed = await asWeb(`SELECT state,count(*)::int AS count FROM control_jobs
+        WHERE id=ANY($1::text[]) GROUP BY state`, [burstIds]);
+      assert.deepEqual(completed, [{ state: "succeeded", count: 10 }], "every burst job completes");
+
+      // --- The same result, sent twenty times, is recorded ONCE.
+      //
+      // This is the half of R5B-07 that a dropped connection depends on: a reply
+      // lost on the way back makes the connector send the same answer again with
+      // the same idempotency key, and the owner must still see it once. Driven
+      // through the real gateway as the production fleet login, over the real
+      // HTTP handler, so the dedup is the database's and not the test's.
+      const repeatTask = await seedProposedTask(admin.client, PROJECT_A, "handoff-pg-repeat");
+      await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: repeatTask.jobId, capability: "writing" });
+      const repeatConfig = join(dir, "repeat.json");
+      await connector.join({ server: origin, code: (await owner.createEnrollmentCode(ownerIdentity(),
+        { displayName: "PG Repeat box", workerKind: "codex", projectIds: [PROJECT_A], capabilities: ["writing"],
+          maxConcurrent: 1 })).code, workerKind: "codex", configPath: repeatConfig, fetcher });
+      const repeatClient = connector.createClient(await connector.loadConfig(repeatConfig), fetcher);
+      const repeatClaim = await repeatClient.claim((await repeatClient.work())[0]!.offerId, "pg-repeat-claim-key-01");
+      const repeatKey = "handoff-pg-repeat-result-key-01";
+      const answered = new Set<string>();
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const stored = await repeatClient.result(repeatClaim.claimId, "One answer, sent twenty times.", [], repeatKey);
+        answered.add(stored.resultId);
+      }
+      assert.deepEqual([...answered].length, 1, `twenty deliveries, one result id: ${[...answered].join(",")}`);
+      const repeatRows = await asWeb("SELECT result_id,summary,idempotency_key FROM fleet_results WHERE job_id=$1",
+        [repeatTask.jobId]);
+      assert.equal(repeatRows.length, 1, `the owner's board holds it once: ${JSON.stringify(repeatRows)}`);
+      assert.equal(repeatRows[0].idempotency_key, repeatKey);
+      const repeatAudit = await asWeb("SELECT count(*)::int AS count FROM audit_events "
+        + "WHERE action='fleet.result.submitted' AND target_id=$1", [repeatTask.jobId]);
+      assert.equal(repeatAudit[0].count, 1, "and the audit chain recorded it once");
+      // A resend that is NOT the same answer is refused, never merged.
+      await assert.rejects(repeatClient.result(repeatClaim.claimId, "A different answer.", [], repeatKey), /conflict/u);
+      assert.equal((await asWeb("SELECT count(*)::int AS count FROM fleet_results WHERE job_id=$1",
+        [repeatTask.jobId]))[0].count, 1);
+      assert.equal((await asWeb("SELECT state FROM control_jobs WHERE id=$1", [repeatTask.jobId]))[0].state,
+        "waiting_approval");
+
+      assert.ok(requests.every(url => url.startsWith(`${origin}/fleet/v1/`)), "the connector spoke only to the gateway");
+      assert.deepEqual(unexpected, []);
+    } finally {
+      await new Promise(done => server.close(done));
+      await Promise.all([admin.close(), fleet.close(), fleetOwner.close()]);
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 240_000 });
+});

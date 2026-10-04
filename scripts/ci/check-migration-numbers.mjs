@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Refuses two files in db/migrations/ that claim the same 4-digit migration number.
 //
 // Migration numbers are an ordering, and the applier orders by filename, so a shared
@@ -16,7 +17,6 @@
 // duplicate numbers, not the numbering convention.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 export const MIGRATIONS_DIRECTORY = join("db", "migrations");
 
@@ -90,4 +90,4 @@ function main() {
   console.log(`migration number check passed: ${result.scanned} migration file(s), no duplicated 4-digit number`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

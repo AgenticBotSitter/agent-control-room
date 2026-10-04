@@ -1,0 +1,128 @@
+[
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "if (ownerOnly && (entry.mode & 0o077) !== 0) throw new Error(\"nightly_backup_credential_refused\");",
+    "replace": "if (false) throw new Error(\"nightly_backup_credential_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='any other account can read' tests/nightly-backup-round4.test.mjs",
+    "why": "R4S-16 a world- or group-readable database password file is refused"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "const spendable = ordered.filter(generation => generation <= name);",
+    "replace": "const spendable = ordered;",
+    "test": "node --import tsx --test --test-name-pattern='clock far ahead' tests/nightly-backup-round4.test.mjs",
+    "why": "R4S-09 retirement is measured against the run's own date, so one future-dated generation cannot disable it"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "const laterDated = ordered.filter(generation => generation > name);",
+    "replace": "const laterDated = [];",
+    "test": "node --import tsx --test --test-name-pattern='names the later-dated generation' tests/nightly-backup-round4.test.mjs",
+    "why": "R4S-09 the owner is told which later-dated generation the run kept"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": ".filter(entry => Number.isFinite(thisRunInstant) && generationInstant(entry.name) <= thisRunInstant - PARTIAL_GENERATION_MINIMUM_AGE_MS_V1)",
+    "replace": ".filter(() => false)",
+    "test": "node --import tsx --test --test-name-pattern='partial generation left by a kill' tests/nightly-backup-round4.test.mjs",
+    "why": "R4S-10 an incomplete generation older than a day is removed under the run lock"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "timeout: dumpTimeoutMs, maxBuffer: 1 << 30 });",
+    "replace": "timeout: 120000, maxBuffer: 1 << 30 });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='still working when its deadline' tests/nightly-backup-postgres.test.ts",
+    "why": "R4S-11 the size-fitted deadline reaches pg_dump rather than the old 120 s guess"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "if (error && typeof error === \"object\" && \"killed\" in error && error.killed === true) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='still working when its deadline' tests/nightly-backup-postgres.test.ts",
+    "why": "R4S-11 a tripped deadline is detected and reported as its own code"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "    await evidenceClient.query(`SET LOCAL lock_timeout = '${evidenceTimeoutMs}ms'`);\n    await evidenceClient.query(`SET LOCAL statement_timeout = '${evidenceTimeoutMs}ms'`);\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='evidence transaction is bounded' tests/nightly-backup-postgres.test.ts",
+    "why": "R4S-11 the evidence transaction carries its own lock and statement deadlines"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "async function endEvidenceClientV1(evidenceClient) {\n  try { await evidenceClient.end(); } catch {}\n  const stream = evidenceClient?.connection?.stream;\n  if (stream && !stream.destroyed) { try { stream.destroy(); } catch {} }\n}",
+    "replace": "async function endEvidenceClientV1(evidenceClient) {\n  const stream = evidenceClient?.connection?.stream;\n  if (stream && !stream.destroyed) { try { stream.destroy(); } catch {} }\n}",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4S-03' tests/nightly-backup-postgres.test.ts",
+    "why": "R4S-03 a failed evidence client is ended, so no session is left and the process can exit"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup-entry.ts",
+    "find": "    process.exitCode = code;\n    process.exit(code);",
+    "replace": "    process.exitCode = code;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4S-03' tests/nightly-backup-postgres.test.ts",
+    "why": "R4S-03 the entry exits instead of waiting for a leaked handle to drain"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "keepAlive: false, exitTimeOut: Math.ceil(NIGHTLY_DUMP_TIMEOUT_MS_V1 / 1000) + 60, nightly: true },",
+    "replace": "keepAlive: false, exitTimeOut: 120, nightly: true },",
+    "test": "node --import tsx --test --test-name-pattern='the dump deadline is sized' tests/nightly-backup-postgres.test.ts",
+    "why": "R4S-11 the nightly job's launchd exit timeout covers the dump deadline, so launchd cannot SIGKILL a long dump"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "    if (manifest?.schema !== BACKUP_MANIFEST_SCHEMA_V1) return false;\n    if (manifest.restoreIdentityDigest !== (metadata.identity as { identityDigest?: unknown } | undefined)?.identityDigest)\n      return false;",
+    "replace": "    if (false) return false;\n    if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='foreign schema' tests/nightly-backup-round4b.test.mjs",
+    "why": "R4B-01 a generation is spendable history only while its manifest still names its own bytes"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "    return manifest.dumpDigest === dumpDigest && manifest.metadataDigest === metadataDigest;",
+    "replace": "    return true;",
+    "test": "node --import tsx --test --test-name-pattern='no longer matches its manifest' tests/nightly-backup-round4b.test.mjs",
+    "why": "R4B-01 the digests are compared against the real dump and metadata, so a damaged dump cannot spend retention"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "    let bound = false;\n    try { bound = (await runtime.readGeneratedGeneration(out)).bound; } catch { bound = false; }\n    if (!bound) {\n      try { await runtime.removeBackup(out); } catch {}\n      throw new Error(\"nightly_backup_unbound_generation\");\n    }",
+    "replace": "    await runtime.readGeneratedGeneration(out);",
+    "test": "node --import tsx --test --test-name-pattern='own generation does not bind' tests/nightly-backup-round4b.test.mjs",
+    "why": "R4B-01 a run whose OWN generation does not bind its bytes refuses by name and removes it"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "    const entry = await lstat(path).catch(() => null);\n    if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)\n      throw new Error(\"backup_refused_incomplete_output\");",
+    "replace": "    const entry = await lstat(path).catch(() => ({ isFile: () => true, isSymbolicLink: () => false, size: 1 }));\n    if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)\n      throw new Error(\"backup_refused_incomplete_output\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4B-10: a manifest can only' tests/nightly-backup-restore-recovery-postgres.test.ts",
+    "why": "R4B-10 the manifest binds bytes that were proven to exist on disk"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "  await writeFile(join(out, \"manifest.json\"), `${JSON.stringify(manifest, null, 2)}\\n`, { mode: 0o600, flag: \"wx\" });",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4B-10: a manifest can only' tests/nightly-backup-restore-recovery-postgres.test.ts",
+    "why": "R4B-10 a scheduled generation carries the manifest the documented verifier requires"
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "  try {\n    await evidenceClient.connect();\n  } catch (error) {\n    await endEvidenceClientV1(evidenceClient);\n    throw error;\n  }",
+    "replace": "  await evidenceClient.connect();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4B-08' tests/nightly-backup-restore-recovery-postgres.test.ts",
+    "why": "R4B-08 a rejected connection ends the evidence client AND destroys its socket, so a wedged database cannot hold the entry open"
+  },
+  {
+    "file": "deploy/postgres/restore-database.mjs",
+    "find": "  await assertBackupBytesAreIntactV1(backup);",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4B-09' tests/nightly-backup-restore-recovery-postgres.test.ts",
+    "why": "R4B-09 a damaged dump is refused before any target effect"
+  },
+  {
+    "file": "deploy/postgres/restore-database.mjs",
+    "find": "      throw new Error(`restore_refused_nonempty_target:${name}`);",
+    "replace": "      throw new Error(\"restore_refused_nonempty_target\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4B-09' tests/nightly-backup-restore-recovery-postgres.test.ts",
+    "why": "R4B-09 the nonempty refusal names the database, so an interrupted restore has a recovery path"
+  }
+]

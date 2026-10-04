@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import { listTestFiles } from "../check-test-lane-coverage.mjs";
 
 const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
@@ -30,6 +30,7 @@ export const skippedTestExemptions = new Map([
   ["tests/private-macos-claude-code-qualification-route.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-macos-service-native-host.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-protected-root-native-directory.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/result-file-upload-race-postgres.test.ts", "upload staging requires the macOS O_EXLOCK directory lock; skips its race test on Linux"],
   ["tests/mac-local-pg17-rehearsal.test.mjs", "runs in the full-mac-local-rehearsal job, which provides CONTROL_ROOM_MAC_REHEARSAL_ROOT (see PR #429)"],
 ]);
 
@@ -186,8 +187,10 @@ function guardedPostgresTests(result, tests, repositoryRoot) {
 // below) makes the bound a true per-file budget. 600000 matches the largest
 // per-test override in the repository (tests/work-batch-assignment-gate.test.ts)
 // and comfortably clears the slowest measured file while still failing a
-// genuine hang well before the job's 45-minute limit.
-export const NODE_TEST_TIMEOUT_MS = 600_000;
+// genuine hang well before the job's 45-minute limit. Raised to 20 minutes when
+// tests/down-migration-sweep-real-postgres.test.ts (one ~12 s rollback per db/down
+// file, 67 files) measured past 10 minutes on the hosted runner.
+export const NODE_TEST_TIMEOUT_MS = 1_200_000;
 
 function nodeTestCommand(test, repositoryRoot) {
   const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", test];
@@ -358,4 +361,4 @@ function main() {
   process.exitCode = runSelectedTests(result, tests, root);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

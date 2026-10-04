@@ -7,9 +7,13 @@ import type { TaskRevisionRequest, TaskRevisionReceipt } from "./task-revision-w
 
 export type ReviewWorkspaceBinding = Pick<TaskReviewDraft, "artifactId" | "targetId" | "targetDigest" | "contentHash">
   & { projectId: string; jobId: string };
-type Snapshot = { feedback: string; pending: boolean; receipt?: TaskReviewReceipt; error?: BrowserRequestError;
+type Snapshot = { feedback: string; exceptionsText: string; pending: boolean; receipt?: TaskReviewReceipt; error?: BrowserRequestError;
   revisionPending: boolean; revisionReceipt?: TaskRevisionReceipt; revisionError?: BrowserRequestError;
   attestations: Readonly<Record<string, boolean>> };
+/** One named exception per non-empty line, trimmed, in the owner's own order. */
+export function parseTaskReviewExceptionsV1(exceptionsText: string): string[] {
+  return exceptionsText.split("\n").map(line => line.trim()).filter(line => line.length > 0);
+}
 /** The attestation a gesture applies to. The instructions a scenario asks the
  * owner to carry out are part of the identity, not decoration: if the digest
  * changes, the owner was asked to do something different and must say so
@@ -37,7 +41,7 @@ export function createTaskReviewWorkspace(
   };
   function createSession(binding: ReviewWorkspaceBinding) {
     const bound = Object.freeze({ ...binding }), client = makeClient(bindAuthenticatedSession), revisionClient = makeRevisionClient(), listeners = new Set<() => void>();
-    let snapshot: Snapshot = { feedback: "", pending: false, revisionPending: false, attestations: {} };
+    let snapshot: Snapshot = { feedback: "", exceptionsText: "", pending: false, revisionPending: false, attestations: {} };
     let retryAttestation: AttestationIdentity | undefined;
     /* The owner's read-and-correct gesture lives HERE, on the result-bound
      * session, rather than in the panel or in a module-global map. This is the
@@ -75,6 +79,7 @@ export function createTaskReviewWorkspace(
       subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
       clearAttestations() { if (Object.keys(snapshot.attestations).length) update({ attestations: {} }); },
       setFeedback(feedback: string) { if (!snapshot.pending && !client.hasPending()) update({ feedback }); },
+      setExceptionsText(exceptionsText: string) { if (!snapshot.pending && !client.hasPending()) update({ exceptionsText }); },
       /** The owner's gesture for one exact attestation of THIS result, or false
        * for any attestation the owner has not been shown or has retracted. */
       attested(identity: AttestationIdentity) { return isAttested(identity); },
@@ -91,9 +96,11 @@ export function createTaskReviewWorkspace(
         update({ pending: true, error: undefined });
         try {
           if (decision === "accepted" && acceptanceAttestation) retryAttestation = acceptanceAttestation;
+          const exceptions = decision === "accepted_with_exceptions" ? parseTaskReviewExceptionsV1(snapshot.exceptionsText) : undefined;
           const receipt = decision ? await client.record(bound.projectId, bound.jobId, { artifactId: bound.artifactId,
             targetId: bound.targetId, targetDigest: bound.targetDigest, contentHash: bound.contentHash, decision,
-            feedback: decision === "changes_requested" ? snapshot.feedback : "", ...(acceptanceAttestation ? { acceptanceAttestation } : {}) },
+            feedback: decision === "changes_requested" ? snapshot.feedback : "",
+            ...(exceptions ? { exceptions } : {}), ...(acceptanceAttestation ? { acceptanceAttestation } : {}) },
           authentication!) : await client.retrySave();
           // The decision is saved against this exact binding, so the gesture
           // that authorised it has been spent. Leaving it set would let a later
@@ -101,7 +108,7 @@ export function createTaskReviewWorkspace(
           if (decision && acceptanceAttestation && isAttested(acceptanceAttestation))
             setAttestation(acceptanceAttestation, false);
           retryAttestation = undefined;
-          update({ receipt, feedback: "" }); return receipt;
+          update({ receipt, feedback: "", exceptionsText: "" }); return receipt;
         } catch (reason) {
           if (!client.hasPending()) retryAttestation = undefined;
           update({ error: reason instanceof BrowserRequestError ? reason : new BrowserRequestError("uncertain") });
