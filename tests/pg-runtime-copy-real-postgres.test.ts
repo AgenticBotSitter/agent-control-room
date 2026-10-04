@@ -267,7 +267,13 @@ test("a real PostgreSQL 17 cluster runs on a Unix socket with no TCP listener an
     //    was set and then overridden by a -o flag or a plist would still read
     //    "off" here while something else bound a port.
     assert.equal(await psql(cluster, "SHOW listen_addresses"), "");
-    const listeners = await execFileAsync("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);
+    // lsof exits 1 with no output when nothing at all listens (a clean CI host);
+    // that is the strongest form of "nothing listens on our port".
+    const listeners = await execFileAsync("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]).catch((error: unknown) => {
+      const failure = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
+      if (failure.code === 1 && !String(failure.stdout ?? "").trim() && !String(failure.stderr ?? "").trim()) return "";
+      throw error;
+    });
     const ourPort = new RegExp(`[:.]${cluster.port}\\b`).test(listeners);
     assert.equal(ourPort, false, `nothing may listen on the cluster's port ${cluster.port}`);
     // 4. The hba the server actually loaded is ours: peer map first, scram
