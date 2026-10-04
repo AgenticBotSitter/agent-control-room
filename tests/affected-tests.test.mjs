@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   affectedTestCommands,
@@ -52,6 +53,63 @@ function executePlainFixture(command, arguments_, commandRoot, environment) {
   assert.match(output, /^# tests 1$/mu, "the fixture must report its one test in TAP");
   return { status: child.status, output };
 }
+
+test("failures, unexempted skips and spawn errors do not hide later affected files", () => {
+  const names = ["fail", "skip", "spawn", "pass"].map(name => `tests/${name}.test.mjs`);
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [], messages = [], originalLog = console.log;
+  console.log = message => messages.push(message);
+  try {
+    const status = runAffectedTests(names, names, root, () => 0, () => true, (_command, args) => {
+      const name = args.at(-1);
+      calls.push(name);
+      if (name === names[2]) throw Object.assign(new Error(), { code: "ENOENT" });
+      return { status: name === names[0] ? 9 : 0, output: name === names[1] ? "# skipped 1\n" : "# skipped 0\n" };
+    });
+    assert.equal(status, 9);
+    assert.deepEqual(calls, names);
+    assert.match(messages.join("\n"), /fail\.test\.mjs \| FAIL \| \d+\.\d{3}/u);
+    assert.match(messages.join("\n"), /skip\.test\.mjs \| SKIP-NOT-EXEMPT/u);
+    assert.match(messages.join("\n"), /spawn\.test\.mjs \| FAIL/u);
+    assert.match(messages.join("\n"), /pass\.test\.mjs \| PASS/u);
+    assert.match(messages.at(-1), /Completed 4 unit\(s\); 3 failed/u);
+  } finally { console.log = originalLog; rmSync(root, { recursive: true }); }
+});
+
+test("failed preparations still fail the plan after both builds and every selected file run", () => {
+  const root = fixture({ "tests/example.test.mjs": "" }), calls = [];
+  try {
+    assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, (_command, args) => {
+      calls.push(args.join(" ")); return 2;
+    }, () => true, (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "# skipped 0\n" }; }), 2);
+    assert.deepEqual(calls, ["build", "run build:demo", "tests/example.test.mjs"]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("real failing and skipping files reach the final file and produce a failing process exit", () => {
+  const root = fixture({
+    "tests/fail.test.mjs": "import test from 'node:test'; test('fails', () => { throw new Error('deliberate fixture failure'); });",
+    "tests/skip.test.mjs": "import test from 'node:test'; test('skips', {skip: true}, () => {});",
+    "tests/pass.test.mjs": "import test from 'node:test'; test('last ran', () => {});",
+  });
+  const modulePath = fileURLToPath(new URL("../scripts/ci/affected-tests.mjs", import.meta.url));
+  const program = `import {runAffectedTests} from ${JSON.stringify(modulePath)};
+    import {spawnSync} from 'node:child_process';
+    const files = ['tests/fail.test.mjs', 'tests/skip.test.mjs', 'tests/pass.test.mjs'];
+    process.exitCode = runAffectedTests(files, files, process.cwd(), undefined, () => true, (cmd, args, cwd, env) => {
+      const child = spawnSync(cmd, args.filter(a => a !== '--import' && a !== 'tsx'), {cwd, env, encoding: 'utf8'});
+      return {status: child.status, output: child.stdout + child.stderr};
+    });`;
+  const env = { ...process.env, GITHUB_ACTIONS: "true" };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", program], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 1);
+    assert.match(child.stdout, /fail\.test\.mjs \| FAIL[\s\S]*skip\.test\.mjs \| SKIP-NOT-EXEMPT[\s\S]*pass\.test\.mjs \| PASS/u);
+    assert.equal(child.stdout.split("::endgroup::").length - 1, 3);
+  } finally { rmSync(root, { recursive: true }); }
+});
 
 test("a leaf change walks transitively to exactly its importing tests", () => {
   check({
@@ -214,7 +272,8 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
   try {
     assert.equal(runAffectedTests(["tests/mac-local-pg17-rehearsal.test.mjs"], ["tests/mac-local-pg17-rehearsal.test.mjs"], root,
       () => 0, () => true, () => ({ status: 0, output: "# skipped 0\n" })), 0);
-    assert.deepEqual(messages, []);
+    assert.doesNotMatch(messages.join("\n"), /Allowing skipped test exemption/u);
+    assert.match(messages.join("\n"), /mac-local-pg17-rehearsal\.test\.mjs \| PASS \|/u);
   } finally {
     console.log = originalLog;
     rmSync(root, { recursive: true });

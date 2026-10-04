@@ -284,6 +284,8 @@ jobs:
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
         run: node --test tests/affected-tests.test.mjs
+      - name: Test CI keep-going and unchanged unit selection
+        run: node --test tests/run-scripts-keep-going.test.mjs
       - name: Test the generic VPS front-door installer
         run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
@@ -446,15 +448,19 @@ jobs:
       - name: Install Chromium for the owner-push receiver lane
         run: pnpm exec playwright install --with-deps chromium
       - name: Runtime-assembly memory guard
+        if: ${{ !cancelled() }}
         run: pnpm run test:private-local-runtime-assembly:memory-guard
       - name: Mac-local real-page journey
+        if: ${{ !cancelled() }}
         run: pnpm run test:mac-local-real-pages
       - name: Phase 2B contracts
+        if: ${{ !cancelled() }}
         run: pnpm run test:phase2b
       - name: Component lanes
+        if: ${{ !cancelled() }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
-        run: pnpm run test:components && pnpm run test:mac-upgrade
+        run: node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:mac-upgrade
       # The shared attack-test kit and its own tests. This lane installs
       # PostgreSQL 17 above, so the kit's real-cluster tests must run here
       # rather than skip: tests/attack-kit.test.ts calls
@@ -467,16 +473,20 @@ jobs:
       # builds its own disposable cluster from db/migrations/ plus the role
       # files and reads pg_proc, so it adds seconds, not a second 10-minute job.
       - name: Fail on a privileged routine without a pg_temp-pinned search_path
+        if: ${{ !cancelled() }}
         run: node --import tsx scripts/check-migration-search-path.mjs
       - name: Attack-test kit
+        if: ${{ !cancelled() }}
         run: pnpm run test:attack-kit
       - name: Installation operations mode
+        if: ${{ !cancelled() }}
         # The owner-facing Pause / Drain / Stop switch, its database guards, the
         # coordinator-backed stop, the Mac-local host composition and the
         # supervisor's machine-health port. It is its own lane because each file
         # builds its own disposable cluster on the reserved 58710-58719 range.
         run: pnpm run test:operations-mode
       - name: Bot dogfood journey
+        if: ${{ !cancelled() }}
         # Can a bot create and run work in Control Room, end to end? The
         # scripted-bot journey and its stress run, both on real PostgreSQL as
         # the production logins, with a scripted bot that never starts a real
@@ -484,6 +494,7 @@ jobs:
         # cluster on the reserved 59620-59629 range.
         run: pnpm run test:bot-dogfood
       - name: Resource-bound connector contracts
+        if: ${{ !cancelled() }}
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
         run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
@@ -978,20 +989,22 @@ jobs:
         if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test:demo
-          pnpm run test:build:demo
+          node scripts/ci/run-scripts-keep-going.mjs test:demo test:build:demo
       - name: Server build tests (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test
+          node scripts/ci/run-scripts-keep-going.mjs test
       - name: Component lanes (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test:components
-          pnpm run test:attack-kit
-          node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+          status=0
+          node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:attack-kit || status=$?
+          echo '::group::Resource-bound connector contracts'
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts || status=$?
+          echo '::endgroup::'
+          exit "${status}"
       - name: Updater lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'updater' && needs.route.result == 'success' && needs.route.outputs.updater == 'false' }}
         env:
@@ -1024,13 +1037,12 @@ jobs:
           # far longer than a developer's, so run the lane from a short copy.
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
-          pnpm run test:updater
-          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres && pnpm run test:pg-runtime-postgres && pnpm run test:pg-runtime-stress && pnpm run test:test-runner
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test:build:articles
+          node scripts/ci/run-scripts-keep-going.mjs test:build:articles
 
   # The single check that attests to the complete suite having run. It reads no
   # routing decision, so a pull request cannot skip it: the lanes it aggregates

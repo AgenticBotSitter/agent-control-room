@@ -1,0 +1,107 @@
+[
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (!scriptName.test(name) || typeof scripts[name] !== \"string\")",
+    "replace": "if (typeof scripts[name] !== \"string\")",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "invalid script names must be refused before execution"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (!scriptName.test(name) || typeof scripts[name] !== \"string\")",
+    "replace": "if (!scriptName.test(name))",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "missing scripts must be refused before execution"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (ancestors.includes(name))",
+    "replace": "if (false)",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "cyclic composites must fail with a controlled refusal"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (expand && references.every(Boolean))",
+    "replace": "if (references.every(Boolean))",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "explicit script mode must not silently expand its composite"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (expand && references.every(Boolean))",
+    "replace": "if (expand)",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "mixed build prerequisite commands must retain their leaf semantics"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "result = { status: 1 };",
+    "replace": "result = { status: 0 };",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "spawn exceptions must be recorded as failures"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "for (const unit of units) {",
+    "replace": "for (const unit of units.slice(0, 1)) {",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "later units must run after an earlier failure"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "return failures[0]?.status ?? 0;",
+    "replace": "return 0;",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "a failing plan must return a nonzero final status"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (args[++index] !== \"1\")",
+    "replace": "if (false && args[++index] !== \"1\")",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "unsupported parallelism must not change the serial CI budget"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "else if (!scriptName.test(arg))",
+    "replace": "else if (false)",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "unknown flags and shell shaped script arguments must be refused"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (names.length === 0)",
+    "replace": "if (false)",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "an empty invocation must not report successful coverage"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (child.error) throw child.error;",
+    "replace": "",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "a missing package runner must report its spawn failure for each unit"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "return { status: child.status ?? 1 };",
+    "replace": "return { status: child.status ?? 0 };",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "a signal terminated subprocess must not report success"
+  },
+  {
+    "file": "scripts/ci/affected-tests.mjs",
+    "find": "return { status: status || 1, verdict: status === 0 ? \"SKIP-NOT-EXEMPT\" : \"FAIL\" };",
+    "replace": "return { status: 0, verdict: \"PASS\" };",
+    "test": "node --test tests/affected-tests.test.mjs",
+    "why": "an unexempted skip must fail after the remaining files execute"
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "try { scripts.push(...parseArguments(match[1].trim().split(/\\s+/u)).names); }",
+    "replace": "try { /* mutation: omit serial runner references */ }",
+    "test": "node --test tests/check-test-lane-coverage.test.mjs",
+    "why": "the coverage checker must reach the new runner units"
+  }
+]

@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
+import { runUnits } from "./run-scripts-keep-going.mjs";
 
 const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
 const importPattern = /\b(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']/g;
@@ -346,26 +347,29 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);
   const preparationCount = commands.length - testCommands.length;
-  for (const [index, [command, arguments_]] of commands.entries()) {
-    if (index < preparationCount) {
+  const units = commands.map(([command, arguments_], index) => index < preparationCount
+    ? [command, ...arguments_].join(" ") : testCommands[index - preparationCount].tests[0]);
+  let index = 0;
+  return runUnits(units, () => {
+    const current = index++;
+    const [command, arguments_] = commands[current];
+    if (current < preparationCount) {
       const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
-      if (status !== 0) return status;
-      continue;
+      return { status };
     }
-    const testCommand = testCommands[index - preparationCount];
+    const testCommand = testCommands[current - preparationCount];
     const execution = executeCapturingOutput(command, arguments_, repositoryRoot, testCommand.environment);
     const status = typeof execution === "number" ? execution : execution.status;
-    if (status !== 0) return status;
     const output = typeof execution === "number" ? "" : execution.output;
     if (testCommand.exempt && hasSkippedTests(output)) {
       console.log(`Allowing skipped test exemption: ${testCommand.tests[0]} — ${skippedTestExemptions.get(testCommand.tests[0])}`);
     }
     if (!testCommand.exempt && hasSkippedTests(output)) {
       console.error("Selected test plan reported skipped tests; merge-gated tests must run or fail unless explicitly exempted.");
-      return 1;
+      return { status: status || 1, verdict: status === 0 ? "SKIP-NOT-EXEMPT" : "FAIL" };
     }
-  }
-  return 0;
+    return { status };
+  });
 }
 
 function main() {

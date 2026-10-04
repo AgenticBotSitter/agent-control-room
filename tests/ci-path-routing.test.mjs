@@ -364,8 +364,8 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   const updaterStep = catchUp.slice(catchUp.indexOf("      - name: Updater lane (merge gate)"));
   assert.match(updaterStep, /matrix\.lane == 'updater'/u);
   assert.match(updaterStep, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
-  assert.match(updaterStep, /pnpm run test:updater/u);
-  assert.match(updaterStep, /pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres/u);
+  assert.match(updaterStep, /run-scripts-keep-going\.mjs test:updater /u);
+  assert.match(updaterStep, /test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres/u);
   assert.match(catchUp, /brew install postgresql@17/u);
   for (const step of [updater, updaterStep.slice(0, updaterStep.indexOf("      - name: Article build lane"))]) {
     assert.doesNotMatch(step, /TMPDIR: \/private\/tmp/u, "shared temporary custody is not a private fixture");
@@ -479,7 +479,9 @@ test("every lane command that ran before still runs, so no test loses its lane",
     "node scripts/check-test-lane-coverage.mjs",
   ];
   for (const command of commands) {
-    assert.ok(workflow.includes(command), `the workflow no longer runs: ${command}`);
+    const invocation = command === "pnpm run test:components"
+      ? "node scripts/ci/run-scripts-keep-going.mjs --expand test:components" : command;
+    assert.ok(workflow.includes(invocation), `the workflow no longer runs: ${command}`);
   }
 });
 
