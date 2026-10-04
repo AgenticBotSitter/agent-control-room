@@ -345,9 +345,20 @@ const collisionConnection = () => {
   const collisionRow = (await lookup.query<{ job_id: string; result_id: string }>(`SELECT r.job_id,r.result_id
     FROM fleet_results r WHERE r.tenant_id=$1 ORDER BY r.result_id LIMIT 1`,
     [config.localOwnerSession.tenantId])).rows[0];
-  await lookup.end();
   assert.ok(collisionRow, "collision proof requires a saved fleet result");
-  const publisher = fleetConnection(), reader = fleetConnection();
+  // fleet_results is append-only and no application login may row-lock it:
+  // row locks need UPDATE, which no fleet role holds. Prove that refusal, then
+  // prove the lock order itself as this rehearsal's verified administrator.
+  await assert.rejects(lookup.query("SELECT result_id FROM fleet_results WHERE tenant_id=$1 AND result_id=$2 FOR UPDATE",
+    [config.localOwnerSession.tenantId, collisionRow.result_id]),
+  (error: { code?: string }) => error?.code === "42501", "the fleet gateway must not row-lock append-only results");
+  await lookup.end();
+  const adminConnection = () => {
+    const client = connectTarget(target);
+    client.on("error", () => {});
+    return client;
+  };
+  const publisher = adminConnection(), reader = adminConnection();
   await Promise.all([publisher.connect(), reader.connect()]);
   try {
     await publisher.query("BEGIN"); await reader.query("BEGIN");
