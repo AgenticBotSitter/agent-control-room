@@ -308,6 +308,17 @@ test("the clone measurement is stable across 20 back-to-back preimages on a load
   // per-clone byte cost must stay under half the source. A single full copy
   // would show up as a cost near 1.0x, and a filesystem that started
   // fragmenting would show up as a rising sequence.
+  //
+  // The verdict comes from the clonefile(2) sidecar, which only macOS can build:
+  // elsewhere the build refuses, so no preimage on that host can ever be
+  // classified as a clone, and that refusal is what this case proves there.
+  if (process.platform !== "darwin") {
+    const { buildPgCloneProbeNativeArtifactV1 } = await import("../scripts/build-pg-clone-probe-native.mjs");
+    await assert.rejects(buildPgCloneProbeNativeArtifactV1({ outputDirectory: ARTIFACT_DIRECTORY }),
+      /^Error: pg_clone_probe_native_build_refused$/u);
+    assert.equal(existsSync(ARTIFACT_DIRECTORY), false, "a refused build leaves no sidecar to run");
+    return;
+  }
   const cluster = await startCluster("load", 3, true);
   try {
     const sourceBytes = allocatedBytes(cluster.data);

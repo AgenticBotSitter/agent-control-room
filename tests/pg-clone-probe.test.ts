@@ -291,7 +291,12 @@ test("the sidecar refuses nonsense arguments instead of guessing", { timeout: 12
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("Node's COPYFILE_FICLONE_FORCE is ENOSYS here, which is why the native sidecar exists", { timeout: 120_000 }, () => {
+// A measurement of macOS libuv, whose force-clone goes through copyfile(3) and
+// answers ENOSYS. Linux libuv uses the FICLONE ioctl instead, and its answer is
+// the filesystem's (ext4 refuses, btrfs and XFS clone), so there is no single
+// Linux result to pin; the sidecar it justifies is macOS-only too.
+test("Node's COPYFILE_FICLONE_FORCE is ENOSYS here, which is why the native sidecar exists", { timeout: 120_000,
+  skip: process.platform === "darwin" ? false : "measures macOS libuv's clonefile path; Linux's FICLONE answer is per filesystem" }, () => {
   // This test is the MEASUREMENT the review's suggestion depends on, kept as a
   // test so a future Node that fixes it produces a failure someone reads rather
   // than a silent behaviour change.
