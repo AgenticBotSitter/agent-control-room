@@ -652,6 +652,12 @@ jobs:
           rehearsal_root=""
           rehearsal_port=""
           cleanup() {
+            status=$?
+            if [ "${status}" -ne 0 ] && [ -n "${rehearsal_root}" ] && [ -f "${rehearsal_root}/protected/runtime/task-host.log" ]; then
+              echo "::group::task host log (last 150 lines, failed journey only)"
+              tail -n 150 -- "${rehearsal_root}/protected/runtime/task-host.log" || true
+              echo "::endgroup::"
+            fi
             if [ -n "${rehearsal_root}" ] && [ -d "${rehearsal_root}" ]; then
               pnpm mac:rehearsal down "${rehearsal_root}" --port "${rehearsal_port}" --fake-executables || true
               rm -rf -- "${rehearsal_root}"
