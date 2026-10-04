@@ -55,6 +55,8 @@ test("CI verifier reports artifact and proof step without exposing subprocess or
     });
   };
   assert.equal((await run()).verified.length, 4);
+  // gpgv writes clearsigned text without the final line break the plain file has.
+  assert.equal((await run({ content: sums.trimEnd() })).verified.length, 4);
   for (const [change, step] of [
     [{ inventory: {} }, "inventory:validate"],
     [{ drop: "node" }, "node:archive_download"],
@@ -68,6 +70,7 @@ test("CI verifier reports artifact and proof step without exposing subprocess or
     [{ status: "no valid signature" }, "node:node_gpg_validsig_missing"],
     [{ status: `[GNUPG:] VALIDSIG ${"B".repeat(40)} 0\n` }, "node:node_gpg_signer_mismatch"],
     [{ content: "tampered" }, "node:node_shasums_content_mismatch"],
+    [{ content: `${sums}${"0".repeat(64)}  extra.tgz\n` }, "node:node_shasums_content_mismatch"],
   ]) {
     await assert.rejects(run(change), error => error.message === `runtime_inventory_verification_failed:${step}`);
   }

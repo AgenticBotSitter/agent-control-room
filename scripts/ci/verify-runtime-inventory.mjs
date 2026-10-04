@@ -77,7 +77,11 @@ async function verifyNodeGpg({ artifact, proof, workDirectory, download, execute
   if (![signingFingerprint, primaryFingerprint].some(value => proof.signerFingerprints.includes(value))) refuse(artifact.tool, "node_gpg_signer_mismatch");
   const [declared, authenticated] = await atStep(artifact.tool, "node_gpg_authenticated_read",
     () => Promise.all([readFile(plain, "utf8"), readFile(verified, "utf8")]));
-  if (declared !== authenticated) refuse(artifact.tool, "node_shasums_content_mismatch");
+  // A clearsigned message's signed text excludes the line break before the
+  // signature block and trailing spaces, so gpgv's output differs from the plain
+  // file only there. Compare lines; the archive row is read from the signed text.
+  const signedLines = text => text.replace(/\r\n/gu, "\n").replace(/[ \t]+$/gmu, "").replace(/\n+$/u, "");
+  if (signedLines(declared) !== signedLines(authenticated)) refuse(artifact.tool, "node_shasums_content_mismatch");
   const matching = authenticated.split(/\r?\n/u).filter(line => line.endsWith(`  ${artifact.archiveName}`));
   if (matching.length !== 1 || matching[0] !== `${artifact.archiveSha256}  ${artifact.archiveName}`) refuse(artifact.tool, "node_shasums_archive_mismatch");
 }
