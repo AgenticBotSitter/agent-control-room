@@ -61,6 +61,9 @@ if (args[0] === "bootstrap") {
   const target = args[1] + "/" + label;
   if (!state.includes(target)) state.push(target);
 }
+// The same stub stands in for systemctl, which a Linux host's connector uses.
+if (args[0] === "--user" && args[1] === "enable" && !state.includes(args[3])) state.push(args[3]);
+if (args[0] === "--user" && args[1] === "disable") state = state.filter(item => item !== args[3]);
 writeFileSync(statePath, JSON.stringify(state) + "\\n", { mode: 0o600 });
 `;
   await mkdir(root, { recursive: true });
@@ -167,9 +170,13 @@ test("exact macOS lines install all registrations and one idempotent worker for 
         epoch: 1, revokedKeyIds: [], paused: false }, ...(optedIn ? { unattended: true } : {}) });
     assert.equal((await stat(credential.installation.workspace)).isDirectory(), true);
     if (optedIn) {
-      const agents = await readdir(join(home, "Library", "LaunchAgents"));
+      // The installed connector picks the host's own service manager: a
+      // LaunchAgent on macOS, a systemd user unit on a Linux host.
       const serviceKey = createHash("sha256").update(profile).digest("hex").slice(0, 16);
-      assert.deepEqual(agents, [`xyz.agentcontrolroom.connector.${serviceKey}.plist`], "one hashed LaunchAgent belongs to this profile");
+      const [serviceDirectory, serviceFile] = process.platform === "darwin"
+        ? [join(home, "Library", "LaunchAgents"), `xyz.agentcontrolroom.connector.${serviceKey}.plist`]
+        : [join(xdg, "systemd", "user"), `control-room-connector-${serviceKey}.service`];
+      assert.deepEqual(await readdir(serviceDirectory), [serviceFile], "one hashed background service belongs to this profile");
       const harnesses = await readJson(join(xdg, "control-room", "bots", `${profile}.harnesses.json`));
       assert.equal(harnesses.harnesses[bot].enabled, true);
       if (bot === "hermes") assert.deepEqual({ profile: harnesses.harnesses.hermes.profile,
@@ -185,7 +192,9 @@ test("exact macOS lines install all registrations and one idempotent worker for 
       if (bot === "hermes") assert.match(await readFile(join(toolRoot, "config.yaml"), "utf8"), new RegExp(`  ${serverName}:`, "u"));
     } else {
       const configPath = bot === "cursor" ? join(home, ".cursor", "mcp.json")
-        : bot === "claude-desktop" ? join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+        : bot === "claude-desktop" ? (process.platform === "darwin"
+          ? join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+          : join(xdg, "Claude", "claude_desktop_config.json"))
           : join(xdg, "control-room", "generic-mcp.json");
       const saved = await readJson(configPath);
       assert.deepEqual(Object.keys(saved.mcpServers), [serverName], "the config writer saved one idempotent registration");
