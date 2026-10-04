@@ -187,8 +187,10 @@ function guardedPostgresTests(result, tests, repositoryRoot) {
 // below) makes the bound a true per-file budget. 600000 matches the largest
 // per-test override in the repository (tests/work-batch-assignment-gate.test.ts)
 // and comfortably clears the slowest measured file while still failing a
-// genuine hang well before the job's 45-minute limit.
-export const NODE_TEST_TIMEOUT_MS = 600_000;
+// genuine hang well before the job's 45-minute limit. Raised to 20 minutes when
+// tests/down-migration-sweep-real-postgres.test.ts (one ~12 s rollback per db/down
+// file, 67 files) measured past 10 minutes on the hosted runner.
+export const NODE_TEST_TIMEOUT_MS = 1_200_000;
 
 function nodeTestCommand(test, repositoryRoot) {
   const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", test];
