@@ -373,6 +373,13 @@ test("the memory budget admits every HTML size the service accepts", async () =>
     const source = Buffer.from(head + body + tail);
     assert.ok(source.length <= TEXT_COPY_LIMITS.htmlInputBytes, `fixture ${size} is not a legal size`);
     const converted = await service.convert({ format: "html", sourceBytes: source });
+    if (process.platform !== "darwin") {
+      // The production sandbox is macOS sandbox-exec. Elsewhere the production
+      // path must fail closed, never convert unsandboxed.
+      assert.equal(converted.status, "no_text_copy");
+      assert.equal(converted.diagnosticCategory, "sandbox_unavailable");
+      continue;
+    }
     assert.equal(converted.status, "succeeded",
       `a legal ${source.length} byte document was refused as ${converted.diagnosticCategory}`);
   }
