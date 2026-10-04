@@ -696,8 +696,15 @@ jobs:
           }
           echo "::notice::launchd installation is macOS-only; this Linux rehearsal uses mac:up's documented detached-host path."
           run_rehearsal "" 15499 3217
+          # Each journey's website uses its web port and intake uses web port + 1.
+          # A finished journey must leave nothing listening on either.
+          if ss -ltnH '( sport = :3217 or sport = :3218 )' | grep -q .; then
+            echo "the first journey left a listener behind after teardown:" >&2
+            ss -ltnp '( sport = :3217 or sport = :3218 )' >&2 || true
+            exit 1
+          fi
           if grep -q -- "--model-allowlists" scripts/mac-local/rehearsal/journey.ts; then
-            run_rehearsal "--model-allowlists" 15500 3218
+            run_rehearsal "--model-allowlists" 15500 3219
           else
             echo "::notice::model-allowlists journey is not present on this pre-#365 revision; the default journey passed and stacked revisions must run both modes."
           fi

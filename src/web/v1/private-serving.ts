@@ -146,8 +146,9 @@ function createLoopbackService(options: ListenerOptions, makeBridge: () => Reque
     async start(): Promise<void> {
       if (attempted || closed) throw new Error("private_listener_already_attempted");
       attempted = true;
+      let reason: "bridge_not_ready" | "address_in_use" | "bind_timeout" | "other" = "other";
       try {
-        if (!bridge.isReady()) throw new Error();
+        if (!bridge.isReady()) { reason = "bridge_not_ready"; throw new Error(); }
         const instance = (options.createServer ?? createServer)(privateServerOptions); server = instance;
         instance.maxConnections = 64; instance.maxHeadersCount = privateHttpLimits.headerCount;
         instance.maxRequestsPerSocket = 1;
@@ -169,20 +170,34 @@ function createLoopbackService(options: ListenerOptions, makeBridge: () => Reque
           });
         instance.on("error", () => { ready = false; void close().catch(() => {}); });
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => { binding.abort(); reject(new Error()); }, bindMs);
-          const failed = () => { clearTimeout(timer); reject(new Error()); };
+          let settled = false;
+          const finish = (failure?: typeof reason) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            instance.off("error", failed);
+            if (failure) { reason = failure; reject(new Error()); } else resolve();
+          };
+          const failed = (error: NodeJS.ErrnoException) => finish(error?.code === "EADDRINUSE" ? "address_in_use" : "other");
+          const timer = setTimeout(() => { finish("bind_timeout"); binding.abort(); }, bindMs);
           instance.once("error", failed);
-          instance.listen({ host: "127.0.0.1", port: options.port, exclusive: true, backlog: 64, signal: binding.signal }, () => {
-            clearTimeout(timer); instance.off("error", failed);
-            if (closed || binding.signal.aborted || !bridge.isReady()) { reject(new Error()); return; }
-            resolve();
-          });
+          try {
+            instance.listen({ host: "127.0.0.1", port: options.port, exclusive: true, backlog: 64, signal: binding.signal }, () => {
+              try {
+                if (closed || binding.signal.aborted) { finish("other"); return; }
+                finish(bridge.isReady() ? undefined : "bridge_not_ready");
+              } catch { finish("other"); }
+            });
+          } catch (error) { failed(error as NodeJS.ErrnoException); }
         });
-        if (closed || !bridge.isReady()) throw new Error();
+        if (closed) throw new Error();
+        if (!bridge.isReady()) { reason = "bridge_not_ready"; throw new Error(); }
         ready = true;
       } catch {
         try { await close(); } catch { throw new Error("private_listener_cleanup_uncertain"); }
-        throw new Error("private_listener_start_failed");
+        // Only fixed reason codes cross the startup log boundary; driver errors
+        // can contain addresses, protected paths or connection credentials.
+        throw new Error(`private_listener_start_failed_${reason}`);
       }
     },
   });

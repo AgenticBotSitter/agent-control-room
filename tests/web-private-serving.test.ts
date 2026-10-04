@@ -8,6 +8,7 @@ import test from "node:test";
 import ts from "typescript";
 import { createContributorDemoService, createPrivateNodeService } from "../src/web/v1/private-serving.ts";
 import { privateResponseHeaders } from "../src/web/v1/http-common.ts";
+import { createMacLocalStartupV1 } from "../src/web/v1/mac-local-startup.ts";
 
 function drainingFixture(handle: () => Promise<void>, closeMs = 40, closeError = false) {
   let databaseClosed = false, refused = 0, forced = 0;
@@ -30,15 +31,17 @@ function drainingFixture(handle: () => Promise<void>, closeMs = 40, closeError =
   return { service, request, databaseClosed: () => databaseClosed, refused: () => refused, forced: () => forced };
 }
 
-function fixture(mode: "normal" | "bind_stalls" | "bind_error" | "close_stalls" | "close_error" = "normal",
-  applicationClose?: () => Promise<void>, demo = false) {
+function fixture(mode: "normal" | "bind_stalls" | "bind_error" | "bind_throw" | "close_stalls" | "close_error" = "normal",
+  applicationClose?: () => Promise<void>, demo = false,
+  startup: { error?: unknown; isReady?: () => boolean; factoryThrows?: boolean } = {}) {
   let created = 0, dbCloses = 0, closes = 0, forceCloses = 0;
   let observedOptions: Readonly<ServerOptions> | undefined, listenOptions: ListenOptions | undefined;
   let completeBind: (() => void) | undefined;
   const server = new EventEmitter() as Server;
   server.listen = ((options: ListenOptions, callback: () => void) => {
     listenOptions = options; completeBind = callback;
-    if (mode === "bind_error") queueMicrotask(() => server.emit("error", new Error("private diagnostic")));
+    if (mode === "bind_throw") throw startup.error;
+    if (mode === "bind_error") queueMicrotask(() => server.emit("error", startup.error ?? new Error("private diagnostic")));
     else if (mode !== "bind_stalls") queueMicrotask(callback);
     return server;
   }) as typeof server.listen;
@@ -47,14 +50,15 @@ function fixture(mode: "normal" | "bind_stalls" | "bind_error" | "close_stalls" 
   server.closeIdleConnections = () => {};
   server.closeAllConnections = () => { forceCloses++; };
   const listener = {
-    createServer: (options: Readonly<ServerOptions>) => { created++; observedOptions = options; return server; },
+    createServer: (options: Readonly<ServerOptions>) => { created++; observedOptions = options;
+      if (startup.factoryThrows) throw startup.error; return server; },
     listenerTiming: { bindMs: 20, closeMs: 25 },
   };
   const service = demo ? createContributorDemoService({ origin: "http://127.0.0.1:3000",
-    isReady: () => true, handle: async () => {},
+    isReady: startup.isReady ?? (() => true), handle: async () => {},
     close: async () => { dbCloses++; await applicationClose?.(); },
   }, listener) : createPrivateNodeService({ origin: "https://private.example.invalid", port: 3210,
-    application: { isReady: () => true, close: async () => { dbCloses++; await applicationClose?.(); } },
+    application: { isReady: startup.isReady ?? (() => true), close: async () => { dbCloses++; await applicationClose?.(); } },
     handler: () => Response.json({ ok: true }), assets: { count: 1, digest: "synthetic", respond: () => undefined },
     ...listener,
   });
@@ -241,7 +245,8 @@ test("reviewed HTTP listener and outbound request imports stay separate; legacy 
 });
 test("failed and late binds close owned application and cannot retry or become ready", async () => {
   for (const mode of ["bind_stalls", "bind_error"] as const) {
-    const f = fixture(mode); await assert.rejects(f.service.start(), { message: "private_listener_start_failed" });
+    const f = fixture(mode); await assert.rejects(f.service.start(), {
+      message: `private_listener_start_failed_${mode === "bind_stalls" ? "bind_timeout" : "other"}` });
     assert.equal(f.observed().listen?.signal?.aborted, true);
     f.completeBind(); assert.equal(f.service.isReady(), false); assert.equal(f.counts().dbCloses, 1);
     await assert.rejects(f.service.start(), /already_attempted/);
@@ -264,6 +269,131 @@ test("unready application and invalid listener configuration cannot start a serv
     createServer: () => { created++; throw new Error(); },
   };
   for (const port of [0, 65536, NaN]) assert.throws(() => createPrivateNodeService({ ...options, port }));
-  const service = createPrivateNodeService(options); await assert.rejects(service.start(), /start_failed/);
+  const service = createPrivateNodeService(options); await assert.rejects(service.start(), {
+    message: "private_listener_start_failed_bridge_not_ready" });
   assert.equal(created, 0); assert.equal(closed, 1);
+});
+
+test("startup diagnostics classify emitted and synchronous bind errors without disclosing driver details", async () => {
+  for (const mode of ["bind_error", "bind_throw"] as const) {
+    for (const code of ["EADDRINUSE", "EACCES", "EADDRINUSE_private_detail", undefined]) {
+      const error = Object.assign(new Error("synthetic protected diagnostic"), { code,
+        address: "synthetic-private-address", path: "synthetic-private-path" });
+      const f = fixture(mode, undefined, false, { error });
+      await assert.rejects(f.service.start(), {
+        message: `private_listener_start_failed_${code === "EADDRINUSE" ? "address_in_use" : "other"}` });
+      assert.equal(f.service.isReady(), false); assert.equal(f.counts().dbCloses, 1);
+      assert.equal(f.server.listenerCount("error"), 1);
+      await assert.rejects(f.service.start(), { message: "private_listener_already_attempted" });
+    }
+    const f = fixture(mode, undefined, false, { error: "synthetic protected diagnostic" });
+    await assert.rejects(f.service.start(), { message: "private_listener_start_failed_other" });
+  }
+  const f = fixture("normal", undefined, false, { factoryThrows: true,
+    error: Object.assign(new Error("synthetic factory diagnostic"), { code: "EADDRINUSE" }) });
+  await assert.rejects(f.service.start(), { message: "private_listener_start_failed_other" });
+  assert.equal(f.counts().dbCloses, 1);
+});
+
+test("readiness lost during or immediately after binding keeps its safe startup reason", async () => {
+  for (const readyChecks of [1, 2]) {
+    let checks = 0;
+    const f = fixture("normal", undefined, false, { isReady: () => ++checks <= readyChecks });
+    await assert.rejects(f.service.start(), { message: "private_listener_start_failed_bridge_not_ready" });
+    assert.equal(f.counts().dbCloses, 1); assert.equal(f.service.isReady(), false);
+  }
+});
+
+test("unexpected readiness exceptions remain sanitized and clean up without escaping a bind callback", async () => {
+  for (const throwOnCheck of [1, 2, 3]) {
+    let checks = 0;
+    const f = fixture("normal", undefined, false, { isReady: () => {
+      if (++checks === throwOnCheck) throw new Error("synthetic protected readiness diagnostic");
+      return true;
+    } });
+    await assert.rejects(f.service.start(), { message: "private_listener_start_failed_other" });
+    assert.equal(f.counts().dbCloses, 1); assert.equal(f.service.isReady(), false);
+  }
+});
+
+test("the Mac startup log preserves all four listener reason codes and omits raw driver diagnostics", async t => {
+  const logs: string[] = [];
+  t.mock.method(console, "error", (line: string) => logs.push(line));
+  for (const [mode, startup, reason] of [
+    ["normal", { isReady: () => false }, "bridge_not_ready"],
+    ["bind_error", { error: Object.assign(new Error("synthetic protected driver diagnostic"), { code: "EADDRINUSE" }) }, "address_in_use"],
+    ["bind_stalls", {}, "bind_timeout"],
+    ["bind_throw", { error: new Error("synthetic protected driver diagnostic") }, "other"],
+  ] as const) {
+    const f = fixture(mode, undefined, false, startup);
+    const host = createMacLocalStartupV1({ connectorOnly: true,
+      openDatabase: () => ({ client: {} as never, isAvailable: () => true, async close() {} }),
+      createService: () => f.service });
+    await assert.rejects(host.start({ database: {} } as never), { message: "mac_local_startup_failed" });
+    assert.equal(logs.pop(), `mac-local-startup: private_listener_start_failed_${reason}`);
+    assert.equal(f.counts().dbCloses, 1);
+  }
+  assert.deepEqual(logs, []);
+});
+
+test("50 simultaneous starts retain one bind failure and refuse retries after cleanup", async () => {
+  const f = fixture("bind_error", undefined, false, {
+    error: Object.assign(new Error("synthetic driver diagnostic"), { code: "EADDRINUSE" }) });
+  const outcomes = await Promise.allSettled(Array.from({ length: 50 }, () => f.service.start()));
+  assert.deepEqual(outcomes.map(outcome => outcome.status === "rejected" ? outcome.reason.message : "started"),
+    ["private_listener_start_failed_address_in_use", ...Array(49).fill("private_listener_already_attempted")]);
+  assert.equal(f.counts().created, 1); assert.equal(f.counts().dbCloses, 1);
+  await assert.rejects(f.service.start(), { message: "private_listener_already_attempted" });
+});
+
+test("stop halfway through binding stays closed after a late callback", async () => {
+  const f = fixture("bind_stalls");
+  const starting = assert.rejects(f.service.start(), { message: "private_listener_start_failed_other" });
+  await f.service.close(); f.completeBind(); await starting;
+  assert.equal(f.service.isReady(), false); assert.equal(f.counts().dbCloses, 1);
+});
+
+test("a stop immediately after the bind callback refuses readiness before start resolves", async () => {
+  const f = fixture("bind_stalls");
+  const starting = assert.rejects(f.service.start(), { message: "private_listener_start_failed_other" });
+  f.completeBind(); await f.service.close(); await starting;
+  assert.equal(f.service.isReady(), false); assert.equal(f.counts().dbCloses, 1);
+});
+
+test("a synchronous bind throw cancels its timer and removes its temporary error observer", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture("bind_throw", undefined, false, {
+    error: Object.assign(new Error("synthetic private bind diagnostic"), { code: "EADDRINUSE" }) });
+  const starting = f.service.start();
+  // A synchronous throw settles before any timer is advanced.
+  assert.equal(f.server.listenerCount("error"), 1);
+  t.mock.timers.tick(21);
+  await assert.rejects(starting, { message: "private_listener_start_failed_address_in_use" });
+  assert.equal(f.counts().dbCloses, 1);
+});
+
+test("successful binding cancels the abort timer", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture(); await f.service.start();
+  t.mock.timers.tick(21);
+  assert.equal(f.observed().listen?.signal?.aborted, false);
+  assert.equal(f.service.isReady(), true); await f.service.close();
+});
+
+test("late bind errors cannot overwrite a timeout diagnostic while application cleanup drains", async () => {
+  let release!: () => void;
+  const f = fixture("bind_stalls", () => new Promise<void>(resolve => { release = resolve; }));
+  const starting = assert.rejects(f.service.start(), { message: "private_listener_start_failed_bind_timeout" });
+  await new Promise(resolve => setTimeout(resolve, 22));
+  assert.equal(f.server.listenerCount("error"), 1);
+  f.completeBind();
+  f.server.emit("error", Object.assign(new Error("synthetic late bind error"), { code: "EADDRINUSE" }));
+  release(); await starting;
+  assert.equal(f.service.isReady(), false); assert.equal(f.counts().dbCloses, 1);
+});
+
+test("failed startup reports cleanup uncertainty instead of claiming owned resources closed", async () => {
+  const f = fixture("bind_error", async () => { throw new Error("synthetic private cleanup diagnostic"); });
+  await assert.rejects(f.service.start(), { message: "private_listener_cleanup_uncertain" });
+  assert.equal(f.service.isReady(), false);
 });
