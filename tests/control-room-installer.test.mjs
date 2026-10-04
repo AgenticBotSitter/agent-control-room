@@ -733,6 +733,7 @@ import { spawnSync } from "node:child_process";
 import { lstat, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { dirname } from "node:path";
 const { continueInstallV1 } = await import(pathToFileURL(process.env.CR_REPOSITORY+"/src/updater/v1/install/install-steps.mjs"));
 const { DiskReserveV1 } = await import(pathToFileURL(process.env.CR_REPOSITORY+"/src/updater/v1/actuator.mjs"));
 const calls = [];
@@ -748,8 +749,10 @@ export default Object.freeze({
   inspectOwnership: async () => ({ type:"directory", symlink:false, uid:0, gid:0, mode:0o755 }), lchownPath: async () => {},
   readAccountInventory: async () => ({ users:[], groups:[] }), createAccount: async () => {}, deleteAccount: async () => {},
   ensureDenyEntry: async () => true, removeDenyEntry: async () => {},
-  installRootFile: async (path,text,owner) => { await mkdir(new URL(".", "file://"+path).pathname,{recursive:true}); await writeFile(path,text,{mode:owner.mode}); return true; },
-  removeRootFile: path => rm(path,{force:true}), validateSudoers: async () => true, sudoSecurePathIsActive: async () => true,
+  installRootFile: async (path,text,owner) => { await mkdir(dirname(path),{recursive:true}); await writeFile(path,text,{mode:owner.mode}); return true; },
+  removeRootFile: path => { if (!Object.values(JSON.parse(process.env.CR_SYSTEM_PATHS)).includes(path))
+    throw new Error("fixture_system_path_escape"); return rm(path,{force:true}); },
+  validateSudoers: async () => true, sudoSecurePathIsActive: async () => true,
   assertT1Path: async path => path,
   assertRuntimeTreeRootMetadata: async () => ({entries:2}),
   assertSeatbeltApplied: async input => ({role:input.role,applied:true,skipped:false}),
@@ -818,8 +821,10 @@ const repository = process.env.CR_REPOSITORY;
 const installer = await import(pathToFileURL(repository+"/src/updater/v1/install/installer.mjs"));
 const ports = (await import(pathToFileURL(process.env.CR_PORT_MODULE))).default;
 const rehearsal = process.env.CR_REHEARSAL_CONFIG;
-if (process.env.CR_UNINSTALL === "1") await installer.uninstallFreshControlRoomV1({root:process.env.CR_ROOT,
-  rehearsalConfig:rehearsal,invokingUser:{user:"fixture-owner",uid:501,gid:20},ports});
+if (process.env.CR_PATH_PROBE) await ports.removeRootFile(process.env.CR_PATH_PROBE);
+else if (process.env.CR_UNINSTALL === "1") await installer.uninstallFreshControlRoomV1({root:process.env.CR_ROOT,
+  rehearsalConfig:rehearsal,invokingUser:{user:"fixture-owner",uid:501,gid:20},
+  systemPaths:JSON.parse(process.env.CR_SYSTEM_PATHS),ports});
 else { const current = await installer.statusControlRoomV1({root:process.env.CR_ROOT});
 if (current.state !== "installed" || process.env.CR_FORCE_INSTALL === "1") await installer.installControlRoomV1({root:process.env.CR_ROOT,commit:"a".repeat(40),webPort:4383,
   bootstrap:process.env.CR_BOOTSTRAP,
@@ -828,6 +833,13 @@ if (current.state !== "installed" || process.env.CR_FORCE_INSTALL === "1") await
   accountsPolicy:{schema:"control-room.accounts/v1",accounts:{service:"_testsvc",database:"_testdb",builder:"_testbuild"}},
   systemPaths:JSON.parse(process.env.CR_SYSTEM_PATHS),ports}); }
 `);
+  const sentinel = join(base, "outside-system-paths");
+  await writeFile(sentinel, "preserve");
+  const escaped = await runChild(runner, { CR_REPOSITORY: repository, CR_PORT_MODULE: portModule,
+    CR_SYSTEM_PATHS: "{}", CR_PATH_PROBE: sentinel });
+  assert.equal(escaped.code, 1);
+  assert.match(escaped.stderr, /fixture_system_path_escape/u);
+  assert.equal(await readFile(sentinel, "utf8"), "preserve");
   for (let sequence = 1; sequence <= boundaryCount; sequence += 1) {
     const root = join(base, `root-${sequence}`), systemBase = join(base, `system-${sequence}`), systemPaths = await prepareSystemPaths(systemBase);
     const bootstrap = join(base, `bootstrap-${sequence}`); await mkdir(bootstrap);
@@ -868,7 +880,9 @@ if (current.state !== "installed" || process.env.CR_FORCE_INSTALL === "1") await
   assert.equal(recovered.code, 0, recovered.stderr);
   const removed = await runChild(runner, { ...environment, CR_KILL_SEQUENCE: "0", CR_UNINSTALL: "1" });
   assert.equal(removed.code, 0, removed.stderr);
+  for (const path of [systemPaths.shim, systemPaths.sudoers]) await assert.rejects(lstat(path), { code: "ENOENT" });
   await assert.rejects(lstat(marker), { code: "ENOENT" });
+  t.diagnostic(`${boundaryCount} install journal boundaries and rehearsal recovery/uninstall passed`);
 
   // rv-9b B4: a kill anywhere after init-database (Ctrl-C, closed Terminal, power cut)
   // and the owner pastes the line again. Recovery runs as root, so the REAL retire port

@@ -6,7 +6,10 @@ import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
 import test, { after } from "node:test";
 import { sha256Digest } from "../src/security";
-import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
+import { LOCAL_OWNER_SESSION_PROFILE_V1, LocalOwnerSessionServiceV1,
+  captureLocalOwnerSessionProfileV1 } from "../src/web/v1/local-owner-session";
+import { createFleetOwnerHttpHandlerV1 } from "../src/web/v1/fleet-owner-http";
+import { FleetErrorV1, type FleetOwnerServiceV1 } from "../src/fleet/v1";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
@@ -17,6 +20,58 @@ import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conforma
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
+
+test("owner offer HTTP acknowledges exact replay and preserves service refusals", { timeout: 30_000 }, async () => {
+  const origin = "http://127.0.0.1:3210", ownerCode = "offer-route-owner-code-000001", now = conformanceNow;
+  const sessions = new LocalOwnerSessionServiceV1(captureLocalOwnerSessionProfileV1({
+    schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:offer-route", provider: "test",
+    subject: "identity:owner", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
+  }));
+  const { cookie } = await sessions.issue(new Request(`${origin}/api/v1/local-owner-session`, {
+    method: "POST", headers: { origin, "sec-fetch-site": "same-origin" },
+  }), ownerCode, now);
+  const offerId = `fleet-offer:${"a".repeat(32)}`;
+  let replayed = false, failure: FleetErrorV1 | undefined;
+  const calls: unknown[] = [];
+  // This tests the HTTP acknowledgement of the service's decision. The real
+  // scope comparison and production-login authority are covered in the PG lane.
+  const service = { async offerTask(_identity: unknown, input: unknown) {
+    calls.push(input);
+    if (failure) throw failure;
+    return { offerId, replayed };
+  } } as unknown as FleetOwnerServiceV1;
+  const handle = createFleetOwnerHttpHandlerV1({ origin, service, localOwnerSession: sessions, clock: () => now });
+  const body = { projectId: "project:route", jobId: "job:route", capability: "code.change" };
+  const post = (raw = JSON.stringify(body), headers: Record<string, string> = {}) => handle(new Request(
+    `${origin}/api/v1/fleet/offers`, { method: "POST", headers: { origin, cookie,
+      "sec-fetch-site": "same-origin", "content-type": "application/json", ...headers }, body: raw }));
+  const first = await post();
+  assert.equal(first.status, 201);
+  assert.deepEqual(await first.json(), { offerId, replayed: false });
+  replayed = true;
+  const retry = await post();
+  assert.equal(retry.status, 201);
+  assert.deepEqual(await retry.json(), { offerId, replayed: true });
+  assert.deepEqual(calls, [body, body], "the service decides whether the whole request is an exact replay");
+  for (const [code, status] of [["conflict", 409], ["not_found", 404], ["invalid", 400]] as const) {
+    failure = new FleetErrorV1(code);
+    const refused = await post();
+    assert.equal(refused.status, status);
+    assert.deepEqual(await refused.json(), { error: code === "invalid" ? "invalid_request" : code });
+  }
+  failure = undefined;
+  const beforeBadInput = calls.length;
+  for (const raw of ["{", "[]", "null"]) assert.equal((await post(raw)).status, 400);
+  assert.equal((await post(JSON.stringify(body), { cookie: "" })).status, 401);
+  assert.equal((await post(JSON.stringify(body), { origin: "http://127.0.0.1:1" })).status, 403);
+  assert.equal(calls.length, beforeBadInput, "bad input and unauthorized requests never reach the service");
+  const recovered = await post();
+  assert.equal(recovered.status, 201, "retry after a refusal still acknowledges the existing offer");
+  assert.deepEqual(await recovered.json(), { offerId, replayed: true });
+  const burst = await Promise.all(Array.from({ length: 50 }, () => post()));
+  assert.ok(burst.every(response => response.status === 201));
+  for (const response of burst) assert.deepEqual(await response.json(), { offerId, replayed: true });
+});
 
 const connectorRelease: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) });

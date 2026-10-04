@@ -238,8 +238,8 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
             throw new WebAccessError("invalid_request");
         }
         const offered = await options.service.offerTask(identity, body as never).catch(translate);
-        // Replays do not update the saved allow-list. Never imply this draft changed it.
-        if (offered.replayed) throw new WebAccessError("conflict");
+        // The service replays only an open offer with the same capability and
+        // worker set. Changed intent is refused there before returning an ID.
         return Response.json(offered, { status: 201, headers: privateResponseHeaders });
       }
       const withdraw = /^\/api\/v1\/fleet\/offers\/(fleet-offer:[a-f0-9]{32})\/withdraw$/u.exec(path);

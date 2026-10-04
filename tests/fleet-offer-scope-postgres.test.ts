@@ -483,11 +483,12 @@ test("a changed chosen-bot list conflicts, and a foreign job never reveals its o
       const crossedRoute = await post({ projectId: PROJECT_A, jobId: foreignTask.jobId, capability: "writing" });
       assert.equal(crossedRoute.status, 404, `a foreign job is 404: ${JSON.stringify(crossedRoute.body)}`);
       assert.ok(!JSON.stringify(crossedRoute.body).includes(foreignOffer.offerId));
-      // The identical request still replays as 409 at the route, because the
-      // route refuses to imply a replay applied a draft (unchanged behaviour).
+      // An identical request acknowledges the existing offer. Changed scope
+      // was refused above, so this success cannot imply a changed worker set.
       const replay = await post({ projectId: PROJECT_A, jobId: routeTask.jobId, capability: "writing",
         allowedWorkerIds: [botA.workerId] });
-      assert.equal(replay.status, 409, "the route's replay refusal is unchanged");
+      assert.equal(replay.status, 201, "an exact replay acknowledges the same offer");
+      assert.deepEqual(replay.body, { offerId: created.body.offerId, replayed: true });
       assert.deepEqual(await storedList(created.body.offerId!), [botA.workerId],
         "the route answered twice and moved nothing");
     } finally {
