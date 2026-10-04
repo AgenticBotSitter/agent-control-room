@@ -491,7 +491,7 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
       LC_ALL: C
@@ -516,6 +516,12 @@ jobs:
             if [ -x "$tool" ]; then ls -l "$tool"; else echo "MISSING: $tool"; fi
           done
           umask; id; ls -ld /private/tmp || true
+      # The PostgreSQL-backed updater tests boot the real updater, which needs
+      # the macOS lockf, so they run here and not in the Linux components job.
+      - name: Install PostgreSQL 17 for the updater database tests
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install postgresql@17 && test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
       - name: Updater lane
         run: |
           set -euo pipefail
@@ -539,6 +545,7 @@ jobs:
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
           pnpm run test:updater
+          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres
 
   test-articles:
     name: Article build lane
@@ -918,7 +925,7 @@ jobs:
             timeout: 90
           - lane: updater
             runner: macos-26
-            timeout: 30
+            timeout: 45
           - lane: articles
             runner: ubuntu-latest
             timeout: 25
@@ -989,9 +996,13 @@ jobs:
           CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
           LC_ALL: C
           LANG: C
+          HOMEBREW_NO_AUTO_UPDATE: '1'
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile --ignore-scripts
+          # The PostgreSQL-backed updater tests run here too (see test-updater).
+          brew install postgresql@17
+          test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
           # BSD children inherit the containing directory's group. Use the
           # test login's primary group, not the shared temporary directory's.
           updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
@@ -1012,6 +1023,7 @@ jobs:
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
           pnpm run test:updater
+          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |

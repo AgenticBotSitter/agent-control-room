@@ -12,7 +12,8 @@
 //      unknown digest, a consumed one and an expired one are each refused by
 //      name, and the per-digest row cap holds a flood bounded;
 //   4. the web login's new surface is exactly five columns of SELECT and no
-//      INSERT, no UPDATE, no DELETE — and the migrator still reaches nothing;
+//      INSERT, no UPDATE, no DELETE — and the migrator reads every updater
+//      relation through the nightly backup's group and writes none of them;
 //   5. 50 concurrent registrations on one digest: all the racers' rows land and
 //      every one of them is visible, and the installer's exactly-one rule then
 //      refuses (50 rows > 1) rather than silently picking a winner;
@@ -39,6 +40,23 @@ import { comparisonCodeV1, PasskeyRefusalAggregatorV1 } from "../src/updater/v1/
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
 import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 import { createMacLocalPasskeyRegistrationPortV1 } from "../src/web/v1/mac-local-host";
+
+/** Catalog reach of one login over every updater relation, read as the admin. */
+async function privilegedReach(postgres: Postgres, login: string) {
+  const privileged = new Client(postgres.admin());
+  await privileged.connect();
+  try {
+    return await privileged.query<{ relation: string; read: boolean; insert: boolean; update: boolean;
+      remove: boolean; truncate: boolean }>(`SELECT c.relname AS relation,
+        has_table_privilege($1, c.oid, 'SELECT') AS read,
+        has_table_privilege($1, c.oid, 'INSERT') AS insert,
+        has_table_privilege($1, c.oid, 'UPDATE') AS update,
+        has_table_privilege($1, c.oid, 'DELETE') AS remove,
+        has_table_privilege($1, c.oid, 'TRUNCATE') AS truncate
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'updater' AND c.relkind IN ('r', 'v') ORDER BY 1`, [login]);
+  } finally { await privileged.end(); }
+}
 
 // 59670 is the port block this job was given.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59670), PG = requiresRealPostgres();
@@ -734,10 +752,39 @@ test("the web's added surface is five SELECT columns and no write at all", async
       await refuses(web, "SELECT * FROM updater.enqueue_cooling_off_notices('x',1,now(),now())");
       await refuses(web, "SELECT * FROM updater.passkey_registrations_limits");
 
-      // The migrator still reaches nothing at all, including the new tables.
+      // The migrator's authority is the nightly backup's, and it is READ-ONLY. It
+      // is a member of `control_room_schema_owner` (db/roles/production_provision.sql),
+      // and the updater DDL grants that group USAGE on the schema and SELECT on every
+      // relation in it (src/updater/v1/ddl/0002_schema.sql, R5Q-06) so `pg_dump`,
+      // which the migrator runs nightly, can read the whole updater. The loader
+      // refuses to start if any of that is missing or any write is present
+      // (schema-installer.ts, backup_read_missing / backup_read_widened). So the
+      // migrator READS every updater relation, including the refusal tables and
+      // the web's view, and writes none of them.
       for (const table of ["passkey_open_registrations", "approval_refusals", "approval_refusal_buckets",
         "passkey_registrations_limits", "passkey_open_registrations_web"])
-        await refuses(migrator, `SELECT * FROM updater.${table}`);
+        await migrator.query(`SELECT * FROM updater.${table}`);
+      await refuses(migrator, "INSERT INTO updater.passkey_open_registrations(registration_digest,installation_id,"
+        + "mode,options_json,expires_at) VALUES($1,'install-fixture','initial','{}'::jsonb,now())",
+      [registrationDigest("migrator-should-not")]);
+      await refuses(migrator, "UPDATE updater.passkey_open_registrations SET consumed_at=now()");
+      await refuses(migrator, "DELETE FROM updater.passkey_open_registrations");
+      await refuses(migrator, "TRUNCATE updater.passkey_open_registrations");
+      await refuses(migrator, "UPDATE updater.passkey_registrations SET comparison_code='AAAAAA'");
+      await refuses(migrator, "DELETE FROM updater.approval_refusals");
+      await refuses(migrator, "DELETE FROM updater.passkey_open_registrations_web");
+      // Catalog-level, for EVERY relation rather than the sample above: SELECT, and
+      // not one write privilege on any of them.
+      // The exact relation list, so a new updater table is a deliberate change here.
+      const reach = (await privilegedReach(postgres, "control_room_migrator")).rows;
+      assert.deepEqual(reach.map(row => row.relation), [
+        "approval_refusal_buckets", "approval_refusals", "heartbeat", "open_run_attention", "owner_requests",
+        "owner_review", "owner_run_attention", "passkey_open_registrations", "passkey_open_registrations_web",
+        "passkey_registrations", "passkey_registrations_limits", "plan_approval_outcomes", "plan_approvals",
+        "plans", "push_queue", "run_events", "runs",
+      ], "the migrator's backup read covers exactly the updater's relations");
+      assert.deepEqual(reach.filter(row => !row.read || row.insert || row.update || row.remove || row.truncate)
+        .map(row => row.relation), [], "the migrator reads every updater relation and writes none");
       // The web's usable read is the view (DB-8): SELECT only, and it carries the
       // same five columns and not `consumed_at`, so the web learns "open" without
       // learning when anything was consumed.
@@ -749,7 +796,8 @@ test("the web's added surface is five SELECT columns and no write at all", async
       await refuses(web, "DELETE FROM updater.passkey_open_registrations_web");
       await refuses(migrator, "CREATE TABLE updater.probe2(id int)");
       assert.equal((await migrator.query<{ usage: boolean }>(
-        "SELECT has_schema_privilege(current_user,'updater','USAGE') AS usage")).rows[0]?.usage, false);
+        "SELECT has_schema_privilege(current_user,'updater','USAGE') AS usage")).rows[0]?.usage, true,
+      "the migrator holds USAGE on the updater schema, through the backup-read group");
 
       // The full function surface, as an EXACT set rather than "nothing". Two
       // functions are executable by the web login by design: the two IMMUTABLE
@@ -776,7 +824,7 @@ test("the web's added surface is five SELECT columns and no write at all", async
           "authorization_complete(credential_id text, authenticator_data bytea, client_data_json bytea, signature bytea)",
           "bounded_transports(value text[])",
         ], "the web login may execute exactly the two CHECK helpers and nothing else");
-        // And the migrator, which has no USAGE on the schema at all.
+        // And the migrator, which reads through the backup group but executes nothing.
         assert.equal((await privileged.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_proc p
           JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'updater'
             AND has_function_privilege('control_room_migrator', p.oid, 'EXECUTE')`)).rows[0]?.n, 0,
