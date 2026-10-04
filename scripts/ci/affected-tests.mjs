@@ -347,17 +347,16 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);
   const preparationCount = commands.length - testCommands.length;
-  const units = commands.map(([command, arguments_], index) => index < preparationCount
-    ? [command, ...arguments_].join(" ") : testCommands[index - preparationCount].tests[0]);
+  for (const [command, arguments_] of commands.slice(0, preparationCount)) {
+    const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
+    if (status !== 0) return status;
+  }
+  const units = testCommands.map(testCommand => testCommand.tests[0]);
   let index = 0;
   return runUnits(units, () => {
     const current = index++;
-    const [command, arguments_] = commands[current];
-    if (current < preparationCount) {
-      const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
-      return { status };
-    }
-    const testCommand = testCommands[current - preparationCount];
+    const [command, arguments_] = commands[preparationCount + current];
+    const testCommand = testCommands[current];
     const execution = executeCapturingOutput(command, arguments_, repositoryRoot, testCommand.environment);
     const status = typeof execution === "number" ? execution : execution.status;
     const output = typeof execution === "number" ? "" : execution.output;

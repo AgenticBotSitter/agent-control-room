@@ -50,7 +50,7 @@
   },
   {
     "file": "scripts/ci/run-scripts-keep-going.mjs",
-    "find": "return failures[0]?.status ?? 0;",
+    "find": "return failures.length === 0 ? 0 : (failures[0].status || 1);",
     "replace": "return 0;",
     "test": "node --test tests/run-scripts-keep-going.test.mjs",
     "why": "a failing plan must return a nonzero final status"
@@ -103,5 +103,40 @@
     "replace": "try { /* mutation: omit serial runner references */ }",
     "test": "node --test tests/check-test-lane-coverage.test.mjs",
     "why": "the coverage checker must reach the new runner units"
+  },
+  {
+    "file": "scripts/ci/affected-tests.mjs",
+    "find": "if (status !== 0) return status;",
+    "replace": "",
+    "test": "node --test tests/affected-tests.test.mjs",
+    "why": "failed build preparations must stop before later builds and test files"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "return failures.length === 0 ? 0 : (failures[0].status || 1);",
+    "replace": "return failures[0]?.status ?? 0;",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "null and absent statuses from failed units must never return success"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "    if (githubActions && result.status !== 0) log(`::error::${unit} FAILED (status ${result.status || 1})`);",
+    "replace": "",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "a failure annotation must appear outside its group before the next unit starts"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (githubActions && result.status !== 0)",
+    "replace": "if (githubActions)",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "passing units must not produce error annotations"
+  },
+  {
+    "file": "scripts/ci/run-scripts-keep-going.mjs",
+    "find": "if (githubActions && result.status !== 0)",
+    "replace": "if (result.status !== 0)",
+    "test": "node --test tests/run-scripts-keep-going.test.mjs",
+    "why": "local runs must not emit GitHub workflow annotations"
   }
 ]

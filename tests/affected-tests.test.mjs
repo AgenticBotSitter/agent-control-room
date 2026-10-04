@@ -76,12 +76,33 @@ test("failures, unexempted skips and spawn errors do not hide later affected fil
   } finally { console.log = originalLog; rmSync(root, { recursive: true }); }
 });
 
-test("failed preparations still fail the plan after both builds and every selected file run", () => {
+test("a failed preparation stops the plan before the second build or any test runs", () => {
   const root = fixture({ "tests/example.test.mjs": "" }), calls = [];
   try {
     assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, (_command, args) => {
       calls.push(args.join(" ")); return 2;
     }, () => true, (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "# skipped 0\n" }; }), 2);
+    assert.deepEqual(calls, ["build"]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("a failed demo preparation stops tests, and a retry runs after both builds succeed", () => {
+  const root = fixture({ "tests/example.test.mjs": "" }), calls = [];
+  let failDemo = true;
+  const execute = (_command, args) => {
+    calls.push(args.join(" "));
+    return failDemo && args.includes("build:demo") ? 3 : 0;
+  };
+  const capture = (_command, args) => {
+    calls.push(args.at(-1));
+    return { status: 0, output: "# skipped 0\n" };
+  };
+  try {
+    assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, execute, () => true, capture), 3);
+    assert.deepEqual(calls, ["build", "run build:demo"]);
+    failDemo = false;
+    calls.length = 0;
+    assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, execute, () => true, capture), 0);
     assert.deepEqual(calls, ["build", "run build:demo", "tests/example.test.mjs"]);
   } finally { rmSync(root, { recursive: true }); }
 });

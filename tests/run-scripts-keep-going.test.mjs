@@ -54,6 +54,49 @@ test("a burst of fifty serial units reaches the last unit, and a retry can succe
   assert.equal(runUnits(names, () => ({ status: 0 }), () => {}, false), 0);
 });
 
+test("null and missing statuses fail closed even when later units pass", () => {
+  for (const failure of [{ status: null }, {}]) {
+    const calls = [], logs = [];
+    assert.equal(runUnits(["failed", "passed"], name => {
+      calls.push(name);
+      return name === "failed" ? failure : { status: 0 };
+    }, message => logs.push(message), true), 1);
+    assert.deepEqual(calls, ["failed", "passed"]);
+    assert.ok(logs.includes("::error::failed FAILED (status 1)"));
+    assert.match(logs.at(-1), /Completed 2 unit\(s\); 1 failed/u);
+  }
+});
+
+test("a raw signal-killed unit fails closed and the next unit still runs", () => {
+  const child = spawnSync(process.execPath, ["-e", "process.kill(process.pid, 'SIGKILL')"], { timeout: 5_000 });
+  assert.equal(child.error, undefined);
+  assert.equal(child.signal, "SIGKILL");
+  assert.equal(child.status, null);
+  const calls = [];
+  const status = runUnits(["killed", "passed"], name => {
+    calls.push(name);
+    return name === "passed" ? { status: 0 } : child;
+  }, () => {}, false);
+  assert.equal(status, 1);
+  assert.deepEqual(calls, ["killed", "passed"]);
+});
+
+test("failure annotations appear outside groups before the next unit begins", () => {
+  const logs = [];
+  let beforeNextUnit;
+  assert.equal(runUnits(["failed", "passed"], name => {
+    if (name === "passed") beforeNextUnit = [...logs];
+    return { status: name === "failed" ? 4 : 0 };
+  }, message => logs.push(message), true), 4);
+  assert.deepEqual(beforeNextUnit, [
+    "::group::failed", "::endgroup::", "::error::failed FAILED (status 4)", "::group::passed",
+  ]);
+  assert.equal(logs.filter(line => line.startsWith("::error::")).length, 1);
+  const localLogs = [];
+  assert.equal(runUnits(["failed"], () => ({ status: 4 }), message => localLogs.push(message), false), 4);
+  assert.ok(localLogs.every(line => !line.startsWith("::")));
+});
+
 test("a real CLI temp-package run continues after a deliberate failure and exits nonzero at the end", () => {
   const root = mkdtempSync(join(tmpdir(), "acr-ci-keep-going-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: {

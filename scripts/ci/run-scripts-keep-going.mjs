@@ -34,6 +34,7 @@ export function runUnits(units, execute, log = console.log, githubActions = proc
     } finally {
       if (githubActions) log("::endgroup::");
     }
+    if (githubActions && result.status !== 0) log(`::error::${unit} FAILED (status ${result.status || 1})`);
     results.push({ unit, status: result.status, verdict: result.verdict ?? (result.status === 0 ? "PASS" : "FAIL"),
       seconds: (performance.now() - start) / 1000 });
   }
@@ -41,7 +42,7 @@ export function runUnits(units, execute, log = console.log, githubActions = proc
   for (const result of results) log(`${result.unit} | ${result.verdict} | ${result.seconds.toFixed(3)}`);
   const failures = results.filter(result => result.status !== 0);
   log(`Completed ${results.length} unit(s); ${failures.length} failed.`);
-  return failures[0]?.status ?? 0;
+  return failures.length === 0 ? 0 : (failures[0].status || 1);
 }
 
 export function parseArguments(args) {
