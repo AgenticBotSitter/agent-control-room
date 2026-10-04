@@ -36,6 +36,7 @@ import { macRolePlan } from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { databaseRoleManifestV1 } from "../scripts/mac-local/database-role-manifest.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
+import { installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { PG_BIN, needsPg } from "./helpers/disposable-postgres-cluster.ts";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
@@ -116,7 +117,8 @@ const KILL_WINDOW_BUDGET_MS = Number(process.env.CONTROL_ROOM_KILL_WINDOW_BUDGET
 /** A dedicated port per cluster, all inside the assigned test port range, so a
  * run can be moved out of the way of whatever else is using 58520-58529. */
 const PORT_BASE = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58520);
-const PORTS = { old: PORT_BASE, fresh: PORT_BASE + 1, migrationsKill: PORT_BASE + 2, grantsKill: PORT_BASE + 3 };
+const PORTS = { old: PORT_BASE, fresh: PORT_BASE + 1, migrationsKill: PORT_BASE + 2, grantsKill: PORT_BASE + 3,
+  queuePresent: PORT_BASE + 4 };
 
 // ---------------------------------------------------------------------------
 // PostgreSQL clusters and the ledger-90 / fresh-HEAD database fixtures.
@@ -613,4 +615,32 @@ test("a real kill inside the grants transaction rolls back every grant and membe
     const { applied: resumedApplied } = await upgradeViaStep(freshUpstream, target, root, { readCode: never });
     assert.equal(resumedApplied.done, true, JSON.stringify(resumedApplied));
     assert.equal(macDatabaseUpgradePlanIsEmptyV1(await inspectMacDatabaseUpgradeV1({ client })), true);
+  });
+
+// The other shape the upgrade meets: a ledger-90 database whose queue already
+// exists (built by an earlier install) but which has no backup read on it yet.
+// 0285 refuses that shape by name, so the read has to be applied BEFORE the
+// ledger runs. Without that, this upgrade stops at 0285 and never reaches the
+// grants converger at all.
+test("a queue that already exists without the nightly backup's read gets it before the ledger runs", { skip },
+  async t => {
+    const cluster = await startCluster("acr-p4-qpresent-", PORTS.queuePresent);
+    let client;
+    t.after(async () => {
+      try { await client?.end(); } catch { /* already closed */ }
+      try { await cluster.teardown.stop(); } finally { await rm(cluster.root, { recursive: true, force: true }); }
+    });
+    client = await ledger90Fixture(cluster);
+    await installFixedQueueSchemaV1(client);
+    const readOf = async () => (await client.query(`SELECT has_schema_privilege('control_room_schema_owner',
+      'control_room_queue', 'USAGE') AS usage, has_table_privilege('control_room_schema_owner',
+      'control_room_queue.job', 'SELECT') AS job_select`)).rows[0];
+    assert.deepEqual(await readOf(), { usage: false, job_select: false }, "the fixture starts without the read");
+
+    const target = socketTarget(cluster), root = await backupRoot(cluster);
+    const upstream = await buildUpstream(cluster.root);
+    const { applied } = await upgradeViaStep(upstream, target, root, { readCode: async () => bothLoginCodes });
+    assert.equal(applied.done, true, JSON.stringify(applied));
+    assert.equal(macDatabaseUpgradePlanIsEmptyV1(await inspectMacDatabaseUpgradeV1({ client })), true);
+    assert.deepEqual(await readOf(), { usage: true, job_select: true }, "the upgrade grants the nightly backup's read");
   });

@@ -24,7 +24,15 @@ const groups = manifest.groups;
 const newLogins = logins.filter(login => manifest.logins[login].newLogin);
 const macPrincipals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
 const migrationLedger = new URL("../../deploy/postgres/migration-ledger.json", import.meta.url);
+const queueBackupReadFile = new URL("../../db/roles/queue_backup_read_roles.sql", import.meta.url);
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+
+// Runs the same file the fresh install runs (narrow-role-provision.mjs). The file
+// owns its own BEGIN/COMMIT, so it runs outside the grants transaction. Callers
+// only invoke it once the queue schema exists, because the file refuses without it.
+async function applyQueueBackupReadV1(client) {
+  await client.query(await readFile(queueBackupReadFile, "utf8"));
+}
 
 async function pendingMigrations(applied) {
   const ledger = JSON.parse(await readFile(migrationLedger, "utf8"));
@@ -284,6 +292,15 @@ async function applyMacDatabaseUpgradeBodyV1({ client, expectedPlanDigest, apply
       throw error;
     }
   }
+  // The nightly backup's read on the queue schema (R5B-01) is granted by the
+  // reviewed file below, which the fresh install runs too. It is NOT in the
+  // converger's `roleFiles` (its parser refuses the schema-owner group), so this
+  // is the only place an upgrade can apply it. When the queue already exists it
+  // goes BEFORE the ledger, because 0285 refuses a present queue without the read;
+  // when the queue is built here it goes right after the build. Idempotent, so any
+  // upgrade that does work also re-asserts a read someone revoked (a run with
+  // nothing to do returns before this point).
+  if (!before.installQueueSchema) await applyQueueBackupReadV1(client);
   if (before.pendingMigrations.length) {
     onStage("migrate");
     await applyPending();
@@ -291,6 +308,7 @@ async function applyMacDatabaseUpgradeBodyV1({ client, expectedPlanDigest, apply
   if (before.installQueueSchema) {
     onStage("queue");
     await installFixedQueueSchemaV1(client);
+    await applyQueueBackupReadV1(client);
   }
   onStage("grants");
   await client.query("BEGIN");
