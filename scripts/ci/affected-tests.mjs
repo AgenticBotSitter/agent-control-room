@@ -161,7 +161,9 @@ function executeCommandCapturingOutput(command, arguments_, root, environment = 
   // A focused guard test invokes this runner from node:test. Its child is the
   // actual test process, not a recursive discovery run.
   delete env.NODE_TEST_CONTEXT;
-  const child = spawnSync(command, arguments_, { cwd: root, encoding: "utf8", env });
+  // TAP from a long real-PostgreSQL suite exceeds spawnSync's 1 MiB default and
+  // failed the lane with ENOBUFS; 256 MiB still bounds a runaway writer.
+  const child = spawnSync(command, arguments_, { cwd: root, encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024 });
   if (child.error) throw child.error;
   process.stdout.write(child.stdout ?? "");
   process.stderr.write(child.stderr ?? "");
