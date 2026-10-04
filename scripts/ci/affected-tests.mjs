@@ -30,6 +30,7 @@ export const skippedTestExemptions = new Map([
   ["tests/private-macos-claude-code-qualification-route.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-macos-service-native-host.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-protected-root-native-directory.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/result-file-upload-race-postgres.test.ts", "upload staging requires the macOS O_EXLOCK directory lock; skips its race test on Linux"],
   ["tests/mac-local-pg17-rehearsal.test.mjs", "runs in the full-mac-local-rehearsal job, which provides CONTROL_ROOM_MAC_REHEARSAL_ROOT (see PR #429)"],
 ]);
 
