@@ -490,7 +490,7 @@ jobs:
     name: macOS updater tests
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
@@ -897,7 +897,7 @@ jobs:
             runner: ubuntu-latest
             timeout: 90
           - lane: updater
-            runner: macos-14
+            runner: macos-15
             timeout: 30
           - lane: articles
             runner: ubuntu-latest

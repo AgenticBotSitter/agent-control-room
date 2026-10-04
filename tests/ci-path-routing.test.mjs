@@ -344,7 +344,7 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.deepEqual(LANES, ["demo", "server", "components", "updater", "articles"]);
   const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
   assert.match(job("route"), /updater: \$\{\{ steps\.route\.outputs\.updater \}\}/u);
-  assert.match(updater, /runs-on: macos-14/u);
+  assert.match(updater, /runs-on: macos-15/u);
   assert.match(updater, /node-version: 22/u);
   assert.match(updater, /timeout-minutes: 30/u);
   assert.match(updater, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
@@ -354,7 +354,7 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.match(scripts["test:updater:linux"], /tests\/updater-journal-linux\.test\.mjs/u);
   assert.doesNotMatch(scripts["test:updater"], /updater-journal-linux/u);
   assert.match(catchUp, /runs-on: \$\{\{ matrix\.runner \}\}/u);
-  assert.match(catchUp, /- lane: updater\n\s+runner: macos-14/u);
+  assert.match(catchUp, /- lane: updater\n\s+runner: macos-15/u);
   const updaterStep = catchUp.slice(catchUp.indexOf("      - name: Updater lane (merge gate)"));
   assert.match(updaterStep, /matrix\.lane == 'updater'/u);
   assert.match(updaterStep, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
