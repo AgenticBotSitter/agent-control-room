@@ -45,7 +45,7 @@ function proposal(projectId: string): WorkBatchProposalV1 {
   return { schema: "control-room.work-batch-proposal/v1", projectId, tasks: [
     { localId: "build", title: "Build the change", instructions: "Implement the requested change.",
       requiredCapability: "code.change", role: "builder",
-      acceptanceCriteria: "tbd", acceptanceTests: "Run the focused tests and confirm they pass." },
+      acceptanceCriteria: "Details are tbd until the owner reviews it.", acceptanceTests: "Run the focused tests and confirm they pass." },
   ], edges: [] };
 }
 
