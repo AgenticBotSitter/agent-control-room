@@ -37,6 +37,22 @@ function check(files, changed, expected) {
   finally { rmSync(root, { recursive: true }); }
 }
 
+// Quick checks runs before dependency installation. These synthetic fixtures
+// are plain JavaScript; keep the real test process and TAP skip detection, but
+// omit the TypeScript loader that the production test plan requires.
+function executePlainFixture(command, arguments_, commandRoot, environment) {
+  const fixtureArguments = arguments_.filter(argument => argument !== "--import" && argument !== "tsx");
+  const env = { ...environment };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawnSync(command, fixtureArguments, {
+    cwd: commandRoot, encoding: "utf8", env, timeout: 10_000,
+  });
+  const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
+  assert.equal(child.status, 0, `the fixture must run successfully before its skip count is checked: ${output}`);
+  assert.match(output, /^# tests 1$/mu, "the fixture must report its one test in TAP");
+  return { status: child.status, output };
+}
+
 test("a leaf change walks transitively to exactly its importing tests", () => {
   check({
     "src/leaf.ts": "export const leaf = 1;",
@@ -148,7 +164,10 @@ test("an env-gated PostgreSQL fixture cannot skip to a green result", () => {
   delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
   try {
     assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root,
-      () => 0, () => true), 1);
+      () => 0, () => true, executePlainFixture), 1);
+    assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root,
+      () => 0, () => true, (command, args, cwd, env) => executePlainFixture(command, args, cwd,
+        { ...env, CONTROL_ROOM_PG17_UPGRADE_REHEARSAL: "1" })), 0);
   } finally {
     if (original === undefined) delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
     else process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL = original;
@@ -359,19 +378,10 @@ test("a real slow-ish node:test run is not killed by crowding from a neighboring
     "test('a', async () => { await setTimeout(1200); });");
   writeFileSync(join(root, "tests/slow-b.test.mjs"), "import test from 'node:test';\nimport { setTimeout } from 'node:timers/promises';\n" +
     "test('b', async () => { await setTimeout(1200); });");
-  // The fixtures are plain .mjs, so they need no `--import tsx`. Run the real
-  // process.execPath with that flag stripped so this test proves per-file
-  // isolation without depending on tsx being installed (Quick checks runs
-  // this file before `pnpm install`).
-  function executeCapturingOutput(command, arguments_, commandRoot, environment) {
-    const strippedArguments = arguments_.filter(argument => argument !== "--import" && argument !== "tsx");
-    const child = spawnSync(command, strippedArguments, { cwd: commandRoot, encoding: "utf8", env: environment });
-    return { status: child.status ?? 1, output: `${child.stdout ?? ""}${child.stderr ?? ""}` };
-  }
   try {
     const tests = ["tests/slow-a.test.mjs", "tests/slow-b.test.mjs"];
     // Real execution, not a mocked runner: this is the same node --test the CI job invokes.
-    assert.equal(runAffectedTests(tests, tests, root, undefined, undefined, executeCapturingOutput), 0);
+    assert.equal(runAffectedTests(tests, tests, root, undefined, undefined, executePlainFixture), 0);
   } finally { rmSync(root, { recursive: true }); }
 });
 
@@ -496,9 +506,12 @@ test("an env-gated PostgreSQL fixture cannot skip to a green result even when th
   delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
   try {
     const tests = listTestFiles(root);
-    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true), 1,
+    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true, executePlainFixture), 1,
       "a migration PR that defers to ALL must not get a green merge gate while the upgrade rehearsal " +
       "silently skips for want of its env var");
+    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true,
+      (command, args, cwd, env) => executePlainFixture(command, args, cwd,
+        { ...env, CONTROL_ROOM_PG17_UPGRADE_REHEARSAL: "1" })), 0);
   } finally {
     if (original === undefined) delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
     else process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL = original;

@@ -308,6 +308,10 @@ jobs:
         run: pnpm run build && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-fleet-gateway-tolerance.test.mjs
       - name: Test and enforce TypeScript test loaders
         run: pnpm run test:test-loaders && pnpm run check:test-loaders
+      - name: Install zsh for the macOS paste-file checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
       - name: Owner paste-file lane
         env:
           CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'

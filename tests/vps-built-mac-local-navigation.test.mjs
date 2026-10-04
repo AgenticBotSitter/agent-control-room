@@ -50,12 +50,25 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
   const { receipt } = await taskResponse.json();
   const taskId = encodeURIComponent(receipt.jobId);
 
-  for (const path of ["/", "/morning", "/needs-me", "/projects", "/workers", `/projects/${projectId}`,
-    `/projects/${projectId}/tasks`, `/projects/${projectId}/reviews`, `/projects/${projectId}/activity`,
-    `/projects/${projectId}/tasks/${taskId}`]) {
+  for (const [path, next] of [["/", "/"], ["/morning", "/morning"], ["/needs-me", "/needs-me"],
+    ...["/projects", "/workers", `/projects/${projectId}`, `/projects/${projectId}/tasks`,
+      `/projects/${projectId}/reviews`, `/projects/${projectId}/activity`, `/projects/${projectId}/tasks/${taskId}`]
+      .map(path => [path, undefined]),
+    [`/projects/${project.projectId}`, `/projects/${project.projectId}`],
+    [`/projects/${project.projectId}/tasks/${receipt.jobId}`, `/projects/${project.projectId}/tasks/${receipt.jobId}`]]) {
     const signedOut = await send(path);
     assert.equal(signedOut.status, 303, `signed-out ${path}`);
-    assert.equal(new URL(signedOut.headers.get("location"), origin).href, `${origin}/session`);
+    const target = new URL(signedOut.headers.get("location"), origin);
+    assert.equal(target.href, `${origin}/session${next === undefined ? "" : `?next=${encodeURIComponent(next)}`}`);
+    assert.equal(target.origin, origin);
+    const signIn = await send(target.pathname + target.search);
+    assert.equal(signIn.status, 200);
+    assert.ok((await signIn.text()).includes(`location.assign(${JSON.stringify(next ?? "/projects")})`));
+  }
+  for (const next of ["https://foreign.invalid/", "//foreign.invalid/", "/\\foreign.invalid/",
+    "/%2f%2fforeign.invalid/", "javascript:alert(1)", "/needs-me?next=https://foreign.invalid/"]) {
+    assert.equal((await send(`/session?next=${encodeURIComponent(next)}`)).status, 400,
+      `unsafe sign-in return path ${next}`);
   }
   const home = await get("/");
   assert.equal(home.status, 200);

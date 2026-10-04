@@ -2059,7 +2059,9 @@ test("A2-06 installer rehearsal JSON refuses duplicate decoded keys in configura
 
 // Synthetic diagnostics only: no database process or SQL is needed.
 test("A2-11 PostgreSQL failure lines contain bounded printable diagnostics", async () => {
-  const { pgFailureLineV1 } = await import("../src/updater/v1/pg/init-database.mjs");
+  // The shipped phase is bundled to JavaScript; source tests need the loader
+  // for its shared TypeScript cluster layout, including on Node 22.13.
+  const { pgFailureLineV1 } = await tsImport("../src/updater/v1/pg/init-database.mjs", import.meta.url);
   for (const text of ['FATAL: bad\u001b[2J\u001b[Hforged\rstatus',
     'PANIC: \u0000\u0007\t\u007f\u0085\u009b', 'ERROR: ' + 'x'.repeat(500)]) {
     const line = pgFailureLineV1(text);
