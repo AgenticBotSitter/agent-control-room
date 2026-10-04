@@ -58,6 +58,10 @@ const COMPOSER_COLUMNS = {
   attention_items: ["id", "tenant_id", "project_id", "attention_type", "title", "summary", "due_at",
     "observed_at", "work_item_id"],
   control_job_dependencies: ["tenant_id", "job_id", "depends_on_job_id"],
+  // 0298: the owner's run page reads the run's live position against its
+  // ceilings on the web login, so the startup gate allows exactly these columns.
+  pipeline_advance_receipts: ["tenant_id", "pipeline_run_id", "stage_ordinal", "loop_index", "source_job_id",
+    "execution_job_id", "advanced_at", "delegation_cost_state", "delegation_cost_microusd"],
 } as const;
 
 async function seedTenant(admin: Client, t: ReturnType<typeof ids>) {
