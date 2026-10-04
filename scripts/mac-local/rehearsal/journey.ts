@@ -24,6 +24,7 @@ import { serviceInstalled } from "../service.mjs";
 import { removeRehearsalConnectorAdvertisementV1, signRehearsalConnectorReleaseV1 } from "./sign-connector-release";
 import { connectBotForJourney, deliverForJourney, removeJourneyConnectorWorkspacesV1 } from "./journey-connector-route";
 import { runMacLocalJourneyV1 } from "./journey-lifecycle";
+import { databaseSqlStateIsAnyV1 } from "../../../src/persistence/database";
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
@@ -351,7 +352,7 @@ const collisionConnection = () => {
   // prove the lock order itself as this rehearsal's verified administrator.
   await assert.rejects(lookup.query("SELECT result_id FROM fleet_results WHERE tenant_id=$1 AND result_id=$2 FOR UPDATE",
     [config.localOwnerSession.tenantId, collisionRow.result_id]),
-  (error: { code?: string }) => error?.code === "42501", "the fleet gateway must not row-lock append-only results");
+  (error: unknown) => databaseSqlStateIsAnyV1(error, ["42501"]), "the fleet gateway must not row-lock append-only results");
   await lookup.end();
   const adminConnection = () => {
     const client = connectTarget(target);
