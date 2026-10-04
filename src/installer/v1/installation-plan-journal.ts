@@ -126,10 +126,14 @@ export class InstallationPlanFilesystemJournalV1 {
       && (entry.size > 0 || allowEmpty && entry.size === 0) && entry.size <= maximumBytes;
   }
 
-  private async readPlan(revision: number, session: InstallationPlanJournalStorageSessionV1): Promise<InstallationPlanV1> {
+  private async readPlan(revision: number, session: InstallationPlanJournalStorageSessionV1,
+    expectedIdentity?: Identity, allowLinked = false): Promise<InstallationPlanV1> {
     try {
       const read = await session.readEntry(this.targetName(revision), MAX_PLAN_BYTES);
-      if (!this.validPrivateFile(read.entry, MAX_PLAN_BYTES, 1) || read.bytes.byteLength !== read.entry.size) unavailable();
+      if (!this.validPrivateFile(read.entry, MAX_PLAN_BYTES, allowLinked && read.entry.linkCount === 2 ? 2 : 1)
+        || read.bytes.byteLength !== read.entry.size
+        || expectedIdentity && (read.entry.identity.device !== expectedIdentity.device
+          || read.entry.identity.inode !== expectedIdentity.inode)) unavailable();
       const plan = verifyInstallationPlanV1(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes)));
       if (plan.revision !== revision) unavailable();
       return plan;
@@ -144,7 +148,13 @@ export class InstallationPlanFilesystemJournalV1 {
   Promise<{ value: PublicationWitness; identity: Identity } | undefined> {
     const name = this.witnessName(revision), before = await session.statEntry(name);
     if (!before) return undefined;
-    if (!this.validPrivateFile(before, 1024, 1, true)) unavailable();
+    if (!this.validPrivateFile(before, 1024, 1, true)) {
+      // lstat may precede retirement while realpath follows it. Retry only a
+      // private witness whose sole invalid property is that vanished pathname.
+      if (this.validPrivateFile({ ...before, canonical: true }, 1024, 1, true)
+        && !await session.statEntry(name)) settling();
+      unavailable();
+    }
     if (before.size === 0) settling();
     try {
       const read = await session.readEntry(name, 1024);
@@ -181,7 +191,26 @@ export class InstallationPlanFilesystemJournalV1 {
       if (await this.readWitness(revision, session)) unavailable();
       return;
     }
-    const witness = await this.readWitness(revision, session);
+    // Capture verified content while the target still has its publication alias.
+    // A freed inode can be reused: device+inode alone cannot bind a later read to
+    // this plan once another writer has retired the temp and witness.
+    let publishingPlan: InstallationPlanV1 | undefined;
+    if (targetEntry.linkCount !== 1) {
+      if (!this.validPrivateFile(targetEntry, MAX_PLAN_BYTES, 2)) unavailable();
+      publishingPlan = await this.readPlan(revision, session, targetEntry.identity, true);
+    }
+    const assertObservedContent = async (allowLinked = false) => {
+      const currentPlan = await this.readPlan(revision, session, targetEntry.identity, allowLinked);
+      if (currentPlan.planDigest !== publishingPlan?.planDigest) unavailable();
+    };
+    let witness: { value: PublicationWitness; identity: Identity } | undefined;
+    try { witness = await this.readWitness(revision, session); }
+    catch (error) {
+      // Witness retirement can itself request a retry. Preserve the content
+      // binding before the next pass takes a fresh target snapshot.
+      if (error instanceof PublicationSettling && publishingPlan) await assertObservedContent(true);
+      throw error;
+    }
     if (targetEntry.linkCount === 1) {
       if (!witness) return;
       const plan = await this.readPlan(revision, session);
@@ -190,12 +219,14 @@ export class InstallationPlanFilesystemJournalV1 {
       await this.unlinkWitness(revision, witness.identity, session, true);
       return;
     }
-    if (!this.validPrivateFile(targetEntry, MAX_PLAN_BYTES, 2)) unavailable();
     if (!witness) {
       const current = await session.statEntry(targetName);
       if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)
         && current.identity.device === targetEntry.identity.device
-        && current.identity.inode === targetEntry.identity.inode) return;
+        && current.identity.inode === targetEntry.identity.inode) {
+        await assertObservedContent();
+        return;
+      }
       return unavailable();
     }
     const tempEntry = await session.statEntry(witness.value.tempName);
@@ -203,7 +234,10 @@ export class InstallationPlanFilesystemJournalV1 {
       const current = await session.statEntry(targetName);
       if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)
         && current.identity.device === targetEntry.identity.device
-        && current.identity.inode === targetEntry.identity.inode) settling();
+        && current.identity.inode === targetEntry.identity.inode) {
+        await assertObservedContent();
+        settling();
+      }
       return unavailable();
     }
     // A writer can unlink the temp alias between lstat and canonical-path lookup.
@@ -217,11 +251,15 @@ export class InstallationPlanFilesystemJournalV1 {
       if (current && this.validPrivateFile(current, MAX_PLAN_BYTES, 1)
         && current.identity.device === targetEntry.identity.device
         && current.identity.inode === targetEntry.identity.inode
-        && !await session.statEntry(witness.value.tempName)) settling();
+        && !await session.statEntry(witness.value.tempName)) {
+        await assertObservedContent();
+        settling();
+      }
     }
     if (!this.validPrivateFile(tempEntry, MAX_PLAN_BYTES, 2)
       || tempEntry.identity.device !== targetEntry.identity.device
       || tempEntry.identity.inode !== targetEntry.identity.inode) unavailable();
+    if (publishingPlan?.planDigest !== witness.value.planDigest) unavailable();
     await session.unlinkExact(witness.value.tempName, tempEntry.identity, true);
     await session.syncDirectory();
     const current = await session.statEntry(targetName);

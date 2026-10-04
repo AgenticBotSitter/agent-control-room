@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, link, lstat, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdtemp, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -207,6 +207,46 @@ test("a read-only read still refuses a witness with no target and never repairs 
   } finally { await f.cleanup(); }
 });
 
+test("an exact writer retries witness metadata whose canonical lookup lost a retirement race",
+  { timeout: 15_000 }, async t => {
+    for (const variant of ["retired", "present", "unsafe-retired"] as const) await t.test(variant, async () => {
+      const f = await fixture();
+      try {
+        const plan = create(), tempName = `${f.installationId}.installation-plan.revision-0000000000.88888888-8888-4888-8888-888888888888.tmp`;
+        const witnessName = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+        await writeFile(join(f.root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600 });
+        await link(join(f.root, tempName), join(f.root, name(f.installationId, 0)));
+        await writeFile(join(f.root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+          revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600 });
+        let observed = false;
+        const late = new InstallationPlanFilesystemJournalV1({ rootDirectory: f.root, installationId: f.installationId,
+          ownerUid: process.getuid!() }, async request => {
+          const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+          return Object.freeze({ ...base, async statEntry(entryName: string) {
+            const entry = await base.statEntry(entryName);
+            if (!observed && entryName === witnessName && entry) {
+              observed = true;
+              if (variant !== "present") await f.journal.readHistory();
+              // lstat succeeded before retirement; realpath completed after it.
+              return Object.freeze({ ...entry, canonical: false,
+                ...(variant === "unsafe-retired" ? { mode: 0o644 } : {}) });
+            }
+            return entry;
+          } });
+        });
+        if (variant === "retired") {
+          assert.equal((await late.append(plan)).replayed, true);
+          assert.deepEqual(await readdir(f.root), [name(f.installationId, 0)]);
+        } else {
+          const before = performance.now();
+          await assert.rejects(late.append(plan), /installation_plan_journal_unavailable/);
+          assert.ok(performance.now() - before < 1_000, "unsafe or still-present witnesses refuse immediately");
+        }
+        assert.equal(observed, true, "the witness metadata race was exercised");
+      } finally { await f.cleanup(); }
+    });
+  });
+
 test("a recovery reader waits out a live publication instead of refusing it", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-waitout-")));
   await chmod(root, 0o700);
@@ -390,8 +430,11 @@ test("recovery refuses a substituted temp or target inside the unlink-alias retr
               await link(attacker, tempPath);
             }
             if (variant === "foreign-target-file") {
+              // Allocate while the original still exists: ext4 must not reuse it.
+              const replacement = join(root, "substituted-plan.json");
+              await writeFile(replacement, `${canonicalJson(create("attacker"))}\n`, { mode: 0o600, flag: "wx" });
               await rm(targetPath);
-              await writeFile(targetPath, `${canonicalJson(create("attacker"))}\n`, { mode: 0o600 });
+              await rename(replacement, targetPath);
             }
             if (variant === "truncated-target") await writeFile(targetPath, "", { mode: 0o600 });
             return Object.freeze({ identity: { device: opened.dev, inode: opened.ino },
@@ -816,8 +859,8 @@ test("an empty witness with unsafe permissions refuses immediately", async () =>
   } finally { await f.cleanup(); }
 });
 
-for (const phase of ["missing-witness", "missing-temp"] as const) {
-  for (const replacement of ["inode", "device"] as const) {
+for (const phase of ["missing-witness", "missing-temp", "unlink-alias", "witness-metadata", "witness-read"] as const) {
+  for (const replacement of ["inode", "device", "reused-inode"] as const) {
     test(`a ${phase} recovery refuses a changed target ${replacement}`, async () => {
       const f = await fixture();
       try {
@@ -828,26 +871,55 @@ for (const phase of ["missing-witness", "missing-temp"] as const) {
         await link(join(f.root, tempName), join(f.root, targetName));
         await writeFile(join(f.root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
           revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600 });
+        const originalIdentity = await entryIdentity(f.root, targetName);
+        assert.ok(originalIdentity);
         let recovered = false;
+        const recoverAndReplace = async () => {
+          recovered = true;
+          await f.journal.readHistory();
+          if (replacement !== "device") {
+            const substitute = join(f.root, "substituted-plan.json");
+            await writeFile(substitute, `${canonicalJson(create("substituted"))}\n`, { mode: 0o600, flag: "wx" });
+            await rm(join(f.root, targetName));
+            await rename(substitute, join(f.root, targetName));
+            assert.notEqual((await lstat(join(f.root, targetName), { bigint: true })).ino, originalIdentity.inode,
+              "the replacement was allocated before freeing the original inode");
+          }
+        };
         const slow = new InstallationPlanFilesystemJournalV1({ rootDirectory: f.root, installationId: f.installationId,
           ownerUid: process.getuid!() }, async request => {
           const base = await openInstallationPlanFilesystemStorageSessionV1(request);
           return Object.freeze({ ...base, async statEntry(entryName: string) {
             const entry = await base.statEntry(entryName);
-            if (!recovered && (phase === "missing-witness" && entryName === targetName
-              || phase === "missing-temp" && entryName === tempName)) {
-              recovered = true;
-              await f.journal.readHistory();
-              if (replacement === "inode") {
-                await rm(join(f.root, targetName));
-                await writeFile(join(f.root, targetName), `${canonicalJson(create("substituted"))}\n`, { mode: 0o600 });
-              }
-              return phase === "missing-witness" ? entry : undefined;
+            // Keep the original changed-inode/device race at the first target
+            // snapshot. Reuse probes retire the witness after content is read.
+            const missingWitnessEntry = replacement === "reused-inode" ? witnessName : targetName;
+            if (!recovered && (phase === "missing-witness" && entryName === missingWitnessEntry
+              || phase === "witness-metadata" && entryName === witnessName
+              || (phase === "missing-temp" || phase === "unlink-alias") && entryName === tempName)) {
+              await recoverAndReplace();
+              if (phase === "witness-metadata" && entry) return Object.freeze({ ...entry, canonical: false });
+              return phase === "unlink-alias" || phase === "missing-witness" && replacement !== "reused-inode" ? entry : undefined;
             }
             if (entry && entryName === targetName && recovered && replacement === "device") {
               return Object.freeze({ ...entry, identity: Object.freeze({ ...entry.identity, device: entry.identity.device + BigInt(1) }) });
             }
+            if (entry && entryName === targetName && recovered && replacement === "reused-inode") {
+              return Object.freeze({ ...entry, identity: originalIdentity });
+            }
             return entry;
+          }, async readEntry(entryName: string, maximumBytes: number) {
+            if (!recovered && phase === "witness-read" && entryName === witnessName) await recoverAndReplace();
+            const read = await base.readEntry(entryName, maximumBytes);
+            // Simulate ext4 reusing dev+ino while preserving real replacement bytes.
+            if (recovered && replacement === "reused-inode" && entryName === targetName) {
+              return Object.freeze({ ...read, entry: Object.freeze({ ...read.entry, identity: originalIdentity }) });
+            }
+            if (recovered && replacement === "device" && entryName === targetName) {
+              return Object.freeze({ ...read, entry: Object.freeze({ ...read.entry,
+                identity: Object.freeze({ ...read.entry.identity, device: originalIdentity.device + BigInt(1) }) }) });
+            }
+            return read;
           } });
         });
         const started = performance.now();
@@ -858,6 +930,44 @@ for (const phase of ["missing-witness", "missing-temp"] as const) {
     });
   }
 }
+
+test("recovery verifies the observed plan before removing publication evidence", async t => {
+  for (const variant of ["read-device", "read-inode", "read-link-count", "witness-digest"] as const) await t.test(variant, async () => {
+    const f = await fixture();
+    try {
+      const plan = create(), targetName = name(f.installationId, 0);
+      const tempName = `${f.installationId}.installation-plan.revision-0000000000.88888888-8888-4888-8888-888888888888.tmp`;
+      const witnessName = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+      await writeFile(join(f.root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600 });
+      await link(join(f.root, tempName), join(f.root, targetName));
+      await writeFile(join(f.root, witnessName), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+        revision: 0, tempName, planDigest: variant === "witness-digest" ? create("changed").planDigest : plan.planDigest })}\n`,
+      { mode: 0o600 });
+      const before = (await readdir(f.root)).sort();
+      let observed = false;
+      const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: f.root, installationId: f.installationId,
+        ownerUid: process.getuid!() }, async request => {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base, async readEntry(entryName: string, maximumBytes: number) {
+          const read = await base.readEntry(entryName, maximumBytes);
+          if (!observed && entryName === targetName) {
+            observed = true;
+            return Object.freeze({ ...read, entry: Object.freeze({ ...read.entry,
+              ...(variant === "read-link-count" ? { linkCount: 3 } : {}),
+              identity: Object.freeze({ ...read.entry.identity,
+                ...(variant === "read-device" ? { device: read.entry.identity.device + BigInt(1) } : {}),
+                ...(variant === "read-inode" ? { inode: read.entry.identity.inode + BigInt(1) } : {}) }) }) });
+          }
+          return read;
+        } });
+      });
+      await assert.rejects(journal.readHistory(), /installation_plan_journal_unavailable/);
+      assert.equal(observed, true);
+      assert.deepEqual((await readdir(f.root)).sort(), before, "refusal must preserve the temp and witness");
+      assert.equal((await lstat(join(f.root, targetName))).nlink, 2);
+    } finally { await f.cleanup(); }
+  });
+});
 
 test("a late exact writer accepts recovery that already retired its own witness", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-late-witness-")));
