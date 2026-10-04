@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { canonicalJson } from "../src/security/canonical-digest";
@@ -37,7 +38,7 @@ const sidecar = {
 };
 const encoded = (value: unknown) => Buffer.from(`${canonicalJson(value)}\n`, "utf8");
 async function protectedCapability(t: TestContext, identity = sidecar) {
-  const root = await mkdtemp(join(process.cwd(), ".claude-release-custody-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "claude-release-custody-")));
   t.after(() => rm(root, { recursive: true, force: true })); await chmod(root, 0o700);
   const configuration = encoded({ protected: true }), configurationName = "operator.json";
   await writeFile(join(root, configurationName), configuration, { mode: 0o600 });
