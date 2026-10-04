@@ -27,6 +27,8 @@ import { createPrivatePostgresDatabase, type PrivatePostgresConfiguration } from
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
 import { createProjectOrchestrationServiceV1 } from "../src/web/v1/project-orchestration-composition";
 import { OperatorSurfaceStoreV1 } from "../src/operator-surfaces/v1/store";
+import type { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
+import { UPDATER_HOME_STATUS_SCHEMA_V1 } from "../src/web/v1/updater-home-status";
 import type { AccessTrust } from "../src/web/v1/access-verifier";
 import { conformanceNow, conformanceSubject, syntheticAccessTrust, syntheticAssertion, syntheticSigningKey }
   from "./helpers/private-owner-bootstrap-conformance";
@@ -146,6 +148,10 @@ const OPTIONAL_CAPABILITY_PROBES: ReadonlyMap<string, string> = new Map([
   // src/web/v1/operations-mode-browser-client.ts -- a 404 maps to
   // BrowserRequestError("not_found"). Mounted only with an operations-mode key.
   ["/api/v1/operations-mode", "operations-mode browser client maps 404 to not_found"],
+  // src/web/v1/updater-owner-ui-browser.ts -- `status === 404` returns
+  // `{ state: "not_configured" }`. Mounted only with `options.updaterOwnerUi`,
+  // which the installed updater supplies and this page-journey fixture does not.
+  ["/api/v1/updater-owner-ui", "readUpdaterOwnerUiV1 returns state: not_configured"],
 ]);
 
 async function journeyFixture(t: TestContext): Promise<Journey> {
@@ -180,6 +186,15 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
     database: { client: opened.client, close: async () => {}, isAvailable: () => true }, planning,
     workerReadiness: { read: () => [{ kind: "codex" as const, state: "ready" as const, proof: "proven" as const }] },
     taskWorkersStarted: true,
+    // The installed host always mounts the updater status card's route. A fixture
+    // reader keeps this test off the owner's real status file (the default reader
+    // reads UPDATER_PUBLIC_ROOT_V1) and reports an idle, healthy updater, so the
+    // home page has no "Self-update needs your attention" alert to excuse.
+    updaterHomeStatus: { read: async () => ({ schema: UPDATER_HOME_STATUS_SCHEMA_V1, state: "healthy" as const }) },
+    // Mount the installed host's DB-backed catalog. This journey publishes no
+    // file bytes; the byte-store port stays empty on both macOS and Linux.
+    resultFileStore: { read: async () => undefined } as unknown as ResultFileStoreV1,
+    taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(7) },
     // Match the installed host's durable settings service, without a planner.
     orchestration: createProjectOrchestrationServiceV1({ db: opened.client,
       tenantId: configuration.tenantId, workspaceId: configuration.workspaceId,
@@ -301,7 +316,11 @@ function assertHealthyPage(page: MountedPage, expected: readonly RegExp[]) {
   // available.", which is the browser client's 404 text for a genuine missing
   // route -- which the 404 exemption above already covers deliberately.
   assert.doesNotMatch(text, /page unavailable|application error|error boundary|this page (?:is|could not)/i);
-  assert.equal(page.dom.window.document.querySelector('[role="alert"]'), null, text);
+  // The alert TEXTS, not the elements: a failing `assert.equal` on a live JSDOM
+  // element makes node format the element and its whole window, which grew to
+  // ~15 GB here before macOS killed the lane.
+  const alerts = [...page.dom.window.document.querySelectorAll('[role="alert"]')].map(alert => alert.textContent ?? "");
+  assert.deepEqual(alerts, [], `${page.dom.window.location.pathname} shows role=alert: ${text.slice(0, 300)}`);
 }
 
 test("real Mac-local pages complete the signed-in project and task journey without hidden HTTP failures", { skip: needsPg }, async t => {
@@ -342,8 +361,14 @@ test("real Mac-local pages complete the signed-in project and task journey witho
   const task = await mountPage(journey, taskPath,
     await TaskPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId), jobId: encodeURIComponent(receipt.jobId) }) }));
   try {
-    assertHealthyPage(task, [/Real-page task/, /Prepare task/, /Task assignment/, /Execution approval/]);
-    assert.ok(task.requests.some(value => value.endsWith("/plan")), "the real preparation panel must execute its client read");
+    // The installed Mac host is connector-only: its task routes answer
+    // dispatch "not_connected", so the page offers work to connected bots and
+    // must not show the hosted Prepare / Assign / Approve dead ends.
+    assertHealthyPage(task, [/Real-page task/, /Send this task to a bot/, /Offer to other machines/]);
+    assert.doesNotMatch(task.dom.window.document.body.textContent ?? "", /Task assignment|Execution approval/u,
+      "the connector-only Mac must not show hosted planning panels");
+    assert.ok(task.requests.includes(`GET /api/v1/projects/${encodeURIComponent(project.projectId)}/result-files?job=${encodeURIComponent(receipt.jobId)}`),
+      "the task page must read the installed result-file catalog route");
   } finally { await task.close(); }
 
   assert.equal((await journey.request("/workers", { headers: { cookie: journey.cookie } })).status, 200);
