@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
@@ -10,6 +9,7 @@ const { ResultUploadStagingV1, stagedChunkNameV1 } = await import('../src/artifa
 import { FleetUploadStoreV1 } from '../src/fleet/v1/upload-store.ts';
 const { createFleetGatewayHandlerV1 } = await import('../src/fleet/v1/gateway-http.ts');
 import { createFleetReleaseTrustForTestV1 } from './support/fleet-release.ts';
+import { kernelOpenLockTestV1 } from './support/kernel-open-lock.ts';
 
 const digest = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 const hex = n => n.toString(16).padStart(32, '0');
@@ -92,7 +92,7 @@ function uploadDatabase(expectedBytes) {
 }
 
 // The database below is a statement stand-in, not PostgreSQL evidence.
-test('R6FL-02: digest mismatch refuses before staging; 50 mismatches and correct resend', { timeout: 8000 }, async () => fixture(async base => {
+kernelOpenLockTestV1('R6FL-02: digest mismatch refuses before staging; 50 mismatches and correct resend', { timeout: 8000 }, async () => fixture(async base => {
   const root = await privateRoot(base, 'staging');
   const staging = await ResultUploadStagingV1.create(configuration(root));
   const approved = Buffer.from('GOOD'), swapped = Buffer.from('EVIL');
@@ -143,7 +143,7 @@ async function afterCleanup(action) {
 }
 
 for (const phase of ['open', 'writeFile', 'sync', 'close', 'read', 'readdir', 'link', 'link-replaced', 'directory-sync']) {
-  test(`R6FL-01: stalled ${phase} expires, holds only its root, cleans late I/O and retries`, { timeout: 30000 }, async () => fixture(async base => {
+  kernelOpenLockTestV1(`R6FL-01: stalled ${phase} expires, holds only its root, cleans late I/O and retries`, { timeout: 30000 }, async () => fixture(async base => {
     const root = await privateRoot(base, 'blocked'), otherRoot = await privateRoot(base, 'other');
     const staging = await ResultUploadStagingV1.create({ ...configuration(root), operationTimeoutMs: 150 });
     const peer = await ResultUploadStagingV1.create({ ...configuration(root), operationTimeoutMs: 150 });
@@ -274,7 +274,7 @@ for (const phase of ['open', 'writeFile', 'sync', 'close', 'read', 'readdir', 'l
   }));
 }
 
-test('R6FL-01: assembly shares one deadline across chunks and retries after late read', { timeout: 10000 }, async () => fixture(async base => {
+kernelOpenLockTestV1('R6FL-01: assembly shares one deadline across chunks and retries after late read', { timeout: 10000 }, async () => fixture(async base => {
   const root = await privateRoot(base, 'aggregate');
   const staging = await ResultUploadStagingV1.create({ ...configuration(root), operationTimeoutMs: 150 });
   for (let ordinal = 1; ordinal <= 4; ordinal++) await staging.stage({ ...identity, ordinal }, Buffer.from('piece'));
@@ -301,7 +301,7 @@ test('R6FL-01: assembly shares one deadline across chunks and retries after late
   assert.deepEqual(Buffer.from(await staging.assemble(identity, 4)), Buffer.from('piece'.repeat(4)));
 }));
 
-test('R6FL-01: discard refuses an unaccounted or replaced root without deleting bytes', { timeout: 8000 }, async () => fixture(async base => {
+kernelOpenLockTestV1('R6FL-01: discard refuses an unaccounted or replaced root without deleting bytes', { timeout: 8000 }, async () => fixture(async base => {
   const root = await privateRoot(base, 'discard');
   const staging = await ResultUploadStagingV1.create(configuration(root));
   await staging.stage(identity, Buffer.from('original'));

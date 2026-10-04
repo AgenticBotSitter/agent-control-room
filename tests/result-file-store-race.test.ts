@@ -32,8 +32,8 @@ import fs, { link, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm,
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
 import { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
+import { kernelOpenLockTestV1 } from "./support/kernel-open-lock";
 
 const TENANT = "tenant:race";
 /** The store's own answers, which are its `code` field values and nothing else.
@@ -169,7 +169,7 @@ const openerScriptV1 = (root: string) => `
   }
   console.log("CODES " + JSON.stringify(codes));`;
 
-test("B3: two writer processes and four opener processes never break the exclusion",
+kernelOpenLockTestV1("B3: two writer processes and four opener processes never break the exclusion",
   { timeout: 300_000 }, async () => {
     const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-race-")));
     const racers: ReturnType<typeof racerV1>[] = [];
@@ -253,7 +253,7 @@ test("B3: two writer processes and four opener processes never break the exclusi
     }
   });
 
-test("B3: a lock name stolen mid-write refuses the write, and the guard is the one doing it",
+kernelOpenLockTestV1("B3: a lock name stolen mid-write refuses the write, and the guard is the one doing it",
   async t => {
     // Pause at the real exclusive-open completion, before put() can prove
     // ownership. A payload size or an unlink polling loop cannot guarantee
@@ -326,7 +326,7 @@ test("B3: a lock name stolen mid-write refuses the write, and the guard is the o
     }
   });
 
-test("B3: a staging file that vanishes mid-write is an unprovable outcome, not a raw ENOENT",
+kernelOpenLockTestV1("B3: a staging file that vanishes mid-write is an unprovable outcome, not a raw ENOENT",
   async () => {
     // The fourth edit. `link()` failing with `ENOENT` means this writer's own
     // staging file was removed while it was writing — by a recovery that got in,
@@ -398,7 +398,7 @@ test("B3: a staging file that vanishes mid-write is an unprovable outcome, not a
     } finally { await rm(base, { recursive: true, force: true }); }
   });
 
-test("N-4c: a root whose volume honours O_EXLOCK is accepted and the probe is removed", async () => {
+kernelOpenLockTestV1("N-4c: a root whose volume honours O_EXLOCK is accepted and the probe is removed", async () => {
   // The review's should-fix, and it is cheap enough to include. Everything this
   // store claims about writers rests on `O_EXLOCK` being HONOURED by the volume
   // the root is on. exFAT and some network volumes accept the flag and take no
@@ -519,7 +519,7 @@ test("N-4c: a root whose volume honours O_EXLOCK is accepted and the probe is re
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("R5V-01: ignored O_EXLOCK refuses 50 openers without deleting a live upload", async () => {
+kernelOpenLockTestV1("R5V-01: ignored O_EXLOCK refuses 50 openers without deleting a live upload", async () => {
   const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-ignored-lock-")));
   const root = join(base, "store");
   await mkdir(root, { mode: 0o700 });
@@ -564,7 +564,7 @@ test("R5V-01: ignored O_EXLOCK refuses 50 openers without deleting a live upload
   }
 });
 
-test("B3: the store's only answers are its own codes, on every path a caller can reach", async () => {
+kernelOpenLockTestV1("B3: the store's only answers are its own codes, on every path a caller can reach", async () => {
   // The error contract, pinned where it was weakest. The store promises that a
   // refusal is always one of `store_invalid`, `store_missing`, `store_conflict`,
   // `store_capacity` or `store_ambiguous` — never a system errno. Two paths used
@@ -624,7 +624,7 @@ test("B3: the store's only answers are its own codes, on every path a caller can
   } finally { await rm(base, { recursive: true, force: true }); }
   });
 
-test("B7: a crash between link() and the staging unlink does not lock the store out for ever",
+kernelOpenLockTestV1("B7: a crash between link() and the staging unlink does not lock the store out for ever",
   async () => {
     // Found by the review's own crash harness against this fix, and it is a
     // pre-existing bug rather than one this round introduced — the guard that

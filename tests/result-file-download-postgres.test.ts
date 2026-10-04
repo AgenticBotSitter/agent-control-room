@@ -33,6 +33,7 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { composeResultFileService } from "../src/web/v1/result-file-composition";
 import { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
+import { KERNEL_OPEN_LOCK_HOST_V1, assertResultStoresRefuseWithoutKernelOpenLockV1 } from "./support/kernel-open-lock";
 
 // The assigned lane for this fix round. It comes from the environment, because
 // the review had to copy this file to make it run: a hard-coded 59520-59529 made
@@ -208,6 +209,9 @@ test("the real download path, the grant it writes, two sessions one file, the qu
         `hmac-sha256:${"e".repeat(64)}`]);
 
       // --- the byte store, on a real 0700 directory ------------------------
+      // Off macOS no store opens (tests/support/kernel-open-lock.ts): the database
+      // half above ran, and the byte half is that refusal.
+      if (!KERNEL_OPEN_LOCK_HOST_V1) { await assertResultStoresRefuseWithoutKernelOpenLockV1(); return; }
       const storeRoot = join(root, "store");
       await mkdir(storeRoot, { recursive: true, mode: 0o700 });
       const store = await ResultFileStoreV1.create({ rootPath: storeRoot, maximumFiles: 32,

@@ -18,6 +18,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { ResultUploadStagingError, ResultUploadStagingV1, stagedChunkNameV1 }
   from "../src/artifacts/v1/result-upload-staging";
+import { kernelOpenLockTestV1 } from "./support/kernel-open-lock";
 
 const TENANT = "tenant:staging-pg";
 const PROJECT = "project:staging-pg";
@@ -47,7 +48,7 @@ const openRoot = (root: string) => ResultUploadStagingV1.create({ rootPath: root
 const openWith = (root: string, maximumChunkBytes: number) => ResultUploadStagingV1.create({ rootPath: root,
   maximumChunkBytes, operationTimeoutMs: 5_000 });
 
-test("the upload staging area is create-once, derived and accounted for", async () => {
+kernelOpenLockTestV1("the upload staging area is create-once, derived and accounted for", async () => {
   const base = await privateBase();
   const root = base.root("staging");
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -183,7 +184,7 @@ test("the upload staging area is create-once, derived and accounted for", async 
   }
 });
 
-test("the staging area refuses a root it cannot trust, and a symlinked entry", async () => {
+kernelOpenLockTestV1("the staging area refuses a root it cannot trust, and a symlinked entry", async () => {
   const base = await privateBase();
   try {
     // A root that does not exist, or is not private, is refused at OPEN: the
@@ -265,7 +266,7 @@ test("the staging area refuses a root it cannot trust, and a symlinked entry", a
   }
 });
 
-test("the staging area refuses a root whose identity changed under it", async () => {
+kernelOpenLockTestV1("the staging area refuses a root whose identity changed under it", async () => {
   const base = await privateBase();
   const root = base.root("root");
   const moved = base.root("moved");
@@ -294,7 +295,7 @@ test("the staging area refuses a root whose identity changed under it", async ()
 // `constants` is imported for the mode bits this file's refusals depend on; the
 // import is used by the assertions below rather than only by the store.
 assert.ok(constants.O_NOFOLLOW > 0, "O_NOFOLLOW is available on this platform, so the guard is not a no-op");
-test("fifty writers and readers at once, and the queue does not lie", async () => {
+kernelOpenLockTestV1("fifty writers and readers at once, and the queue does not lie", async () => {
   const base = await privateBase();
   const root = base.root("busy");
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -400,7 +401,7 @@ test("fifty writers and readers at once, and the queue does not lie", async () =
   }
 });
 
-test("the staging fixture canonicalizes a TMPDIR symlink before production opens its root", async () => {
+kernelOpenLockTestV1("the staging fixture canonicalizes a TMPDIR symlink before production opens its root", async () => {
   const temporaryParent = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "cr-staging-real-tmp-")));
   const linkedParent = join(realpathSync(tmpdir()), `cr-staging-linked-tmp-${process.pid}-${Date.now()}`);
   const original = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
@@ -453,7 +454,7 @@ const interruptedWriter = (root: string, uploadId: string) => {
   return { child, closed, ready, stop };
 };
 
-test("FILES3-04: twenty stopped writers reclaim their parts and a live writer survives reopening", async () => {
+kernelOpenLockTestV1("FILES3-04: twenty stopped writers reclaim their parts and a live writer survives reopening", async () => {
   const base = await privateBase();
   try {
     const root = join(base.path, "staging"); await mkdir(root, { mode: 0o700 });
@@ -482,7 +483,7 @@ test("FILES3-04: twenty stopped writers reclaim their parts and a live writer su
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-04: fifty staging requests share an aggregate disk budget and retry after cleanup", async () => {
+kernelOpenLockTestV1("FILES3-04: fifty staging requests share an aggregate disk budget and retry after cleanup", async () => {
   const base = await privateBase();
   try {
     const root = join(base.path, "staging"); await mkdir(root, { mode: 0o700 });
@@ -501,7 +502,7 @@ test("FILES3-04: fifty staging requests share an aggregate disk budget and retry
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-03: discard refuses a replaced root and preserves the outside victim", async () => {
+kernelOpenLockTestV1("FILES3-03: discard refuses a replaced root and preserves the outside victim", async () => {
   const base = await privateBase();
   try {
     const root = join(base.path, "staging"), outside = join(base.path, "outside");
@@ -519,7 +520,7 @@ test("FILES3-03: discard refuses a replaced root and preserves the outside victi
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-07: empty assembly is valid but still checks its identity and root", async () => {
+kernelOpenLockTestV1("FILES3-07: empty assembly is valid but still checks its identity and root", async () => {
   const base = await privateBase();
   try {
     const root = join(base.path, "staging"); await mkdir(root, { mode: 0o700 });
@@ -532,7 +533,7 @@ test("FILES3-07: empty assembly is valid but still checks its identity and root"
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-02: colliding staging identities cannot read or discard the other session", async () => {
+kernelOpenLockTestV1("FILES3-02: colliding staging identities cannot read or discard the other session", async () => {
   const base = await privateBase();
   try {
     const root = join(base.path, "staging"); await mkdir(root, { mode: 0o700 });
@@ -547,7 +548,7 @@ test("FILES3-02: colliding staging identities cannot read or discard the other s
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-07: fleet reserves and finalises an empty file, verifies its digest and retries", async () => {
+kernelOpenLockTestV1("FILES3-07: fleet reserves and finalises an empty file, verifies its digest and retries", async () => {
   const { FleetUploadStoreV1 } = await import("../src/fleet/v1/upload-store");
   const { ResultFileStoreV1 } = await import("../src/artifacts/v1/result-file-store");
   const base = await privateBase();
@@ -597,7 +598,7 @@ test("FILES3-07: fleet reserves and finalises an empty file, verifies its digest
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-03: swapping the root after the helper's check cannot redirect unlink", async () => {
+kernelOpenLockTestV1("FILES3-03: swapping the root after the helper's check cannot redirect unlink", async () => {
   const base = await privateBase();
   const previous = { NODE_OPTIONS: process.env.NODE_OPTIONS, FILES3_SWAP_ROOT: process.env.FILES3_SWAP_ROOT,
     FILES3_SWAP_OLD: process.env.FILES3_SWAP_OLD, FILES3_SWAP_OUTSIDE: process.env.FILES3_SWAP_OUTSIDE };
@@ -621,7 +622,7 @@ test("FILES3-03: swapping the root after the helper's check cannot redirect unli
   }
 });
 
-test("FILES3-03: a cleanup helper sent to another directory refuses its inode", async () => {
+kernelOpenLockTestV1("FILES3-03: a cleanup helper sent to another directory refuses its inode", async () => {
   const base = await privateBase();
   const originalSpawn = childProcess.spawn;
   try {
@@ -644,7 +645,7 @@ test("FILES3-03: a cleanup helper sent to another directory refuses its inode", 
   }
 });
 
-test("FILES3-03: cleanup refuses symlinks and hardlinks", async () => {
+kernelOpenLockTestV1("FILES3-03: cleanup refuses symlinks and hardlinks", async () => {
   const base = await privateBase();
   try {
     const root = join(base.path, "staging"); await mkdir(root, { mode: 0o700 });
@@ -683,7 +684,7 @@ test("FILES3-04: malformed aggregate budgets are refused", async () => {
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-03: cleanup helper rejects unbounded names", async () => {
+kernelOpenLockTestV1("FILES3-03: cleanup helper rejects unbounded names", async () => {
   const base = await privateBase(); const originalSpawn = childProcess.spawn;
   try {
     const root = join(base.path, "staging"); await mkdir(root, { mode: 0o700 });
@@ -705,7 +706,7 @@ const cleanupProbe = (staging: ResultUploadStagingV1, names: string[], abandoned
     abandoned: boolean, owned: boolean): Promise<number> })
     .removeBoundNames(names, { deadline: Date.now() + 5000 }, abandoned, owned);
 
-test("cleanup tolerates EPERM when signalling its closed child and really removes only its chunk", async () => {
+kernelOpenLockTestV1("cleanup tolerates EPERM when signalling its closed child and really removes only its chunk", async () => {
   const base = privateBase(), originalSpawn = childProcess.spawn, originalKill = process.kill;
   const children: ReturnType<typeof spawn>[] = [];
   let injected = 0;
@@ -747,7 +748,7 @@ test("cleanup tolerates EPERM when signalling its closed child and really remove
   }
 });
 
-test("cleanup deadline signal failures never escape the timer; failed cleanup can retry", async () => {
+kernelOpenLockTestV1("cleanup deadline signal failures never escape the timer; failed cleanup can retry", async () => {
   // Model a child's delayed close without starting an idle OS process. The
   // existing spawn and signal seams exercise the real timer and kill helper.
   for (const errno of ["EPERM", "EIO"]) {
@@ -787,7 +788,7 @@ test("cleanup deadline signal failures never escape the timer; failed cleanup ca
   }
 });
 
-test("FILES3-04: parent reclamation never schedules live or inaccessible writers", async () => {
+kernelOpenLockTestV1("FILES3-04: parent reclamation never schedules live or inaccessible writers", async () => {
   const base = privateBase(), originalSpawn = childProcess.spawn, originalKill = process.kill;
   try {
     const staging = await openWith(base.path, 1024);
@@ -809,7 +810,7 @@ test("FILES3-04: parent reclamation never schedules live or inaccessible writers
   }
 });
 
-test("FILES3-04 FILES3-03: child scratch cleanup proves writer, ownership and matching links", async () => {
+kernelOpenLockTestV1("FILES3-04 FILES3-03: child scratch cleanup proves writer, ownership and matching links", async () => {
   const base = privateBase();
   const previous = { NODE_OPTIONS: process.env.NODE_OPTIONS, FILES3_CLEANUP_FAULT: process.env.FILES3_CLEANUP_FAULT };
   try {
@@ -838,7 +839,7 @@ test("FILES3-04 FILES3-03: child scratch cleanup proves writer, ownership and ma
   }
 });
 
-test("FILES3-03: cleanup refuses an entry replaced between its inode checks", async () => {
+kernelOpenLockTestV1("FILES3-03: cleanup refuses an entry replaced between its inode checks", async () => {
   const base = privateBase();
   const previous = { NODE_OPTIONS: process.env.NODE_OPTIONS, FILES3_CLEANUP_FAULT: process.env.FILES3_CLEANUP_FAULT,
     FILES3_CLEANUP_FAULT_NAME: process.env.FILES3_CLEANUP_FAULT_NAME };
@@ -856,7 +857,7 @@ test("FILES3-03: cleanup refuses an entry replaced between its inode checks", as
   }
 });
 
-test("FILES3-04: the held quota lock proves its directory and fails once on a real open error", async () => {
+kernelOpenLockTestV1("FILES3-04: the held quota lock proves its directory and fails once on a real open error", async () => {
   const base = privateBase(), originalOpen = fs.open;
   try {
     const root = base.root("staging"), outside = base.root("outside");
@@ -877,7 +878,7 @@ test("FILES3-04: the held quota lock proves its directory and fails once on a re
   } finally { fs.open = originalOpen; syncBuiltinESMExports(); await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-04: the disk budget rejects non-files and reserves a live part's promised bytes", async () => {
+kernelOpenLockTestV1("FILES3-04: the disk budget rejects non-files and reserves a live part's promised bytes", async () => {
   const base = privateBase();
   try {
     const staging = await ResultUploadStagingV1.create({ rootPath: base.path, maximumChunkBytes: 1024,
@@ -894,7 +895,7 @@ test("FILES3-04: the disk budget rejects non-files and reserves a live part's pr
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("review m-rvfiles3: the default staging budget holds one full result set and still admits another upload", async () => {
+kernelOpenLockTestV1("review m-rvfiles3: the default staging budget holds one full result set and still admits another upload", async () => {
   const base = privateBase();
   try {
     const staging = await ResultUploadStagingV1.create({ rootPath: base.path, maximumChunkBytes: 1024, operationTimeoutMs: 5000 });
@@ -908,7 +909,7 @@ test("review m-rvfiles3: the default staging budget holds one full result set an
   } finally { await rm(base.path, { recursive: true, force: true }); }
 });
 
-test("FILES3-03: a stalled cleanup child is killed at the operation deadline", { timeout: 2000 }, async () => {
+kernelOpenLockTestV1("FILES3-03: a stalled cleanup child is killed at the operation deadline", { timeout: 2000 }, async () => {
   const base = privateBase(), originalSpawn = childProcess.spawn;
   let helper: ReturnType<typeof spawn> | undefined, closed: Promise<unknown> | undefined;
   let watchdog: ReturnType<typeof setTimeout> | undefined;

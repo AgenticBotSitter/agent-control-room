@@ -20,6 +20,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "../src/web/v1/access-v
 import { resultFileCatalogSchema } from "../src/web/v1/result-file-wire";
 import type { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
 import type { DatabaseClient, DatabaseSession, QueryResult } from "../src/persistence/database";
+import { kernelOpenLockTestV1 } from "./support/kernel-open-lock";
 
 const TENANT = "tenant:one";
 const PROJECT = "project:alpha";
@@ -753,7 +754,7 @@ test("a set that stops being stored after the mint cannot be downloaded on the o
 
 // Joined production functions; only database authority is a controlled fixture.
 for (const displayName of ["report.txt", "report(1).txt", "report[final].txt", "report+2026.csv", "café.txt", "Budget€.txt"]) {
-  test(`FILES3-05 FILES3-01: browser catalog, mint and byte download: ${displayName}`, async () => {
+  kernelOpenLockTestV1(`FILES3-05 FILES3-01: browser catalog, mint and byte download: ${displayName}`, async () => {
     const rootPath = await realpath(await mkdtemp(join(tmpdir(), "files3-download-")));
     try {
       const disk = await RealResultFileStore.create({ rootPath, maximumFiles: 32, maximumFileBytes: 1024,

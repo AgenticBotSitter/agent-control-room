@@ -29,7 +29,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { kernelOpenLockTestV1 } from "./support/kernel-open-lock";
 
 const TENANT = "tenant:upload-race";
 const PROJECT = "project:upload-race";
@@ -181,7 +181,7 @@ const openerScriptV1 = (root: string) => `
   }
   console.log("CODES " + JSON.stringify(codes));`;
 
-test("the upload staging area survives two writers and four openers racing one directory",
+kernelOpenLockTestV1("the upload staging area survives two writers and four openers racing one directory",
   { timeout: 300_000 }, async () => {
     const base = await realpath(await mkdtemp(join(tmpdir(), "cr-upload-staging-race-")));
     const racers: ReturnType<typeof racerV1>[] = [];
@@ -306,7 +306,7 @@ const differentWriterScriptV1 = (root: string, seed: number, startAt: number) =>
     console.log("ROUND " + round + " " + outcome);
   }`;
 
-test("two writers racing DIFFERENT bytes for one chunk: at most one ever creates it, and its bytes are the chunk",
+kernelOpenLockTestV1("two writers racing DIFFERENT bytes for one chunk: at most one ever creates it, and its bytes are the chunk",
   { timeout: 300_000 }, async () => {
     const base = await realpath(await mkdtemp(join(tmpdir(), "cr-upload-staging-race-different-")));
     try {
@@ -363,7 +363,7 @@ test("two writers racing DIFFERENT bytes for one chunk: at most one ever creates
     }
   });
 
-test("FILES3-04: twenty real processes share one staging quota", { timeout: 60000 }, async () => {
+kernelOpenLockTestV1("FILES3-04: twenty real processes share one staging quota", { timeout: 60000 }, async () => {
   const base = await realpath(await mkdtemp(join(tmpdir(), "files3-budget-race-")));
   const racers: ReturnType<typeof racerV1>[] = [];
   try {

@@ -24,6 +24,7 @@ import { sha256Digest } from "../src/security";
 import { verifyPrivateDatabase } from "../src/web/v1/private-database-preflight";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { ResultFileStoreV1, resultFileStorageKeyV1 } from "../src/artifacts/v1/result-file-store";
+import { KERNEL_OPEN_LOCK_HOST_V1, assertResultStoresRefuseWithoutKernelOpenLockV1 } from "./support/kernel-open-lock";
 
 // This file's assigned lane, ten ports wide. It follows the env override rather
 // than a separate literal, so a lane that moves the base (as this fix round
@@ -198,6 +199,9 @@ test("the result-file catalog, its byte store and the owner download grant hold 
         `hmac-sha256:${"e".repeat(64)}`]);
 
       // --- the byte store, on a real 0700 directory ------------------------
+      // Off macOS no store opens (tests/support/kernel-open-lock.ts): the database
+      // half above ran, and the byte half is that refusal.
+      if (!KERNEL_OPEN_LOCK_HOST_V1) { await assertResultStoresRefuseWithoutKernelOpenLockV1(); return; }
       const storeRoot = join(root, "store");
       await mkdir(storeRoot, { recursive: true, mode: 0o700 });
       const store = await ResultFileStoreV1.create({ rootPath: storeRoot, maximumFiles: 32,

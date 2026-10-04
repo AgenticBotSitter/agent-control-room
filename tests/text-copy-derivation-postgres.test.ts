@@ -29,6 +29,7 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 import { FleetGatewayStoreV1, FleetOwnerServiceV1, FleetUploadStoreV1 } from "../src/fleet/v1";
 import { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
 import { ResultUploadStagingV1 } from "../src/artifacts/v1/result-upload-staging";
+import { KERNEL_OPEN_LOCK_HOST_V1, assertResultStoresRefuseWithoutKernelOpenLockV1 } from "./support/kernel-open-lock";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
@@ -993,6 +994,9 @@ test("a bot reads only the inputs of the work it was admitted to", { skip }, asy
       // Both files go up, because 0210's publication guard refuses a receipt for
       // a set whose promised count is not entirely stored. One of the two would
       // be the cheaper fixture and it is refused, which is the guard working.
+      // Off macOS no store opens (tests/support/kernel-open-lock.ts): the database
+      // half above ran, and the byte half is that refusal.
+      if (!KERNEL_OPEN_LOCK_HOST_V1) { await assertResultStoresRefuseWithoutKernelOpenLockV1(); return; }
       const stagingRoot = join(storeRoot, "staging");
       const fileStoreRoot = join(storeRoot, "files");
       await mkdir(stagingRoot, { mode: 0o700 });
@@ -1060,6 +1064,9 @@ test("a bot reads only the inputs of the work it was admitted to", { skip }, asy
         await rm(storeRoot, { recursive: true, force: true }).catch(() => undefined);
       }
     });
+    // Off macOS the upload stopped at the store refusal, so nothing was published.
+    if (!KERNEL_OPEN_LOCK_HOST_V1) return;
+    assert.ok(seen, "the upload published both files");
 
     await withClient(pg, {}, async publisher => {
       await recordTextCopyDerivation(publisher as never, {

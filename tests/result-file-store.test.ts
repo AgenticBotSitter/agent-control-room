@@ -17,6 +17,7 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { kernelOpenLockTestV1 } from "./support/kernel-open-lock";
 import { ResultFileStoreV1, ResultFileStoreError, resultFileStorageKeyV2, resultFileStorageKeyV1,
   RESULT_FILE_LIMITS_V1, resultFileStoreBootIdentityV1 } from "../src/artifacts/v1/result-file-store";
 
@@ -101,7 +102,7 @@ async function withStore(t: { after?: (root: string, store: ResultFileStoreV1) =
 const identity = (project = PROJECT, file = FILE, content = bytes("report\n")) =>
   ({ tenantId: TENANT, projectId: project, fileId: file, contentDigest: digest(content) });
 
-test("a stored file comes back byte-for-byte, and an exact retry is idempotent", async () => {
+kernelOpenLockTestV1("a stored file comes back byte-for-byte, and an exact retry is idempotent", async () => {
   await withStore({ async after(_root, store) {
     const content = bytes("report body\n");
     const id = identity(PROJECT, FILE, content);
@@ -114,7 +115,7 @@ test("a stored file comes back byte-for-byte, and an exact retry is idempotent",
     assert.deepEqual(Buffer.from((await store.read(id))!), Buffer.from(content));
   } });
 });
-test("the same key with different bytes is a conflict, never an overwrite", async () => {
+kernelOpenLockTestV1("the same key with different bytes is a conflict, never an overwrite", async () => {
   await withStore({ async after(root, store) {
     // The key is derived from the digest, so "the same key with different
     // bytes" is only reachable when the FILE on disk no longer matches the name
@@ -145,7 +146,7 @@ test("the same key with different bytes is a conflict, never an overwrite", asyn
   } });
 });
 
-test("two projects with identical bytes are two files, and neither reads the other", async () => {
+kernelOpenLockTestV1("two projects with identical bytes are two files, and neither reads the other", async () => {
   await withStore({ async after(root, store) {
     const content = bytes("identical bytes\n");
     const inA = identity("project:alpha", FILE, content);
@@ -166,7 +167,7 @@ test("two projects with identical bytes are two files, and neither reads the oth
   } });
 });
 
-test("a symlinked or hard-linked entry is refused, never followed", async () => {
+kernelOpenLockTestV1("a symlinked or hard-linked entry is refused, never followed", async () => {
   // Each case is built so that ONLY the link rule can be the reason for the
   // refusal. A symlink whose target holds the right bytes would be served by a
   // store that followed it, so the refusal below is that store's behaviour and
@@ -209,7 +210,7 @@ test("a symlinked or hard-linked entry is refused, never followed", async () => 
   } });
 });
 
-test("a root that is not private, canonical or a directory is refused", async () => {
+kernelOpenLockTestV1("a root that is not private, canonical or a directory is refused", async () => {
   const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-bad-")));
   try {
     const open = (rootPath: string) => ResultFileStoreV1.create({ rootPath, maximumFiles: 32,
@@ -239,7 +240,7 @@ test("a root that is not private, canonical or a directory is refused", async ()
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("an entry the store did not write is a refusal, never a deletion", async () => {
+kernelOpenLockTestV1("an entry the store did not write is a refusal, never a deletion", async () => {
   await withStore({ async after(root, store) {
     const content = bytes("stored\n");
     const id = identity(PROJECT, FILE, content);
@@ -255,7 +256,7 @@ test("an entry the store did not write is a refusal, never a deletion", async ()
   } });
 });
 
-test("the declared ceilings are enforced by the store, not only by the schema", async () => {
+kernelOpenLockTestV1("the declared ceilings are enforced by the store, not only by the schema", async () => {
   await withStore({ async after(_root, store) {
     // Per file.
     const big = new Uint8Array(2_097_152);
@@ -292,7 +293,7 @@ test("the declared ceilings are enforced by the store, not only by the schema", 
   } });
 });
 
-test("a malformed identity is refused before any path is built", async () => {
+kernelOpenLockTestV1("a malformed identity is refused before any path is built", async () => {
   await withStore({ async after(_root, store) {
     for (const bad of [
       { tenantId: "", projectId: PROJECT, fileId: FILE, contentDigest: digest(bytes("x")) },
@@ -313,7 +314,7 @@ test("a malformed identity is refused before any path is built", async () => {
   } });
 });
 
-test("a read re-proves the digest, so a file changed under it is a refusal", async () => {
+kernelOpenLockTestV1("a read re-proves the digest, so a file changed under it is a refusal", async () => {
   await withStore({ async after(root, store) {
     const content = bytes("original\n");
     const id = identity(PROJECT, FILE, content);
@@ -348,7 +349,7 @@ test("the v1 limits are the ones plan 2.6 states, and are not configurable upwar
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("no error message carries a path, a display name or a digest", async () => {
+kernelOpenLockTestV1("no error message carries a path, a display name or a digest", async () => {
   await withStore({ async after(_root, store) {
     const content = bytes("secret report contents\n");
     const id = identity(PROJECT, FILE, content);
@@ -382,7 +383,7 @@ test("no error message carries a path, a display name or a digest", async () => 
 // flight is a real write.
 // ---------------------------------------------------------------------------
 
-test("B3: the 32-file ceiling is per SET, not for the whole installation", async () => {
+kernelOpenLockTestV1("B3: the 32-file ceiling is per SET, not for the whole installation", async () => {
   // The review stored 33 files and watched the 33rd be refused `store_capacity`
   // on an installation whose largest set held one. `inventory.count` counted
   // every file in the store, so a per-set limit was applied installation-wide.
@@ -400,7 +401,7 @@ test("B3: the 32-file ceiling is per SET, not for the whole installation", async
   } });
 });
 
-test("B3: the per-set ceiling is still refused, and the installation total still bites", async () => {
+kernelOpenLockTestV1("B3: the per-set ceiling is still refused, and the installation total still bites", async () => {
   await withStore({ async after(_root, store) {
     const content = bytes("one\n");
     const id = identity(PROJECT, FILE, content);
@@ -423,7 +424,7 @@ test("B3: the per-set ceiling is still refused, and the installation total still
   } });
 });
 
-test("B7: a crashed writer's leftovers do not stop the store from opening", async () => {
+kernelOpenLockTestV1("B7: a crashed writer's leftovers do not stop the store from opening", async () => {
   // The review's live case: a surviving lock or an orphaned `pending-*` file
   // made `create()` throw `store_ambiguous`, and the Mac-local task provider
   // awaits `create()` with no fallback — so one interrupted write locked the
@@ -461,7 +462,7 @@ test("B7: a crashed writer's leftovers do not stop the store from opening", asyn
   }
 });
 
-test("B1+B7: a LIVE writer's lock and pending file are never cleared", async () => {
+kernelOpenLockTestV1("B1+B7: a LIVE writer's lock and pending file are never cleared", async () => {
   // The recovery must be able to tell a dead writer from a live one, or it
   // destroys a write in progress. The store asks the KERNEL, so a "live writer"
   // here has to be a real held `O_EXLOCK` lock: a lock file written with
@@ -529,7 +530,7 @@ test("B1+B7: a LIVE writer's lock and pending file are never cleared", async () 
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("B7: a lock this store cannot PROVE abandoned is left alone, and never deleted", async () => {
+kernelOpenLockTestV1("B7: a lock this store cannot PROVE abandoned is left alone, and never deleted", async () => {
   // The store must not guess. There is one class it will not classify at all — a
   // bookkeeping name that is a DIRECTORY or a symlink is not this store's own
   // file — and that one is a refusal with nothing removed. What it will NOT do
@@ -568,7 +569,7 @@ test("B7: a lock this store cannot PROVE abandoned is left alone, and never dele
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("S1: an EMPTY lock is repaired, not left to block every write for good", async () => {
+kernelOpenLockTestV1("S1: an EMPTY lock is repaired, not left to block every write for good", async () => {
   // The review's S1, first case, live: a crash between the O_EXCL create and the
   // stamp write leaves an empty lock. It used to be "assume live" for ever, so
   // every write was refused `store_ambiguous` — still, after a restart, because
@@ -615,7 +616,7 @@ test("S1: an EMPTY lock is repaired, not left to block every write for good", as
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("B1: NOTHING in a leftover's stamp decides anything, and every old format still repairs", async () => {
+kernelOpenLockTestV1("B1: NOTHING in a leftover's stamp decides anything, and every old format still repairs", async () => {
   // The review's S1 was three cases — a previous boot, a recycled pid, a part-1
   // bare pid — that a stamp-reading store had to reason about, and that any
   // reasoning about them could get wrong in the fail-open direction. The kernel
@@ -697,7 +698,7 @@ test("B1: NOTHING in a leftover's stamp decides anything, and every old format s
   }
 });
 
-test("B1: the STORE'S OWN write path takes the kernel lock, not just the tests' fixtures", async () => {
+kernelOpenLockTestV1("B1: the STORE'S OWN write path takes the kernel lock, not just the tests' fixtures", async () => {
   // Mutation testing found this one missing, and it is the most important
   // property of the whole fix: the previous build's fixtures all created their
   // "live writer" locks BY HAND, so the lane was green while the real write path
@@ -743,7 +744,7 @@ test("B1: the STORE'S OWN write path takes the kernel lock, not just the tests' 
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("B1: a second process's LIVE write is never taken over, measured with a real writer", async () => {
+kernelOpenLockTestV1("B1: a second process's LIVE write is never taken over, measured with a real writer", async () => {
   // The review's B1 attack, as a test: a real writer in a real child process,
   // alive for longer than a second, part-way through a real write — and a second
   // store instance opening the same directory underneath it.
@@ -876,7 +877,7 @@ test("B1: a second process's LIVE write is never taken over, measured with a rea
   }
 });
 
-test("B1: a HELD lock is left alone whatever its stamp says, including a lying one", async () => {
+kernelOpenLockTestV1("B1: a HELD lock is left alone whatever its stamp says, including a lying one", async () => {
   // The fail-open direction, which is the only one that destroys anything. A
   // lock the kernel holds is a live writer, so it is left alone — and that has
   // to be true even when the stamp inside it is nonsense, because a stamp is
@@ -917,7 +918,7 @@ test("B1: a HELD lock is left alone whatever its stamp says, including a lying o
 });
 
 
-test("B8: a read succeeds while a write is in progress", async () => {
+kernelOpenLockTestV1("B8: a read succeeds while a write is in progress", async () => {
   // The review's live case: 50 reads of a stored file raced one 64 MiB upload
   // and 13 of the 50 failed `store_ambiguous`, which the route turns into a
   // 503. The cause was the read's whole-directory check refusing the writer's
@@ -972,7 +973,7 @@ test("B8: a read succeeds while a write is in progress", async () => {
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("B8: a read is still refused for an entry the store did not write", async () => {
+kernelOpenLockTestV1("B8: a read is still refused for an entry the store did not write", async () => {
   // The fix ignores ONLY the store's own bookkeeping. A stray file is still a
   // refusal, and still not a deletion.
   await withStore({ async after(root, store) {
@@ -988,7 +989,7 @@ test("B8: a read is still refused for an entry the store did not write", async (
 });
 
 
-test("STRESS: 50 downloads race 8 uploads, and every download still succeeds", async () => {
+kernelOpenLockTestV1("STRESS: 50 downloads race 8 uploads, and every download still succeeds", async () => {
   // The review's case, as briefed: "50 downloads + 50 uploads". Downloads and
   // uploads are in the SAME store, the store serialises its own writes behind a
   // queue, and every download re-proves its own digest — so the only thing that
@@ -1041,7 +1042,7 @@ test("STRESS: 50 downloads race 8 uploads, and every download still succeeds", a
   } });
 });
 
-test("STRESS: 50 concurrent writers of distinct files all land, and retries still replay", async () => {
+kernelOpenLockTestV1("STRESS: 50 concurrent writers of distinct files all land, and retries still replay", async () => {
   // The store serialises its own writes, so 50 callers is a queue rather than a
   // race. That is the property worth proving: the queue does not drop, reorder
   // into a conflict, or lose a file, and an exact retry after the burst is still
@@ -1068,7 +1069,7 @@ test("STRESS: 50 concurrent writers of distinct files all land, and retries stil
 });
 
 
-test("B7: a recovery that was ITSELF interrupted does not lock the store out forever", async () => {
+kernelOpenLockTestV1("B7: a recovery that was ITSELF interrupted does not lock the store out forever", async () => {
   // Found by re-reading my own diff as the reviewer. A leftover recovery lock
   // from a crash DURING the crash recovery is the one input that reproduces the
   // original bug in the fix: `create()` refuses, and nothing in the application
@@ -1117,7 +1118,7 @@ test("B7: a recovery that was ITSELF interrupted does not lock the store out for
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("S1: a bookkeeping name the store cannot OPEN is a refusal, never a deletion", async () => {
+kernelOpenLockTestV1("S1: a bookkeeping name the store cannot OPEN is a refusal, never a deletion", async () => {
   // The direction that is not S1 but is just as important: the repairs must not
   // become a blanket "clear anything I do not recognise". A name the store
   // cannot OPEN is someone else's file, and deleting it is unrecoverable, so
@@ -1158,7 +1159,7 @@ test("S1: a bookkeeping name the store cannot OPEN is a refusal, never a deletio
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("B1: the KERNEL lock, not a stamp, is what says a writer is alive", async () => {
+kernelOpenLockTestV1("B1: the KERNEL lock, not a stamp, is what says a writer is alive", async () => {
   // The property the whole B1 fix rests on, proved against the kernel rather
   // than against this store's own interpretation of a file. Three claims, in
   // the order the store relies on them:
@@ -1239,7 +1240,7 @@ test("B1: the KERNEL lock, not a stamp, is what says a writer is alive", async (
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("S1: a lock that is a SYMLINK is never read as a stamp, and never removed", async () => {
+kernelOpenLockTestV1("S1: a lock that is a SYMLINK is never read as a stamp, and never removed", async () => {
   // The store opens its own bookkeeping `O_NOFOLLOW` and refuses a symlink
   // outright. A symlink at the lock name is not this store's file: reading it
   // would follow an attacker's link, and removing it would unlink a name the
@@ -1302,7 +1303,7 @@ test("S1: a lock that is a SYMLINK is never read as a stamp, and never removed",
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("S1: a leftover the store did not create in a PRIVATE place is never removed", async () => {
+kernelOpenLockTestV1("S1: a leftover the store did not create in a PRIVATE place is never removed", async () => {
   // The review's note, now a test. The recovery deletes only names this store
   // itself created: a plain regular file, not a symlink, link count 1, owner
   // only. A world-writable leftover is exactly what an attacker would plant to
@@ -1338,7 +1339,7 @@ test("S1: a leftover the store did not create in a PRIVATE place is never remove
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("FILES3-02: colliding legacy identity tuples cannot address each other's bytes", async () => {
+kernelOpenLockTestV1("FILES3-02: colliding legacy identity tuples cannot address each other's bytes", async () => {
   const base = await realpath(await mkdtemp(join(tmpdir(), "files3-identity-")));
   try {
     const store = await ResultFileStoreV1.create({ rootPath: base, maximumFiles: 32,
@@ -1357,7 +1358,7 @@ test("FILES3-02: colliding legacy identity tuples cannot address each other's by
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("FILES3-02: legacy bytes are retained but never used as an ambiguous fallback", async () => {
+kernelOpenLockTestV1("FILES3-02: legacy bytes are retained but never used as an ambiguous fallback", async () => {
   const rootPath = await realpath(await mkdtemp(join(tmpdir(), "files3-legacy-")));
   try {
     const body = bytes("legacy namespace without custody stamp");

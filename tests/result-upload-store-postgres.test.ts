@@ -36,6 +36,7 @@ import { FleetErrorV1, FleetGatewayStoreV1, FleetOwnerServiceV1, FleetUploadStor
 import { WebOperationsModeServiceV1, readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
 import { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
 import { ResultUploadStagingV1 } from "../src/artifacts/v1/result-upload-staging";
+import { KERNEL_OPEN_LOCK_HOST_V1, assertResultStoresRefuseWithoutKernelOpenLockV1 } from "./support/kernel-open-lock";
 import { FLEET_TENANT, FLEET_WORKSPACE, PROJECT_A, PROJECT_B, ownerIdentity, seedFleetTenant, seedProposedTask }
   from "./support/fleet-fixture";
 
@@ -90,6 +91,9 @@ test("FleetUploadStoreV1 publishes a real upload, leaves nothing staged on refus
         const modeService = new WebOperationsModeServiceV1(webPool.client,
           { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE }, modeKey);
         try {
+          // Off macOS no store opens (tests/support/kernel-open-lock.ts): the database
+          // half above ran, and the byte half is that refusal.
+          if (!KERNEL_OPEN_LOCK_HOST_V1) { await assertResultStoresRefuseWithoutKernelOpenLockV1(); return; }
           const stagingRoot = join(base, "staging"), storeRoot = join(base, "store");
           await mkdir(stagingRoot, { mode: 0o700 });
           await mkdir(storeRoot, { mode: 0o700 });
