@@ -329,8 +329,10 @@ test("a dead updater lock is recovered without trusting a symlinked versions dir
 
 test("a reused live PID does not preserve a stale updater lock", { skip: process.platform !== "linux" }, async t => {
   const f = await fixture(t), bytes = Buffer.from("export default 'pid-reuse';\n"), release = advertised(bytes);
+  // `processIdentity` is the key the lock protocol reads (connector-update.mjs
+  // sameProcess); a record without it cannot prove the pid was reused.
   await writeFile(f.paths.lock, JSON.stringify({ pid: process.pid, token: "old-owner", createdAt: 0,
-    identity: "not-this-process-generation" }), { mode: 0o600 });
+    processIdentity: "not-this-process-generation" }), { mode: 0o600 });
   const old = new Date(Date.now() - 60_000); await utimes(f.paths.lock, old, old);
   const result = await checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
     fetcher: releaseFetcher(bytes), healthCheck: async () => true });
