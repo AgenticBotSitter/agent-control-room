@@ -850,8 +850,15 @@ test('R5SD: SIP status dropped reads abort within the bound; 50 callers fail clo
   assert.deepEqual(stopped.warnings, [sipOwnerLine]);
 });
 
+// Owner decision (2026-10-04): these two host checks qualify a SIP-enabled Mac
+// (the owner's, and every practice install checks SIP again). Hosted macOS CI
+// VMs run with SIP disabled, so there they skip by name instead of failing.
+const sipDisabledHost = async () => existsSync('/usr/bin/csrutil') && !(await readSipEnabledV1());
+const SIP_DISABLED_HOST_SKIP = 'this host reports SIP not fully enabled (hosted CI VM); the check qualifies SIP-enabled Macs';
+
 test('R5SD: SIP native status on this Mac is enabled and consulted by the check', async t => {
   if (!existsSync('/usr/bin/csrutil')) { t.skip('csrutil unavailable: native SIP status cannot be read'); return; }
+  if (await sipDisabledHost()) { t.skip(SIP_DISABLED_HOST_SKIP); return; }
   let calls = 0;
   const port = scanPort([''], ['']);
   const scan = port.run, warnings = [];
@@ -1027,7 +1034,9 @@ test('R5SD: real system signature controls work and the default scan refuses whe
   }
 });
 
-test('R5SD: CLI keeps the STOP heading, names unknown programs and preserves folders without printing argv', async () => {
+test('R5SD: CLI keeps the STOP heading, names unknown programs and preserves folders without printing argv', async t => {
+  // With SIP disabled the CLI correctly leads with its SIP advisory, not STOP.
+  if (await sipDisabledHost()) { t.skip(SIP_DISABLED_HOST_SKIP); return; }
   const f = await stoppedProcessFixtures(), commands = await fixture();
   try {
     const child = await f.start('CLI unknown program', f.clobber, ['erased-worker idle']);
