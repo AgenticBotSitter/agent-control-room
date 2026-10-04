@@ -545,7 +545,7 @@ jobs:
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
           pnpm run test:updater
-          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres
+          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres && pnpm run test:pg-runtime-postgres
 
   test-articles:
     name: Article build lane
@@ -1023,7 +1023,7 @@ jobs:
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
           pnpm run test:updater
-          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres
+          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres && pnpm run test:pg-runtime-postgres
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |

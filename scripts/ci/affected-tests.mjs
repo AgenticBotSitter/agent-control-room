@@ -290,7 +290,8 @@ export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), 
   // retaining the separate Linux journal and live PostgreSQL lanes here.
   if (platform !== "darwin" && existsSync(join(repositoryRoot, "package.json"))) {
     const { scripts = {} } = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8"));
-    const macLane = reachableTests(scripts, ["pnpm run test:updater"]);
+    // pg-runtime-copy uses lsof, hdiutil and clonefile, so it runs in the macOS job too.
+    const macLane = reachableTests(scripts, ["pnpm run test:updater", "pnpm run test:pg-runtime-postgres"]);
     const deferred = tests.filter(test => macLane.has(test));
     if (deferred.length > 0) {
       console.log(`Deferring ${deferred.length} macOS updater file(s) to test-updater or full-gate on macOS.`);
