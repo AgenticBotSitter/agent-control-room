@@ -530,3 +530,33 @@ test("a package.json plus a migration change still selects ALL but keeps needs-p
     "so a real migration PR must still provision PostgreSQL for this lane to run it");
   assert.match(outputs, /defer-to-full-suite=true/u);
 });
+
+
+test("the Linux affected job defers exact macOS updater files even on the ALL PostgreSQL path", () => {
+  const mac = "tests/updater.test.mjs", linux = "tests/linux-journal.test.mjs";
+  const root = fixture({
+    "package.json": JSON.stringify({ scripts: {
+      "test:updater": `node --test ${mac}`, "test:updater:linux": `node --test ${linux}`,
+    } }),
+    [mac]: "// requiresRealPostgres: this Mac fixture only describes injected database ports",
+    [linux]: "",
+  });
+  try {
+    for (const selected of [[mac], "ALL"]) {
+      const calls = [];
+      assert.equal(runSelectedTests(selected, [mac], root, () => { throw new Error("must defer builds"); },
+        () => true, (...args) => { calls.push(args); return { status: 0, output: "" }; }, "linux"), 0);
+      assert.deepEqual(calls, []);
+    }
+    const calls = [];
+    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, () => 0, () => true,
+      (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "" }; }, "linux"), 0);
+    assert.deepEqual(calls, [linux], "Linux journal coverage must run directly");
+    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, () => 0, () => true,
+      () => ({ status: 1, output: "" }), "linux"), 1, "a retained Linux failure still fails the job");
+    const macCalls = [];
+    assert.equal(runSelectedTests([mac], [mac], root, () => 0, () => true,
+      (_command, args) => { macCalls.push(args.at(-1)); return { status: 0, output: "" }; }, "darwin"), 0);
+    assert.deepEqual(macCalls, [mac], "a Mac fast job may run the selected updater test directly");
+  } finally { rmSync(root, { recursive: true }); }
+});

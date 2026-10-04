@@ -395,3 +395,31 @@ It reads the directory the applier reads, needs no PostgreSQL, and runs in the
 same dependency-free job. No migration, grant, role, SQL, transaction, connection
 pool or process supervision is changed by either check, so neither required a
 disposable cluster.
+
+## Amendment: macOS updater lane
+
+The updater and attended Mac installer tests use BSD lockf, Developer Tools,
+launchd templates and BSD file metadata. They now run on the standard public
+`macos-14` arm64 runner with Node 22, the existing reviewed action pins, a
+30-minute early-job timeout and `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1`.
+The runner labels and public-repository pricing are documented in
+[GitHub hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+No new action, credential, permission, artifact upload or deployment is added.
+The existing frozen install with lifecycle scripts disabled is retained.
+
+Routing exposes a fifth lane, `updater`; root markdown and release inputs also
+select it because its attended-release and service-template tests read them.
+The three install-guide paths under docs select updater before the inert docs class.
+The catch-up matrix assigns this lane the same macOS runner and command, and
+per-entry timeouts match each early job (30 minutes for updater and 90 for components).
+The final merge gate requires the updater result independently of routing.
+The Linux kernel-journal tests remain reachable through `test:updater:linux`
+in the Ubuntu components lane, so moving the Mac tests retains Linux coverage.
+The early and catch-up Linux component jobs provision zsh for shell fixtures.
+The Ubuntu affected-test job defers the exact files in `test:updater` to its
+mandatory macOS job, including files matched only by PostgreSQL-related comments;
+it still executes the separate Linux journal and live database tests.
+The default moved lane uses synthetic PostgreSQL artifacts and injected ports;
+live PostgreSQL updater schema and passkey lanes remain in components. The existing
+opt-in HARD7 production-login backup proof needs a supplied migrated disposable
+fixture and keeps its visible skip when that configuration is absent.

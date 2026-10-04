@@ -2,7 +2,7 @@ import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { listTestFiles } from "../check-test-lane-coverage.mjs";
+import { listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
 
 const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
 const importPattern = /\b(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']/g;
@@ -260,7 +260,7 @@ export function shouldDeferToFullSuite(result, totalTestCount) {
 export function deferralMessage(result, selectedCount, totalTestCount) {
   const affected = result === "ALL" ? `all ${totalTestCount}` : `${selectedCount} of ${totalTestCount}`;
   return `This change affects ${affected} test file(s). The fast lane is skipping direct execution of the bulk here: ` +
-    "the full-suite lanes (test-demo, test-server, test-components, test-articles, full-gate) already run " +
+    "the full-suite lanes (test-demo, test-server, test-components, test-updater, test-articles, full-gate) already run " +
     "the rest of the suite, so re-running it in this 45-minute lane would only duplicate that coverage. " +
     "Any PostgreSQL-gated file still runs directly below, since no other lane sets up its environment.";
 }
@@ -279,10 +279,25 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
 }
 
 export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
-  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
+  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform) {
   if (result === "DOCS_ONLY") {
     console.log(noTestsAffectedMessage());
     return 0;
+  }
+  // The ordinary macOS updater command is mandatory in test-updater or its
+  // full-gate counterpart. The Ubuntu fast job must defer those exact files,
+  // including files whose comments match the broad PostgreSQL marker, while
+  // retaining the separate Linux journal and live PostgreSQL lanes here.
+  if (platform !== "darwin" && existsSync(join(repositoryRoot, "package.json"))) {
+    const { scripts = {} } = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8"));
+    const macLane = reachableTests(scripts, ["pnpm run test:updater"]);
+    const deferred = tests.filter(test => macLane.has(test));
+    if (deferred.length > 0) {
+      console.log(`Deferring ${deferred.length} macOS updater file(s) to test-updater or full-gate on macOS.`);
+      tests = tests.filter(test => !macLane.has(test));
+      if (Array.isArray(result)) result = result.filter(test => !macLane.has(test));
+      if (tests.length === 0) return 0;
+    }
   }
   const totalTestCount = listTestFiles(repositoryRoot).length;
   if (shouldDeferToFullSuite(result, totalTestCount)) {

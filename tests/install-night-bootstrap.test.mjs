@@ -287,7 +287,8 @@ test("bootstrap metadata JSON-escapes an absolute tool path", async t => {
 });
 
 test("bootstrap tool injection is unavailable outside an explicit private test root", async t => {
-  const fixture = await harness(t), root = await realpath(await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "bootstrap-wrong-root-")));
+  await mkdir(join(process.cwd(), ".test-tmp"), { recursive: true });
+  const fixture = await harness(t), root = await realpath(await mkdtemp(join(process.cwd(), ".test-tmp", "bootstrap-wrong-root-")));
   t.after(() => cleanup(root)); const script = join(root, "bootstrap.sh"); await cp(bootstrapSource, script); await chmod(script, 0o700);
   const result = await new Promise(resolveResult => {
     const child = spawn("/bin/sh", ["-p", script, commit, root], { env: { ...process.env,

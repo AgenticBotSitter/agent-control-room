@@ -72,10 +72,10 @@ async function fixture(t) {
   t.after(() => fs.rm(root, { recursive: true, force: true })); return root;
 }
 function launch(args) {
-  const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = ''; child.stderr.on('data', bytes => stderr += bytes);
   const closed = new Promise((done, fail) => { child.once('error', fail); child.once('close', (code, signal) => done({ code, signal, stderr })); });
-  return { child, closed, stop: async () => { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } await closed; } };
+  return { child, closed, stop: async () => { child.kill('SIGKILL'); child.stdin.destroy(); await closed; } };
 }
 const modulePath = resolve('src/updater/v1/journal.mjs');
 
@@ -85,7 +85,13 @@ test('Linux journal: helper exit retains kernel exclusion; SIGKILL releases it a
   const holder = launch(['--input-type=module', '-e', `
     const {FileStepJournalV1}=await import(${JSON.stringify(modulePath)});
     await new FileStepJournalV1(process.argv[1],{ownerUid:process.getuid(),checkpoint:async point=>{
-      if(point==='append_before_write'){process.stdout.write('held\\n');setInterval(()=>{},1000);await new Promise(()=>{});}
+      if(point==='append_before_write'){
+        process.stdin.resume(); process.stdout.write('held\\n');
+        // A pipe listener roots the suspended transaction. An unreachable promise
+        // lets GC close its FileHandle while the PID is still alive. EOF also
+        // releases the transaction if the test parent disappears.
+        await new Promise(done=>process.stdin.once('end',done));
+      }
     }}).intent({runId:'killed',ordinal:1});`, root]);
   let timer;
   try {

@@ -144,6 +144,7 @@ jobs:
       demo: ${{ steps.route.outputs.demo }}
       server: ${{ steps.route.outputs.server }}
       components: ${{ steps.route.outputs.components }}
+      updater: ${{ steps.route.outputs.updater }}
       articles: ${{ steps.route.outputs.articles }}
       full: ${{ steps.route.outputs.full }}
       classes: ${{ steps.route.outputs.classes }}
@@ -187,6 +188,7 @@ jobs:
           DEMO: ${{ steps.route.outputs.demo }}
           SERVER: ${{ steps.route.outputs.server }}
           COMPONENTS: ${{ steps.route.outputs.components }}
+          UPDATER: ${{ steps.route.outputs.updater }}
           ARTICLES: ${{ steps.route.outputs.articles }}
           REASON: ${{ steps.route.outputs.reason }}
         run: |
@@ -196,7 +198,7 @@ jobs:
             echo ""
             echo "- Classes: \`${CLASSES}\`"
             echo "- Complete suite required: \`${FULL}\`"
-            echo "- Lanes run early: \`demo=${DEMO} server=${SERVER} components=${COMPONENTS} articles=${ARTICLES}\`"
+            echo "- Lanes run early: \`demo=${DEMO} server=${SERVER} components=${COMPONENTS} updater=${UPDATER} articles=${ARTICLES}\`"
             echo ""
             echo "Every lane not run early is run by \`full-gate\`, so the complete suite still runs before merge."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -396,6 +398,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Install zsh for the install guide checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
       - name: Provide the macOS /private/tmp path on Linux
         # Mac-local tests keep short socket and install roots under /private/tmp;
         # the Linux runner has no such path. Create a real sticky directory, as on
@@ -479,6 +485,33 @@ jobs:
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
         run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+
+  test-updater:
+    name: macOS updater tests
+    needs: route
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+      TMPDIR: /private/tmp
+      LC_ALL: C
+      LANG: C
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # This lane uses macOS lockf, Developer Tools and BSD file metadata.
+      # Default PostgreSQL artifacts are synthetic; live database lanes stay in components.
+      # The opt-in HARD7 dump proof needs a separately supplied migrated fixture.
+      - name: Updater lane
+        run: pnpm run test:updater
 
   test-articles:
     name: Article build lane
@@ -841,12 +874,27 @@ jobs:
     name: Merge gate catch-up
     needs: route
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
-        lane: [demo, server, components, articles]
+        include:
+          - lane: demo
+            runner: ubuntu-latest
+            timeout: 25
+          - lane: server
+            runner: ubuntu-latest
+            timeout: 30
+          - lane: components
+            runner: ubuntu-latest
+            timeout: 90
+          - lane: updater
+            runner: macos-14
+            timeout: 30
+          - lane: articles
+            runner: ubuntu-latest
+            timeout: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -867,6 +915,12 @@ jobs:
       # tests would skip here and a pull request that routed away from the
       # components lane would still get a green merge gate with none of that
       # coverage. Mirrors the PGDG keyring steps in the early job.
+      - name: Prepare Linux component catch-up prerequisites
+        if: ${{ !cancelled() && matrix.lane == 'components' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - name: Install PostgreSQL 17 from PGDG for the components catch-up
         if: ${{ !cancelled() && matrix.lane == 'components' }}
         env:
@@ -902,6 +956,16 @@ jobs:
           pnpm run test:components
           pnpm run test:attack-kit
           node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+      - name: Updater lane (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'updater' && needs.route.result == 'success' && needs.route.outputs.updater == 'false' }}
+        env:
+          CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+          TMPDIR: /private/tmp
+          LC_ALL: C
+          LANG: C
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run test:updater
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |
@@ -914,7 +978,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [affected-tests, route, mutation-checks, pr-claims, quick, test-demo, test-server, test-components, test-articles, migration-lint, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
+    needs: [affected-tests, route, mutation-checks, pr-claims, quick, test-demo, test-server, test-components, test-updater, test-articles, migration-lint, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -942,6 +1006,7 @@ jobs:
           check demo "${{ needs.test-demo.result }}"
           check server "${{ needs.test-server.result }}"
           check components "${{ needs.test-components.result }}"
+          check updater "${{ needs.test-updater.result }}"
           check articles "${{ needs.test-articles.result }}"
           check migration-lint "${{ needs.migration-lint.result }}"
           check unified-product "${{ needs.test-unified-product.result }}"
