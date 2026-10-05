@@ -1108,18 +1108,30 @@ test("10 000 same-hour refusals stay bounded and earn one journal line and one p
       };
       const start = Date.now();
       const counts: number[] = [];
+      // The hour is the DATABASE's hour, so a run that crosses an hour boundary
+      // legitimately opens a second bucket. Count per bucket the database reported.
+      const hours = new Map<string, { refusals: number; highest: number }>();
       for (let batch = 0; batch < 100; batch += 1) {
         // 100 concurrent callers per batch, on the same connection pool the
         // updater actually has, so this measures the store rather than 10 000
         // sockets.
         const parallel = await Promise.all(Array.from({ length: 100 }, record));
         counts.push(...parallel.map(result => result.count));
+        for (const result of parallel) {
+          const hour = hours.get(String(result.bucketStart)) ?? { refusals: 0, highest: 0 };
+          hour.refusals += 1; hour.highest = Math.max(hour.highest, result.count);
+          hours.set(String(result.bucketStart), hour);
+        }
       }
       const elapsed = Date.now() - start;
       assert.equal(counts.length, 10_000, "all 10 000 refusals were recorded");
-      assert.equal(journal.length, 1, "exactly one journal line for the hour");
-      assert.equal(pushes.length, 1, "exactly one push for the hour");
-      assert.equal(Math.max(...counts), 10_000, "and the count the journal would carry is 10 000");
+      assert.ok(hours.size === 1 || hours.size === 2, `a run of minutes spans one hour, or two at a boundary (got ${hours.size})`);
+      assert.equal(journal.length, hours.size, "exactly one journal line for each hour the database counted");
+      assert.equal(new Set(journal).size, journal.length, "never two journal lines for one hour");
+      assert.equal(pushes.length, hours.size, "exactly one push for each hour");
+      for (const [bucketStart, hour] of hours) assert.equal(hour.highest, hour.refusals,
+        `the count the journal would carry for ${bucketStart} is every refusal in that hour`);
+      if (hours.size === 1) assert.equal(Math.max(...counts), 10_000, "and the count the journal would carry is 10 000");
       // The table is bounded by construction: ONE row per plan-hour for the
       // aggregate, and one ledger row per approval id, which is what makes a
       // replay a no-op. Nothing grew per refusal beyond those two.
@@ -1129,7 +1141,7 @@ test("10 000 same-hour refusals stay bounded and earn one journal line and one p
       const ledger = (await client.query<{ n: number }>(
         "SELECT count(*)::int AS n FROM updater.approval_refusals WHERE plan_id=$1", [plan])).rows[0]?.n;
       assert.equal(typeof buckets, "number");
-      assert.equal(buckets, 1, "one aggregate row per plan-hour, however many refusals");
+      assert.equal(buckets, hours.size, "one aggregate row per plan-hour, however many refusals");
       assert.equal(ledger, 10_000, "one ledger row per approval, which is the idempotency record");
       assert.ok(elapsed < 300_000, `10 000 refusals took ${elapsed}ms`);
 
