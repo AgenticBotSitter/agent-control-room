@@ -51,8 +51,10 @@ jobs:
   affected-tests:
     name: Affected tests (fast)
     runs-on: ubuntu-latest
-    # A full-suite change still runs every PostgreSQL-gated file directly (about 80 minutes).
-    timeout-minutes: 150
+    # A full-suite change still runs all 124 PostgreSQL-gated files directly. Measured on
+    # 2026-10-04: 77 files in about 85 minutes, so about 140 minutes for the full set. 240
+    # leaves margin until the sharded lane replaces this single job.
+    timeout-minutes: 240
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8
