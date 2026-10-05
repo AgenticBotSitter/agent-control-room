@@ -292,6 +292,28 @@ fstatSync(3);process.stdout.write('effect-entered\\n');setInterval(()=>{},1000);
   }
 });
 
+test('R4B-05: a lock shared with a child stays held after its stamped holder is gone', {timeout:30_000}, async t => {
+  const { spawn } = await import('node:child_process');
+  const { once } = await import('node:events');
+  const { acquirePrivateProcessLockV1 } = await import('../src/installer/shared/private-process-lock.mjs');
+  const path = join(await root(t,'upgrade-shared-lock'),'upgrade.lock'), acquire = () => acquirePrivateProcessLockV1(path,{busyCode:'busy'});
+  // Linux pid_max is at most 2^22 and macOS far lower: no process can own this PID.
+  const gone = 4_194_305;
+  // Unshared is the control: on Linux only the shared flock, never the stamp, outlives the holder.
+  for (const share of [true,false]) {
+    const lock = acquire();
+    if (share) lock.shareWithChildren();
+    const child = spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','ignore','ignore',lock.fd]});
+    const closed = once(child,'close');
+    try {
+      lock.writeOwner(gone);lock.close();
+      if (share || process.platform === 'darwin') assert.throws(acquire,{code:'busy'});
+      else acquire().release();
+    } finally { try{process.kill(-child.pid,'SIGKILL');}catch(e){if(e.code!=='ESRCH')throw e;} await closed; }
+    acquire().release();
+  }
+});
+
 test('R4B-04: the default Git port retries interrupted rollback from a real detached checkout', async t => {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');

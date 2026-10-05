@@ -32,6 +32,16 @@ function readOwner(path, before, uid) {
     return JSON.parse(bytes.subarray(0, length).toString("utf8"));
   } finally { closeSync(fd); }
 }
+// Probe on our own descriptor; closing it drops a probe lock we won. A probe that cannot run
+// proves nothing, so it counts as held. A replaced name is refused by the caller's inode check.
+function sharedLockHeld(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    return !kernelFileLockPlatformV1().tryLock(fd);
+  } catch { return true; }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
 const processExists = pid => {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; }
 };
@@ -98,7 +108,8 @@ export async function acquireKernelFileLockV1(path, { expectedUid = process.getu
  * to lose the lock, and "full disk" is not something quarantining a file can fix.
  *
  * @returns {Readonly<{fd: number, identity: Readonly<{dev: number, ino: number, nonce: string}>,
- *   writeOwner: (pid: number, command?: string[]) => void, close: () => void, release: () => void}>}
+ *   writeOwner: (pid: number, command?: string[]) => void, shareWithChildren: () => void,
+ *   close: () => void, release: () => void}>}
  */
 export function acquirePrivateProcessLockV1(path, {
   busyCode = "private_process_lock_busy", expectedUid = process.getuid(), unusableCode = "private_process_lock_unusable" } = {}) {
@@ -133,6 +144,9 @@ export function acquirePrivateProcessLockV1(path, {
         if (liveStart && (!owner.start || owner.start === liveStart)
           || !liveStart && Number.isSafeInteger(owner?.pid) && owner.pid > 0 && processExists(owner.pid)
           || !owner && Date.now() - before.mtimeMs < 300_000) busy();
+        // A holder that shared its descriptor proved liveness by flock(2), not by its PID: a child
+        // that inherited the descriptor keeps the lock after the stamped process is gone.
+        if (owner?.flock === true && sharedLockHeld(path)) busy();
         if (!same(before, lstatSync(path))) busy();
         unlinkSync(path);
         fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
@@ -155,12 +169,23 @@ export function acquirePrivateProcessLockV1(path, {
     if (!privateFile(owned, expectedUid)) unusable();
     if (!same(owned, lstatSync(path))) busy();
     const nonce = randomBytes(24).toString("hex"), identity = { dev: owned.dev, ino: owned.ino, nonce };
+    let shared = false, stamped = [process.pid, []];
     const writeOwner = (pid, command = []) => {
+      stamped = [pid, command];
       ftruncateSync(fd, 0);
-      writeSync(fd, `${JSON.stringify({ version: 2, pid, command, nonce, ...(kernelLock ? {} : { start: linuxStart(pid) }) })}\n`, 0, "utf8");
+      writeSync(fd, `${JSON.stringify({ version: 2, pid, command, nonce, ...(kernelLock ? {} : { start: linuxStart(pid), ...(shared ? { flock: true } : {}) }) })}\n`, 0, "utf8");
       fsyncSync(fd);
     };
     writeOwner(process.pid);
+    // Call before passing `fd` to a child that must keep exclusion if this process dies. macOS
+    // O_EXLOCK already belongs to the shared open file description. Linux adds flock(2) to it,
+    // then stamps that, so a competitor probes the inode instead of trusting a dead PID.
+    const shareWithChildren = () => {
+      if (kernelLock || shared) return;
+      if (!kernelFileLockPlatformV1().tryLock(fd)) busy();
+      shared = true;
+      writeOwner(...stamped);
+    };
     let closed = false;
     const close = () => { if (!closed) { closed = true; closeSync(fd); } };
     const release = () => {
@@ -168,7 +193,7 @@ export function acquirePrivateProcessLockV1(path, {
       catch (error) { if (error.code !== "ENOENT") throw error; }
       finally { close(); }
     };
-    return Object.freeze({ fd, identity: Object.freeze(identity), writeOwner, close, release });
+    return Object.freeze({ fd, identity: Object.freeze(identity), writeOwner, shareWithChildren, close, release });
   } catch (error) {
     if (fd !== undefined) closeSync(fd);
     if (error?.unusable === true) throw error;

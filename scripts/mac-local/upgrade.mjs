@@ -165,6 +165,8 @@ export async function runMacUpgradeV1(options) {
   const lock = acquirePrivateProcessLockV1(join(runtime.runtime, "upgrade.lock"),
     { busyCode: "upgrade_busy", unusableCode: "upgrade_lock_unusable" });
   try {
+    // pnpm effects inherit lock.fd; on Linux too, a killed coordinator must not free them.
+    lock.shareWithChildren();
     await custody();
     return await runLockedMacUpgradeV1(options, runtime, lock.fd);
   } finally {
