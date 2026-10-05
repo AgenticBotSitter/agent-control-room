@@ -216,7 +216,8 @@ test("thirty concurrent symlinked entry processes all run exactly once", async t
     child.stdout.on("data", chunk => { stdout += chunk; });
     child.stderr.on("data", chunk => { stderr += chunk; });
     child.once("error", reject);
-    child.once("exit", (status, signal) => resolveChild({ status, signal, stdout, stderr }));
+    // "close", not "exit": stdout can still be in flight when "exit" fires (seen 1 in 30 under load).
+    child.once("close", (status, signal) => resolveChild({ status, signal, stdout, stderr }));
   })));
   for (const result of results) assert.deepEqual(result,
     { status: 0, signal: null, stdout: "RAN\n", stderr: "" });
