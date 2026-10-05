@@ -367,7 +367,10 @@ test("in-flight durability timeout preserves linked and pending evidence and for
   const gate = new ControlledIo("root_sync", "wait");
   t.after(() => gate.releaseWait());
   const storage = await createPersistentLocalArtifactStorageForTestV1(
-    configuration(root, { operationTimeoutMs: 200 }), gate);
+    // The deadline must expire WHILE the put is held at root_sync, not before it gets there. The budget is
+    // re-checked before every I/O step, so 200 ms was spent before the gate on a loaded 2-CPU runner
+    // (measured: 2 of 6 whole-file runs never reached the gate). 2000 ms keeps the same mechanism with margin.
+    configuration(root, { operationTimeoutMs: 2000 }), gate);
   await assert.rejects(storage.put({ artifactId: id("in-flight-timeout"), bytes: text("Timeout after target link.") }),
     storageError("storage_ambiguous"));
   assert.equal(gate.hits, 1);
