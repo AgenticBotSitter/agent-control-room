@@ -15,6 +15,7 @@ import { checkForConnectorUpdateV1, compareConnectorVersionsV1, connectorRelease
 import { applyReleaseKeyRevocationsV1, applyReleaseKeyRotationV1, createReleaseKeyRevocationsV1,
   createReleaseKeyRotationV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { ConnectorRedirectRefusedV1 } from "../scripts/fleet/connector-http.mjs";
 
 const keys = generateKeyPairSync("ed25519");
 const stranger = generateKeyPairSync("ed25519");
@@ -568,4 +569,77 @@ test("SELFUPD-06: a close-delimited download that ends while its reader is stall
   assert.deepEqual(JSON.parse(/^result (.+)$/mu.exec(stdout)?.[1] ?? "null"), { state: "updated", version: "1.1.0" });
   assert.equal(await currentVersion(f), "1.1.0");
   assert.deepEqual(await readFile(join(f.paths.versions, "1.1.0", "connector.mjs")), bytes);
+});
+
+async function rawReleaseServer(t, answer) {
+  const requests = [], closed = [], sockets = new Set();
+  const server = createNetServer(socket => {
+    let received = "";
+    sockets.add(socket);
+    closed.push(new Promise(done => socket.once("close", () => { sockets.delete(socket); done(true); })));
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      if (received.includes("\r\n\r\n")) return;
+      received += chunk.toString("latin1");
+      if (!received.includes("\r\n\r\n")) return;
+      requests.push(received);
+      answer(socket, requests.length);
+    });
+  });
+  await new Promise(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => { for (const socket of sockets) socket.destroy(); return new Promise(done => server.close(() => done())); });
+  return { url: `http://127.0.0.1:${server.address().port}`, requests, closed };
+}
+
+/** Whether the connector let go of the connection within a generous bound. */
+const releasedWithin = (closed, ms = 10_000) => Promise.race([closed, new Promise(done => setTimeout(() => done(false), ms).unref())]);
+
+test("SELFUPD-07: over the production transport a download longer, shorter or larger than its signed size never installs", async t => {
+  const f = await fixture(t);
+  const bytes = Buffer.from(`export const version = "1.1.0";\n//${"y".repeat(200 * 1024)}\n`), release = advertised(bytes);
+  const longer = Buffer.concat([bytes, Buffer.from("!")]);
+  const replies = [
+    // declared larger than the signed size
+    socket => socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${longer.length}\r\nconnection: close\r\n\r\n`), longer])),
+    // no declared size, and more bytes than signed
+    socket => socket.end(Buffer.concat([Buffer.from("HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n"), longer])),
+    // the right declared size, but the connection ends early
+    socket => socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${bytes.length}\r\nconnection: close\r\n\r\n`),
+      bytes.subarray(0, 100 * 1024)])),
+  ];
+  const gateway = await rawReleaseServer(t, (socket, count) => replies[count - 1](socket));
+  const config = { ...f.config, server: gateway.url };
+  await writeFile(f.configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  const expected = [/connector_update_refused:size/u, /connector_update_refused:size/u, /^TypeError: terminated$/u];
+  for (const [index, refusal] of expected.entries()) {
+    // No fetcher: the production default carries the download.
+    await assert.rejects(checkForConnectorUpdateV1({ ...f, config, advertised: release, currentVersion: "1.0.0",
+      healthCheck: async () => true }), refusal);
+    assert.equal(await releasedWithin(gateway.closed[index]), true, `refused download ${index + 1} must release its connection`);
+    assert.equal(await currentVersion(f), "1.0.0");
+    await assert.rejects(readFile(f.paths.lock), error => error.code === "ENOENT");
+  }
+  assert.equal(gateway.requests.length, 3);
+  for (const request of gateway.requests) {
+    assert.match(request, /^GET \/fleet\/v1\/connector-releases\/1\.1\.0 HTTP\/1\.1\r\n/u);
+    assert.match(request, /\r\nauthorization: Bearer crf_/iu);
+    // Node's fetch always sends sec-fetch-mode; this transport never does.
+    assert.doesNotMatch(request, /\r\nsec-fetch-mode:/iu, "the update must download over the connector transport");
+  }
+});
+
+test("SELFUPD-08: a redirected download is refused with its status and its location never sees the machine key", async t => {
+  const f = await fixture(t), bytes = Buffer.from("export const version = '1.1.0';\n"), release = advertised(bytes);
+  const elsewhere = await rawReleaseServer(t, socket => socket.end("HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n"));
+  const gateway = await rawReleaseServer(t, socket => socket.end(
+    `HTTP/1.1 308 Permanent Redirect\r\nlocation: ${elsewhere.url}/release.mjs\r\ncontent-length: 0\r\nconnection: close\r\n\r\n`));
+  const config = { ...f.config, server: gateway.url };
+  await writeFile(f.configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  await assert.rejects(checkForConnectorUpdateV1({ ...f, config, advertised: release,
+    currentVersion: "1.0.0", healthCheck: async () => true }),
+  error => error instanceof ConnectorRedirectRefusedV1 && error.code === "redirect_refused" && error.status === 308);
+  assert.equal(gateway.requests.length, 1);
+  assert.equal(elsewhere.requests.length, 0);
+  assert.equal(await currentVersion(f), "1.0.0");
+  await assert.rejects(readFile(f.paths.lock), error => error.code === "ENOENT");
 });

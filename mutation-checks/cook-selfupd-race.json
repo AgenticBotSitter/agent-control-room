@@ -1,0 +1,86 @@
+[
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "fetcher = connectorFetchV1, healthCheck = connectorCandidateHealthCheckV1,",
+    "replace": "fetcher = globalThis.fetch, healthCheck = connectorCandidateHealthCheckV1,",
+    "test": "node --test --test-name-pattern \"SELFUPD-07\" tests/fleet-connector-update.test.mjs",
+    "why": "the connector downloads its own update over node:http, never Node's fetch, whose close-delimited body can crash the process"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "clearTimer(timer); controller.abort();",
+    "replace": "clearTimer(timer);",
+    "test": "node --test --test-name-pattern \"SELFUPD-07\" tests/fleet-connector-update.test.mjs",
+    "why": "a download refused before its body was read still releases its connection"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "export function createClient(config, fetcher = connectorFetchV1,",
+    "replace": "export function createClient(config, fetcher = globalThis.fetch,",
+    "test": "node --test --test-name-pattern \"CONNHTTP-1[67]\" tests/fleet-connector-http.test.mjs",
+    "why": "the gateway client's default transport is the connector's node:http transport"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const call = fetcher ?? connectorFetchV1;",
+    "replace": "const call = fetcher ?? globalThis.fetch;",
+    "test": "node --test --test-name-pattern \"CONNHTTP-19\" tests/fleet-connector-http.test.mjs",
+    "why": "the MCP recovery path uses the connector transport when no fetcher is injected"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (error?.code !== CONNECTOR_REDIRECT_REFUSED_V1) throw error;",
+    "replace": "throw error;",
+    "test": "node --test --test-name-pattern \"CONNHTTP-19\" tests/fleet-connector-http.test.mjs",
+    "why": "an MCP session reports a refused redirect as a refusal with its status"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "if (REDIRECT_STATUSES.has(status)) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern \"CONNHTTP-09\" tests/fleet-connector-http.test.mjs",
+    "why": "every redirect status is refused, so the bearer credential is never sent on to the location it names"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "if (redirect !== \"error\") throw new Error(",
+    "replace": "if (false) throw new Error(",
+    "test": "node --test --test-name-pattern \"CONNHTTP-10\" tests/fleet-connector-http.test.mjs",
+    "why": "the transport has no follow or manual mode; asking for one is refused before anything is sent"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "if (url.username || url.password) throw new Error(\"credentials in the URL\");",
+    "replace": "if (false) throw new Error(\"credentials in the URL\");",
+    "test": "node --test --test-name-pattern \"CONNHTTP-11\" tests/fleet-connector-http.test.mjs",
+    "why": "a URL carrying credentials is refused before any connection"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "if ((controller.desiredSize ?? 0) <= 0) response.pause();",
+    "replace": "void controller.desiredSize;",
+    "test": "node --test --test-name-pattern \"CONNHTTP-15\" tests/fleet-connector-http.test.mjs",
+    "why": "an unread body holds the sender back instead of being drained into memory"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "if (method.toUpperCase() === \"HEAD\" || NULL_BODY_STATUSES.has(status))",
+    "replace": "if (method.toUpperCase() === \"HEAD\")",
+    "test": "node --test --test-name-pattern \"CONNHTTP-06\" tests/fleet-connector-http.test.mjs",
+    "why": "204, 205 and 304 replies resolve with no body instead of failing"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "      fail(reason); terminate(reason);",
+    "replace": "      fail(new Error(\"aborted\")); terminate(new Error(\"aborted\"));",
+    "test": "node --test --test-name-pattern \"CONNHTTP-13\" tests/fleet-connector-http.test.mjs",
+    "why": "an abort rejects with the caller's own signal reason, which the deadline classifiers read"
+  },
+  {
+    "file": "scripts/fleet/connector-http.mjs",
+    "find": "          response.on(\"error\", error => terminate(new TypeError(\"terminated\", { cause: error })));\n          response.once(\"close\", () => {\n            if (!response.complete) terminate(",
+    "replace": "          response.on(\"error\", () => { streamDone = true; controller.close(); });\n          response.once(\"close\", () => {\n            if (false) terminate(",
+    "test": "node --test --test-name-pattern \"CONNHTTP-04\" tests/fleet-connector-http.test.mjs",
+    "why": "a body that stops before its declared end is an error, never a short success"
+  }
+]
