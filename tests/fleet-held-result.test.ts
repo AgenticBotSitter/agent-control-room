@@ -1299,6 +1299,9 @@ test("synchronized recovery callers merge the current disk minimum, including 50
       } }, reportDelivery: async () => { throw outage(); } });
   };
   const callers = [run(false), run(true)];
+  // Observe both at once: a caller can reject while the loop below is still
+  // polling, and an unobserved rejection fails the file as unhandledRejection.
+  for (const caller of callers) caller.catch(() => {});
   try {
     // Both callers have the same stale snapshot; release the later gateway
     // reading only after the earlier minimum is on disk.
