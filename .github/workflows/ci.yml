@@ -51,7 +51,8 @@ jobs:
   affected-tests:
     name: Affected tests (fast)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A full-suite change still runs every PostgreSQL-gated file directly (about 80 minutes).
+    timeout-minutes: 150
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8
@@ -393,7 +394,8 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The full test:components chain needs about 150-160 minutes on a hosted runner.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -922,7 +924,7 @@ jobs:
             timeout: 30
           - lane: components
             runner: ubuntu-latest
-            timeout: 90
+            timeout: 180
           - lane: updater
             runner: macos-26
             timeout: 45
