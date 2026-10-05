@@ -13,8 +13,8 @@
 // default and moves with CONTROL_ROOM_PG_TEST_PORT_BASE.
 import assert from "node:assert/strict";
 import { Client, Pool } from "pg";
-import test from "node:test";
-import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
+import test, { after, before } from "node:test";
+import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
@@ -34,6 +34,59 @@ const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
   Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58710) + index));
 const PG = requiresRealPostgres();
 const needsPg = () => (PG ? undefined : { skip: realPostgresSkipMessage() });
+
+// Migrate once per file. Each body still gets an empty, physically separate
+// database with the complete production schema, queues and grants. Repeating
+// initdb/migration/shutdown eleven times exhausted the file's 600-second bound.
+let releaseCluster!: () => void;
+const released = new Promise<void>(resolve => { releaseCluster = resolve; });
+let publishCluster!: (postgres: RealPostgres) => void;
+const clusterReady = new Promise<RealPostgres>(resolve => { publishCluster = resolve; });
+let clusterRun: Promise<unknown> | undefined;
+let fixtureNumber = 0;
+
+before(async () => {
+  if (!PG) return;
+  clusterRun = withRealPostgres(async postgres => {
+    // Keep the template immutable and prevent an autovacuum connection from
+    // racing CREATE DATABASE. Only the per-body copies accept clients.
+    const admin = new Client(postgres.admin({ database: "postgres" }));
+    try {
+      await admin.connect();
+      await admin.query(`ALTER DATABASE "${postgres.database}" ALLOW_CONNECTIONS false`);
+    } finally { await admin.end(); }
+    publishCluster(postgres);
+    await released;
+  }, { port: PORTS[8], allowedPorts: PORTS, boundMs: 500_000 });
+  await Promise.race([clusterReady, clusterRun]);
+});
+after(async () => {
+  releaseCluster();
+  await clusterRun;
+});
+
+type HostPostgres = Pick<RealPostgres, "port" | "database" | "admin" | "connection">;
+async function withHostPostgres(body: (postgres: HostPostgres) => Promise<void>): Promise<void> {
+  const template = await clusterReady;
+  const database = `operations_host_fixture_${++fixtureNumber}`;
+  const admin = new Client(template.admin({ database: "postgres" }));
+  try {
+    await admin.connect();
+    await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${template.database}" ALLOW_CONNECTIONS true`);
+    try {
+      // TEMPLATE copies object ACLs, but not the database ACL. Match the
+      // production helper's private_web_database.sql revocation as its owner.
+      await admin.query(`REVOKE CREATE, TEMPORARY ON DATABASE "${database}" FROM PUBLIC`);
+      const fixture: HostPostgres = { port: template.port, database,
+        admin: options => template.admin({ ...options, database: options?.database ?? database }),
+        connection: (role, options) => template.connection(role, { ...options, database: options?.database ?? database }) };
+      await body(fixture);
+    } finally {
+      // No FORCE: a leaked connection is a test failure, not hidden cleanup.
+      await admin.query(`DROP DATABASE "${database}"`);
+    }
+  } finally { await admin.end(); }
+}
 
 const PROVIDER = "test";
 const ISSUED_AT = new Date(Date.now() - 60_000).toISOString();
@@ -217,22 +270,52 @@ function productionHost(client: DatabaseClient, options: Readonly<{ key?: Uint8A
   return Object.freeze({ host, rendered });
 }
 
-test("the production host serves the operations-mode endpoint on a real port", { timeout: 600_000 }, async t => {
+test("the shared host template refuses production-login connections", { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  const template = await clusterReady;
+  const web = new Client(template.connection("web"));
+  try {
+    await assert.rejects(web.connect(), (error: unknown) => (error as { code?: string }).code === "55000",
+      "production readers must use their fixture, not the shared template");
+  } finally { await web.end(); }
+});
+
+test("host fixture copies retain production database privilege refusals", { timeout: 180_000 }, async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  await withHostPostgres(async postgres => {
+    const web = new Client(postgres.connection("web"));
+    try {
+      await web.connect();
+      // Independent contract: db/roles/private_web_database.sql revokes both
+      // database privileges from PUBLIC; the real helper applies that rule.
+      await assert.rejects(web.query("CREATE TEMP TABLE operations_mode_fixture_probe(value integer)"),
+        (error: unknown) => (error as { code?: string }).code === "42501",
+        "host copies must refuse temporary tables as the production web login");
+      await assert.rejects(web.query("CREATE SCHEMA operations_mode_fixture_probe"),
+        (error: unknown) => (error as { code?: string }).code === "42501",
+        "host copies must refuse schema creation as the production web login");
+    } finally { await web.end(); }
+  });
+});
+
+test("the production host serves the operations-mode endpoint on a real port", { timeout: 180_000 }, async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     // Seeded before the host starts: the local owner session store loads its
     // persisted sessions during startup, so a row written afterwards would
     // never be seen.
-    await seedTenant(admin);
-    const { host, rendered } = productionHost(client, { key: KEY });
-    // The host's start() is the one the launcher calls; it returns the composed
-    // service, which is what owns the listener.
-    const started = await host.start();
+    let started: Awaited<ReturnType<ReturnType<typeof productionHost>["host"]["start"]>> | undefined;
     try {
+      await admin.connect();
+      await seedTenant(admin);
+      const { host, rendered } = productionHost(client, { key: KEY });
+      // Startup and seeding must also reach the connection cleanup.
+      started = await host.start();
       assert.ok(started, "the production host must start with the installed key");
       // A real request over a real socket, through the host's own composition.
       const response = await fetch(`http://127.0.0.1:${PORT}/api/v1/operations-mode`, {
@@ -270,18 +353,21 @@ test("the production host serves the operations-mode endpoint on a real port", {
       assert.equal(stopped.mode, "stopped");
       assert.equal(stopped.stopRequests, null,
         "with no coordinator composed there is no stop request to report, and the receipt must say so");
-    } finally { await started.close(); await close(); await admin.end(); }
-  }, { port: PORTS[8], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally {
+      try { await started?.close(); }
+      finally { await Promise.all([close(), admin.end()]); }
+    }
+  });
 });
 
-test("the protected host hands the task application a working supervisor port", { timeout: 600_000 }, async t => {
+test("the protected host hands the task application a working supervisor port", { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       // Seeded before the host starts: the local owner session store loads its
       // persisted sessions during startup, so a row written afterwards would
       // never be seen.
@@ -329,19 +415,19 @@ test("the protected host hands the task application a working supervisor port", 
         assert.deepEqual(spy.application.revoked, ["job:running"],
           "the revoke must run on the coordinator's own path, not a weaker private copy");
       } finally { await started.close(); }
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[9], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("the composed Mac-local host routes the operations-mode endpoint, and it is the server's state",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       const service = host(client, { key: KEY });
 
@@ -368,35 +454,35 @@ test("the composed Mac-local host routes the operations-mode endpoint, and it is
       // same decision.
       const other = new WebOperationsModeServiceV1(client, { tenantId: TENANT, workspaceId: WORKSPACE }, KEY);
       assert.equal((await other.read(ownerIdentity())).mode, "paused");
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[0], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("a host with no operations mode leaves the endpoint absent rather than showing a switch that does nothing",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       const response = await host(client).handle(call("/api/v1/operations-mode", "GET"), render);
       assert.notEqual(response.status, 200, "no key must mean no endpoint, never a default that pretends to work");
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[1], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("automatic health pauses resume only their own revision, record activity, and cap at three per hour",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       const service = new WebOperationsModeServiceV1(client, { tenantId: TENANT, workspaceId: WORKSPACE }, KEY);
       const port = createOperationsModeSupervisorPortV1({ target: service });
@@ -467,19 +553,19 @@ test("automatic health pauses resume only their own revision, record activity, a
       assert.equal(afterOwnerPause.revision, ownerPause.revision);
       assert.equal(afterOwnerPause.reason, "owner is checking the Mac");
       assert.deepEqual(Object.keys(port), ["pauseNewStarts", "resumeAfterMachineHealth"]);
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[2], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("the same health observation always yields the same receipt id, so a duplicated cycle is visibly a duplicate",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       const service = new WebOperationsModeServiceV1(client, { tenantId: TENANT, workspaceId: WORKSPACE }, KEY);
       const port = createOperationsModeSupervisorPortV1({ target: service });
@@ -487,19 +573,19 @@ test("the same health observation always yields the same receipt id, so a duplic
       const first = await port.pauseNewStarts({ reasonCode: "machine_health_failed", observedAt });
       const second = await port.pauseNewStarts({ reasonCode: "machine_health_failed", observedAt });
       assert.equal(first.receiptId, second.receiptId);
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[3], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("a health check cannot pause an installation with no live owner grant",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       // The owner identity exists and its web session still works, but the
       // grant that authorizes an operations-mode write is gone. A health check
@@ -510,19 +596,19 @@ test("a health check cannot pause an installation with no live owner grant",
         /operations_mode_owner_unavailable/);
       assert.equal((await admin.query(
         "SELECT count(*)::int AS n FROM installation_operations_mode_revisions")).rows[0]!.n, 0);
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[4], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("an agent identity is never resolved as the owner, however wide its grant",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       // An agent holding the owner role key and every action. The 0155 guard
       // refuses a non-human identity at the insert, and the installation path
@@ -550,19 +636,19 @@ test("an agent identity is never resolved as the owner, however wide its grant",
         "SELECT set_by_identity_id FROM installation_operations_mode_revisions");
       assert.ok(history.rows.every(row => row.set_by_identity_id === OWNER),
         "an agent identity must never author an operations-mode record");
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[7], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("an owner grant without operations.set_mode does not authorize a pause",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       // The owner role, but not the action. This is the grant an operator-shaped
       // installation would have: able to run the installation, not to stop it.
@@ -574,19 +660,19 @@ test("an owner grant without operations.set_mode does not authorize a pause",
         "the owner role alone is not the authority; operations.set_mode is");
       assert.equal((await admin.query(
         "SELECT count(*)::int AS n FROM installation_operations_mode_revisions")).rows[0]!.n, 0);
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[2], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("two live owners refuse the installation pause rather than choosing one",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin, [OWNER, "identity:operations-host-owner-two"]);
       const service = new WebOperationsModeServiceV1(client, { tenantId: TENANT, workspaceId: WORKSPACE }, KEY);
       await assert.rejects(service.pauseForMachineHealth(OPERATIONS_MODE_MACHINE_HEALTH_REASON_V1),
@@ -597,19 +683,19 @@ test("two live owners refuse the installation pause rather than choosing one",
       // The owner's own session path is unaffected: the refusal is specific to
       // the installation pause, not to the endpoint.
       assert.equal((await service.read(ownerIdentity())).mode, "running");
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[5], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
 });
 
 test("an unhealthy machine does not overwrite a mode the owner chose",
-  { timeout: 600_000 }, async t => {
+  { timeout: 180_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
-  await withRealPostgres(async postgres => {
+  await withHostPostgres(async postgres => {
     const admin = new Client(postgres.admin({ database: postgres.database }));
-    await admin.connect();
     const { client, close } = webClient(postgres);
     try {
+      await admin.connect();
       await seedTenant(admin);
       const service = new WebOperationsModeServiceV1(client, { tenantId: TENANT, workspaceId: WORKSPACE }, KEY);
       // The owner drains by hand first; the machine must not overwrite it.
@@ -639,6 +725,43 @@ test("an unhealthy machine does not overwrite a mode the owner chose",
       // And the owner's recorded reason survives: the machine's reason must not
       // be written in its place under the same revision.
       assert.equal((await service.read(ownerIdentity())).reason, "finishing tonight");
-    } finally { await close(); await admin.end(); }
-  }, { port: PORTS[6], allowedPorts: PORTS, boundMs: 180_000 });
+    } finally { await Promise.all([close(), admin.end()]); }
+  });
+});
+
+test("twenty concurrent host fixtures keep decisions and production logins isolated", { timeout: 180_000 }, async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  let arrived = 0;
+  let release!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  const runs = Array.from({ length: 20 }, () => withHostPostgres(async postgres => {
+    const admin = new Client(postgres.admin());
+    try {
+      await admin.connect();
+      await seedTenant(admin);
+    } finally { await admin.end(); }
+    // The seed clients are closed before the web clients open, keeping the
+    // fixture burst below the real cluster's production connection ceiling.
+    if (++arrived === 20) release();
+    await barrier;
+    const { client, close } = webClient(postgres);
+    try {
+      assert.equal(arrived, 20, "all independent callers reach the same barrier");
+      const service = new WebOperationsModeServiceV1(client, { tenantId: TENANT, workspaceId: WORKSPACE }, KEY);
+      assert.equal((await service.read(ownerIdentity())).revision, 0);
+      const written = await service.set(ownerIdentity(), { mode: "paused", reason: "fixture concurrency" });
+      assert.equal(written.revision, 1);
+      const readBack = await new WebOperationsModeServiceV1(client,
+        { tenantId: TENANT, workspaceId: WORKSPACE }, KEY).read(ownerIdentity());
+      assert.equal(readBack.mode, "paused");
+      assert.equal(readBack.revision, 1);
+    } finally { await close(); }
+  }));
+  try { await Promise.all(runs); }
+  finally {
+    // A failed seed must release the other callers and await every DROP/close.
+    release();
+    await Promise.allSettled(runs);
+  }
 });
