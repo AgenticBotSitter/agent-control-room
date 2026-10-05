@@ -598,19 +598,25 @@ test("SELFUPD-07: over the production transport a download longer, shorter or la
   const f = await fixture(t);
   const bytes = Buffer.from(`export const version = "1.1.0";\n//${"y".repeat(200 * 1024)}\n`), release = advertised(bytes);
   const longer = Buffer.concat([bytes, Buffer.from("!")]);
+  // The replies refused before their body is read keep their connection open
+  // with the body unfinished, so only the connector can let go of it.
   const replies = [
     // declared larger than the signed size
-    socket => socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${longer.length}\r\nconnection: close\r\n\r\n`), longer])),
+    socket => socket.write(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${longer.length}\r\nconnection: close\r\n\r\n`),
+      longer.subarray(0, 1024)])),
     // no declared size, and more bytes than signed
     socket => socket.end(Buffer.concat([Buffer.from("HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n"), longer])),
     // the right declared size, but the connection ends early
     socket => socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${bytes.length}\r\nconnection: close\r\n\r\n`),
       bytes.subarray(0, 100 * 1024)])),
+    // a refusal status, its body unfinished
+    socket => socket.write(Buffer.from("HTTP/1.1 503 Service Unavailable\r\ncontent-length: 4096\r\nconnection: close\r\n\r\nbusy")),
   ];
   const gateway = await rawReleaseServer(t, (socket, count) => replies[count - 1](socket));
   const config = { ...f.config, server: gateway.url };
   await writeFile(f.configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
-  const expected = [/connector_update_refused:size/u, /connector_update_refused:size/u, /^TypeError: terminated$/u];
+  const expected = [/connector_update_refused:size/u, /connector_update_refused:size/u, /^TypeError: terminated$/u,
+    /connector_update_refused:download_503/u];
   for (const [index, refusal] of expected.entries()) {
     // No fetcher: the production default carries the download.
     await assert.rejects(checkForConnectorUpdateV1({ ...f, config, advertised: release, currentVersion: "1.0.0",
@@ -619,7 +625,7 @@ test("SELFUPD-07: over the production transport a download longer, shorter or la
     assert.equal(await currentVersion(f), "1.0.0");
     await assert.rejects(readFile(f.paths.lock), error => error.code === "ENOENT");
   }
-  assert.equal(gateway.requests.length, 3);
+  assert.equal(gateway.requests.length, 4);
   for (const request of gateway.requests) {
     assert.match(request, /^GET \/fleet\/v1\/connector-releases\/1\.1\.0 HTTP\/1\.1\r\n/u);
     assert.match(request, /\r\nauthorization: Bearer crf_/iu);
