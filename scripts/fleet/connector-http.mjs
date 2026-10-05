@@ -3,6 +3,26 @@ import { request as httpsRequest } from "node:https";
 
 const BODY_HIGH_WATER_MARK = 64 * 1024;
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+// The statuses fetch() treats as redirects. 300 and 304 are ordinary replies.
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** The code a refused redirect carries, so callers can tell it from an outage. */
+export const CONNECTOR_REDIRECT_REFUSED_V1 = "redirect_refused";
+
+/** The gateway answered with a redirect, and the connector never follows one:
+ * the next request would carry the machine's bearer credential to whatever
+ * location the reply named. It is a TypeError with fetch's own message and
+ * cause, exactly what `redirect: "error"` gave before, plus the HTTP status
+ * and a code no network-failure check matches, so a redirect is never retried
+ * as a lost connection and never mistaken for a refused credential. */
+export class ConnectorRedirectRefusedV1 extends TypeError {
+  constructor(status) {
+    super("fetch failed", { cause: new Error("unexpected redirect") });
+    this.name = "ConnectorRedirectRefusedV1";
+    this.code = CONNECTOR_REDIRECT_REFUSED_V1;
+    this.status = status;
+  }
+}
 
 /** The connector's default gateway transport: the subset of fetch() the
  * connector uses, carried by node:http instead of Node's bundled undici.
@@ -21,16 +41,22 @@ const NULL_BODY_STATUSES = new Set([204, 205, 304]);
  * Failures keep fetch's shapes, because callers classify them: a network
  * failure is a TypeError whose `cause` carries the socket code, an abort
  * rejects with the signal's reason, and a body that stops early errors its
- * stream with a TypeError. Redirects are never followed. Every request uses
- * its own connection, as the gateway's one-reply-per-connection rule expects.
+ * stream with a TypeError. Every request uses its own connection, as the
+ * gateway's one-reply-per-connection rule expects.
+ *
+ * Redirects are refused, always: there is no follow mode. A redirect status
+ * rejects with ConnectorRedirectRefusedV1 whether or not it names a location,
+ * as fetch's `redirect: "error"` does, and any other `redirect` mode is
+ * refused before a request is sent, so no caller can believe it follows.
  * @param {string | URL} input
  * @param {RequestInit} [init] string or byte bodies only
  * @returns {Promise<Response>} */
-export function connectorFetchV1(input, { method = "GET", headers = {}, body, signal, redirect = "follow" } = {}) {
+export function connectorFetchV1(input, { method = "GET", headers = {}, body, signal, redirect = "error" } = {}) {
   return new Promise((resolveFetch, rejectFetch) => {
     if (signal?.aborted) { rejectFetch(signal.reason); return; }
     let url, outgoing, payload;
     try {
+      if (redirect !== "error") throw new Error(`redirect mode ${String(redirect)}: the connector refuses every redirect`);
       url = new URL(String(input));
       if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`unsupported protocol ${url.protocol}`);
       if (url.username || url.password) throw new Error("credentials in the URL");
@@ -67,9 +93,9 @@ export function connectorFetchV1(input, { method = "GET", headers = {}, body, si
     request.once("response", response => {
       incoming = response;
       const status = response.statusCode ?? 0;
-      if (status >= 300 && status < 400 && response.headers.location !== undefined && redirect !== "manual") {
+      if (REDIRECT_STATUSES.has(status)) {
         response.destroy();
-        fail(new TypeError("fetch failed", { cause: new Error("unexpected redirect") }));
+        fail(new ConnectorRedirectRefusedV1(status));
         return;
       }
       let stream = null;

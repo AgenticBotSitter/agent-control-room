@@ -311,7 +311,11 @@ async function downloadRelease(release, config, fetcher, destination, { clock = 
   } catch (error) {
     if (controller.signal.aborted) refused("download_timeout");
     throw error;
-  } finally { clearTimer(timer); }
+  } finally {
+    // A reply refused before its body was read (a status, a declared size)
+    // still holds its connection open; aborting releases it on every path.
+    clearTimer(timer); controller.abort();
+  }
 }
 
 async function sweepTemporaryConnectors(paths) {

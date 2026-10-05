@@ -27,7 +27,7 @@ import { assertConnectorReleaseTrustCompatibleV1, checkForConnectorUpdateV1, con
   connectorInstallRootFromConfigPathV1,
   connectorUpdatesPausedV1, installConnectorLauncherV1, launchCurrentConnectorV1,
   setConnectorUpdatesPausedV1 } from "./connector-update.mjs";
-import { connectorFetchV1 } from "./connector-http.mjs";
+import { CONNECTOR_REDIRECT_REFUSED_V1, connectorFetchV1 } from "./connector-http.mjs";
 import { captureReleaseTrustV1, compareReleaseVersionsV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
 
 import { acquireRotationLock, electGenerationCleaner, getProcessIdentity, lockGeneration, pidAlive, sameProcess } from "./connector-update.mjs";
@@ -1872,7 +1872,19 @@ function lazyRecoveredMcpClient({ configPath, fetcher, refreshSecrets, checkWrit
         // the wrapper is built, not left to the callee.
         const call = fetcher ?? connectorFetchV1;
         const recording = async (url, init) => {
-          const response = await call(url, init);
+          let response;
+          try { response = await call(url, init); }
+          catch (error) {
+            // A redirect is the gateway's answer, not a lost connection, and
+            // it is refused on purpose: following it would hand this secret
+            // to another location. It is reported like any other refusal,
+            // with its status, and it says nothing about the credential, so
+            // the secret is neither remembered as refused nor swapped for the
+            // pending one.
+            if (error?.code !== CONNECTOR_REDIRECT_REFUSED_V1) throw error;
+            throw Object.assign(new Error(`Control Room refused the request (${CONNECTOR_REDIRECT_REFUSED_V1}, HTTP ${error.status}).`),
+              { code: CONNECTOR_REDIRECT_REFUSED_V1, status: error.status });
+          }
           if (response?.status === 401) {
             const presented = /^Bearer (\S+)$/u.exec(String(init?.headers?.authorization ?? ""))?.[1];
             if (presented) refused.add(presented);
