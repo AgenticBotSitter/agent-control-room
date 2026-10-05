@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tryPersistentKernelLockV1 } from "../../src/installer/shared/persistent-kernel-lock.mjs";
+import { connectorFetchV1 } from "./connector-http.mjs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyReleaseKeyRevocationsV1, captureReleaseTrustV1, compareReleaseVersionsV1,
   connectorReleaseSignatureMaterialV1, MAX_CONNECTOR_RELEASE_BYTES_V1,
@@ -377,7 +378,7 @@ export async function recoverPendingConnectorUpdateV1({ installRoot, configPath,
 }
 
 export async function checkForConnectorUpdateV1({ installRoot, configPath, config, advertised, currentVersion,
-  fetcher = globalThis.fetch, healthCheck = connectorCandidateHealthCheckV1, fault = async () => {}, clock = Date.now,
+  fetcher = connectorFetchV1, healthCheck = connectorCandidateHealthCheckV1, fault = async () => {}, clock = Date.now,
   minimumCheckIntervalMs = 0, downloadDeadlineMs = DOWNLOAD_DEADLINE_MS }) {
   const paths = connectorUpdatePathsV1(installRoot);
   return withUpdateLock(paths.lock, async () => {

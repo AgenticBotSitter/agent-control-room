@@ -27,6 +27,7 @@ import { assertConnectorReleaseTrustCompatibleV1, checkForConnectorUpdateV1, con
   connectorInstallRootFromConfigPathV1,
   connectorUpdatesPausedV1, installConnectorLauncherV1, launchCurrentConnectorV1,
   setConnectorUpdatesPausedV1 } from "./connector-update.mjs";
+import { connectorFetchV1 } from "./connector-http.mjs";
 import { captureReleaseTrustV1, compareReleaseVersionsV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
 
 import { acquireRotationLock, electGenerationCleaner, getProcessIdentity, lockGeneration, pidAlive, sameProcess } from "./connector-update.mjs";
@@ -366,7 +367,7 @@ function gatewayRefusalCode(value, status) {
   return Number.isInteger(status) && status >= 400 && status <= 599 ? `http_${status}` : "protocol_invalid";
 }
 
-export function createClient(config, fetcher = globalThis.fetch, { timeoutMs: requestTimeoutMs } = {}) {
+export function createClient(config, fetcher = connectorFetchV1, { timeoutMs: requestTimeoutMs } = {}) {
   async function call(method, path, body, secret = config.secret, extraHeaders = {}, timeoutMs = 30_000) {
     const { response, value } = await gatewayJson(fetcher, `${config.server}${path}`, { method, redirect: "error",
       headers: { accept: "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}),
@@ -575,7 +576,7 @@ async function joinLocked({ server, code, workerKind, configPath, fetcher, write
   // retries this exact enrollment instead of consuming a second credential.
   await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: null, secret,
     credentialExpiresAt: null, codeDigest, clientNonce, workerKind });
-  try { await refuseNewerConnectorBeforeEnrollment(origin, fetcher ?? globalThis.fetch); }
+  try { await refuseNewerConnectorBeforeEnrollment(origin, fetcher ?? connectorFetchV1); }
   catch (error) {
     // A retry may carry a secret whose prior enrollment committed after its
     // response was lost. Keep that exact retry binding on every preflight
@@ -1869,7 +1870,7 @@ function lazyRecoveredMcpClient({ configPath, fetcher, refreshSecrets, checkWrit
         // real CLI, and wrapping `undefined` turned every request into
         // "fetcher is not a function" -- so the default is resolved here, where
         // the wrapper is built, not left to the callee.
-        const call = fetcher ?? globalThis.fetch;
+        const call = fetcher ?? connectorFetchV1;
         const recording = async (url, init) => {
           const response = await call(url, init);
           if (response?.status === 401) {

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { closeSync, constants as fsConstants, openSync } from "node:fs";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -483,4 +485,87 @@ test("R2C-10: simultaneous stale inspectors elect exactly one cleaner for that g
   }));
   assert.equal(cleaners, 1);
   assert.equal(results.filter(result => result.status === "fulfilled").length, contenders);
+});
+
+// The child runs the real update check on its default transport, with one
+// libuv worker. "stall" parks that worker on a FIFO open, so the connector's
+// file writes wait while the event loop still reads the socket. The test
+// opens the FIFO's other end to let the download continue.
+const STALLED_DOWNLOAD_CHILD = `
+import { closeSync, open, writeSync } from "node:fs";
+const { checkForConnectorUpdateV1 } = await import(process.env.CONTROL_ROOM_TEST_UPDATER_MODULE);
+const fifo = process.env.CONTROL_ROOM_TEST_STALL_FIFO;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", text => {
+  if (text.includes("stall")) {
+    open(fifo, "r", (error, fd) => { if (!error) closeSync(fd); });
+    writeSync(1, "stalled\\n");
+  }
+});
+const result = await checkForConnectorUpdateV1({ ...JSON.parse(process.env.CONTROL_ROOM_TEST_UPDATE_FIXTURE),
+  healthCheck: async () => true });
+writeSync(1, "result " + JSON.stringify(result) + "\\n");
+process.exit(0);
+`;
+
+test("SELFUPD-06: a close-delimited download that ends while its reader is stalled never kills the update", async t => {
+  // Node 22's fetch paused its parser once 64 KiB waited unread, let the FIN
+  // arrive meanwhile, then re-paused while resuming and finished a paused
+  // parser: `assert(!this.paused)` killed the MCP shim in the middle of its
+  // self-update, the flaky release-signing E2E under CPU load.
+  const f = await fixture(t);
+  const bytes = Buffer.from(`export const version = "1.1.0";\n//${"x".repeat(100 * 1024)}\n`);
+  const release = advertised(bytes), fifo = join(f.root, "stall.fifo");
+  const made = spawnSync("mkfifo", ["-m", "600", fifo]);
+  assert.equal(made.status, 0, String(made.stderr));
+  // A crashed child cannot exit while its worker waits, so the test releases it.
+  const releaseStall = () => {
+    try { closeSync(openSync(fifo, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK)); }
+    catch (error) { if (!["ENXIO", "ENOENT"].includes(error?.code)) throw error; }
+  };
+  let child, requests = 0;
+  const childSaid = word => new Promise(done => {
+    const seen = () => { if (stdout.includes(word)) { child.stdout.off("data", seen); done(); } };
+    child.stdout.on("data", seen); seen();
+  });
+  const server = createNetServer(socket => {
+    let received = "";
+    socket.on("error", () => {});
+    socket.on("data", async chunk => {
+      if (received.includes("\r\n\r\n")) return;
+      received += chunk.toString("latin1");
+      if (!received.includes("\r\n\r\n")) return;
+      requests += 1;
+      assert.match(received, /^GET \/fleet\/v1\/connector-releases\/1\.1\.0 HTTP\/1\.1\r\n/u);
+      child.stdin.write("stall\n");
+      await childSaid("stalled");
+      await new Promise(done => socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\n`
+        + `content-type: text/javascript\r\ncontent-length: ${bytes.length}\r\nconnection: close\r\n\r\n`), bytes]), done));
+      // The whole reply and the FIN reach the child while its reader cannot run.
+      await new Promise(done => setTimeout(done, 1_000));
+      releaseStall();
+    });
+  });
+  await new Promise(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise(done => server.close(() => done())));
+  const config = { ...f.config, server: `http://127.0.0.1:${server.address().port}` };
+  await writeFile(f.configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  const { NODE_TEST_CONTEXT: _context, ...environment } = process.env;
+  child = spawn(process.execPath, ["--input-type=module", "-e", STALLED_DOWNLOAD_CHILD], {
+    stdio: ["pipe", "pipe", "pipe"], env: { ...environment, UV_THREADPOOL_SIZE: "1",
+      CONTROL_ROOM_TEST_STALL_FIFO: fifo,
+      CONTROL_ROOM_TEST_UPDATER_MODULE: new URL("../scripts/fleet/connector-update.mjs", import.meta.url).href,
+      CONTROL_ROOM_TEST_UPDATE_FIXTURE: JSON.stringify({ installRoot: f.installRoot, configPath: f.configPath, config,
+        advertised: release, currentVersion: "1.0.0" }) } });
+  t.after(() => { releaseStall(); child.kill("SIGKILL"); });
+  let stdout = "", stderr = "", timer;
+  child.stdout.on("data", text => { stdout += text; }); child.stderr.on("data", text => { stderr += text; });
+  const code = await Promise.race([new Promise((done, reject) => { child.once("error", reject); child.once("close", done); }),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`update child hung: ${stderr}`)), 30_000); })])
+    .finally(() => clearTimeout(timer));
+  assert.equal(code, 0, stderr);
+  assert.equal(requests, 1);
+  assert.deepEqual(JSON.parse(/^result (.+)$/mu.exec(stdout)?.[1] ?? "null"), { state: "updated", version: "1.1.0" });
+  assert.equal(await currentVersion(f), "1.1.0");
+  assert.deepEqual(await readFile(join(f.paths.versions, "1.1.0", "connector.mjs")), bytes);
 });
