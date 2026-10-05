@@ -160,6 +160,16 @@ attack-kit test file (`tests/attack-kit.test.ts`,
 comparing by segment id rather than by count — a teardown that released one
 cluster's segment while leaking another's would otherwise show a flat count.
 
+`sharedMemorySegments()` keeps only the segments owned by **this account**, and
+resolves the account with `os.userInfo()` — the passwd database for the effective
+uid — not from `$USER`. `$USER` is a login-shell convention, not a fact about the
+process: a bare `docker run` and a CI step that sets an explicit environment both
+omit it, while `ipcs` still prints the real owner name. Measured on Ubuntu 24.04
+with neither `USER` nor `LOGNAME` set, comparing against `$USER` failed with
+`+ 'runner' - undefined` the moment this user owned one segment; reading the
+passwd database is correct on macOS, in a container and on a GitHub runner alike.
+Use `accountName()` when a caller needs to name the same account.
+
 ## Concurrency
 
 ```ts

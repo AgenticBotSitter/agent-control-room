@@ -17,7 +17,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1252,6 +1252,41 @@ export function parseSharedMemory(
 }
 
 /**
+ * The login name `ipcs` prints as a segment's owner, resolved the same way on
+ * every platform.
+ *
+ * `USER` is an optional convention, not a fact about the process: login shells
+ * and login(1) set it, a bare `docker run` and a CI step that sets an explicit
+ * environment do not. MEASURED on Ubuntu 24.04 in acr-linuxci:24.04-v3, with
+ * neither `USER` nor `LOGNAME` in the environment, `ipcs -m -p` still prints
+ * `runner` as the owner of this user's segments — so `USER` was answering a
+ * different question from the one the filter asks, and comparing the two failed
+ * on a real segment (the loop is vacuous with zero segments, which is why the
+ * failure is intermittent: it appears only once this user owns one).
+ *
+ * GitHub's ubuntu-latest happens to export `USER=runner`, so the same bug is
+ * invisible there; it is the container, not the platform, that lacks the
+ * variable. Reading the account from the OS is correct on both, and needs no
+ * environment at all.
+ *
+ * `userInfo()` reads the passwd database for the effective uid rather than
+ * trusting an inherited string, so a caller cannot widen the filter by exporting
+ * `USER` to another account's name and have this suite compare itself against
+ * segments it does not own.
+ */
+export const accountName = (): string => {
+  try {
+    return userInfo().username;
+  } catch {
+    // No passwd entry for this uid (an unusual container image, or a uid with no
+    // name). An empty name makes the caller keep every segment rather than
+    // silently filter to none, which is the same fail-loud rule the rest of this
+    // module follows.
+    return process.env.USER ?? "";
+  }
+};
+
+/**
  * The ids of the SysV shared-memory segments owned by this user, each attributed
  * to this suite when its creator's command line says so.
  *
@@ -1270,10 +1305,10 @@ export async function sharedMemorySegments(
   if (rows === null) return null;
   // Only this user's segments: the count has to be comparable with the count
   // taken before the suite, and another user's are not ours to account for.
-  // `USER` is the name `ipcs` prints; with no name available every segment is
-  // returned rather than silently none.
-  const user = process.env.USER;
-  const mine = user === undefined || user === "" ? rows : rows.filter(row => row.owner === user);
+  // With no resolvable account name every segment is returned rather than
+  // silently none.
+  const user = accountName();
+  const mine = user === "" ? rows : rows.filter(row => row.owner === user);
   const commands = await readCommands([...new Set(mine.map(row => String(row.creatorPid)))]);
   const pattern = oursPattern(ports);
   return mine.map(row => ({

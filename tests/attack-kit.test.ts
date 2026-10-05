@@ -25,6 +25,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test, { describe } from "node:test";
 import {
+  accountName,
   assertPortAvailable,
   assertSearchPathPinned,
   ConcurrentReadRaceError,
@@ -40,6 +41,7 @@ import {
   parseSharedMemory,
   portIsOccupied,
   proconfigSearchPath,
+  resolvePgBin,
   searchPathEndsInPgTemp,
   securityDefinerAudit,
   securityDefinerAuditLive,
@@ -1120,9 +1122,77 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
     assert.ok(segments !== null, "ipcs is readable here, so the guard will not refuse");
     assert.ok(Array.isArray(segments));
     for (const one of segments) {
-      assert.equal(one.owner, process.env.USER, "only this user's segments are reported");
+      assert.equal(one.owner, accountName(), "only this user's segments are reported");
       assert.ok(/^\d+$/u.test(one.id));
       assert.ok(Number.isInteger(one.creatorPid));
+    }
+  });
+
+  // The test above is VACUOUS whenever this user owns no segment: the loop body
+  // never runs, so it cannot fail, and an environment with no `USER` exported
+  // — a bare `docker run`, which is how the local Linux runner starts its
+  // containers — passes for the wrong reason. MEASURED on Ubuntu 24.04: with
+  // `USER` unset the real run failed with `+ 'runner' - undefined` on the first
+  // CI container run, then passed on a later run in the same image, purely
+  // because a neighbouring cluster happened to hold a segment at that moment.
+  //
+  // So the guard on the account name is proved against a REAL segment the test
+  // makes itself, and the expected value comes from the passwd database rather
+  // than from the environment variable that caused the bug.
+  test("a real segment is reported as owned by this account, with USER unset", async (context) => {
+    const previous = { user: process.env.USER, logname: process.env.LOGNAME };
+    // Deleted, not set to something plausible: the failure mode is exactly the
+    // case where the variable is absent.
+    delete process.env.USER;
+    delete process.env.LOGNAME;
+    context.after(() => {
+      if (previous.user === undefined) delete process.env.USER; else process.env.USER = previous.user;
+      if (previous.logname === undefined) delete process.env.LOGNAME; else process.env.LOGNAME = previous.logname;
+    });
+
+    // MEASURED from this account, not from the environment: `accountName()` reads
+    // the passwd database for the effective uid, so it is non-empty and equal to
+    // what `ipcs` prints here even with no environment at all.
+    const expected = accountName();
+    assert.notEqual(expected, "", "the effective uid has an account name in the passwd database");
+
+    const port = 56179;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { mkdir } = await import("node:fs/promises");
+    const exec_ = promisify(execFile);
+    const pgBin = resolvePgBin();
+    assert.ok(pgBin, "the real-PostgreSQL binaries are needed to create a real segment");
+    const root = await lane.temporary("attack-kit-ipsc-");
+    const dataDirectory = join(root, "data");
+    // The kit publishes into a short socket directory it creates itself, because
+    // a data directory's own path is too long for a socket on macOS. Here only a
+    // segment is needed, so the socket directory is any writable directory that
+    // is NOT the default `/var/run/postgresql` — with no `-k`, postgres falls
+    // back to that default and `pg_ctl` fails with `invalid argument`.
+    const socketDirectory = join(root, "sock");
+    await mkdir(socketDirectory, { mode: 0o700 });
+    const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", LC_ALL: "C", NODE_ENV: "test" };
+    await exec_(join(pgBin, "initdb"), ["-D", dataDirectory, "-U", "fixture_admin",
+      "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"], { env });
+    await exec_(join(pgBin, "pg_ctl"), ["-D", dataDirectory, "-o", `-k ${socketDirectory} -p ${port} -h ''`,
+      "-l", join(root, "server.log"), "-w", "-t", "60", "start"], { env });
+    try {
+      const withSegment = await sharedMemorySegments([56170]);
+      assert.ok(withSegment !== null, "ipcs is readable while a segment exists");
+      const mine = withSegment.filter(segment => segment.owner === expected);
+      assert.ok(mine.length > 0,
+        `this account must own at least the segment the test just created: `
+        + `expected_owner=${expected} rows=${JSON.stringify(withSegment)}`);
+      for (const one of withSegment) {
+        assert.equal(one.owner, expected,
+          "the filter reports only segments owned by this account, and names it correctly");
+      }
+    } finally {
+      // A cooperative stop RELEASES the segment; SIGKILL leaks it, which is the
+      // whole subject of the ladder suite above.
+      await exec_(join(pgBin, "pg_ctl"), ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"], { env })
+        .catch(() => {});
     }
   });
 });
@@ -1364,5 +1434,5 @@ lane.closeLane([
   "attack-kit-pg-", "attack-kit-hint-", "attack-kit-hint-cross-", "attack-kit-hint-comment-",
   "attack-kit-skipprobe-", "attack-kit-allow-identity-", "attack-kit-allow-expiry-",
   "attack-kit-allow-stale-", "attack-kit-allow-state-", "attack-kit-allow-nostate-",
-  "attack-kit-allow-bounds-",
+  "attack-kit-allow-bounds-", "attack-kit-ipsc-",
 ]);

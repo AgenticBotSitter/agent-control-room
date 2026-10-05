@@ -393,7 +393,98 @@ describe("attack kit: mutation", () => {
       }
     }
   });
+
+  // ---- A2: the account-name guard, proved by turning it off ----
+  //
+  // The guard this file now depends on reads the account from the passwd
+  // database instead of `process.env.USER`. MEASURED on Ubuntu 24.04 in
+  // acr-linuxci:24.04-v3: with neither `USER` nor `LOGNAME` in the environment,
+  // `ipcs -m -p` still printed `runner` as the owner, and the old comparison
+  // failed with `+ 'runner' - undefined` as soon as this user owned one segment.
+  //
+  // A guard with no mutation is a guard nobody checked. The mutation below turns
+  // the guard back into the environment read — the exact defect — and requires a
+  // named test to fail.
+  //
+  // The guard's SOURCE is extracted from the real kit file at run time rather
+  // than copied here, so the experiment cannot drift from the code it is
+  // checking: if the real guard changes, this fixture changes with it, and if
+  // the guard's text ever moves, the extraction fails loudly instead of
+  // quietly mutating a stale copy.
+  test("the account-name guard bites when it is mutated back to reading $USER", async () => {
+    const kitSource = await readFile(join(REPOSITORY_ROOT, "tests/support/attack-kit/real-postgres.ts"), "utf8");
+    // The guard, lifted out of the kit file by name. Both halves are required:
+    // the helper and the `userInfo` call inside it.
+    const start = kitSource.indexOf("export const accountName = (): string => {");
+    assert.notEqual(start, -1, "the kit file still exports accountName");
+    const end = kitSource.indexOf("\n};", start);
+    assert.notEqual(end, -1, "accountName still has a closing brace to find");
+    const guardSource = kitSource.slice(start, end + 3);
+    assert.match(guardSource, /userInfo\(\)\.username/u,
+      "the guard really does read the passwd database before it is mutated");
+
+    // The fixture: the REAL guard source plus a named test whose expected value
+    // comes from `id -un`, an independent source (the account database read by a
+    // different program), never from the code under test.
+    const { directory, file } = await buildRepo("attack-kit-mutation-user-");
+    await writeFile(join(directory, "account.ts"),
+      `import { userInfo } from "node:os";\n${guardSource}\n`, { flag: "w" });
+    const probe = join(directory, "owner.test.ts");
+    await writeFile(probe, `
+      import assert from "node:assert/strict";
+      import { execFileSync } from "node:child_process";
+      import test from "node:test";
+      import { accountName } from "./account.ts";
+      test("the guard names this account with no USER in the environment", () => {
+        const previous = process.env.USER;
+        delete process.env.USER;
+        try {
+          // INDEPENDENT source: the passwd database, read by a different program.
+          const expected = execFileSync("id", ["-un"], { encoding: "utf8" }).trim();
+          assert.notEqual(expected, "", "this uid has an account name");
+          assert.equal(accountName(), expected,
+            "the guard resolves the account from the OS, not from an optional env var");
+        } finally {
+          if (previous === undefined) delete process.env.USER; else process.env.USER = previous;
+        }
+      });
+    `, { flag: "w" });
+    // Committed, because assertGuardBites refuses a dirty tree and restores by
+    // content; both files must be tracked.
+    await git(directory, "add", "-A");
+    await git(directory, "-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "guard");
+
+    const guardFile = join(directory, "account.ts");
+    const guardBefore = await readFile(guardFile, "utf8");
+    const testCommand = [process.execPath, "--import", await import.meta.resolve("tsx"),
+      "--test", "--test-concurrency=1", "owner.test.ts"];
+
+    // Control first: unmutated, the real guard passes its test. This rules out
+    // "the test could not start" being read as a bite.
+    await execFileIn(directory, testCommand);
+    assert.ok(guardBefore.includes("userInfo().username"), "the unmutated guard reads the passwd database");
+
+    const result = await assertGuardBites({
+      root: directory, file: guardFile,
+      find: "return userInfo().username;", replace: "return process.env.USER ?? \"\";",
+      testCmd: testCommand,
+      because: "a guard that reads an optional environment variable must be caught",
+    });
+    assert.notEqual(result.exitCode, 0, "the mutated guard's test must fail");
+    assert.ok(result.applied, "the mutation was really applied");
+    assert.match(result.output, /not equal|AssertionError|actual/i,
+      "and the failure comes from the child's assertion, not a harness error");
+    assert.equal(await readFile(guardFile, "utf8"), guardBefore, "the guard is restored");
+  });
 });
+
+/** Run a command in `cwd`, returning its stdout; used for the unmutated control. */
+async function execFileIn(cwd: string, command: readonly string[]): Promise<string> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { stdout } = await promisify(execFile)(command[0]!, [...command.slice(1)], { cwd });
+  return String(stdout ?? "");
+}
 
 lane.closeLane([
   "attack-kit-pg-", "attack-kit-mutation-", "attack-kit-mutation-timeout-",

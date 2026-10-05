@@ -12,6 +12,7 @@ export {
   CLUSTER_REGISTRY_NAME,
   NAMED_ROLES,
   ROLE_LOGINS,
+  accountName,
   assertClusterDestroyed,
   assertPortAvailable,
   disposableRunDirectories,
