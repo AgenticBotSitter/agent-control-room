@@ -451,16 +451,23 @@ test("two hundred concurrent callers are deterministic and share no mutable stat
 });
 
 test("the CLI classifies a diff between two real repository commits", () => {
-  const readAgainst = (JSON.parse(policies.protectedJson) as { readAgainst: { "cook/v1": string } }).readAgainst["cook/v1"];
-  const [from, candidateCommit] = execFileSync("git", ["rev-parse", `${readAgainst}^`, readAgainst],
-    { encoding: "utf8" }).trim().split(/\s+/u);
-  const output = execFileSync(process.execPath, ["--import", "tsx", "src/updater/v1/referee/cli.ts",
-    "--policy-dir", "src/updater/v1/policy", from!, candidateCommit!], { encoding: "utf8" });
-  const result = JSON.parse(output) as ReturnType<typeof classify>;
-  assert.equal(result.classification, "database");
-  assert.ok(result.filesChanged > 1);
-  assert.equal(result.refused, false);
-  assert.ok(parseUpdaterRawDiffV1(execFileSync("git", ["diff", "--raw", "-z", "--find-renames", from!, candidateCommit!])).length > 1);
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const from = commitRepository(repository, "base");
+    writeRepositoryFile(repository, "db/migrations/0200_referee_fixture.sql",
+      "CREATE TABLE referee_fixture (id integer PRIMARY KEY);\n");
+    writeRepositoryFile(repository, "db/down/0200_referee_fixture.sql", "DROP TABLE referee_fixture;\n");
+    const candidateCommit = commitRepository(repository, "database candidate");
+    const output = runRefereeCli(repository, from, candidateCommit);
+    assert.equal(output.status, 0);
+    const result = JSON.parse(output.stdout) as ReturnType<typeof classify>;
+    assert.equal(result.classification, "database");
+    assert.ok(result.filesChanged > 1);
+    assert.equal(result.refused, false);
+    assert.ok(parseUpdaterRawDiffV1(execFileSync("git", ["-C", repository, "diff", "--raw", "-z",
+      "--find-renames", from, candidateCommit])).length > 1);
+  });
 });
 
 test("the CLI disables copy detection and still protects both halves of a real rename", () => {
