@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
@@ -259,12 +259,20 @@ test("P8: default updater and Mac-local composition complete add -> phone -> typ
     let updater: Awaited<ReturnType<typeof startUpdaterV1>> | undefined;
     try {
       await deployer.connect(); await web.connect();
-      updater = await startUpdaterV1({ alerts: null, root, client: deployer, passkeyVerifier: {
+      const starting = startUpdaterV1({ alerts: null, root, client: deployer, passkeyVerifier: {
         async verifyRegistration({ response }: { response: { id: string } }) {
           return { credentialId: response.id, publicKey: Buffer.alloc(64, 31).toString("base64url"),
             algorithm: -7, counter: 0, transports: ["internal"] };
         }, async verifyAuthentication() { throw new Error("no existing passkey in cooling-off route"); },
       } });
+      // The updater holds its local lock through macOS /usr/bin/lockf
+      // (src/updater/v1/fs-safety.mjs). Where lockf does not exist (Linux) it must
+      // refuse to start rather than run unlocked; the database half above ran.
+      if (!existsSync("/usr/bin/lockf")) {
+        await assert.rejects(starting, { code: "updater_local_lock_refused" });
+        return;
+      }
+      updater = await starting;
       updater.loop.stop();
       const socket = join(root, "updater-state/control.sock");
       const begun = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",

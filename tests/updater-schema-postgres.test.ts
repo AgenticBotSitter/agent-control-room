@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1207,6 +1207,12 @@ test("the item-17 watcher plan port uses database time and atomically supersedes
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 
+// The updater holds its local lock through macOS /usr/bin/lockf
+// (src/updater/v1/fs-safety.mjs). Where lockf does not exist (Linux) it must
+// refuse to start rather than run unlocked, so a case that boots it proves that
+// refusal there once its database half has run.
+const LOCKF_HOST = existsSync("/usr/bin/lockf");
+
 test("startUpdaterV1 boots with a live run and only one of 20 production sessions acquires it", async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
@@ -1267,9 +1273,15 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
         { mode: 0o600 });
       const vapidRuntime = { getuid: () => 0,
         lstat: async (path: string) => Object.assign(await lstat(path), { uid: 0 }) };
-      updater = await startUpdaterV1({ alerts: null, root, store,
+      const starting = startUpdaterV1({ alerts: null, root, store,
         identity: { bootId: "boot-live-resume", leaseToken: "lease-new-session" }, effects,
         referee: { async assertPlanAllowed() {} }, alertRuntime: vapidRuntime });
+      if (!LOCKF_HOST) {
+        await assert.rejects(starting, { code: "updater_local_lock_refused" });
+        assert.deepEqual(calls, [], "an updater that cannot lock runs no step of the live run");
+        return;
+      }
+      updater = await starting;
       assert.equal(updater.identity.leaseToken, "lease-previous-session");
       assert.equal(updater.loop.lastOutcome.status, "succeeded");
       assert.deepEqual(calls, ["precheck", "stage", "quick_backup", "drain", "switch", "restart", "health",
@@ -1299,6 +1311,10 @@ test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across
     try {
       await deployer.connect(); await web.connect();
       const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+      if (!LOCKF_HOST) {
+        await assert.rejects(startUpdaterV1({ alerts: null, root, store }), { code: "updater_local_lock_refused" });
+        return;
+      }
       updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
       assert.equal(updater.loop.lastOutcome.status, "uncertain");
       const checkId = `owner-request:${randomUUID()}`;
