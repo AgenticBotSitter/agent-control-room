@@ -34,7 +34,10 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
 
-const PG_BIN = "/opt/homebrew/opt/postgresql@17/bin";
+// The shared candidate list: PG_BIN first, then the Homebrew and Debian paths.
+// A fixed Homebrew path skipped every database body on Linux CI, which the
+// merge gate correctly refuses as an unexempted skip.
+const PG_BIN = process.env.PG_BIN || undefined;
 // This suite's OWN port block, read from TEXT_COPY_DERIVATION_PG_PORT_BASE and
 // defaulting to the block assigned to this stream. It deliberately does NOT read
 // CONTROL_ROOM_PG_TEST_PORT_BASE: several suites in this repository read that one
@@ -391,7 +394,7 @@ test("a conversion is recorded once and an exact retry reuses the row", { skip }
         `SELECT count(*)::text AS n FROM control_text_copy_derivations WHERE tenant_id=$1`, [tenant]);
       assert.equal(counted.rows[0]!.n, "1", "the fence must leave exactly one row");
     });
-  }, { port: PORT, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("changed source bytes produce a NEW derivation, and a changed converter version does too", { skip }, async () => {
@@ -422,7 +425,7 @@ test("changed source bytes produce a NEW derivation, and a changed converter ver
         (error: unknown) => error instanceof TextCopyDerivationRefused
           && error.code === "derivation_source_digest_mismatch");
     });
-  }, { port: PORT + 1, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT + 1, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("the refusals are refused, each for its own reason", { skip }, async () => {
@@ -534,7 +537,7 @@ test("the refusals are refused, each for its own reason", { skip }, async () => 
       assert.equal(constraintNames.rows[0]!.n, "6",
         "every shape rule must be a NAMED constraint, so a violation says which one");
     });
-  }, { port: PORT + 2, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT + 2, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("a derivation is never rewritten or deleted", { skip }, async () => {
@@ -563,7 +566,7 @@ test("a derivation is never rewritten or deleted", { skip }, async () => {
         `DELETE FROM control_text_copy_derivations WHERE tenant_id=$1`, [tenant]),
         /append|rejected/iu);
     });
-  }, { port: PORT + 3, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT + 3, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("the owner reads its own project's derivations and no other table", { skip }, async () => {
@@ -614,7 +617,7 @@ test("the owner reads its own project's derivations and no other table", { skip 
         `SELECT * FROM control_text_copy_derivations WHERE tenant_id=$1`, [tenant]),
         (error: unknown) => (error as { code?: string }).code === "42501");
     });
-  }, { port: PORT + 4, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT + 4, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("a bot reads only the inputs of the work it was admitted to", { skip }, async () => {
@@ -1109,7 +1112,7 @@ test("a bot reads only the inputs of the work it was admitted to", { skip }, asy
     } finally {
       await other.end().catch(() => undefined);
     }
-  }, { port: PORT + 5, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT + 5, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("concurrent writers of the same derivation leave exactly one row", { skip }, async () => {
@@ -1140,7 +1143,7 @@ test("concurrent writers of the same derivation leave exactly one row", { skip }
         `SELECT count(*)::text AS n FROM control_text_copy_derivations WHERE tenant_id=$1`, [tenant]);
       assert.equal(counted.rows[0]!.n, "1", "20 concurrent identical writers must leave one row");
     });
-  }, { port: PORT + 6, allowedPorts: ALLOWED, pgBin: PG_BIN ?? undefined, boundMs: 600_000 });
+  }, { port: PORT + 6, allowedPorts: ALLOWED, pgBin: pgBin ?? undefined, boundMs: 600_000 });
 });
 
 test("the derivation id is derived, stable and tenant-scoped", () => {
