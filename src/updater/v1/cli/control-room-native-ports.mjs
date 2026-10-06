@@ -651,8 +651,12 @@ export default Object.freeze({
   removeRootFile: path => rm(path, { force: true }),
   async validateSudoers(path) { try { await command("/usr/sbin/visudo", ["-cf", path]); return true; } catch { return false; } },
   sudoSecurePathIsActive: sudoSecurePathIsActiveV1,
-  assertT1Path: (path, options = {}) => assertTrustedPath(path, {
-    allowedRoots: [path], executable: options.executable === true,
+  // The root is the path itself AND its canonical location: on macOS /etc and /var are
+  // symlinks into /private, and assertT1Path compares the resolved path against the roots.
+  // With only the spelled path, /etc/sudoers.d resolved to /private/etc/sudoers.d and was
+  // refused as t1_path_outside_roots on every real Mac. Ownership/ACL checks are unchanged.
+  assertT1Path: async (path, options = {}) => assertTrustedPath(path, {
+    allowedRoots: [path, await realpath(path).catch(() => path)], executable: options.executable === true,
   }),
   assertRuntimeTreeRootMetadata: assertRuntimeTreeRootMetadataPortV1,
   assertRehearsalOwnerDenied: assertRehearsalOwnerDeniedV1,

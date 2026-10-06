@@ -521,3 +521,14 @@ test("the native registerInitialPasskey builds its own session and refuses befor
   await assert.rejects(nativePorts.registerInitialPasskey(installerInput),
     error => /^passkey_deployer_session_refused:/u.test(error?.code ?? ""));
 });
+
+test("assertT1Path accepts a system folder reached through macOS's /etc -> /private/etc symlink", async () => {
+  const { default: nativePorts } = await import("../src/updater/v1/cli/control-room-native-ports.mjs");
+  // On macOS /etc is a symlink into /private; the installer checks /etc/sudoers.d and
+  // was refused with t1_path_outside_roots on every real Mac. On Linux /etc is a real
+  // directory, so the same call checks the ordinary path. /etc itself always exists.
+  const resolved = await nativePorts.assertT1Path("/etc");
+  assert.equal(resolved, process.platform === "darwin" ? "/private/etc" : "/etc");
+  // A path that is NOT inside the requested root is still refused.
+  await assert.rejects(nativePorts.assertT1Path("/nonexistent-control-room-path"), /t1_path_missing/u);
+});
