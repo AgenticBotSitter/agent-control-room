@@ -51,7 +51,10 @@ jobs:
   affected-tests:
     name: Affected tests (fast)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # A full-suite change still runs all 124 PostgreSQL-gated files directly. Measured on
+    # 2026-10-04: 77 files in about 85 minutes, so about 140 minutes for the full set. 240
+    # leaves margin until the sharded lane replaces this single job.
+    timeout-minutes: 240
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8
@@ -61,6 +64,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Provide the macOS /private/tmp path on Linux
+        # Mac-local tests keep short socket and install roots under /private/tmp;
+        # the Linux runner has no such path. Create a real sticky directory, as on
+        # macOS: a symlink would be refused by the product's file-custody walk.
+        run: test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -139,6 +147,7 @@ jobs:
       demo: ${{ steps.route.outputs.demo }}
       server: ${{ steps.route.outputs.server }}
       components: ${{ steps.route.outputs.components }}
+      updater: ${{ steps.route.outputs.updater }}
       articles: ${{ steps.route.outputs.articles }}
       full: ${{ steps.route.outputs.full }}
       classes: ${{ steps.route.outputs.classes }}
@@ -182,6 +191,7 @@ jobs:
           DEMO: ${{ steps.route.outputs.demo }}
           SERVER: ${{ steps.route.outputs.server }}
           COMPONENTS: ${{ steps.route.outputs.components }}
+          UPDATER: ${{ steps.route.outputs.updater }}
           ARTICLES: ${{ steps.route.outputs.articles }}
           REASON: ${{ steps.route.outputs.reason }}
         run: |
@@ -191,7 +201,7 @@ jobs:
             echo ""
             echo "- Classes: \`${CLASSES}\`"
             echo "- Complete suite required: \`${FULL}\`"
-            echo "- Lanes run early: \`demo=${DEMO} server=${SERVER} components=${COMPONENTS} articles=${ARTICLES}\`"
+            echo "- Lanes run early: \`demo=${DEMO} server=${SERVER} components=${COMPONENTS} updater=${UPDATER} articles=${ARTICLES}\`"
             echo ""
             echo "Every lane not run early is run by \`full-gate\`, so the complete suite still runs before merge."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -223,6 +233,8 @@ jobs:
       - name: Install the frozen dependency graph
         if: steps.manifest.outputs.exists == 'true'
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Validate every declared mutation anchor
+        run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations
         if: steps.manifest.outputs.exists == 'true'
         env:
@@ -269,11 +281,15 @@ jobs:
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
-        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/migration-number-check.test.mjs tests/verify-mutation-checks.test.mjs
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/test-file-dynamic-import-guard.test.mjs tests/release-tool.test.mjs tests/migration-number-check.test.mjs tests/verify-mutation-checks.test.mjs tests/install-preflight.test.mjs tests/mac-local-rehearsal-fleet-bringup-sources.test.mjs tests/runtime-inventory-ci.test.mjs
       - name: Test the PR evidence claims checker
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
         run: node --test tests/affected-tests.test.mjs
+      - name: Test CI keep-going and unchanged unit selection
+        run: node --test tests/run-scripts-keep-going.test.mjs
+      - name: Test the generic VPS front-door installer
+        run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject stale or incomplete test quarantines
@@ -298,6 +314,20 @@ jobs:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test the fleet gateway refusal tolerance
+        env:
+          CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+        run: pnpm run build && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-fleet-gateway-tolerance.test.mjs
+      - name: Test and enforce TypeScript test loaders
+        run: pnpm run test:test-loaders && pnpm run check:test-loaders
+      - name: Install zsh for the macOS paste-file checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+      - name: Owner paste-file lane
+        env:
+          CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+        run: pnpm run test:owner-paste-file
       - name: Test the owner review readiness helper
         run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/browser/owner-review-readiness.test.ts
       # The privileged-routine search_path gate does NOT run here. It used to:
@@ -368,11 +398,21 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The full test:components chain needs about 150-160 minutes on a hosted runner.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Install zsh for the install guide checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+      - name: Provide the macOS /private/tmp path on Linux
+        # Mac-local tests keep short socket and install roots under /private/tmp;
+        # the Linux runner has no such path. Create a real sticky directory, as on
+        # macOS: a symlink would be refused by the product's file-custody walk.
+        run: test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -402,14 +442,27 @@ jobs:
       # calendar, observations, workspaces, native fences, release licenses and
       # the build profile. These cover the security boundaries the
       # configuration contract commits to; none of them ran in CI before.
+      # Chromium for the owner-push receiver-side lane (R6C-05), which drives the
+      # shipped service worker against real IndexedDB and the real notification
+      # API. Without it that file SKIPS visibly -- never silently -- and the
+      # component lane would report the receiver half of R6C-05 as proved while
+      # having run nothing. One browser, one install step, no new job.
+      - name: Install Chromium for the owner-push receiver lane
+        run: pnpm exec playwright install --with-deps chromium
       - name: Runtime-assembly memory guard
+        if: ${{ !cancelled() }}
         run: pnpm run test:private-local-runtime-assembly:memory-guard
       - name: Mac-local real-page journey
+        if: ${{ !cancelled() }}
         run: pnpm run test:mac-local-real-pages
       - name: Phase 2B contracts
+        if: ${{ !cancelled() }}
         run: pnpm run test:phase2b
       - name: Component lanes
-        run: pnpm run test:components
+        if: ${{ !cancelled() }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:mac-upgrade
       # The shared attack-test kit and its own tests. This lane installs
       # PostgreSQL 17 above, so the kit's real-cluster tests must run here
       # rather than skip: tests/attack-kit.test.ts calls
@@ -422,13 +475,92 @@ jobs:
       # builds its own disposable cluster from db/migrations/ plus the role
       # files and reads pg_proc, so it adds seconds, not a second 10-minute job.
       - name: Fail on a privileged routine without a pg_temp-pinned search_path
+        if: ${{ !cancelled() }}
         run: node --import tsx scripts/check-migration-search-path.mjs
       - name: Attack-test kit
+        if: ${{ !cancelled() }}
         run: pnpm run test:attack-kit
+      - name: Installation operations mode
+        if: ${{ !cancelled() }}
+        # The owner-facing Pause / Drain / Stop switch, its database guards, the
+        # coordinator-backed stop, the Mac-local host composition and the
+        # supervisor's machine-health port. It is its own lane because each file
+        # builds its own disposable cluster on the reserved 58710-58719 range.
+        run: pnpm run test:operations-mode
+      - name: Bot dogfood journey
+        if: ${{ !cancelled() }}
+        # Can a bot create and run work in Control Room, end to end? The
+        # scripted-bot journey and its stress run, both on real PostgreSQL as
+        # the production logins, with a scripted bot that never starts a real
+        # agent CLI. Its own lane because each file builds its own disposable
+        # cluster on the reserved 59620-59629 range.
+        run: pnpm run test:bot-dogfood
       - name: Resource-bound connector contracts
+        if: ${{ !cancelled() }}
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
         run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+
+  test-updater:
+    name: macOS updater tests
+    needs: route
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+      LC_ALL: C
+      LANG: C
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # This lane uses macOS lockf, Developer Tools and BSD file metadata.
+      # Default PostgreSQL artifacts are synthetic; live database lanes stay in components.
+      # The opt-in HARD7 dump proof needs a separately supplied migrated fixture.
+      - name: Report the macOS tools the updater depends on
+        run: |
+          sw_vers || true
+          for tool in /usr/bin/lockf /usr/bin/xcrun /usr/bin/codesign /usr/sbin/lsof /bin/zsh; do
+            if [ -x "$tool" ]; then ls -l "$tool"; else echo "MISSING: $tool"; fi
+          done
+          umask; id; ls -ld /private/tmp || true
+      # The PostgreSQL-backed updater tests boot the real updater, which needs
+      # the macOS lockf, so they run here and not in the Linux components job.
+      - name: Install PostgreSQL 17 for the updater database tests
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install postgresql@17 && test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
+      - name: Updater lane
+        run: |
+          set -euo pipefail
+          # BSD children inherit the containing directory's group. Use the
+          # test login's primary group, not the shared temporary directory's.
+          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          trap 'rm -rf -- "${updater_tmp}"' EXIT
+          chgrp "$(id -g)" "${updater_tmp}"
+          chmod 0700 "${updater_tmp}"
+          export TMPDIR="${updater_tmp}"
+          # The full Xcode image can have writable ancestors. The installed
+          # Command Line Tools use the root-owned path this lane verifies.
+          sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
+          test -x /usr/bin/lockf
+          for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
+          pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
+          node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          # The guard's control socket lives under the worktree's .test-tmp and
+          # macOS caps a socket path at 104 bytes; the hosted checkout path is
+          # far longer than a developer's, so run the lane from a short copy.
+          short_root="${HOME}/acr"
+          rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
+          pnpm run test:updater
+          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres && pnpm run test:pg-runtime-postgres && pnpm run test:pg-runtime-stress && pnpm run test:test-runner
 
   test-articles:
     name: Article build lane
@@ -451,6 +583,13 @@ jobs:
 
   migration-lint:
     name: New migration safety
+    # The owner's accepted installed backlog is recorded in scripts/ci/migration-lint-baseline.json
+    # as filenames and ledger SHA-256 digests, pinned by an independent list digest in
+    # migration-lint-baseline.mjs with the source ledger revision recorded for provenance.
+    # Its tests refuse widening even if the current ledger grows or history is squash-merged;
+    # missing or changed accepted files fail, and every SQL file outside that baseline runs
+    # through Squawk with all configured rules on every run. The origin/main edit refusal
+    # still protects later shipped migrations. Do not edit applied SQL to settle old lint debt.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -464,8 +603,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test the accepted migration baseline and future-migration lint selection
+        run: npm exec --yes --package=squawk-cli@2.61.0 -- node --test tests/migration-lint-baseline.test.mjs
       - name: Reject edits to shipped migrations and lint new PostgreSQL 17 migrations
-        run: npm exec --yes --package=squawk-cli@2.61.0 -- node scripts/check-migration-changes.mjs --base origin/main
+        run: npm exec --yes --package=squawk-cli@2.61.0 -- node scripts/check-migration-changes.mjs --base origin/main --baseline scripts/ci/migration-lint-baseline.json
 
   quarantined-tests:
     name: Quarantined tests (non-blocking)
@@ -502,6 +643,7 @@ jobs:
       - name: Shared topology and installable product lanes
         run: |
           pnpm run test:unified-topology
+          pnpm run test:launch-daemons
           pnpm run test:local-installation
           pnpm run test:protected-data-transaction
           pnpm run test:local-hermes-admission
@@ -597,13 +739,27 @@ jobs:
       - name: Build the production application
         run: pnpm build
       - name: Test Mac task host recovery
-        run: pnpm test:mac-host-supervisor
+        run: pnpm test:mac-journey-lifecycle && pnpm test:mac-host-supervisor
       - name: Run both supported full journeys with pinned fakes
         run: |
           set -euo pipefail
           rehearsal_root=""
           rehearsal_port=""
           cleanup() {
+            status=$?
+            if [ "${status}" -ne 0 ] && [ -n "${rehearsal_root}" ] && [ -f "${rehearsal_root}/protected/runtime/task-host.log" ]; then
+              echo "::group::task host log (last 150 lines, failed journey only)"
+              tail -n 150 -- "${rehearsal_root}/protected/runtime/task-host.log" || true
+              echo "::endgroup::"
+              if [ -f "${rehearsal_root}/pg.log" ]; then
+                echo "::group::rehearsal PostgreSQL log (last 120 lines, failed journey only)"
+                tail -n 120 -- "${rehearsal_root}/pg.log" || true
+                echo "::endgroup::"
+              fi
+              echo "::group::listening TCP ports at failure"
+              ss -ltnp || true
+              echo "::endgroup::"
+            fi
             if [ -n "${rehearsal_root}" ] && [ -d "${rehearsal_root}" ]; then
               pnpm mac:rehearsal down "${rehearsal_root}" --port "${rehearsal_port}" --fake-executables || true
               rm -rf -- "${rehearsal_root}"
@@ -639,8 +795,15 @@ jobs:
           }
           echo "::notice::launchd installation is macOS-only; this Linux rehearsal uses mac:up's documented detached-host path."
           run_rehearsal "" 15499 3217
+          # Each journey's website uses its web port and intake uses web port + 1.
+          # A finished journey must leave nothing listening on either.
+          if ss -ltnH '( sport = :3217 or sport = :3218 )' | grep -q .; then
+            echo "the first journey left a listener behind after teardown:" >&2
+            ss -ltnp '( sport = :3217 or sport = :3218 )' >&2 || true
+            exit 1
+          fi
           if grep -q -- "--model-allowlists" scripts/mac-local/rehearsal/journey.ts; then
-            run_rehearsal "--model-allowlists" 15500 3218
+            run_rehearsal "--model-allowlists" 15500 3219
           else
             echo "::notice::model-allowlists journey is not present on this pre-#365 revision; the default journey passed and stacked revisions must run both modes."
           fi
@@ -665,6 +828,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Chromium for the CI journey only
         run: pnpm exec playwright install --with-deps chromium
+      - name: Inbox phone target geometry
+        run: pnpm test:inbox-browser
       - name: Install PostgreSQL 17 from PGDG
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -758,12 +923,27 @@ jobs:
     name: Merge gate catch-up
     needs: route
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
-        lane: [demo, server, components, articles]
+        include:
+          - lane: demo
+            runner: ubuntu-latest
+            timeout: 25
+          - lane: server
+            runner: ubuntu-latest
+            timeout: 30
+          - lane: components
+            runner: ubuntu-latest
+            timeout: 180
+          - lane: updater
+            runner: macos-26
+            timeout: 45
+          - lane: articles
+            runner: ubuntu-latest
+            timeout: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -784,6 +964,12 @@ jobs:
       # tests would skip here and a pull request that routed away from the
       # components lane would still get a green merge gate with none of that
       # coverage. Mirrors the PGDG keyring steps in the early job.
+      - name: Prepare Linux component catch-up prerequisites
+        if: ${{ !cancelled() && matrix.lane == 'components' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - name: Install PostgreSQL 17 from PGDG for the components catch-up
         if: ${{ !cancelled() && matrix.lane == 'components' }}
         env:
@@ -805,25 +991,60 @@ jobs:
         if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test:demo
-          pnpm run test:build:demo
+          node scripts/ci/run-scripts-keep-going.mjs test:demo test:build:demo
       - name: Server build tests (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test
+          node scripts/ci/run-scripts-keep-going.mjs test
       - name: Component lanes (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test:components
-          pnpm run test:attack-kit
-          node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+          status=0
+          node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:attack-kit || status=$?
+          echo '::group::Resource-bound connector contracts'
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts || status=$?
+          echo '::endgroup::'
+          exit "${status}"
+      - name: Updater lane (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'updater' && needs.route.result == 'success' && needs.route.outputs.updater == 'false' }}
+        env:
+          CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+          LC_ALL: C
+          LANG: C
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --ignore-scripts
+          # The PostgreSQL-backed updater tests run here too (see test-updater).
+          brew install postgresql@17
+          test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
+          # BSD children inherit the containing directory's group. Use the
+          # test login's primary group, not the shared temporary directory's.
+          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          trap 'rm -rf -- "${updater_tmp}"' EXIT
+          chgrp "$(id -g)" "${updater_tmp}"
+          chmod 0700 "${updater_tmp}"
+          export TMPDIR="${updater_tmp}"
+          # The full Xcode image can have writable ancestors. The installed
+          # Command Line Tools use the root-owned path this lane verifies.
+          sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
+          test -x /usr/bin/lockf
+          for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
+          pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
+          node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          # The guard's control socket lives under the worktree's .test-tmp and
+          # macOS caps a socket path at 104 bytes; the hosted checkout path is
+          # far longer than a developer's, so run the lane from a short copy.
+          short_root="${HOME}/acr"
+          rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run test:build:articles
+          node scripts/ci/run-scripts-keep-going.mjs test:build:articles
 
   # The single check that attests to the complete suite having run. It reads no
   # routing decision, so a pull request cannot skip it: the lanes it aggregates
@@ -831,7 +1052,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [affected-tests, route, mutation-checks, pr-claims, quick, test-demo, test-server, test-components, test-articles, migration-lint, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
+    needs: [affected-tests, route, mutation-checks, pr-claims, quick, test-demo, test-server, test-components, test-updater, test-articles, migration-lint, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -859,6 +1080,7 @@ jobs:
           check demo "${{ needs.test-demo.result }}"
           check server "${{ needs.test-server.result }}"
           check components "${{ needs.test-components.result }}"
+          check updater "${{ needs.test-updater.result }}"
           check articles "${{ needs.test-articles.result }}"
           check migration-lint "${{ needs.migration-lint.result }}"
           check unified-product "${{ needs.test-unified-product.result }}"

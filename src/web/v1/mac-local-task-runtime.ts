@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { readFirstOwnerStateV1 } from "../../updater/v1/pg/first-owner-state.mjs";
 import { link, lstat, readFile, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
 import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
@@ -70,6 +71,7 @@ export function captureMacLocalTaskRuntimeV1(value: unknown): MacLocalTaskRuntim
 type Runtime = Readonly<{
   lstat: typeof lstat; readFile: typeof readFile; writeFile: typeof writeFile; link: typeof link; unlink: typeof unlink;
   randomBytes: (size: number) => Uint8Array; pid: number;
+  firstOwnerStateRuntime?: Parameters<typeof readFirstOwnerStateV1>[1];
 }>;
 const production: Runtime = Object.freeze({ lstat, readFile, writeFile, link, unlink, randomBytes, pid: process.pid });
 
@@ -81,7 +83,11 @@ function runtimePath(protectedRoot: string) {
 async function requirePrivateDirectories(runtime: Runtime, protectedRoot: string, config: string) {
   for (const directory of [protectedRoot, config]) {
     const entry = await runtime.lstat(directory);
-    if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) invalid();
+    // The installer creates root-owned 0750 directories for service traversal.
+    const permissionsValid = basename(protectedRoot) === "Protected"
+      ? entry.uid === 0 && (entry.mode & 0o7027) === 0
+      : (entry.mode & 0o077) === 0;
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !permissionsValid) invalid();
   }
 }
 
@@ -98,7 +104,8 @@ export async function loadMacLocalTaskRuntimeFromRootV1(protectedRoot: string, r
   } catch { return invalid(); }
 }
 
-/** Creates the file once with fresh keys. An existing file is validated and
+/** Creates the file once. Installed `Protected` roots adopt first-owner's review
+ * key; development roots generate fresh keys. An existing file is validated and
  * kept, never regenerated or overwritten: rotating these keys would orphan
  * every stored plan, run and result. An existing invalid file is refused. */
 export async function createMacLocalTaskRuntimeFileV1(protectedRoot: string, hermes: MacLocalHermesRunSettingsV1,
@@ -106,10 +113,17 @@ export async function createMacLocalTaskRuntimeFileV1(protectedRoot: string, her
   const { config, file } = runtimePath(protectedRoot);
   const settings = hermesSettings(hermes);
   await requirePrivateDirectories(runtime, protectedRoot, config).catch(invalid);
+  const reviewKey = basename(protectedRoot) === "Protected"
+    ? (await readFirstOwnerStateV1(dirname(protectedRoot), { ...runtime.firstOwnerStateRuntime, ownerUid: 0 })).reviewKey
+    : undefined;
+  const verifyStoredReviewKey = async () => {
+    const loaded = await loadMacLocalTaskRuntimeFromRootV1(protectedRoot, runtime);
+    if (reviewKey !== undefined && Buffer.from(loaded.keys.review).toString("base64url") !== reviewKey) invalid();
+  };
   try { await runtime.lstat(file); } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") invalid();
     const keys = Object.fromEntries(MAC_LOCAL_TASK_RUNTIME_KEY_ROLES_V1.map(role => [role,
-      Buffer.from(runtime.randomBytes(32)).toString("base64url")]));
+      role === "review" && reviewKey !== undefined ? reviewKey : Buffer.from(runtime.randomBytes(32)).toString("base64url")]));
     const body = { schema: MAC_LOCAL_TASK_RUNTIME_V1, keys, hermes: settings };
     captureMacLocalTaskRuntimeV1(body);
     const temporary = `${file}.new-${runtime.pid}-${Buffer.from(runtime.randomBytes(8)).toString("hex")}`;
@@ -123,9 +137,9 @@ export async function createMacLocalTaskRuntimeFileV1(protectedRoot: string, her
       if ((linkError as NodeJS.ErrnoException)?.code !== "EEXIST") throw linkError;
       outcome = "existing";
     } finally { await runtime.unlink(temporary).catch(() => {}); }
-    await loadMacLocalTaskRuntimeFromRootV1(protectedRoot, runtime);
+    await verifyStoredReviewKey();
     return outcome;
   }
-  await loadMacLocalTaskRuntimeFromRootV1(protectedRoot, runtime);
+  await verifyStoredReviewKey();
   return "existing";
 }

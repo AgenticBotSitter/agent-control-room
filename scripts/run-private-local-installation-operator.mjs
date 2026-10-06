@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
+import { fileURLToPath } from "node:url";
 import { basename, dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { types } from "node:util";
@@ -137,5 +138,5 @@ export async function runPrivateLocalInstallationOperator(args, runtime = instal
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runPrivateLocalInstallationOperator(process.argv.slice(2));

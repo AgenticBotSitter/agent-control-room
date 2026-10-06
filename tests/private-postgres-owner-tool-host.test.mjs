@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 
-const host = new URL("../deploy/postgres/private-owner-tool-host.mjs", import.meta.url).pathname;
+const host = fileURLToPath(new URL("../deploy/postgres/private-owner-tool-host.mjs", import.meta.url));
 const protocol = "control-room.private-postgres-owner-tool-host/v1";
 const paths = ["deploy/postgres/provision-database.sql", "deploy/postgres/apply-migrations.mjs",
   "deploy/postgres/evidence.mjs", "deploy/postgres/migration-ledger.json"];

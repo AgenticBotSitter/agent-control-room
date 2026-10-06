@@ -21,12 +21,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_local_result_publisher;
+GRANT SELECT, INSERT ON control_project_event_stream_heads, control_project_events TO control_room_local_result_publisher;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_local_result_publisher;
 -- Plain reads: workflowIdForJob and verifyRecordedIdentity look up control_jobs,
 -- control_attempts and adapter_registry with no locking clause.
 -- Startup installation check (verifyDatabase): the owner's workspace, identity and
 -- active owner grant, read-only, as every other results-type login reads them.
 GRANT SELECT ON workspaces, control_identities, control_role_grants TO control_room_local_result_publisher;
-GRANT SELECT ON control_jobs, control_attempts, adapter_registry,
+GRANT SELECT ON projects, control_jobs, control_attempts, adapter_registry,
   control_task_model_selections,
   control_harness_runs, control_harness_run_events, control_artifact_manifests, control_native_artifact_receipts,
   control_durable_result_write_reservations, control_native_review_plans,

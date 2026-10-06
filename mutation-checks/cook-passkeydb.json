@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "CREATE OR REPLACE FUNCTION updater.guard_passkey_registration_open() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER",
+    "replace": "CREATE OR REPLACE FUNCTION updater.guard_passkey_registration_open() RETURNS trigger\nLANGUAGE plpgsql",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the guard fires for the web login, which holds five columns of the open-registration table and none of the limits table; as an invoker body every web insert would fail with permission denied (measured, not assumed)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  PERFORM pg_catalog.pg_advisory_xact_lock(\n    pg_catalog.hashtextextended('updater:registration-rows:' || NEW.registration_digest, 0));\n  SELECT count(*)::integer INTO existing_rows FROM updater.passkey_registrations r",
+    "replace": "  SELECT count(*)::integer INTO existing_rows FROM updater.passkey_registrations r",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the per-digest row cap is a read-then-write; without the transaction-scoped advisory lock 50 concurrent registrations each count zero rows and all 50 land (measured: 50 rows, cap of 4 never consulted)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NOT FOUND THEN\n    RAISE EXCEPTION 'updater registration digest is not open' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF NOT FOUND THEN\n    RETURN NEW;\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "a registration row must be accepted only for a digest the updater opened; a page that saw the URL fragment must not be able to insert for a registration nobody issued"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF open_consumed_at IS NOT NULL THEN\n    RAISE EXCEPTION 'updater registration was already consumed at %', open_consumed_at\n      USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater registration was already consumed at %', open_consumed_at\n      USING ERRCODE = '42501';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "a registration is single-use: once the updater has consumed R a late insert must be refused, or a second passkey can be created from a spent secret"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF open_expires_at <= pg_catalog.now() THEN\n    RAISE EXCEPTION 'updater registration expired at %', open_expires_at USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater registration expired at %', open_expires_at USING ERRCODE = '42501';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "R lives 30 minutes (design 5.1) and the comparison is against the DATABASE clock, so a caller-supplied time cannot extend it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  INSERT INTO updater.approval_refusals (approval_id, plan_id, reason, bucket_start)\n    VALUES (p_approval_id, p_plan_id, p_reason, bucket)\n    ON CONFLICT (approval_id) DO NOTHING\n    RETURNING TRUE INTO claimed;\n  IF claimed IS NULL THEN\n    RAISE EXCEPTION 'updater refusal is not an approval' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  INSERT INTO updater.approval_refusals (approval_id, plan_id, reason, bucket_start)\n    VALUES (p_approval_id, p_plan_id, p_reason, bucket)\n    ON CONFLICT (approval_id) DO UPDATE SET reason = EXCLUDED.reason;\n  claimed := TRUE;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "a replayed approval must be a no-op: without the RETURNING clause a bot re-POSTing one stale assertion becomes 10000 journal lines (design 13 P8)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  bucket := pg_catalog.date_trunc('hour', pg_catalog.now());",
+    "replace": "  bucket := '2020-01-01 00:00:00+00'::timestamptz;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the bucket is the DATABASE's hour; a fixed bucket would let a caller open a second aggregate for an hour that already has one (P-3)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF (OLD.journaled_at IS NOT NULL AND NEW.journaled_at IS NULL)\n     OR (OLD.pushed_at IS NOT NULL AND NEW.pushed_at IS NULL) THEN\n    RAISE EXCEPTION 'updater refusal delivery cannot be undone' USING ERRCODE = '23514';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater refusal delivery cannot be undone' USING ERRCODE = '23514';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "delivery is one-way, or a re-drive that failed halfway puts the same hour back in the queue and the owner sees the line twice (P-4)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NEW.count <> OLD.count AND NEW.count <> OLD.count + 1 THEN\n    RAISE EXCEPTION 'updater refusal count refused: % -> %', OLD.count, NEW.count USING ERRCODE = '23514';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater refusal count refused: % -> %', OLD.count, NEW.count USING ERRCODE = '23514';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the aggregate rises by one or not at all, so no caller can rewrite an hour's count and hide how many attempts failed"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  SELECT count(*)::integer INTO reached FROM public.owner_web_push_subscriptions s\n    WHERE s.expires_at IS NULL OR s.expires_at > pg_catalog.now();\n  IF reached = 0 THEN\n    RAISE EXCEPTION 'updater cooling-off notice has no subscriptions to send to' USING ERRCODE = '23503';\n  END IF;",
+    "replace": "  reached := 1;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "a passkey add with nobody to warn must refuse loudly rather than report a warning that was never sent (design 5.1 step 7, P-5)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  key_repeat := 'passkey-cooling-off:' || p_credential_id || ':repeat';",
+    "replace": "  key_repeat := 'passkey-cooling-off:' || p_credential_id || ':repeat-' || p_number::text;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the idempotency key is the whole of the re-drive safety; a key that varies per call lets a retried add tell the owner twice about the same key (R14c, P-5)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF TG_OP = 'DELETE' THEN\n    RAISE EXCEPTION 'updater open registrations are not deletable' USING ERRCODE = '23514';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater open registrations are not deletable' USING ERRCODE = '23514';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the consumed marker is what makes a late web insert fail by name; a deleted row makes it look merely expired"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF (to_jsonb(NEW) - ARRAY['consumed_at']) IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['consumed_at']) THEN\n    RAISE EXCEPTION 'updater open registration content is immutable' USING ERRCODE = '23514';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater open registration content is immutable' USING ERRCODE = '23514';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the options object is what the owner is shown; only the updater's ledger may decide what it says, and only consumed_at may move"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NEW.template LIKE 'control-room-updater%' AND current_user <> 'control_room_deployer' THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "a web-inserted push rendering as the updater is the one impersonation the root-only VAPID key was changed to stop (R12)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "GRANT SELECT (registration_digest, mode, options_json, authorization_challenge, expires_at)\n  ON updater.passkey_open_registrations TO control_room_private_web;",
+    "replace": "GRANT SELECT ON updater.passkey_open_registrations TO control_room_private_web;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59670}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-passkey-postgres.test.ts",
+    "why": "the web's reach here is five columns and no more; consumed_at and installation_id are the updater's, and a table-wide grant would hand them over silently"
+  }
+]

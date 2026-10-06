@@ -26,11 +26,12 @@ test("one artifact accepts isolated product configurations without rebuild", () 
 test("parse isolates input, freezes its result, and exports exact canonical JSON", () => {
   const input = configuration(), parsed = parseProductConfigurationV1(input);
   input.projectTemplates[0]!.displayName = "Mutated";
-  assert.equal(parsed.projectTemplates[0]!.displayName, "Operations");
+  assert.equal(parsed.projectTemplates.find(template => template.id === "operations")!.displayName, "Operations");
+  assert.equal(parsed.projectTemplates.some(template => template.id === "control-room"), true);
   assert.equal(Object.isFrozen(parsed), true);
   assert.equal(Object.isFrozen(parsed.projectTemplates), true);
   const exported = exportProductConfigurationV1(configuration());
-  assert.equal(exported, '{"schema":"control-room.product-configuration/v1","displayName":"Control Room","defaultTimezone":"America/Denver","modules":{"ideaLab":true,"news":false,"sessionObservations":true},"limits":{"maxProjects":24,"maxTasksPerProject":200,"maxResultsPerTask":20,"maxArticleSources":10,"maxIdeaParticipants":8},"projectTemplates":[{"id":"operations","displayName":"Operations","enabledModules":["sessionObservations"]},{"id":"research","displayName":"Research","enabledModules":["ideaLab"]}]}');
+  assert.equal(exported, '{"schema":"control-room.product-configuration/v1","displayName":"Control Room","defaultTimezone":"America/Denver","modules":{"ideaLab":true,"news":false,"sessionObservations":true},"limits":{"maxProjects":24,"maxTasksPerProject":200,"maxResultsPerTask":20,"maxArticleSources":10,"maxIdeaParticipants":8},"projectTemplates":[{"id":"control-room","displayName":"Control Room","enabledModules":[]},{"id":"operations","displayName":"Operations","enabledModules":["sessionObservations"]},{"id":"research","displayName":"Research","enabledModules":["ideaLab"]}]}');
   assert.equal(exportProductConfigurationV1(JSON.parse(exported)), exported);
 });
 

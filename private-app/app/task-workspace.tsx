@@ -7,10 +7,13 @@ import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, TaskStateGuidance, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
+import { PrivateResultFiles } from "./result-files-panel";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
 import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
+import { FleetOfferControl } from "./workers/fleet-offer";
+import { PrivateTaskCancel } from "./task-cancel";
 import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
@@ -21,6 +24,7 @@ import { useLocalRuntime } from "./local-runtime";
 import { StateChip } from "./owner-ui";
 import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
 import { usePolledRead } from "./use-polled-read";
+import { isPolledReadAbort } from "../../src/web/v1/polled-read-scheduler";
 
 /** Polling the same task must retain its object identity. The planning,
  * assignment and result children key their protected reads to this value; a
@@ -37,13 +41,23 @@ export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
 }
 
-/** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
+/** Read-gated child; command memory is owned by the stable keyed task page, not this subtree.
+ *
+ * "Delivered files" sits beside "What changed" (plan v4.3 2.6): the text result
+ * is what a bot said, the file list is what it produced. Both are read from
+ * their own route, and neither is shown for a task that has neither. */
 export function TaskDetailResults({ detail, projectId, reviewWorkspace, verificationWorkspace }: {
   detail?: TaskDetail; projectId: string; reviewWorkspace: TaskReviewWorkspace; verificationWorkspace?: TaskVerificationWorkspace;
 }) {
-  return detail && (detail.artifacts === "configured" || detail.review === "recorded")
-    ? <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId}
-      jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /> : null;
+  if (!detail) return null;
+  return <>
+    {detail.artifacts === "configured" || detail.review === "recorded"
+      ? <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId}
+        jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} />
+      : null}
+    <PrivateResultFiles key={`files:${projectId}:${detail.task.jobId}`} projectId={projectId}
+      jobId={detail.task.jobId} />
+  </>;
 }
 
 /** A proposal has no assignment yet; asking the assignment endpoint for it is
@@ -58,10 +72,21 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   }, []);
   const preparedFromSource = preparedContinuation?.sourceJobId === detail.task.jobId ? preparedContinuation.task : undefined;
   if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
+  const fleet = <FleetOfferControl projectId={detail.task.projectId} jobId={detail.task.jobId} state={detail.task.state} />;
+  // The installed Mac host is connector-only: it builds no planner, assignment
+  // or queue, so its task routes answer `dispatch: "not_connected"`. Its bots
+  // are connector workers, and offering is the only way work reaches them.
+  // Prepare / Assign / Approve panels there are dead ends that read as broken.
+  if (mode === "local" && detail.dispatch === "not_connected") return <>{fleet}
+    <section id="task-planning" className="private-panel" aria-label="How work reaches a bot"><h2>Send this task to a bot</h2>
+      <p>On this Mac, bots you connect on the <a href="/workers">Workers</a> page do the work. Use “Offer to other machines” to let a connected bot with the chosen skill pick up this task.</p>
+      <p className="private-note">Nothing starts until a connected bot claims it. Its result comes back to you for review on the Workers page.</p>
+    </section></>;
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
-    <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
+    <PrivateTaskCancel detail={detail} client={workspace.cancel} onRecorded={onRecorded} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} />{fleet}</>;
+  if (!detail.preparedFor) return <>{fleet}<PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
     {preparedFromSource ? null : <>
     <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
       <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
@@ -70,7 +95,8 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
       <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
       <button type="button" disabled>Approve after assignment</button></section></>}</>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
-    <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
+    <PrivateTaskCancel detail={detail} client={workspace.cancel} onRecorded={onRecorded} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} local />{fleet}</>;
 }
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
@@ -86,6 +112,10 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
   const [error, setError] = useState<BrowserRequestError>();
   const [navigationNotice, setNavigationNotice] = useState(false);
+  // int10: an uncertain or unsent save is an alert; after a definite refusal the error
+  // alert already explains it, so the draft note is a status line, not a second alert.
+  const [draftNotice, setDraftNotice] = useState<{ text: string; alert: boolean }>();
+  const [readFailed, setReadFailed] = useState(false);
   const [preparing, setPreparing] = useState(false), preparingRef = useRef(false);
   const [experimentNotice, setExperimentNotice] = useState<string>();
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
@@ -105,7 +135,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   // while the tab is hidden, refreshes on focus, never overlaps a read, and
   // backs off when nothing changes or the read fails. `generation` fences a
   // retired read from overwriting a newer result, exactly as before.
-  usePolledRead<true>({
+  const taskRead = usePolledRead<true>({
     key: `task-workspace-${projectId}-${jobId ?? "list"}-${after ?? ""}-${refresh}`,
     baseIntervalMs: 30_000,
     enabled: !authInvalid,
@@ -117,21 +147,27 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
           : await client.list(projectId, after, signal, transport);
         if (current === generation.current) {
           if ("task" in value) setDetail(previous => retainEquivalentTaskDetailV1(previous, value)); else setPage(value);
+          setReadFailed(false);
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
+        if (signal.aborted || isPolledReadAbort(reason)) throw reason;
         if (current === generation.current) {
           const err = failure(reason);
           if (err.code === "authentication_required") { reviewWorkspace.invalidateAuthenticatedSession(); setAuthInvalid(true); }
-          setPage(undefined); setDetail(undefined); setError(err);
+          setReadFailed(true);
+          if (err.code !== "unavailable") { setPage(undefined); setDetail(undefined); setError(err); }
+          else if (!page && !detail) setError(err);
         }
+        throw reason;
       } finally { if (current === generation.current) setLoading(false); }
       return true;
     },
   });
   async function save(retry = false) {
-    if (busy.current || preparingRef.current || !page || (!retry && !page.canPropose)) return;
-    busy.current = true; generation.current++; setPending(true); setError(undefined);
+    if (busy.current || preparingRef.current || readFailed || taskRead.checking || !page || (!retry && !page.canPropose)) return;
+    if (navigator.onLine === false) { setDraftNotice({ text: "You are offline. The task was not sent. Your typed draft is kept; reconnect and try again.", alert: true }); return; }
+    busy.current = true; generation.current++; setPending(true); setError(undefined); setDraftNotice(undefined);
     try {
       const receipt: TaskReceipt = retry ? await client.retrySave() : await client.propose(projectId, draft);
       // The confirmed command has released its hold; allow the success navigation.
@@ -141,7 +177,10 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       if (alive.current) {
         const err = failure(reason); setError(err);
         if (err.code === "authentication_required") { reviewWorkspace.invalidateAuthenticatedSession(); setAuthInvalid(true); }
-        if (["authentication_required", "access_denied", "not_found"].includes(err.code)) { setPage(undefined); setDetail(undefined); setDraft({ title: "", instructions: "" }); }
+        setDraftNotice(client.hasPending()
+          ? { text: "The task save is unconfirmed; it may have completed. Your typed draft is kept. Check this exact save before sending another.", alert: true }
+          : { text: "The task was not saved. Your typed draft is kept.", alert: false });
+        if (["authentication_required", "access_denied", "not_found"].includes(err.code)) { setPage(undefined); setDetail(undefined); }
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }
   }
@@ -167,6 +206,9 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
     {navigationNotice && <p className="private-notice" role="alert">A save was still unconfirmed when you tried to leave.
       Keep this tab open and check that exact save again. If sign-in has expired, sign in from another tab, then return here.</p>}
+    {draftNotice && <p role={draftNotice.alert ? "alert" : "status"}>{draftNotice.text}</p>}
+    {(page || detail) && taskRead.checking && <p role="status">Checking… Last saved tasks are shown.</p>}
+    {readFailed && (page || detail) && <p role="status">Couldn't refresh. Last saved tasks and your typed draft are kept.</p>}
     {error && <div className="private-notice" role="alert">{error.code === "authentication_required"
       ? <TaskAuthenticationRecovery held={client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending() || executionWorkspace.hasPending()} />
       : <p>{taskErrorMessage[error.code]}</p>}
@@ -186,11 +228,22 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
           onClick={() => { void prepareExperiment(); }}>{preparing ? "Reading experiment…" : "Prepare first experiment task"}</button>
         {(!!draft.title || !!draft.instructions) && <p>Clear both draft fields first if you want to prepare it again. Existing text is never replaced.</p>}
       </section>}{experimentNotice && <p role="status">{experimentNotice}</p>}
-        <TaskProposalForm draft={draft} setDraft={setDraft} modelOptions={page.modelOptions} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
+        <TaskProposalForm draft={draft} setDraft={setDraft} modelOptions={page.modelOptions} pending={pending} preparing={preparing || readFailed || taskRead.checking} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
+    {/* TaskDetailPanel's own first section is the status lead: state chip,
+        title and an explicit "Assigned to" line (owner-ux-feedback-2026-09-27.md
+        item 4). Its later sections — Prepared worker, Local task route,
+        Ownership leases, Agent progress — are now collapsed behind <details>,
+        so "What happens next" (TaskStateGuidance) is reached after one status
+        section and a run of one-line collapsed headings, not a wall of
+        evidence text. Splitting TaskDetailPanel to put guidance literally
+        between its first section and the rest would duplicate the status line
+        for no owner-visible gain, since every later section is already
+        collapsed by default. */}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}
-    {detail && runtime.mode !== "checking" && <TaskWorkflowGuide local={runtime.mode === "local"} prepared={!!detail.preparedFor} />}
+    {detail && runtime.mode !== "checking" && <TaskWorkflowGuide local={runtime.mode === "local"} prepared={!!detail.preparedFor}
+      connectorOnly={runtime.mode === "local" && detail.dispatch === "not_connected"} />}
     {jobId && detail && <TaskExecutionStage detail={detail} mode={runtime.mode} workspace={executionWorkspace} onRecorded={refreshSaved} />}
     <div id="task-results"><TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /></div>
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue work when configured. Refreshing this page does not submit a task.</p>}

@@ -1,0 +1,233 @@
+[
+  {
+    "file": "src/web/v1/idea-decision-client.ts",
+    "find": "!pending.uncertain && !ideaDecisionDraftSchema.parse(JSON.parse(pending.body)).promotionTask",
+    "replace": "!pending.uncertain",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/idea-workspace.test.tsx",
+    "why": "M3-IDEA-01 promotion refusals retain the exact request for recovery"
+  },
+  {
+    "file": "src/usage/v1/usage-cost.ts",
+    "find": "sums[field] <= BigInt(Number.MAX_SAFE_INTEGER)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-cost.test.ts",
+    "why": "M3-COST-01 unchecked BigInt aggregates never round through Number"
+  },
+  {
+    "file": "src/web/v1/task-wire.ts",
+    "find": "const aggregateCount = z.union([count, z.string().regex(/^(?:0|[1-9][0-9]*)$/)]);",
+    "replace": "const aggregateCount = count;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-cost.test.ts",
+    "why": "M3-COST-01 the browser accepts exact overflow decimal counts"
+  },
+  {
+    "file": "src/web/v1/task-wire.ts",
+    "find": "const aggregateCount = z.union([count, z.string().regex(/^(?:0|[1-9][0-9]*)$/)]);",
+    "replace": "const aggregateCount = z.union([count, z.string()]);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-cost.test.ts",
+    "why": "M3-COST-01 decimal counts refuse negative fractional and noncanonical inputs"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK",
+    "replace": "constants.O_RDONLY | constants.O_NONBLOCK",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 opening a price file never follows a symlink"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK",
+    "replace": "constants.O_RDONLY | constants.O_NOFOLLOW",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 a FIFO without a writer cannot stall the loader"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "!entry.isFile() || ",
+    "replace": "",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 the opened descriptor must be a regular file"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "(entry.mode & 0o077) !== 0 || ",
+    "replace": "",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 the opened descriptor must have private permissions"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "uid !== undefined && entry.uid !== uid",
+    "replace": "false",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 the opened descriptor must have the expected owner"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "await handle.readFile(\"utf8\")",
+    "replace": "await (await import(\"node:fs/promises\")).readFile(path, \"utf8\")",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 inspection and reading use the same opened file"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "finally { await handle.close(); }",
+    "replace": "finally {}",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 every opened descriptor closes on success and failure"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "usagePriceTableSchemaV1.parse(JSON.parse(await handle.readFile(\"utf8\")))",
+    "replace": "JSON.parse(await handle.readFile(\"utf8\"))",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 syntactically valid JSON still requires a valid price table"
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-read.ts",
+    "find": "[...groups.values()].slice(0, 200).sort",
+    "replace": "[...groups.values()].sort",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-02 the read result respects the browser group bound"
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-read.ts",
+    "find": "olderGroupsOmitted: Math.max(0, groups.size - 200)",
+    "replace": "olderGroupsOmitted: 0",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-02 every omitted older group is declared"
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-read.ts",
+    "find": "bucket.unknownReview = countValue(unknownReview);",
+    "replace": "bucket.unknownReview = 0;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-03 missing review evidence has an explicit outcome count"
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-browser-client.ts",
+    "find": "unknownReview: z.number().int().min(0).default(0)",
+    "replace": "unknownReview: z.any().default(0)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-03 unknown outcome counts refuse malformed wire values"
+  },
+  {
+    "file": "src/web/v1/worker-scorecard-browser-client.ts",
+    "find": "olderGroupsOmitted: z.number().int().min(0).default(0)",
+    "replace": "olderGroupsOmitted: z.any().default(0)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-02 omission counts refuse malformed wire values"
+  },
+  {
+    "file": "private-app/app/workers/workers-scorecard.tsx",
+    "find": "window.unknownReview > 0",
+    "replace": "false",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-03 the owner can see the unknown review outcome"
+  },
+  {
+    "file": "private-app/app/workers/workers-scorecard.tsx",
+    "find": "view.view.olderGroupsOmitted > 0",
+    "replace": "false",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/worker-scorecard-read.test.tsx",
+    "why": "M3-SCORE-02 the owner can see how many older groups are omitted"
+  },
+  {
+    "file": "src/web/v1/reusable-skill-browser-client.ts",
+    "find": "}, 10_000);",
+    "replace": "}, 10_001);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 every operation settles within its ten-second deadline"
+  },
+  {
+    "file": "src/web/v1/reusable-skill-browser-client.ts",
+    "find": "controller.abort(); reject",
+    "replace": "reject",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 deadlines cancel the underlying transport"
+  },
+  {
+    "file": "src/web/v1/reusable-skill-browser-client.ts",
+    "find": "return await Promise.race([deadline, (async () => {",
+    "replace": "void deadline.catch(() => {}); return await Promise.race([(async () => {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 a transport ignoring abort cannot hold the caller forever"
+  },
+  {
+    "file": "src/web/v1/reusable-skill-browser-client.ts",
+    "find": "const failure = write ? \"uncertain\" : \"unavailable\";",
+    "replace": "const failure = \"unavailable\";",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 a lost write response must remain uncertain"
+  },
+  {
+    "file": "src/web/v1/reusable-skill-browser-client.ts",
+    "find": "finally { clearTimeout(timer); }",
+    "replace": "finally {}",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 settled operations remove their pending deadline"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "if (code === \"conflict\" && editing) setConflict(true);",
+    "replace": "if (code === \"conflict\" && editing) setConflict(false);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-01 a stale edit is blocked with an explicit refresh control"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "if (!current) throw new BrowserRequestError(\"not_found\");",
+    "replace": "if (false) throw new BrowserRequestError(\"not_found\");",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-01 a missing skill cannot rebase a draft onto no saved head"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "setEditing(current); setName(current.name); setConflict(false);",
+    "replace": "setName(current.name); setConflict(false);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-01 refreshing replaces the expected version with the saved head"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "setEditing(current); setName(current.name); setConflict(false);",
+    "replace": "setEditing(current); setName(current.name); setInstructions(current.instructions); setConflict(false);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-01 refreshing preserves the unsaved instructions"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "if (code === \"uncertain\") { setUncertain(true); setChecked(false); }",
+    "replace": "if (code === \"uncertain\") { setUncertain(false); setChecked(false); }",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 an uncertain save freezes its draft and requires inspection"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "disabled={pending || !checked}",
+    "replace": "disabled={pending}",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 a failed refresh cannot unlock discarding an uncertain draft"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "{uncertain && <details><summary>Saved instructions</summary><pre>{skill.instructions}</pre></details>}",
+    "replace": "{false && <details><summary>Saved instructions</summary><pre>{skill.instructions}</pre></details>}",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 saved instructions are inspectable while uncertain saves stay blocked"
+  },
+  {
+    "file": "src/usage/v1/usage-price-table-loader.ts",
+    "find": "if ((error as NodeJS.ErrnoException).code === \"ELOOP\")",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/usage-price-table-loader.test.ts",
+    "why": "M3-PRICE-01 a refused symlink is reported as unsafe"
+  },
+  {
+    "file": "private-app/app/reusable-skills.tsx",
+    "find": "error && !conflict && !uncertain",
+    "replace": "false",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='M3-' tests/recurring-owner-ui.test.tsx",
+    "why": "M3-SKILL-02 failed reads expose an in-panel refresh"
+  }
+]

@@ -10,8 +10,10 @@ import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../src/ha
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
-import { databaseBackupVerificationRootPrefixV1, normalizeMacApplicationOwnershipV1, verifyMacLocalDatabaseBackupV1 } from
-  "../scripts/ops/verify-database-backup.mjs";
+import { DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV, DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1,
+  databaseBackupVerificationRootPrefixV1, normalizeMacApplicationOwnershipV1,
+  parseDatabaseBackupVerificationPortRangeV1, resolveDatabaseBackupVerificationPortRangeV1,
+  verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const planDigest = sha256Digest("reviewed-local-installation-plan");
@@ -91,7 +93,7 @@ test("writes a secret-free digest manifest and refuses a tampered dump before st
   t.after(() => rm(root, { recursive: true, force: true }));
   const identityDigest = sha256Digest("restore-identity"), ledgerDigest = sha256Digest("ledger");
   const manifest = await createMacLocalDatabaseBackupV1({
-    source: "postgresql://operator:private-password@127.0.0.1/control_room", out: root,
+    source: "postgresql://operator:private-password@127.0.0.1/control_room", out: join(root, "generation"),
     pgBin: "/unused/postgres/bin", now: () => "2026-09-27T00:00:00.000Z",
     backup: async ({ out }) => {
       await mkdir(out!, { recursive: true });
@@ -105,8 +107,8 @@ test("writes a secret-free digest manifest and refuses a tampered dump before st
   const encoded = JSON.stringify(manifest);
   assert.doesNotMatch(encoded, /private-password|postgresql|operator/u);
   assert.equal(manifest.restoreIdentityDigest, identityDigest);
-  await writeFile(join(root, "database.dump"), "tampered-custom-format-backup");
-  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: root, port: 15620,
+  await writeFile(join(root, "generation", "database.dump"), "tampered-custom-format-backup");
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: join(root, "generation"), port: 15620,
     pgBin: "/unused/postgres/bin" }), /database_backup_digest_refused/u);
 });
 
@@ -199,6 +201,101 @@ test("a slow disposable-cluster shutdown is DEGRADED, never raised as a teardown
   await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: "not/an/absolute/path",
     port: 15620, pgBin: "/unused/postgres/bin" }), /database_backup_path_refused/u,
     "a backup that is not an absolute, bound backup directory is still a FAIL");
+});
+
+test("the verifier's accepted port range defaults to the documented block and is strictly validated when overridden", async () => {
+  // The block 15620..15649 is what production and CI use. It is the DEFAULT, not
+  // a constant in the verifier's logic: a helper restricted to a different
+  // assigned range could not otherwise run the documented journey locally at all,
+  // and widening the check by editing this module would change the answer for
+  // everyone who did not ask for a change.
+  assert.deepEqual({ ...DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1 }, { min: 15620, max: 15649 });
+  assert.equal(Object.isFrozen(DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1), true,
+    "the shared default must not be mutable by a caller");
+  // Unset, and set-but-blank, both mean the default rather than a refusal: an
+  // exported-but-empty variable is how a shell leaves one behind.
+  for (const env of [{}, { [DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV]: "" },
+    { [DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV]: "   " }]) {
+    assert.deepEqual({ ...resolveDatabaseBackupVerificationPortRangeV1(undefined, env) },
+      { min: 15620, max: 15649 }, `an absent value must keep the default: ${JSON.stringify(env)}`);
+  }
+
+  // A valid override moves the range, as a string or as an already-parsed pair.
+  assert.deepEqual({ ...parseDatabaseBackupVerificationPortRangeV1("58675-58679") },
+    { min: 58675, max: 58679 });
+  assert.deepEqual({ ...parseDatabaseBackupVerificationPortRangeV1(" 58675-58679 ") },
+    { min: 58675, max: 58679 }, "surrounding whitespace is a shell artefact, not a value");
+  assert.deepEqual({ ...parseDatabaseBackupVerificationPortRangeV1("5000-5000") },
+    { min: 5000, max: 5000 }, "a one-port range is a valid assignment");
+  assert.deepEqual({ ...resolveDatabaseBackupVerificationPortRangeV1({ min: 4900, max: 4903 }) },
+    { min: 4900, max: 4903 });
+  assert.deepEqual({ ...resolveDatabaseBackupVerificationPortRangeV1(undefined,
+    { [DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV]: "7000-7100" }) }, { min: 7000, max: 7100 });
+  // An explicit range wins over the environment: a caller that states its own
+  // block must not have it silently replaced by an inherited variable.
+  assert.deepEqual({ ...resolveDatabaseBackupVerificationPortRangeV1("6000-6009",
+    { [DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV]: "7000-7100" }) }, { min: 6000, max: 6009 });
+  assert.equal(Object.isFrozen(parseDatabaseBackupVerificationPortRangeV1("6000-6009")), true);
+
+  // Everything else is refused, and refused as a RANGE problem rather than
+  // silently falling back — a mistyped value that quietly used the default would
+  // put a cluster back on a port this run is not allowed to use.
+  const refused: unknown[] = [
+    // Not a `MIN-MAX` pair.
+    "", " ", "58675", "58675-", "-58679", "58675,58679", "58675 - 58679", "min-max", "15620..15649",
+    // Not integers.
+    "58675.0", "1e4-1e5", "0x1-0x2", "a-b", " 58675 - 58679",
+    // Descending, or a span no assignment would ever claim.
+    "58679-58675", "1-65535", "1024-65535", "1024-2049",
+    // Privileged or out of the port space. The over-65535 cases are narrow on
+    // purpose: a wide one is already refused for its span or its low end, so only
+    // a narrow ascending range above 65535 isolates the upper bound itself.
+    "0-80", "80-1023", "1-1023", "100-120", "65530-65536", "65535-65536", "65536-65535", "65530-70000", "0-65535",
+    // Six digits cannot be a port at all, and must not be read as one.
+    "123456-123457", "100000-100001",
+  ];
+  for (const value of refused) assert.throws(() => parseDatabaseBackupVerificationPortRangeV1(value as string),
+    /database_backup_verification_port_range_refused/u, `the value ${JSON.stringify(value)} must be refused`);
+  for (const value of [null, undefined, 0, 1, true, [], [{ min: 58675, max: 58679 }]])
+    assert.throws(() => parseDatabaseBackupVerificationPortRangeV1(value as unknown as string),
+      /database_backup_verification_port_range_refused/u,
+      `a non-string value ${JSON.stringify(value)} must be refused`);
+  // A parsed pair is validated the same way as the string form, so a caller's own
+  // object cannot skip the checks. A string is still accepted here and goes
+  // through the identical parse.
+  assert.deepEqual({ ...resolveDatabaseBackupVerificationPortRangeV1("58675-58679") },
+    { min: 58675, max: 58679 }, "the string form is parsed, not treated as an object");
+  for (const value of [null, 42, true, [], { min: 80, max: 90 }, { min: 58679, max: 58675 },
+    { min: 58675 }, { min: 58675.5, max: 58679 }, { min: 15620, max: 65535 }])
+    assert.throws(() => resolveDatabaseBackupVerificationPortRangeV1(value as never),
+      /database_backup_verification_port_range_refused/u,
+      `an object range must be validated: ${JSON.stringify(value)}`);
+  assert.throws(() => resolveDatabaseBackupVerificationPortRangeV1("not-a-range"),
+    /database_backup_verification_port_range_refused/u,
+    "a string range is parsed, so a bad one is refused rather than coerced");
+  assert.throws(() => resolveDatabaseBackupVerificationPortRangeV1(undefined,
+    { [DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV]: "not-a-range" }),
+  /database_backup_verification_port_range_refused/u, "an invalid environment value is refused, not ignored");
+
+  // And the boundary: the default block is enforced where a cluster is created,
+  // and a range the operator supplied replaces it there and nowhere else. Both
+  // refusals land before any PostgreSQL directory is created, so neither can
+  // leave a postmaster behind.
+  const notABackup = join(tmpdir(), "port-range-is-not-a-backup");
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: notABackup, port: 58675,
+    pgBin: "/unused/postgres/bin" }), /database_backup_verification_arguments_refused/u,
+    "a port outside the default block is still refused with no range configured");
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: notABackup, port: 58675,
+    pgBin: "/unused/postgres/bin", portRange: "58675-58679" }), /ENOENT|database_backup_path_refused/u,
+    "the same port inside an operator-supplied range passes the port check and fails on the backup instead");
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: notABackup, port: 15620,
+    pgBin: "/unused/postgres/bin", portRange: "58675-58679" }),
+  /database_backup_verification_arguments_refused/u,
+    "a port from the default block is refused once another range is in force");
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: notABackup, port: 15620,
+    pgBin: "/unused/postgres/bin", portRangeEnv: { [DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV]: "1-99" } }),
+  /database_backup_verification_port_range_refused/u,
+    "an unusable range is refused, not quietly replaced by the default");
 });
 
 test("the verifier's teardown seam cannot be pointed at another cluster", async () => {

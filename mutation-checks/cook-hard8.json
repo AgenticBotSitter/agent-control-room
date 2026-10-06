@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (registration.mode === \"initial\" && ledger.passkeys.length !== 0)\n          throw updaterRefuseV1(\"updater_registration_mode_refused\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern='R2W-1' tests/updater-passkey.test.mjs",
+    "why": "A pending initial link must be consumed and refused once any first key has been recorded"
+  },
+  {
+    "file": "src/web/v1/private-node-handler.ts",
+    "find": "const bodyAllowed = method === \"POST\" || editPut || method === \"DELETE\"",
+    "replace": "const bodyAllowed = method === \"POST\" || editPut",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "Unsubscribe requires the explicitly supported DELETE body"
+  },
+  {
+    "file": "src/web/v1/private-node-handler.ts",
+    "find": "&& url.pathname === \"/api/v1/owner-web-push\" && !url.search",
+    "replace": "&& !url.search",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "DELETE bodies belong only to the notification endpoint"
+  },
+  {
+    "file": "src/web/v1/private-node-handler.ts",
+    "find": "&& url.pathname === \"/api/v1/owner-web-push\" && !url.search",
+    "replace": "&& url.pathname === \"/api/v1/owner-web-push\"",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "The transport exception does not include a query variant"
+  },
+  {
+    "file": "src/web/v1/private-node-handler.ts",
+    "find": "if (!bodyAllowed && (transfer || expectedLength && expectedLength > 0)) throw new RequestFailure(400);",
+    "replace": "",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "Forbidden framed bodies are refused before a byte is read"
+  },
+  {
+    "file": "src/web/v1/private-node-handler.ts",
+    "find": "if (!head.bodyAllowed && body.length) throw new RequestFailure(400);",
+    "replace": "",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "Unframed unexpected body bytes cannot reach session revocation"
+  },
+  {
+    "file": "src/web/v1/private-node-handler.ts",
+    "find": "...(head.bodyAllowed && body.length ? { body: new Uint8Array(body) } : {})",
+    "replace": "...(head.method === \"POST\" && body.length ? { body: new Uint8Array(body) } : {})",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "The bounded DELETE bytes must reach the application"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "          throw new WebAccessError(\"not_found\");\n        }\n        if (request.method !== \"GET\") {\n          sessions.assertLocalRequest(request, true);\n",
+    "replace": "          throw new WebAccessError(\"not_found\");\n        }\n        if (request.method !== \"GET\") {\n",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "Push writes still require an exact supplied origin after transport is repaired"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "(?:lifecycle|idea-lifecycle|settings)",
+    "replace": "(?:lifecycle|idea-lifecycle)",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "The settings browser path reaches its existing handler"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "orchestration(?:-settings|-retry)?$",
+    "replace": "orchestration(?:-settings)?$",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "The planner retry path reaches its existing owner handler"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "if(!response.ok&&response.status!==401)throw new Error(\"sign_out_unconfirmed\");",
+    "replace": "",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "Non-successful durable revocation must not navigate to signed-out UI"
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "catch{message.textContent=\"Could not sign out: the sign-out could not be confirmed, so your session may still be active. Try signing out again.\";busy=false;button.disabled=false}",
+    "replace": "catch{busy=false;button.disabled=false}",
+    "test": "node --import tsx --test tests/website-round2.test.mjs",
+    "why": "Both transport failures and refusal statuses must leave a visible retry message"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (action !== \"void\") return fleetFail(\"not_found\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='R2W-5' tests/website-gateway-round2.test.mjs",
+    "why": "Read-only upload listing paths never dispatch cancellation"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "} catch (error) {\n    if (error instanceof FleetErrorV1) throw error;\n    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  try { return new TextDecoder",
+    "replace": "} catch (error) {\n    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  try { return new TextDecoder",
+    "test": "node --import tsx --test --test-name-pattern='existing typed size' tests/website-gateway-round2.test.mjs",
+    "why": "A JSON size refusal survives the aborted marker"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "} catch (error) {\n    if (error instanceof FleetErrorV1) throw error;\n    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  if (!length)",
+    "replace": "} catch (error) {\n    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  if (!length)",
+    "test": "node --import tsx --test --test-name-pattern='existing typed size' tests/website-gateway-round2.test.mjs",
+    "why": "A raw-byte size refusal survives the aborted marker"
+  }
+]

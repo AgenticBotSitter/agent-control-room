@@ -1,0 +1,457 @@
+[
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    for (const pattern of [...patterns, ...exclude]) validateGlobPattern(pattern);\n    return { patterns, exclude,",
+    "replace": "    return { patterns, exclude,",
+    "test": "node --import tsx --test --test-name-pattern='unreadable running policy' tests/updater-referee.test.ts",
+    "why": "every database and dependency glob must parse when the running policy loads even if no current diff path reaches its malformed segment"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "function compiledGlobMatches(pattern: CompiledGlobPattern, path: string): boolean {\n  const paths = path.toLowerCase().split(\"/\");",
+    "replace": "function compiledGlobMatches(pattern: CompiledGlobPattern, path: string): boolean {\n  const paths = path.split(\"/\");",
+    "test": "node --import tsx --test --test-name-pattern='supplemental examples' tests/updater-referee.test.ts",
+    "why": "case folding is required because differently-cased candidate paths land on the same APFS path and must retain the running policy class"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  return rule.patternMatchers.some(pattern => compiledGlobMatches(pattern, path)) &&\n    !rule.excludeMatchers.some(pattern => compiledGlobMatches(pattern, path));",
+    "replace": "  return rule.patternMatchers.some(pattern => compiledGlobMatches(pattern, path));",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "the updater DDL exclusion prevents a legitimate updater-only DDL change from becoming the forbidden updater plus database combination"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (!safePath(path)) { refusal(\"path_not_allowed\", \"This update has a file name Control Room can't check safely.\"); return; }",
+    "replace": "    if (false) { refusal(\"path_not_allowed\", \"This update has a file name Control Room can't check safely.\"); return; }",
+    "test": "node --import tsx --test --test-name-pattern='malformed, oversized' tests/updater-referee.test.ts",
+    "why": "unsafe path segments and names must refuse instead of being treated as ordinary code"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if (!(raw instanceof Uint8Array) || raw.byteLength === 0 || raw.byteLength > UPDATER_REFEREE_MAX_RAW_DIFF_BYTES_V1)\n    throw new Error(\"diff_unreadable\");",
+    "replace": "  if (!(raw instanceof Uint8Array) || raw.byteLength === 0)\n    throw new Error(\"diff_unreadable\");",
+    "test": "node --import tsx --test --test-name-pattern='malformed, oversized' tests/updater-referee.test.ts",
+    "why": "the raw diff byte bound stops an attacker-shaped candidate from forcing unbounded parsing work"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    const paths = [...new Set([entry.oldPath, entry.newPath].filter((path): path is string => path !== null))];",
+    "replace": "    const paths = [...new Set([entry.newPath].filter((path): path is string => path !== null))];",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples|renames classify' tests/updater-referee.test.ts",
+    "why": "a rename or copy must retain the stronger class from either its old or new path"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (entry.oldMode === \"160000\" || entry.newMode === \"160000\" || paths.some(path => {",
+    "replace": "      if (false || paths.some(path => {",
+    "test": "node --import tsx --test --test-name-pattern='submodules and escaping' tests/updater-referee.test.ts",
+    "why": "a gitlink is refused because git archive omits the reviewed submodule content"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (entry.oldMode === \"120000\" || entry.newMode === \"120000\") {",
+    "replace": "      if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='symlinks classify|submodules and escaping' tests/updater-referee.test.ts",
+    "why": "every added changed or removed symlink is protected even when its path and target are otherwise ordinary"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "          if (resolved.escaped) refusal(\"symlink_escape\", \"This update has a link pointing outside Control Room.\");",
+    "replace": "          if (false) refusal(\"symlink_escape\", \"This update has a link pointing outside Control Room.\");",
+    "test": "node --import tsx --test --test-name-pattern='submodules and escaping' tests/updater-referee.test.ts",
+    "why": "an absolute or lexically escaping link must never survive classification"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "              if (!protectedEntry.patternMatchers.some(pattern => compiledGlobMatches(pattern, resolved.path!)) ||",
+    "replace": "              if (true || !protectedEntry.patternMatchers.some(pattern => compiledGlobMatches(pattern, resolved.path!)) ||",
+    "test": "node --import tsx --test --test-name-pattern='symlinks classify' tests/updater-referee.test.ts",
+    "why": "a link into a protected or updater path must carry the target rule and reason as well as generic symlink protection"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (lower === \"export-ignore\" || lower === \"export-subst\" || lower === \"ident\" ||",
+    "replace": "      if (lower === \"export-subst\" || lower === \"ident\" ||",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "archive-changing attributes are refused because installed bytes would differ from the reviewed tree"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (onChange === \"refuse_reinstall\") refusal(\"needs_reinstall\", \"This change needs a reinstall on the Mac.\");",
+    "replace": "    if (false) refusal(\"needs_reinstall\", \"This change needs a reinstall on the Mac.\");",
+    "test": "node --import tsx --test --test-name-pattern='supplemental examples' tests/updater-referee.test.ts",
+    "why": "guard shim and sudoers changes are refused because an update cannot safely replace those install-time files"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            if (policy.packageRules.protected.has(key))",
+    "replace": "            if (false && policy.packageRules.protected.has(key))",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "package scripts are protected because they select and can silently remove required guard tests"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            classes.add(\"dependency\");\n            hit(packagePath, \"package-json-unparseable\", \"A package manifest could not be read unambiguously.\", \"protected\");",
+    "replace": "            hit(packagePath, \"package-json-unparseable\", \"A package manifest could not be read unambiguously.\", \"protected\");",
+    "test": "node --import tsx --test --test-name-pattern='package manifests fail closed' tests/updater-referee.test.ts",
+    "why": "ambiguous or duplicate-key package JSON must receive both dependency and protected treatment"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            else classes.add(\"dependency\");",
+    "replace": "            else { /* mutated: unknown package keys treated as code */ }",
+    "test": "node --import tsx --test --test-name-pattern='package manifests fail closed' tests/updater-referee.test.ts",
+    "why": "a package key unknown to the running policy is dependency-class because the package manager may interpret it"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if (classes.has(\"updater\") && classes.has(\"database\"))",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "an updater change and database change must be split into separate update plans"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    approvalNeeded: { phonePasskey: true, macConfirm: classes.has(\"updater\") },",
+    "replace": "    approvalNeeded: { phonePasskey: true, macConfirm: false },",
+    "test": "node --import tsx --test --test-name-pattern='policy edits are judged' tests/updater-referee.test.ts",
+    "why": "an updater-class plan needs the independent root-rendered Mac confirmation in addition to the phone passkey"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    independentReviewRequired: classes.has(\"database\") || classes.has(\"dependency\") || classes.has(\"protected\") || classes.has(\"updater\"),",
+    "replace": "    independentReviewRequired: false,",
+    "test": "node --import tsx --test --test-name-pattern='policy edits are judged' tests/updater-referee.test.ts",
+    "why": "database dependency protected and updater changes all require an independent review bound to the candidate tree"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "function safePath(path: string): boolean {\n  if (path.length === 0 || path.startsWith(\"/\") || path.includes(\"\\\\\")) return false;\n  if ([...encoder.encode(path)].some(byte => byte < 0x21 || byte > 0x7e)) return false;\n  const segments = path.split(\"/\");",
+    "replace": "function safePath(path: string): boolean {\n  if (path.length === 0 || path.includes(\"\\\\\")) return false;\n  if ([...encoder.encode(path)].some(byte => byte < 0x21 || byte > 0x7e)) return false;\n  const segments = path.startsWith(\"/\") ? path.slice(1).split(\"/\") : path.split(\"/\");",
+    "test": "node --import tsx --test --test-name-pattern='leading slash' tests/updater-referee.test.ts",
+    "why": "an absolute diff path must not be interpreted as a repository-relative path"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": " || path.includes(\"\\\\\")",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='backslash is refused' tests/updater-referee.test.ts",
+    "why": "a backslash is a platform-dependent separator and must be refused"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "!isDotGitSegment(segment) && !isNodeModulesSegment(segment)",
+    "replace": "true && !isNodeModulesSegment(segment)",
+    "test": "node --import tsx --test --test-name-pattern='case-folded .git path segment' tests/updater-referee.test.ts",
+    "why": "a mixed-case .git segment must not enter the release path"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "target.length === 0 || target.startsWith(\"/\") || target.includes(\"\\0\")",
+    "replace": "target.length === 0 || target.includes(\"\\0\")",
+    "test": "node --import tsx --test --test-name-pattern='absolute symlink target' tests/updater-referee.test.ts",
+    "why": "an absolute symlink target escapes the candidate tree"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if ([...buffer].some(byte => byte < 0x20 || byte > 0x7e)) throw new Error(\"diff_unreadable\");\n  return String.fromCharCode(...buffer);",
+    "replace": "  return String.fromCharCode(...buffer.map(byte => byte & 0x7f));",
+    "test": "node --import tsx --test --test-name-pattern='non-UTF-8 raw-diff header' tests/updater-referee.test.ts",
+    "why": "raw diff headers are strict ASCII and cannot admit undecodable bytes"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "score === null || score > 100",
+    "replace": "score === null",
+    "test": "node --import tsx --test --test-name-pattern='similarity score above 100' tests/updater-referee.test.ts",
+    "why": "Git rename and copy similarity scores cannot exceed one hundred"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "const oidPattern = /^[0-9a-f]{7,64}$/u;",
+    "replace": "const oidPattern = /^[0-9a-f]{4,64}$/u;",
+    "test": "node --import tsx --test --test-name-pattern='object id shorter' tests/updater-referee.test.ts",
+    "why": "too-short object ids are ambiguous and must not select attacker-controlled blobs"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "const modePattern = /^(?:000000|100644|100755|120000|160000)$/u;",
+    "replace": "const modePattern = /^(?:000000|77777|100644|100755|120000|160000)$/u;",
+    "test": "node --import tsx --test --test-name-pattern='unknown Git mode' tests/updater-referee.test.ts",
+    "why": "unknown entry modes cannot be safely classified"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "status === \"A\" && oldMode !== \"000000\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='add row with a nonzero' tests/updater-referee.test.ts",
+    "why": "an add row must have Git's zero old mode"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "status !== \"A\" && oldMode === \"000000\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='modify row with a zero' tests/updater-referee.test.ts",
+    "why": "a non-add row cannot have Git's zero old mode"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "ids.has(value.id)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='duplicate protected-policy entry id' tests/updater-referee.test.ts",
+    "why": "duplicate rule identifiers make policy explanations ambiguous"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if (bytes.byteLength > maximumBytes) throw new Error(\"diff_unreadable\");",
+    "replace": "  if (false) throw new Error(\"diff_unreadable\");",
+    "test": "node --import tsx --test --test-name-pattern='symlink target longer' tests/updater-referee.test.ts",
+    "why": "candidate-controlled blobs have a strict parsing bound"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (output.length >= UPDATER_REFEREE_MAX_DIFF_RECORDS_V1) throw new Error(\"diff_unreadable\");",
+    "replace": "    if (false) throw new Error(\"diff_unreadable\");",
+    "test": "node --import tsx --test --test-name-pattern='100001st raw-diff record' tests/updater-referee.test.ts",
+    "why": "the raw diff record cap bounds parser work"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "alternatives.map(alternative => segmentSource(alternative)).join(\"|\")",
+    "replace": "alternatives.slice(1).map(alternative => segmentSource(alternative)).join(\"|\")",
+    "test": "node --import tsx --test --test-name-pattern='first brace alternative' tests/updater-referee.test.ts",
+    "why": "the first brace alternative retains its wildcard semantics"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "alternatives.map(alternative => segmentSource(alternative)).join(\"|\")",
+    "replace": "alternatives.slice(0, 1).map(alternative => segmentSource(alternative)).join(\"|\")",
+    "test": "node --import tsx --test --test-name-pattern='second brace alternative' tests/updater-referee.test.ts",
+    "why": "the second brace alternative retains its wildcard semantics"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "function segmentSource(pattern: string): string {\n  let source = \"\";\n  for (const character of pattern) {\n    if (character === \"*\") source += \".*\";\n    else if (character === \"?\") source += \".\";",
+    "replace": "function segmentSource(pattern: string): string {\n  let source = \"\";\n  for (const character of pattern) {\n    if (character === \"*\") source += \".*\";\n    else if (character === \"?\") source += \"\";",
+    "test": "node --import tsx --test --test-name-pattern='question mark in a brace' tests/updater-referee.test.ts",
+    "why": "question marks inside brace alternatives match exactly one character"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    } else source += character.replace(/[\\\\^$.[\\]|()+]/u, \"\\\\$&\");",
+    "replace": "    } else source += character;",
+    "test": "node --import tsx --test --test-name-pattern='route brackets are literal' tests/updater-referee.test.ts",
+    "why": "route brackets are literal path characters rather than regular expression syntax"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "else if (patterns[patternIndex] === \"**\") matched = visit(patternIndex + 1, pathIndex) ||",
+    "replace": "else if (patterns[patternIndex] === \"**\") matched = false ||",
+    "test": "node --import tsx --test --test-name-pattern='double-star matches both zero' tests/updater-referee.test.ts",
+    "why": "double-star may consume zero complete path segments"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      (pathIndex < paths.length && visit(patternIndex, pathIndex + 1));\n    else matched = pathIndex < paths.length && segmentMatches",
+    "replace": "      false;\n    else matched = pathIndex < paths.length && segmentMatches",
+    "test": "node --import tsx --test --test-name-pattern='double-star matches both zero' tests/updater-referee.test.ts",
+    "why": "double-star may consume several complete path segments"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if (candidateTreeHasCaseCollision(treeEntries))",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='candidate tree refuses|hostile candidate tree' tests/updater-referee.test.ts",
+    "why": "the complete candidate tree must be refused when two names collide on the Mac"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            if (resolved.containsDotGit)",
+    "replace": "            if (false)",
+    "test": "node --import tsx --test --test-name-pattern='mixed-case .git segments|nested candidate symlink' tests/updater-referee.test.ts",
+    "why": "a symlink cannot resolve into repository metadata"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (link === undefined) return { ...resolved, containsDotGit: false };",
+    "replace": "    if (true) return { ...resolved, containsDotGit: false };",
+    "test": "node --import tsx --test --test-name-pattern='nested candidate symlink' tests/updater-referee.test.ts",
+    "why": "candidate-tree symlink chains are followed rather than trusted at their first hop"
+  },
+  {
+    "file": "src/updater/v1/referee/cli.ts",
+    "find": "\"--no-renames\", \"--no-ext-diff\"",
+    "replace": "\"--find-copies-harder\", \"--no-ext-diff\"",
+    "test": "node --import tsx --test --test-name-pattern='disables copy detection' tests/updater-referee.test.ts",
+    "why": "copy detection stays disabled so attacker-shaped candidates cannot force Git's quadratic unchanged-source scan"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    budget.chargeDiffRecords(records.length);",
+    "replace": "    budget.checkpoint();",
+    "test": "node --import tsx --test --test-name-pattern='fixed plan-time budget is shared' tests/updater-referee.test.ts",
+    "why": "candidate and five overlay probes share one total record allowance"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (this.now() - this.#startedAt > UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1)",
+    "replace": "    if (false)",
+    "test": "node --import tsx --test --test-name-pattern='deadline expires halfway' tests/updater-referee.test.ts",
+    "why": "classification fails closed when the fixed plan-time deadline expires"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "!isDotGitSegment(segment) && !isNodeModulesSegment(segment));",
+    "replace": "!isDotGitSegment(segment));",
+    "test": "node --import tsx --test --test-name-pattern='node_modules segments' tests/updater-referee.test.ts",
+    "why": "a nested node_modules segment is refused because Node and bundlers can resolve attacker-controlled code from it"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "segment.length > 0 && segment !== \".\" && segment !== \"..\"",
+    "replace": "segment.length > 0 && segment !== \"..\"",
+    "test": "node --import tsx --test --test-name-pattern='dot tree segment' tests/updater-referee.test.ts",
+    "why": "a crafted dot tree segment is refused rather than normalized into a protected-looking path"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (!safePath(entry.path))\n        refusal(\"path_not_allowed\", \"This update has a file name Control Room can't check safely.\");",
+    "replace": "      if (false)\n        refusal(\"path_not_allowed\", \"This update has a file name Control Room can't check safely.\");",
+    "test": "node --import tsx --test --test-name-pattern='node_modules segments' tests/updater-referee.test.ts",
+    "why": "unsafe paths already present elsewhere in the candidate tree are refused even when the current diff does not touch them"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (entry.mode === \"160000\") refusal(\"submodule\", \"Submodules aren't supported.\");",
+    "replace": "      if (false) refusal(\"submodule\", \"Submodules aren't supported.\");",
+    "test": "node --import tsx --test --test-name-pattern='unchanged gitlink' tests/updater-referee.test.ts",
+    "why": "every gitlink in the candidate tree is refused because archived content omits it"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    const tokens = line.split(/[ \\t\\r]+/u).slice(1);",
+    "replace": "    const tokens = line.split(/[ \\t]+/u).slice(1);",
+    "test": "node --import tsx --test --test-name-pattern='CR-separated archive attributes' tests/updater-referee.test.ts",
+    "why": "carriage returns are Git attribute separators and cannot hide export-ignore from the refusal"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "          archiveAttributesUnsafe(blobText(diff, entry.oid, 1024 * 1024)))",
+    "replace": "          false)",
+    "test": "node --import tsx --test --test-name-pattern='CR-separated archive attributes' tests/updater-referee.test.ts",
+    "why": "unsafe attributes are checked across the complete candidate tree, including unchanged files"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    return failure(\"diff_unreadable\", \"Control Room couldn't read what this update changes.\");\n  }\n  if (classes.has(\"updater\")",
+    "replace": "    refusal(\"diff_unreadable\", \"Control Room couldn't read what this update changes.\");\n  }\n  if (classes.has(\"updater\")",
+    "test": "node --import tsx --test --test-name-pattern='one fail-closed shape' tests/updater-referee.test.ts",
+    "why": "a mid-loop failure returns the same updater plus protected fail-closed shape as every early parse failure"
+  },
+  {
+    "file": "src/updater/v1/referee/cli.ts",
+    "find": "stdio: [\"ignore\", \"pipe\", \"pipe\"], env: gitEnvironment,",
+    "replace": "stdio: [\"ignore\", \"pipe\", \"pipe\"],",
+    "test": "node --import tsx --test --test-name-pattern='ignores caller Git config' tests/updater-referee.test.ts",
+    "why": "candidate Git commands do not inherit caller-controlled Git configuration"
+  },
+  {
+    "file": "src/updater/v1/referee/cli.ts",
+    "find": "  GIT_NO_REPLACE_OBJECTS: \"1\",",
+    "replace": "  GIT_OPTIONAL_LOCKS: \"0\",",
+    "test": "node --import tsx --test --test-name-pattern='replacement refs' tests/updater-referee.test.ts",
+    "why": "replacement refs cannot substitute a different tree for the commit being classified"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "const treeHeaderPattern = /^(100644|100755|120000) blob",
+    "replace": "const treeHeaderPattern = /^(100600|100644|100755|120000) blob",
+    "test": "node --import tsx --test --test-name-pattern='tree parsing rejects' tests/updater-referee.test.ts",
+    "why": "the tree parser accepts only the Git modes whose install semantics the referee understands"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (output.length >= UPDATER_REFEREE_MAX_TREE_RECORDS_V1 || index === start) throw new Error(\"tree_unreadable\");",
+    "replace": "    if (index === start) throw new Error(\"tree_unreadable\");",
+    "test": "node --import tsx --test --test-name-pattern='tree parsing rejects' tests/updater-referee.test.ts",
+    "why": "the candidate tree record cap bounds attacker-controlled parsing work"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "const utf8 = new TextDecoder(\"utf-8\", { fatal: true });",
+    "replace": "const utf8 = new TextDecoder(\"utf-8\");",
+    "test": "node --import tsx --test --test-name-pattern='tree parsing rejects' tests/updater-referee.test.ts",
+    "why": "invalid UTF-8 tree paths fail closed rather than being replaced with ambiguous characters"
+  },
+  {
+    "file": "src/updater/v1/policy/classes.json",
+    "find": "\"protected\": [\"scripts\", \"imports\", \"type\"]",
+    "replace": "\"protected\": [\"scripts\"]",
+    "test": "node --import tsx --test --test-name-pattern='imports and type resolution' tests/updater-referee.test.ts",
+    "why": "package imports and type keys are protected because they redirect module resolution"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "\"patterns\": [\"**/.env*\"]",
+    "replace": "\"patterns\": [\"**/.environment-never\"]",
+    "test": "node --import tsx --test --test-name-pattern='tracked .env file' tests/updater-referee.test.ts",
+    "why": "tracked environment files are protected because the build tool loads them into candidate builds"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "src/web/v1/mac-local-{node-key-pin,protected-loader,protected-configuration}.ts",
+    "replace": "src/web/v1/mac-local-never-matches.ts",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "worker key pinning and Protected configuration implementations receive the red-card class"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "src/node-protocol/v1/{crypto,authentication}.ts",
+    "replace": "src/node-protocol/v1/never-matches.ts",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "worker authentication implementations receive the red-card class"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "src/harness/v1/{bounded-owner-signature,owned-owner-signature,owner-signing-stream}.ts",
+    "replace": "src/harness/v1/never-matches.ts",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "owner-signing implementations receive the red-card class"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "\"patterns\": [\"src/web/v1/http-common.ts\"]",
+    "replace": "\"patterns\": [\"src/web/v1/never-matches.ts\"]",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "the shared bounded request-body parser receives the red-card class"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "        \"private-app/app/layout.tsx\",",
+    "replace": "        \"private-app/app/never-matches.tsx\",",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "the layout wrapping every owner Install screen receives the red-card class"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "\"scripts/mac-local/database-upgrade-scram.mjs\"",
+    "replace": "\"scripts/mac-local/database-upgrade-never.mjs\"",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "the database password provisioning implementation receives the red-card class"
+  },
+  {
+    "file": "src/updater/v1/policy/protected.json",
+    "find": "\"**/{tsconfig,jsconfig}*.json\"",
+    "replace": "\"**/never-build-config.json\"",
+    "test": "node --import tsx --test --test-name-pattern='security implementations and build pipeline' tests/updater-referee.test.ts",
+    "why": "TypeScript and JavaScript path maps are protected build-pipeline levers"
+  },
+  {
+    "file": "src/updater/v1/referee/cli.ts",
+    "find": "treeSymlinks.length > 1024 || treeAttributes.length > 64",
+    "replace": "treeSymlinks.length > 1024",
+    "test": "node --import tsx --test --test-name-pattern='burst above 64 candidate attribute' tests/updater-referee.test.ts",
+    "why": "tree-wide attribute scanning has a fixed blob-load bound and fails before spawning an attacker-sized process loop"
+  }
+]

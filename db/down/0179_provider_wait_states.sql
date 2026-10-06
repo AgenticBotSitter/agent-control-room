@@ -1,0 +1,10 @@
+BEGIN;
+REVOKE UPDATE (state,released_at) ON control_provider_waits FROM control_room_task_coordinator;
+REVOKE SELECT, INSERT ON control_provider_waits FROM control_room_task_coordinator;
+DROP INDEX control_provider_waits_due;
+DROP TRIGGER control_provider_waits_no_truncate ON control_provider_waits;
+DROP TRIGGER control_provider_waits_no_delete ON control_provider_waits;
+DROP TRIGGER control_provider_waits_guard ON control_provider_waits;
+DROP FUNCTION guard_provider_wait_update();
+DROP TABLE control_provider_waits;
+COMMIT;

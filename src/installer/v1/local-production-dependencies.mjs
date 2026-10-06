@@ -22,6 +22,9 @@ const LOCK_NAME = ".control-room-production-dependencies.lock";
 const PACKAGE_MANAGER = "pnpm@11.19.0";
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_PACKAGE_BYTES = 64 * 1024;
+// The release's own root manifest carries every test lane; it passed 64 KiB in the
+// int9 integration. Same bound as the release builder and assembler.
+const MAX_RELEASE_PACKAGE_BYTES = 256 * 1024;
 const MAX_RELEASE_FILES = 25_000;
 const MAX_RELEASE_BYTES = 1024 * 1024 * 1024;
 const MAX_DEPENDENCY_FILES = 150_000;
@@ -146,7 +149,7 @@ function manifestEntry(manifest, path) {
 async function parsePackage(versionRoot, manifest) {
   const entry = manifestEntry(manifest, "package.json");
   const path = join(versionRoot, "package.json");
-  const stat = await regularFile(path, versionRoot, MAX_PACKAGE_BYTES);
+  const stat = await regularFile(path, versionRoot, MAX_RELEASE_PACKAGE_BYTES);
   const bytes = await readFile(path);
   if (stat.size !== entry.bytes || bytes.byteLength !== entry.bytes
     || sha256(bytes) !== `sha256:${entry.sha256}`) refuse();

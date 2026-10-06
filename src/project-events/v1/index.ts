@@ -6,3 +6,4 @@ export * from "./store";
 export * from "./sse";
 export * from "./idea-lab-reconciler";
 export * from "./key";
+export * from "./task-lifecycle";

@@ -5,7 +5,9 @@ import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import {
   access,
+  chmod,
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -109,6 +111,14 @@ before(async () => {
 });
 
 after(async () => {
+  const thaw = async path => {
+    let stat;
+    try { stat = await lstat(path); } catch (error) { if (error?.code === "ENOENT") return; throw error; }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+    await chmod(path, 0o700);
+    for (const name of await readdir(path)) await thaw(join(path, name));
+  };
+  await thaw(suiteRoot);
   await rm(suiteRoot, { recursive: true, force: true });
 });
 

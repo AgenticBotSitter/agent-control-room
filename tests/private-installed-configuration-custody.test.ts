@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { canonicalJson } from "../src/security/canonical-digest";
@@ -20,7 +21,7 @@ const encoded = (value: unknown) => Buffer.from(`${canonicalJson(value)}\n`, "ut
 async function fixture(t: TestContext, configurationValue: unknown = {
   value: "private-data", nested: { permitted: true }, operatorFactory: "data-not-code",
 }) {
-  const root = await mkdtemp(join(process.cwd(), ".private-installed-custody-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "private-installed-custody-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   await chmod(root, 0o700);
   const ownerUid = process.geteuid!(), configuration = encoded(configurationValue);

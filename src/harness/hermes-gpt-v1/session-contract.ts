@@ -1,3 +1,4 @@
+import { upstreamObjectV1 } from "../../security/upstream-object";
 import { z } from "zod";
 
 /**
@@ -87,7 +88,7 @@ const sessionId = z.string().min(1).refine(
 );
 
 /** `operator_policy.make_error_envelope`. `success` and `ok` are both false for compatibility. */
-export const hermesSessionErrorEnvelopeSchemaV1 = z.object({
+export const hermesSessionErrorEnvelopeSchemaV1 = upstreamObjectV1({
   success: z.literal(false),
   ok: z.literal(false).optional(),
   error: z.string(),
@@ -96,14 +97,14 @@ export const hermesSessionErrorEnvelopeSchemaV1 = z.object({
   safe_message: z.string(),
   suggested_action: z.string(),
   trace_id: z.string().optional(),
-}).passthrough();
+});
 
-export const hermesSessionContinueResponseSchemaV1 = z.object({
+export const hermesSessionContinueResponseSchemaV1 = upstreamObjectV1({
   success: z.literal(true),
   job_id: jobId,
   session_id: sessionId,
   status: z.literal("running"),
-}).passthrough();
+});
 
 /**
  * The persisted job record upstream writes with `_save`.
@@ -113,7 +114,7 @@ export const hermesSessionContinueResponseSchemaV1 = z.object({
  * saves a record carrying neither field. Requiring them would turn that
  * degraded-but-real record into an unrecognized reply.
  */
-export const hermesSessionJobSchemaV1 = z.object({
+export const hermesSessionJobSchemaV1 = upstreamObjectV1({
   job_id: jobId,
   session_id: sessionId.optional(),
   status: z.enum(HERMES_SESSION_JOB_STATES_V1),
@@ -125,14 +126,14 @@ export const hermesSessionJobSchemaV1 = z.object({
   prompt_len: z.number().int().nonnegative().optional(),
   prompt_sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   reconciliation: z.string().optional(),
-}).passthrough();
+});
 
-export const hermesSessionJobStatusResponseSchemaV1 = z.object({
+export const hermesSessionJobStatusResponseSchemaV1 = upstreamObjectV1({
   success: z.literal(true),
   job: hermesSessionJobSchemaV1,
-}).passthrough();
+});
 
-export const hermesSessionJobResultResponseSchemaV1 = z.object({
+export const hermesSessionJobResultResponseSchemaV1 = upstreamObjectV1({
   success: z.literal(true),
   job_id: jobId,
   session_id: sessionId.nullable(),
@@ -140,7 +141,7 @@ export const hermesSessionJobResultResponseSchemaV1 = z.object({
   return_code: z.number().int().nullable().optional(),
   response: z.string(),
   truncated: z.boolean(),
-}).passthrough();
+});
 
 export type HermesSessionErrorEnvelopeV1 = z.infer<typeof hermesSessionErrorEnvelopeSchemaV1>;
 export type HermesSessionContinueResponseV1 = z.infer<typeof hermesSessionContinueResponseSchemaV1>;

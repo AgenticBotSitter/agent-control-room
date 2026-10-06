@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { projectViewSchema, catalogProjectIdSchema as id } from "./project-wire";
 import { taskDraftSchema } from "./task-wire";
+import { newsWorkOrderProposalSchemaV1 } from "../../project-adapters/news/v1/schemas";
 
 export const newsSourceSchema = z.object({ sourceId: id, label: z.string().min(1).max(180),
   mode: z.enum(["synthetic", "configured"]), state: z.enum(["available", "partial", "stale", "unavailable", "disabled"]),
@@ -21,7 +22,7 @@ export const newsResearchInputSchema = z.object({ storyId: id,
   action: z.enum(["research_brief", "setup_guide", "product_comparison", "news_article_draft"]), goal: z.string().trim().min(1).max(1200),
 }).strict();
 export const newsResearchPreviewSchema = z.object({ projectId: id, storyId: id,
-  storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), draft: taskDraftSchema,
+  storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), proposal: newsWorkOrderProposalSchemaV1, draft: taskDraftSchema,
   saved: z.literal(false), dispatch: z.literal("not_requested"),
 }).strict();
 

@@ -5,6 +5,7 @@ import { createTaskPlanningBrowserClient } from "./task-planning-browser-client"
 import { createTaskAssignmentBrowserClient } from "./task-assignment-browser-client";
 import { createTaskApprovalBrowserClient } from "./task-approval-browser-client";
 import { createTaskSubmissionBrowserClient } from "./task-submission-browser-client";
+import { createTaskCancelBrowserClient } from "./task-cancel-browser-client";
 
 export type TaskSubmissionBinding = { projectId: string; jobId: string; inputDigest: string; packetDigest: string };
 
@@ -15,15 +16,17 @@ export function createTaskExecutionWorkspace(factories: Partial<{
   assignment: typeof createTaskAssignmentBrowserClient;
   approval: typeof createTaskApprovalBrowserClient;
   submission: typeof createTaskSubmissionBrowserClient;
+  cancel: typeof createTaskCancelBrowserClient;
 }> = {}) {
   const planning = (factories.planning ?? createTaskPlanningBrowserClient)();
   const assignment = (factories.assignment ?? createTaskAssignmentBrowserClient)();
   const approval = (factories.approval ?? createTaskApprovalBrowserClient)();
+  const cancel = (factories.cancel ?? createTaskCancelBrowserClient)();
   const makeSubmission = factories.submission ?? createTaskSubmissionBrowserClient;
   const submissions = new Map<string, ReturnType<typeof createTaskSubmissionBrowserClient>>();
   return Object.freeze({
-    planning, assignment, approval,
-    hasPending: () => planning.hasPending() || assignment.hasPending() || approval.hasPending()
+    planning, assignment, approval, cancel,
+    hasPending: () => planning.hasPending() || assignment.hasPending() || approval.hasPending() || cancel.hasPending()
       || [...submissions.values()].some(client => client.hasPending()),
     submission(binding: TaskSubmissionBinding) {
       if (![binding.projectId, binding.jobId].every(value => catalogProjectIdSchema.safeParse(value).success)

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   affectedTestCommands,
@@ -36,6 +37,100 @@ function check(files, changed, expected) {
   try { assert.deepEqual(affectedTests(root, changed), expected); }
   finally { rmSync(root, { recursive: true }); }
 }
+
+// Quick checks runs before dependency installation. These synthetic fixtures
+// are plain JavaScript; keep the real test process and TAP skip detection, but
+// omit the TypeScript loader that the production test plan requires.
+function executePlainFixture(command, arguments_, commandRoot, environment) {
+  const fixtureArguments = arguments_.filter(argument => argument !== "--import" && argument !== "tsx");
+  const env = { ...environment };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawnSync(command, fixtureArguments, {
+    cwd: commandRoot, encoding: "utf8", env, timeout: 10_000,
+  });
+  const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
+  assert.equal(child.status, 0, `the fixture must run successfully before its skip count is checked: ${output}`);
+  assert.match(output, /^# tests 1$/mu, "the fixture must report its one test in TAP");
+  return { status: child.status, output };
+}
+
+test("failures, unexempted skips and spawn errors do not hide later affected files", () => {
+  const names = ["fail", "skip", "spawn", "pass"].map(name => `tests/${name}.test.mjs`);
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [], messages = [], originalLog = console.log;
+  console.log = message => messages.push(message);
+  try {
+    const status = runAffectedTests(names, names, root, () => 0, () => true, (_command, args) => {
+      const name = args.at(-1);
+      calls.push(name);
+      if (name === names[2]) throw Object.assign(new Error(), { code: "ENOENT" });
+      return { status: name === names[0] ? 9 : 0, output: name === names[1] ? "# skipped 1\n" : "# skipped 0\n" };
+    });
+    assert.equal(status, 9);
+    assert.deepEqual(calls, names);
+    assert.match(messages.join("\n"), /fail\.test\.mjs \| FAIL \| \d+\.\d{3}/u);
+    assert.match(messages.join("\n"), /skip\.test\.mjs \| SKIP-NOT-EXEMPT/u);
+    assert.match(messages.join("\n"), /spawn\.test\.mjs \| FAIL/u);
+    assert.match(messages.join("\n"), /pass\.test\.mjs \| PASS/u);
+    assert.match(messages.at(-1), /Completed 4 unit\(s\); 3 failed/u);
+  } finally { console.log = originalLog; rmSync(root, { recursive: true }); }
+});
+
+test("a failed preparation stops the plan before the second build or any test runs", () => {
+  const root = fixture({ "tests/example.test.mjs": "" }), calls = [];
+  try {
+    assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, (_command, args) => {
+      calls.push(args.join(" ")); return 2;
+    }, () => true, (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "# skipped 0\n" }; }), 2);
+    assert.deepEqual(calls, ["build"]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("a failed demo preparation stops tests, and a retry runs after both builds succeed", () => {
+  const root = fixture({ "tests/example.test.mjs": "" }), calls = [];
+  let failDemo = true;
+  const execute = (_command, args) => {
+    calls.push(args.join(" "));
+    return failDemo && args.includes("build:demo") ? 3 : 0;
+  };
+  const capture = (_command, args) => {
+    calls.push(args.at(-1));
+    return { status: 0, output: "# skipped 0\n" };
+  };
+  try {
+    assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, execute, () => true, capture), 3);
+    assert.deepEqual(calls, ["build", "run build:demo"]);
+    failDemo = false;
+    calls.length = 0;
+    assert.equal(runAffectedTests("ALL", ["tests/example.test.mjs"], root, execute, () => true, capture), 0);
+    assert.deepEqual(calls, ["build", "run build:demo", "tests/example.test.mjs"]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("real failing and skipping files reach the final file and produce a failing process exit", () => {
+  const root = fixture({
+    "tests/fail.test.mjs": "import test from 'node:test'; test('fails', () => { throw new Error('deliberate fixture failure'); });",
+    "tests/skip.test.mjs": "import test from 'node:test'; test('skips', {skip: true}, () => {});",
+    "tests/pass.test.mjs": "import test from 'node:test'; test('last ran', () => {});",
+  });
+  const modulePath = fileURLToPath(new URL("../scripts/ci/affected-tests.mjs", import.meta.url));
+  const program = `import {runAffectedTests} from ${JSON.stringify(modulePath)};
+    import {spawnSync} from 'node:child_process';
+    const files = ['tests/fail.test.mjs', 'tests/skip.test.mjs', 'tests/pass.test.mjs'];
+    process.exitCode = runAffectedTests(files, files, process.cwd(), undefined, () => true, (cmd, args, cwd, env) => {
+      const child = spawnSync(cmd, args.filter(a => a !== '--import' && a !== 'tsx'), {cwd, env, encoding: 'utf8'});
+      return {status: child.status, output: child.stdout + child.stderr};
+    });`;
+  const env = { ...process.env, GITHUB_ACTIONS: "true" };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", program], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 1);
+    assert.match(child.stdout, /fail\.test\.mjs \| FAIL[\s\S]*skip\.test\.mjs \| SKIP-NOT-EXEMPT[\s\S]*pass\.test\.mjs \| PASS/u);
+    assert.equal(child.stdout.split("::endgroup::").length - 1, 3);
+  } finally { rmSync(root, { recursive: true }); }
+});
 
 test("a leaf change walks transitively to exactly its importing tests", () => {
   check({
@@ -148,7 +243,10 @@ test("an env-gated PostgreSQL fixture cannot skip to a green result", () => {
   delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
   try {
     assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root,
-      () => 0, () => true), 1);
+      () => 0, () => true, executePlainFixture), 1);
+    assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root,
+      () => 0, () => true, (command, args, cwd, env) => executePlainFixture(command, args, cwd,
+        { ...env, CONTROL_ROOM_PG17_UPGRADE_REHEARSAL: "1" })), 0);
   } finally {
     if (original === undefined) delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
     else process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL = original;
@@ -195,7 +293,8 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
   try {
     assert.equal(runAffectedTests(["tests/mac-local-pg17-rehearsal.test.mjs"], ["tests/mac-local-pg17-rehearsal.test.mjs"], root,
       () => 0, () => true, () => ({ status: 0, output: "# skipped 0\n" })), 0);
-    assert.deepEqual(messages, []);
+    assert.doesNotMatch(messages.join("\n"), /Allowing skipped test exemption/u);
+    assert.match(messages.join("\n"), /mac-local-pg17-rehearsal\.test\.mjs \| PASS \|/u);
   } finally {
     console.log = originalLog;
     rmSync(root, { recursive: true });
@@ -203,7 +302,7 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
 });
 
 test("every skipped-test exemption names an existing file and non-empty reason", () => {
-  assert.equal(skippedTestExemptions.size, 16, "the documented exemption list must stay deliberately bounded");
+  assert.equal(skippedTestExemptions.size, 25, "the documented exemption list must stay deliberately bounded");
   for (const [file, reason] of skippedTestExemptions) {
     assert.ok(existsSync(join(process.cwd(), file)), `exemption file must exist: ${file}`);
     assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);
@@ -359,19 +458,10 @@ test("a real slow-ish node:test run is not killed by crowding from a neighboring
     "test('a', async () => { await setTimeout(1200); });");
   writeFileSync(join(root, "tests/slow-b.test.mjs"), "import test from 'node:test';\nimport { setTimeout } from 'node:timers/promises';\n" +
     "test('b', async () => { await setTimeout(1200); });");
-  // The fixtures are plain .mjs, so they need no `--import tsx`. Run the real
-  // process.execPath with that flag stripped so this test proves per-file
-  // isolation without depending on tsx being installed (Quick checks runs
-  // this file before `pnpm install`).
-  function executeCapturingOutput(command, arguments_, commandRoot, environment) {
-    const strippedArguments = arguments_.filter(argument => argument !== "--import" && argument !== "tsx");
-    const child = spawnSync(command, strippedArguments, { cwd: commandRoot, encoding: "utf8", env: environment });
-    return { status: child.status ?? 1, output: `${child.stdout ?? ""}${child.stderr ?? ""}` };
-  }
   try {
     const tests = ["tests/slow-a.test.mjs", "tests/slow-b.test.mjs"];
     // Real execution, not a mocked runner: this is the same node --test the CI job invokes.
-    assert.equal(runAffectedTests(tests, tests, root, undefined, undefined, executeCapturingOutput), 0);
+    assert.equal(runAffectedTests(tests, tests, root, undefined, undefined, executePlainFixture), 0);
   } finally { rmSync(root, { recursive: true }); }
 });
 
@@ -496,9 +586,12 @@ test("an env-gated PostgreSQL fixture cannot skip to a green result even when th
   delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
   try {
     const tests = listTestFiles(root);
-    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true), 1,
+    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true, executePlainFixture), 1,
       "a migration PR that defers to ALL must not get a green merge gate while the upgrade rehearsal " +
       "silently skips for want of its env var");
+    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true,
+      (command, args, cwd, env) => executePlainFixture(command, args, cwd,
+        { ...env, CONTROL_ROOM_PG17_UPGRADE_REHEARSAL: "1" })), 0);
   } finally {
     if (original === undefined) delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
     else process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL = original;
@@ -516,4 +609,34 @@ test("a package.json plus a migration change still selects ALL but keeps needs-p
     "tests/mac-local-database-upgrade-pg17.test.mjs matches the PostgreSQL marker in the real repository, " +
     "so a real migration PR must still provision PostgreSQL for this lane to run it");
   assert.match(outputs, /defer-to-full-suite=true/u);
+});
+
+
+test("the Linux affected job defers exact macOS updater files even on the ALL PostgreSQL path", () => {
+  const mac = "tests/updater.test.mjs", linux = "tests/linux-journal.test.mjs";
+  const root = fixture({
+    "package.json": JSON.stringify({ scripts: {
+      "test:updater": `node --test ${mac}`, "test:updater:linux": `node --test ${linux}`,
+    } }),
+    [mac]: "// requiresRealPostgres: this Mac fixture only describes injected database ports",
+    [linux]: "",
+  });
+  try {
+    for (const selected of [[mac], "ALL"]) {
+      const calls = [];
+      assert.equal(runSelectedTests(selected, [mac], root, () => { throw new Error("must defer builds"); },
+        () => true, (...args) => { calls.push(args); return { status: 0, output: "" }; }, "linux"), 0);
+      assert.deepEqual(calls, []);
+    }
+    const calls = [];
+    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, () => 0, () => true,
+      (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "" }; }, "linux"), 0);
+    assert.deepEqual(calls, [linux], "Linux journal coverage must run directly");
+    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, () => 0, () => true,
+      () => ({ status: 1, output: "" }), "linux"), 1, "a retained Linux failure still fails the job");
+    const macCalls = [];
+    assert.equal(runSelectedTests([mac], [mac], root, () => 0, () => true,
+      (_command, args) => { macCalls.push(args.at(-1)); return { status: 0, output: "" }; }, "darwin"), 0);
+    assert.deepEqual(macCalls, [mac], "a Mac fast job may run the selected updater test directly");
+  } finally { rmSync(root, { recursive: true }); }
 });

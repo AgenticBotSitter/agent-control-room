@@ -102,8 +102,13 @@ export function parseCodexJsonLineV1(line: string): { kind: "message"; text: str
     // accounting), reused at a discounted rate; it is never additional usage.
     const cachedInputTokens = typeof raw.cached_input_tokens === "number" && Number.isSafeInteger(raw.cached_input_tokens)
       && raw.cached_input_tokens >= 0 ? raw.cached_input_tokens : undefined;
-    return { kind: "complete", ...(inputTokens === undefined && outputTokens === undefined && cachedInputTokens === undefined
-      ? {} : { usage: { inputTokens, outputTokens, ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}) } }) };
+    // A `usage` object that reports input and output IS a cache report, whatever
+    // it does or does not say about cache: Codex omits the key when the turn
+    // reused nothing. Omitting it here would leave the count unknown and refuse
+    // to price a run whose cache use the harness genuinely reported.
+    const reportsCache = cachedInputTokens !== undefined || inputTokens !== undefined || outputTokens !== undefined;
+    return { kind: "complete", ...(reportsCache
+      ? { usage: { inputTokens, outputTokens, cachedInputTokens: cachedInputTokens ?? 0 } } : {}) };
   }
   if (typeof record.type !== "string") throw new Error("malformed_jsonl");
   return undefined;

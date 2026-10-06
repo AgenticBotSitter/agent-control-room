@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,7 +28,7 @@ test("quarantined failures leave the gate green while ordinary failures fail it"
     test("known flaky", () => assert.fail("quarantined failure"));
     test("ordinary", () => assert.ok(true));
   `);
-  const runner = new URL("../scripts/run-tests-with-quarantine.mjs", import.meta.url).pathname;
+  const runner = fileURLToPath(new URL("../scripts/run-tests-with-quarantine.mjs", import.meta.url));
   const quarantine = [{ test: "tests/sample.test.mjs::known flaky", issue: "#123", added: new Date().toISOString().slice(0, 10), owner: "test maintainer" }];
   await writeFile(join(root, "tests", "quarantine.json"), JSON.stringify(quarantine));
   const gate = spawnSync(process.execPath, [runner, "--test", "tests/sample.test.mjs"], { cwd: root, encoding: "utf8" });

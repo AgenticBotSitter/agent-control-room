@@ -25,3 +25,4 @@ export * from "./hermes-021-enrollment-readiness";
 export * from "./hermes-021-qualification-spend-store";
 export * from "./live-panel-authority-store";
 export * from "./owner-ready-live-packet";
+export * from "./promotion-task-link-store";

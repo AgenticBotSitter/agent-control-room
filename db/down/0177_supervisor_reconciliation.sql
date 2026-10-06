@@ -1,0 +1,16 @@
+BEGIN;
+REVOKE UPDATE (node_id,state,safe_reason_code,last_heartbeat_at,observed_at)
+  ON control_supervisor_agent_health FROM control_room_task_coordinator;
+REVOKE UPDATE (lapse_count,last_attempt_id,state,updated_at)
+  ON control_supervisor_task_heads FROM control_room_task_coordinator;
+REVOKE SELECT, INSERT ON control_supervisor_task_heads, control_supervisor_reconciliation_events,
+  control_supervisor_agent_health FROM control_room_task_coordinator;
+DROP INDEX control_supervisor_agent_health_suspect;
+DROP INDEX control_supervisor_task_heads_attention;
+DROP TRIGGER control_supervisor_reconciliation_events_no_truncate ON control_supervisor_reconciliation_events;
+DROP TRIGGER control_supervisor_reconciliation_events_immutable ON control_supervisor_reconciliation_events;
+DROP FUNCTION reject_supervisor_reconciliation_event_mutation();
+DROP TABLE control_supervisor_agent_health;
+DROP TABLE control_supervisor_reconciliation_events;
+DROP TABLE control_supervisor_task_heads;
+COMMIT;

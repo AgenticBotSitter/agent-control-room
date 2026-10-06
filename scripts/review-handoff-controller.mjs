@@ -1,5 +1,6 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { currentClaimAuthority, parseClaimMarker } from "./automatic-claim-controller.mjs";
 
 const MARKER = /<!-- agent-control-room-handoff:v1 (\{[^\n]+\}) -->/;
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
@@ -7,6 +8,10 @@ const WORKER = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const SHA = /^[a-f0-9]{40}$/;
 const BOT = comment => comment?.user?.login === 'github-actions[bot]' && comment.user.type === 'Bot';
 const COMMANDS = new Set(['submit', 'changes', 'adopt-changes', 'acknowledge', 'resubmit', 'accept', 'accept-amendment', 'stop', 'stopped']);
+// Commands that put a pull request into, or back into, review. This is the one
+// place the handoff grants a PR its review position, so it is the one place the
+// reservation must still be current authority.
+const REVIEW_ENTRY = new Set(['submit', 'resubmit']);
 const labels = issue => issue.labels.map(label => typeof label === 'string' ? label : label.name);
 const bodyFor = record => `Workflow handoff: ${record.phase}\n\nWorker: ${record.workerId}\nState: ${record.state}\nNext: ${record.action}\nReviewed/submitted commit: ${record.head}\nInstructions: ${record.reviewUrl}${record.instruction ? `\n\nCorrection details:\n${record.instruction}` : ''}\n\n<!-- agent-control-room-handoff:v1 ${JSON.stringify(record)} -->`;
 
@@ -41,13 +46,17 @@ async function commentsFor(api, repository, issue) {
   throw new Error('handoff_history_incomplete');
 }
 
+// The live accepted claim for this pair. The v3 marker is authoritative: the
+// legacy v2 acceptance kept in the same body is a reader-compatibility record,
+// never current authority on its own.
 function acceptedClaim(comments, issue, workerId) {
-  const claims = comments.filter(BOT).filter(c => c.body?.includes('<!-- agent-control-room-claim:v2'));
-  const latest = claims.at(-1);
-  if (!latest?.body.startsWith('CLAIM ACCEPTED —')) throw new Error('handoff_claim_unavailable');
-  const match = /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([^ ]+) worker=([^ ]+) -->/.exec(latest.body);
-  if (!match || Number(match[1]) !== issue || match[4] !== workerId) throw new Error('handoff_worker_changed');
-  return { id: latest.id, actor: match[3] };
+  const claims = comments.filter(BOT)
+    .filter(comment => parseClaimMarker(comment.body)?.worker === workerId);
+  const latest = claims.filter(comment => comment.body?.startsWith('CLAIM ACCEPTED —')
+    || comment.body?.startsWith('CLAIM RENEWED —')).at(-1);
+  const marker = parseClaimMarker(latest?.body);
+  if (!marker || marker.issue !== issue || marker.worker !== workerId) throw new Error('handoff_claim_unavailable');
+  return { id: latest.id, actor: marker.actor };
 }
 
 function nextState(command, previous) {
@@ -69,7 +78,9 @@ function nextState(command, previous) {
 
 // This controller records cooperative repository work. It cannot stop a process,
 // grant runtime authority, prove a shared account's worker identity, or merge code.
-export async function runHandoff({ event, repository, api, maintainers = [] }) {
+// `now` is injected by tests so lease expiry is deterministic; production uses
+// the wall clock.
+export async function runHandoff({ event, repository, api, maintainers = [], now = Date.now() }) {
   const request = parseHandoffCommand(event.comment?.body);
   if (!request) return { status: 'ignored' };
   if (!COMMANDS.has(request.command) || event.issue?.pull_request || event.action !== 'created') throw new Error('handoff_event_invalid');
@@ -114,9 +125,29 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   // to contain the one exact issue line.
   const records = comments.map(comment => ({ comment, record: parseHandoff(comment) }))
     .filter(item => item.record?.issue === issueNumber);
-  const latest = records.at(-1);
+  // R5I-06: concurrent copies of one request can each create a journal. Fold
+  // them into one canonical timeline before anything is validated, so exactly
+  // one record occupies each saved-request slot. The lowest comment id wins and
+  // is the journal a later retry replays; the higher duplicates are orphans the
+  // rest of this run ignores rather than mistaking for newer history. Identity
+  // is the whole assignment, not the request id alone: two journals are copies
+  // only when their issue, PR, worker, request and predecessor all agree.
+  const canonical = [];
+  const byIdentity = new Map();
+  const journalIdentity = item => JSON.stringify([item.record.issue, item.record.pr, item.record.workerId,
+    item.record.requestId, item.record.previousId ?? null]);
+  for (const item of records) {
+    const key = journalIdentity(item);
+    const existing = byIdentity.get(key);
+    if (!existing) { byIdentity.set(key, item); canonical.push(item); continue; }
+    if (item.comment.id < existing.comment.id) {
+      canonical[canonical.indexOf(existing)] = item;
+      byIdentity.set(key, item);
+    }
+  }
+  const latest = canonical.at(-1);
   const replay = latest?.record.requestId === requestId ? latest : undefined;
-  const predecessor = replay ? records.at(-2) : latest;
+  const predecessor = replay ? canonical.at(-2) : latest;
   const continuingAdoptedLegacy = ['acknowledge', 'stop', 'stopped'].includes(request.command)
     && issueBindings.length === 0 && predecessor?.record.requiresPrIssueBinding === true;
   if (!exactIssueBinding && ((!adoptingChanges && !continuingAdoptedLegacy) || issueBindings.length !== 0))
@@ -125,6 +156,17 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     ? request.claimWorkerId : predecessor?.record.claimWorkerId ?? request.workerId;
   const claim = acceptedClaim(comments, issueNumber, claimWorkerId);
   if (pr.user.login !== claim.actor) throw new Error('handoff_pr_owner_mismatch');
+  // R5I-01: a PR must not reach review under a reservation the submit
+  // controller would refuse. `submit`/`resubmit` grant the review position, so
+  // they pass the identical canonical current-claim gate: current v3 marker,
+  // the issue's exact work packet, and an unexpired lease. The authority is
+  // re-checked before the journal is created and again before it is completed,
+  // so a lease that expires mid-transition leaves no settled review position.
+  if (REVIEW_ENTRY.has(request.command)) {
+    const authority = currentClaimAuthority(comments,
+      { issueNumber, actor: claim.actor, workerId: claimWorkerId }, issue.body ?? '', now);
+    if (!authority.ok) throw new Error(`handoff_claim_${authority.reason}`);
+  }
   const maintainerAction = ['changes', 'adopt-changes', 'accept', 'accept-amendment', 'stop'].includes(request.command);
   if (maintainerAction ? (!maintainers.includes(actor) || actor === claim.actor) : actor !== claim.actor)
     throw new Error('handoff_authority_denied');
@@ -167,25 +209,68 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     sourceIssueLabels: workflowLabels(issue), sourcePrLabels: workflowLabels(prIssue),
   };
   if (replay && record.phase === 'complete') return { status: 'already-recorded', commentId: replay.comment.id };
+  // Copies of THIS request: same issue, PR, worker, request id and predecessor.
+  // Anything else in the history is a different decision, not a duplicate.
+  const copyOfThisRequest = comment => {
+    const value = parseHandoff(comment);
+    return value !== undefined && value.issue === record.issue && value.pr === record.pr
+      && value.workerId === record.workerId && value.requestId === record.requestId
+      && (value.previousId ?? null) === (record.previousId ?? null);
+  };
   let journalId = replay?.comment.id;
   if (!journalId) {
     try { journalId = (await api('POST', `${root}/issues/${issueNumber}/comments`, { body: bodyFor(record) })).id; }
     catch (error) {
-      const matches = (await commentsFor(api, repository, issueNumber)).filter(c => parseHandoff(c)?.requestId === requestId);
-      if (matches.length !== 1) throw error;
+      // A lost reply is reconciled by adopting whatever journal the history
+      // now shows for this saved request. More than one means a concurrent
+      // duplicate also created one; the canonical (lowest id) journal wins and
+      // the duplicate is abandoned rather than left to poison a later retry.
+      const matches = (await commentsFor(api, repository, issueNumber))
+        .filter(copyOfThisRequest).sort((a, b) => a.id - b.id);
+      if (matches.length === 0) throw error;
       journalId = matches[0].id;
     }
   }
+  // R5I-06: many duplicate runs may reach this point before any of them has
+  // re-read the history, so each may have created its own journal. Re-read and
+  // fold now, BEFORE any label write, so every duplicate that observes a peer
+  // adopts that peer's canonical (lowest-id) journal instead of writing a second
+  // one. Whichever journal remains lowest is the one that will be completed, and
+  // every duplicate drives the same labels toward the same settled target.
+  if (!replay) {
+    const concurrent = (await commentsFor(api, repository, issueNumber))
+      .filter(copyOfThisRequest).sort((a, b) => a.id - b.id)[0];
+    if (concurrent) journalId = concurrent.id;
+  }
+  async function canonicalJournalId() {
+    const history = await commentsFor(api, repository, issueNumber);
+    return history.filter(copyOfThisRequest).sort((a, b) => a.id - b.id)[0]?.id;
+  }
   async function fresh() {
     const history = await commentsFor(api, repository, issueNumber);
-    const current = history.filter(c => parseHandoff(c)?.issue === issueNumber).at(-1);
+    const canonicalId = await canonicalJournalId();
     const currentClaim = acceptedClaim(history, issueNumber, claimWorkerId);
     const currentPr = await api('GET', `${root}/pulls/${request.pr}`);
-    if (current?.id !== journalId || currentClaim.id !== claim.id || currentClaim.actor !== claim.actor
+    // Duplicates of THIS request are not competing decisions: the fold picked
+    // one canonical journal and every duplicate drives it to the same target.
+    // A DIFFERENT request's journal appearing NEWER than this run's canonical
+    // journal means someone else made a later decision, which must be refused.
+    // The previous transition's journal is older and is exactly what is expected.
+    const latestOther = history.filter(c => parseHandoff(c)?.issue === issueNumber)
+      .filter(c => !copyOfThisRequest(c)).at(-1);
+    if ((latestOther?.id ?? 0) > (canonicalId ?? journalId) || currentClaim.id !== claim.id
+      || currentClaim.actor !== claim.actor
       || currentPr.head.sha !== (acknowledgingReview ? pr.head.sha : request.head)
       || currentPr.state !== 'open' || currentPr.body !== pr.body) throw new Error('handoff_concurrent_change');
+    // This run adopts the canonical journal so the completion PATCH below
+    // settles exactly one record even if this run created a different one.
+    if (canonicalId !== undefined && canonicalId !== journalId) journalId = canonicalId;
   }
-  for (const [number, source] of [[issueNumber, record.sourceIssueLabels], [request.pr, record.sourcePrLabels]]) {
+  // A replayed journal written by an older controller may predate the recorded
+  // source labels. Treat a missing record as the labels observed now, so an
+  // interrupted transition is reconciled instead of crashing.
+  for (const [number, source] of [[issueNumber, record.sourceIssueLabels ?? workflowLabels(issue)],
+    [request.pr, record.sourcePrLabels ?? workflowLabels(prIssue)]]) {
     await fresh();
     const current = await getIssue(number);
     if (current.state !== 'open') throw new Error('handoff_target_closed');
@@ -212,8 +297,25 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     }
   }
   await fresh();
-  if (!(await Promise.all([getIssue(issueNumber), getIssue(request.pr)])).every(value => value.state === 'open' && equal(workflowLabels(value), target)))
+  // The fresh pair of reads below is the ONLY authority on "are these targets
+  // still open and settled on these labels" AND, for the issue, on what the work
+  // packet says now. Bind them: the final gate must read the issue body from
+  // this fetch, not from the one taken at the top of this function.
+  const [settledIssue, settledPr] = await Promise.all([getIssue(issueNumber), getIssue(request.pr)]);
+  if (![settledIssue, settledPr].every(value => value.state === 'open' && equal(workflowLabels(value), target)))
     throw new Error('handoff_labels_unsettled');
+  // Second authority check, immediately before the journal is settled. A lease
+  // can expire while the label transition runs, and so can the work packet be
+  // edited, so a review position must not be completed under a reservation that
+  // is no longer current — in either dimension. Both are re-read here: the claim
+  // from a fresh comment list, the packet from the issue fetched just above. The
+  // journal is left pending, which the worker's inbox already reports as
+  // attention, so the refusal is visible rather than a silent review entry.
+  if (REVIEW_ENTRY.has(request.command)) {
+    const final = currentClaimAuthority(await commentsFor(api, repository, issueNumber),
+      { issueNumber, actor: claim.actor, workerId: claimWorkerId }, settledIssue.body ?? '', now);
+    if (!final.ok) throw new Error(`handoff_claim_${final.reason}`);
+  }
   const complete = { ...record, phase: 'complete' };
   try { await api('PATCH', `${root}/issues/comments/${journalId}`, { body: bodyFor(complete) }); }
   catch (error) {
@@ -237,5 +339,5 @@ async function main() {
   console.log(JSON.stringify(await runHandoff({ event, repository, api,
     maintainers: (process.env.HANDOFF_MAINTAINERS ?? '').split(',').map(s => s.trim()).filter(Boolean) })));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(error.message); process.exitCode = 1; });

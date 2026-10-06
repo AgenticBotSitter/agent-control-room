@@ -17,7 +17,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,8 @@ const ROLE_PASSWORDS = Object.freeze({
   control_room_queue_worker: randomBytes(24).toString("base64url"),
   control_room_intake: randomBytes(24).toString("base64url"),
   control_room_news: randomBytes(24).toString("base64url"),
+  control_room_fleet: randomBytes(24).toString("base64url"),
+  control_room_fleet_owner: randomBytes(24).toString("base64url"),
 });
 
 /**
@@ -64,6 +66,23 @@ const ROLE_PASSWORDS = Object.freeze({
  * The queue role files raise when their pg-boss prerequisite is missing, so
  * the runner builds the two queues those files assert on before applying any
  * of them. Every other role file is independent of the queue.
+ *
+ * These are the PRODUCTION Mac-local grants and nothing more, which is what
+ * every preflight this kit exercises is written against. The coordinator
+ * preflight is an exact-equality check over the pg-boss queue schema, so a
+ * fixture that holds a privilege production never grants does not merely test
+ * more: it makes a correctly installed database fail its own startup preflight.
+ * That is exactly what `native_queue_recovery_roles.sql` did here — it grants
+ * the coordinator UPDATE on sixteen `job`/`job_common` columns, which
+ * `verifyPgBossApplicationPermissions` requires only for the recovery profile.
+ *
+ * No production path applies that file: the narrow-role installer
+ * (`scripts/mac-local/narrow-role-provision.mjs`), the live upgrade ACL
+ * comparison (`scripts/mac-local/database-upgrade-grants.mjs`),
+ * `scripts/mac-local/check-database.ts` and every Mac-local upgrade and
+ * lifecycle test omit it. It is not a fixture to widen but an authority an
+ * owner has to grant explicitly, so a test that needs it must ask for it by
+ * name through `extraRoleFiles` rather than have every test inherit it.
  */
 const ROLE_FILES = Object.freeze([
   "production_roles.sql",
@@ -76,9 +95,24 @@ const ROLE_FILES = Object.freeze([
   "news_coordinator_roles.sql",
   "native_queue_producer_roles.sql",
   "native_queue_worker_roles.sql",
-  "native_queue_recovery_roles.sql",
   "news_queue_producer_roles.sql",
+  "fleet_gateway_roles.sql",
+  // R5B-01. The nightly backup dumps as `control_room_migrator`, and `pg_dump`
+  // reads every schema — including `control_room_queue`, which this kit's
+  // `buildQueues` creates. The grant the dump needs is issued to
+  // `control_room_schema_owner`, the migrator's own group, and it is issued HERE
+  // because this file's actor (the kit's database admin) is the queue schema's
+  // owner — the migrator cannot grant on it at all (MEASURED). A lane that does
+  // not build the queue filters this file out on `/queue/`, which is why the
+  // name is kept rather than shortened: the filter is the guard, and the guard
+  // only works while the name says what it is about.
+  "queue_backup_read_roles.sql",
 ]);
+
+/** The role files the kit applies by default, for the ACL-equivalence guard.
+ * Exported read-only so a test can compare them against the production grant
+ * manifest without restating the list and letting the two drift apart. */
+export const DEFAULT_ROLE_FILES = ROLE_FILES;
 
 const QUEUES = Object.freeze(["native-task-delivery", "news-feed-collection"]);
 
@@ -98,6 +132,8 @@ export const ROLE_LOGINS = Object.freeze({
   app: Object.freeze({ login: "control_room_app", group: "control_room_application" }),
   scheduler: Object.freeze({ login: "control_room_scheduler", group: "control_room_schedule_admissions" }),
   migrator: Object.freeze({ login: "control_room_migrator", group: "control_room_schema_owner" }),
+  fleet: Object.freeze({ login: "control_room_fleet", group: "control_room_fleet_gateway" }),
+  fleetOwner: Object.freeze({ login: "control_room_fleet_owner", group: "control_room_fleet_owner_authority" }),
   owner: Object.freeze({ login: "control_room_web", group: "control_room_private_web" }),
 });
 
@@ -421,12 +457,13 @@ export async function socketClaimed(port: number, directory?: string): Promise<b
   return false;
 }
 
-/** Every `/tmp/ak*` socket directory the kit's own runner publishes into. */
+/** Every `<short socket root>/ak*` socket directory the kit's own runner publishes into. */
 export async function shortSocketDirectories(): Promise<string[]> {
-  const entries = await readdir(SHORT_SOCKET_ROOT, { withFileTypes: true }).catch(() => []);
+  const root = shortSocketRoot();
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   return entries
     .filter(entry => entry.isDirectory() && entry.name.startsWith("ak"))
-    .map(entry => join(SHORT_SOCKET_ROOT, entry.name));
+    .map(entry => join(root, entry.name));
 }
 
 /** First line of an error message, for a one-token teardown failure summary. */
@@ -578,13 +615,21 @@ async function buildQueues(admin: ConnectionOptions): Promise<void> {
  * stays where `disposableRunDirectories()` looks for it; only the SOCKET lives
  * in a short path, and it is removed with the run directory's teardown.
  */
-const SHORT_SOCKET_ROOT = "/tmp";
+const DEFAULT_SHORT_SOCKET_ROOT = "/tmp";
+
+/**
+ * Where the kit's short socket directories go. `/tmp` by default;
+ * `ATTACK_KIT_SOCKET_ROOT` lets a caller that already owns a short private
+ * directory (the local test runner's per-run `/tmp/acr-tr-*`) keep the sockets
+ * inside it, so its sandbox never has to open a shared `/tmp` pattern.
+ */
+export const shortSocketRoot = (): string => process.env.ATTACK_KIT_SOCKET_ROOT?.trim() || DEFAULT_SHORT_SOCKET_ROOT;
 
 /** Longest socket path this will create, including a 5-digit port. */
 const MAX_SOCKET_PATH_BYTES = 100;
 
 function shortSocketDirectory(run: string, port: number): string {
-  const candidate = join(SHORT_SOCKET_ROOT, `ak${process.pid}-${basename(run)}`);
+  const candidate = join(shortSocketRoot(), `ak${process.pid}-${basename(run)}`);
   // `.s.PGSQL.` plus the port is 13-14 bytes; leave headroom under the cap.
   if (Buffer.byteLength(candidate) + 16 > MAX_SOCKET_PATH_BYTES) {
     throw new Error(`attack_kit_socket_path_too_long:${candidate}`);
@@ -1207,6 +1252,41 @@ export function parseSharedMemory(
 }
 
 /**
+ * The login name `ipcs` prints as a segment's owner, resolved the same way on
+ * every platform.
+ *
+ * `USER` is an optional convention, not a fact about the process: login shells
+ * and login(1) set it, a bare `docker run` and a CI step that sets an explicit
+ * environment do not. MEASURED on Ubuntu 24.04 in acr-linuxci:24.04-v3, with
+ * neither `USER` nor `LOGNAME` in the environment, `ipcs -m -p` still prints
+ * `runner` as the owner of this user's segments — so `USER` was answering a
+ * different question from the one the filter asks, and comparing the two failed
+ * on a real segment (the loop is vacuous with zero segments, which is why the
+ * failure is intermittent: it appears only once this user owns one).
+ *
+ * GitHub's ubuntu-latest happens to export `USER=runner`, so the same bug is
+ * invisible there; it is the container, not the platform, that lacks the
+ * variable. Reading the account from the OS is correct on both, and needs no
+ * environment at all.
+ *
+ * `userInfo()` reads the passwd database for the effective uid rather than
+ * trusting an inherited string, so a caller cannot widen the filter by exporting
+ * `USER` to another account's name and have this suite compare itself against
+ * segments it does not own.
+ */
+export const accountName = (): string => {
+  try {
+    return userInfo().username;
+  } catch {
+    // No passwd entry for this uid (an unusual container image, or a uid with no
+    // name). An empty name makes the caller keep every segment rather than
+    // silently filter to none, which is the same fail-loud rule the rest of this
+    // module follows.
+    return process.env.USER ?? "";
+  }
+};
+
+/**
  * The ids of the SysV shared-memory segments owned by this user, each attributed
  * to this suite when its creator's command line says so.
  *
@@ -1225,10 +1305,10 @@ export async function sharedMemorySegments(
   if (rows === null) return null;
   // Only this user's segments: the count has to be comparable with the count
   // taken before the suite, and another user's are not ours to account for.
-  // `USER` is the name `ipcs` prints; with no name available every segment is
-  // returned rather than silently none.
-  const user = process.env.USER;
-  const mine = user === undefined || user === "" ? rows : rows.filter(row => row.owner === user);
+  // With no resolvable account name every segment is returned rather than
+  // silently none.
+  const user = accountName();
+  const mine = user === "" ? rows : rows.filter(row => row.owner === user);
   const commands = await readCommands([...new Set(mine.map(row => String(row.creatorPid)))]);
   const pattern = oursPattern(ports);
   return mine.map(row => ({

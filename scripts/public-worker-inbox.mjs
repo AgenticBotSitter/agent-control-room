@@ -1,4 +1,4 @@
-import { pathToFileURL } from "node:url";
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { spawnSync } from "node:child_process";
 import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker,
   verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
@@ -125,7 +125,29 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
         comment, order, trust: "controller-record", kind: "claim", outcome: ended[1] }];
       return [];
     });
-    const official = records.filter(record => record.trust === "controller-record" && record.marker.issue === issue.number);
+    // Concurrent duplicate handoffs can leave more than one journal comment for
+    // the same saved request. Only the canonical (lowest-id) journal carries the
+    // decision; a later pending copy is a duplicate, not newer history, so it is
+    // folded away before the newest record decides what the worker is told.
+    // Identity is the whole assignment, not just the request id: two comments
+    // are copies only when their issue, PR, worker and previous journal agree.
+    const folded = [...records];
+    const seenHandoffs = new Map();
+    const handoffKey = record => JSON.stringify([record.marker.issue, record.marker.pr,
+      record.marker.workerId, record.marker.requestId, record.marker.previousId ?? null]);
+    for (const record of folded) {
+      if (record.kind !== "handoff" || !Number.isSafeInteger(record.marker.requestId)) continue;
+      const key = handoffKey(record);
+      const existing = seenHandoffs.get(key);
+      if (!existing || record.comment.id < existing.comment.id) seenHandoffs.set(key, record);
+    }
+    // A handoff record with no saved-request id predates the field and cannot be
+    // matched to a copy, so it is always its own record.
+    const keep = new Set(seenHandoffs.values());
+    const official = folded.filter(record => record.trust === "controller-record"
+      && record.marker.issue === issue.number
+      && (record.kind !== "handoff" || !Number.isSafeInteger(record.marker.requestId) || keep.has(record)))
+      .sort((a, b) => a.order - b.order);
     const claim = official.filter(record => record.kind === "claim").at(-1);
     const assignment = claim?.outcome === "REVOKED" ? claim : official.at(-1);
     // Public advice may add a visible correction but cannot reassign a controller reservation.
@@ -364,5 +386,5 @@ async function main() {
     : renderWorkerInbox(options.workerId, actions));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(`public-worker-inbox: ${error.message}`); process.exitCode = 1; });

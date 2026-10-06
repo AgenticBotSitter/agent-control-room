@@ -3,9 +3,14 @@ import { existsSync, readdirSync } from "node:fs";
 import test from "node:test";
 import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
-import { fixture, now, origin, trust, request } from "./helpers/web-foundation.ts";
+import { fixture, now, origin, trust, request, token } from "./helpers/web-foundation.ts";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project.ts";
-import { seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/web-connection.ts";
+import { safeWebConnection, seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/web-connection.ts";
+import { ConnectionCenterReadServiceV1, ConnectionCenterReadErrorV1 } from "../src/connection-center/v1/service.ts";
+import { AuthenticatedFleetTelemetryFreshnessSourceV1 } from "../src/connection-center/v1/authenticated-freshness.ts";
+import { ConnectionRegistryStoreV1 } from "../src/connection-registry/v1/store.ts";
+import { AuthenticatedTelemetryReceiptStoreV1 } from "../src/node-fleet/v1/authenticated-telemetry-receipt-store.ts";
+import { sha256Digest } from "../src/security/digest.ts";
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
@@ -23,14 +28,19 @@ test("Node client/SSR artifacts are separate from Sites metadata", () => {
   assert.equal(existsSync("dist-vps/.openai/hosting.json"), false);
 });
 
-test("compiled private routes use the installed process, real disposable SQL, and shared revocation", async t => {
+test("compiled private routes use the installed process, real disposable SQL, and shared revocation", { timeout: 60_000 }, async t => {
   const f = await fixture();
   const { project: idea } = await seedWebIdea(f.client);
   await seedWebConnection(f.client); await seedWebSignal(f.client);
+  let observeAdmission;
+  const client = { ...f.client, transactionWithPreCommitCheck(...args) {
+    observeAdmission?.();
+    return f.client.transactionWithPreCommitCheck(...args);
+  } };
   const app = installPrivateWebProcess({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
     ideaProjects: { integrityKey: webIdeaKey },
     connections: webConnectionKeys,
-    database: { client: f.client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });
+    database: { client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });
   t.after(() => app.close());
   assert.throws(() => installPrivateWebProcess({}), /already_configured/);
   const home = await handler(request("/")); assert.equal(home.status, 200);
@@ -52,6 +62,47 @@ test("compiled private routes use the installed process, real disposable SQL, an
   // The client shell must wait for the authenticated catalog read before showing records.
   assert.equal(catalogHtml.includes(project.title), false);
   const path = `/projects/${encodeURIComponent(project.projectId)}`;
+  const coordinationPath = `${path}/coordination`;
+  const assertCoordinationShell = async response => {
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /<main\b[^>]*\bid="private-main"/);
+    assert.match(html, /href="#private-main"/);
+    assert.match(html, /Project coordination/);
+  };
+  await assertCoordinationShell(await handler(request(coordinationPath)));
+  const signedOutCoordination = await handler(new Request(`${origin}${coordinationPath}`));
+  assert.equal(signedOutCoordination.status, 401);
+  assert.doesNotMatch(await signedOutCoordination.text(), /id="private-main"/);
+
+  // A real saved project in a separate owner's installation is invisible here.
+  // Use existing fixture/service APIs; this test adds no SQL or network database.
+  const other = await fixture(() => now, "full", "other-owner"); t.after(() => other.db.close());
+  const foreignCreated = await other.handler(request(undefined, "POST",
+    { title: "Other owner's project", summary: "Separate owner installation" }, "foreign-project-create",
+    token({ sub: "other-owner" })));
+  assert.equal(foreignCreated.status, 201);
+  const { project: foreignProject } = await foreignCreated.json();
+  const foreignCoordinationPath = `/projects/${encodeURIComponent(foreignProject.projectId)}/coordination`;
+  for (const suffix of ["", "/coordination"]) {
+    const refused = await handler(request(`/projects/${encodeURIComponent(foreignProject.projectId)}${suffix}`));
+    assert.equal(refused.status, 404);
+    assert.doesNotMatch(await refused.text(), /id="private-main"/);
+  }
+  for (const badPath of [`${coordinationPath}?unexpected=1`, "/projects/%ZZ/coordination",
+    "/projects/project:missing/coordination"]) {
+    const refused = await handler(request(badPath));
+    assert.equal(refused.status, badPath.includes("missing") ? 404 : 400, badPath);
+  }
+  await assertCoordinationShell(await handler(request(coordinationPath))); // retry after refusals
+  const burst = await Promise.all(Array.from({ length: 50 }, (_, index) => {
+    const allowed = index % 2 === 0;
+    return handler(request(allowed ? coordinationPath : foreignCoordinationPath)).then(async response => {
+      if (allowed) await assertCoordinationShell(response);
+      else assert.equal(response.status, 404);
+    });
+  }));
+  assert.equal(burst.length, 50);
   const taskPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/tasks`;
   const taskSaved = await handler(request(taskPath, "POST", { title: "Compiled task", instructions: "Produce a useful comparison" }, "compiled-task-save-001"));
   assert.equal(taskSaved.status, 201); const { receipt: taskReceipt } = await taskSaved.json();
@@ -154,8 +205,127 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
   for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/workers", "/session-watch", "/settings",
     "/api/v1/connections", "/api/v1/session-watch", path, `/projects/${encodeURIComponent(idea.projectId)}`,
-    taskPath, attentionPath, overviewPath, filesPath, projectInboxPath, projectReviewsPath, `${path}/inbox`, `${path}/agents`, `${path}/automations`, `${path}/files`, `${path}/reviews`, `${path}/activity`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
+    taskPath, attentionPath, overviewPath, filesPath, projectInboxPath, projectReviewsPath, coordinationPath, `${path}/inbox`, `${path}/agents`, `${path}/automations`, `${path}/files`, `${path}/reviews`, `${path}/activity`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
-  await app.close(); assert.equal((await handler(request("/projects"))).status, 503);
+  // Shutdown drains requests already admitted, then refuses new route requests.
+  const freshJwt = token({ iat: now / 1000 - 30 });
+  let admitted = 0;
+  const allAdmitted = new Promise(resolve => { observeAdmission = () => { if (++admitted === 25) resolve(); }; });
+  const duringStop = Promise.all(Array.from({ length: 25 }, () =>
+    handler(request(coordinationPath, "GET", undefined, undefined, freshJwt)).then(assertCoordinationShell)));
+  await allAdmitted; observeAdmission = undefined;
+  await app.close(); await duringStop;
+  assert.equal((await handler(request(coordinationPath))).status, 503);
+  assert.equal((await handler(request("/projects"))).status, 503);
+});
+
+/** Covers the Connection Center signal-freshness classification wiring:
+ * ConnectionCenterReadServiceV1 + buildConnectionCenterProjectionV1
+ * (src/connection-center/v1/service.ts) with AuthenticatedTelemetryReceiptStoreV1
+ * (src/node-fleet/v1/authenticated-telemetry-receipt-store.ts) wrapped by
+ * AuthenticatedFleetTelemetryFreshnessSourceV1
+ * (src/connection-center/v1/authenticated-freshness.ts) — the same services
+ * src/web/v1/connection-service.ts constructs for /api/v1/connections. */
+const connectionCenterNow = new Date(now).toISOString();
+
+function connectionCenterReadService(client) {
+  return new ConnectionCenterReadServiceV1(
+    new ConnectionRegistryStoreV1(client, webConnectionKeys.registryIntegrityKey),
+    new AuthenticatedFleetTelemetryFreshnessSourceV1(client, webConnectionKeys.telemetryIntegrityKey));
+}
+
+/** Enrolls an extra connection on an already-seeded node. seedWebConnection always
+ * creates the node row, so a second connection sharing a node goes straight
+ * through the registry with its own enrollment id. Route and profile digests
+ * must differ per connection: the registry rejects two active connections that
+ * share either as a replay. */
+async function seedSharedNodeConnection(client, nodeId, connectionId, enrollmentId) {
+  const enrollment = safeWebConnection({ nodeId, connectionId, enrollmentId,
+    connectorRouteDigest: sha256Digest({ route: connectionId }),
+    profileIdentityDigest: sha256Digest({ profile: connectionId }) });
+  await new ConnectionRegistryStoreV1(client, webConnectionKeys.registryIntegrityKey)
+    .enrollAuthenticated(enrollment, connectionCenterNow,
+      { tenantId: "tenant:web", nodeId, connectionId });
+}
+
+async function seedExpiredWebSignal(client, nodeId) {
+  const observedAt = new Date(now - 10 * 60_000).toISOString();
+  await new AuthenticatedTelemetryReceiptStoreV1(client, webConnectionKeys.telemetryIntegrityKey)
+    .recordAfterAuthenticatedIngress({
+      tenantId: "tenant:web", nodeId, signalSequence: 1,
+      signalDigest: sha256Digest({ nodeId, kind: "expired-signal" }),
+      messageId: "message:expired", keyId: "key:test", connectionId: "connection:test",
+      observedAt, expiresAt: new Date(now - 5 * 60_000).toISOString(), authenticatedAt: observedAt });
+}
+
+test("connection center renders multiple connections with deduplicated node references and signal counts", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  const distinctRoute = (connectionId) => ({ connectorRouteDigest: sha256Digest({ route: connectionId }),
+    profileIdentityDigest: sha256Digest({ profile: connectionId }) });
+  await seedWebConnection(f.client, { nodeId: "node:shared-a", connectionId: "connection:a-1",
+    enrollmentId: "enrollment:durable:101", ...distinctRoute("connection:a-1") });
+  await seedSharedNodeConnection(f.client, "node:shared-a", "connection:a-2", "enrollment:durable:102");
+  await seedWebConnection(f.client, { nodeId: "node:other-b", connectionId: "connection:b-1",
+    enrollmentId: "enrollment:durable:103", ...distinctRoute("connection:b-1") });
+  await seedWebSignal(f.client, "node:shared-a");
+  await seedExpiredWebSignal(f.client, "node:other-b");
+  const projection = await connectionCenterReadService(f.client)
+    .read({ tenantId: "tenant:web", now: connectionCenterNow });
+  assert.equal(projection.connections.length, 3);
+  const freshnessByNode = new Map();
+  for (const item of projection.connections) {
+    if (!freshnessByNode.has(item.nodeReference)) freshnessByNode.set(item.nodeReference, []);
+    freshnessByNode.get(item.nodeReference).push(item.signalFreshness);
+  }
+  assert.equal(freshnessByNode.size, 2);
+  assert.deepEqual([...freshnessByNode.values()].map(group => group.sort().join(",")).sort(),
+    ["current,current", "stale"]);
+  assert.equal(projection.summary.connectionCount, 3);
+  assert.equal(projection.summary.currentSignalCount, 2);
+  assert.equal(projection.summary.staleSignalCount, 1);
+  assert.equal(projection.summary.missingSignalCount, 0);
+});
+
+test("connection center classifies an expired telemetry receipt as stale", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  await seedWebConnection(f.client);
+  await seedExpiredWebSignal(f.client, "node:private-test");
+  const projection = await connectionCenterReadService(f.client)
+    .read({ tenantId: "tenant:web", now: connectionCenterNow });
+  assert.equal(projection.connections.length, 1);
+  assert.equal(projection.connections[0].signalFreshness, "stale");
+  assert.equal(projection.connections[0].signalFreshnessBasis, "authenticated_telemetry");
+  assert.equal(projection.summary.staleSignalCount, 1);
+  assert.equal(projection.summary.currentSignalCount, 0);
+});
+
+test("connection center classifies a node with no telemetry receipt as missing", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  await seedWebConnection(f.client);
+  const projection = await connectionCenterReadService(f.client)
+    .read({ tenantId: "tenant:web", now: connectionCenterNow });
+  assert.equal(projection.connections.length, 1);
+  const item = projection.connections[0];
+  assert.equal(item.signalFreshness, "missing");
+  assert.equal(item.signalFreshnessBasis, "none");
+  assert.equal(item.signalObservedAt, null);
+  assert.equal(item.signalExpiresAt, null);
+  assert.equal(projection.summary.missingSignalCount, 1);
+});
+
+test("connection center rejects a tampered telemetry receipt instead of serving it", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  await seedWebConnection(f.client);
+  await seedWebSignal(f.client);
+  await f.client.query(
+    "UPDATE control_connection_authenticated_telemetry_receipts SET expires_at = $1 WHERE tenant_id = $2 AND node_id = $3",
+    [new Date(now + 3_600_000).toISOString(), "tenant:web", "node:private-test"]);
+  await assert.rejects(
+    connectionCenterReadService(f.client).read({ tenantId: "tenant:web", now: connectionCenterNow }),
+    (error) => error instanceof ConnectionCenterReadErrorV1 && error.safeCode === "invalid_roster");
 });

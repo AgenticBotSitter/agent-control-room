@@ -4,10 +4,10 @@ import { controllerWorkerAdapterIdSchemaV1, createControllerWorkerDeliveryV1, de
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
-const delivery = () => createControllerWorkerDeliveryV1({
+const delivery = (input = { prompt: "Summarize the change.", instructions: "Return a short plain-English result." }) => createControllerWorkerDeliveryV1({
   identity: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local", runId: "run:local", nodeId: "node:hermes-worker" },
   worker: { workerId: "worker:hermes-worker", adapterId: "connector:hermes-021", adapterRevision: "00570550" },
-  input: { prompt: "Summarize the change.", instructions: "Return a short plain-English result." },
+  input,
   authorityDigest: digest("authority"), connectorProfileDigest: digest("profile"), acceptanceProfileId: "profile:result",
   acceptanceProfileDigest: digest("acceptance"), issuedAt: "2026-09-19T12:00:00.000Z", expiresAt: "2026-09-19T12:05:00.000Z",
 });
@@ -45,4 +45,31 @@ test("adapter identifiers may use reviewed slash-separated names but never paths
   assert.equal(controllerWorkerAdapterIdSchemaV1.parse("codex-app-server/v1"), "codex-app-server/v1");
   for (const unsafe of ["/codex-app-server/v1", "codex-app-server/", "codex-app-server//v1", "../codex", "codex/../v1", "codex/app server"])
     assert.equal(controllerWorkerAdapterIdSchemaV1.safeParse(unsafe).success, false, unsafe);
+});
+
+// R4U-01 sibling: `installation-topology.ts` imports only `controllerWorkerAdapterIdSchemaV1`
+// from this module for a browser-reachable schema, but that pulls the whole file — including
+// the prompt/instructions length checks below — into the client bundle. A real browser has no
+// `Buffer` global, so a Node-only byte-length check there crashes every signed-in page.
+test("prompt and instructions length checks work without a Node Buffer global (browser-safe)", () => {
+  const realBuffer = (globalThis as Record<string, unknown>).Buffer;
+  delete (globalThis as Record<string, unknown>).Buffer;
+  try {
+    assert.doesNotThrow(() => delivery());
+    assert.throws(() => createControllerWorkerDeliveryV1({
+      identity: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local", runId: "run:local", nodeId: "node:hermes-worker" },
+      worker: { workerId: "worker:hermes-worker", adapterId: "connector:hermes-021", adapterRevision: "00570550" },
+      input: { prompt: "x".repeat(32_769), instructions: "Return a short plain-English result." },
+      authorityDigest: digest("authority"), connectorProfileDigest: digest("profile"), acceptanceProfileId: "profile:result",
+      acceptanceProfileDigest: digest("acceptance"), issuedAt: "2026-09-19T12:00:00.000Z", expiresAt: "2026-09-19T12:05:00.000Z",
+    }));
+  } finally {
+    (globalThis as Record<string, unknown>).Buffer = realBuffer;
+  }
+});
+
+test("browser-safe prompt and instruction guards measure UTF-8 at each byte limit", () => {
+  assert.doesNotThrow(() => delivery({ prompt: "🙂".repeat(8192), instructions: "🙂".repeat(2048) }));
+  assert.throws(() => delivery({ prompt: "🙂".repeat(8193), instructions: "Short instructions" }));
+  assert.throws(() => delivery({ prompt: "Short prompt", instructions: "🙂".repeat(2049) }));
 });

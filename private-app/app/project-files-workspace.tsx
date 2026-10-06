@@ -8,6 +8,7 @@ import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
+import { PrivateResultFiles } from "./result-files-panel";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -37,6 +38,25 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
   </section>;
 }
 
+/**
+ * Project Files: the result-file catalog, then the older native text receipts
+ * beneath it.
+ *
+ * The catalog comes first because it is the complete list — every file any job
+ * in this project produced, with a Download on each. The native receipts are
+ * kept below under their own heading rather than merged in, because a native
+ * text result is a different thing: it is what a bot SAID, not a file it
+ * produced, and merging the two would make one look like the other. When the
+ * catalog is not configured the receipts still stand on their own, so a
+ * read that could not complete never looks like an empty project.
+ */
+export function ProjectFilesWithCatalog({ projectId, data }: { projectId: string; data: State }) {
+  return <>
+    <PrivateResultFiles projectId={projectId} />
+    <ProjectFilesView projectId={projectId} data={data} />
+  </>;
+}
+
 export function PrivateProjectFiles({ projectId }: { projectId: string }) {
   const [state, setState] = useState<State>({ state: "loading" });
   const [generation, setGeneration] = useState(0);
@@ -52,9 +72,9 @@ export function PrivateProjectFiles({ projectId }: { projectId: string }) {
   }, [projectId, generation]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a href={`/projects/${encodeURIComponent(projectId)}`} className="private-back">← Project overview</a>
-    <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Opening one goes straight to that exact file in its task, where it can be read and reviewed.</p></div>
+    <div className="private-heading"><h1>Project files</h1><p>Everything this project’s jobs produced, saved on the Mac. Download any file from here, or open a task to read what a bot said about it.</p></div>
     <ProjectNavigation projectId={projectId} current="files" />
-    <ProjectFilesView projectId={projectId} data={state} />
+    <ProjectFilesWithCatalog projectId={projectId} data={state} />
     <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved project files again</button>
   </main></div>;
 }

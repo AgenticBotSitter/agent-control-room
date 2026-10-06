@@ -114,7 +114,7 @@ export class IdeaLabProtectedOperatorServiceV1 {
   project(session:ReturnType<typeof parseIdeaLabSessionV1>,run:IdeaLabBotRunV1|undefined,synthesis:IdeaLabSynthesisV1|undefined,decision:Awaited<ReturnType<IdeaLabProjectRegistryStoreV1["getDecision"]>>,updatedAt:string):IdeaLabSessionProjectionV1{
     const state=decision?"decided":synthesis?"synthesized":run?.state==="completed"?"panel_complete":run?.state==="prepared"?"ready":run?.state??"ready";
     const material={contractVersion:IDEA_LAB_SESSION_PROJECTION_V1,tenantId:session.tenantId,workspaceId:session.workspaceId,sessionId:session.sessionId,sessionDigest:session.sessionDigest,title:session.title,ideaSummary:session.ideaSummary,targetCustomer:session.targetCustomer,state,
-      participantCount:session.participants.length,contributionCount:run?.messagesUsed??0,messagesUsed:run?.messagesUsed??0,costUsd:run?.costUsd??0,
+      participantCount:session.participants.length,contributionCount:run?.messagesUsed??0,messagesUsed:run?.messagesUsed??0,costUsd:run?run.costUsd:0,
       ...(run?{runId:run.runId,runDigest:run.runDigest}:{}),...(synthesis?{synthesisDigest:synthesis.synthesisDigest}:{}),...(decision?{decisionDigest:decision.decisionDigest,...(decision.project?{projectId:decision.project.projectId}:{})}:{}),
       safeStatusCode:decision?"owner_decided":synthesis?"synthesis_ready":run?.safeCode??"ready_for_panel",retryPermitted:false as const,
       liveProviderConfigured:false as const,providerContacted:false as const,grantsApproval:false as const,grantsCommandAuthority:false as const,

@@ -1,0 +1,5 @@
+{
+  "schema": "control-room.release-schema-digest/v1",
+  "digest": "ef71e299dfac1dd36ca7a3cb569b6e0b23a307bb3f075048f5f408186c816390",
+  "note": "The digest of schema `public` after the whole release migration ledger, as the release's own readPrivateWebSchemaDigest computes it. `apply-release-schema.mjs` refuses a cluster whose live digest differs from this value, and tests/install-database-phase-real-postgres.test.mjs proves this constant equals src/web/v1/private-database-preflight.ts's privateWebSchemaDigest and that release-schema-digest.sql is byte-identical to that module's query. Re-derived with `node --import tsx bin/cook-digest.mts` after this branch made digestReleaseSchemaRowsV1 canonicalise constraint rows exactly as the release does, so a database restored from a backup of itself no longer reads as a moved schema."
+}

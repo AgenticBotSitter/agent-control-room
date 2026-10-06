@@ -6,6 +6,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { catalogProjectIdSchema } from "./project-wire";
 import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
+import { IdeaLabPromotionTaskLinkStoreV1 } from "../../idea-lab/v1/promotion-task-link-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -52,6 +53,8 @@ export class WebIdeaService {
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
       const synthesis = await store.getSynthesis(this.scope.tenantId, sessionId);
       const decision = await store.getDecision(this.scope.tenantId, sessionId);
+      const promotionTask = decision?.decision === "create_project"
+        ? await new IdeaLabPromotionTaskLinkStoreV1(joined(tx), this.key).get(this.scope.tenantId, sessionId) : undefined;
       const canonicalLinks = await new IdeaLabCanonicalTaskLinkStoreV1(joined(tx), this.key).list(this.scope.tenantId, sessionId);
       const canonicalTasks = canonicalLinks.length ? (() => {
         const projectId = canonicalLinks[0].projectId;
@@ -92,9 +95,35 @@ export class WebIdeaService {
         return canonicalTasks.tasks.filter(task => task.round === latest).every(task => task.contributionRecorded)
           && latest < session.maxRounds ? latest + 1 : null;
       })() : null;
-      const canPrepareNextRound = this.startConfigured && nextCanonicalRound !== null
+      // The SAME deadline rule the round operation enforces, evaluated against
+      // the same captured instant. Without it, an elapsed window still offered
+      // a "prepare the next round" control whose POST returned conflict and
+      // created nothing - a control the server would refuse, shown to the owner
+      // as though it were available. The deadline here is exactly
+      // `Date.parse(actor.now) > createdAt + maxDurationSeconds * 1000` from
+      // WebIdeaRoundProposalOperation, including its boundary being inclusive:
+      // at the exact instant the window is still open.
+      const preparationExpired = Date.parse(actor.now) > Date.parse(session.createdAt) + session.maxDurationSeconds * 1000;
+      const canPrepareNextRound = this.startConfigured && nextCanonicalRound !== null && !preparationExpired
         && actor.can("idea_lab.panel_start", undefined, true);
-      return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
+      // A round whose preparation was interrupted holds fewer tasks than the
+      // session has participants. It is neither a later round nor a complete
+      // one, so the owner is offered the ONE action that can finish it: the
+      // same idempotent preparation call, which refills only the missing turns
+      // and replays the receipts for the ones already saved. Reported
+      // separately from `nextCanonicalRound` so the two states cannot be
+      // confused for each other in the UI.
+      const unfinishedRound = canonicalTasks && !run && !synthesis && !decision ? (() => {
+        const latest = canonicalTasks.preparedRounds.at(-1)!;
+        const saved = canonicalTasks.tasks.filter(task => task.round === latest).length;
+        return saved < session.participants.length && !canonicalTasks.tasks
+          .filter(task => task.round === latest).some(task => task.contributionRecorded) ? latest : null;
+      })() : null;
+      const canFinishRound = this.startConfigured && unfinishedRound !== null && !preparationExpired
+        && actor.can("idea_lab.panel_start", undefined, true);
+      return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null,
+        promotionTask: promotionTask ? { projectId: promotionTask.projectId, jobId: promotionTask.jobId,
+          requestId: promotionTask.requestId, startsWork: false as const } : null, canDecide,
         canSynthesize: this.synthesisConfigured && !synthesis && !decision && (run
           ? run.state === "completed" && contributions.length === session.maxMessages
           : !!canonicalTasks && canonicalTasks.taskCount === session.maxMessages && contributions.length === session.maxMessages
@@ -106,12 +135,13 @@ export class WebIdeaService {
         canStop: this.stopConfigured && !!run && ["prepared", "running"].includes(run.state) && !run.cancellationRequestedAt
           && actor.can("idea_lab.panel_cancel", undefined, true),
         run: run ? { runId: run.runId, sessionId: run.sessionId, sessionDigest: run.sessionDigest, state: run.state,
-          messagesUsed: run.messagesUsed, maxMessages: session.maxMessages, costUsd: run.costUsd,
+          messagesUsed: run.messagesUsed, maxMessages: session.maxMessages, costUsd: run.costUsd, safeCode: run.safeCode,
           providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,
           cancellationRequestedAt: run.cancellationRequestedAt ?? null,
           attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
         execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const,
-        canonicalTasks, canProjectResults, nextCanonicalRound, canPrepareNextRound, observedAt: actor.now };
+        canonicalTasks, canProjectResults, nextCanonicalRound, canPrepareNextRound, canFinishRound,
+        unfinishedRound, preparationExpired, observedAt: actor.now };
     });
   }
 }

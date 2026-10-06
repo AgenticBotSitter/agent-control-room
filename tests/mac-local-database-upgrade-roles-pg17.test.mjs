@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { applyMacDatabaseUpgradeV1, applyPendingMacMigrationsV1, macDatabaseUpgradePlanDigestV1,
-  runMacDatabaseUpgradeCommandV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
+  plainMacDatabaseUpgradeRefusalV1, runMacDatabaseUpgradeCommandV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { PG_BIN, findFreePort, needsPg, requestedPort } from "./helpers/disposable-postgres-cluster.ts";
@@ -21,7 +21,8 @@ const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const legacyMacLogins = ["control_room_web", "control_room_coordinator", "control_room_results",
   "control_room_queue_worker"];
 const password = login => `p${login.replaceAll("_", "")}`.padEnd(40, "x");
-const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40);
+const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40), reviewerPassword = "v".repeat(40);
+const fleetPassword = "f".repeat(40), fleetOwnerPassword = "o".repeat(40);
 const mainCommit = "c".repeat(40);
 const git = params => params[0] === "status" ? "" : mainCommit;
 const state = {};
@@ -119,9 +120,29 @@ test("a planned new login without its code is refused in plain words before anyt
     args: ["--apply", "--expected-main", mainCommit, "--expected-plan-digest", digest],
     readVerifier: async () => "", git, openClient: () => connectTarget(operator()),
     applyPending: async () => { migrated = true; },
-  }), /^Error: upgrade_new_login_needs_verifier:control_room_publisher,control_room_work_intake_agent$/u);
+  }), /^Error: upgrade_new_login_needs_verifier:control_room_agent_reviewer_login,control_room_fleet,control_room_fleet_owner,control_room_publisher,control_room_work_intake_agent$/u);
   assert.equal(migrated, false);
   assert.deepEqual(await catalog(state.client), beforeCatalog, "a refused upgrade changes nothing");
+  // Codes for every other new login are not enough: the reviewer login needs its own.
+  await assert.rejects(runMacDatabaseUpgradeCommandV1({
+    args: ["--apply", "--expected-main", mainCommit, "--expected-plan-digest", digest],
+    readVerifier: async () => JSON.stringify({ control_room_publisher: postgresScramVerifierV1(publisherPassword),
+      control_room_work_intake_agent: postgresScramVerifierV1(intakePassword),
+      control_room_fleet: postgresScramVerifierV1(fleetPassword),
+      control_room_fleet_owner: postgresScramVerifierV1(fleetOwnerPassword) }),
+    git, openClient: () => connectTarget(operator()),
+    applyPending: async () => { migrated = true; },
+  }), /^Error: upgrade_new_login_needs_verifier:control_room_agent_reviewer_login,/u);
+  assert.equal(migrated, false);
+  assert.deepEqual(await catalog(state.client), beforeCatalog, "a refused upgrade changes nothing");
+  assert.equal(plainMacDatabaseUpgradeRefusalV1(new Error("upgrade_new_login_needs_verifier:"
+    + "control_room_agent_reviewer_login")), "Refused: this upgrade adds the new database login "
+    + "control_room_agent_reviewer_login, and each needs its login code from the Mac. Nothing was changed. "
+    + "Run the upgrade again with the code on standard input.");
+  assert.deepEqual(plan.createRoles.filter(item => item.role.startsWith("control_room_agent_reviewer")), [
+    { role: "control_room_agent_reviewer", attributes: "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" },
+    { role: "control_room_agent_reviewer_login", attributes: "LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" },
+  ]);
   assert.ok(plan.createRoles.some(item => item.role === "control_room_work_intake_agent"));
 });
 
@@ -138,7 +159,10 @@ test("an older ledger missing control_room_work_intake gets the group first, so 
   const result = await applyMacDatabaseUpgradeV1({ client: state.client,
     expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan), applyPending: peerMigrations,
     publisherVerifier: postgresScramVerifierV1(publisherPassword),
-    loginVerifiers: { control_room_work_intake_agent: postgresScramVerifierV1(intakePassword) } });
+    loginVerifiers: { control_room_work_intake_agent: postgresScramVerifierV1(intakePassword),
+      control_room_agent_reviewer_login: postgresScramVerifierV1(reviewerPassword),
+      control_room_fleet: postgresScramVerifierV1(fleetPassword),
+      control_room_fleet_owner: postgresScramVerifierV1(fleetOwnerPassword) } });
   assert.equal(result.upgraded, true);
   assert.deepEqual(plan.createRoles.find(item => item.role === "control_room_work_intake"), {
     role: "control_room_work_intake", attributes: "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" });
@@ -152,7 +176,9 @@ test("an older ledger missing control_room_work_intake gets the group first, so 
     CROSS JOIN LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid=a.grantee
     WHERE r.rolname='control_room_work_intake'`)).rows[0].count > 0, true, "table grants reached the new group");
   for (const [login, secret] of [["control_room_work_intake_agent", intakePassword],
-    ["control_room_publisher", publisherPassword], ...legacyMacLogins.map(login => [login, password(login)])]) {
+    ["control_room_publisher", publisherPassword], ["control_room_agent_reviewer_login", reviewerPassword],
+    ["control_room_fleet", fleetPassword], ["control_room_fleet_owner", fleetOwnerPassword],
+    ...legacyMacLogins.map(login => [login, password(login)])]) {
     const session = connectTarget(tcp(login, secret));
     await session.connect();
     try { assert.equal((await session.query("SELECT current_user AS role")).rows[0].role, login); }
@@ -164,6 +190,21 @@ test("an older ledger missing control_room_work_intake gets the group first, so 
     assert.equal((await intake.query(`SELECT pg_has_role('control_room_work_intake','member') AS member`))
       .rows[0].member, true);
   } finally { await intake.end(); }
+  const reviewer = connectTarget(tcp("control_room_agent_reviewer_login", reviewerPassword));
+  await reviewer.connect();
+  try {
+    assert.equal((await reviewer.query(`SELECT pg_has_role('control_room_agent_reviewer','member') AS member`))
+      .rows[0].member, true);
+  } finally { await reviewer.end(); }
+  for (const [login, secret, group] of [["control_room_fleet", fleetPassword, "control_room_fleet_gateway"],
+    ["control_room_fleet_owner", fleetOwnerPassword, "control_room_fleet_owner_authority"]]) {
+    const session = connectTarget(tcp(login, secret));
+    await session.connect();
+    try {
+      assert.equal((await session.query("SELECT pg_has_role($1,'member') AS member", [group])).rows[0].member, true);
+      assert.equal((await session.query("SELECT rolsuper OR rolcreaterole OR rolbypassrls AS dangerous FROM pg_roles WHERE rolname=current_user")).rows[0].dangerous, false);
+    } finally { await session.end(); }
+  }
 });
 
 test("a second upgrade of the same database needs no code and applies nothing new", { skip: needsPg }, async () => {

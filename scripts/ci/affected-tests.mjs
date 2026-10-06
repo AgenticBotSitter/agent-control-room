@@ -1,8 +1,9 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
-import { listTestFiles } from "../check-test-lane-coverage.mjs";
+import { listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
+import { runUnits } from "./run-scripts-keep-going.mjs";
 
 const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
 const importPattern = /\b(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']/g;
@@ -30,6 +31,15 @@ export const skippedTestExemptions = new Map([
   ["tests/private-macos-claude-code-qualification-route.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-macos-service-native-host.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-protected-root-native-directory.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/install-first-owner-real-postgres.test.mjs", "its real-cluster cases need the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides; its fixture-only cases still run"],
+  ["tests/install-first-owner-script-real-postgres.test.mjs", "needs the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides"],
+  ["tests/install-services-bringup-real-postgres.test.mjs", "needs the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides"],
+  ["tests/install-database-phase-real-postgres.test.mjs", "its release-phase cases need the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides; its data, ledger and digest cases still run"],
+  ["tests/result-file-upload-race-postgres.test.ts", "upload staging requires the macOS O_EXLOCK directory lock; skips its race test on Linux"],
+  ["tests/pg-runtime-vendor.test.ts", "its vendoring cases need the pinned macOS PostgreSQL archive (PG_RUNTIME_ARCHIVE), which no Linux job provides"],
+  ["tests/pg-runtime-vendor-synthetic.test.ts", "its Mach-O signing case needs the real /usr/bin/clang and /usr/bin/codesign, which are macOS-only; its other cases still run"],
+  ["tests/pg-clone-probe.test.ts", "its clonefile(2) sidecar needs the macOS toolchain (xcrun, clang) and hdiutil, and its ENOSYS case measures macOS libuv; Linux has none of them"],
+  ["tests/test-runner-service.test.mjs", "its native-code case (T1) compiles a macOS process-table probe with the Xcode C compiler; its other cases still run"],
   ["tests/mac-local-pg17-rehearsal.test.mjs", "runs in the full-mac-local-rehearsal job, which provides CONTROL_ROOM_MAC_REHEARSAL_ROOT (see PR #429)"],
 ]);
 
@@ -156,7 +166,9 @@ function executeCommandCapturingOutput(command, arguments_, root, environment = 
   // A focused guard test invokes this runner from node:test. Its child is the
   // actual test process, not a recursive discovery run.
   delete env.NODE_TEST_CONTEXT;
-  const child = spawnSync(command, arguments_, { cwd: root, encoding: "utf8", env });
+  // TAP from a long real-PostgreSQL suite exceeds spawnSync's 1 MiB default and
+  // failed the lane with ENOBUFS; 256 MiB still bounds a runaway writer.
+  const child = spawnSync(command, arguments_, { cwd: root, encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024 });
   if (child.error) throw child.error;
   process.stdout.write(child.stdout ?? "");
   process.stderr.write(child.stderr ?? "");
@@ -186,8 +198,10 @@ function guardedPostgresTests(result, tests, repositoryRoot) {
 // below) makes the bound a true per-file budget. 600000 matches the largest
 // per-test override in the repository (tests/work-batch-assignment-gate.test.ts)
 // and comfortably clears the slowest measured file while still failing a
-// genuine hang well before the job's 45-minute limit.
-export const NODE_TEST_TIMEOUT_MS = 600_000;
+// genuine hang well before the job's 45-minute limit. Raised to 20 minutes when
+// tests/down-migration-sweep-real-postgres.test.ts (one ~12 s rollback per db/down
+// file, 67 files) measured past 10 minutes on the hosted runner.
+export const NODE_TEST_TIMEOUT_MS = 1_200_000;
 
 function nodeTestCommand(test, repositoryRoot) {
   const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", test];
@@ -251,7 +265,7 @@ export function shouldDeferToFullSuite(result, totalTestCount) {
 export function deferralMessage(result, selectedCount, totalTestCount) {
   const affected = result === "ALL" ? `all ${totalTestCount}` : `${selectedCount} of ${totalTestCount}`;
   return `This change affects ${affected} test file(s). The fast lane is skipping direct execution of the bulk here: ` +
-    "the full-suite lanes (test-demo, test-server, test-components, test-articles, full-gate) already run " +
+    "the full-suite lanes (test-demo, test-server, test-components, test-updater, test-articles, full-gate) already run " +
     "the rest of the suite, so re-running it in this 45-minute lane would only duplicate that coverage. " +
     "Any PostgreSQL-gated file still runs directly below, since no other lane sets up its environment.";
 }
@@ -270,10 +284,26 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
 }
 
 export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
-  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
+  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform) {
   if (result === "DOCS_ONLY") {
     console.log(noTestsAffectedMessage());
     return 0;
+  }
+  // The ordinary macOS updater command is mandatory in test-updater or its
+  // full-gate counterpart. The Ubuntu fast job must defer those exact files,
+  // including files whose comments match the broad PostgreSQL marker, while
+  // retaining the separate Linux journal and live PostgreSQL lanes here.
+  if (platform !== "darwin" && existsSync(join(repositoryRoot, "package.json"))) {
+    const { scripts = {} } = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8"));
+    // pg-runtime-copy and its stress lane use lsof, hdiutil and clonefile (cp -c), so they run in the macOS job too; the test-runner service is a macOS Seatbelt (sandbox-exec) sandbox.
+    const macLane = reachableTests(scripts, ["pnpm run test:updater", "pnpm run test:pg-runtime-postgres", "pnpm run test:pg-runtime-stress", "pnpm run test:test-runner"]);
+    const deferred = tests.filter(test => macLane.has(test));
+    if (deferred.length > 0) {
+      console.log(`Deferring ${deferred.length} macOS updater file(s) to test-updater or full-gate on macOS.`);
+      tests = tests.filter(test => !macLane.has(test));
+      if (Array.isArray(result)) result = result.filter(test => !macLane.has(test));
+      if (tests.length === 0) return 0;
+    }
   }
   const totalTestCount = listTestFiles(repositoryRoot).length;
   if (shouldDeferToFullSuite(result, totalTestCount)) {
@@ -317,26 +347,28 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);
   const preparationCount = commands.length - testCommands.length;
-  for (const [index, [command, arguments_]] of commands.entries()) {
-    if (index < preparationCount) {
-      const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
-      if (status !== 0) return status;
-      continue;
-    }
-    const testCommand = testCommands[index - preparationCount];
+  for (const [command, arguments_] of commands.slice(0, preparationCount)) {
+    const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
+    if (status !== 0) return status;
+  }
+  const units = testCommands.map(testCommand => testCommand.tests[0]);
+  let index = 0;
+  return runUnits(units, () => {
+    const current = index++;
+    const [command, arguments_] = commands[preparationCount + current];
+    const testCommand = testCommands[current];
     const execution = executeCapturingOutput(command, arguments_, repositoryRoot, testCommand.environment);
     const status = typeof execution === "number" ? execution : execution.status;
-    if (status !== 0) return status;
     const output = typeof execution === "number" ? "" : execution.output;
     if (testCommand.exempt && hasSkippedTests(output)) {
       console.log(`Allowing skipped test exemption: ${testCommand.tests[0]} — ${skippedTestExemptions.get(testCommand.tests[0])}`);
     }
     if (!testCommand.exempt && hasSkippedTests(output)) {
       console.error("Selected test plan reported skipped tests; merge-gated tests must run or fail unless explicitly exempted.");
-      return 1;
+      return { status: status || 1, verdict: status === 0 ? "SKIP-NOT-EXEMPT" : "FAIL" };
     }
-  }
-  return 0;
+    return { status };
+  });
 }
 
 function main() {
@@ -358,4 +390,4 @@ function main() {
   process.exitCode = runSelectedTests(result, tests, root);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

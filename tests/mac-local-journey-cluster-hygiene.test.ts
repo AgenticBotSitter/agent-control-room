@@ -21,16 +21,17 @@
 // with no teardown hook at all, where only the process `exit` handler can clean
 // up. And a fast, PostgreSQL-free set pinning the port resolver.
 //
-// Real PostgreSQL is required for the scenario cases, so they carry the repo's
-// existing `needs PostgreSQL 17 binaries` skip reason: a lane without PG reports
-// skipped, never green. Every child process is killed by recorded pid only —
-// never by pattern (standing rule: other jobs run the same programs).
+// Real PostgreSQL is required for the scenarios that reach initdb; they carry
+// the repo's existing `needs PostgreSQL 17 binaries` skip reason. The exact
+// pre-start scenario runs before the first PostgreSQL command and therefore
+// remains executable without it. Every child process is killed by recorded pid
+// only — never by pattern (standing rule: other jobs run the same programs).
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -80,13 +81,14 @@ const pinnedPorts = (() => {
   return () => (next <= 65535 ? next++ : undefined);
 })();
 
-function spawnScript(script: string, args: string[]): Spawned {
+function spawnScript(script: string, args: string[], environment?: Readonly<Record<string, string | undefined>>): Spawned {
   // Only override the environment when a block is pinned; with nothing pinned,
   // the child inherits an unset variable and resolves its own port.
   const port = pinnedPorts?.();
   const child = spawn(process.execPath, ["--import", "tsx", script, ...args], {
     stdio: ["ignore", "pipe", "pipe"], cwd: resolve(import.meta.dirname, ".."),
-    ...(port === undefined ? {} : { env: { ...process.env, [PG_PORT_ENV]: String(port) } }),
+    ...(environment === undefined && port === undefined ? {}
+      : { env: { ...process.env, ...environment, ...(port === undefined ? {} : { [PG_PORT_ENV]: String(port) }) } }),
   });
   let buffer = "";
   child.stdout.on("data", chunk => { buffer += String(chunk); });
@@ -358,23 +360,32 @@ test("a SIGTERM between the postmaster launch and the start resolving leaves no 
 // ---------------------------------------------------------------------------
 
 test("a SIGTERM right after the run directory is created removes the run directory",
-  { skip: needsPg, timeout: 180_000 }, async () => {
+  { timeout: 180_000 }, async () => {
     // The window between the run dir existing and the socket dir existing. No
     // postmaster has been launched, so this cannot be about a surviving process:
     // it is about the two directories, which survive unless the run is
-    // registered the moment it is created. A parent-side signal cannot hit the
-    // window precisely, so the fixture signals itself the instant it sees the
-    // directory — the earliest a signal can land after it exists.
-    const run = spawnScript(SCENARIO, ["early"]);
+    // registered the moment it is created. The helper pauses at its own exact
+    // post-registration checkpoint, so the fixture can self-signal before the
+    // socket operation or any PostgreSQL child begins.
+    // The checkpoint is before the first PostgreSQL command, so three marker
+    // files are enough for the child module's availability probe. This keeps
+    // the regression executable even on hosts without PostgreSQL and proves no
+    // database process is needed for this pre-start case.
+    const pgBin = await mkdtemp(join(tmpdir(), "crpg-early-bin-"));
+    await Promise.all(["initdb", "pg_ctl", "postgres"].map(name => writeFile(join(pgBin, name), "", "utf8")));
+    const run = spawnScript(SCENARIO, ["early"], { PG_BIN: pgBin });
     try {
       const result = await run.exited;
-      assert.ok(result.code !== null || result.signal !== null, "the child must actually terminate");
+      assert.deepEqual(result, { code: 143, signal: null },
+        "the installed SIGTERM handler must perform cleanup and exit conventionally");
       const runDir = run.runDir();
       assert.ok(runDir, `the early scenario must report its run dir:\n${run.output()}`);
+      assert.equal(run.socketDir(), "", "precondition: the socket directory must not have been assigned");
       assert.equal(await waitFor(() => !existsSync(runDir!), 30_000), true,
         `the run dir survived a SIGTERM in the pre-start window: ${runDir}`);
     } finally {
       await stopRun(run);
+      await rm(pgBin, { recursive: true, force: true });
     }
   });
 

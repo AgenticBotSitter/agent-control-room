@@ -1,6 +1,6 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres.ts";
 import { loadMacLocalDatabaseRolesFromRootV1, loadMacLocalProtectedConfigurationFromRootV1 }
   from "../../src/web/v1/mac-local-protected-loader.ts";
@@ -75,7 +75,7 @@ export async function pinMacLocalNodeKeysV1(protectedRoot, receiptPath, runtime 
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length !== 2) {
     process.stderr.write("Usage: pnpm mac:pin-node-keys <protected-root> <receipt-file>\n");

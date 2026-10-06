@@ -60,7 +60,7 @@ export const fleetWorkerSummarySchemaV1 = z.object({
   platform: z.enum(["macos", "windows", "linux", "cloud"]),
   state: z.enum(["online", "idle", "busy", "draining", "degraded", "offline", "maintenance"]),
   stateReasonCode: safeId.optional(),
-  lastObservedAt: isoDate,
+  lastObservedAt: isoDate.nullable(),
   capacityState: z.enum(["reported", "unavailable"]),
   availableSlots: z.number().int().min(0).optional(),
   totalSlots: z.number().int().positive().optional(),

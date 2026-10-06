@@ -6,6 +6,7 @@ import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-comm
 import { applyReadValidator, readValidatorScope } from "./private-read-validator";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
+import { ownerProjectSectionPageV1 } from "./owner-project-pages";
 import { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
 import { catalogProjectIdSchema, lifecycleSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
@@ -29,7 +30,7 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
-import { ideaCreationOptionsSchema } from "./idea-wire";
+import { ideaCreationOptionsSchema, ideaDecisionDraftSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
@@ -44,18 +45,29 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
+import { IdeaLabPromotionTaskLinkStoreV1, IDEA_LAB_PROMOTION_TASK_LINK_V1 } from "../../idea-lab/v1/promotion-task-link-store";
 import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
-import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
-import { LinearPipelineServiceV1 } from "../../pipelines/v1";
+import { createOperationsModeHttpHandlerV1 } from "./operations-mode-http";
+import { WebOperationsModeServiceV1, type OperationsModeStopAuthorityV1 } from "./operations-mode-service";
+import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
 import { sessionWatchIdSchema } from "./session-watch-wire";
+import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
+import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
+import { RecurringRuleServiceV1 } from "../../recurring/v1";
+import { ReusableSkillServiceV1 } from "../../skills/v1";
+import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
+import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -106,6 +118,10 @@ export interface PrivateWebProcessOptions {
   operatorSurface?: { read: (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
   }) => Promise<OperatorSurfaceSnapshotV1> };
+  /** Bounded per-node task and terminal-result attribution from canonical records. */
+  workerBoard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
+  /** Read-only per worker-kind/model pipeline build-stage outcomes over trailing windows. */
+  workerScorecard?: { read: (input: { tenantId: string; workspaceId: string; now: string }) => Promise<unknown> };
   /** Owner-only canonical attention reader supplied by trusted composition.
    * It is intentionally separate from the full operator snapshot so the
    * coordinator role needs access only to the inbox table for this route. */
@@ -117,7 +133,10 @@ export interface PrivateWebProcessOptions {
   /** Optional proposal-intake integrity key. It enables owner batch review;
    * omission keeps the Pipelines routes absent. */
   workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
-    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1 };
+    queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
+    pipelineRepositories?: CanonicalPipelineRepositoryRegistryV1 };
+  /** Owner-facing chief-of-staff bridge. Storage and planner lifetime remain in the supplying composition. */
+  orchestration?: ProjectOrchestrationOwnerPortV1;
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
@@ -130,6 +149,9 @@ export interface PrivateWebProcessOptions {
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
   queueAttention?: QueueAttentionSource;
+  /** Installation-wide Pause / Drain / Stop. Omission keeps the endpoint and
+   * the Home control absent rather than showing a switch that does nothing. */
+  operationsMode?: { integrityKey: Uint8Array; stop?: OperationsModeStopAuthorityV1 };
   /**
    * Project coordination surface: the canonical store adapter for the
    * coordination engine. Production supplies the real PostgreSQL-backed
@@ -251,6 +273,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const operatorSurface = options.operatorSurface ? Object.freeze({
     read: options.operatorSurface.read.bind(options.operatorSurface),
   }) : undefined;
+  if (options.workerBoard && typeof options.workerBoard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerBoard = options.workerBoard ? Object.freeze({ read: options.workerBoard.read.bind(options.workerBoard) }) : undefined;
+  if (options.workerScorecard && typeof options.workerScorecard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerScorecard = options.workerScorecard ? Object.freeze({ read: options.workerScorecard.read.bind(options.workerScorecard) }) : undefined;
   if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
   const actionInboxSource = options.actionInboxSource ? Object.freeze({
     read: options.actionInboxSource.read.bind(options.actionInboxSource),
@@ -277,13 +303,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
-    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke,
+    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke, options.assignment.cancel,
       options.assignment.options, options.assignment.projectOptions]
       .some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   const assignment = options.assignment ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     assign: options.assignment.assign.bind(options.assignment), expire: options.assignment.expire.bind(options.assignment),
-    revoke: options.assignment.revoke.bind(options.assignment),
+    revoke: options.assignment.revoke.bind(options.assignment), cancel: options.assignment.cancel.bind(options.assignment),
     options: options.assignment.options.bind(options.assignment), projectOptions: options.assignment.projectOptions.bind(options.assignment) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
@@ -304,17 +330,30 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey,
     options.ideaProjects ? new WebIdeaProjectLifecycleOperation(options.database.client,
       { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.ideaProjects.integrityKey, clock) : undefined,
-    productConfiguration);
+    productConfiguration, options.tasks?.harnessIntegrityKey);
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
-    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
+      productConfiguration });
+  const recurringRules = new RecurringRuleServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
+  const reusableSkills = new ReusableSkillServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
+  const orchestrationHandlers = new Map<string, ReturnType<typeof createProjectOrchestrationHttpHandlerV1>>();
   const pipelines = options.workBatches ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,
-    options.workBatches.queueAdmissionAuthority, clock) : undefined;
+    options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories, tasks) : undefined;
+  const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
+  const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
+  const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.operationsMode.integrityKey, clock,
+    options.operationsMode.stop) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -324,7 +363,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
       options.ideaProjects.integrityKey, tasks, clock, ideaResultProjection) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
+    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey, productConfiguration }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
@@ -356,7 +395,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!,
-      ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
+      ideaIntegrityKey: options.ideaProjects?.integrityKey, followUps: tasks }, clock) : undefined;
   const ownerVerifications = options.tasks?.manualVerificationScenarios ? new WebTaskVerificationService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.reviews!,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey,
@@ -448,6 +487,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
             });
           }
+          if (url.pathname === "/api/v1/operations-mode") {
+            if (!operationsMode) throw new WebAccessError("not_found");
+            if (request.method === "GET" && !url.search)
+              return Response.json(await operationsMode.read(identity), { headers: privateResponseHeaders });
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
+              throw new WebAccessError("invalid_request");
+            const receipt = await operationsMode.set(identity, await readBoundedJson(request.body, 2048));
+            return Response.json(receipt, { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/needs-me/action-items") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!actionInboxSource) throw new WebAccessError("not_found");
@@ -475,6 +524,27 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
             if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
             return Response.json({ snapshot }, { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-board") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerBoard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, now: actor.now };
+            });
+            return Response.json(await workerBoard.read(scope), { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-scorecard") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerScorecard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              // Owner-only, and the read is workspace-scoped, so this is a
+              // decision about the caller's own installation rather than a
+              // general permission the caller happens to hold.
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, workspaceId: options.workspaceId, now: actor.now };
+            });
+            return Response.json(await workerScorecard.read(scope), { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
@@ -556,8 +626,26 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.decide) throw new Error("idea_decision_not_configured");
             let sessionId: string; try { sessionId = decodeURIComponent(ideaDecision[1]); } catch { throw new WebAccessError("invalid_request"); }
-            const result = await ideaCreation.decide(identity, sessionId, await readBoundedJson(request.body, 4096));
-            return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+            const body = ideaDecisionDraftSchema.safeParse(await readBoundedJson(request.body, 8192));
+            if (!body.success) throw new WebAccessError("invalid_request");
+            const decision = await ideaCreation.decide(identity, sessionId, body.data);
+            if (body.data.intent.decision !== "create_project") {
+              return Response.json({ ...decision, firstTask: null },
+                { status: decision.replayed ? 200 : 201, headers: privateResponseHeaders });
+            }
+            if (!decision.projectId || !body.data.promotionTask || !options.ideaProjects) throw new Error("idea_promotion_unavailable");
+            const firstTask = await tasks.propose(identity, decision.projectId, body.data.promotionTask,
+              `idea-promotion:${decision.decisionDigest.slice(7)}`);
+            await new IdeaLabPromotionTaskLinkStoreV1(options.database.client, options.ideaProjects.integrityKey).record({
+              contractVersion: IDEA_LAB_PROMOTION_TASK_LINK_V1, tenantId: options.tenantId, sessionId,
+              decisionDigest: decision.decisionDigest, projectId: decision.projectId,
+              jobId: firstTask.receipt.jobId, requestId: firstTask.receipt.requestId,
+              createdAt: firstTask.receipt.createdAt, startsWork: false,
+              grantsAssignmentAuthority: false, grantsApproval: false, grantsExecutionAuthority: false,
+            });
+            const replayed = decision.replayed && firstTask.replayed;
+            return Response.json({ ...decision, firstTask, replayed },
+              { status: replayed ? 200 : 201, headers: privateResponseHeaders });
           }
           const ideaStop = /^\/api\/v1\/ideas\/([^/]+)\/stop$/.exec(url.pathname);
           if (ideaStop) {
@@ -776,6 +864,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
               planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
+          if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname))
+            return createRecurringRuleHttpHandlerV1({ origin: site.origin, trust, service: recurringRules,
+              gatewayAssertionProfile, clock })(request);
+          if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname))
+            return createReusableSkillHttpHandlerV1({ origin: site.origin, trust, service: reusableSkills,
+              gatewayAssertionProfile, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
@@ -811,14 +905,34 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               clock,
               isCoordinationEnabled: () => coordination.isEnabled(),
               inflight: coordinationInflight,
+              // Every write request authorizes itself against the durable
+              // session/grant authority before it may join an in-flight
+              // promise, so a follower is never answered with a leader's receipt.
+              authorizeCaller: async (verified, project) => { await coordination.authorizeCaller(verified, project); },
             })(request);
+          }
+          // Retain one handler per site; give it each request's refreshed trust.
+          if ((/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings|-retry)?$/.test(url.pathname)
+            || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)) && options.orchestration) {
+            let orchestrationHttp = orchestrationHandlers.get(site.origin);
+            if (!orchestrationHttp) {
+              orchestrationHttp = createProjectOrchestrationHttpHandlerV1({ origin: site.origin, trust,
+                gatewayAssertionProfile, service: options.orchestration, clock });
+              orchestrationHandlers.set(site.origin, orchestrationHttp);
+            }
+            return orchestrationHttp(request, trust);
           }
           if (workBatches && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname))
             return createWorkBatchOwnerHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: workBatches, clock })(request);
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
-              gatewayAssertionProfile, service: pipelines, clock })(request);
+              gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
+          if (improvementDesk && (url.pathname === "/api/v1/update-candidates"
+            || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
+            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)))
+            return createImproveControlRoomHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: improvementDesk, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -827,7 +941,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
         const taskSummaryPage = /^\/projects\/([^/]+)\/(reviews|activity)$/.exec(url.pathname);
         const pipelinesPage = /^\/projects\/([^/]+)\/pipelines(?:\/([^/]+))?$/.exec(url.pathname);
-        const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations)$/.exec(url.pathname);
+        const projectUtilityPage = ownerProjectSectionPageV1.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {
@@ -850,7 +964,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelinesPage[2]) {
             let batchId: string;
             try { batchId = decodeURIComponent(pipelinesPage[2]); } catch { throw new WebAccessError("invalid_request"); }
-            await workBatches.view(identity, id, batchId);
+            if(pipelines&&batchId.startsWith("pipeline-run:"))await pipelines.view(identity,id,batchId);
+            else await workBatches.view(identity, id, batchId);
           } else await workBatches.list(identity, id);
         } else if (taskSummaryPage) {
           if (url.search) throw new WebAccessError("invalid_request");
@@ -858,6 +973,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           try { id = decodeURIComponent(taskSummaryPage[1]); } catch { throw new WebAccessError("invalid_request"); }
           if (taskSummaryPage[2] === "activity") await projectActivity.authorize(identity, id);
           else await tasks.authorize(identity, id);
+        } else if (detail) {
+          let id: string;
+          try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
+          await service.getView(identity, id);
         } else if (projectUtilityPage) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;
@@ -887,10 +1006,6 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           try { id = decodeURIComponent(newsPage[1]); } catch { throw new WebAccessError("invalid_request"); }
           await news.list(identity, id, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined,
             url.searchParams.get("view") ?? "history", url.searchParams.get("order") ?? "important");
-        } else if (detail) {
-          let id: string;
-          try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
-          await service.getView(identity, id);
         } else if (["/", "/projects"].includes(url.pathname)) {
           if ([...url.searchParams.keys()].some(key => !["after", "lifecycle"].includes(key))
             || ["after", "lifecycle"].some(key => url.searchParams.getAll(key).length > 1)

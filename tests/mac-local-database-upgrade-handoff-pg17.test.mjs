@@ -1,7 +1,7 @@
 // Mac `--prepare`/`--finish` bundled into a real, disposable PostgreSQL 17
 // upgrade: one handoff code covers every login the role manifest still marks
 // as missing, and the VPS apply path (already covered on its own by
-// mac-local-database-upgrade-roles-pg17.test.mjs) creates both from it.
+// mac-local-database-upgrade-roles-pg17.test.mjs) creates each from it.
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { execFileSync } from "node:child_process";
@@ -15,6 +15,8 @@ import { applyPendingMacMigrationsV1, runMacDatabaseUpgradeCommandV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
 import { captureProvisionedMacLocalConfigurationV1, finishMacLocalDatabaseUpgradeV1,
   prepareMacLocalDatabaseUpgradeV1 } from "../scripts/mac-local/provision-database.mjs";
+import { readMacUpgradeLedgerHeadV1 } from "../scripts/mac-local/upgrade.mjs";
+import { readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from "../src/web/v1/mac-local-database-roles.ts";
 import { captureWorkIntakeServerConfigurationV1 } from "../src/work-intake/v1/installed-configuration.ts";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
@@ -79,7 +81,7 @@ after(async () => {
   try { await state.teardown?.stop(); } finally { await rm(state.root, { recursive: true, force: true }); }
 });
 
-test("two missing logins bundle into one code, and the VPS upgrade creates both from it", {
+test("every missing login bundles into one code, and the VPS upgrade creates each from it", {
   skip: needsPg,
 }, async t => {
   const protectedRoot = await mkdtemp(join(tmpdir(), "mac-db-handoff-protected-"));
@@ -105,10 +107,14 @@ test("two missing logins bundle into one code, and the VPS upgrade creates both 
   const prepared = await prepareMacLocalDatabaseUpgradeV1({ protectedRoot, mainCommit });
   const preparedOutput = JSON.stringify(prepared);
   const codes = JSON.parse(prepared.code);
-  assert.deepEqual(Object.keys(codes).sort(), ["control_room_publisher", "control_room_work_intake_agent"]);
+  assert.deepEqual(Object.keys(codes).sort(), ["control_room_agent_reviewer_login", "control_room_fleet",
+    "control_room_fleet_owner", "control_room_publisher", "control_room_work_intake_agent"]);
   const publisherPassword = (await readFile(join(passwords, "control_room_publisher.txt"), "utf8")).trim();
+  const reviewerPassword = (await readFile(join(passwords, "control_room_agent_reviewer_login.txt"), "utf8")).trim();
   const intakePassword = (await readFile(join(passwords, "control_room_work_intake_agent.txt"), "utf8")).trim();
-  for (const secret of [publisherPassword, intakePassword])
+  const fleetPassword = (await readFile(join(passwords, "control_room_fleet.txt"), "utf8")).trim();
+  const fleetOwnerPassword = (await readFile(join(passwords, "control_room_fleet_owner.txt"), "utf8")).trim();
+  for (const secret of [publisherPassword, reviewerPassword, intakePassword, fleetPassword, fleetOwnerPassword])
     assert.equal(preparedOutput.includes(secret), false, "the prepare output must never contain a password");
 
   // The VPS apply path, exactly as cr-db-upgrade would run it, fed the one bundled code.
@@ -120,7 +126,8 @@ test("two missing logins bundle into one code, and the VPS upgrade creates both 
     applyPending: () => applyPendingMacMigrationsV1(operator()) });
   assert.equal(applyResult.upgraded, true);
   for (const [login, secret] of [["control_room_publisher", publisherPassword],
-    ["control_room_work_intake_agent", intakePassword]]) {
+    ["control_room_agent_reviewer_login", reviewerPassword], ["control_room_work_intake_agent", intakePassword],
+    ["control_room_fleet", fleetPassword], ["control_room_fleet_owner", fleetOwnerPassword]]) {
     const session = connectTarget(tcp(login, secret));
     await session.connect();
     try { assert.equal((await session.query("SELECT current_user AS role")).rows[0].role, login); }
@@ -134,12 +141,18 @@ test("two missing logins bundle into one code, and the VPS upgrade creates both 
   const finishedOutput = JSON.stringify(finished);
   assert.equal(finished.finished, true);
   assert.equal(finished.nothingToFinish, undefined);
-  for (const secret of [publisherPassword, intakePassword])
+  for (const secret of [publisherPassword, reviewerPassword, intakePassword, fleetPassword, fleetOwnerPassword])
     assert.equal(finishedOutput.includes(secret), false, "the finish output must never contain a password");
 
   const changedRoles = captureMacLocalDatabaseRolesV1(JSON.parse(await readFile(roleFile, "utf8")));
   assert.equal(changedRoles.publisher.username, "control_room_publisher");
   assert.equal(changedRoles.publisher.password, publisherPassword);
+  assert.equal(changedRoles.agentReviewer.username, "control_room_agent_reviewer_login");
+  assert.equal(changedRoles.agentReviewer.password, reviewerPassword);
+  assert.equal(changedRoles.fleetGateway?.username, "control_room_fleet");
+  assert.equal(changedRoles.fleetGateway?.password, fleetPassword);
+  assert.equal(changedRoles.fleetOwner?.username, "control_room_fleet_owner");
+  assert.equal(changedRoles.fleetOwner?.password, fleetOwnerPassword);
   const intakeFile = join(config, "work-intake-server.json");
   const intake = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
   assert.equal(intake.database.username, "control_room_work_intake_agent");
@@ -148,13 +161,33 @@ test("two missing logins bundle into one code, and the VPS upgrade creates both 
     [{ workerId: "worker:codex:mac-1", workerKind: "codex" }]);
   assert.equal((await stat(join(config, "work-intake-clients"))).mode & 0o777, 0o700);
 
-  for (const file of ["control_room_publisher.txt", "control_room_work_intake_agent.txt"])
+  for (const file of ["control_room_publisher.txt", "control_room_agent_reviewer_login.txt",
+    "control_room_work_intake_agent.txt", "control_room_fleet.txt", "control_room_fleet_owner.txt"])
     assert.equal((await stat(join(passwords, file))).mode & 0o777, 0o600);
   assert.equal((await stat(roleFile)).mode & 0o777, 0o600);
   assert.equal((await stat(intakeFile)).mode & 0o777, 0o600);
   assert.equal((await stat(protectedRoot)).mode & 0o777, 0o700);
   assert.equal((await stat(config)).mode & 0o777, 0o700);
   assert.equal((await stat(passwords)).mode & 0o777, 0o700);
+
+  // The Mac command records this non-secret identity before it stops the host
+  // and compares it before rollback. It reads through the real restricted web
+  // login, not the postgres operator used to prepare this fixture — and that
+  // login has no row access to the migration ledger at all (the same
+  // least-privilege denial `tests/postgres-production-lifecycle.test.mjs` and
+  // `tests/project-coordination-web-role.test.ts` pin), so prove the direct
+  // read is refused before proving the real command succeeds anyway.
+  const webSession = connectTarget(tcp("control_room_web", legacyPassword("control_room_web")));
+  await webSession.connect();
+  try {
+    await assert.rejects(webSession.query("SELECT 1 FROM control_room_schema_migrations LIMIT 1"), /permission denied/);
+  } finally { await webSession.end(); }
+  const ledger = JSON.parse(await readFile(join(repoRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
+  const lastMigration = ledger.entries.filter(entry => (entry.kind ?? "migrate") === "migrate").at(-1);
+  const expectedDigest = await readPrivateWebSchemaDigest(state.client);
+  assert.deepEqual(await readMacUpgradeLedgerHeadV1(protectedRoot), {
+    file: lastMigration.file, order: lastMigration.order, digest: `sha256:${expectedDigest}`,
+  });
 
   // A repeat prepare/finish is now a clean no-op, not a refusal.
   assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1({ protectedRoot, mainCommit }),

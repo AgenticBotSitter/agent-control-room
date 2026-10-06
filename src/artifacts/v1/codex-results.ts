@@ -6,6 +6,7 @@ import { completionAcceptanceProfileSchemaV1, completionReviewTargetSchemaV1 } f
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
 import { codexReviewPlanSchemaV1, codexReviewPlanTagV1, codexReviewRevisionV1, codexReviewTargetV1,
   verifyCodexReviewPlanV1, type CodexReviewPlanV1 } from "../../completion-gate/v1/codex-review-plan";
+import { deriveAuthenticatedRunPrincipalV1 } from "../../completion-gate/v1/protected-agent-principal";
 import { DOMAIN_CONTRACT_VERSION, artifactManifestRecordSchema, attemptRecordSchema, jobRecordSchema,
   leaseRecordSchema, type ArtifactManifestRecord } from "../../domain/v1";
 import { createCodexCanonicalResultRecordV1, codexCanonicalResultRecordSchemaV1,
@@ -269,13 +270,16 @@ export class CodexCanonicalResultPublisherV1 {
       cancelState: "unsupported", createdAt: receivedAt, updatedAt: receivedAt, lastObservedAt: receivedAt };
   }
 
-  private reviewPlan(plan: CodexTaskExecutionPlan, record: CodexCanonicalResultRecordV1): CodexReviewPlanV1 {
+  private reviewPlan(plan: CodexTaskExecutionPlan, record: CodexCanonicalResultRecordV1,
+    producer: ReturnType<typeof deriveAuthenticatedRunPrincipalV1>): CodexReviewPlanV1 {
     const i = record.publication.identity;
     return codexReviewPlanSchemaV1.parse({ schema: plan.schema === "control-room.task-execution-plan/v4"
       ? "control-room.codex-review-plan/v2" : "control-room.codex-review-plan/v1",
       ...(plan.schema === "control-room.task-execution-plan/v4" ? { revision: plan.revision } : {}),
       tenantId: i.tenantId, projectId: i.projectId, jobId: i.jobId, attemptId: i.attemptId,
-      runId: i.runId, nodeId: i.nodeId,
+      runId: i.runId, nodeId: i.nodeId, producer, workerId: producer.workerId,
+      agentProfileId: producer.agentProfileId, harness: producer.harness, adapterId: producer.adapterId,
+      modelFamily: producer.modelFamily,
       publicationId: record.publication.publicationId, publicationContractDigest: record.publication.contractDigest,
       terminalEvidenceDigest: record.terminalEvidence.evidenceDigest, taskPlanDigest: record.taskPlanDigest,
       activationIntentRecordDigest: record.activationIntentRecordDigest,
@@ -464,8 +468,19 @@ export class CodexCanonicalResultPublisherV1 {
         [tenantId, runId]);
       if (locked.rows.length !== 1) unavailable();
       const run = await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspect(tenantId, runId);
-      if (!run || run.events.length || run.run.harness !== "codex" || run.run.state !== "discovered"
+      if (!run) return unavailable();
+      if (run.events.length || run.run.harness !== "codex" || run.run.state !== "discovered"
         || run.run.nativeTask || run.run.startedAt || run.run.finishedAt || run.run.resumable) unavailable();
+      const attempt = (await tx.query<{ job_id: string; node_id: string; worker_id: string | null }>(
+        "SELECT job_id,node_id,worker_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
+        [tenantId, run.run.attemptId])).rows[0];
+      const attemptWorkerId = attempt?.worker_id;
+      if (!attemptWorkerId || attempt.job_id !== run.run.jobId || attempt.node_id !== run.run.nodeId) return unavailable();
+      const selection = (await tx.query<{ model: string; effort: "default" | "low" | "medium" | "high" | "xhigh" | "max" }>(
+        "SELECT model,effort FROM control_task_model_selections WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3",
+        [tenantId, run.run.projectId, run.run.jobId])).rows[0];
+      const producer = deriveAuthenticatedRunPrincipalV1({ ...run.run,
+        ...(selection ? { modelSelection: { model: selection.model, effort: selection.effort } } : {}) }, attemptWorkerId);
       const publicationRow = (await tx.query<PublicationRow>(`SELECT * FROM control_codex_result_publications
         WHERE tenant_id=$1 AND run_id=$2`, [tenantId, runId])).rows[0];
       if (!publicationRow) unavailable();
@@ -473,7 +488,7 @@ export class CodexCanonicalResultPublisherV1 {
       const readTaskPlan = await readCodexTaskExecutionPlanV3InSession(tx, this.taskPlanKey, tenantId, identity.jobId);
       const taskPlan = readTaskPlan ?? unavailable();
       if (sha256Digest(taskPlan) !== record.taskPlanDigest) unavailable();
-      const expectedPlan = this.reviewPlan(taskPlan, record);
+      const expectedPlan = this.reviewPlan(taskPlan, record, producer);
       const reviewRow = (await tx.query<ReviewRow>(`SELECT * FROM control_native_review_plans
         WHERE tenant_id=$1 AND run_id=$2`, [tenantId, runId])).rows[0];
       let plan: CodexReviewPlanV1;

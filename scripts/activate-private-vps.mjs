@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkPreparedPrivateVpsDatabase } from "./check-private-vps-database.mjs";
@@ -93,5 +94,5 @@ export async function activatePrivateVps(args, runtime = installed) {
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await activatePrivateVps(process.argv.slice(2));

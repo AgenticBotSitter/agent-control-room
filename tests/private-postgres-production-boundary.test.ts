@@ -38,6 +38,7 @@ async function fixture(t: TestContext) {
     { file: "db/migrations/0001_fixture.sql", kind: "migrate" },
     { file: "db/roles/production_roles.sql", kind: "grants" },
     { file: "db/roles/production_table_grants.sql", kind: "grants" },
+    { file: "db/roles/agent_reviewer_roles.sql", kind: "grants" },
     { file: "db/roles/production_provision.sql", kind: "provision" },
   ].map((entry, index) => ({ ...entry, order: index + 1,
     sha256: createHash("sha256").update(`-- ${entry.file}\n`).digest("hex") }));

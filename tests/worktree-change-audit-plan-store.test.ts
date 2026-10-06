@@ -51,7 +51,8 @@ test("only an authenticated controller delivery plus active manager lease can pe
   await provisionRun(f);
   await f.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, key, delivery, receipt(delivery), at(3000)));
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: registration.id, repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const lease = await workspace.prepare({ deliveryDigest: delivery.deliveryDigest, runId: registration.id,
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 3, maximumChangedBytes: 4096 });
   await assert.rejects(f.db.transaction(tx => persistManagedWorktreeChangeAuditPlanV1(tx, key, {
@@ -74,7 +75,8 @@ test("a rejected delivery receipt can never become a persisted worktree audit pl
   await provisionRun(f);
   await f.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, key, delivery, receipt(delivery, "rejected"), at(3000)));
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: registration.id, repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const lease = await workspace.prepare({ deliveryDigest: delivery.deliveryDigest, runId: registration.id,
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 3, maximumChangedBytes: 4096 });
   await assert.rejects(f.db.transaction(tx => persistManagedWorktreeChangeAuditPlanV1(tx, key, {
@@ -86,7 +88,8 @@ test("a rejected delivery receipt can never become a persisted worktree audit pl
 test("a worker cannot register an audit plan from a missing delivery or inactive lease", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
   const delivery = packet(), workspace = manager();
-  const lease = await workspace.prepare({ runId: registration.id, repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const lease = await workspace.prepare({ deliveryDigest: delivery.deliveryDigest, runId: registration.id,
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 3, maximumChangedBytes: 4096 });
   await assert.rejects(f.db.transaction(tx => persistManagedWorktreeChangeAuditPlanV1(tx, key, {
@@ -108,7 +111,8 @@ test("only the evidence role can persist raw audit plans; private web cannot rea
     GRANT control_room_native_evidence TO audit_evidence_test;
     GRANT control_room_private_web TO audit_web_test`);
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: registration.id, repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const lease = await workspace.prepare({ deliveryDigest: delivery.deliveryDigest, runId: registration.id,
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 3, maximumChangedBytes: 4096 });
   await f.db.transaction(async tx => {

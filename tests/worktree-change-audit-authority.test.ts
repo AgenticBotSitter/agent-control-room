@@ -27,33 +27,41 @@ function manager() {
 
 test("only the manager-owned active lease can derive a fixed-policy change-audit plan", async () => {
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: "run:audited", repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const packet = delivery();
+  const lease = await workspace.prepare({ deliveryDigest: packet.deliveryDigest, runId: "run:audited",
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 2, maximumChangedBytes: 2048 });
-  const plan = authority.derive({ delivery: delivery(), lease });
+  const plan = authority.derive({ delivery: packet, lease });
   assert.deepEqual(plan.allowedPaths, ["src/**"]);
   assert.equal(plan.maximumChangedFiles, 2);
   assert.equal(plan.maximumChangedBytes, 2048);
   assert.equal(plan.baseRevision, revision);
 
   await workspace.cleanup(lease);
-  assert.throws(() => authority.derive({ delivery: delivery(), lease }), /not active/);
+  assert.throws(() => authority.derive({ delivery: packet, lease }), /not active/);
 });
 
 test("a structurally valid, self-computed lease cannot substitute for a manager lease", async () => {
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: "run:audited", repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const packet = delivery();
+  const lease = await workspace.prepare({ deliveryDigest: packet.deliveryDigest, runId: "run:audited",
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 2, maximumChangedBytes: 2048 });
   const forged = { ...lease, checkoutPath: "/fixture/work/codex-aaaaaaaaaaaaaaaaaaaaaaaa", inode: "99" };
-  forged.leaseId = sha256Digest({ runId: forged.runId, repositoryRealPath: forged.repositoryRealPath,
-    checkoutPath: forged.checkoutPath, revision: forged.revision, device: forged.device, inode: forged.inode });
-  assert.throws(() => authority.derive({ delivery: delivery(), lease: forged }), /not active/);
+  forged.leaseId = sha256Digest({ deliveryDigest: forged.deliveryDigest, runId: forged.runId,
+    repositoryRealPath: forged.repositoryRealPath, repositoryDevice: forged.repositoryDevice,
+    repositoryInode: forged.repositoryInode, checkoutPath: forged.checkoutPath, revision: forged.revision,
+    device: forged.device, inode: forged.inode });
+  assert.throws(() => authority.derive({ delivery: packet, lease: forged }), /not active/);
 });
 
 test("the authority refuses a packet for another run before it can create a plan", async () => {
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: "run:audited", repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const packet = delivery();
+  const lease = await workspace.prepare({ deliveryDigest: packet.deliveryDigest, runId: "run:audited",
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 2, maximumChangedBytes: 2048 });
   assert.throws(() => authority.derive({ delivery: delivery("run:other"), lease }), /delivery_lease_mismatch/);

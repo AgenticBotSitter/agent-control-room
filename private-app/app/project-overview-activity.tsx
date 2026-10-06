@@ -36,7 +36,7 @@ export function ProjectOverviewActivityView({ state, projectId }: { state: Overv
         <div><dt>Input tokens</dt><dd>{value.usageRollup.inputTokens === null ? "Unknown — not reported by every run" : value.usageRollup.inputTokens.toLocaleString()}</dd></div>
         <div><dt>Output tokens</dt><dd>{value.usageRollup.outputTokens === null ? "Unknown — not reported by every run" : value.usageRollup.outputTokens.toLocaleString()}</dd></div>
         <div><dt>Wall time</dt><dd>{value.usageRollup.wallTimeMs === null ? "Unknown — not recorded for every run" : `${value.usageRollup.wallTimeMs.toLocaleString()} ms`}</dd></div>
-        <div><dt>Known cost</dt><dd>{formatNanoUsdV1(value.usageRollup.knownCostNanoUsd)} across {value.usageRollup.knownCostRuns} run(s)</dd></div>
+        <div><dt>Known cost</dt><dd>{value.usageRollup.knownCostRuns > 0 ? formatNanoUsdV1(value.usageRollup.knownCostNanoUsd) : value.usageRollup.unknownCostRuns > 0 ? "Unknown" : "No token-priced runs"} across {value.usageRollup.knownCostRuns} run(s)</dd></div>
         <div><dt>Subscription</dt><dd>{value.usageRollup.subscriptionRuns} run(s) included in subscription</dd></div>
         <div><dt>Unknown cost</dt><dd>{value.usageRollup.unknownCostRuns} run(s)</dd></div></dl>
       <p className="private-note">{value.priceTable.state === "recorded"

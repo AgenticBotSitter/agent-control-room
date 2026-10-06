@@ -9,6 +9,7 @@ export function IdeaDecisionForm({ detail, pendingChanged }: { detail: IdeaDetai
   const [client] = useState(() => createIdeaDecisionClient());
   const [choice, setChoice] = useState(""), [title, setTitle] = useState(detail.session.title);
   const [summary, setSummary] = useState(detail.synthesis?.nextExperiment ?? "");
+  const [firstTaskTitle, setFirstTaskTitle] = useState(`Test: ${detail.session.title}`);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string>(), [receipt, setReceipt] = useState<IdeaDecisionReceipt>();
   const held = busy || client.hasPending();
   useEffect(() => { pendingChanged?.(held); return () => pendingChanged?.(false); }, [held, pendingChanged]);
@@ -22,7 +23,9 @@ export function IdeaDecisionForm({ detail, pendingChanged }: { detail: IdeaDetai
         intent: { decision: choice, safeReasonCode: "owner_selected", ...(choice === "create_project" ? { project: {
           projectId: `project:idea:${detail.session.sessionDigest.slice(7)}`, title: title.trim(), workspaceName: title.trim(),
           summary: summary.trim(), projectKind: "business_validation", priority: 50,
-        } } : {}) },
+        } } : {}) }, ...(choice === "create_project" ? { promotionTask: {
+          title: firstTaskTitle.trim(), instructions: detail.synthesis.nextExperiment,
+        } } : {}),
       })));
     } catch (reason) { setError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
       ? browserAuthenticationRecovery(client.hasPending())
@@ -41,7 +44,9 @@ export function IdeaDecisionForm({ detail, pendingChanged }: { detail: IdeaDetai
         <option value="save">Save for later</option><option value="reject">Reject this idea</option>
       </select></label>
       {choice === "create_project" ? <><label>Project title<input required maxLength={120} value={title} onChange={event => setTitle(event.target.value)} /></label>
-        <label>Project summary<textarea required maxLength={600} value={summary} onChange={event => setSummary(event.target.value)} /></label></> : null}
+        <label>Project summary<textarea required maxLength={600} value={summary} onChange={event => setSummary(event.target.value)} /></label>
+        <label>Proposed first task<input required maxLength={120} value={firstTaskTitle} onChange={event => setFirstTaskTitle(event.target.value)} /></label>
+        <p>This saves a task proposal only. Assignment, approval and execution remain separate owner actions.</p></> : null}
     </fieldset>
     <p>This records one final choice for this discussion. Creating a project does not approve or start agent work.</p>
     <button type="submit" disabled={busy}>{client.hasPending() ? "Check this exact decision again" : "Save my decision"}</button>

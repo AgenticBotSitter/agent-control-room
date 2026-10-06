@@ -122,13 +122,14 @@ function captureWorker(value: unknown): Readonly<{
 /** Captures the simple, owner-accepted local trust record. It intentionally
  * grants neither delivery nor execution: a caller must still hold a current
  * canonical queue delivery before it may use a listed executable. */
-export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrustedLocalEnablementV1 {
+export function captureOwnerTrustedLocalEnablementV1(value: unknown,
+  options: Readonly<{ allowEmpty?: boolean }> = {}): OwnerTrustedLocalEnablementV1 {
   // A previously captured record carries its derived digest; accept it only when the digest still matches.
   const captured = Object.hasOwn(plain(value), "enablementDigest");
   const record = exact(value, captured ? ["schema", "mode", "nodeId", "workers", "enablementDigest"] : ["schema", "mode", "nodeId", "workers"]);
   const rawWorkers = record.workers;
   if (record.schema !== OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 || record.mode !== "mac-local" || record.nodeId !== "mac-1"
-    || !Array.isArray(rawWorkers) || rawWorkers.length < 1 || rawWorkers.length > 3) refused();
+    || !Array.isArray(rawWorkers) || rawWorkers.length < (options.allowEmpty === true ? 0 : 1) || rawWorkers.length > 3) refused();
   // Keep the explicit assignment: TypeScript cannot retain the array proof
   // from the compound validation above when this parser is a release build
   // entry under strict mode.

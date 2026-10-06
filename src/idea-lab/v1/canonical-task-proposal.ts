@@ -28,6 +28,7 @@ export class IdeaLabCanonicalTaskProposalServiceV1 {
     session: unknown;
     round: number;
     contributions: readonly unknown[];
+    followUp?: string;
   }): Promise<Readonly<{ plans: readonly IdeaLabCanonicalTaskPlanV1[]; receipts: readonly { receipt: TaskReceipt; replayed: boolean }[] }>> {
     const session = parseIdeaLabSessionV1(input.session);
     if (!Number.isInteger(input.round) || input.round < 1 || input.round > session.maxRounds) {
@@ -36,7 +37,7 @@ export class IdeaLabCanonicalTaskProposalServiceV1 {
     const ownerPrompt = buildIdeaLabOwnerPromptV1(session);
     const plans = session.participants.map((participant) => buildIdeaLabCanonicalTaskPlanV1({ session,
       projectId: this.scope.projectId, participantId: participant.participantId, round: input.round,
-      ownerPrompt, contributions: input.contributions,
+      ownerPrompt, contributions: input.contributions, followUp: input.followUp,
     })).sort((left, right) => left.taskKey.localeCompare(right.taskKey));
     await this.links.bindSession(plans[0]!);
     // Check every turn before proposing the first one. A changed later-round

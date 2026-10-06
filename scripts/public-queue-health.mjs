@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Read-only queue health for the public Agent Control Room work queue.
 //
 // Reports whether useful work is flowing: substantial Ready packages, active workers,
@@ -19,7 +20,6 @@
 //
 // Advisory means advisory: a configured identity's record is read and reported, never
 // treated as authoritative, and it grants no authority to anything else.
-import { pathToFileURL } from "node:url";
 import { parseActionMarker } from "./public-worker-inbox.mjs";
 import { parseHandoff } from "./review-handoff-controller.mjs";
 import { parseClaimPacket, verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
@@ -673,5 +673,5 @@ async function main() {
   // always distinguish a completed read from a failed one.
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(`public-queue-health: ${sanitize(error.message)}`); process.exitCode = 1; });

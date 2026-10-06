@@ -1,0 +1,226 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "try { return await joinLocked(options); }",
+    "replace": "try { await releaseRotationLock(release); return await joinLocked(options); }",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-05 direct joins hold the profile lock through credential publication"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "current?.workerId === null && current.clientNonce === clientNonce",
+    "replace": "current.clientNonce === clientNonce",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-05 refusal cleanup cannot erase a joined credential"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "current?.workerId === null && current.clientNonce === clientNonce",
+    "replace": "current?.workerId === null",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-05 refusal cleanup checks its own pending nonce"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "\"--config\", paths.configPath,\n    \"--harnesses\"",
+    "replace": "\"--harnesses\"",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-01 the service retains its exact installed configuration path"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!absolutePath(path)) throw new Error(\"Connector service paths must be absolute paths without control characters.\");\n  }",
+    "replace": "if (false) throw new Error(\"Connector service paths must be absolute paths without control characters.\");\n  }",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-03 environment-derived paths refuse controls before installation"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!absolutePath(path)) throw new Error(\"Connector service paths must be absolute paths without control characters.\");\n  const args",
+    "replace": "if (false) throw new Error(\"Connector service paths must be absolute paths without control characters.\");\n  const args",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-03 the serializer independently refuses control-bearing paths"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": " || /[\\u0000-\\u001f\\u007f]/u.test(arg)",
+    "replace": "",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A2-05 process arguments reject unsupported controls including NUL"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!plainObject(result) || typeof result.workerKind",
+    "replace": "if (false || typeof result.workerKind",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed heartbeat object is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "typeof result.workerKind !== \"string\" || !result.workerKind",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed heartbeat worker kind is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "typeof result.displayName !== \"string\"",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed heartbeat display name is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "!plainObject(result.workingAgreement)",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed heartbeat agreement object is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "typeof result.claimId !== \"string\" || !/^fleet-claim:[a-f0-9]{32}$/u.test(result.claimId)",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed claim identity is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "typeof result.jobId !== \"string\" || !result.jobId",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed claim job is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "typeof result.title !== \"string\"",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed claim title is refused at the client boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "typeof result.instructions !== \"string\"",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 malformed claim instructions is refused at the client boundary"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "if (versions.length !== 1 || versions[0][1] !== manifest.version) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node --import tsx --test tests/fleet-connector-version.test.mjs",
+    "why": "A4-04 signer binds the deterministic bundled runtime version to the label without executing output"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "report?.connectorVersion === expectedVersion",
+    "replace": "true",
+    "test": "node --import tsx --test tests/fleet-connector-version.test.mjs",
+    "why": "A4-04 updater compares the actual health report version with the signed label"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "code === 0 && !overflow &&",
+    "replace": "code === 0 &&",
+    "test": "node --import tsx --test tests/fleet-connector-version.test.mjs",
+    "why": "A4-04 oversized health reports are refused"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "print({ connectorVersion: CONNECTOR_VERSION }); return 0;",
+    "replace": "return 0;",
+    "test": "node --import tsx --test tests/fleet-connector-version.test.mjs",
+    "why": "A4-04 runtime health reports its executable version"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "const platform = typeof input.platform === \"string\" && Object.hasOwn(platforms, input.platform)\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const architecture",
+    "replace": "const platform = Object.hasOwn(platforms, input.platform)\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const architecture",
+    "test": "node --import tsx --test tests/fleet-parsing-robustness.test.mjs",
+    "why": "A2-08 enrollment platform validates type before a transaction"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "const platform = typeof input.platform === \"string\" && Object.hasOwn(platforms, input.platform)\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const architecture",
+    "replace": "const platform = typeof input.platform === \"string\" && Boolean(platforms[input.platform as keyof typeof platforms])\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const architecture",
+    "test": "node --import tsx --test tests/fleet-parsing-robustness.test.mjs",
+    "why": "A2-08 enrollment platform validates own property before a transaction"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "const platform = typeof input.platform === \"string\" && Object.hasOwn(platforms, input.platform)\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const adapterCapabilities",
+    "replace": "const platform = Object.hasOwn(platforms, input.platform)\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const adapterCapabilities",
+    "test": "node --import tsx --test tests/fleet-parsing-robustness.test.mjs",
+    "why": "A2-08 heartbeat platform validates type before a transaction"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "const platform = typeof input.platform === \"string\" && Object.hasOwn(platforms, input.platform)\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const adapterCapabilities",
+    "replace": "const platform = typeof input.platform === \"string\" && Boolean(platforms[input.platform as keyof typeof platforms])\n      ? platforms[input.platform as keyof typeof platforms] : fleetFail(\"invalid\");\n    const adapterCapabilities",
+    "test": "node --import tsx --test tests/fleet-parsing-robustness.test.mjs",
+    "why": "A2-08 heartbeat platform validates own property before a transaction"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if ((header(request, \"content-type\") ?? \"\").split(\";\", 1)[0]!.trim().toLowerCase() !== \"application/json\") fleetFail(\"invalid\");",
+    "replace": "if (!(header(request, \"content-type\") ?? \"\").startsWith(\"application/json\")) fleetFail(\"invalid\");",
+    "test": "node --import tsx --test tests/fleet-parsing-robustness.test.mjs",
+    "why": "A2-07 the normalized JSON media type must match exactly"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "new TextDecoder(\"utf-8\", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length))",
+    "replace": "Buffer.concat(chunks, length).toString(\"utf8\")",
+    "test": "node --import tsx --test tests/fleet-parsing-robustness.test.mjs",
+    "why": "A2-07 invalid UTF8 is refused rather than repaired"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (finalRefusal) {\n      await removePendingJoin(configPath, clientNonce);",
+    "replace": "    if (finalRefusal) {\n      void 0;",
+    "test": "node --test --test-name-pattern \"definitive enrollment refusal\" tests/fleet-connector-install.test.mjs",
+    "why": "a final enrollment refusal removes the pending secret so a fresh code can be used"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (error?.preflightFailure === true && pending === undefined) await removePendingJoin(configPath, clientNonce);",
+    "replace": "    if (error?.preflightFailure === true) await removePendingJoin(configPath, clientNonce);",
+    "test": "node --test --test-name-pattern \"preflight retries retain\" tests/fleet-connector-install.test.mjs",
+    "why": "a preflight refusal during a retry retains the original pending secret and nonce because the prior enrollment may have committed"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  try { return new TextDecoder(\"utf-8\", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length)); }\n  catch { return fleetFail(\"invalid\"); }",
+    "replace": "    if (false) return fleetFail(\"invalid\");\n    throw error;\n  }\n  try { return new TextDecoder(\"utf-8\", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length)); }\n  catch { return fleetFail(\"invalid\"); }",
+    "test": "node --import tsx --test --test-name-pattern \"stopped halfway\" tests/fleet-connector.test.ts",
+    "why": "an aborted enrollment body is a fixed invalid refusal rather than an unexpected logged error"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "localWorkingAgreement((await client.heartbeat()).workingAgreement); print({ connectorVersion: CONNECTOR_VERSION });",
+    "replace": "await client.heartbeat(); print({ connectorVersion: CONNECTOR_VERSION });",
+    "test": "node --import tsx --test tests/fleet-connector-robustness.test.mjs",
+    "why": "A4-02 worker and health refuse the same malformed agreement"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (signal?.aborted) throw toolError(\"tool_adapter_aborted\", \"The tool run was stopped before it began.\");",
+    "replace": "      if (false) throw toolError(\"tool_adapter_aborted\", \"The tool run was stopped before it began.\");",
+    "test": "node --test --test-name-pattern=\"tool cancellation during staging\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Cancellation during staging refuses before spawning an inert tool"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (signal?.aborted) stop();",
+    "replace": "      if (false) stop();",
+    "test": "node --test --test-name-pattern=\"tool cancellation during staging\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Cancellation during spawn is rechecked after the abort listener attaches"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "output.length + chunk.length > 4096",
+    "replace": "false",
+    "test": "node --import tsx --test tests/fleet-connector-version.test.mjs",
+    "why": "A4-04 candidate health bounds output even when an exited child cannot be killed"
+  }
+]

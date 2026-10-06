@@ -1,6 +1,6 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { CompletionGateStoreV1 } from "../../src/completion-gate/v1/store.ts";
 import { sha256Digest } from "../../src/security/index.ts";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres.ts";
@@ -37,7 +37,11 @@ export async function completeMacLocalFirstOwnerV1(protectedRoot, receiptPath, r
   if (JSON.stringify(manifest) !== JSON.stringify(expectedManifest)) refuse();
 
   // Key pinning must be established before the independent rollback checkpoint.
-  await (runtime.pinNodeKeys ?? pinMacLocalNodeKeysV1)(protectedRoot, receiptPath, { receipt });
+  // The completion boundary owns the real pin command. Tests may isolate only
+  // that command's separate database port; the validated receipt cannot be
+  // replaced by the nested runtime.
+  await (runtime.pinNodeKeys ?? pinMacLocalNodeKeysV1)(protectedRoot, receiptPath,
+    { ...(runtime.pinNodeKeysRuntime ?? {}), receipt });
   const roles = await (runtime.loadRoles ?? loadMacLocalDatabaseRolesFromRootV1)(protectedRoot);
   const db = (runtime.openDatabase ?? createPrivatePostgresDatabase)(roles.coordinator);
   let checkpoints;
@@ -51,7 +55,7 @@ export async function completeMacLocalFirstOwnerV1(protectedRoot, receiptPath, r
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length !== 2) {
     process.stderr.write("Usage: pnpm mac:complete-first-owner <protected-root> <receipt-file>\n");

@@ -13,8 +13,15 @@ test('cancelled result reads refuse acquisition and late responses', async () =>
     calls++;
     return new Promise(resolve => { release = resolve; });
   });
-  await assert.rejects(client.results('project:test', 'job:test', AbortSignal.abort()), { code: 'unavailable' });
-  await assert.rejects(client.resultContent('project:test', 'job:test', 'artifact:test', AbortSignal.abort()), { code: 'unavailable' });
+  // A cancelled read rethrows the caller's abort reason rather than a typed
+  // unavailable refusal: the polled-read scheduler relies on that AbortError to
+  // treat a retired view as "not a failure" (see isPolledReadAbort). The content
+  // read is given a real result descriptor, so it reaches the abort check rather
+  // than refusing a bare artifact id first.
+  const cancelledArtifact = { artifactId: 'artifact:test', fileAccess: {
+    previewHref: '/api/v1/projects/project%3Atest/tasks/job%3Atest/files/artifact%3Atest?disposition=preview&token=test-token' } };
+  await assert.rejects(client.results('project:test', 'job:test', AbortSignal.abort()), { name: 'AbortError' });
+  await assert.rejects(client.resultContent('project:test', 'job:test', cancelledArtifact, AbortSignal.abort()), { name: 'AbortError' });
   assert.equal(calls, 0);
   const abort = new AbortController();
   const reading = client.results('project:test', 'job:test', abort.signal);
@@ -22,7 +29,7 @@ test('cancelled result reads refuse acquisition and late responses', async () =>
   release(Response.json({ projectId: 'project:test', jobId: 'job:test', observedAt: '2026-09-08T12:00:00.000Z',
     resultSource: 'configured', reviewSource: 'configured', items: [], reviews: [], canReadContent: true,
     additionalResultsOmitted: false, additionalTargetsOmitted: false, reviewCommands: 'not_connected' }));
-  await assert.rejects(reading, { code: 'unavailable' });
+  await assert.rejects(reading, { name: 'AbortError' });
   assert.equal(calls, 1);
 });
 

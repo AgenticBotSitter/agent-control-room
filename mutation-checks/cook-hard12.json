@@ -1,0 +1,205 @@
+[
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "PRE_DRAIN_V1.has(run.state) && EFFECT_FAILURES_V1.get(error) !== \"drain\"",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='SELFUPD-02' tests/updater-self-update-safety.test.mjs",
+    "why": "failures before drain refuse without a physical rollback"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "PRE_DRAIN_V1.has(run.state) && EFFECT_FAILURES_V1.get(error) !== \"drain\"",
+    "replace": "PRE_DRAIN_V1.has(run.state)",
+    "test": "node --test --test-name-pattern='every failed update step' tests/updater-skeleton.test.mjs",
+    "why": "a failed drain still restores a usable service"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "  async #record(run, state, detail = {}, options = {}) {\n    // \u00a711's order, unchanged: journal the intent, take the transition (which\n    // writes the database mirror in the SAME statement), journal the done line.\n    // Read the file label once for the matching intent/done lines. The database\n    // derives its own event ordinal; failed file intents have no database event.\n    // The production transition replaces detail; retain the pinned effect inputs.\n    detail = { ...run.detail, ...detail };\n",
+    "replace": "  async #record(run, state, detail = {}, options = {}) {\n    // \u00a711's order, unchanged: journal the intent, take the transition (which\n    // writes the database mirror in the SAME statement), journal the done line.\n    // Read the file label once for the matching intent/done lines. The database\n    // derives its own event ordinal; failed file intents have no database event.\n    // The production transition replaces detail; retain the pinned effect inputs.\n    detail = { ...detail };\n",
+    "test": "node --test --test-name-pattern='replacement transitions' tests/updater-self-update-safety.test.mjs",
+    "why": "pinned actuator metadata survives #record replacement transitions"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "  async #effect(run, name, nextState, effect, detail = {}, options = {}) {\n    // The production transition replaces detail; retain the pinned effect inputs.\n    detail = { ...run.detail, ...detail };\n",
+    "replace": "  async #effect(run, name, nextState, effect, detail = {}, options = {}) {\n    // The production transition replaces detail; retain the pinned effect inputs.\n    detail = { ...detail };\n",
+    "test": "node --test --test-name-pattern='replacement transitions' tests/updater-self-update-safety.test.mjs",
+    "why": "pinned actuator metadata survives #effect replacement transitions"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "\"uncertain\", { ...run.detail, reason });",
+    "replace": "\"uncertain\", { reason });",
+    "test": "node --test --test-name-pattern='journal uncertainty' tests/updater-self-update-safety.test.mjs",
+    "why": "journal uncertainty preserves the inputs required by owner recovery"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (run.state === \"code_restored\") return {",
+    "replace": "if (false) return {",
+    "test": "node --test --test-name-pattern='kill after code_restored' tests/updater-self-update-safety.test.mjs",
+    "why": "a durable completed rollback settles without replaying an effect"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "|| samePairV1(candidate, plan.to)) continue;",
+    "replace": "|| false) continue;",
+    "test": "node --test --test-name-pattern='replay keeps' tests/updater-self-update-safety.test.mjs",
+    "why": "the failed candidate is never used as its own rollback destination"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (!samePairV1(rollbackFrom, candidate)) await switchPairLinksV1",
+    "replace": "if (true) await switchPairLinksV1",
+    "test": "node --test --test-name-pattern='an unhealthy restored service' tests/updater-self-update-safety.test.mjs",
+    "why": "an already restored pair must not start a conflicting link transaction"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (restoredIndex > 0) pairs.unshift(...pairs.splice(restoredIndex, 1));",
+    "replace": "if (false) pairs.unshift(...pairs.splice(restoredIndex, 1));",
+    "test": "node --test --test-name-pattern='replay keeps' tests/updater-self-update-safety.test.mjs",
+    "why": "a healthy fallback remains the first recovery destination on replay"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "      await onProgress?.(run);",
+    "replace": "",
+    "test": "node --test --test-name-pattern='public progress' tests/updater-self-update-safety.test.mjs",
+    "why": "slow effects publish progress before the runner waits"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": ": status === \"refused\" ? \"refused\"",
+    "replace": ": status === \"refused\" ? \"idle\"",
+    "test": "node --test --test-name-pattern='public progress' tests/updater-self-update-safety.test.mjs",
+    "why": "a failure before switching is a distinct public outcome"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "\"stopped\", \"needs_attention\", \"refused\"]",
+    "replace": "\"stopped\", \"needs_attention\"]",
+    "test": "node --test --test-name-pattern='public progress' tests/updater-self-update-safety.test.mjs",
+    "why": "the public status allowlist accepts the failed-before-switch outcome"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "|| ![\"Off\", \"On\"].includes(String(value.selfUpdate))) return false;",
+    "replace": "|| value.selfUpdate !== \"Off\") return false;",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "valid On evidence must produce distinct owner states"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "|| ![\"Off\", \"On\"].includes(String(value.selfUpdate))) return false;",
+    "replace": "|| false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "invalid self-update flags stay conservative attention displays"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "if (value.selfUpdate === \"Off\") return",
+    "replace": "if (value.selfUpdate === \"On\") return",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Off and On display projections follow their own evidence"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "value.needsYou || ATTENTION_STATES_V1.has(value.state) ? \"needs_owner\"",
+    "replace": "false ? \"needs_owner\"",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home distinguishes needs_owner"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "value.state === \"refused\" ? \"failed_before_switch\"",
+    "replace": "false ? \"failed_before_switch\"",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home distinguishes failed_before_switch"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "value.state === \"rolled_back\" ? \"rolled_back\"",
+    "replace": "false ? \"rolled_back\"",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home distinguishes rolled_back"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "value.state === \"idle\" ? \"healthy\"",
+    "replace": "false ? \"healthy\"",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home distinguishes healthy"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "[\"paused\", \"stopped\"].includes(value.state) ? \"needs_owner\"",
+    "replace": "false ? \"needs_owner\"",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home distinguishes needs_owner"
+  },
+  {
+    "file": "src/web/v1/updater-home-status-browser.ts",
+    "find": "[\"off\", \"attention\", \"healthy\", \"in_progress\", \"failed_before_switch\", \"rolled_back\", \"needs_owner\"].includes",
+    "replace": "[\"off\", \"attention\"].includes",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "the browser accepts every reduced updater display state"
+  },
+  {
+    "file": "tests/release-signing-e2e.test.ts",
+    "find": "  t.after(async () => { if (gateway.server.listening) await stopGateway(gateway.server); });",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern=SELFUPD tests/release-signing-e2e.test.ts",
+    "why": "every gateway is closed when the release-signing E2E fails"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "return Math.max(databaseNext, journalNext ?? 1);",
+    "replace": "return databaseNext;",
+    "test": "node --test --test-name-pattern='every failed update' tests/updater-skeleton.test.mjs",
+    "why": "failed effects must consume a file ordinal"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (error && (typeof error === \"object\" || typeof error === \"function\")) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern=\"every failed update step\" tests/updater-skeleton.test.mjs",
+    "why": "primitive effect failures must be wrapped before failure tagging"
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "if (read.state === \"not_configured\" && ![\"off\", \"attention\", \"needs_owner\"].includes(legacyState)) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home renders the distinct reduced updater state in plain words"
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "if (read.state === \"not_configured\" && legacyState === \"needs_owner\")",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='SELFUPD-04' tests/updater-home-status.test.tsx",
+    "why": "Home renders the distinct reduced updater state in plain words"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "async runOnce({ onProgress } = {}) {\n    if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "replace": "async runOnce({ onProgress } = {}) {\n    if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "test": "node --test --test-name-pattern='named H2 scenarios' tests/updater-rehearsal.test.mjs",
+    "why": "P6 must send twenty calls through one runner and detect removal of its in-process exclusion guard"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (samePairV1(rollbackFrom, candidate) && await this.healthProbe(run, candidate)) return candidate;",
+    "replace": "if (false) return candidate;",
+    "test": "node --test --test-name-pattern='healthy replay never' tests/updater-self-update-safety.test.mjs",
+    "why": "healthy rollback replay is a physical no-op even when a redundant restart would fail"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (isNoSpaceV1(error) || verifiedPair) throw error;",
+    "replace": "if (isNoSpaceV1(error)) throw error;",
+    "test": "node --test --test-name-pattern='operational recovery failure' tests/updater-self-update-safety.test.mjs",
+    "why": "a service or link failure cannot cause another downgrade after artifact verification"
+  }
+]

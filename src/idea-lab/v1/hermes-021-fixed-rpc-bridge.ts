@@ -1,3 +1,4 @@
+import { printableIdeaTextV1 } from "./schemas";
 import { z } from "zod";
 import { sha256Digest } from "../../security";
 import {
@@ -194,7 +195,7 @@ const panelResultSchema = z.object({
   safeOpinion: ideaTextSchemaV1,
   opportunityCode: ideaCodeSchemaV1,
   primaryRiskCode: ideaCodeSchemaV1,
-  suggestedExperiment: z.string().min(1).max(500),
+  suggestedExperiment: z.string().min(1).max(500).refine(printableIdeaTextV1),
   confidencePercent: z.number().int().min(0).max(100),
 }).strict();
 
@@ -428,59 +429,75 @@ export class IdeaLabHermes021FixedRpcBridgeV1 implements IdeaLabHermes021NativeB
   }
 
   async #callOpen(input: ExecuteInput): Promise<unknown> {
-    this.#assertExecutionActive();
-    const handoff = createHostResultCollectorV1();
-    await this.#open({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
-      connectionIdentityDigest: sha256Digest({ contractVersion: IDEA_LAB_HERMES_021_CONNECTION_IDENTITY_V1,
-        connectionId: input.connectionId }), transport: input.transport,
-      connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
-      permitDigest: input.permitDigest, profileIdentityDigest: input.profileIdentityDigest,
-      conversationIdentityDigest: input.conversationIdentityDigest,
-      sourceManifestDigest: IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1,
-      signal: input.signal }, handoff.collector);
-    const value = handoff.take();
-    this.#assertExecutionActive();
-    return value;
+    try {
+      this.#assertExecutionActive();
+      const handoff = createHostResultCollectorV1();
+      await this.#open({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
+        connectionIdentityDigest: sha256Digest({ contractVersion: IDEA_LAB_HERMES_021_CONNECTION_IDENTITY_V1,
+          connectionId: input.connectionId }), transport: input.transport,
+        connectorRouteDigest: input.connectorRouteDigest, attemptId: input.attemptId,
+        permitDigest: input.permitDigest, profileIdentityDigest: input.profileIdentityDigest,
+        conversationIdentityDigest: input.conversationIdentityDigest,
+        sourceManifestDigest: IDEA_LAB_HERMES_021_FIXED_RPC_SOURCE_MANIFEST_DIGEST_V1,
+        signal: input.signal }, handoff.collector);
+      const value = handoff.take();
+      this.#assertExecutionActive();
+      return value;
+    } catch {
+      throw new IdeaLabErrorV1("integrity_failed");
+    }
   }
 
   async #callOperation(input: ExecuteInput, operation: IdeaLabHermes021FixedOperationV1,
     parameters: Record<string, unknown>): Promise<unknown> {
-    const binding = this.#binding;
-    this.#assertExecutionActive();
-    if (!binding?.routeLeaseDigest) throw new IdeaLabErrorV1("integrity_failed");
-    const handoff = createHostResultCollectorV1();
-    if (operation === "session.create") this.#sessionCleanupRequired = true;
-    await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
-      connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
-      attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,
-      parameters: nativeObjectFreezeV1({ ...parameters }), signal: input.signal }, handoff.collector);
-    const value = handoff.take();
-    this.#assertExecutionActive();
-    return value;
+    try {
+      const binding = this.#binding;
+      this.#assertExecutionActive();
+      if (!binding?.routeLeaseDigest) throw new IdeaLabErrorV1("integrity_failed");
+      const handoff = createHostResultCollectorV1();
+      if (operation === "session.create") this.#sessionCleanupRequired = true;
+      await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
+        connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
+        attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,
+        parameters: nativeObjectFreezeV1({ ...parameters }), signal: input.signal }, handoff.collector);
+      const value = handoff.take();
+      this.#assertExecutionActive();
+      return value;
+    } catch {
+      throw new IdeaLabErrorV1("integrity_failed");
+    }
   }
 
   async #callCleanupOperation(input: CleanupInput,
     operation: "session.interrupt" | "session.status" | "session.close"): Promise<unknown> {
-    const binding = this.#binding;
-    if (!binding?.routeLeaseDigest) throw new IdeaLabErrorV1("integrity_failed");
-    const handoff = createHostResultCollectorV1();
-    await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
-      connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
-      attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,
-      parameters: nativeObjectFreezeV1({}), signal: input.signal }, handoff.collector);
-    return handoff.take();
+    try {
+      const binding = this.#binding;
+      if (!binding?.routeLeaseDigest) throw new IdeaLabErrorV1("integrity_failed");
+      const handoff = createHostResultCollectorV1();
+      await this.#request({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
+        connectorRouteDigest: binding.connectorRouteDigest, routeLeaseDigest: binding.routeLeaseDigest,
+        attemptId: binding.attemptId, permitDigest: binding.permitDigest, operation,
+        parameters: nativeObjectFreezeV1({}), signal: input.signal }, handoff.collector);
+      return handoff.take();
+    } catch {
+      throw new IdeaLabErrorV1("integrity_failed");
+    }
   }
 
   async #callClose(input: CleanupInput): Promise<unknown> {
-    const binding = this.#binding;
-    if (!binding) throw new IdeaLabErrorV1("integrity_failed");
-    const handoff = createHostResultCollectorV1();
-    await this.#close({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
-      connectorRouteDigest: binding.connectorRouteDigest,
-      ...(binding.routeLeaseDigest ? { routeLeaseDigest: binding.routeLeaseDigest } : {}),
-      attemptId: binding.attemptId, permitDigest: binding.permitDigest,
-      signal: input.signal }, handoff.collector);
-    return handoff.take();
+    try {
+      const binding = this.#binding;
+      if (!binding) throw new IdeaLabErrorV1("integrity_failed");
+      const handoff = createHostResultCollectorV1();
+      await this.#close({ contractVersion: IDEA_LAB_HERMES_021_FIXED_RPC_BRIDGE_V1,
+        connectorRouteDigest: binding.connectorRouteDigest,
+        ...(binding.routeLeaseDigest ? { routeLeaseDigest: binding.routeLeaseDigest } : {}),
+        attemptId: binding.attemptId, permitDigest: binding.permitDigest,
+        signal: input.signal }, handoff.collector);
+      return handoff.take();
+    } catch {
+      throw new IdeaLabErrorV1("integrity_failed");
+    }
   }
 
   #assertExecutionActive(): void {

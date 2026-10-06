@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { InstallationPlanFilesystemJournalV1 } from "../src/installer/v1/installation-plan-journal";
@@ -187,7 +188,7 @@ test("every release-bound sidecar identity field and the fixed staged path must 
 });
 
 test("journal-root replacement is never adopted after manifest custody", async (t: TestContext) => {
-  const parent = await mkdtemp(join(process.cwd(), ".journal-composer-root-"));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), "journal-composer-root-")));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const root = join(parent, "journal"), original = join(parent, "journal-original");
   await mkdir(root, { mode: 0o700 }); await chmod(root, 0o700);

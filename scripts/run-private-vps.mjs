@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { lstat, realpath } from 'node:fs/promises';
@@ -175,7 +176,7 @@ export async function startWebsiteOnly(prepared, { bootstrap, ideaAuthoring, ser
 }
 
 // Import is inert. A service manager owns final termination if cleanup cannot finish.
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { process.exitCode = await runPrivateVps(process.argv.slice(2)); }
   catch { console.error('Control Room launcher refused setup.'); process.exitCode = 1; }
 }

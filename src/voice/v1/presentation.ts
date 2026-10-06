@@ -9,7 +9,7 @@ import type { VoiceInputStateV1, VoiceReadStateV1 } from "./types";
 export function voiceInputStateTextV1(state: VoiceInputStateV1): string {
   switch (state) {
     case "idle": return "Voice input is off. Nothing is listening.";
-    case "listening": return "Listening. Press Stop or Cancel, then confirm before any text is used.";
+    case "listening": return "Listening. Press Stop, then review and Confirm before any text is used. Cancel discards the words.";
     case "confirming": return "Heard something. Review the words below, then Confirm to use them or Cancel to discard.";
     case "denied": return "Microphone permission was denied. Voice input stays off; type instead.";
     case "unsupported": return "Voice input is not supported in this browser. Type instead.";

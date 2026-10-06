@@ -1,0 +1,135 @@
+[
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "  \"control-room-updater.passkey_cooling_off\": \"A new passkey was added to this Mac. If this wasn't you, revoke it in Control Room.\",\n",
+    "replace": "",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='N05: the cooling-off notice is sent with its own authorized body, not refused as delivered' tests/updater-push-claims-postgres.test.ts",
+    "why": "N05-no-template: N05: the cooling-off notice is sent with its own authorized body, not refused as delivered"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "          const body = typeof primary.body === \"string\" && primary.body.length > 0\n            ? primary.body : TEMPLATES[template];",
+    "replace": "          const body = TEMPLATES[template];",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='N05: the cooling-off notice is sent with its own authorized body, not refused as delivered' tests/updater-push-claims-postgres.test.ts",
+    "why": "N05-row-body-ignored: N05: the cooling-off notice is sent with its own authorized body, not refused as delivered"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "        AND (not_before IS NULL OR not_before <= pg_catalog.now())\n      ORDER BY queued_at,id LIMIT $1`, [limit])).rows;",
+    "replace": "      ORDER BY queued_at,id LIMIT $1`, [limit])).rows;",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U06: a scheduled notice is invisible to selection and unclaimable until its due time' tests/updater-push-claims-postgres.test.ts",
+    "why": "U06-pending-ignores-not-before: U06: a scheduled notice is invisible to selection and unclaimable until its due time"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_push_claims.sql",
+    "find": "     AND (q.not_before IS NULL OR q.not_before <= pg_catalog.now());\n  -- Zero rows matched",
+    "replace": "     ;\n  -- Zero rows matched",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U06: a scheduled notice is invisible to selection and unclaimable until its due time' tests/updater-push-claims-postgres.test.ts",
+    "why": "U06-begin-ignores-not-before: U06: a scheduled notice is invisible to selection and unclaimable until its due time"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_push_claims.sql",
+    "find": "   WHERE q.id = p_id\n     AND q.sent_at IS NULL\n     AND q.claim_token = p_claim_token;\n  RETURN FOUND;\nEND;\n$$;\nREVOKE ALL ON FUNCTION updater.settle_push_claim",
+    "replace": "   WHERE q.id = p_id\n     AND q.sent_at IS NULL;\n  RETURN FOUND;\nEND;\n$$;\nREVOKE ALL ON FUNCTION updater.settle_push_claim",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U02: twenty concurrent dispatchers produce one claim, and a settle needs the token that took it' tests/updater-push-claims-postgres.test.ts",
+    "why": "U02-no-fence-on-settle: U02: twenty concurrent dispatchers produce one claim, and a settle needs the token that took it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_push_claims.sql",
+    "find": "     AND OLD.claim_expires_at > pg_catalog.now() THEN\n    RAISE EXCEPTION 'updater push live claim cannot be stolen'",
+    "replace": "     AND false THEN\n    RAISE EXCEPTION 'updater push live claim cannot be stolen'",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U02: twenty concurrent dispatchers produce one claim, and a settle needs the token that took it' tests/updater-push-claims-postgres.test.ts",
+    "why": "U02-live-claim-stealable: U02: twenty concurrent dispatchers produce one claim, and a settle needs the token that took it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_push_claims.sql",
+    "find": "    IF lost.attempts < 10 THEN",
+    "replace": "    IF true THEN",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U03: a claim abandoned on the last attempt ends in a visible terminal outcome, never reserved forever' tests/updater-push-claims-postgres.test.ts",
+    "why": "U03-no-terminal-outcome: U03: a claim abandoned on the last attempt ends in a visible terminal outcome, never reserved forever"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_push_claims.sql",
+    "find": "             last_error_code = NULL\n       WHERE q.id = lost.id AND q.claim_token IS NOT NULL AND q.attempts < 10;",
+    "replace": "             last_error_code = last_error_code\n       WHERE q.id = lost.id AND q.claim_token IS NOT NULL AND q.attempts < 10;",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U07: a claim abandoned by a dead process is recovered and its row is sent' tests/updater-push-claims-postgres.test.ts",
+    "why": "U07-recovery-keeps-reservation-code: U07: a claim abandoned by a dead process is recovered and its row is sent"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "      if (typeof this.store.recoverExpiredClaims === \"function\")\n        await this.store.recoverExpiredClaims(64);",
+    "replace": "      // mutation: recovery sweep removed",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U07: a claim abandoned by a dead process is recovered and its row is sent' tests/updater-push-claims-postgres.test.ts",
+    "why": "U07-no-recovery-sweep: U07: a claim abandoned by a dead process is recovered and its row is sent"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "  IF OLD.acknowledged_at IS NOT NULL AND NEW.acknowledged_at IS NULL\n     AND NEW.last_observed_at <= OLD.last_observed_at THEN\n    RAISE EXCEPTION 'updater owner review acknowledgement is final'",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater owner review acknowledgement is final'",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='N06: an update error stays outstanding until the owner acknowledges it, and re-opens when it happens again' tests/updater-push-claims-postgres.test.ts",
+    "why": "N06-ack-final: N06: an update error stays outstanding until the owner acknowledges it, and re-opens when it happens again"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "    acknowledged_at = NULL, acknowledged_by = NULL;",
+    "replace": "    acknowledged_at = owner_review.acknowledged_at, acknowledged_by = owner_review.acknowledged_by;",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='N06: an update error stays outstanding until the owner acknowledges it, and re-opens when it happens again' tests/updater-push-claims-postgres.test.ts",
+    "why": "N06-reopen-clears-ack: N06: an update error stays outstanding until the owner acknowledges it, and re-opens when it happens again"
+  },
+  {
+    "file": "src/supervisor/v1/reconciler.ts",
+    "find": "      await this.attentionFor(row.worker_id,lost,at);",
+    "replace": "      // mutation: escalation removed",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it' tests/supervisor-offline-attention-postgres.test.ts",
+    "why": "U05-no-escalation: U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it"
+  },
+  {
+    "file": "db/migrations/0250_supervisor_offline_attention.sql",
+    "find": "    OR NOT EXISTS (SELECT 1 FROM public.control_supervisor_agent_health h\n         WHERE h.tenant_id = NEW.tenant_id AND h.worker_id = worker\n           AND h.state = 'suspect' AND h.safe_reason_code = 'heartbeat_lost') THEN",
+    "replace": "    OR false THEN",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 --test-timeout=300000 tests/supervisor-offline-attention-postgres.test.ts",
+    "why": "U05-forged-item-allowed: U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it"
+  },
+  {
+    "file": "db/migrations/0250_supervisor_offline_attention.sql",
+    "find": "    OR NEW.id <> 'attention:supervisor-agent:' || substring(pg_catalog.md5(\n         NEW.tenant_id || '/' || worker) from 1 for 32)",
+    "replace": "    OR false",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 --test-timeout=300000 tests/supervisor-offline-attention-postgres.test.ts",
+    "why": "U05-deterministic-id-dropped: U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it"
+  },
+  {
+    "file": "src/supervisor/v1/reconciler.ts",
+    "find": "        WHERE tenant_id=$1 AND id=$2 AND state='open'\n        RETURNING id`,",
+    "replace": "        WHERE tenant_id=$1 AND id=$2 AND state='open'`,",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it' tests/supervisor-offline-attention-postgres.test.ts",
+    "why": "U05-resolve-without-returning: U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it"
+  },
+  {
+    "file": "src/supervisor/v1/reconciler.ts",
+    "find": "    const reopened = await this.db.query(`UPDATE control_action_inbox",
+    "replace": "    const reopened = await this.db.query(`SELECT 1 WHERE false; UPDATE control_action_inbox",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it' tests/supervisor-offline-attention-postgres.test.ts",
+    "why": "U05-reopen-removed: U05: a lost heartbeat opens exactly one owner attention item, and recovery resolves it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_push_claims.sql",
+    "find": "  IF OLD.claim_token IS NOT NULL AND NEW.claim_token IS NULL\n     AND NEW.claim_expires_at IS NOT NULL THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U02: twenty concurrent dispatchers produce one claim, and a settle needs the token that took it' tests/updater-push-claims-postgres.test.ts",
+    "why": "U02-settle-clears-claim-without-token: U02: twenty concurrent dispatchers produce one claim, and a settle needs the token that took it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "  IF NEW.review_kind <> OLD.review_kind OR NEW.opened_at <> OLD.opened_at THEN\n    RAISE EXCEPTION 'updater owner review identity is immutable'",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater owner review identity is immutable'",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='N06: an update error stays outstanding until the owner acknowledges it, and re-opens when it happens again' tests/updater-push-claims-postgres.test.ts",
+    "why": "N06-identity-immutable: N06: an update error stays outstanding until the owner acknowledges it, and re-opens when it happens again"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "          AND (not_before IS NULL OR not_before <= pg_catalog.now())\n        RETURNING id,attempts`, [id])).rows.length === 1;",
+    "replace": "        RETURNING id,attempts`, [id])).rows.length === 1;",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-59830} node --import tsx --test --test-concurrency=1 --test-timeout=300000 --test-name-pattern='U06: a scheduled notice is invisible to selection and unclaimable until its due time' tests/updater-push-claims-postgres.test.ts",
+    "why": "U06-begin-tokenless-ignores-not-before (The tokenless branch of begin(), kept for a store with no claim API. The production sender always passes a token and never takes this path, so the mutation is recorded against the same test as the claim-side one: it documents that BOTH branches carry the due-time rule, and if the tokenless branch lost it the test's own second assertion would be the one that noticed.): U06: a scheduled notice is invisible to selection and unclaimable until its due time"
+  }
+]

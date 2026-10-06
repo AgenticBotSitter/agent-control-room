@@ -1,0 +1,114 @@
+[
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(ledger.version, 1, \"migration_lint_ledger_version\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"baseline and ledger versions\" tests/migration-lint-baseline.test.mjs",
+    "why": "Unknown ledger formats must refuse"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(ledger.digest, ledgerDigest(ledger.entries), \"migration_lint_ledger_digest\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"baseline and ledger versions\" tests/migration-lint-baseline.test.mjs",
+    "why": "Ledger bytes must match their digest"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(baseline.appliedLedgerDigest, APPLIED_LEDGER_DIGEST, \"migration_lint_applied_anchor\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"baseline and ledger versions\" tests/migration-lint-baseline.test.mjs",
+    "why": "Only the fixed accepted ledger can grant exemptions"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "verifyLedger(currentLedger);",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"baseline and ledger versions\" tests/migration-lint-baseline.test.mjs",
+    "why": "The current ledger must remain valid"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(baseline.version, 1, \"migration_lint_baseline_version\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"baseline and ledger versions\" tests/migration-lint-baseline.test.mjs",
+    "why": "Unknown baseline formats must refuse"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(baseline.appliedRevision, APPLIED_LEDGER_REVISION, \"migration_lint_baseline_revision\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"baseline and ledger versions\" tests/migration-lint-baseline.test.mjs",
+    "why": "A moving revision must not redefine acceptance"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(digest, ACCEPTED_MIGRATIONS_DIGEST, \"migration_lint_baseline_widened_or_changed\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"adding a migration to both\" tests/migration-lint-baseline.test.mjs",
+    "why": "Updating the current ledger cannot widen acceptance"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(matches.length, 1, `migration_lint_baseline_ledger_entry:${entry.file}`);",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"accepted files must still match\" tests/migration-lint-baseline.test.mjs",
+    "why": "Missing and duplicate ledger entries must refuse"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(matches[0].kind, \"migrate\", `migration_lint_baseline_ledger_kind:${entry.file}`);",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"accepted files must still match\" tests/migration-lint-baseline.test.mjs",
+    "why": "Grants must not masquerade as applied migrations"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(matches[0].sha256, entry.sha256, `migration_lint_baseline_ledger_digest:${entry.file}`);",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"accepted files must still match\" tests/migration-lint-baseline.test.mjs",
+    "why": "Regenerating a ledger cannot accept altered applied SQL"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": "assert.equal(actual, sha256, `migration_lint_applied_file_changed:${file}`);",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"changed and missing accepted SQL\" tests/migration-lint-baseline.test.mjs",
+    "why": "Applied SQL bytes must remain immutable"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": ".filter(name => name.endsWith(\".sql\"))",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"all future SQL is linted\" tests/migration-lint-baseline.test.mjs",
+    "why": "Non-SQL notes are not executable migrations"
+  },
+  {
+    "file": "scripts/ci/migration-lint-baseline.mjs",
+    "find": ".filter(file => !acceptedPaths.has(file))",
+    "replace": ".filter(() => false)",
+    "test": "node --test --test-name-pattern=\"all future SQL is linted\" tests/migration-lint-baseline.test.mjs",
+    "why": "Every future SQL file must reach lint on every retry"
+  },
+  {
+    "file": "scripts/check-migration-changes.mjs",
+    "find": "result.lint = selectMigrationsOutsideBaseline({ cwd, baselinePath });",
+    "replace": "",
+    "test": "node --test --test-name-pattern=\"all future SQL is linted\" tests/migration-lint-baseline.test.mjs",
+    "why": "Baseline mode must inspect files absent from the Git diff"
+  },
+  {
+    "file": "scripts/check-migration-changes.mjs",
+    "find": "if (baselineIndex >= 0 && (!baselinePath || baselinePath.startsWith(\"--\"))) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern=\"CLI requires a baseline path\" tests/migration-lint-baseline.test.mjs",
+    "why": "Malformed baseline arguments must not silently select legacy lint"
+  },
+  {
+    "file": "scripts/check-migration-changes.mjs",
+    "find": "const result = checkMigrations({ base, baselinePath });",
+    "replace": "const result = checkMigrations({ base });",
+    "test": "npm exec --yes --package=squawk-cli@2.61.0 -- node --test --test-name-pattern=\"real Squawk rejects\" tests/migration-lint-baseline.test.mjs",
+    "why": "The CLI must pass its baseline to the selection logic"
+  }
+]

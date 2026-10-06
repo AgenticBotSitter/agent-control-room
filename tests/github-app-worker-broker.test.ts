@@ -121,3 +121,101 @@ test("oversized webhook payload is rejected before parsing", async () => {
   assert.deepEqual(await admitGitHubWorkerWebhook({ ...request(body), maxBodyBytes: 50 }),
     { accepted: false, reason: "payload_too_large" });
 });
+
+const tokenResponse = (name: string) => Response.json({ token: name.repeat(24), expires_at: "2026-09-15T07:00:00.000Z" });
+
+for (const order of ["old-first", "new-first"] as const) test(`R5I-02: clear detaches a blocked exchange (${order})`, async () => {
+  const releases: (() => void)[] = [];
+  const auth = new GitHubAppInstallationAuth({ credentials, now: () => NOW,
+    fetchImpl: async () => {
+      const index = releases.length;
+      await new Promise<void>(resolve => releases.push(resolve));
+      return tokenResponse(index === 0 ? "old" : "new");
+    } });
+  const old = auth.token();
+  auth.clear();
+  const fresh = auth.token();
+  try {
+    assert.equal(releases.length, 2, "post-clear caller starts its own exchange");
+    if (order === "old-first") {
+      releases[0]!(); await old;
+      const joined = auth.token();
+      assert.equal(releases.length, 2, "old completion neither caches nor clears the fresh exchange");
+      releases[1]!();
+      assert.strictEqual(await joined, await fresh);
+    } else {
+      releases[1]!(); await fresh;
+      releases[0]!(); await old;
+    }
+    assert.equal((await auth.token()).token, "new".repeat(24), "invalidated result cannot overwrite the cache");
+  } finally {
+    releases.forEach(release => release());
+    await Promise.allSettled([old, fresh]);
+  }
+});
+
+for (const phase of ["connection", "body"] as const) test(`R5I-03: 50 callers time out a stalled ${phase} and retry`, async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let release!: () => void, calls = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let signal: AbortSignal | null | undefined;
+  const auth = new GitHubAppInstallationAuth({ credentials, now: () => NOW,
+    fetchImpl: async (_input, init) => {
+      calls++; signal = init?.signal;
+      if (calls > 1) return tokenResponse("recovered");
+      if (phase === "connection") { await gate; return tokenResponse("late"); }
+      return { ok: true, json: async () => { await gate; return { token: "late".repeat(24), expires_at: "2026-09-15T07:00:00.000Z" }; } } as Response;
+    } });
+  let results: PromiseSettledResult<unknown>[] = [];
+  const callers = Promise.allSettled(Array.from({ length: 50 }, () => auth.token())).then(value => { results = value; });
+  const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+  try {
+    await flush();
+    assert.equal(calls, 1);
+    assert.ok(signal instanceof AbortSignal, "fetch gets an owned abort signal");
+    t.mock.timers.tick(19_999); await flush();
+    assert.equal(results.length, 0, "deadline has not arrived");
+    t.mock.timers.tick(1); await flush();
+    assert.equal(results.length, 50, "even an abort-ignoring transport/body must settle");
+    for (const result of results) {
+      assert.equal(result.status, "rejected");
+      if (result.status === "rejected") assert.match(String(result.reason), /github_app_token_exchange_timeout/);
+    }
+    assert.equal(signal!.aborted, true);
+    assert.equal((await auth.token()).token, "recovered".repeat(24));
+    assert.equal(calls, 2);
+    release(); await flush();
+    assert.equal((await auth.token()).token, "recovered".repeat(24), "late result cannot replace recovered cache");
+  } finally { release(); await callers; t.mock.timers.reset(); }
+});
+
+test("R5I-03: successful and failed exchanges dispose their deadline before retry", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const signals: AbortSignal[] = [];
+  let fail = true;
+  const auth = new GitHubAppInstallationAuth({ credentials, now: () => NOW,
+    fetchImpl: async (_input, init) => {
+      signals.push(init!.signal!);
+      return fail ? Response.json(null) : tokenResponse("valid");
+    } });
+  try {
+    const failures = await Promise.allSettled(Array.from({ length: 50 }, () => auth.token()));
+    assert.ok(failures.every(result => result.status === "rejected" && /github_app_token_response_invalid/.test(String(result.reason))));
+    fail = false;
+    await auth.token();
+    t.mock.timers.tick(20_000);
+    assert.equal(signals.length, 2);
+    assert.ok(signals.every(signal => !signal.aborted), "completed requests have no live deadline");
+  } finally { t.mock.timers.reset(); }
+});
+
+for (const body of [{ token: "short", expires_at: "2026-09-15T07:00:00.000Z" },
+  { token: "x".repeat(24), expires_at: "invalid" }, { token: "x".repeat(24), expires_at: new Date(NOW).toISOString() }]) {
+  test(`token response with invalid material is refused and can retry (${body.expires_at}/${body.token.length})`, async () => {
+    let calls = 0;
+    const auth = new GitHubAppInstallationAuth({ credentials, now: () => NOW,
+      fetchImpl: async () => ++calls === 1 ? Response.json(body) : tokenResponse("valid") });
+    await assert.rejects(auth.token(), /github_app_token_response_invalid/);
+    assert.equal((await auth.token()).token, "valid".repeat(24));
+  });
+}

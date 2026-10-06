@@ -76,6 +76,9 @@ test("assembles the same reviewed release bytes twice with no installation effec
     const manifest = JSON.parse(await readFile(join(root, "first", first.manifestName), "utf8"));
     const paths = new Set(manifest.files.map(entry => entry.path));
     assert.equal(paths.has("scripts/prepare-local-installation.mjs"), true);
+    assert.equal(paths.has("scripts/release-signing.mjs"), true);
+    assert.equal(paths.has("scripts/verify-signed-release.mjs"), true);
+    assert.equal(paths.has("scripts/generate-installation-release-key.mjs"), true);
     assert.equal(paths.has("scripts/prepare-local-production-dependencies.mjs"), true);
     assert.equal(paths.has("scripts/launch-local-setup.mjs"), true);
     assert.equal(paths.has("scripts/initialize-local-installation-plan.mjs"), true);
@@ -87,6 +90,7 @@ test("assembles the same reviewed release bytes twice with no installation effec
     assert.equal(paths.has("deploy/FIRST_ACTIVATION.md"), true);
     assert.equal(paths.has("src/installer/v1/local-clean-install-acceptance.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-installation-release.mjs"), true);
+    assert.equal(paths.has("src/installer/v1/signed-release-verifier.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-production-dependencies.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-release-assembly.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-release-stager.mjs"), true);

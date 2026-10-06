@@ -12,21 +12,26 @@ const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const model = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 const effort = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
 const usageUnknownReason = z.enum(["usage_not_reported", "model_not_recorded", "price_table_not_recorded",
-  "price_entry_not_recorded", "partial_token_usage", "cache_pricing_not_recorded"]);
+  "price_entry_not_recorded", "partial_token_usage", "cache_pricing_not_recorded", "cached_usage_not_reported"]);
 export const usageCostSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("known"), nanoUsd: z.string().regex(/^(?:0|[1-9][0-9]*)$/), priceEntryId: id, tableId: id }).strict(),
   z.object({ kind: z.literal("included_in_subscription"), priceEntryId: id, tableId: id }).strict(),
   z.object({ kind: z.literal("unknown"), reason: usageUnknownReason }).strict(),
 ]);
-export const usageRollupSchema = z.object({ runs: count, inputTokens: count.nullable(), outputTokens: count.nullable(),
-  totalTokens: count.nullable(), wallTimeMs: count.nullable(), knownCostNanoUsd: z.string().regex(/^(?:0|[1-9][0-9]*)$/),
+const aggregateCount = z.union([count, z.string().regex(/^(?:0|[1-9][0-9]*)$/)]);
+export const usageRollupSchema = z.object({ runs: count, inputTokens: aggregateCount.nullable(), outputTokens: aggregateCount.nullable(),
+  totalTokens: aggregateCount.nullable(), wallTimeMs: aggregateCount.nullable(), knownCostNanoUsd: z.string().regex(/^(?:0|[1-9][0-9]*)$/),
   knownCostRuns: count, subscriptionRuns: count, unknownCostRuns: count,
   unknownCostReasons: z.array(usageUnknownReason) }).strict();
 const declaredScope = z.object({ kind: z.enum(["file", "tree"]), path: z.string().max(512)
   .refine(value => value === "" || /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(\/[A-Za-z0-9_][A-Za-z0-9._-]{0,127})*$/.test(value)) }).strict()
   .transform(value => ({ ...value, path: value.path.toLowerCase() }));
 export const taskDraftSchema = z.object({ title: text(120), instructions: text(4000),
-  model: model.optional(), effort: effort.optional(), scopes: z.array(declaredScope).max(64).optional() }).strict()
+  model: model.optional(), effort: effort.optional(), scopes: z.array(declaredScope).max(64).optional(),
+  /** 0290: owner-approved acceptance requirements. Stored apart from the
+   * instruction and delivered to the worker with it; they are DATA the worker
+   * must satisfy, never authority to accept, merge or approve anything. */
+  acceptanceCriteria: text(2000).optional(), acceptanceTests: text(2000).optional() }).strict()
   .superRefine((value, context) => {
     if (value.scopes && new Set(value.scopes.map(scope => `${scope.kind}\0${scope.path}`)).size !== value.scopes.length)
       context.addIssue({ code: "custom", message: "duplicate task scope", path: ["scopes"] });
@@ -35,7 +40,10 @@ export type TaskDraft = z.infer<typeof taskDraftSchema>;
 export const taskSummarySchema = z.object({ jobId: id, projectId: id, requestId: id, title: text(180),
   state: z.enum(jobStates), version: count, createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   /** Present only when authenticated completion-gate evidence proves the result is ready. */
-  qualityStatus: z.literal("accepted").optional() }).strict();
+  qualityStatus: z.literal("accepted").optional(),
+  /** Present only when the saved attempt record proves the owner rejected this
+   * task's returned result. Anything else cancelled keeps no such claim. */
+  ownerRejected: z.literal(true).optional() }).strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 export const taskReceiptSchema = z.object({ jobId: id, projectId: id, requestId: id,
   createdAt: z.string().datetime(), submission: z.literal("proposed"), startsWork: z.literal(false) }).strict();

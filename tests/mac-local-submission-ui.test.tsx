@@ -201,3 +201,45 @@ test("a saved source plan links to the prepared task and shows its canonical sta
   assert.match(html, /Prepared task status:.*leased/);
   assert.match(html, new RegExp(encodeURIComponent(preparedJobId)));
 });
+
+test("connector-only Mac host: a new task points to Offer, not to dead-end Prepare, Assign and Approve steps", async () => {
+  // These are the exact answers the installed connector-only Mac host gave in a
+  // real PostgreSQL 17 rehearsal: the host builds no planner or queue, so the
+  // plan read says not_configured and the task detail says not_connected.
+  const source = { ...detail, preparedFor: null, attempts: [], dispatch: "not_connected",
+    task: { ...detail.task, state: "proposed" } } as TaskDetail;
+  const plan = { projectId: source.task.projectId, sourceJobId: source.task.jobId, inputDigest: source.inputDigest,
+    availability: "not_configured", startsWork: false };
+  const { JSDOM } = await import("jsdom");
+  const { createRoot } = await import("react-dom/client");
+  const { act } = await import("react");
+  const dom = new JSDOM('<div id="root"></div>', { url: "https://control.invalid/" });
+  const saved = Object.fromEntries(["window", "document", "fetch", "IS_REACT_ACT_ENVIRONMENT"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async (url: string) => String(url).endsWith("/plan") ? Response.json(plan)
+      : String(url) === "/api/v1/fleet" ? Response.json({ workers: [], pendingCodes: [], results: [] })
+        : new Response(null, { status: 404 }) });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    // The production default workspace: no injected planning, assignment or submission client.
+    await act(async () => { root.render(createElement(TaskExecutionStage,
+      { detail: source, mode: "local", workspace: createTaskExecutionWorkspace() })); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const text = dom.window.document.body.textContent ?? "";
+    assert.match(text, /Offer to other machines/);
+    assert.match(text, /Send this task to a bot/);
+    assert.doesNotMatch(text, /Task preparation is not connected|Assign after preparation|Approve after assignment/);
+    assert.equal(dom.window.document.querySelectorAll("button[disabled]").length, 0);
+  } finally {
+    await act(async () => { root.unmount(); }); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+  const guide = renderToStaticMarkup(createElement(TaskWorkflowGuide, { local: true, prepared: false, connectorOnly: true }));
+  assert.match(guide, /Offer/);
+  assert.match(guide, /Workers page/);
+  assert.doesNotMatch(guide, /Prepare|Assign|Approve and queue/);
+});

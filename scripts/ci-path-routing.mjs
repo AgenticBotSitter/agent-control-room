@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Decides which verification lanes a change must run, from the paths it touches.
 //
 // Two properties matter more here than precision:
@@ -20,32 +21,39 @@
 // allowed a narrow lane list when nothing under it is read by another lane's tests.
 
 import { readFileSync, appendFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 
-export const LANES = ["demo", "server", "components", "articles"];
+export const LANES = ["demo", "server", "components", "updater", "articles"];
 
 // First match wins, so the order is load-bearing: the narrow, provably inert
 // classes come first and the catch-all server class comes last.
 export const CHANGE_CLASSES = [
   {
+    name: "updater-guide",
+    patterns: ["docs/INSTALL_NIGHT_OWNER_GUIDE.md", "docs/install/E2E2_REHEARSAL.md", "docs/OWNER_GUIDE_MAC.md"],
+    lanes: ["updater"],
+    evidence:
+      "tests/install-night-owner-guide.test.mjs reads all three install guides, and " +
+      "tests/e2e2-rehearsal.mjs reads the rehearsal guide. Both run in the macOS updater lane.",
+  },
+  {
     name: "docs",
     patterns: ["docs/**"],
     lanes: [],
     evidence:
-      "No test file, build config or script reads anything under docs/. The only reference in the " +
+      "The install guides are classified above. Other docs/ paths remain inert for routing. The reference in the " +
       "whole repository is scripts/license-inventory.mjs writing docs/license-inventory.json, which " +
       "is an output. docs/ is therefore provably inert and skips every heavy lane.",
   },
   {
     name: "markdown",
     patterns: ["*.md"],
-    lanes: ["components"],
+    lanes: ["components", "updater"],
     evidence:
-      "Root-level markdown is read, but only from the components lane. THIRD_PARTY.md is read by " +
+      "Root-level markdown is read by the components and updater lanes. THIRD_PARTY.md is read by " +
       "scripts/license-inventory.mjs, scripts/runtime-license-finalize.mjs and " +
       "tests/runtime-license-finalize.test.mjs; README.md is read by " +
       "tests/runtime-license-bundled-collector.test.mjs and tests/runtime-license-digest.test.mjs. " +
-      "Those run inside test:components. No server-lane input (any tests/vps-built-*.test.mjs), no " +
+      "The attended-release source fixture also reads THIRD_PARTY.md in test:updater. No server-lane input (any tests/vps-built-*.test.mjs), no " +
       "article-lane input (tests/vps-built-article-extraction.test.mjs, vite.vps.config.ts, " +
       "scripts/build-vps.mjs) and no demo-lane input reads a markdown file, so those three are " +
       "skipped. This class is why the docs class is 'docs/**' and not '**/*.md': a markdown file " +
@@ -54,10 +62,10 @@ export const CHANGE_CLASSES = [
   {
     name: "release",
     patterns: ["deploy/**", "third_party/**", "research/**"],
-    lanes: ["server", "components"],
+    lanes: ["server", "components", "updater"],
     evidence:
       "Third-party notices, bundled-license scans and runtime-license fixtures live in " +
-      "test:release-licenses (part of test:components), research/ fixtures are read by the codex and " +
+      "test:release-licenses (part of test:components), deploy/macos fixtures feed test:updater, research/ fixtures are read by the codex and " +
       "license lanes (also test:components), and deploy/operator-config.mjs is read by " +
       "tests/vps-built-startup.test.mjs in the server lane. Every file in the demo lane " +
       "(test:demo and test:build:demo, including vite.contributor.config.ts and " +
@@ -291,4 +299,4 @@ function main() {
   target.write(rendered);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

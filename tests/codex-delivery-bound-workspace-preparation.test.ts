@@ -5,6 +5,8 @@ import { createCodexDeliveryBoundWorkspacePreparationV1, effectiveOwnershipLease
 import type { CodexLocalStartBindingV1 } from '../src/harness/codex-v1/local-start-runtime';
 import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery';
 import { sha256Digest } from '../src/security/canonical-digest';
+import { createPipelineBuildPublicationAuthoritySnapshotV1, createPipelineBuildPublicationAuthorityV1 }
+  from '../src/pipelines/v1/build-publication-authority';
 
 const revision = 'a'.repeat(40);
 const intent = Object.freeze({ schema: 'control-room.workspace-intent/v1' as const,
@@ -39,16 +41,57 @@ function binding(packet = delivery()): CodexLocalStartBindingV1 {
   }, dispatchFrameDigest } as CodexLocalStartBindingV1;
 }
 
-function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean;
-  allowedPaths?: readonly string[] } = {}) {
-  let creates = 0, removes = 0, inspections = 0, current = true;
+function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; publication?: boolean;
+  driftBeforeOpen?: boolean; allowedPaths?: readonly string[] } = {}) {
+  let creates = 0, removes = 0, inspections = 0, opens = 0, retains = 0, controllerChecks = 0, current = true;
+  let canonicalSelectedModel = 'model:current';
+  const publications = new Map<string, unknown>();
   const journal = {
     reserveWorkspaceIntent: () => 'recorded' as const,
     recordWorkspaceRoots() { return 'recorded' as const; }, recordWorkspaceCreation() { return 'recorded' as const; },
     reserveWorkspaceRemoval: () => 'recorded' as const, recordWorkspaceRemoved() { return 'recorded' as const; },
+    loadPullRequestPublication(id: string) { return structuredClone(publications.get(id)); },
+    retainedPullRequestPublication(digest: string) {
+      return [...publications.values()].find(value => (value as { deliveryDigest?: string }).deliveryDigest === digest); },
+    reservePullRequestPublication(id: string, value: unknown) {
+      if (publications.has(id)) return 'exists' as const; publications.set(id, structuredClone(value)); return 'reserved' as const; },
+    replacePullRequestPublication(id: string, expected: unknown, value: unknown) {
+      if (sha256Digest(publications.get(id)) !== sha256Digest(expected)) return false;
+      publications.set(id, structuredClone(value)); return true; },
   };
+  const packet = delivery();
+  const integrityKey = new Uint8Array(32).fill(19);
+  const snapshot = createPipelineBuildPublicationAuthoritySnapshotV1(integrityKey, {
+    schema: 'control-room.pipeline-build-publication-authority/v1', deliveryDigest: packet.deliveryDigest,
+    tenantId: intent.tenantId, projectId: intent.projectId, sourceJobId: 'job:source', executionJobId: intent.jobId,
+    attemptId: intent.attemptId, runId: intent.runId, artifactId: 'artifact:test', resultRevision: 1,
+    pipelineRunId: 'pipeline-run:test', stageOrdinal: 0,
+    stageRecordDigest: sha256Digest('stage'), workerId: packet.worker.workerId, model: 'model:current', effort: 'high',
+    allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096,
+    retainedResultDigest: sha256Digest('retained-build-result'),
+    repositoryUrl: 'https://example.invalid/controller/repository', title: 'Server title', body: 'Server body',
+  });
+  const authority = createPipelineBuildPublicationAuthorityV1({ integrityKey, snapshot,
+    assertControllerCurrent: async () => {
+      controllerChecks++;
+      if (options.driftBeforeOpen && controllerChecks >= 4) canonicalSelectedModel = 'model:changed';
+      if (canonicalSelectedModel !== snapshot.model) throw new Error('canonical_selection_changed');
+    } });
   const preparation = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent, journal,
     policy: { allowedPaths: options.allowedPaths ?? ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
+    ...(options.publication ? { publication: { integrityKey, journal, authority,
+      runGit: async (_cwd: string, args: readonly string[]) => {
+        if (args.includes('status')) return Buffer.from('');
+        if (args.includes('diff')) return Buffer.from('M\0src/change.ts\0');
+        if (args.includes('-s')) return Buffer.from('8\n');
+        if (args.includes('blob')) return Buffer.from('content\n');
+        if (args.includes('--verify')) return Buffer.from(`${'c'.repeat(40)}\n`);
+        return Buffer.from(`${'b'.repeat(40)}\n`);
+      },
+      openPullRequest: async () => { opens++; return { status: 'opened' as const,
+        url: 'https://example.invalid/controller/repository/pull/31', observedCommit: 'b'.repeat(40) }; },
+      retainPublished: async () => { retains++; },
+    } } : {}),
     workspacePort: {
       async inspectRootIdentities() { return {
         repository: { realPath: intent.repositoryRoot, device: '1', inode: '2' },
@@ -56,7 +99,7 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean;
         commonGit: { realPath: `${intent.repositoryRoot}/.git`, device: '1', inode: '4' } }; },
       async observeCheckout() { return { state: 'absent' as const }; },
       async inspectExisting(path) { inspections++; return { realPath: path, device: '1',
-        inode: path === intent.repositoryRoot ? '2' : '3' }; },
+        inode: path === intent.repositoryRoot ? '2' : path === intent.checkoutPath ? '5' : '3' }; },
       async createDetachedWorktree() {
         creates++;
         if (options.revokeDuringCreate) current = false;
@@ -68,7 +111,8 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean;
     },
   });
   const assertCurrent = () => { if (!current) throw new Error('revoked'); };
-  return { preparation, assertCurrent, counts: () => ({ creates, removes, inspections }) };
+  return { preparation, assertCurrent, counts: () => ({ creates, removes, inspections, opens }),
+    retains: () => retains };
 }
 
 test('one exact shared delivery prepares and retains one workspace while its digest stays distinct from dispatch', async () => {
@@ -76,7 +120,7 @@ test('one exact shared delivery prepares and retains one workspace while its dig
   f.preparation.bindDelivery(packet);
   await f.preparation.prepare(startBinding, f.assertCurrent);
   await f.preparation.prepare(startBinding, f.assertCurrent);
-  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2 });
+  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 });
   assert.throws(() => f.preparation.bindDelivery(packet), /unavailable/,
     'the shared delivery binding is one-use even when the packet is exact');
   assert.equal('cleanup' in f.preparation, false); assert.equal('lease' in f.preparation, false);
@@ -95,40 +139,63 @@ test('durable ownership scopes narrow the real workspace change-audit policy', a
   const narrowed = fixture(), startBinding = binding(packet);
   narrowed.preparation.bindDelivery(packet);
   await narrowed.preparation.prepare(startBinding, narrowed.assertCurrent);
-  assert.deepEqual(narrowed.counts(), { creates: 1, removes: 0, inspections: 2 },
+  assert.deepEqual(narrowed.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 },
     'the production holder accepts the exact lease intersection');
 
   const disjoint = fixture({ allowedPaths: ['docs/**'] });
   disjoint.preparation.bindDelivery(packet);
   await assert.rejects(disjoint.preparation.prepare(startBinding, disjoint.assertCurrent), /unavailable/,
     'the production preparation cannot fall back to the wider host ceiling');
-  assert.deepEqual(disjoint.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(disjoint.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 });
 
 test('absent, changed, or mismatched shared delivery refuses before workspace effects', async () => {
   const absent = fixture();
   await assert.rejects(absent.preparation.prepare(binding(), absent.assertCurrent), /unavailable/);
-  assert.deepEqual(absent.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(absent.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 
   const wrongIdentity = fixture();
   assert.throws(() => wrongIdentity.preparation.bindDelivery(delivery({ jobId: 'job:other' })), /unavailable/);
-  assert.deepEqual(wrongIdentity.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(wrongIdentity.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 
   const changed = fixture(), packet = delivery(); changed.preparation.bindDelivery(packet);
   await assert.rejects(changed.preparation.prepare(binding(delivery({ prompt: 'Changed task.' })), changed.assertCurrent),
     /unavailable/);
-  assert.deepEqual(changed.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(changed.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 });
 
 test('creation uncertainty is retained and a repeated prepare never creates or cleans again', async () => {
   const f = fixture({ failCreate: true }), packet = delivery(); f.preparation.bindDelivery(packet);
   await assert.rejects(f.preparation.prepare(binding(packet), f.assertCurrent), /unavailable/);
   await assert.rejects(f.preparation.prepare(binding(packet), f.assertCurrent), /unavailable/);
-  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2 });
+  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 });
 });
 
 test('authority is rechecked after acquisition before the workspace can be accepted for start', async () => {
   const f = fixture({ revokeDuringCreate: true }), packet = delivery(); f.preparation.bindDelivery(packet);
   await assert.rejects(f.preparation.prepare(binding(packet), f.assertCurrent), /revoked/);
-  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2 });
+  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 });
+});
+
+test('the production delivery-bound holder publishes only through its active lease and retains the result', async () => {
+  const f = fixture({ publication: true }), packet = delivery();
+  f.preparation.bindDelivery(packet);
+  await f.preparation.prepare(binding(packet), f.assertCurrent);
+  const first = await f.preparation.publishBuildPullRequest();
+  assert.equal(first.status, 'published');
+  const replay = await f.preparation.publishBuildPullRequest();
+  assert.deepEqual(replay, first);
+  assert.equal(f.counts().opens, 1);
+  assert.equal(f.retains(), 2, 'canonical retention is retried after a durable local publication replay');
+});
+
+test('fresh controller drift after snapshot burns the durable intent and opens no pull request', async () => {
+  const f = fixture({ publication: true, driftBeforeOpen: true }), packet = delivery();
+  f.preparation.bindDelivery(packet);
+  await f.preparation.prepare(binding(packet), f.assertCurrent);
+  await assert.rejects(f.preparation.publishBuildPullRequest(), /canonical_selection_changed/);
+  assert.equal(f.counts().opens, 0);
+  assert.deepEqual(await f.preparation.publishBuildPullRequest(), { status: 'reconciliation_required' });
+  assert.equal(f.counts().opens, 0, 'a restart/replay cannot reopen after the post-reservation fence failed');
+  assert.equal(f.retains(), 0);
 });

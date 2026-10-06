@@ -154,9 +154,21 @@ assert.deepEqual(leaked, [], "a cluster was killed rather than stopped");
 
 Both helpers return `null` rather than an empty list when `ipcs` cannot be read,
 so a guard that could not run refuses instead of reporting a clean result it
-never measured. `tests/attack-kit.test.ts` asserts this over the whole suite,
+never measured. `tests/support/attack-kit/suite-lane.ts` asserts this for each
+attack-kit test file (`tests/attack-kit.test.ts`,
+`tests/attack-kit-mutation.test.ts`, `tests/attack-kit-real-postgres.test.ts`),
 comparing by segment id rather than by count — a teardown that released one
 cluster's segment while leaking another's would otherwise show a flat count.
+
+`sharedMemorySegments()` keeps only the segments owned by **this account**, and
+resolves the account with `os.userInfo()` — the passwd database for the effective
+uid — not from `$USER`. `$USER` is a login-shell convention, not a fact about the
+process: a bare `docker run` and a CI step that sets an explicit environment both
+omit it, while `ipcs` still prints the real owner name. Measured on Ubuntu 24.04
+with neither `USER` nor `LOGNAME` set, comparing against `$USER` failed with
+`+ 'runner' - undefined` the moment this user owned one segment; reading the
+passwd database is correct on macOS, in a container and on a GitHub runner alike.
+Use `accountName()` when a caller needs to name the same account.
 
 ## Concurrency
 

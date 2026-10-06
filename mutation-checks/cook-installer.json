@@ -1,0 +1,632 @@
+[
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "switched = true;",
+    "replace": "switched = false;",
+    "test": "node --test --test-name-pattern='stop at a journal boundary' tests/control-room-installer.test.mjs",
+    "why": "a pointer switch must retain its rollback receipt even when the following journal write fails"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!exactStagedChild(join(root, \"releases\"), releaseTarget)\n      || updaterTarget !== null && !exactStagedChild(join(root, \"updater\"), updaterTarget))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='tampered recovery account and path data' tests/control-room-installer.test.mjs",
+    "why": "interrupted recovery must refuse a forged parent or nested stage target before moving anything"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "entry.uid !== 0 || (entry.mode & 0o022) !== 0",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='default root' tests/control-room-installer.test.mjs",
+    "why": "every install-root ancestor must be root-owned and not group- or world-writable"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "!usedUids.has(id) && !usedGids.has(id)",
+    "replace": "!usedUids.has(id)",
+    "test": "node --test --test-name-pattern='exact layout' tests/control-room-installer.test.mjs",
+    "why": "a selected numeric identity must be free in both user and group namespaces"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "return installShimAndSudoers(paths, ports, undo);",
+    "replace": "return {};",
+    "test": "node --test --test-name-pattern='exact layout' tests/control-room-installer.test.mjs",
+    "why": "installation cannot finish without the validated secure-path sudoers policy and fixed shim"
+  },
+  {
+    "file": "src/updater/v1/bin/control-room",
+    "find": "exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root /bin/sh -p",
+    "replace": "exec /usr/bin/env PATH=/usr/bin:/bin HOME=\"$HOME\" /bin/sh -p",
+    "test": "node --test --test-name-pattern='shim strips' tests/control-room-installer.test.mjs",
+    "why": "the root shim must build its environment from nothing and fix HOME"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "Object.keys(handlers).length !== 1",
+    "replace": "Object.keys(handlers).length < 1",
+    "test": "node --test --test-name-pattern='Serve exclusivity is scoped' tests/control-room-installer.test.mjs",
+    "why": "the production hostname must expose exactly one handler and no preview port"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "try { if (releaseLock) await releaseLock(); }\n    finally { await ports.invalidateSudoTimestamp(options.invokingUser); }",
+    "replace": "if (releaseLock) await releaseLock();",
+    "test": "node --test --test-name-pattern='service rollback' tests/control-room-installer.test.mjs",
+    "why": "the install must invalidate the invoking owner's sudo timestamp on failure as well as success"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await replaceRootOwnedFile(join(root, \"updater-state\", \"self-update\"), \"Off\\n\", 0o600);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='exact layout' tests/control-room-installer.test.mjs",
+    "why": "a fresh install must leave the root-held self-update switch Off"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await link(temporary, path);",
+    "replace": "await rename(temporary, path);",
+    "test": "node --test --test-name-pattern='twenty parallel' tests/control-room-installer.test.mjs",
+    "why": "exclusive journal marker creation must preserve a live legacy holder even when the newer kernel lease is free"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!stat.isFile() || stat.nlink !== 1) refuse(\"log_file_refused\");",
+    "replace": "if (stat.nlink !== 1) refuse(\"log_file_refused\");",
+    "test": "node --test --test-name-pattern='planted log symlink' tests/control-room-installer.test.mjs",
+    "why": "a planted service log symlink must never be accepted or written through"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "![\"install\", \"passkey\", \"recovery\"].includes(value.command)",
+    "replace": "![\"install\", \"passkey\", \"recovery\", \"update\"].includes(value.command)",
+    "test": "node --test --test-name-pattern='foreign records' tests/control-room-installer.test.mjs",
+    "why": "the installer-owned journal must reject updater commands"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "await execute(\"/usr/bin/sudo\", [\"-K\"], { uid: identity.uid, gid: identity.gid });",
+    "replace": "await execute(\"/usr/bin/sudo\", [\"-K\", \"-u\", identity.user], { uid: identity.uid, gid: identity.gid });",
+    "test": "node --test --test-name-pattern='sudo -K runs' tests/control-room-installer.test.mjs",
+    "why": "sudo timestamp removal must use valid bare -K while executing as the invoking uid"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (value === \"On\\n\") refuse(\"self_update_enabled\");",
+    "replace": "if (false) refuse(\"self_update_enabled\");",
+    "test": "node --test --test-name-pattern='self-update On' tests/control-room-installer.test.mjs",
+    "why": "install commit must refuse while self-update is On"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "export const CONTROL_ROOM_INSTALLER_JOURNAL_FILE_V1 = \"installer-journal.jsonl\";",
+    "replace": "export const CONTROL_ROOM_INSTALLER_JOURNAL_FILE_V1 = \"journal.jsonl\";",
+    "test": "node --test --test-name-pattern='installer journal is separate' tests/control-room-installer.test.mjs",
+    "why": "installer recovery records must not collide with the updater-owned journal"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await assertInstallerRootSafetyV1({ root, ports });\n    await existingDirectory(root, \"install_root_refused\");",
+    "replace": "await existingDirectory(root, \"install_root_refused\");",
+    "test": "node --test --test-name-pattern='uninstall-fresh checks root ancestry' tests/control-room-installer.test.mjs",
+    "why": "uninstall-fresh must refuse an owner-controlled install-root ancestry"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await existingDirectory(root, \"install_root_refused\");\n    releaseLock = await acquireLock(root, ports);",
+    "replace": "await existingDirectory(root, \"install_root_refused\");\n    releaseLock = async () => {};",
+    "test": "node --test --test-name-pattern='forty-caller burst' tests/control-room-installer.test.mjs",
+    "why": "uninstall-fresh must serialize against install and other uninstall callers"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "created.some(name => !Object.values(names).includes(name))",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='validates created account names' tests/control-room-installer.test.mjs",
+    "why": "uninstall-fresh may delete only account names from the sealed policy"
+  },
+  {
+    "file": "src/updater/v1/bin/control-room",
+    "find": "INVOKING_UID=${SUDO_UID-}",
+    "replace": "INVOKING_UID=",
+    "test": "node --test --test-name-pattern='shim carries only' tests/control-room-installer.test.mjs",
+    "why": "the shim must explicitly carry the invoking uid before clearing the environment"
+  },
+  {
+    "file": "src/updater/v1/bin/control-room",
+    "find": "${SUDO_USER+x}${SUDO_UID+x}${SUDO_GID+x}",
+    "replace": "${SUDO_USER-}${SUDO_UID-}${SUDO_GID-}",
+    "test": "node --test --test-name-pattern='shim carries only' tests/control-room-installer.test.mjs",
+    "why": "a supplied sudo identity must be validated and forwarded as a complete unit"
+  },
+  {
+    "file": "src/updater/v1/bin/control-room",
+    "find": "install)",
+    "replace": "disabled-install-check)",
+    "test": "node --test --test-name-pattern='shim carries only' tests/control-room-installer.test.mjs",
+    "why": "install must refuse before node when the invoking sudo identity is absent"
+  },
+  {
+    "file": "src/updater/v1/bin/control-room",
+    "find": "-le",
+    "replace": "-lt",
+    "test": "node --test --test-name-pattern='shim carries only' tests/control-room-installer.test.mjs",
+    "why": "the shim must refuse an invoking username longer than 64 characters"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "const SECURE_PATH_LINE = \"Value to override user's $PATH with: /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\";",
+    "replace": "const SECURE_PATH_LINE = \"Value to override user's $PATH with: /usr/bin:/bin:/usr/sbin:/sbin\";",
+    "test": "node --test --test-name-pattern='sudoers validation asks' tests/control-room-installer.test.mjs",
+    "why": "sudo -V must report the exact secure_path that selects the root-owned shim first"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "[\"--no-same-owner\", \"--no-same-permissions\"]",
+    "replace": "[]",
+    "test": "node --test --test-name-pattern='vendor extraction normalizes' tests/updater-trusted-runtime.test.mjs",
+    "why": "root extraction must not restore archive ownership, modes, ACLs or flags"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "await changeOwner(path, uid, gid);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='vendor extraction normalizes' tests/updater-trusted-runtime.test.mjs",
+    "why": "every vendored entry including symlinks must be normalized to the root caller"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "return execute(TAILSCALE, args, { uid: owner.uid, gid: owner.gid, maxBuffer: MAX_TAILSCALE_JSON_BYTES });",
+    "replace": "return execute(TAILSCALE, args, { maxBuffer: MAX_TAILSCALE_JSON_BYTES });",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "the Tailscale application binary must never execute as root"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (installed) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='installed commit runs only' tests/control-room-installer.test.mjs",
+    "why": "an installed commit must use the attended update path and never reopen fresh-only steps"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (entries.some(entry => entry.command === \"install\" && entry.action === \"transaction\"",
+    "replace": "if (false && entries.some(entry => entry.command === \"install\" && entry.action === \"transaction\"",
+    "test": "node --test --test-name-pattern='installed commit runs only' tests/control-room-installer.test.mjs",
+    "why": "the fresh-once install form must refuse once an installed transaction exists"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await replaceRootOwnedFile(join(root, \"updater-state\", \"self-update\"), \"Off\\n\", 0o600);",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='Off exists before services' tests/control-room-installer.test.mjs",
+    "why": "the Off switch must exist immediately after layout and before any daemon can start"
+  },
+  {
+    "file": "src/updater/v1/policy/service-supervisor.sb",
+    "find": "(deny process-exec* file-map-executable)",
+    "replace": "(allow process-exec* file-map-executable)",
+    "test": "node --test --test-name-pattern='every service profile denies' tests/updater-trusted-runtime.test.mjs",
+    "why": "service execution must be allow-listed rather than inherited from allow-default"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "\"readsecurity\", \"list\", \"search\", \"execute\"",
+    "replace": "\"readsecurity\", \"list\", \"search\", \"execute\", \"writesecurity\"",
+    "test": "node --test --test-name-pattern='T1 checks root ownership' tests/updater-trusted-runtime.test.mjs",
+    "why": "any ACL right outside the strict read-only allow-list must refuse T1"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "[\"builder\", ids(accounts, \"builder\")], [\"upgrader\", database]",
+    "replace": "[\"builder\", ids(accounts, \"builder\")], [\"upgrader\", ids(accounts, \"builder\")]",
+    "test": "node --test --test-name-pattern='exact layout' tests/control-room-installer.test.mjs",
+    "why": "the database upgrader rather than candidate-controlled builder must own upgrade logs"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "return geteuid() === 0 ? undefined : environment.CONTROL_ROOM_INSTALLER_PORT_MODULE;",
+    "replace": "return environment.CONTROL_ROOM_INSTALLER_PORT_MODULE;",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "root execution must ignore an environment-selected implementation module"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "results.otool = await assertT1Path(results.otool, { allowedRoots, executable: true, runtime });",
+    "replace": "results.otool = results.otool;",
+    "test": "node --test --test-name-pattern='otool is T1-checked before' tests/updater-trusted-runtime.test.mjs",
+    "why": "the resolved otool path must pass T1 before root executes it"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "password: \"*\"",
+    "replace": "password: \"\"",
+    "test": "node --test --test-name-pattern='exact layout' tests/control-room-installer.test.mjs",
+    "why": "new service accounts must have the locked Password star value"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "if (raw) process.stdin.setRawMode(true);",
+    "replace": "if (raw) process.stdin.setRawMode(false);",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "the attended credential prompt must disable terminal echo"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "try { return await ports.processIdentity(value.pid) !== value.identity; }",
+    "replace": "try { await ports.processIdentity(value.pid); return false; }",
+    "test": "node --test --test-name-pattern='reused lock pid' tests/control-room-installer.test.mjs",
+    "why": "a recycled pid must not keep a stale installer lock alive"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await handle.writeFile(bytes); await handle.chmod(mode); await handle.sync();",
+    "replace": "await handle.writeFile(bytes); await handle.sync();",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "root must set permissions through the already-open descriptor instead of a raceable path"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "await handle.writeFile(text); await handle.chmod(mode); await handle.sync();",
+    "replace": "await handle.writeFile(text); await handle.sync();",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "native atomic writes must fchmod the descriptor before it closes"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK)\n    .catch(() => refuse(\"existing_file_refused\"));",
+    "replace": "const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)\n    .catch(() => refuse(\"existing_file_refused\"));",
+    "test": "node --test --test-name-pattern='rerun key reads' tests/control-room-installer.test.mjs",
+    "why": "rerun reads must not block root on a planted FIFO or device"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "await verifyPinnedFile(snapshot, artifact.archiveSha256);",
+    "replace": "await verifyPinnedFile(archive, artifact.archiveSha256);",
+    "test": "node --test --test-name-pattern='vendor snapshots an owner archive once' tests/updater-trusted-runtime.test.mjs",
+    "why": "hashing and extraction must use the same root-owned snapshot rather than rereading owner input"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "if (entry.uid !== 0 || entry.gid !== 0 || (await inspectAcl(path)).length !== 0",
+    "replace": "if (false || (await inspectAcl(path)).length !== 0",
+    "test": "node --test --test-name-pattern='inventory verification refuses' tests/updater-trusted-runtime.test.mjs",
+    "why": "every installed runtime inventory entry must have the root uid and gid in production"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const undo = [];\n  try {\n    await ports.invalidateSudoTimestamp(options.invokingUser);",
+    "replace": "const undo = [];\n  try {",
+    "test": "node --test --test-name-pattern='service rollback' tests/control-room-installer.test.mjs",
+    "why": "the sudo timestamp must be dropped at the start before any root install work"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await ports.recoverServices({ root, roles, ...(rehearsal ? { servicePolicy: rehearsal.servicePolicy } : {}),\n        ...(record?.data?.receipt ? { receipt: record.data.receipt } : {}) });\n    }\n    await ports.killAccountProcesses({ uid: accounts.database.uid });",
+    "replace": "await Promise.resolve();\n    }\n    await ports.killAccountProcesses({ uid: accounts.database.uid });",
+    "test": "node --test --test-name-pattern='uninstall boots services out' tests/control-room-installer.test.mjs",
+    "why": "uninstall-fresh must boot out jobs and remove plists before restoring Serve or deleting accounts"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "Buffer.byteLength(text) > MAX_TAILSCALE_JSON_BYTES",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "Tailscale JSON is untrusted and must be bounded before parsing"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!Array.isArray(argv) || argv.some(value => typeof value !== \"string\" || value.includes(\"\\0\")))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "the one CLI must reject non-string and NUL-bearing arguments before parsing any verb"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (identity === undefined || values[value] !== undefined) throw updaterRefuseV1(\"invoking_user_refused\");",
+    "replace": "if (identity === undefined) throw updaterRefuseV1(\"invoking_user_refused\");",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "the one CLI must reject duplicate invoking identity flags rather than allow a later value to replace one"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!/^[A-Za-z0-9._-]{1,64}$/u.test(user ?? \"\") || !/^\\d{1,10}$/u.test(uidText ?? \"\")",
+    "replace": "if (false || !/^\\d{1,10}$/u.test(uidText ?? \"\")",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "the one CLI must reject invoking usernames outside the reviewed bounded grammar"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid) || uid < 1 || gid < 1",
+    "replace": "if (false",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "the one CLI must reject root and out-of-range invoking numeric identities"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!accepted.has(name) || value === undefined || flags[name] !== undefined)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "installer verb options must come from a closed set with one value per flag"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (flags[\"--commit\"] !== undefined && !/^[a-f0-9]{40}$/u.test(flags[\"--commit\"]))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "install commit input must remain an exact lowercase forty-character object id"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (flags[\"--web-port\"] !== undefined && (!/^\\d{1,5}$/u.test(flags[\"--web-port\"])\n      || !Number.isSafeInteger(Number(flags[\"--web-port\"]))\n      || Number(flags[\"--web-port\"]) < 1024 || Number(flags[\"--web-port\"]) > 65535))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "the centrally parsed web port must refuse non-decimal input before reaching installer policy"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (flags[\"--i-am-replacing-live\"] !== undefined && flags[\"--i-am-replacing-live\"] !== \"yes\")",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "the live replacement acknowledgement must accept only the exact reviewed value"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!invokingUser) throw updaterRefuseV1(\"invoking_user_refused\");\n    if (flags[\"--bootstrap\"] !== undefined",
+    "replace": "if (false) throw updaterRefuseV1(\"invoking_user_refused\");\n    if (flags[\"--bootstrap\"] !== undefined",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "install must carry a complete validated invoking owner identity into the root installer"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!invokingUser) throw updaterRefuseV1(\"invoking_user_refused\");\n    if (flags[\"--rehearsal-config\"] !== undefined",
+    "replace": "if (false) throw updaterRefuseV1(\"invoking_user_refused\");\n    if (flags[\"--rehearsal-config\"] !== undefined",
+    "test": "node --test --test-name-pattern='central invoking suffix' tests/control-room-installer.test.mjs",
+    "why": "uninstall must carry a complete validated invoking owner identity into the root installer"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (!ports || typeof ports.geteuid !== \"function\" || ports.geteuid() !== 0) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='archived installer' tests/control-room-installer.test.mjs",
+    "why": "install and uninstall must refuse before parsing privileged arguments when the selected ports are not root"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "const result = await installControlRoomV1({ ...(options.installerOptions ?? {}), ...parsed,",
+    "replace": "const result = await uninstallFreshControlRoomV1({ ...(options.installerOptions ?? {}), ...parsed,",
+    "test": "node --test --test-name-pattern='single CLI sends install' tests/control-room-installer.test.mjs",
+    "why": "install commit must dispatch through the installer repeat authority and its journal"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "const status = await statusControlRoomV1(parsed);",
+    "replace": "const status = { secret: \"must-not-print\" };",
+    "test": "node --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "status must dispatch to the installer status authority even when the shim appends invoking identity"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const shim = await readFile(controlRoomShimPath, \"utf8\");",
+    "replace": "const shim = \"\";",
+    "test": "node --test --test-name-pattern='exact layout' tests/control-room-installer.test.mjs",
+    "why": "the installer must install the one reviewed shim file rather than embedded or replacement bytes"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (releaseStage?.target !== join(root, \"releases\", release.releaseId)) refuse(\"attended_stage_result_refused\");",
+    "replace": "if (false) refuse(\"attended_stage_result_refused\");",
+    "test": "node --test --test-name-pattern='partial pair staging' tests/control-room-installer.test.mjs",
+    "why": "the installer accepts only the exact release destination returned by its attended stage piece"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const updateUpdater = runningBundleDigest !== bundle.bundleDigest;",
+    "replace": "const updateUpdater = true;",
+    "test": "node --test --test-name-pattern='unchanged fixed bundle' tests/control-room-installer.test.mjs",
+    "why": "an identical fixed bundle must not churn the updater current and previous pair"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (target === expected) await retireStagedTarget(root, target, `${target}.rolled-back-${commit.slice(0, 12)}`).catch(() => {});",
+    "replace": "if (false) await retireStagedTarget(root, target, `${target}.rolled-back-${commit.slice(0, 12)}`).catch(() => {});",
+    "test": "node --test --test-name-pattern='partial pair staging' tests/control-room-installer.test.mjs",
+    "why": "a failed second staging half must retire the already-staged release so the exact retry can proceed"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "  case \"$d\" in\n    /private/tmp/*) testing=1; test_tmpdir=/private/tmp ;;\n    /tmp/*) testing=1; test_tmpdir=/tmp ;;\n    *) refuse 'bootstrap_test_root_refused' ;;\n  esac",
+    "replace": "  testing=1; test_tmpdir=/private/tmp",
+    "test": "node --test --test-name-pattern='tool injection is unavailable' tests/install-night-bootstrap.test.mjs",
+    "why": "absolute system-tool overrides exist only for the fake harness under a private temporary root"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "\"$SUDO\" -n -u \"#$SUDO_UID\" /usr/bin/sudo -K || refuse 'bootstrap_sudo_timestamp_refused'",
+    "replace": ": # mutation removes sudo timestamp invalidation",
+    "test": "node --test --test-name-pattern='real bootstrap is POSIX' tests/install-night-bootstrap.test.mjs",
+    "why": "stage B drops the invoking owner's cached sudo timestamp before network work"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "\"$CURL\" -q --proto '=https'",
+    "replace": "\"$CURL\" --proto '=https'",
+    "test": "node --test --test-name-pattern='real bootstrap is POSIX' tests/install-night-bootstrap.test.mjs",
+    "why": "root curl ignores curlrc files before parsing any other option"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "|| refuse 'bootstrap_node_digest_refused'",
+    "replace": "|| :",
+    "test": "node --test --test-name-pattern='rejects pin, mirror' tests/install-night-bootstrap.test.mjs",
+    "why": "the pinned Node archive digest is checked before extraction or execution"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 CONTROL_ROOM_GITHUB_TOKEN_FILE=\"$token_file\"",
+    "replace": "CONTROL_ROOM_GITHUB_TOKEN_FILE=\"$token_file\"",
+    "test": "node --test --test-name-pattern='fresh mirror hardening' tests/install-night-bootstrap.test.mjs",
+    "why": "system attributes and replacement refs cannot affect the confirmed fresh mirror"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "|| refuse 'bootstrap_commit_not_on_main'",
+    "replace": "|| :",
+    "test": "node --test --test-name-pattern='rejects pin, mirror' tests/install-night-bootstrap.test.mjs",
+    "why": "the phone-confirmed commit must be an ancestor of fetched main"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "|| refuse 'bootstrap_script_consistency_refused'",
+    "replace": "|| :",
+    "test": "node --test --test-name-pattern='rejects pin, mirror' tests/install-night-bootstrap.test.mjs",
+    "why": "the fetched bootstrap bytes must equal the copy archived from commit40"
+  },
+  {
+    "file": "scripts/install-night/bootstrap.sh",
+    "find": "[ -z \"$(\"$FIND\" \"$source_root\" -type l -print -quit)\" ] || refuse 'bootstrap_source_link_refused'",
+    "replace": ": # mutation permits source links before Node loads the archive",
+    "test": "node --test --test-name-pattern='rejects pin, mirror' tests/install-night-bootstrap.test.mjs",
+    "why": "stage B must refuse archive symlinks before verified Node imports any source module"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "if (result.stdout.trim() !== expected.get(file.path).oid) refuse(\"bootstrap_source_tree_refused\");",
+    "replace": "if (false) refuse(\"bootstrap_source_tree_refused\");",
+    "test": "node --test --test-name-pattern='stage 0 rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "stage 0 rehashes every extracted file without filters against the confirmed git tree"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "if (digest !== expectedDigest) refuse(\"updater_bundle_digest_refused\");",
+    "replace": "if (false) refuse(\"updater_bundle_digest_refused\");",
+    "test": "node --test --test-name-pattern='hand-off rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "the stage-1 bundle must equal the digest the owner confirmed before import"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "if (entry.isSymbolicLink() || entry.uid !== expectedUid || (entry.mode & 0o022) !== 0\n        || part === \"lib\"",
+    "replace": "if (false\n        || part === \"lib\"",
+    "test": "node --test --test-name-pattern='hand-off rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "the imported install-step module and its ancestor must not be writable by another uid"
+  },
+  {
+    "file": "src/updater/v1/install/bootstrap.mjs",
+    "find": "const backup = join(state, `.${name}-${input.transactionId}`);",
+    "replace": "const backup = current;",
+    "test": "node --test --test-name-pattern='stage 0 rehashes' tests/install-night-bootstrap.test.mjs",
+    "why": "a prior adopted mirror or token is moved aside so a retry past step 6 can proceed"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!hasInstalled && options.bootstrap === undefined) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='requires the install-night line' tests/control-room-installer.test.mjs",
+    "why": "the bundled install command cannot start or recover a fresh root without stage B inputs"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await loaded.continueInstallV1(Object.freeze({ root, transactionId: id,\n      accounts: accountState.accounts,",
+    "replace": "await Promise.resolve(Object.freeze({ root, transactionId: id,\n      accounts: accountState.accounts,",
+    "test": "node --test --test-name-pattern='fake-root install night' tests/control-room-installer.test.mjs",
+    "why": "the same root process must enter the verified bundle before any stage-one work"
+  },
+  {
+    "file": "src/updater/v1/policy/bundle.json",
+    "find": "\"output\": \"lib/install-steps.mjs\"",
+    "replace": "\"output\": \"lib/omitted.mjs\"",
+    "test": "node --test tests/updater-fixed-bundle.test.mjs",
+    "why": "the fixed updater bundle contains the one reviewed stage-1 hand-off entry"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!fresh && classification.changesDatabase) refuse(\"attended_database_change_requires_upgrader\");",
+    "replace": "if (false) refuse(\"attended_database_change_requires_upgrader\");",
+    "test": "node --test --test-name-pattern='verified diff touches db' tests/control-room-installer.test.mjs",
+    "why": "an attended repeat must refuse database changes until the separate upgrader exists"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "if (options.moveLiveDatabase === true) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern='fresh database is the default' tests/control-room-installer.test.mjs",
+    "why": "install night initializes a fresh database unless an explicit move is selected"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "{ healthAccepted: true, knownGoodAccepted: true }), POST_HEALTH_SERVICE_ROLES_V1);",
+    "replace": "{ healthAccepted: false, knownGoodAccepted: true }), POST_HEALTH_SERVICE_ROLES_V1);",
+    "test": "node --test --test-name-pattern='E2E-1 fake-root' tests/control-room-installer.test.mjs",
+    "why": "post-health root authorities start only after health and known-good acceptance"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "ownerCodePolicy: \"every-unconsumed-attempt\"",
+    "replace": "ownerCodePolicy: \"first-attempt-only\"",
+    "test": "node --test --test-name-pattern='every unconsumed passkey QR' tests/control-room-installer.test.mjs",
+    "why": "every QR carries the owner code until that code has been consumed"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "await ports.killAccountProcesses({ uid: context.accounts.database.uid });",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='database recovery is bootout' tests/control-room-installer.test.mjs",
+    "why": "database cleanup sweeps the database uid after bootout and before data retirement"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "export const DEFAULT_CONTROL_ROOM_WEB_PORT_V1 = 3210;",
+    "replace": "export const DEFAULT_CONTROL_ROOM_WEB_PORT_V1 = 3213;",
+    "test": "node --test --test-name-pattern='E2E-1 fake-root' tests/control-room-installer.test.mjs",
+    "why": "the install-night bootstrap has no port flag and must select the reserved live web port"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "export const DEFAULT_CONTROL_ROOM_GATEWAY_PORT_V1 = 3211;",
+    "replace": "export const DEFAULT_CONTROL_ROOM_GATEWAY_PORT_V1 = 3212;",
+    "test": "node --test --test-name-pattern='E2E-1 fake-root' tests/control-room-installer.test.mjs",
+    "why": "protected configuration must select the reserved fleet gateway port"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "|| !Number.isSafeInteger(gatewayPort) || gatewayPort < 1024 || gatewayPort > 65535 || gatewayPort === webPort",
+    "replace": "|| !Number.isSafeInteger(gatewayPort) || gatewayPort < 1024 || gatewayPort > 65535 || false",
+    "test": "node --test --test-name-pattern='bad input' tests/control-room-installer.test.mjs",
+    "why": "the web and fleet gateway daemons must never be assigned the same listener port"
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "if (extractRpId(serve) !== rpId) refuse(\"tailscale_rp_id_changed\");",
+    "replace": "if (false) refuse(\"tailscale_rp_id_changed\");",
+    "test": "node --test --test-name-pattern='a conflicting :443 handler' tests/control-room-installer.test.mjs",
+    "why": "the hostname placed in protected config must still be the hostname activated for the owner"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "if (!/^[A-Za-z0-9.-]{1,253}$/u.test(rpId)) throw new Error(\"tailscale_rp_id_refused\");",
+    "replace": "if (false) throw new Error(\"tailscale_rp_id_refused\");",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "a missing or malformed Tailscale DNS name cannot become the WebAuthn relying-party id"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "installServices: installServicesV1,",
+    "replace": "installServices: dependencyUnavailable(\"daemon_adapter\"),",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "the native composition must call the reviewed in-process root service batch rather than a missing adapter"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "startPostHealthServices: (input, proof) => startPostHealthServicesV1(input, proof),",
+    "replace": "startPostHealthServices: dependencyUnavailable(\"post_health_services\"),",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "step 27b must use the reviewed heartbeat-checked service batch"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "rollbackRuntime: rollbackToolRuntime,",
+    "replace": "rollbackRuntime: dependencyUnavailable(\"runtime_rollback\"),",
+    "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
+    "why": "completed runtime actions must use their transaction-owned undo receipt during rollback"
+  }
+]

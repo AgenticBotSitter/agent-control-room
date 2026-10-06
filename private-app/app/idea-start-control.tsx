@@ -14,6 +14,7 @@ export function IdeaStartControl({ session, projectId: fixedProjectId, round = 1
   const [loadingProjects, setLoadingProjects] = useState(true), [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<IdeaRoundProposalReceipt>(), [error, setError] = useState<string>();
   const [uncertain, setUncertain] = useState(false);
+  const [followUp, setFollowUp] = useState("");
   useEffect(() => {
     if (fixedProjectId) { setProjectId(fixedProjectId); setLoadingProjects(false); return; }
     let active = true;
@@ -28,7 +29,8 @@ export function IdeaStartControl({ session, projectId: fixedProjectId, round = 1
     if (busy || uncertain || receipt) return;
     if (!projectId) return;
     setBusy(true); setError(undefined);
-    try { setReceipt(await client.propose(session.sessionId, { sessionDigest: session.sessionDigest, projectId, round })); }
+    try { setReceipt(await client.propose(session.sessionId, { sessionDigest: session.sessionDigest, projectId, round,
+      ...(round > 1 ? { followUp: followUp.trim() } : {}) })); }
     catch (reason) {
       const unknown = !(reason instanceof BrowserRequestError) || reason.code === "uncertain";
       setUncertain(unknown); setError(!unknown && reason instanceof BrowserRequestError ? browserErrorMessage[reason.code]
@@ -41,7 +43,9 @@ export function IdeaStartControl({ session, projectId: fixedProjectId, round = 1
     {fixedProjectId ? <p>Tasks stay in the existing discussion project.</p> : loadingProjects ? <p>Loading active projects…</p> : projects.length ? <label>Save tasks in project <select value={projectId ?? ""} disabled={busy || uncertain || !!receipt} onChange={event => setProjectId(event.target.value)}>
       {projects.map(project => <option key={project.projectId} value={project.projectId}>{project.title}</option>)}</select></label>
       : <p>Create an active ordinary project before preparing discussion tasks.</p>}
-    <button type="button" disabled={loadingProjects || !projectId || busy || uncertain || !!receipt} onClick={() => void start()}>{busy ? "Preparing tasks…" : `Prepare round ${round} tasks`}</button>
+    {round > 1 ? <label>Owner follow-up question<textarea value={followUp} maxLength={300}
+      disabled={busy || uncertain || !!receipt} onChange={event => setFollowUp(event.target.value)} /></label> : null}
+    <button type="button" disabled={loadingProjects || !projectId || busy || uncertain || !!receipt || round > 1 && !followUp.trim()} onClick={() => void start()}>{busy ? "Preparing tasks…" : `Prepare round ${round} tasks`}</button>
     {error ? <p role="alert">{error}</p> : null}
     {receipt ? <p role="status">Round {round} tasks were saved for {receipt.receipts.length} participants. They are proposed only; review and assignment happen through the selected project.</p> : null}
     {receipt ? <a href={`/projects/${encodeURIComponent(receipt.projectId)}`}>Open project tasks</a> : null}

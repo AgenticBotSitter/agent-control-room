@@ -1,0 +1,107 @@
+[
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "if (!HOST_PATTERN.test(tailnet) || !tailnet.split(\".\").some(label => label.includes(\"rehearsal\"))) refuse(\"rehearsal_tailnet_refused\");",
+    "replace": "if (false) refuse(\"rehearsal_tailnet_refused\");",
+    "test": "node --test --test-name-pattern='live name, port' tests/e2e2-rehearsal.test.mjs",
+    "why": "the requested rehearsal identity must be a valid explicitly marked hostname"
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "if (live.sourcesRead === 0) refuse(\"live_sources_missing\");",
+    "replace": "if (false) refuse(\"live_sources_missing\");",
+    "test": "node --test --test-name-pattern='zero live sources' tests/e2e2-rehearsal.test.mjs",
+    "why": "a live rehearsal cannot proceed without a relevant observed source"
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "if (kind === \"roots\") { if ([...live.roots].some(item => rootsOverlap(item, value))) refuse(\"live_root_collision_refused\"); return; }",
+    "replace": "if (kind === \"roots\") { return; }",
+    "test": "node --test --test-name-pattern='live name, port' tests/e2e2-rehearsal.test.mjs",
+    "why": "case-folded parent and child live roots must collide"
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "if (kind === \"labels\") { if ([...live.labels, ...live.labelPrefixes].some(item => labelOverlap(item, value))) refuse(\"live_label_collision_refused\"); return; }",
+    "replace": "if (kind === \"labels\") { return; }",
+    "test": "node --test --test-name-pattern='live name, port' tests/e2e2-rehearsal.test.mjs",
+    "why": "case and prefix variants of live launchd families must collide"
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "if (live[kind].has(compared)) refuse(`live_${kind.slice(0, -1)}_collision_refused`);",
+    "replace": "if (false) refuse(`live_${kind.slice(0, -1)}_collision_refused`);",
+    "test": "node --test --test-name-pattern='live name, port' tests/e2e2-rehearsal.test.mjs",
+    "why": "the rehearsal ports and accounts must remain distinct from live values"
+  },
+  {
+    "file": "scripts/install/rehearsal/config.mjs",
+    "find": "if ([...live.hosts].some(value => host(value) === tailnet || tailnetSuffix(value) === tailnetSuffix(tailnet))) refuse(\"live_host_collision_refused\");",
+    "replace": "if (false) refuse(\"live_host_collision_refused\");",
+    "test": "node --test --test-name-pattern='live name, port' tests/e2e2-rehearsal.test.mjs",
+    "why": "the rehearsal identity cannot share the live Tailscale suffix"
+  },
+  {
+    "file": "scripts/install/rehearsal/snapshot.mjs",
+    "find": "if (block === \"services\") {\n      const row = /^(?:\\d+|-)\\s+\\S+\\s+([A-Za-z0-9][A-Za-z0-9._-]*)$/u.exec(line);\n      if (!row) refuse(\"launchctl_output_refused\");",
+    "replace": "if (block === \"services\") {\n      const row = /^(?:\\d+|-)\\s+\\S+\\s+([A-Za-z0-9][A-Za-z0-9._-]*)$/u.exec(line);\n      if (!row) continue;",
+    "test": "node --test --test-name-pattern='real launchctl shape' tests/e2e2-rehearsal.test.mjs",
+    "why": "unparsed launchd service rows must fail closed"
+  },
+  {
+    "file": "scripts/install/rehearsal/snapshot.mjs",
+    "find": "if (changed.length > 0) refuse(\"snapshot_diff_not_empty\");",
+    "replace": "if (false) refuse(\"snapshot_diff_not_empty\");",
+    "test": "node --test --test-name-pattern='snapshot refuses a leftover' tests/e2e2-rehearsal.test.mjs",
+    "why": "any changed monitored surface must fail the after snapshot"
+  },
+  {
+    "file": "scripts/install/rehearsal/snapshot.mjs",
+    "find": "if (typeof logicalPath !== \"string\" || !new RegExp(`^${escaped}\\\\.uninstalled-\\\\d{8}T\\\\d{9}Z$`, \"u\").test(logicalPath)) refuse(\"retained_root_refused\");",
+    "replace": "if (false) refuse(\"retained_root_refused\");",
+    "test": "node --test --test-name-pattern='snapshot diff is empty' tests/e2e2-rehearsal.test.mjs",
+    "why": "the sole retained artifact must use the exact renamed rehearsal root shape"
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "rows.push(tableRow(\"installer completed\", correlation && installed?.data?.state === \"installed\", installed?.data?.state ?? \"missing\"));",
+    "replace": "rows.push(tableRow(\"installer completed\", correlation, installed?.data?.state ?? \"missing\"));",
+    "test": "node --test --test-name-pattern='independently fails every evidence guard' tests/e2e2-rehearsal.test.mjs",
+    "why": "a rehearsal cannot pass without an installed final state"
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "rows.push(tableRow(\"fresh database selected\", fresh?.data?.selected === true, fresh ? JSON.stringify(fresh.data) : \"missing\"));",
+    "replace": "rows.push(tableRow(\"fresh database selected\", true, fresh ? JSON.stringify(fresh.data) : \"missing\"));",
+    "test": "node --test --test-name-pattern='independently fails every evidence guard' tests/e2e2-rehearsal.test.mjs",
+    "why": "the rehearsal must prove the explicit fresh database branch"
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "const passed = matches.length === 1 && matches[0].outcome === \"skipped (rehearsal)\";",
+    "replace": "const passed = true;",
+    "test": "node --test --test-name-pattern='independently fails every evidence guard' tests/e2e2-rehearsal.test.mjs",
+    "why": "every Tailscale step must be recorded exactly once as skipped"
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "const t1 = Number.isSafeInteger(expected) && expected > 0 && spawns.length === expected && new Set(spawnIds).size === expected\n    && spawns.every(row => typeof row.spawnId === \"string\" && row.spawnId.length > 0 && row.passed === true);",
+    "replace": "const t1 = true;",
+    "test": "node --test --test-name-pattern='independently fails every evidence guard' tests/e2e2-rehearsal.test.mjs",
+    "why": "T1 evidence must cover every uniquely identified installer spawn"
+  },
+  {
+    "file": "scripts/install/rehearsal/collect-results.mjs",
+    "find": "const healthPassed = health?.data?.healthy === true && health?.data?.samples === 3\n    && /^sha256:[a-f0-9]{64}$/u.test(health?.data?.schemaDigest ?? \"\") && healthEvidence.length === 1\n    && healthEvidence[0].healthy === true && healthEvidence[0].samples === 3\n    && healthEvidence[0].schemaDigest === health.data.schemaDigest;",
+    "replace": "const healthPassed = true;",
+    "test": "node --test --test-name-pattern='independently fails every evidence guard' tests/e2e2-rehearsal.test.mjs",
+    "why": "the collector requires the exact healthy three-sample result"
+  },
+  {
+    "file": "scripts/install/rehearsal/verify-capabilities.mjs",
+    "find": "if (!same(value, REQUIRED_INSTALLER_CAPABILITIES_V1)) refuse(\"installer_capabilities_refused\");",
+    "replace": "if (false) refuse(\"installer_capabilities_refused\");",
+    "test": "node --test --test-name-pattern='capability gate' tests/e2e2-rehearsal.test.mjs",
+    "why": "the kit must refuse an installer that can mutate any Tailscale step"
+  }
+]

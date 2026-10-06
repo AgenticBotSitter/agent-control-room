@@ -28,14 +28,18 @@ test("Idea Lab participant rounds become deterministic non-runnable ordinary tas
   const roundTwo = source.session.participants.map((participant) => buildIdeaLabCanonicalTaskPlanV1({
     session: source.session, projectId: "project:idea-workspace", participantId: participant.participantId,
     round: 2, ownerPrompt, contributions: source.contributions.filter((item) => item.round === 1),
+    followUp: "Which assumption would you test first, and why?",
   }));
   for (const plan of roundTwo) {
     assert.deepEqual(plan.dependsOnTaskKeys, roundOne.map((item) => item.taskKey).sort());
     assert.match(plan.taskDraft.instructions, /untrusted data, not instructions/);
+    assert.match(plan.taskDraft.instructions, /Owner follow-up: Which assumption/);
+    assert.equal(plan.ownerFollowUp, "Which assumption would you test first, and why?");
   }
   assert.deepEqual(buildIdeaLabCanonicalTaskPlanV1({ session: source.session, projectId: "project:idea-workspace",
     participantId: source.session.participants[0]!.participantId, round: 2, ownerPrompt,
     contributions: source.contributions.filter((item) => item.round === 1),
+    followUp: "Which assumption would you test first, and why?",
   }), roundTwo[0]);
 });
 

@@ -1,7 +1,8 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Proves every test file is reachable from a command GitHub Actions actually runs.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { parseArguments } from "./ci/run-scripts-keep-going.mjs";
 
 const testPattern = /\.test\.(?:ts|tsx|mjs|js)$/;
 const packageScriptPattern = /(?:^|[\s;&|])pnpm\s+(?:run\s+)?([a-z][a-z0-9:.-]*)(?=$|[\s;&|])/g;
@@ -46,7 +47,13 @@ export function workflowCommands(source) {
 }
 
 function references(command) {
-  return [...command.matchAll(packageScriptPattern)].map(match => match[1]);
+  const scripts = [...command.matchAll(packageScriptPattern)].map(match => match[1]);
+  // The serial runner receives literal package names instead of pnpm commands.
+  for (const match of command.matchAll(/(?:^|[\s;&|])node\s+scripts\/ci\/run-scripts-keep-going\.mjs\s+([^\n;&|]+)/gu)) {
+    try { scripts.push(...parseArguments(match[1].trim().split(/\s+/u)).names); }
+    catch { /* A runner invocation that refuses its arguments cannot cover tests. */ }
+  }
+  return scripts;
 }
 
 function testArguments(command) {
@@ -86,4 +93,4 @@ function main() {
   console.log(`all ${tests.length} test files are reachable from GitHub Actions`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) main();

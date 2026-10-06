@@ -1,0 +1,5 @@
+# This lane's own scratch. Everything here is per-run and machine-specific: a
+# TMPDIR, a PG_BIN path and a scratch port base. None of it belongs in the repo,
+# so the whole directory is ignored rather than itemised.
+*
+!.gitignore

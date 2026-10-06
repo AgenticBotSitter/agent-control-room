@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { link, lstat, open, readdir, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
   type ArtifactStorageWriteV1,
   type StoredArtifactV1,
 } from "../../node-executor/artifact-storage";
+import { tryPersistentKernelLockV1 } from "../../installer/shared/persistent-kernel-lock.mjs";
 import { checkedResultBytes, resultBytesHash } from "./native-results";
 
 export interface PersistentLocalArtifactStorageConfigurationV1 {
@@ -50,6 +51,8 @@ export type PersistentLocalArtifactStorageIoBoundaryV1 =
   | "artifact_stat" | "artifact_read" | "artifact_recheck" | "artifact_close"
   | "lock_open" | "lock_write" | "lock_sync" | "pending_open" | "pending_write" | "pending_sync"
   | "pending_close" | "target_link" | "pending_unlink" | "lock_close" | "lock_unlink"
+  | "kernel_stamp" | "kernel_sync"
+  | "kernel_lock" | "lock_wait" | "recovery_stat" | "recovery_open" | "recovery_unlink"
   | "root_sync_open" | "root_sync" | "root_sync_close";
 
 /** Test-only fault gate. The production factory never accepts an injected filesystem implementation. */
@@ -62,10 +65,15 @@ const artifactNamePattern = /^[a-f0-9]{64}\.artifact$/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const lockName = ".control-room-persistent-artifact.lock";
 const pendingPrefix = ".control-room-persistent-artifact-pending-";
+const kernelName = ".control-room-artifact-kernel.lock";
+const writerSchema = "control-room.persistent-artifact-writer/v1";
+const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const headerLimitBytes = 512;
 const resultLimitBytes = 65_536;
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
+
+const retiringGuards = new Set<FileHandle>();
 
 class DeadlineError extends Error {}
 
@@ -153,11 +161,13 @@ function decodeEnvelope(value: Uint8Array, expectedArtifactId?: string): StoredR
 
 /**
  * Persistent, create-once native-result bytes rooted in one explicitly supplied private directory.
- * It does not create directories, resolve caller paths, repair locks, or delete unknown entries.
+ * Kernel exclusion permits recovery of identified abandoned bookkeeping only.
+ * Complete targets and unknown entries are preserved.
  */
 export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   private queue: Promise<void> = Promise.resolve();
   private poisoned = false;
+  private readonly inFlight = new Set<Promise<unknown>>();
 
   private constructor(
     private readonly root: string,
@@ -212,10 +222,20 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
       configuration.operationTimeoutMs, testIo);
     try {
       await adapter.assertRootIdentity(context);
-      const inventory = await adapter.inventory(context);
-      if (inventory.count > configuration.maximumArtifacts || inventory.totalBytes > configuration.maximumTotalBytes) {
-        throw new ArtifactStorageError("storage_capacity");
-      }
+      // An empty fresh root needs no recovery or mutation. Once a writer has
+      // installed the permanent guard, every opener participates in exclusion.
+      const entries = await adapter.io("inventory_read", () => readdir(canonical), context);
+      let guard: FileHandle | undefined;
+      try {
+        if (entries.some(name => name === kernelName || name === lockName || name.startsWith(pendingPrefix))) {
+          guard = await adapter.acquireGuard(context);
+          await adapter.recover(context);
+        }
+        const inventory = await adapter.inventory(context);
+        if (inventory.count > configuration.maximumArtifacts || inventory.totalBytes > configuration.maximumTotalBytes) {
+          throw new ArtifactStorageError("storage_capacity");
+        }
+      } finally { if (guard) await adapter.retireGuard(guard); }
       return adapter;
     } catch (error) {
       throw safeStorageError(error);
@@ -273,6 +293,8 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     this.checkpoint(context);
     await this.assertRootIdentity(context);
     const lockPath = join(this.root, lockName);
+    let guard: FileHandle | undefined;
+    const token = randomUUID();
     let lock: FileHandle | undefined;
     let ownedLock = false;
     let pending: FileHandle | undefined;
@@ -281,11 +303,15 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     let operationError: unknown;
     let cleanupError: unknown;
     try {
+      guard = await this.acquireGuard(context);
+      await this.recover(context);
+      await this.io("kernel_stamp", async () => { await guard!.truncate(0); await guard!.writeFile(JSON.stringify({ schema: writerSchema, pid: process.pid, token })); }, context);
+      await this.io("kernel_sync", () => guard!.sync(), context);
       lock = await this.io("lock_open",
         () => open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), context, true);
       ownedLock = true;
       context.mutationStarted = true;
-      await this.io("lock_write", () => lock!.writeFile("control-room-persistent-artifact-write\n", "utf8"), context);
+      await this.io("lock_write", () => lock!.writeFile(`${JSON.stringify({ schema: writerSchema, pid: process.pid, token })}\n`, "utf8"), context);
       await this.io("lock_sync", () => lock!.sync(), context);
       const inventory = await this.inventory(context, true);
       const targetPath = join(this.root, storageName(input.artifactId));
@@ -296,7 +322,7 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
           || inventory.totalBytes + input.bytes.byteLength > this.maximumTotalBytes) {
           throw new ArtifactStorageError("storage_capacity");
         }
-        pendingPath = join(this.root, `${pendingPrefix}${randomUUID()}`);
+        pendingPath = join(this.root, `${pendingPrefix}${token}`);
         pending = await this.io("pending_open", () => open(pendingPath!,
           constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), context);
         const envelope = encodeEnvelope(input.artifactId, input.bytes);
@@ -339,17 +365,23 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
           context.uncertain = true;
           cleanupError = error;
         }
-      } else {
-        void pending?.close().catch(() => {});
-        void lock?.close().catch(() => {});
       }
+      const remainingPending = pending, remainingLock = lock;
+      const closeRemaining = async () => {
+        await remainingPending?.close().catch(() => {});
+        await remainingLock?.close().catch(() => {});
+      };
+      // A timed-out syscall can still be running. Keep exclusion and its
+      // descriptors until it settles; SIGKILL releases them regardless.
+      if (guard) await this.retireGuard(guard, closeRemaining);
+      else await closeRemaining();
     }
     if (context.uncertain || cleanupError) {
       this.poisoned = true;
       // The artifact result is set only after its link and pending-file retirement have both been
       // directory-synchronized and its exact envelope has been read back. A later failure can make
       // lock retirement uncertain, but it cannot make that already-proven artifact ambiguous. The
-      // current adapter still retires; a surviving lock makes every new adapter fail closed.
+      // current adapter still retires; startup can recover its abandoned bookkeeping.
       if (result) return result;
       throw new ArtifactStorageError("storage_ambiguous");
     }
@@ -359,6 +391,115 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     }
     if (!result) throw new ArtifactStorageError("storage_ambiguous");
     return result;
+  }
+
+  private async retireGuard(guard: FileHandle, cleanup = async () => {}): Promise<void> {
+    const finish = async () => {
+      try { await cleanup(); } finally { await guard.close(); }
+    };
+    if (this.inFlight.size) {
+      retiringGuards.add(guard);
+      void Promise.allSettled([...this.inFlight]).then(finish)
+        .finally(() => retiringGuards.delete(guard)).catch(() => {});
+    } else await finish();
+  }
+
+  private recoveryError(reason: string): ArtifactStorageError {
+    return Object.assign(new ArtifactStorageError("storage_ambiguous"), { safeReasonCode: reason, message: `storage_ambiguous: ${reason}` });
+  }
+
+  private async acquireGuard(context: OperationContext): Promise<FileHandle> {
+    for (;;) {
+      let acquired: FileHandle | null = null;
+      let guard: FileHandle | null;
+      try {
+        guard = await this.io("kernel_lock", async () => {
+          acquired = await tryPersistentKernelLockV1(join(this.root, kernelName));
+          if (context.uncertain || context.signal?.aborted || Date.now() >= context.deadline) {
+            await acquired?.close(); acquired = null;
+          }
+          return acquired;
+        }, context);
+      } catch (error) { await (acquired as FileHandle | null)?.close(); throw error; }
+      if (guard) {
+        try { await this.assertRootIdentity(context); return guard; }
+        catch (error) { await guard.close(); throw error; }
+      }
+      await this.io("lock_wait", () => new Promise<void>(done => setTimeout(done, 10)), context);
+    }
+  }
+
+  /** The permanent kernel guard is held for the entire inventory and recovery.
+   * Empty records arise before lock_write; no pending file can exist yet. A
+   * legacy anonymous writer did not use this guard, so it needs a stopped-host
+   * migration and is refused here with a named reason. */
+  private async recover(context: OperationContext): Promise<void> {
+    await this.assertRootIdentity(context);
+    const entries = await this.io("inventory_read", () => readdir(this.root), context);
+    const pendingNames = entries.filter(name => name.startsWith(pendingPrefix));
+    for (const name of entries) {
+      if (name !== kernelName && name !== lockName && !artifactNamePattern.test(name)
+        && !pendingNames.includes(name)) throw this.recoveryError("storage_unknown_entry");
+    }
+    let token: string | undefined;
+    let writerInfo: BigIntStats | undefined;
+    if (entries.includes(lockName)) {
+      const path = join(this.root, lockName);
+      writerInfo = await this.privateBookkeeping(context, path, false);
+      if (writerInfo.size > BigInt(1024)) throw this.recoveryError("storage_writer_unidentified");
+      const handle = await this.io("recovery_open", () => open(path, constants.O_RDONLY | noFollow | nonBlock), context);
+      try {
+        const info = await handle.stat({ bigint: true });
+        if (info.dev !== writerInfo.dev || info.ino !== writerInfo.ino) throw this.recoveryError("storage_writer_changed");
+        const raw = await handle.readFile("utf8");
+        if (!raw) {
+          // The new writer durably identifies itself on the permanent guard
+          // BEFORE lock_open. An old anonymous/empty lock has no such proof.
+          const stampHandle = await open(join(this.root, kernelName), constants.O_RDONLY | noFollow | nonBlock);
+          try {
+            const stampInfo = await stampHandle.stat();
+            if (stampInfo.size > 1024) throw this.recoveryError("storage_writer_unidentified");
+            let stamp;
+            try { stamp = JSON.parse(await stampHandle.readFile("utf8")); }
+            catch { throw this.recoveryError("storage_writer_unidentified"); }
+            if (stamp?.schema !== writerSchema || !Number.isSafeInteger(stamp.pid) || stamp.pid < 1
+              || !uuidPattern.test(stamp.token)) throw this.recoveryError("storage_writer_unidentified");
+            token = stamp.token;
+          } finally { await stampHandle.close(); }
+        } else {
+          let owner;
+          try { owner = JSON.parse(raw); } catch { throw this.recoveryError("storage_writer_unidentified"); }
+          if (owner?.schema !== writerSchema || !Number.isSafeInteger(owner.pid) || owner.pid < 1
+            || !uuidPattern.test(owner.token)) throw this.recoveryError("storage_writer_unidentified");
+          token = owner.token;
+        }
+      } finally { await handle.close(); }
+    }
+    // Validate the complete recovery set before deleting anything. A named
+    // pending file belongs only to the identified writer's unique token.
+    for (const name of pendingNames) {
+      if (!token || name !== `${pendingPrefix}${token}`) throw this.recoveryError("storage_pending_unidentified");
+      await this.privateBookkeeping(context, join(this.root, name), true);
+    }
+    for (const name of pendingNames) {
+      const path = join(this.root, name);
+      await this.io("recovery_unlink", () => unlink(path), context);
+    }
+    if (writerInfo) {
+      const current = await this.privateBookkeeping(context, join(this.root, lockName), false);
+      if (current.dev !== writerInfo.dev || current.ino !== writerInfo.ino) throw this.recoveryError("storage_writer_changed");
+      await this.io("recovery_unlink", () => unlink(join(this.root, lockName)), context);
+    }
+    if (pendingNames.length || writerInfo) await this.syncRoot(context);
+  }
+
+  private async privateBookkeeping(context: OperationContext, path: string, pending: boolean): Promise<BigIntStats> {
+    const info = await this.io("recovery_stat", () => lstat(path, { bigint: true }), context);
+    if (!info.isFile() || info.isSymbolicLink() || !validPrivateMode(info.mode)
+      || info.uid !== BigInt(process.getuid!()) || (pending ? info.nlink < BigInt(1) || info.nlink > BigInt(2) : info.nlink !== BigInt(1))) {
+      throw this.recoveryError("storage_bookkeeping_invalid");
+    }
+    return info;
   }
 
   private async replay(
@@ -391,8 +532,8 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     let totalBytes = 0;
     const entries = await this.io("inventory_read", () => readdir(this.root), context);
     for (const entry of entries) {
-      if (entry === lockName && ownLock) continue;
-      if (!artifactNamePattern.test(entry)) throw new ArtifactStorageError("storage_ambiguous");
+      if (entry === kernelName || entry === lockName && ownLock) continue;
+      if (!artifactNamePattern.test(entry)) throw this.recoveryError("storage_unknown_entry");
       const record = await this.readRecord(join(this.root, entry), context, undefined, false);
       if (!record || storageName(record.header.artifactId) !== entry
         || record.header.sizeBytes > this.maximumFileBytes) throw new ArtifactStorageError("storage_ambiguous");
@@ -472,6 +613,8 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     begin: () => Promise<T>, context: OperationContext, uncertainAcquisition = false): Promise<T> {
     this.checkpoint(context);
     const operation = this.testIo ? Promise.resolve().then(() => this.testIo!.run(boundary, begin)) : begin();
+    this.inFlight.add(operation);
+    void operation.finally(() => this.inFlight.delete(operation)).catch(() => {});
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     const stopped = new Promise<never>((_resolve, reject) => {

@@ -33,8 +33,9 @@ export interface PolledReadSchedulerOptions<T> {
   read: (signal: AbortSignal) => Promise<T>;
   /** Called with a value the caller has accepted as the current presentation. */
   accept: (value: T) => void;
-  /** Called for every failed read, including aborts caused by `stop`. */
+  /** Called for failed reads; cancellation is not evidence of an outage. */
   failed: (reason: unknown) => void;
+  checking?: () => void;
   /** The ordinary interval. Backoff and quiet stretching are multiples of it. */
   baseIntervalMs: number;
   /** True while the tab is not visible. Supplied so tests need no DOM. */
@@ -57,6 +58,8 @@ export interface PolledReadScheduler {
   start(startDelayMs?: number): void;
   /** Owner pressed refresh, the tab became visible, or the window was focused. */
   trigger(force?: boolean): void;
+  /** Cancel a hidden tab's read, retaining its last accepted presentation. */
+  pause(): void;
   /** Ends polling and aborts any read still in flight. Safe to call twice. */
   stop(): void;
   readonly stopped: boolean;
@@ -77,13 +80,17 @@ export const structuralEqual = (previous: unknown, next: unknown): boolean => {
   return leftKeys.every(key => Object.hasOwn(right, key) && structuralEqual(left[key], right[key]));
 };
 
+export function isPolledReadAbort(reason: unknown): boolean {
+  return typeof reason === "object" && reason !== null && "name" in reason && reason.name === "AbortError";
+}
+
 export function createPolledReadScheduler<T>(options: PolledReadSchedulerOptions<T>): PolledReadScheduler {
   const base = options.baseIntervalMs;
   if (!Number.isFinite(base) || base <= 0) throw new Error("polled_read_interval_invalid");
   const maxQuiet = options.maxQuietMultiplier ?? 4;
   const maxError = options.maxErrorMultiplier ?? 8;
   const same = options.unchanged ?? structuralEqual;
-  const abort = new AbortController();
+  let abort: AbortController | undefined;
   let stopped = false, reading = false, coalesced = false, quiet = 0, failures = 0;
   let timer: unknown, latest: { value: T } | undefined;
 
@@ -109,9 +116,11 @@ export function createPolledReadScheduler<T>(options: PolledReadSchedulerOptions
     if (stopped || reading || (options.hidden() && !initial)) return;
     reading = true;
     clearTimer();
+    const request = new AbortController(); abort = request;
+    options.checking?.();
     try {
-      const value = await options.read(abort.signal);
-      if (stopped) return;
+      const value = await options.read(request.signal);
+      if (stopped || request.signal.aborted) return;
       const unchanged = latest !== undefined && same(latest.value, value);
       latest = { value };
       failures = 0;
@@ -121,10 +130,14 @@ export function createPolledReadScheduler<T>(options: PolledReadSchedulerOptions
       options.accept(value);
     } catch (reason) {
       if (stopped) return;
+      if (request.signal.aborted || isPolledReadAbort(reason)) {
+        failures = 0; quiet = 0; return;
+      }
       failures = failures + 1;
       options.failed(reason);
     } finally {
       reading = false;
+      if (abort === request) abort = undefined;
       // A trigger that arrived during the read is served now, at the base
       // interval, rather than being folded into the next scheduled poll.
       if (!stopped && coalesced) { coalesced = false; clearTimer(); void run(); return; }
@@ -154,12 +167,16 @@ export function createPolledReadScheduler<T>(options: PolledReadSchedulerOptions
       clearTimer();
       void run(force);
     },
+    pause() {
+      if (stopped) return;
+      clearTimer(); abort?.abort();
+    },
     stop() {
       if (stopped) return;
       stopped = true;
       coalesced = false;
       clearTimer();
-      abort.abort();
+      abort?.abort();
     },
     get stopped() { return stopped; },
   };

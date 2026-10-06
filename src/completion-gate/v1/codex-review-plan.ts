@@ -4,7 +4,8 @@ import type { CodexResultReceiptV1 } from "../../artifacts/v1/codex-result-recei
 import { digestSchema, localId } from "../../harness/v1/native-run-identifiers";
 import type { DatabaseSession } from "../../persistence/database";
 import { hmacSha256Tag, sha256Digest } from "../../security";
-import type { CompletionReviewTargetV1, CompletionRevisionV1 } from "./types";
+import type { CompletionPrincipalV1, CompletionReviewTargetV1, CompletionRevisionV1 } from "./types";
+import { completionPrincipalSchemaV1 } from "./schemas";
 import { nativeRevisionContextSchema } from "./native-revision-context";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
@@ -12,6 +13,9 @@ const material = z.object({ tenantId: localId, projectId: localId, jobId: localI
   runId: localId, nodeId: localId, publicationId: localId, publicationContractDigest: digestSchema,
   terminalEvidenceDigest: digestSchema, taskPlanDigest: digestSchema, activationIntentRecordDigest: digestSchema,
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema, plannedAt: instant, targetId: localId,
+  producer: completionPrincipalSchemaV1.optional(),
+  workerId: localId.optional(), agentProfileId: localId.optional(), harness: localId.optional(),
+  adapterId: localId.optional(), modelFamily: localId.optional(),
   qualityAccepted: z.literal(false), completionVerified: z.literal(false), releasesCapacity: z.literal(false),
   grantsExecutionAuthority: z.literal(false) }).strict();
 const initial = material.extend({ schema: z.literal("control-room.codex-review-plan/v1") }).strict();
@@ -52,7 +56,8 @@ export function codexReviewTargetV1(plan: CodexReviewPlanV1, receipt: CodexResul
   return { schemaVersion: "control-room-completion-gate/v1", id: plan.targetId, tenantId: plan.tenantId,
     projectId: plan.projectId, kind: "document", subjectId: prior?.rootSubjectId ?? plan.jobId,
     subjectDigest: receipt.contentHash, acceptanceProfileId: plan.acceptanceProfileId,
-    acceptanceProfileDigest: plan.acceptanceProfileDigest, producer: { actorId: plan.nodeId, actorType: "agent" },
+    acceptanceProfileDigest: plan.acceptanceProfileDigest,
+    producer: plan.producer ?? ({ actorId: plan.nodeId, actorType: "agent" } satisfies CompletionPrincipalV1),
     rootTargetId: prior?.rootTargetId ?? plan.targetId, revisionNumber: prior?.revisionNumber ?? 0,
     ...(prior ? { supersedesTargetId: prior.fromTargetId } : {}), submittedAt: receipt.receivedAt };
 }

@@ -1,8 +1,8 @@
 // Local rehearsal database: a throwaway PostgreSQL 17 cluster on 127.0.0.1 with the full
 // migration ledger, the five Mac-local roles, and a protected root pointing at it.
 // Never points at the VPS. Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
-import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { PgBoss, getConstructionPlans } from "pg-boss";
 import { existsSync, mkdirSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
@@ -15,7 +15,9 @@ import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1, captureMacLocalProtectedConfigura
 import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../../../src/web/v1/mac-local-database-roles";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
-import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
+import { readPinnedMacExecutableVersion } from "../bot-executable-inspection.mjs";
+import { ensureHealthProbeKeyV1 } from "../provision-database.mjs";
+import { captureReleaseTrustV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../../release-signing.mjs";
 // The shared disposable-cluster teardown. `.mjs` because
 // `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
 // `.ts` module could not be imported by one of its own callers.
@@ -30,6 +32,15 @@ const portIndex = process.argv.indexOf("--port");
 const port = portIndex === -1 ? 15499 : Number(process.argv[portIndex + 1]);
 const webPortIndex = process.argv.indexOf("--web-port");
 const webPort = webPortIndex === -1 ? 3217 : Number(process.argv[webPortIndex + 1]);
+const soakOwned = process.argv.includes("--soak-owned");
+if (soakOwned && !process.argv.includes("--fake-executables")) throw new Error("soak_requires_fake_executables");
+let ownedPostgres: ReturnType<typeof spawn> | undefined;
+let ownedPostgresClosed: Promise<void> | undefined;
+let ownerGone = false;
+if (soakOwned) {
+  process.stdin.resume();
+  process.stdin.once("end", () => { ownerGone = true; ownedPostgres?.kill("SIGQUIT"); });
+}
 const fakeExecutables = process.argv.includes("--fake-executables");
 if (!["up", "down"].includes(action) || !dir || !isAbsolute(dir) || !Number.isInteger(port)
   || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65534 || webPort === port || webPort + 1 === port) {
@@ -96,6 +107,7 @@ if (action === "down") {
 }
 
 const fresh = !existsSync(pg);
+if (soakOwned && !fresh) throw new Error("soak_requires_fresh_cluster");
 try {
   if (fresh) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -105,7 +117,23 @@ try {
     })}\n`, { mode: 0o600, flag: "wx" });
     writeFileSync(join(pg, "pg_hba.conf"), "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
   }
-  pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
+  if (soakOwned) {
+    if (ownerGone) throw new Error("soak_owner_gone");
+    // Foreground postmaster inherits the setup child's process group. Never pg_ctl start.
+    ownedPostgres = spawn(pgExecutable("postgres"), ["-D", pg, "-p", String(port), "-k", "",
+      "-c", "listen_addresses=127.0.0.1"], { env, stdio: ["ignore", "ignore", "ignore"] });
+    ownedPostgresClosed = new Promise<void>(done => ownedPostgres!.once("close", () => done()));
+    let spawnFailed = false;
+    ownedPostgres.once("error", () => { spawnFailed = true; });
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      if (ownerGone || spawnFailed || ownedPostgres.exitCode !== null || ownedPostgres.signalCode !== null)
+        throw new Error("soak_postgres_start_failed");
+      try { pgctl("status"); break; } catch { /* wait for this postmaster's PID */ }
+      if (Date.now() > deadline) throw new Error("soak_postgres_start_timeout");
+      await new Promise(done => setTimeout(done, 100));
+    }
+  } else pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
   clusterStarted = true;
   // Retained while the cluster is up, so a teardown reached from a signal or the
   // exit hook has a pid even when the rest of setup is about to throw.
@@ -120,11 +148,22 @@ try {
     process.exit(0);
   }
 
+if (soakOwned) {
+  const identityClient = connectTarget(`host=127.0.0.1 port=${port} dbname=postgres user=postgres`);
+  try {
+    await identityClient.connect();
+    const identity = (await identityClient.query("SELECT current_setting('data_directory') AS directory,current_user,current_setting('server_version_num')::int AS version")).rows[0];
+    if (resolve(identity.directory) !== resolve(pg) || identity.current_user !== "postgres"
+      || Math.floor(identity.version / 10000) !== 17) throw new Error("soak_database_identity_refused");
+  } finally { await identityClient.end(); }
+}
 execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
   "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
 const secrets = { migrator: pw(), application: pw(), scheduler: pw(), workIntake: pw() };
-const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
+const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(),
+  control_room_results: pw(), control_room_publisher: pw(), control_room_agent_reviewer_login: pw(),
+  control_room_queue_worker: pw(), control_room_fleet: pw(), control_room_fleet_owner: pw() };
 const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
 await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
   ledgerPath: fileURLToPath(new URL("../../../deploy/postgres/migration-ledger.json", import.meta.url)),
@@ -152,14 +191,18 @@ try {
 } finally { await queueClient.end(); }
 psql("control_room", "../../../db/roles/private_web_database.sql");
 for (const file of ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
-  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql"])
+  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql", "agent_reviewer_roles.sql",
+  "fleet_gateway_roles.sql"])
   psql("control_room", `../../../db/roles/${file}`);
 const membership = connectTarget(bootstrapTarget); await membership.connect();
 try {
   const roleByLogin: Record<string, string> = { control_room_web: "control_room_private_web",
     control_room_coordinator: "control_room_task_coordinator", control_room_results: "control_room_native_results",
     control_room_publisher: "control_room_local_result_publisher",
-    control_room_queue_worker: "control_room_native_queue_worker" };
+    control_room_agent_reviewer_login: "control_room_agent_reviewer",
+    control_room_queue_worker: "control_room_native_queue_worker",
+    control_room_fleet: "control_room_fleet_gateway",
+    control_room_fleet_owner: "control_room_fleet_owner_authority" };
   for (const [login, password] of Object.entries(local)) {
     await membership.query(`CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${membership.escapeLiteral(password)}`);
     await membership.query(`GRANT ${roleByLogin[login]} TO ${login}`);
@@ -198,7 +241,9 @@ mkdirSync(config, { recursive: true, mode: 0o700 }); chmodSync(root, 0o700); chm
 const database = { host: "127.0.0.1", port, database: "control_room", username: "control_room_web", password: local.control_room_web, majorVersion: 17 };
 const role = (username: string) => ({ ...database, username, password: local[username] });
 const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role("control_room_web"), coordinator: role("control_room_coordinator"),
-  results: role("control_room_results"), publisher: role("control_room_publisher"), queueWorker: role("control_room_queue_worker") };
+  results: role("control_room_results"), publisher: role("control_room_publisher"),
+  agentReviewer: role("control_room_agent_reviewer_login"), queueWorker: role("control_room_queue_worker"),
+  fleetGateway: role("control_room_fleet"), fleetOwner: role("control_room_fleet_owner") };
 captureMacLocalDatabaseRolesV1(roles);
 const ownerCode = pw() + pw();
 const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, workspaceId: "workspace:mac-local",
@@ -222,6 +267,33 @@ const workIntake = captureWorkIntakeServerConfigurationV1({ schema: WORK_INTAKE_
 for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)],
   ["work-intake-server.json", JSON.stringify(workIntake)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
+// The fleet connector release build (scripts/build-fleet-connector.mjs, driven by `pnpm mac:up`)
+// and loadMacLocalFleetReleaseTrustV1 both require this file at the fixed path below; without it
+// `mac:up` refuses at its "fleet connector release" step and the host never starts.
+const { publicKey: fleetPublicKey, privateKey: fleetPrivateKey } = generateKeyPairSync("ed25519");
+const fleetPublicKeyB64 = fleetPublicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const releaseTrust = captureReleaseTrustV1({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(fleetPublicKeyB64), publicKey: fleetPublicKeyB64, versionFloor: "0.0.1", revokedKeyIds: [] });
+writeFileSync(join(config, "release-trust.json"), `${JSON.stringify(releaseTrust)}\n`, { mode: 0o600 });
+// The installed Mac is connector-only: its bots are fleet connector workers and
+// reach work only through the fleet gateway, which refuses to start without a
+// SIGNED connector release. A real install signs one with its installation key
+// (src/updater/v1/install/connector-release.mjs). The rehearsal keeps its own
+// throwaway key OUTSIDE the protected root, so `sign-connector-release.ts` can
+// do the same and the rehearsal runs the gateway the owner's Mac runs.
+writeFileSync(join(dir, "rehearsal-release-signing.pem"),
+  fleetPrivateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+// The independent host-readiness probe key. `mac:up` and the task host both
+// refuse to start without it (loadHealthProbeKeyV1 in start-web-host.mjs), and
+// until afc636354 only the VPS provisioner created it -- so a rehearsal root,
+// and therefore the phone preview and any other `mac:rehearsal up` user, could
+// never start a host. This rehearsal builds a complete protected root, so it
+// must create the same key the provisioner does, through the provisioner's own
+// function so the format, mode and EEXIST-preserves-identity behaviour cannot
+// drift between the two paths.
+const service = join(root, "service");
+mkdirSync(service, { recursive: true, mode: 0o700 }); chmodSync(service, 0o700);
+await ensureHealthProbeKeyV1(root);
 const clientRoot=join(config,"work-intake-clients"); mkdirSync(clientRoot,{recursive:true,mode:0o700});
 for(const {worker,client} of clients) writeFileSync(join(clientRoot,workIntakeClientFileNameV1(worker.workerId)),`${JSON.stringify(client)}\n`,{mode:0o600});
 // An owner price table, present for every rehearsal run: this is the only
@@ -248,11 +320,23 @@ const usagePriceTable = { schema: "control-room.usage-price-table/v1", tableId: 
 writeFileSync(join(root, "usage-prices.json"), `${JSON.stringify(usagePriceTable)}\n`, { mode: 0o600 });
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
-  keepCluster = true;
+  if (soakOwned) {
+    if (ownerGone) throw new Error("soak_owner_gone");
+    console.log("SOAK_SETUP_READY");
+    await new Promise<void>(done => {
+      process.stdin.once("end", done);
+      ownedPostgres!.once("exit", () => { ownerGone = true; done(); });
+    });
+    if (!ownerGone) throw new Error("soak_owner_gone");
+  } else keepCluster = true;
   // Deliberate hand-off, as above: the hooks are disarmed so a later Ctrl-C in
   // the owner's shell does not stop a database the rehearsal was asked to leave
   // running. `pnpm mac:rehearsal down` is what stops it.
-  teardown.release();
+  if (!soakOwned) teardown.release();
 } finally {
-  if (!keepCluster) stopStartedCluster();
+  if (!keepCluster && !soakOwned) stopStartedCluster();
+  if (soakOwned) {
+    await teardown.stop();
+    await ownedPostgresClosed;
+  }
 }

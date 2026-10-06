@@ -23,8 +23,19 @@ import type { BottleneckProjectionV1, FleetWorkerSummaryV1, OperatorSurfaceSnaps
 
 export const OPERATOR_CAPACITY_VIEW_V1 = "control-room-operator-capacity-view/v1" as const;
 
-/** An observation older than this is not fresh enough to measure capacity. */
-export const CAPACITY_FRESHNESS_MINUTES_V1 = 30;
+/** How long ONE worker observation stays fresh enough to measure capacity.
+ *
+ * The number is the fleet telemetry's own lifetime, once, and nothing else.
+ * `src/operator-surfaces/v1/read-service.ts:39` reads a telemetry row only
+ * while `f.expires_at <= f.observed_at + INTERVAL '5 minutes'`, and
+ * `src/node-fleet/v1/telemetry-port.ts` caps that lifetime at 300 seconds. So a
+ * worker observed four minutes ago has genuinely been observed recently, and one
+ * observed six minutes ago has not — whichever screen is asked.
+ *
+ * This was previously named twice with two different values (30 here, a literal
+ * 5 in the workers board), so the board called the same worker stale while the
+ * workboard beside it still reported measured slots. One constant, one answer. */
+export const CAPACITY_FRESHNESS_MINUTES_V1 = 5;
 
 /** Below this many samples a comparison shows observations without a winner. */
 export const COMPARABLE_MINIMUM_V1 = 5;
@@ -68,7 +79,7 @@ export interface OperatorCapacityWorkerV1 {
   workerId: string;
   platform: FleetWorkerSummaryV1["platform"];
   state: FleetWorkerSummaryV1["state"];
-  lastObservedAt: string;
+  lastObservedAt: string | null;
   /**
    * `self_reported` when this row carries its own reported capacity; freshness
    * is a separate question and never changes attribution.

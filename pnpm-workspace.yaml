@@ -5,3 +5,7 @@ allowBuilds:
   esbuild: false
   sharp: false
   workerd: false
+# jsdom's ws range also admits affected releases. Pin the minimum release fixing
+# GHSA-96hv-2xvq-fx4p and GHSA-58qx-3vcg-4xpx without replacing jsdom's DOM stack.
+overrides:
+  ws: 8.21.0

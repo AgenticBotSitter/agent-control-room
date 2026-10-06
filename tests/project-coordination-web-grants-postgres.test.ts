@@ -30,7 +30,7 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security";
 
 // Reserved disposable-cluster lane: 58290-58299.
-const PORT = 58290;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58290);
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => {
@@ -58,6 +58,10 @@ const COMPOSER_COLUMNS = {
   attention_items: ["id", "tenant_id", "project_id", "attention_type", "title", "summary", "due_at",
     "observed_at", "work_item_id"],
   control_job_dependencies: ["tenant_id", "job_id", "depends_on_job_id"],
+  // 0298: the owner's run page reads the run's live position against its
+  // ceilings on the web login, so the startup gate allows exactly these columns.
+  pipeline_advance_receipts: ["tenant_id", "pipeline_run_id", "stage_ordinal", "loop_index", "source_job_id",
+    "execution_job_id", "advanced_at", "delegation_cost_state", "delegation_cost_microusd"],
 } as const;
 
 async function seedTenant(admin: Client, t: ReturnType<typeof ids>) {
@@ -140,7 +144,8 @@ test("the production private-web login passes preflight and serves the coordinat
       await verifyPrivateDatabase(web.client, config, { tenantId: A.tenant, workspaceId: A.workspace,
         ownerIdentityId: A.identity, issuer: PROVIDER }, Date.now(), { nativeQueue: true });
 
-      const store = createProjectCoordinationCanonicalStoreAdapterV1({ database: web.client, tenantId: A.tenant });
+      const store = createProjectCoordinationCanonicalStoreAdapterV1({
+        database: web.client, tenantId: A.tenant, workspaceId: A.workspace });
       const service = new ProjectCoordinationHttpService({ database: web.client,
         scope: { tenantId: A.tenant, workspaceId: A.workspace }, clock: () => Date.now(), store });
       const identity: VerifiedWebIdentity = { provider: PROVIDER, subject: A.identity, tokenDigest,

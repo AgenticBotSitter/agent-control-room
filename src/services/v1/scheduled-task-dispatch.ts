@@ -39,6 +39,7 @@ export type ScheduledTaskDispatchRefusalV1 =
   | "definition_changed"
   | "schedule_not_active"
   | "target_not_admissible"
+  | "project_inactive"
   | "source_unavailable"
   | "recovery_window_expired"
   | "outbox_not_delivered"
@@ -98,6 +99,10 @@ function mapAdmissionCode(code: ScheduledTaskAdmissionError["safeCode"]): Schedu
     case "occurrence_cancelled": return "occurrence_cancelled";
     case "outbox_not_delivered": return "outbox_not_delivered";
     case "schedule_not_active": return "schedule_not_active";
+    // Its own code, not `admission_refused`: an archived or paused project is a state
+    // the owner set deliberately and can change back, and a dispatcher reading
+    // "admission_refused" has no way to tell that from a real binding conflict.
+    case "project_inactive": return "project_inactive";
     default: return "admission_refused";
   }
 }

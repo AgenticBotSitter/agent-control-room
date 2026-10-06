@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { DatabaseSession } from "../../persistence/database";
 import type { NativeResultReceipt } from "../../artifacts/v1/native-results";
 import { hmacSha256Tag, sha256Digest } from "../../security";
-import type { CompletionReviewTargetV1, CompletionRevisionV1 } from "./types";
+import type { CompletionPrincipalV1, CompletionReviewTargetV1, CompletionRevisionV1 } from "./types";
+import { completionPrincipalSchemaV1 } from "./schemas";
 import { nativeRevisionContextSchema } from "./native-revision-context";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -13,7 +14,9 @@ export const nativeReviewRequestSchema = z.object({ tenantId: id, runId: id, acc
   acceptanceProfileDigest: digest, plannedAt: instant }).strict();
 const initial = nativeReviewRequestSchema.extend({ schema: z.literal("control-room.native-review-plan/v1"),
   projectId: id, jobId: id, attemptId: id, nodeId: id, inputDigest: digest, authorityDigest: digest,
-  bindingDigest: digest, targetId: id }).strict();
+  bindingDigest: digest, targetId: id, producer: completionPrincipalSchemaV1.optional(),
+  workerId: id.optional(), agentProfileId: id.optional(), harness: id.optional(), adapterId: id.optional(),
+  modelFamily: id.optional() }).strict();
 export const nativeReviewPlanSchema = z.discriminatedUnion("schema", [initial,
   initial.extend({ schema: z.literal("control-room.native-review-plan/v2"), revision: nativeRevisionContextSchema })]);
 export type NativeReviewPlan = z.infer<typeof nativeReviewPlanSchema>;
@@ -41,7 +44,8 @@ export function nativeReviewTarget(plan: NativeReviewPlan, receipt: NativeResult
   return { schemaVersion: "control-room-completion-gate/v1", id: plan.targetId, tenantId: plan.tenantId,
     projectId: plan.projectId, kind: "document", subjectId: revision?.rootSubjectId ?? plan.jobId,
     subjectDigest: receipt.contentHash, acceptanceProfileId: plan.acceptanceProfileId,
-    acceptanceProfileDigest: plan.acceptanceProfileDigest, producer: { actorId: plan.nodeId, actorType: "agent" },
+    acceptanceProfileDigest: plan.acceptanceProfileDigest,
+    producer: plan.producer ?? ({ actorId: plan.nodeId, actorType: "agent" } satisfies CompletionPrincipalV1),
     rootTargetId: revision?.rootTargetId ?? plan.targetId, revisionNumber: revision?.revisionNumber ?? 0,
     ...(revision ? { supersedesTargetId: revision.fromTargetId } : {}), submittedAt: receipt.receivedAt };
 }

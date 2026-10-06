@@ -1,0 +1,317 @@
+[
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "try { fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | kernelLock, 0o600); }",
+    "replace": "try { fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); }",
+    "test": "node --import tsx --test --test-name-pattern='empty and recycled' tests/hard7-robustness.test.mjs",
+    "why": "Kernel ownership must exclude another live backup even in the same process (R4S-07 moved the open inside a try that separates EAGAIN from a damaged entry)"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "try { fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | kernelLock, 0o600); }",
+    "replace": "try { fd = openSync(path, constants.O_CREAT | constants.O_RDWR | kernelLock, 0o600); }",
+    "test": "node --import tsx --test --test-name-pattern='O_NOFOLLOW' tests/hard7-robustness.test.mjs",
+    "why": "A link swapped after open must never turn its target into the lock (R4S-07 moved the open inside a try that separates EAGAIN from a damaged entry)"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": " && s.nlink === 1",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='private descriptor locks' tests/hard7-robustness.test.mjs",
+    "why": "A second name must not receive lock writes"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "s.uid === uid",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='private descriptor locks' tests/hard7-robustness.test.mjs",
+    "why": "A lock belongs to the expected account"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "(s.mode & 0o077) === 0",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='private descriptor locks' tests/hard7-robustness.test.mjs",
+    "why": "Loose lock files must refuse without alteration"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!same(owned, lstatSync(path))) busy();",
+    "replace": "if (false) busy();",
+    "test": "node --import tsx --test --test-name-pattern='acquisition refuses a name' tests/hard7-robustness.test.mjs",
+    "why": "An opened descriptor must still own its directory entry; R4S-07 made the preceding privateFile check a separate unusable refusal"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (same(owned, lstatSync(path))) unlinkSync(path);",
+    "replace": "if (true) unlinkSync(path);",
+    "test": "node --import tsx --test --test-name-pattern='private descriptor locks' tests/hard7-robustness.test.mjs",
+    "why": "Release must not delete a replacement lock inode"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "|| !same(before, identity)",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='descriptor liveness rejects' tests/hard7-robustness.test.mjs",
+    "why": "A recycled descriptor identity must never pass liveness"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "owner.pid !== pid || ",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='descriptor liveness rejects' tests/hard7-robustness.test.mjs",
+    "why": "A different live PID is not the child recorded by the lease"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "owner.nonce !== identity.nonce || ",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='descriptor liveness rejects' tests/hard7-robustness.test.mjs",
+    "why": "The same inode must still carry the expected incarnation nonce"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "JSON.stringify(owner.command) !== JSON.stringify(command)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='descriptor liveness rejects' tests/hard7-robustness.test.mjs",
+    "why": "A lease for another command must not authorize a signal"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (length > 8192) throw new Error(\"private_process_lock_invalid\");",
+    "replace": "if (false) throw new Error(\"private_process_lock_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='lease reads stay bounded' tests/hard7-robustness.test.mjs",
+    "why": "Growth after stat must not widen the bounded lease read"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "error.code === \"EAGAIN\" && same(before, lstatSync(path))",
+    "replace": "error.code === \"EAGAIN\"",
+    "test": "node --import tsx --test --test-name-pattern='lease reads stay bounded' tests/hard7-robustness.test.mjs",
+    "why": "A held old inode does not identify a replacement path"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "liveStart && (!owner.start || owner.start === liveStart)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='portability fallback' tests/hard7-robustness.test.mjs",
+    "why": "Portable recovery must preserve the live process incarnation"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "Date.now() - before.mtimeMs < 300_000",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='portability fallback' tests/hard7-robustness.test.mjs",
+    "why": "A fresh incomplete portable stamp cannot be reclaimed during publication"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "try { generation = await runtime.prepareBackup(out); } catch { throw new Error(\"nightly_backup_output_refused\"); }",
+    "replace": "try { generation = undefined; } catch { throw new Error(\"nightly_backup_output_refused\"); }",
+    "test": "node --import tsx --test --test-name-pattern='same timestamp' tests/hard7-robustness.test.mjs",
+    "why": "A retry at the same timestamp must never overwrite an older dump"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "    } catch (error) {\n      await runtime.removeBackup(out);\n      if (error instanceof Error && error.message === \"nightly_backup_incomplete\") throw error;",
+    "replace": "    } catch (error) {\n      if (error instanceof Error && error.message === \"nightly_backup_incomplete\") throw error;",
+    "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
+    "why": "A failed or incomplete attempt must be removed without spending retention"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "generations.filter(entry => entry.completed)",
+    "replace": "generations",
+    "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
+    "why": "Empty crashed generations must not retire completed backups"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "      const laterDated = ordered.filter(generation => generation > name);",
+    "replace": "      const laterDated = [];",
+    "test": "node --import tsx --test --test-name-pattern='backward clock' tests/hard7-robustness.test.mjs",
+    "why": "A backward clock must leave all later history and must REPORT it rather than stop retiring"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "[generation.slice(0, 10), generation]",
+    "replace": "[generation, generation]",
+    "test": "node --import tsx --test --test-name-pattern='same-day bursts' tests/hard7-robustness.test.mjs",
+    "why": "Multiple successes on one day must spend one retention day"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "input.nightly ? '  <false/>' : '  <true/>'",
+    "replace": "'  <true/>'",
+    "test": "node --import tsx --test --test-name-pattern='scheduled nightly' tests/hard7-robustness.test.mjs",
+    "why": "Service load must not take a nightly backup"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "input.nightly ? '  <false/>' : '  <true/>'",
+    "replace": "'  <true/>'",
+    "test": "node --import tsx --test --test-name-pattern='byte-identical' tests/updater-services.test.mjs",
+    "why": "Service load must not take a nightly backup"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "!serviceLabelPattern.test(service.label)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='foreign labels' tests/hard7-robustness.test.mjs",
+    "why": "A bundle cannot retarget a foreign launch daemon"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "[\"name\", \"uid\", \"gid\"].some(field => new Set(Object.values(parsed).map(entry => entry[field])).size !== 3)",
+    "replace": "new Set(Object.values(parsed).map(entry => entry.name)).size !== 3",
+    "test": "node --import tsx --test --test-name-pattern='foreign labels' tests/hard7-robustness.test.mjs",
+    "why": "Service identities must have distinct UIDs and GIDs"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": "|| !input.pgRuntime.endsWith(\"/bin/postgres\")",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='foreign labels' tests/hard7-robustness.test.mjs",
+    "why": "A runtime directory is not a PostgreSQL executable"
+  },
+  {
+    "file": "src/installer/v1/macos-launch-daemon-bundle.ts",
+    "find": "|| !parsed.postgresExecutable.endsWith(\"/bin/postgres\")",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='database executable paths' tests/macos-launch-daemon-bundle.test.ts",
+    "why": "The TypeScript authority also refuses directory-shaped executable paths"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "await discardUnsafeDiagnostic(backup);",
+    "replace": "throw error;",
+    "test": "node --import tsx --test --test-name-pattern='loose old log' tests/hard7-robustness.test.mjs",
+    "why": "Unsafe diagnostic backup entries must not stop streaming rotation"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "const supervisorLock = acquireRecoverablePrivateProcessLockV1(paths.hostLock,\n    { busyCode: \"mac_local_supervisor_busy\", unusableCode: \"mac_local_supervisor_lock_unusable\" });",
+    "replace": "const supervisorLock = { release() {} };",
+    "test": "node --import tsx --test --test-name-pattern='fifty concurrent supervisors' tests/hard7-robustness.test.mjs",
+    "why": "The second supervisor must refuse before spawn or state effects (R4S-07: the recoverable acquire, which quarantines one damaged entry)"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "if (error?.message === \"mac_local_supervisor_busy\") {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='real CLI refusal' tests/hard7-robustness.test.mjs",
+    "why": "A refused CLI must not overwrite the running supervisor state or log"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "stdio: [\"pipe\", \"pipe\", \"pipe\", childLock.fd]",
+    "replace": "stdio: [\"pipe\", \"pipe\", \"pipe\"]",
+    "test": "node --import tsx --test --test-name-pattern='real replacement kills' tests/hard7-robustness.test.mjs",
+    "why": "The child must inherit the descriptor that proves its live incarnation"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "signals.on(\"SIGTERM\", onTerm);",
+    "replace": "signals.once(\"SIGTERM\", onTerm);",
+    "test": "node --import tsx --test --test-name-pattern='repeated stop signals' tests/hard7-robustness.test.mjs",
+    "why": "Handlers must remain installed for repeated stop signals"
+  },
+  {
+    "file": "scripts/mac-local/install-supervisor-launchdaemon.mjs",
+    "find": "return template.replace(/__[A-Z_]+__/gu, placeholder => {",
+    "replace": "let body = template; for (const [key,value] of Object.entries(values)) body = body.replaceAll(key, xml(value)); return body.replace(/__[A-Z_]+__/gu, placeholder => {",
+    "test": "node --import tsx --test --test-name-pattern='template values retain' tests/hard7-robustness.test.mjs",
+    "why": "Inserted values must not be processed as replacement syntax or as later placeholders"
+  },
+  {
+    "file": "src/updater/v1/install/connector-release.mjs",
+    "find": "const held = acquirePrivateProcessLockV1(lock, { expectedUid, busyCode: \"attended_connector_release_busy\" });",
+    "replace": "const fd = await open(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600); const held = {release: async()=>{await fd.close();await rm(lock);}};",
+    "test": "node --import tsx --test --test-name-pattern='F3-22' tests/installer-connector-release.test.mjs",
+    "why": "A killed signer must not leave its output permanently busy"
+  },
+  {
+    "file": "src/updater/v1/services/bundle.mjs",
+    "find": " || service.label.length > 128",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='foreign labels' tests/hard7-robustness.test.mjs",
+    "why": "The namespace does not remove the label size limit"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "dump.size > 0",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
+    "why": "A zero-byte dump cannot count as a retained backup"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "metadata.version === 1",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
+    "why": "Metadata with an unknown version cannot spend retention"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "/^sha256:[a-f0-9]{64}$/u.test(metadata.identity?.identityDigest ?? \"\")",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
+    "why": "Missing or invalid completed-dump identity cannot spend retention"
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "dump.isFile() && !dump.isSymbolicLink()",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
+    "why": "A linked dump is not a completed retained generation"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "const lease = readPrivateProcessLeaseV1(paths.childLock);",
+    "replace": "const lease = undefined;",
+    "test": "node --import tsx --test --test-name-pattern='missing or damaged diagnostic' tests/hard7-robustness.test.mjs",
+    "why": "A lost diagnostic state file must not prevent descriptor-based orphan recovery"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const before = lstatSync(path), owner = readOwner(path, before, process.getuid());",
+    "replace": "throw new Error(\"mutated_lease_read\"); const before = lstatSync(path), owner = readOwner(path, before, process.getuid());",
+    "test": "node --import tsx --test --test-name-pattern='missing or damaged diagnostic' tests/hard7-robustness.test.mjs",
+    "why": "Recovered child identity must come from the bounded private-file reader"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "if (!runtime.alive) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='missing or damaged diagnostic' tests/hard7-robustness.test.mjs",
+    "why": "The installed supervisor must use the private identity stamp when diagnostic state is unavailable"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "if (!previous) return;",
+    "replace": "if (false) return;",
+    "test": "node --import tsx --test --test-name-pattern='real replacement kills' tests/hard7-robustness.test.mjs",
+    "why": "A fresh start with no previous lease must proceed without dereferencing missing identity"
+  },
+  {
+    "file": "scripts/mac-local/install-supervisor-launchdaemon.mjs",
+    "find": "if (!Object.hasOwn(values, placeholder)) throw new Error(\"supervisor_launchdaemon_template_invalid\");",
+    "replace": "if (false) throw new Error(\"supervisor_launchdaemon_template_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='template values retain' tests/hard7-robustness.test.mjs",
+    "why": "An unknown template placeholder must retain its named refusal"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "signals.on(\"SIGINT\", onInt);",
+    "replace": "signals.once(\"SIGINT\", onInt);",
+    "test": "node --import tsx --test --test-name-pattern='repeated stop signals' tests/hard7-robustness.test.mjs",
+    "why": "SIGINT handling must survive repeated shutdown signals"
+  },
+  {
+    "file": "scripts/mac-local/task-host-supervisor.mjs",
+    "find": "signals.on(\"SIGHUP\", onHangup);",
+    "replace": "signals.once(\"SIGHUP\", onHangup);",
+    "test": "node --import tsx --test --test-name-pattern='repeated stop signals' tests/hard7-robustness.test.mjs",
+    "why": "SIGHUP handling must survive repeated shutdown signals"
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "schema": "control-room.updater-rehearsal-config/v1",
+  "mode": "real-root",
+  "rehearsalRoot": "/Volumes/CRRehearsal/control-room-rehearsal-install",
+  "rehearsalHostname": "control-room-rehearsal.example.invalid",
+  "expectedOrigin": "https://control-room-rehearsal.example.invalid:59400",
+  "ports": {
+    "web": 59400,
+    "gateway": 59410,
+    "postgres": 59420
+  },
+  "accounts": {
+    "service": "_rehearsal_service",
+    "database": "_rehearsal_database",
+    "builder": "_rehearsal_builder"
+  },
+  "daemonLabelPrefix": "xyz.agentcontrolroom.rehearsal.install",
+  "allowRealRoot": true
+}

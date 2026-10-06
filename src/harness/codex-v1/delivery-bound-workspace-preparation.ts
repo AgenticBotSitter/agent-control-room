@@ -7,6 +7,13 @@ import { controllerWorkerDeliverySchemaV1, type ControllerWorkerDeliveryV1 }
 import type { CodexWorkspacePreparationV1, CodexLocalStartBindingV1 } from './local-start-runtime';
 import type { ObservableGitWorkspacePort } from './git-workspace-port';
 import { journaledWorkspacePort } from './journaled-workspace-port';
+import { composeBuildStagePullRequestPublicationV1,
+  type CurrentBuildStagePublicationAuthorityV1 } from './build-stage-pull-request-publication';
+import { SqlitePullRequestPublicationStoreV1 } from './sqlite-pull-request-publication-store';
+import type { WorktreeInventoryGitRunnerV1 } from './git-worktree-change-inventory';
+import type { PullRequestOpenEffectV1, PullRequestPublicationResultV1 }
+  from '../v1/pull-request-publication';
+import { verifyRetainedPullRequestPublicationForDeliveryV1 } from '../v1/pull-request-publication';
 
 type WorkspaceJournal = Pick<SqliteBridgeJournal,
   'reserveWorkspaceIntent' | 'recordWorkspaceRoots' | 'recordWorkspaceCreation'
@@ -20,6 +27,19 @@ export type CodexDeliveryBoundWorkspacePolicyV1 = Readonly<{
 
 export type CodexDeliveryBoundWorkspacePreparationV1 = CodexWorkspacePreparationV1 & Readonly<{
   bindDelivery(delivery: unknown): void;
+  publishBuildPullRequest(): Promise<PullRequestPublicationResultV1>;
+}>;
+
+type PublicationJournal = Pick<SqliteBridgeJournal, 'loadPullRequestPublication'
+  | 'reservePullRequestPublication' | 'replacePullRequestPublication' | 'retainedPullRequestPublication'>;
+
+export type CodexBuildStagePublicationCompositionV1 = Readonly<{
+  integrityKey: Uint8Array;
+  authority: CurrentBuildStagePublicationAuthorityV1;
+  runGit: WorktreeInventoryGitRunnerV1;
+  journal: PublicationJournal;
+  openPullRequest: PullRequestOpenEffectV1;
+  retainPublished(input: Readonly<{ plan: unknown; evidence: unknown }>): Promise<void>;
 }>;
 
 const unavailable = (): never => { throw new Error('codex_delivery_bound_workspace_unavailable'); };
@@ -80,7 +100,8 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
   workspaceIntent: unknown;
   workspacePort: ObservableGitWorkspacePort;
   journal: WorkspaceJournal;
-  policy: CodexDeliveryBoundWorkspacePolicyV1;
+  policy?: CodexDeliveryBoundWorkspacePolicyV1;
+  publication?: CodexBuildStagePublicationCompositionV1;
 }>): CodexDeliveryBoundWorkspacePreparationV1 {
   const intent = parseWorkspaceIntent(structuredClone(input.workspaceIntent));
   const workspacePort: ObservableGitWorkspacePort = Object.freeze({
@@ -90,8 +111,8 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
     createDetachedWorktree: input.workspacePort.createDetachedWorktree.bind(input.workspacePort),
     removeWorktree: input.workspacePort.removeWorktree.bind(input.workspacePort),
   });
-  const policy = Object.freeze({ allowedPaths: Object.freeze([...input.policy.allowedPaths]),
-    maximumChangedFiles: input.policy.maximumChangedFiles, maximumChangedBytes: input.policy.maximumChangedBytes });
+  const legacyPolicy = input.policy ? Object.freeze({ allowedPaths: Object.freeze([...input.policy.allowedPaths]),
+    maximumChangedFiles: input.policy.maximumChangedFiles, maximumChangedBytes: input.policy.maximumChangedBytes }) : undefined;
   let delivery: ControllerWorkerDeliveryV1 | undefined;
   let holder: CodingWorkspaceLifecycleHolderV1 | undefined;
 
@@ -109,14 +130,19 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       const bound: ControllerWorkerDeliveryV1 = selected;
       assertBinding(bound, intent, binding);
       assertCurrent();
+      const durableWorkspacePort = journaledWorkspacePort({ port: workspacePort, journal: input.journal,
+        intent, assertCurrent });
+      const policy = input.publication?.authority.workspacePolicy?.(bound) ?? legacyPolicy;
+      if (policy === undefined) return unavailable();
       const leaseAllowedPaths = effectiveOwnershipLeaseAllowedPathsV1(bound, policy.allowedPaths);
       holder ??= new CodingWorkspaceLifecycleHolderV1({
         maximumConcurrentWorkspaces: 1,
         allowedPaths: leaseAllowedPaths,
         maximumChangedFiles: policy.maximumChangedFiles,
         maximumChangedBytes: policy.maximumChangedBytes,
-        workspacePort: journaledWorkspacePort({ port: workspacePort, journal: input.journal,
-          intent, assertCurrent }),
+        workspacePort: Object.freeze({ ...durableWorkspacePort,
+          inspectRootIdentities: workspacePort.inspectRootIdentities,
+          observeCheckout: workspacePort.observeCheckout }),
       });
       const observation = await holder.acquire({ delivery: bound, repositoryRoot: intent.repositoryRoot,
         workspaceRoot: intent.workspaceRoot, revision: intent.revision });
@@ -133,6 +159,32 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
         || auditPlan.allowedPaths.length !== leaseAllowedPaths.length
         || auditPlan.allowedPaths.some((path, index) => path !== leaseAllowedPaths[index])
         || observation.startsAdapter || observation.releasesCapacity) unavailable();
+    },
+    async publishBuildPullRequest() {
+      const selected = delivery, currentHolder = holder, publication = input.publication;
+      if (!selected || !currentHolder || !publication) return unavailable();
+      return currentHolder.withActivePublicationContext(selected, async context => {
+        const store = new SqlitePullRequestPublicationStoreV1(publication.journal);
+        let composed: Awaited<ReturnType<typeof composeBuildStagePullRequestPublicationV1>>;
+        try {
+          composed = await composeBuildStagePullRequestPublicationV1({
+            integrityKey: publication.integrityKey, workspaceManager: context.workspaceManager,
+            workspacePort: context.workspacePort, delivery: selected, lease: context.lease,
+            auditPlan: context.auditPlan, auditAuthority: context.auditAuthority,
+            publicationAuthority: publication.authority, runGit: publication.runGit,
+            store, openPullRequest: publication.openPullRequest,
+          });
+        } catch (error) {
+          const retained = store.retainedForDelivery(selected.deliveryDigest);
+          if (retained === undefined) throw error;
+          verifyRetainedPullRequestPublicationForDeliveryV1(publication.integrityKey, retained, selected.deliveryDigest);
+          return Object.freeze({ status: 'reconciliation_required' as const });
+        }
+        const result = await composed.publish();
+        if (result.status === 'published') await publication.retainPublished({ plan: composed.publicationPlan,
+          evidence: result.evidence });
+        return result;
+      });
     },
   });
 }

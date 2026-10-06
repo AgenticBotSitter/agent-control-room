@@ -1,4 +1,4 @@
-import { pathToFileURL } from 'node:url';
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { resolve } from 'node:path';
 import { checkPrivateWorkerPreparationV1 } from './check-private-worker-preparation.mjs';
 import { comparePreparations, explainPreparation } from '../src/worker-preparation-report/v1/explain.mjs';
@@ -64,7 +64,7 @@ async function main(args) {
   process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     await main(process.argv.slice(2));
   } catch {

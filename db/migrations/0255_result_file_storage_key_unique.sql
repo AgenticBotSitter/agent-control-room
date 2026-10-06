@@ -1,0 +1,85 @@
+-- One storage key names ONE file, across every tenant and every project.
+--
+-- FILES3-02, and the database half of it. 0206 derives each file's storage key
+-- from the tenant, the project, the file's own id and its content digest:
+--
+--   'crbf1-' || sha256('control-room.result-file-store/v1:' || tenant || ':'
+--                        || project || ':' || file_id || ':' || digest)
+--
+-- and the byte store keeps every result in ONE flat directory on the Mac, named
+-- by that key's own hex. So "two catalog rows with the same storage key" is not
+-- two copies of a file; it is one file with two names in the owner's catalog, and
+-- whichever of the two rows is read, the store answers with the same bytes.
+--
+-- WHY THE EXISTING CONSTRAINT DOES NOT CATCH IT. 0206 already has
+-- `UNIQUE (tenant_id, project_id, storage_key)` — but it is scoped BY THE TENANT,
+-- so it is exactly the statement "within one tenant, one project, a key is
+-- unique". Two DIFFERENT tenants sharing one key is invisible to it. And two
+-- identities can share a key whenever their colon-joined material is identical,
+-- which the tenant and project grammars both permit because ':' is an ordinary
+-- character in either (`^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$`):
+--
+--   tenant `tenant:one`,           project `project:two`   ->  tenant:one:project:two
+--   tenant `tenant:one:project`,   project `two`           ->  tenant:one:project:two
+--
+-- Measured on real PostgreSQL 17 with the production role files applied: the two
+-- derivations above produce the byte-identical key
+-- `crbf1-e2c4309c883c40cf423a2afa5e430fcf8b406442dd493758141bfad438c21dd4`,
+-- and `result-upload-staging` derives a colliding on-disk chunk name from the same
+-- two fields. The collision is therefore expressible in the schema, and the only
+-- constraint that would have caught it was not there.
+--
+-- WHAT IS AND IS NOT REACHABLE, stated plainly rather than as a scare. No
+-- production login can create a second tenant: INSERT on `tenants` is held by
+-- `control_room_application` and the schema owner alone, and every product path
+-- that creates a tenant does so as the operator. Inside ONE tenant the
+-- derivation is already injective, because the project id alone separates two
+-- files and the project is unique within its tenant. So an ordinary owner or
+-- worker cannot choose identifiers that collide on a single-tenant installation,
+-- and this is not a demonstrated cross-owner read. It is a missing structural
+-- guarantee: the safety of the flat store rests on a property no constraint
+-- states, so a second tenant — a restore rehearsal, a VPS cluster with several
+-- installations, or an operator repair — silently shares bytes between
+-- installations. The web login CAN create projects, so the project side of a
+-- future collision is within an ordinary owner's reach; only the tenant side
+-- needs an operator today.
+--
+-- WHY A CONSTRAINT AND NOT A NEW DERIVATION. Changing the derivation would
+-- strand every file already on the Mac (and would have to change
+-- `resultFileStorageKeyV1` in the same commit, which is application code this
+-- branch does not touch). The derivation is injective GIVEN a globally unique
+-- key, so the guarantee is added where it is missing — on the key itself — and
+-- every existing file keeps its name and its place.
+--
+-- Cost: one more unique index on a table that already has four, and a refusal
+-- of the only rows this schema should never have held. On a single-tenant
+-- installation, where the derivation is already injective, it refuses nothing:
+-- `tests/result-file-key-uniqueness-postgres.test.ts` proves that on real
+-- PostgreSQL by writing both colliding identities as the schema owner and
+-- requiring exactly one row to survive.
+--
+-- THE LOCK, stated rather than glossed. Squawk flags `disallowed-unique-constraint`
+-- here, and it is right that the ALTER takes an ACCESS EXCLUSIVE lock for the
+-- build. The alternative it recommends — build the index CONCURRENTLY, then attach
+-- it — cannot run in this applier: deploy/postgres/apply-migrations.mjs applies
+-- every migration inside ONE transaction, and `CREATE INDEX CONCURRENTLY` cannot
+-- run inside one. So the lock is taken, and the file bounds it three ways:
+--
+--   * `lock_timeout = '1s'` above, so a catalog another process is writing is
+--     REFUSED in a second rather than waited on, and the whole migration rolls back
+--     with its ledger row rather than half-applying;
+--   * the build is one sequential pass over the result catalog, which on a Mac
+--     install holds thousands of rows;
+--   * the index is built once, at upgrade, and every write after it is an ordinary
+--     unique-index check on one column.
+--
+-- The up side is that a Mac installation upgrading with 10,000 catalog rows
+-- measures the unique check at under a millisecond on the same read paths
+-- tests/result-file-growth-postgres.test.ts exercises, so the constraint costs
+-- nothing per publish and the lock is paid once.
+
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
+ALTER TABLE control_result_files
+  ADD CONSTRAINT control_result_files_storage_key_unique UNIQUE (storage_key);

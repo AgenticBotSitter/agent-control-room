@@ -5,3 +5,6 @@ export * from "./view-model";
 export * from "./durable-result-review-submission";
 export * from "./durable-local-result-inspection";
 export * from "./routed-result-inspection";
+export * from "./reviewer-independence";
+export * from "./protected-agent-principal";
+export * from "./agent-review-service";

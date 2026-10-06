@@ -1,7 +1,7 @@
 import type { ActionInboxItemV1 } from "../../operator-surfaces/v1/types";
 import type { TaskAttentionPage, TaskAttentionReason } from "./task-attention-wire";
 
-export const actionInboxKinds = ["failure", "blocked", "approval", "review", "notification", "preparation"] as const;
+export const actionInboxKinds = ["failure", "blocked", "approval", "review", "notification", "preparation", "expired"] as const;
 export type ActionInboxKind = typeof actionInboxKinds[number];
 
 export interface ActionInboxDisplayItem {
@@ -61,32 +61,42 @@ function itemKind(item: ActionInboxItemV1): ActionInboxKind {
   return "notification";
 }
 
-function href(item: Pick<ActionInboxItemV1, "projectId" | "workItemId" | "reasonCode" | "blockedWorkItemIds">): string | undefined {
-  const { projectId, workItemId } = item;
-  if (projectId && workItemId && item.blockedWorkItemIds.includes(workItemId))
-    return `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(workItemId)}`;
+function supervisorTaskId(item: ActionInboxItemV1): string | undefined {
+  if (item.id.startsWith("attention:supervisor:")
+    && ["stalled_outcome_uncertain", "second_stall_needs_attention"].includes(item.reasonCode)
+    && item.blockedWorkItemIds.length === 1) return item.blockedWorkItemIds[0];
   return undefined;
+}
+
+function href(item: ActionInboxItemV1): string | undefined {
+  const { projectId, workItemId } = item;
+  if (!projectId) return undefined;
+  if (item.reasonCode === "work_batch_proposed" && workItemId)
+    return `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(workItemId)}`;
+  const jobId = workItemId && item.blockedWorkItemIds.includes(workItemId) ? workItemId : supervisorTaskId(item);
+  return jobId ? taskHref(projectId, jobId) : undefined;
 }
 
 function taskHref(projectId: string, jobId: string): string {
   return `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`;
 }
 
-function canonicalItem(item: ActionInboxItemV1): ActionInboxDisplayItem {
+function canonicalItem(item: ActionInboxItemV1, now: number): ActionInboxDisplayItem {
+  const expired = !!item.expiresAt && Date.parse(item.expiresAt) <= now;
   return {
     key: `canonical:${item.id}`,
-    kind: itemKind(item),
-    title: item.requestedAction,
-    summary: `Recorded reason: ${item.reasonCode.replaceAll("_", " ")}.`,
+    kind: expired ? "expired" : itemKind(item),
+    title: expired ? `Expired decision: ${item.requestedAction}` : item.requestedAction,
+    summary: `${expired ? "The deadline has passed. This decision is no longer available. Review the saved source for current status and any new decision. " : ""}Recorded reason: ${item.reasonCode.replaceAll("_", " ")}.`,
     href: href(item),
-    actionLabel: item.workItemId && item.blockedWorkItemIds.includes(item.workItemId) ? "Open task"
-        : "Exact action route unavailable",
+    actionLabel: expired ? "Review current status" : href(item) ? item.reasonCode === "work_batch_proposed" ? "Open batch review" : "Open task"
+      : "Exact action route unavailable",
     ...(item.projectId ? { projectId: item.projectId } : {}),
     observedAt: item.createdAt,
     ...(item.expiresAt ? { expiresAt: item.expiresAt } : {}),
     blockedCount: item.blockedWorkItemIds.length,
     deliveryState: item.deliveryState,
-    availableResponses: item.legalResponses.filter(response => response.available).map(response => response.label),
+    availableResponses: expired ? [] : item.legalResponses.filter(response => response.available).map(response => response.label),
     evidenceCount: item.evidence.length,
   };
 }
@@ -98,10 +108,11 @@ const kindRank: Record<ActionInboxKind, number> = {
   review: 3,
   notification: 4,
   preparation: 5,
+  expired: 6,
 };
 
 /** Read-only presentation over the two existing owner-attention sources. */
-export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], actionItems: readonly ActionInboxItemV1[] = []): ActionInboxDisplayItem[] {
+export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], actionItems: readonly ActionInboxItemV1[] = [], now = Date.now()): ActionInboxDisplayItem[] {
   const tasks: ActionInboxDisplayItem[] = taskPages.flatMap(page => page.items).map(item => ({
     key: `task:${item.task.projectId}:${item.task.jobId}`,
     kind: taskKind(item.reasons),
@@ -115,7 +126,22 @@ export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], a
     availableResponses: [],
     evidenceCount: 0,
   }));
-  const canonical = actionItems.filter(item => item.state === "open").map(canonicalItem);
+  const byTask = new Map(tasks.map(item => [item.href, item]));
+  const canonical: ActionInboxDisplayItem[] = [];
+  for (const item of actionItems.filter(item => item.state === "open")) {
+    const row = canonicalItem(item, now);
+    const jobId = supervisorTaskId(item);
+    const matching = item.projectId && jobId ? byTask.get(taskHref(item.projectId, jobId)) : undefined;
+    if (matching && row.kind !== "expired") {
+      matching.summary += ` ${item.requestedAction} ${row.summary}`;
+      matching.evidenceCount += row.evidenceCount;
+      matching.availableResponses = [...new Set([...matching.availableResponses, ...row.availableResponses])];
+      matching.deliveryState = row.deliveryState;
+      matching.blockedCount = Math.max(matching.blockedCount, row.blockedCount);
+      if (kindRank[row.kind] < kindRank[matching.kind]) matching.kind = row.kind;
+      if (row.expiresAt && (!matching.expiresAt || row.expiresAt < matching.expiresAt)) matching.expiresAt = row.expiresAt;
+    } else canonical.push(row);
+  }
   return [...tasks, ...canonical].sort((left, right) => {
     const rank = kindRank[left.kind] - kindRank[right.kind];
     if (rank) return rank;

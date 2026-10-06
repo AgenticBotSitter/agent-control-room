@@ -43,6 +43,18 @@ test("look-alike filenames do not count as exact test arguments", () => {
   assert.equal(reached.has("tests/case.test.ts"), false);
 });
 
+test("keep-going runner names reach their package chains without covering unused scripts", () => {
+  const scripts = { suite: "pnpm a && pnpm b", a: "node --test tests/a.test.mjs",
+    b: "node --test tests/b.test.mjs", unused: "node --test tests/unused.test.mjs" };
+  assert.deepEqual([...reachableTests(scripts,
+    ["node scripts/ci/run-scripts-keep-going.mjs --jobs 1 --expand suite"])].sort(),
+    ["tests/a.test.mjs", "tests/b.test.mjs"]);
+  for (const flags of ["--jobs 2", "--unknown"]) {
+    assert.deepEqual([...reachableTests(scripts,
+      [`node scripts/ci/run-scripts-keep-going.mjs ${flags} suite`])], []);
+  }
+});
+
 test("quoted and block workflow commands are extracted", () => {
   assert.deepEqual(workflowCommands([
     "steps:",

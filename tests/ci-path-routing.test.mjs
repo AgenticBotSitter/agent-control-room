@@ -39,6 +39,16 @@ test("a generated docs artifact is inert too, because it is written rather than 
   assert.equal(decisionFor("docs/license-inventory.json").full, false);
 });
 
+test("install guides select the macOS updater lane before the inert docs class", () => {
+  for (const path of ["docs/INSTALL_NIGHT_OWNER_GUIDE.md", "docs/install/E2E2_REHEARSAL.md", "docs/OWNER_GUIDE_MAC.md"]) {
+    const decision = decisionFor(path);
+    assert.deepEqual(decision.classes, ["updater-guide"]);
+    assert.equal(decision.lanes.updater, true);
+    assert.equal(decision.full, false);
+    assert.deepEqual(gateLanes(decision), LANES.filter(lane => lane !== "updater"));
+  }
+});
+
 test("a frontend change runs the complete suite, because every lane observes frontend paths", () => {
   // vite.vps.config.ts reads public/favicon.svg and sets appDir: private-app, so the
   // compiled server lane and the article lane both observe frontend paths, and
@@ -51,7 +61,7 @@ test("a frontend change runs the complete suite, because every lane observes fro
   assert.deepEqual(gateLanes(decision), [], "nothing is left to the gate");
 });
 
-test("root markdown runs the component lanes only, because that is what reads it", () => {
+test("root markdown runs the component and updater lanes, because that is what reads it", () => {
   for (const path of ["README.md", "THIRD_PARTY.md"]) {
     const decision = decisionFor(path);
     assert.deepEqual(decision.classes, ["markdown"], `${path} should be the markdown class`);
@@ -59,6 +69,7 @@ test("root markdown runs the component lanes only, because that is what reads it
     assert.equal(decision.lanes.server, false, "no server-lane input reads markdown");
     assert.equal(decision.lanes.articles, false, "no article-lane input reads markdown");
     assert.equal(decision.lanes.demo, false, "no demo-lane input reads markdown");
+    assert.equal(decision.lanes.updater, true, "attended release fixtures read THIRD_PARTY.md");
     assert.deepEqual(gateLanes(decision).sort(), ["articles", "demo", "server"]);
   }
 });
@@ -74,11 +85,12 @@ test("markdown outside docs/ and the repository root belongs to its own area, no
   assert.equal(decisionFor("skills/x/SKILL.md").full, true);
 });
 
-test("a release change runs the server and component lanes", () => {
+test("a release change runs the server, component and updater lanes", () => {
   const decision = decisionFor("third_party/jsdom/LICENSE.txt", "deploy/operator-config.mjs");
   assert.deepEqual(decision.classes, ["release"]);
   assert.equal(decision.lanes.server, true);
   assert.equal(decision.lanes.components, true);
+  assert.equal(decision.lanes.updater, true);
   assert.equal(decision.lanes.demo, false);
 });
 
@@ -326,6 +338,54 @@ test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every suppo
   assert.ok(!/secrets\./u.test(job), "the fake rehearsal must not receive secrets");
 });
 
+test("the updater lane runs on macOS in both paths and is required by the merge gate", () => {
+  const job = name => workflow.match(new RegExp(`^  ${name}:[\\s\\S]*?(?=^  [a-z][a-z-]+:|$(?![\\s\\S]))`, "mu"))?.[0] ?? "";
+  const updater = job("test-updater"), catchUp = job("full-gate"), gate = job("merge-gate");
+  assert.deepEqual(LANES, ["demo", "server", "components", "updater", "articles"]);
+  const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
+  assert.match(job("route"), /updater: \$\{\{ steps\.route\.outputs\.updater \}\}/u);
+  assert.match(updater, /runs-on: macos-26/u);
+  assert.match(updater, /node-version: 22/u);
+  assert.match(updater, /timeout-minutes: 45/u);
+  assert.match(updater, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
+  assert.match(updater, /pnpm run test:updater/u);
+  // The PostgreSQL updater tests boot the real updater and need macOS lockf, so
+  // they run in the macOS job after PostgreSQL 17 is installed there, and not in
+  // the Linux components lane.
+  assert.match(updater, /brew install postgresql@17/u);
+  assert.match(updater, /pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres/u);
+  assert.doesNotMatch(scripts["test:components"], /pnpm test:updater(?:\s|$)/u);
+  assert.doesNotMatch(scripts["test:components"], /test:updater-schema|test:updater-passkey-postgres/u);
+  assert.match(scripts["test:components"], /pnpm test:updater:linux/u);
+  assert.match(scripts["test:updater:linux"], /tests\/updater-journal-linux\.test\.mjs/u);
+  assert.doesNotMatch(scripts["test:updater"], /updater-journal-linux/u);
+  assert.match(catchUp, /runs-on: \$\{\{ matrix\.runner \}\}/u);
+  assert.match(catchUp, /- lane: updater\n\s+runner: macos-26/u);
+  const updaterStep = catchUp.slice(catchUp.indexOf("      - name: Updater lane (merge gate)"));
+  assert.match(updaterStep, /matrix\.lane == 'updater'/u);
+  assert.match(updaterStep, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
+  assert.match(updaterStep, /run-scripts-keep-going\.mjs test:updater /u);
+  assert.match(updaterStep, /test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres/u);
+  assert.match(catchUp, /brew install postgresql@17/u);
+  for (const step of [updater, updaterStep.slice(0, updaterStep.indexOf("      - name: Article build lane"))]) {
+    assert.doesNotMatch(step, /TMPDIR: \/private\/tmp/u, "shared temporary custody is not a private fixture");
+    assert.match(step, /updater_tmp="\$\(mktemp -d \/private\/tmp\/acr-updater\.XXXXXX\)"/u);
+    assert.match(step, /trap 'rm -rf -- "\$\{updater_tmp\}"' EXIT/u);
+    assert.match(step, /chgrp "\$\(id -g\)" "\$\{updater_tmp\}"/u);
+    assert.match(step, /chmod 0700 "\$\{updater_tmp\}"/u);
+    assert.match(step, /export TMPDIR="\$\{updater_tmp\}"/u);
+    assert.match(step, /sudo \/usr\/bin\/xcode-select --switch \/Library\/Developer\/CommandLineTools/u);
+    assert.match(step, /test -x \/usr\/bin\/lockf/u);
+    assert.match(step, /await resolveDeveloperTools\(\)/u, "run the unchanged root-ownership verifier before the lane");
+  }
+  const gateHeader = gate.slice(0, gate.indexOf("    steps:"));
+  assert.match(gateHeader, /needs: \[[^\]]*test-updater[,\]]/u);
+  assert.match(gate, /check updater "\$\{\{ needs\.test-updater\.result \}\}"/u);
+  for (const name of ["test-components", "full-gate"]) {
+    assert.match(job(name), /sudo apt-get install -y zsh/u, "Linux install checks require zsh");
+  }
+});
+
 test("every lane the fast path can skip has a merge-gate counterpart", () => {
   const gateJob = workflow.slice(workflow.indexOf("  merge-gate:"));
   for (const lane of LANES) {
@@ -411,13 +471,17 @@ test("every lane command that ran before still runs, so no test loses its lane",
     "pnpm run test:build:demo",
     "pnpm run test",
     "pnpm run test:components",
+    "pnpm run test:updater",
+    "pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres",
     "node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts",
     "pnpm run test:build:articles",
     "node --test tests/check-test-lane-coverage.test.mjs",
     "node scripts/check-test-lane-coverage.mjs",
   ];
   for (const command of commands) {
-    assert.ok(workflow.includes(command), `the workflow no longer runs: ${command}`);
+    const invocation = command === "pnpm run test:components"
+      ? "node scripts/ci/run-scripts-keep-going.mjs --expand test:components" : command;
+    assert.ok(workflow.includes(invocation), `the workflow no longer runs: ${command}`);
   }
 });
 

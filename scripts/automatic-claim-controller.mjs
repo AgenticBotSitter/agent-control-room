@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { createHash } from "node:crypto";
 
 const CLAIM_HEADER = "CLAIM REQUEST";
@@ -761,6 +762,35 @@ const acceptedBase = body => {
   return match ? match[1] : undefined;
 };
 
+/**
+ * Canonical current-claim authority for a pair on one issue: the live accepted
+ * marker must be a current v3 record, its packet must still be the issue's
+ * exact work packet, and its lease must still be active.
+ *
+ * This is the single gate every operation that acts under a reservation must
+ * pass. CLAIM RENEW and CLAIM SUBMIT enforce it inline; the review handoff
+ * controller calls it too, so moving a PR into review can never outlive the
+ * lease or survive a changed packet that the submit controller would refuse.
+ * A legacy v2 acceptance is a compatibility marker, not current authority: it
+ * returns `legacy_claim_manual` and the caller must refuse.
+ *
+ * Returns `{ ok: true, marker, packet, comment }` or
+ * `{ ok: false, reason }` with one of `no_accepted_claim_for_pair`,
+ * `legacy_claim_manual`, `packet_changed`, `lease_unknown` or `lease_expired`.
+ */
+export function currentClaimAuthority(comments, { issueNumber, actor, workerId }, issueBody, now) {
+  const record = acceptedMarkerFor(comments, { issueNumber, actor, workerId });
+  if (!record) return Object.freeze({ ok: false, reason: "no_accepted_claim_for_pair" });
+  if (record.marker.version !== 3 || !record.marker.packet)
+    return Object.freeze({ ok: false, reason: "legacy_claim_manual" });
+  const packet = parseClaimPacket(issueBody);
+  if (!packet || packetHash(packet) !== record.marker.packet)
+    return Object.freeze({ ok: false, reason: "packet_changed" });
+  const lease = leaseStatus(record, packet, now);
+  if (lease !== "active") return Object.freeze({ ok: false, reason: lease });
+  return Object.freeze({ ok: true, marker: record.marker, packet, comment: record.comment });
+}
+
 /** CLAIM RENEW extends only the same worker's unchanged packet. */
 export async function runClaimRenew({ event, repository, api, now = Date.now() }) {
   const command = parseClaimCommand(event?.comment?.body);
@@ -1438,7 +1468,7 @@ function githubApi(token) {
   } });
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const { readFile } = await import("node:fs/promises");
   const { GITHUB_EVENT_PATH: eventPath, GITHUB_REPOSITORY: repository, GITHUB_TOKEN: token } = process.env;
   if (!eventPath || !repository || !token) throw new Error("claim_controller_environment_invalid");

@@ -66,7 +66,7 @@ export async function ownerReviewControlsWhenReady(page: Page): Promise<Readonly
 export async function requestChangesControlWhenReady(page: Page, feedback: string): Promise<Locator> {
   const { panel } = await ownerReviewControlsWhenReady(page);
   const changes = panel.getByLabel("Changes you want");
-  const requestChanges = panel.getByRole("button", { name: "Request changes", exact: true });
+  const requestChanges = panel.getByRole("button", { name: "Send back", exact: true });
   await expect(changes).toBeEnabled();
   await changes.fill(feedback);
   await expect(requestChanges).toBeEnabled();
@@ -74,10 +74,12 @@ export async function requestChangesControlWhenReady(page: Page, feedback: strin
 }
 
 /** Opens a result while proving the owner-review panel exposes its loading state before it becomes ready. */
-export async function openResultWithDeferredOwnerReview(page: Page): Promise<void> {
+export async function openResultWithDeferredOwnerReview(page: Page,
+  result: "first" | "last" = "first"): Promise<void> {
   const deferred = await deferNextOwnerReviewLoad(page);
   try {
-    await page.getByRole("button", { name: "Read result" }).first().click();
+    const buttons = page.getByRole("button", { name: "Read result" });
+    await (result === "last" ? buttons.last() : buttons.first()).click();
     await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
     await deferred.waitUntilHeld();
     const loading = page.locator('[role="status"][data-state="loading"]');

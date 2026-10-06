@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Read-only local watcher for the accepted public worker inbox.
 //
 // One tick reads the inbox through the accepted client, fingerprints the assigned action,
@@ -14,7 +15,6 @@
 import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { readWorkerInbox } from "../public-worker-inbox.mjs";
 import { actionsFingerprint, describeChange } from "./lib/inbox-fingerprint.mjs";
@@ -304,7 +304,7 @@ export async function main(argv = process.argv.slice(2), { reader, environment =
   return EXIT_OK;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main().then(code => { process.exitCode = code; }).catch(error => {
     console.error(`worker-inbox-watch: ${error.message}`);
     process.exitCode = isFatalError(error?.message) ? EXIT_CONFIG : EXIT_TRANSIENT;

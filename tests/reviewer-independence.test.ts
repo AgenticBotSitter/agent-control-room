@@ -29,3 +29,17 @@ test("owner review remains allowed without agent provenance", () => {
   assert.doesNotThrow(() => assertReviewerIndependentV1(producer,
     { actorId: "identity:owner", actorType: "human" }, reviewerSeparationForPolicyV1("different_model_family")));
 });
+
+test("missing provenance is distinguishable from a same-value reviewer", () => {
+  const separation = reviewerSeparationForPolicyV1("different_model_family");
+  assert.throws(() => assertReviewerIndependentV1(producer, reviewer({ modelFamily: undefined }), separation),
+    (error: unknown) => (error as { safeCode?: string }).safeCode === "reviewer_provenance_missing");
+  assert.throws(() => assertReviewerIndependentV1(producer, reviewer({ modelFamily: producer.modelFamily }), separation),
+    (error: unknown) => (error as { safeCode?: string }).safeCode === "reviewer_not_independent");
+});
+
+for (const field of ["workerId", "agentProfileId", "harness"] as const) test(`missing ${field} fails closed distinctly`, () => {
+  assert.throws(() => assertReviewerIndependentV1(producer, reviewer({ [field]: undefined }),
+    reviewerSeparationForPolicyV1("different_worker")),
+  (error: unknown) => (error as { safeCode?: string }).safeCode === "reviewer_provenance_missing");
+});

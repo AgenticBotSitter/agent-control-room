@@ -1,0 +1,135 @@
+[
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (input.principal.actorType !== \"agent\") throw new Error(\"intake_coordinator_input_invalid\");",
+    "replace": "if (false && input.principal.actorType !== \"agent\") throw new Error(\"intake_coordinator_input_invalid\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "an initial planner request must use an agent principal"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (configured === null) return Object.freeze({ ...common, status: \"manual\" as const,",
+    "replace": "if (false && configured === null) return Object.freeze({ ...common, status: \"manual\" as const,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "an empty planner selection must retain the manual no-orchestrator path"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (await this.failures.count(scope) < 2) continue;",
+    "replace": "if (await this.failures.count(scope) < 3) continue;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "an escalated request must never self-wake for a third planner run"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (!authority.allowed) return Object.freeze({ ...common, status: \"refused\" as const,",
+    "replace": "if (false && !authority.allowed) return Object.freeze({ ...common, status: \"refused\" as const,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "a re-split proposer must still hold the existing propose-only authority"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (!allowed.allowed) return Object.freeze({ ...common, status: \"allowance_refused\" as const,",
+    "replace": "if (false && !allowed.allowed) return Object.freeze({ ...common, status: \"allowance_refused\" as const,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "a refused S7b allowance must prevent the planner run"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (input.signal?.aborted) return stopped();\n    if (input.requestKind === \"initial\") {",
+    "replace": "if (false && input.signal?.aborted) return stopped();\n    if (input.requestKind === \"initial\") {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "a stop after planner success must prevent retaining either a submission or suggestion; this final write fence covers state-clear cancellation"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "const validated = validateWorkBatchProposalV1(replyText, input.projectId);",
+    "replace": "const validated = validateWorkBatchProposalV1(\"not json\", input.projectId);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "the exact planner reply must pass the existing strict proposal validator"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "|| !this.#capabilities.has(task.requiredCapability)) return \"planner_reply_capability_invalid\";",
+    "replace": "|| (false && !this.#capabilities.has(task.requiredCapability))) return \"planner_reply_capability_invalid\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "planner proposals cannot invent owner-controlled capabilities"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (task.requestedModelKey && !task.requestedWorkerId) return \"planner_reply_route_invalid\";",
+    "replace": "if (false && task.requestedModelKey && !task.requestedWorkerId) return \"planner_reply_route_invalid\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "a model pin without an exact catalog worker must be refused"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "} catch { return \"planner_reply_route_invalid\"; }",
+    "replace": "} catch { continue; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "unknown worker or model pins must fail closed"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (\"accepted\" in submission)",
+    "replace": "if (false && \"accepted\" in submission)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "a refusal from unchanged WorkBatchService submit cannot be reported as submitted"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (active.digest !== inputDigest) return Promise.resolve(Object.freeze({ ...common,",
+    "replace": "if (false) return Promise.resolve(Object.freeze({ ...common,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "concurrent reuse of a request key with different content must not share an outcome"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (Math.max(requestCount, projectCount) < 2) return firstFailure;",
+    "replace": "if (Math.max(requestCount, projectCount) < 3) return firstFailure;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "the second failure must raise Needs-you"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (input.actorType !== \"human\" || !id.safeParse(input.ownerIdentityId).success)",
+    "replace": "if (false && (input.actorType !== \"human\" || !id.safeParse(input.ownerIdentityId).success))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "only a human owner form can read a suggestion as a prefill"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (record.baseRevision !== input.currentRevision || record.baseRevisionDigest !== input.currentRevisionDigest)",
+    "replace": "if (false && (record.baseRevision !== input.currentRevision || record.baseRevisionDigest !== input.currentRevisionDigest))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "a later revision must make an older suggestion stale"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "Object.freeze(value);",
+    "replace": "void value;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "stored planner reply data must not be mutable through a returned suggestion"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "if (input.requestKind === \"initial\") {",
+    "replace": "if (true) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "post-revision output must append a suggestion instead of submitting a revision"
+  },
+  {
+    "file": "src/work-intake/v1/intake-coordinator.ts",
+    "find": "const flagsByLocalId = flagsFor(validated.proposal);",
+    "replace": "const flagsByLocalId = freezeFlags({});",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "every planner proposal must be rerun through the intake gate"
+  },
+  {
+    "file": "src/work-intake/v1/queue-catalog.ts",
+    "find": "...(requested.requestedEffort ? { effort: requested.requestedEffort } : {})",
+    "replace": "...(requested.requestedEffort ? {} : {})",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/intake-coordinator.test.ts",
+    "why": "the configured planner effort must be resolved by the protected queue catalog"
+  }
+]

@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { createWorkerLifecycleFixture, projectSyntheticRecovery, recordSyntheticLifecycle,
   reopenSyntheticLifecycle, runSyntheticLauncherScenario } from '../tests/helpers/private-worker-lifecycle';
 
@@ -31,7 +31,7 @@ export async function testPrivateWorkerLifecycleV1() {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { process.stdout.write(`${JSON.stringify(await testPrivateWorkerLifecycleV1())}\n`); }
   catch { console.error('Control Room synthetic worker lifecycle failed.'); process.exitCode = 1; }
 }

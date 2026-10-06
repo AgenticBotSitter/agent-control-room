@@ -276,6 +276,11 @@ test("demo HTTP composes protected login and project routes without operational 
   assert.equal(restored.unavailable, false); assert.equal(restored.samples.length, 2);
   assert.equal(restored.samples[1].artifactId, revised.artifactId);
   assert.match(restored.samples[1].text, /Use a shorter summary/);
+  const concurrentRestores = await Promise.all(Array.from({ length: 20 }, () => loadContributorHistory({
+    simulations: createContributorDemoBrowserClient(readTransport),
+    tasks: createTaskBrowserClient(createLocalPilotBrowserTransportV1(readTransport)),
+  }, projectId, jobId)));
+  assert.ok(concurrentRestores.every(history => history.unavailable === false && history.samples.length === 2));
   const notAccepted = { parentArtifactId: revised.artifactId, feedback: "Keep this unsent draft." };
   const disconnected = createContributorDemoBrowserClient(async () => { throw new Error("request never delivered"); });
   await assert.rejects(disconnected.simulate(projectId, jobId, notAccepted), { code: "uncertain" });
@@ -292,6 +297,7 @@ test("demo HTTP composes protected login and project routes without operational 
   const result = await resultResponse.json();
   assert.equal(result.simulationOnly, true);
   assert.equal(result.grantsExecutionAuthority, false);
+  assert.equal("identityId" in result, false);
   assert.match(result.text, /HTTP sample/);
   assert.equal((await handle(new Request(`${workspace}?resource=projects`, {
     headers: { cookie, origin: "https://untrusted.example" },

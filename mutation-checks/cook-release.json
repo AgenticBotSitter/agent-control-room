@@ -1,0 +1,16 @@
+[
+  {
+    "file": "scripts/release-tool.mjs",
+    "find": "if (secretFindings.length > 0) refuse(\"secret_scan_refused\");",
+    "replace": "if (false) refuse(\"secret_scan_refused\");",
+    "test": "node --test tests/release-tool.test.mjs",
+    "why": "a release candidate must refuse a tracked credential before its gates run"
+  },
+  {
+    "file": "scripts/release-tool.mjs",
+    "find": "if (typeof approval !== \"string\" || !SAFE_TOKEN.test(approval)) refuse(\"release_approval_required\");",
+    "replace": "if (false) refuse(\"release_approval_required\");",
+    "test": "node --test tests/release-tool.test.mjs",
+    "why": "publication without an owner approval token must not create a release branch"
+  }
+]

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PRIVATE_POSTGRES_ENDPOINT_V2, privatePostgresEndpointFingerprintV1 } from
   "../src/web/v1/private-postgres-endpoint";
@@ -559,7 +560,10 @@ const installedFileBytes = (value: unknown) => Buffer.from(`${canonicalJson(valu
 async function installedOperatorLoaderPackage(t: { after(fn: () => unknown): void }, f: any,
   claudeCodeProcessNativeSidecar?: unknown) {
   const composed = installedComposerPackage(f);
-  const root = await mkdtemp(join(process.cwd(), ".installed-operator-loader-"));
+  // The protected ancestor walk refuses any group-writable ancestor, so the root
+  // cannot sit under the checkout: an external drive's mount point is often
+  // group-writable. The system temp directory is private and sticky-free.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "installed-operator-loader-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   await chmod(root, 0o700);
   const journalPath = join(root, "installation-journal");

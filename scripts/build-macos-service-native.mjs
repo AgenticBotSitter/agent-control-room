@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 /** Explicit inert release-build tool for the fixed ACRSVC1 helper. It uses
  * only the installed Apple toolchain and never installs, publishes, registers,
  * starts, stops, or inspects a service. */
@@ -7,7 +8,7 @@ import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { MACOS_SERVICE_NATIVE_ARTIFACT_V1, MACOS_SERVICE_NATIVE_MANIFEST_NAME_V1,
   MACOS_SERVICE_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-service-native-sidecar.mjs";
@@ -72,7 +73,7 @@ export async function buildMacosServiceNativeArtifactV1({ outputDirectory }) {
   } finally { await rm(work, { recursive: true, force: true }); }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     if (process.argv.length !== 4 || process.argv[2] !== "--output-directory") refused();
     console.log(JSON.stringify(await buildMacosServiceNativeArtifactV1({ outputDirectory: process.argv[3] })));

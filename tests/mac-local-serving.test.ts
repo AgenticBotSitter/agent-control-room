@@ -35,7 +35,7 @@ test("Mac-local service is inert until explicit start and binds only its selecte
   const service = createMacLocalControlRoomServiceV1({ origin, port: 3210, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, assets: { count: 0, digest: "empty", respond: () => undefined },
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, assets: { count: 0, digest: "empty", respond: () => undefined },
     render: () => new Response("shell"), createServer: (_options: Readonly<ServerOptions>) => server,
     listenerTiming: { bindMs: 100, closeMs: 100 } });
   assert.equal(service.isReady(), false); assert.equal(capture.read(), undefined);

@@ -92,7 +92,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
   }, [projectId, after, sourceAfter, view, order, refresh]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
-    <ProjectNavigation projectId={projectId} current="news" />
+    <ProjectNavigation projectId={projectId} current="news" presentation={page?.project.presentation} />
     <NewsSourceSettings key={projectId} projectId={projectId} />
     <button type="button" disabled={!!selected || archiveHeld} onClick={() => { setPage(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved news</button>
     {archiveMessage ? <p role="status">{archiveMessage}</p> : null}

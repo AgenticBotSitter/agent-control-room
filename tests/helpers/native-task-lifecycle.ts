@@ -62,8 +62,9 @@ export async function nativeTaskLifecycleFixture(configuration: {
     while (incoming.length) await session.receive(incoming.shift()!);
   }
   assert.ok(session.nativeDeliveryChannel()); assert.equal(outgoing.length + incoming.length, 0);
-  const registration = nativeTaskRegistration(f.prepared.binding, f.args[3],
-    f.prepared.request.leaseId, f.prepared.request.leaseEpoch, timestamp());
+  const registration = { ...nativeTaskRegistration(f.prepared.binding, f.args[3],
+    f.prepared.request.leaseId, f.prepared.request.leaseEpoch, timestamp()),
+    modelSelection: { model: "hermes-test", effort: "default" as const, provider: "openai", profile: "profile:test" } };
   const plan = await f.planner.read(f.args[2]);
   if (!plan || (plan.schema !== "control-room.task-execution-plan/v1" && plan.schema !== "control-room.task-execution-plan/v2"))
     throw new Error("missing_native_lifecycle_plan");

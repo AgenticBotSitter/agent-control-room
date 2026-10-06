@@ -53,12 +53,11 @@ export class DatabaseOperatorFleetReadSourceV1 implements OperatorFleetReadSourc
       const node = nodeRecordSchema.safeParse(row.payload);
       if (!node.success || node.data.tenantId !== input.tenantId || node.data.id !== row.id || node.data.state !== row.state) throw new OperatorSurfaceReadError("invalid_read_scope");
       const telemetryState = Number(row.fresh_telemetry_count) > 0 ? "fresh" : Number(row.usable_telemetry_count) > 0 ? "stale" : "missing";
-      const observedCandidates = [row.valid_telemetry_observed_at, node.data.lastSeenAt, row.updated_at]
+      const observedCandidates = [row.valid_telemetry_observed_at, node.data.lastSeenAt]
         .filter((value): value is string | Date => value !== null && value !== undefined)
         .map((value) => new Date(value).toISOString())
         .filter((value) => Date.parse(value) <= Date.parse(input.now));
-      const observedAt = observedCandidates.sort((left, right) => Date.parse(right) - Date.parse(left))[0];
-      if (!observedAt) throw new OperatorSurfaceReadError("invalid_read_scope");
+      const observedAt = observedCandidates.sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null;
       const activeState = telemetryState === "fresh" ? "online" as const : "degraded" as const;
       const activeReason = telemetryState === "fresh" ? undefined : telemetryState === "stale" ? "telemetry_stale" : "telemetry_missing";
       const capabilityState = Number(row.verified_capability_count) > 0 ? "verified" as const
