@@ -406,8 +406,9 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    # The full test:components chain needs about 150-160 minutes on a hosted runner.
-    timeout-minutes: 180
+    # The full test:components chain now needs about 200-220 minutes on a hosted runner
+    # (2026-10-06: cancelled at 180 inside test:mac-upgrade, its last script).
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
