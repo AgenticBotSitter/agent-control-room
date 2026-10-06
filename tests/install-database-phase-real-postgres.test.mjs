@@ -290,10 +290,8 @@ const manifestFor = (port, database = "control_room") => Object.freeze({
  *     the installer created. MEASURED: pointing both at the invoking account
  *     answers `database_init_input_refused` from the very parser that guards the
  *     property — so the lane keeps distinct NAMES and uids.
- *   - `chownOwnershipV1` sets `pg/socket`'s group to D's own gid (it cannot set a
- *     gid it does not belong to without root) and records the SERVICE gid as
- *     `intendedGid`. MEASURED: setting the fictional service gid directly refused
- *     with `EPERM: operation not permitted, lchown '…/pg/socket'`.
+ *   - `chownOwnershipV1` sets `pg/socket`'s group to the SERVICE gid. A non-root
+ *     lane can only set a group it belongs to, so the lane's service gid is its own.
  *
  * So `service.uid` is a real, different, non-privileged uid on this machine and its
  * gid is this process's own — which is the group the socket would have to carry for
@@ -832,28 +830,21 @@ test("every path the init creates is handed to the account that must own it",
     // group is what lets the web process reach it, and D:D would make the socket
     // unreachable by exactly the process the design installs it for.
     //
-    // `intendedGid` rather than `gid`, and the distinction is measured: a non-root
-    // phase cannot set a gid it does not belong to, so `gid` is what it actually
-    // sets and `intendedGid` is the service group the layout's reachability needs.
-    // Asserting `intendedGid` keeps the DESIGN claim in the assertion while letting
-    // the phase run without root -- and the real-root rehearsal is what measures
-    // the arrangement where the two are the same value.
+    // The group the phase APPLIES, read from the syscall. It used to set D's own
+    // group and only record the service group as an intention, which left
+    // production's socket directory D:D -- unreachable by the supervisor and gateway.
     const socket = calls.find(call => call.path.endsWith("/pg/socket"));
     assert.ok(socket, "pg/socket must be chowned");
-    assert.equal(socket.gid, OTHER_DATABASE.gid,
-      "a phase that cannot set the service group must set its OWN, and record the service group as intended");
+    assert.equal(socket.gid, OTHER_SERVICE.gid,
+      "pg/socket must be chowned to the SERVICE group, or the web process cannot reach the 0770 socket");
     // …and it must be D's UID, because the postmaster has to create the socket
     // INSIDE that directory.
     assert.equal(socket.uid, OTHER_DATABASE.uid, "pg/socket must be owned by the database account");
-    // The SERVICE group is still asserted, from the PLAN rather than from the
-    // syscall: `chownOwnershipV1` records it as `intendedGid`, and it is what the
-    // layout's 0770 depends on. Asserting the plan's value is what keeps the
-    // design claim in the test even where the machine cannot set it.
     const socketPlan = chownOwnershipV1({ root: "/x", pgDataId: "data-A",
       accounts: { database: OTHER_DATABASE, service: OTHER_SERVICE } })
       .find(entry => entry.path.endsWith("/pg/socket"));
-    assert.equal(socketPlan.intendedGid, OTHER_SERVICE.gid,
-      "the socket's INTENDED group must be the service account's, or the web process cannot reach it");
+    assert.equal(socketPlan.gid, OTHER_SERVICE.gid,
+      "the socket's group must be the service account's, or the web process cannot reach it");
     assert.equal(socketPlan.uid, OTHER_DATABASE.uid, "the socket's owner must be the database account");
     // The three config files are handed to D by the SECOND handoff, which runs after
     // `initdb` has created them and the phase has replaced them. This run cannot

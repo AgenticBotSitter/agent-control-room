@@ -84,15 +84,18 @@ async function boundedJsonV1(response, limit, refused = "health_web_refused") {
 
 function verifyWebHealthV1(value, { key, nonce, expectedRelease }) {
   if (!exactKeys(value, ["schema", "ready", "pid", "nonce", "releaseId", "startedAt", "tag"])
-    || value.schema !== "control-room.local-host-health/v1" || value.ready !== true
+    || value.schema !== "control-room.local-host-health/v1" || typeof value.ready !== "boolean"
     || !Number.isSafeInteger(value.pid) || value.pid <= 1 || value.nonce !== nonce
     || value.releaseId !== expectedRelease || typeof value.startedAt !== "string"
     || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") refuse("health_web_refused");
-  const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1", ready: true,
+  const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1", ready: value.ready,
     releaseId: value.releaseId, startedAt: value.startedAt });
   const expected = `hmac-sha256:${createHmac("sha256", key).update(material, "utf8").digest("hex")}`;
   const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");
   if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) refuse("health_web_refused");
+  // A correctly tagged "not ready yet" (its database pool still warming up) is retried only
+  // inside the bounded startup wait; anywhere else it is refused like any wrong answer.
+  if (value.ready !== true) throw Object.assign(updaterRefuseV1("health_web_refused"), { healthStarting: true });
   return Object.freeze({ pid: value.pid, releaseId: value.releaseId, startedAt: value.startedAt });
 }
 
@@ -175,7 +178,7 @@ export async function checkHealthV1(input, ports = {}, runtime = {}) {
   const answering = async probe => {
     for (;;) {
       try { return await probe(input, runtime); } catch (error) {
-        if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;
+        if ((error?.healthUnreachable !== true && error?.healthStarting !== true) || now() >= startupDeadline) throw error;
       }
       await delay(runtime.startupPollMs ?? 500);
     }

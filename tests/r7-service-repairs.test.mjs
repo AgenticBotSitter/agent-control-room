@@ -95,7 +95,10 @@ test('database ownership plan keeps pg searchable by the web identity and data p
   assert.equal(pg.mode & 0o001, 0o001, 'the distinct service identity can search the parent');
   const socket = plan.find(entry => entry.path === join(root, 'pg', 'socket'));
   assert.equal(socket.uid, accounts.database.uid);
-  assert.equal(socket.intendedGid, accounts.service.gid);
+  // The APPLIED group, not a recorded intention: the phase chowns to `gid`, and a
+  // D:D socket directory leaves the supervisor and gateway unable to connect.
+  assert.equal(socket.gid, accounts.service.gid, 'pg/socket is chowned to the service group');
+  assert.notEqual(socket.gid, accounts.database.gid);
   assert.equal(socket.mode, 0o750);
   assert.equal(plan.find(entry => entry.path === join(root, 'pg', 'data-A')).mode, 0o700);
 });

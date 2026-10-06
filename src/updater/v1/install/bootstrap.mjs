@@ -266,9 +266,14 @@ async function verifyBundle(directory, expectedDigest) {
   const declared = new Set();
   for (const item of manifest.files) {
     const profileMode = /^policy\/service-[a-z-]+\.sb$/u.test(item?.path ?? "");
+    // Service profiles are 0440 (service group). The PostgreSQL profile is 0444, because
+    // the database account reads it as "other" (see build-fixed-updater-bundle.mjs);
+    // 0440 stays accepted for it only so a bundle staged before that change still
+    // verifies as the RUNNING updater -- it is the narrower mode, never a wider one.
+    const profileModes = !profileMode ? [] : item.path === "policy/service-postgres.sb" ? [0o440, 0o444] : [0o440];
     if (!item || typeof item.path !== "string" || item.path.startsWith("/") || item.path.split("/").some(part => !part || part === "." || part === "..")
         || !DIGEST.test(item.sha256) || item.type !== "file"
-        || ![0o400, 0o500, ...(profileMode ? [0o440] : []), ...(item.path === "service-output.mjs" ? [0o555] : [])].includes(item.mode) || declared.has(item.path)) {
+        || ![0o400, 0o500, ...profileModes, ...(item.path === "service-output.mjs" ? [0o555] : [])].includes(item.mode) || declared.has(item.path)) {
       refuse("updater_bundle_manifest_refused");
     }
     declared.add(item.path);

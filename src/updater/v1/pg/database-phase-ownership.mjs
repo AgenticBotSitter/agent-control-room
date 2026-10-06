@@ -104,16 +104,15 @@ export function chownOwnershipV1({ root, pgDataId, accounts }) {
     // exactly the process the design installs it for, and S:S would take the
     // directory away from the postmaster that has to create the socket inside it.
     //
-    // A non-root rehearsal cannot set a gid it does not belong to, and MEASURED, a
-    // plan that tried refused with `EPERM: operation not permitted, lchown
-    // '…/pg/socket'` — which is the phase correctly reporting an ownership it
-    // cannot establish. So the entry carries BOTH: `gid` is what the phase sets,
-    // and `intendedGid` is the service group the layout's reachability depends on.
-    // In production root sets them equal; where the phase cannot set the group it
-    // sets D's own and the read-back below checks `intendedGid` only when the
-    // phase was able to set it — which is what the real-root rehearsal measures.
+    // The group APPLIED is the service group. It used to be recorded only as an
+    // `intendedGid` while D's own group was what the phase set -- so production root
+    // left `pg/socket` D:D, the socket file inherited D's group (BSD semantics: a new
+    // file takes its directory's group), and the supervisor and gateway (S) got
+    // EACCES on every connection. Root can set any group; a non-root rehearsal must
+    // run with a service gid it belongs to (the real-PostgreSQL lane uses its own),
+    // and an `lchown` it cannot perform is a refusal, never a silent D:D.
     Object.freeze({ path: join(root, "pg", "socket"), owner: OWNERSHIP_DATABASE_V1, uid: database.uid,
-      gid: database.gid, intendedGid: service.gid, mode: 0o750,
+      gid: service.gid, mode: 0o750,
       why: "the layout grants 0770 on the socket; the service group is what lets the web process reach it" }),
     // The data directory, before initdb: `initdb` chowns its own output to
     // itself, but it must already OWN the directory to do that.

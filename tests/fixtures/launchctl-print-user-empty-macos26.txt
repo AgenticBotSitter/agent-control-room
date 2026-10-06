@@ -1,0 +1,135 @@
+user/9999 = {
+	type = user
+	handle = 9999
+	active count = 40
+	service count = 39
+	creator = launchctl[41629]
+	creator euid = 0
+	session = Background
+	security context = {
+		uid = 9999
+		asid = 100074
+	}
+
+	bringup time = 16 ms
+	death port = 0x0
+
+	services = {
+		       0      - 	com.apple.cvmsCompAgent3425AMD_x86_64_1
+		       0      - 	com.apple.mdworker.sizing
+		       0      - 	com.apple.trustd.agent
+		       0      - 	com.apple.mdworker.mail
+		       0      - 	com.apple.cvmsCompAgent3600_x86_64_1
+		       0      - 	com.apple.metadata.mdbulkimport
+		       0      - 	com.apple.mdworker.single.arm64
+		       0      - 	com.apple.metadata.mdflagwriter
+		       0      - 	com.apple.security.KeychainStasher
+		       0      - 	com.apple.keychainsharingmessagingd
+		       0      - 	com.apple.netauth.user.auth
+		       0      - 	com.apple.cvmsCompAgent3600_arm64
+		       0      - 	com.apple.ContainerMigrationService
+		       0      - 	com.apple.mbbackgrounduseragent
+		       0      - 	com.apple.secd
+		       0      - 	com.apple.ctkd
+		       0      - 	com.apple.mdworker.shared
+		       0      - 	com.apple.mdworker.application
+		       0      - 	com.apple.cvmsCompAgent3425AMD_x86_64
+		       0      - 	com.apple.mdworker.single.x86_64
+		       0      - 	com.apple.usermanagerhelper
+		       0      - 	com.apple.installandsetup.migrationhelper.user
+		       0      - 	com.apple.cvmsCompAgent_x86_64
+		       0      - 	com.apple.lsd
+		       0      - 	com.apple.cvmsCompAgent_x86_64_1
+		       0      - 	com.apple.contactsd
+		       0      - 	com.apple.cvmsCompAgent3600_x86_64
+		       0      - 	com.apple.speech.speechsynthesisd.arm64
+		       0      - 	com.apple.containermanagerd
+		       0      - 	com.apple.cfprefsd.xpc.agent
+		       0      - 	com.apple.coreimportd
+		       0      - 	com.apple.fskit.fskit_agent
+		       0      - 	com.apple.secinitd
+		       0      - 	com.apple.speech.speechsynthesisd.x86_64
+		       0      - 	com.apple.pluginkit.pkd
+		       0     78 	com.apple.distnoted.xpc.agent
+		       0      - 	com.apple.TrustEvaluationAgent
+		       0      - 	com.apple.CoreAuthentication.agent
+		       0      - 	com.apple.cvmsCompAgent3600_arm64_1
+	}
+
+	unmanaged processes = {
+	}
+
+	endpoints = {
+		       0    M   D   com.apple.lsd.openurl
+		       0    M   D   com.apple.mbbackgrounduseragent
+		 0xba093    M   D   com.apple.distributed_notifications@Uv3
+		       0    M   D   com.apple.askto.client.com.apple.contacts.commlimits
+		       0    M   D   com.apple.keychainsharingmessagingd
+		       0    M   D   com.apple.mdworker.shared
+		       0    M   D   com.apple.lsd.mapdb
+		       0    M   D   com.apple.mdworker.single.arm64
+		       0    M   D   com.apple.ctkd.token-client
+		       0    M   D   com.apple.security.octagon
+		       0    M   D   com.apple.security.kcsharing
+		       0    M   D   com.apple.speech.speechsynthesisd.arm64
+		       0    M   D   com.apple.LocalAuthentication.ap2
+		       0    M   D   com.apple.speech.speechsynthesisd.x86_64
+		       0    M   D   com.apple.lsd.trustedsignatures
+		       0    M   D   com.apple.cvmsCompAgent3600_arm64_1
+		       0    M   D   com.apple.lsd.modifydb
+		       0    M   D   com.apple.security.KeychainStasher
+		       0    M   D   com.apple.ContainerMigrationService
+		       0    M   D   com.apple.contacts.account-caching
+		       0    M   D   com.apple.contactsd.persistence
+		       0    M   D   com.apple.contactsd.support
+		       0    M   D   com.apple.AddressBook.ContactsAccountsService
+		       0    M   D   com.apple.securityd.aps
+		       0    M   D   com.apple.cvmsCompAgent_x86_64
+		       0    M   D   com.apple.pluginkit.pkd
+		       0    M   D   com.apple.mdworker.single.x86_64
+		       0    M   D   com.apple.cfprefsd.agent
+		       0    M   D   com.apple.cvmsCompAgent3600_x86_64_1
+		       0    M   D   com.apple.lsd.diagnostics
+		       0    M   D   com.apple.lsd.personaobserver
+		       0    M   D   com.apple.cvmsCompAgent3600_x86_64
+		       0    M   D   com.apple.installandsetup.migrationhelper
+		       0    M   D   com.apple.cvmsCompAgent3425AMD_x86_64
+		       0    M   D   com.apple.mdworker.sizing
+		       0    M   D   com.apple.trustd.agent
+		       0    M   D   com.apple.security.escrow-update
+		       0    M   D   com.apple.spotlight.ImportAgent
+		       0    M   D   com.apple.lsd.plugin
+		       0    M   D   com.apple.securityd.sos
+		       0    M   D   com.apple.mdworker.application
+		       0    M   D   com.apple.usermanagerhelper
+		       0    M   D   com.apple.lsd.advertisingidentifiers
+		       0    M   D   com.apple.secinitd
+		       0    M   D   com.apple.securityd.general
+		       0    M   D   com.apple.fskit.fskit_agent
+		       0    M   D   com.apple.containermanagerd
+		       0    M   D   com.apple.netauth.user.auth
+		       0    M   D   com.apple.CoreAuthentication.agent
+		       0    M   D   com.apple.lsd.open
+		       0    M   D   com.apple.securityd.xpc
+		       0    M   D   com.apple.mdworker.mail
+		       0    M   D   com.apple.CoreAuthentication.agent.libxpc
+		       0    M   D   com.apple.securityd.ckks
+		       0    M   D   com.apple.security.translocation
+		       0    M   D   com.apple.cvmsCompAgent_x86_64_1
+		       0    M   D   com.apple.cvmsCompAgent3425AMD_x86_64_1
+		       0    M   D   com.apple.TrustEvaluationAgent
+		       0    M   D   com.apple.contactsd.contact-provider
+		       0    M   D   com.apple.cvmsCompAgent3600_arm64
+		       0    M   D   com.apple.metadata.mdbulkimport
+		       0    M   D   com.apple.lsd.extensions
+		       0    M   D   com.apple.metadata.mdflagwriter
+	}
+
+	task-special ports = {
+			 0xba503 4       bootstrap  com.apple.xpc.launchd.domain.user.9999
+			  0x2b03 9          access  (unknown)
+	}
+
+
+	properties = 
+}

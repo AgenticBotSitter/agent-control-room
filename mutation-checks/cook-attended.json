@@ -190,7 +190,7 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "await mkdir(targetPath, { mode: 0o750 }); await visit(sourcePath, targetPath); await chmod(targetPath, 0o550);",
+    "find": "await mkdir(targetPath, { mode: 0o750 }); await visit(sourcePath, targetPath);\n        await chmod(targetPath, stagedDirectoryModeV1(snapshot, local, modeForFile));",
     "replace": "await mkdir(targetPath, { mode: 0o550 }); await visit(sourcePath, targetPath);",
     "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
     "why": "root can populate nested updater staging directories before sealing them read-only"

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import * as releaseParsers from "../src/web/v1/mac-local-protected-loader.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -12,7 +13,7 @@ import {
 import { INSTALL_DATABASE_LOGINS_V1 } from "../src/updater/v1/install/install-steps.mjs";
 import {
   checkHealthDatabaseV1, cleanupBootstrapV1, composeProtectedConfigPortV1, createStageOnePortsV1, firstOwnerV1,
-  initializeDatabaseV1, installGuardV1, killAccountProcessesV1, recordPasskeyStatusV1, recordTailscaleServeV1,
+  initializeDatabaseV1, installGuardV1, killAccountProcessesV1, launchDomainLeftoversV1, recordPasskeyStatusV1, recordTailscaleServeV1,
   registerInitialPasskeyV1, removeDatabaseLoginsV1, removeGuardV1, removeKnownGoodV1, remintOwnerCodeV1,
   retireDatabaseV1, rollbackOwnerCodeV1, seedKnownGoodV1, writeDatabaseLoginsV1,
 } from "../src/updater/v1/install/stage-one-ports.mjs";
@@ -303,16 +304,29 @@ test("account sweep is bounded, verifies the builder launch domain, retries afte
   assert.equal(burst.length, 32);
 });
 
-test("a builder launch domain left by a finished build is booted out, then the sweep passes; one that stays is refused", async () => {
-  // launchd keeps user/<uid> for an account that has run anything; a retry after a failed build
-  // must not stop on it (measured on a macOS 26 VM: builder_launch_domain_refused on the retry).
-  let bootedOut = false; const calls = [];
-  const execute = async (file, args) => { calls.push([file, ...args]);
-    if (file === "/bin/launchctl" && args[0] === "bootout") { bootedOut = true; return { stdout: "" }; }
-    if (file === "/bin/launchctl" && bootedOut) throw Object.assign(new Error("not found"), { code: 113 });
-    return { stdout: file === "/bin/ps" ? "0\n" : "" }; };
-  assert.deepEqual(await killAccountProcessesV1({ uid: 311, checkLaunchDomain: true }, { execute }), { swept: true, uid: 311 });
-  assert.deepEqual(calls.filter(call => call[0] === "/bin/launchctl"),
-    [["/bin/launchctl", "print", "user/311"], ["/bin/launchctl", "bootout", "user/311"], ["/bin/launchctl", "print", "user/311"]]);
+test("macOS 26 builder launch domain: Apple's idle agents pass, a builder-started service is booted out, one that stays is refused", async () => {
+  // `launchctl print user/<uid>` answers for ANY uid on macOS 26 (captured from a VM for an unused
+  // uid): Apple's on-demand agents, none running. The old "domain exists" test refused every retry.
+  const idle = readFileSync(new URL("./fixtures/launchctl-print-user-empty-macos26.txt", import.meta.url), "utf8");
+  assert.deepEqual(launchDomainLeftoversV1(idle), []);
+  const withLeftover = idle.replace("\tservices = {\n", "\tservices = {\n\t\t       0      - \tcom.example.builder-persist\n");
+  const withRunning = idle.replace(/^(\t\t\s+)0(\s+-\s+\tcom\.apple\.trustd\.agent)$/mu, "$14242$2");
+  assert.deepEqual(launchDomainLeftoversV1(withLeftover), ["com.example.builder-persist"]);
+  assert.deepEqual(launchDomainLeftoversV1(withRunning), ["com.apple.trustd.agent"]);
+  assert.throws(() => launchDomainLeftoversV1("user/311 = {\n\ttype = user\n}\n"), /builder_launch_domain_refused/u);
+
+  const sweep = (first, later = first) => { const calls = []; let printed = 0;
+    const execute = async (file, args) => { calls.push([file, ...args]);
+      if (file === "/bin/launchctl" && args[0] === "print") { printed += 1; return { stdout: printed === 1 ? first : later }; }
+      return { stdout: file === "/bin/ps" ? "0\n" : "" }; };
+    return { calls, run: () => killAccountProcessesV1({ uid: 311, checkLaunchDomain: true }, { execute }) }; };
+  const clean = sweep(idle);
+  assert.deepEqual(await clean.run(), { swept: true, uid: 311 });
+  assert.equal(clean.calls.some(call => call[1] === "bootout"), false, "an idle Apple-only domain needs no bootout");
+  const recovered = sweep(withLeftover, idle);
+  assert.deepEqual(await recovered.run(), { swept: true, uid: 311 });
+  assert.deepEqual(recovered.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1]), ["print", "bootout", "print"]);
+  await assert.rejects(sweep(withLeftover).run(), /builder_launch_domain_refused/u);
+  await assert.rejects(sweep(withRunning).run(), /builder_launch_domain_refused/u);
 });
 

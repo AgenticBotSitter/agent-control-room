@@ -244,7 +244,13 @@ export async function runTailscaleCliV1(identity, args, execute = command) {
   if (!Array.isArray(args) || args.some(value => typeof value !== "string" || value.includes("\0"))) {
     throw new Error("tailscale_arguments_refused");
   }
-  return execute(TAILSCALE, args, { uid: owner.uid, gid: owner.gid, maxBuffer: MAX_TAILSCALE_JSON_BYTES });
+  // Run the CLI exactly as the owner's own Terminal would: sudo -u gives the owner's full group
+  // list (a uid/gid spawn drops supplementary groups such as admin, which the standalone app's
+  // local API proof file needs), and TERM puts the app binary in CLI mode. Without TERM or
+  // SHLVL it prints "The Tailscale GUI failed to start" to stdout and exits 0 (measured,
+  // Tailscale 1.102.2 on macOS 26.6.2).
+  return execute("/usr/bin/sudo", ["-n", "-u", `#${owner.uid}`, "--", "/usr/bin/env", "TERM=dumb", TAILSCALE, ...args],
+    { maxBuffer: MAX_TAILSCALE_JSON_BYTES });
 }
 
 const tailscaleCommand = runTailscaleCliV1;

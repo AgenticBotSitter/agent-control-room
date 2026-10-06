@@ -638,6 +638,10 @@ test("wraps postgres, supervisor and gateway in Seatbelt and binds PG runtime co
   assert.match(postgres, /ssl = off/u);
   for (const name of ["OPENSSL_CONF", "OPENSSL_MODULES", "KRB5_CONFIG", "KRB5_KDC_PROFILE"])
     assert.match(postgres, new RegExp(`<key>${name}</key>`, "u"));
+  // The locale pin the init phase's postmaster has: launchd gives the job its own
+  // environment, and a macOS postmaster without a valid locale refuses to start.
+  for (const name of ["LANG", "LC_ALL"])
+    assert.match(postgres, new RegExp(`<key>${name}</key>\\s*<string>C</string>`, "u"));
   assert.match(postgres, /runtime\/pg-current\/etc\/openssl\.cnf/u);
   assert.match(postgres, /runtime\/pg-current\/lib\/ossl-modules/u);
   assert.doesNotMatch(postgres, /<string>ssl(?:=|\s)/u);

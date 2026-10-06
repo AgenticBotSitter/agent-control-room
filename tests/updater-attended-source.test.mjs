@@ -101,7 +101,7 @@ async function fixture(t) {
   const fake = join(temporary, "fake-build.mjs");
   await writeFile(fake, `#!${process.execPath}
 import {spawn} from 'node:child_process';import {createHash} from 'node:crypto';import {chmod,mkdir,writeFile} from 'node:fs/promises';import {join} from 'node:path';
-let [mode,out,commit,extra]=process.argv.slice(2);if(mode==='fetch')process.exit(0);if(mode==='install'){await mkdir(join(process.cwd(),'node_modules'),{recursive:true});await writeFile(join(process.cwd(),'node_modules/.package-map.json'),'{}\\n');process.exit(0);}if(mode==='run'){await mkdir(join(process.cwd(),'dist-vps/client'),{recursive:true});await writeFile(join(process.cwd(),'dist-vps/client/generated.js'),'generated\\n');process.exit(0);}if(out==='AUTO')out=join(process.cwd(),'..','output');if(out==='AUTO_BUNDLE')out=join(process.cwd(),'..','bundle');const digest=b=>'sha256:'+createHash('sha256').update(b).digest('hex');
+let [mode,out,commit,extra]=process.argv.slice(2);if(mode==='fetch'){await mkdir(join(process.cwd(),'node_modules/.pnpm'),{recursive:true});process.exit(0);}if(mode==='bundle'&&(await import('node:fs')).existsSync(join(process.cwd(),'src/updater/v1/node_modules'))){process.stderr.write('updater_bundle_source_modules_refused\\n');process.exit(1);}if(mode==='install'){await mkdir(join(process.cwd(),'node_modules'),{recursive:true});await writeFile(join(process.cwd(),'node_modules/.package-map.json'),'{}\\n');process.exit(0);}if(mode==='run'){await mkdir(join(process.cwd(),'dist-vps/client'),{recursive:true});await writeFile(join(process.cwd(),'dist-vps/client/generated.js'),'generated\\n');process.exit(0);}if(out==='AUTO')out=join(process.cwd(),'..','output');if(out==='AUTO_BUNDLE')out=join(process.cwd(),'..','bundle');const digest=b=>'sha256:'+createHash('sha256').update(b).digest('hex');
 if(mode==='sleep'){process.on('SIGTERM',()=>{});setInterval(()=>{},1000);}
 if(mode==='linger'){const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});await writeFile(extra,String(child.pid));process.exit(0);}
 if(mode==='daemon'){const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});child.unref();await writeFile(extra,String(child.pid));mode='build';extra='';}
@@ -336,6 +336,35 @@ test("the default tools path completes with generated outputs and simulated sepa
     "the staged release keeps executable files executable for its service group");
   assert.equal((await lstat(join(updaterTarget, "policy/service-supervisor.sb"))).mode & 0o777, 0o440,
     "the service account can open its sandbox profile after launchd drops privileges");
+  // The DATABASE account is neither the owner (root) nor in the service group, and
+  // `sandbox-exec` opens the profile with that account's rights (init-database,
+  // apply-release-schema and the database LaunchDaemon all do). So from the bundle
+  // root down, every directory needs the other-search bit and the profile the
+  // other-read bit -- and nothing else in `policy/` may become other-readable, and
+  // nothing may become writable beyond root.
+  const otherReachable = async (base, relativePath) => {
+    let path = base;
+    for (const part of ["", ...relativePath.split("/")]) {
+      path = part ? join(path, part) : path;
+      const entry = await lstat(path);
+      if (entry.isSymbolicLink()) return false;
+      if (entry.isDirectory() ? (entry.mode & 0o001) === 0 : (entry.mode & 0o004) === 0) return false;
+    }
+    return true;
+  };
+  assert.equal(await otherReachable(updaterTarget, "policy/service-postgres.sb"), true,
+    "the database account (not in the service group) can open its own Seatbelt profile");
+  assert.equal((await lstat(join(updaterTarget, "policy"))).mode & 0o777, 0o551,
+    "policy/ is searchable but not listable by other accounts");
+  assert.equal((await lstat(join(updaterTarget, "policy/service-postgres.sb"))).mode & 0o777, 0o444,
+    "the PostgreSQL profile is read-only for everyone and writable by nobody");
+  for (const name of await readdir(join(updaterTarget, "policy"))) {
+    if (name === "service-postgres.sb") continue;
+    assert.equal(await otherReachable(updaterTarget, `policy/${name}`), false, `policy/${name} stays private`);
+  }
+  for (const [name, mode] of [["", 0o551], ["policy", 0o551], ["lib", 0o550], ["bin", 0o550]]) {
+    assert.equal((await lstat(join(updaterTarget, name))).mode & 0o777, mode, `updater/${name || "."} mode`);
+  }
 });
 
 test("post-build source verification refuses a changed archived file before adoption", async t => {

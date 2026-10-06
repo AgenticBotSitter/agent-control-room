@@ -226,6 +226,31 @@ test("the real loopback transport: a web host and gateway that start listening l
   assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
 });
 
+test("a correctly tagged 'not ready yet' web answer waits inside the startup window only; untagged is refused at once", async () => {
+  let clock = 0, webCalls = 0;
+  const result = await checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (url, init) => { if (url.endsWith("/fleet/v1/local-health")) return serviceResponse(url, init);
+      webCalls += 1; return responseFor(init, webCalls <= 3 ? { ready: false } : {}); } });
+  assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
+  assert.equal(webCalls, 4 + 2);
+  // After startup (sample 2), the same tagged ready:false is a refusal.
+  webCalls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (url, init) => { if (url.endsWith("/fleet/v1/local-health")) return serviceResponse(url, init);
+      webCalls += 1; return responseFor(init, webCalls === 2 ? { ready: false } : {}); } }), /health_web_refused/u);
+  assert.equal(webCalls, 2);
+  // An untagged or wrongly tagged ready:false is refused on the first answer.
+  webCalls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (_url, init) => { webCalls += 1;
+      return Response.json({ ...healthValue(JSON.parse(init.body).nonce, { ready: false }), tag: "hmac-sha256:00" }); } }),
+  /health_web_refused/u);
+  assert.equal(webCalls, 1);
+});
+
 test("the real loopback transport: a redirecting web host or gateway is refused at once, not waited for", async t => {
   for (const service of ["web", "gateway"]) {
     let requests = 0;

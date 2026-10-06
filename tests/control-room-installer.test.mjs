@@ -1812,8 +1812,11 @@ test("root entry ignores an environment-selected port module and Tailscale alway
   const calls = [];
   await runTailscaleCliV1({ uid: 501, gid: 20 }, ["serve", "status", "--json"], async (...args) => { calls.push(args);
     return { stdout: "{}", stderr: "" }; });
-  assert.equal(calls[0][0], "/Applications/Tailscale.app/Contents/MacOS/Tailscale");
-  assert.deepEqual(calls[0][2], { uid: 501, gid: 20, maxBuffer: 1024 * 1024 });
+  // As the owner with the owner's full groups (sudo -u), in CLI mode (TERM).
+  assert.equal(calls[0][0], "/usr/bin/sudo");
+  assert.deepEqual(calls[0][1], ["-n", "-u", "#501", "--", "/usr/bin/env", "TERM=dumb",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "serve", "status", "--json"]);
+  assert.deepEqual(calls[0][2], { maxBuffer: 1024 * 1024 });
   assert.equal(await readTailscaleRpIdV1({ uid: 501, gid: 20 }, async () => ({
     stdout: '{"Self":{"DNSName":"fixture.ts.net."}}', stderr: "",
   })), "fixture.ts.net");
@@ -2427,4 +2430,17 @@ test("rehearsal evidence appends recover a torn tail and refuse corrupt middle l
     await assert.rejects(installControlRoomV1({ ...f.options, rehearsalConfig: configPath, freshDatabase: true,
       authenticator: "software", e2e2EvidenceLog: join(f.base, "e2e2-evidence.jsonl") }), /rehearsal_evidence_refused/u);
   }
+});
+
+test("the Tailscale app binary needs TERM to act as a CLI; without it it exits 0 printing a GUI error (real app, read-only)", async t => {
+  const app = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+  const { existsSync } = await import("node:fs");
+  if (process.platform !== "darwin" || !existsSync(app)) { t.diagnostic("needs macOS with the Tailscale app"); return; }
+  const { execFile } = await import("node:child_process");
+  const version = env => new Promise(resolve => execFile(app, ["version"], { env }, (error, stdout) =>
+    resolve({ code: error?.code ?? 0, stdout })));
+  const bare = await version({ LANG: "C", LC_ALL: "C" });
+  assert.equal(bare.code, 0); assert.match(bare.stdout, /GUI failed to start/u);
+  const cli = await version({ LANG: "C", LC_ALL: "C", TERM: "dumb" });
+  assert.equal(cli.code, 0); assert.match(cli.stdout, /^\d+\.\d+\.\d+/u);
 });

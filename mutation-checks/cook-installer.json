@@ -176,8 +176,8 @@
   },
   {
     "file": "src/updater/v1/cli/control-room-native-ports.mjs",
-    "find": "return execute(TAILSCALE, args, { uid: owner.uid, gid: owner.gid, maxBuffer: MAX_TAILSCALE_JSON_BYTES });",
-    "replace": "return execute(TAILSCALE, args, { maxBuffer: MAX_TAILSCALE_JSON_BYTES });",
+    "find": "return execute(\"/usr/bin/sudo\", [\"-n\", \"-u\", `#${owner.uid}`, \"--\", \"/usr/bin/env\", \"TERM=dumb\", TAILSCALE, ...args],",
+    "replace": "return execute(\"/usr/bin/sudo\", [\"-n\", \"--\", \"/usr/bin/env\", \"TERM=dumb\", TAILSCALE, ...args],",
     "test": "node --test --test-name-pattern='root entry ignores' tests/control-room-installer.test.mjs",
     "why": "the Tailscale application binary must never execute as root"
   },

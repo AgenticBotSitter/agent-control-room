@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
-  chmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink,
+  chmod, copyFile, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
@@ -446,6 +446,25 @@ async function snapshotVerifiedTree(source, ownership) {
   return entries;
 }
 
+// A staged directory is searchable by OTHER accounts only when a file somewhere below
+// it is itself readable by other accounts once staged; every other directory keeps the
+// root/service-only 0550. Search without read: another account can open a named
+// world-readable file but can never list the directory or open its group-only files.
+//
+// Two files need this today, both in the updater bundle and both opened by the DATABASE
+// account, which is not in the service group: the immutable collector
+// `service-output.mjs` (bundle root) and `policy/service-postgres.sb`, the Seatbelt
+// profile `sandbox-exec` reads with the database account's own rights. Without
+// `policy/` being searchable the database phases and the database LaunchDaemon die
+// at `sandbox-exec: ...service-postgres.sb: Permission denied`.
+export function stagedDirectoryModeV1(snapshot, directory, modeForFile) {
+  const prefix = directory === "" ? "" : `${directory}/`;
+  for (const [path, entry] of snapshot) {
+    if (entry.type === "file" && path.startsWith(prefix) && (modeForFile(path, entry.mode) & 0o004) !== 0) return 0o551;
+  }
+  return 0o550;
+}
+
 async function copyVerifiedTree(source, destination, ownership, snapshot, modeForFile) {
   await mkdir(destination, { mode: 0o750 });
   async function visit(from, to) {
@@ -455,7 +474,8 @@ async function copyVerifiedTree(source, destination, ownership, snapshot, modeFo
       if (!expected || entry.isSymbolicLink()) refuse("updater_adoption_source_refused");
       if (expected.type === "directory") {
         if (!entry.isDirectory() || (entry.mode & 0o777) !== expected.mode) refuse("updater_adoption_source_refused");
-        await mkdir(targetPath, { mode: 0o750 }); await visit(sourcePath, targetPath); await chmod(targetPath, 0o550);
+        await mkdir(targetPath, { mode: 0o750 }); await visit(sourcePath, targetPath);
+        await chmod(targetPath, stagedDirectoryModeV1(snapshot, local, modeForFile));
       } else {
         if (!entry.isFile() || entry.nlink !== 1) refuse("updater_adoption_source_refused");
         const sourceHandle = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -873,6 +893,16 @@ export async function buildFixedBundleV1(input) {
     bundle = join(bundleJob, "bundle"), bundleStore = join(bundleJob, "store");
   await mkdir(bundleJob); await mkdir(bundleStore); await mkdir(join(bundleJob, "tmp"));
   await stageFixedBundleInputs(source, bundleSource, { rootUid: identity.rootUid, rootGid: identity.rootGid });
+  // pnpm 11 `fetch` also links the virtual store (node_modules) into its working directory, and
+  // the bundle build refuses an updater source that holds node_modules (macOS VM: every real
+  // install stopped with updater_bundle_source_modules_refused). Fetch into the store from a
+  // separate folder holding only the updater's manifest and lockfile.
+  const bundleFetchRoot = join(bundleJob, "fetch");
+  await mkdir(bundleFetchRoot);
+  for (const name of ["package.json", "pnpm-lock.yaml"]) {
+    await copyFile(join(bundleSource, "src/updater/v1", name), join(bundleFetchRoot, name))
+      .catch(error => { if (error?.code !== "ENOENT") throw error; });
+  }
   if (session.input.tools === undefined) tools = await stageBuilderTools(tools, join(bundleJob, "builder-tools"),
     { rootUid: identity.rootUid, rootGid: identity.rootGid }, ["bundleEntry", "bundlePolicy"]);
   await changeOwnership(session.input, bundleJob, identity.builderUid, identity.builderGid);
@@ -883,7 +913,7 @@ export async function buildFixedBundleV1(input) {
   { explicitlySet: ["PATH", "HOME", "TMPDIR", "NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG"] });
   const bundleFetchStep = session.input.bundleFetchStep === undefined ? { file: tools.pnpm,
     args: ["fetch", "--ignore-scripts", "--frozen-lockfile", `--store-dir=${bundleStore}`],
-    cwd: join(bundleSource, "src/updater/v1") } : session.input.bundleFetchStep;
+    cwd: bundleFetchRoot } : session.input.bundleFetchStep;
   session.builderActive = true;
   if (bundleFetchStep !== null) await runBuilderStep(session.input, identity, bundleFetchStep,
     bundleFetchStep.cwd ?? bundleSource, bundleEnv, session.input.fetchTimeoutMs ?? 10 * 60 * 1000);
@@ -998,7 +1028,7 @@ export async function classifyAttendedSourceV1(input) {
 }
 
 export async function stageVerifiedTreeV1(session, source, snapshot, target, staging, serviceGid, modeForFile) {
-  const directoryMode = snapshot.has("service-output.mjs") ? 0o551 : 0o550;
+  const directoryMode = stagedDirectoryModeV1(snapshot, "", modeForFile);
   const existing = await lstat(target).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (existing) {
     if (!existing.isDirectory() || existing.isSymbolicLink() || existing.uid !== session.identity.rootUid
@@ -1012,7 +1042,9 @@ export async function stageVerifiedTreeV1(session, source, snapshot, target, sta
           refuse("updater_install_target_exists");
         }
         if (expected.type === "directory") {
-          if (!entry.isDirectory() || (entry.mode & 0o777) !== 0o550) refuse("updater_install_target_exists");
+          if (!entry.isDirectory() || (entry.mode & 0o777) !== stagedDirectoryModeV1(snapshot, local, modeForFile)) {
+            refuse("updater_install_target_exists");
+          }
           await verify(path);
         } else {
           const bytes = entry.isFile() && entry.nlink === 1 ? await readFile(path) : null;
@@ -1028,8 +1060,9 @@ export async function stageVerifiedTreeV1(session, source, snapshot, target, sta
   try {
     await copyVerifiedTree(source, staging, { rootUid: session.identity.rootUid, rootGid: session.identity.rootGid,
       serviceGid }, snapshot, modeForFile);
-    // The database login must search the bundle root to read the immutable collector.
-    // Other files and all subdirectories retain their root/service-only modes.
+    // The database login must search the bundle root to read the immutable collector,
+    // and `policy/` to read its own Seatbelt profile (`stagedDirectoryModeV1`). Other
+    // files and subdirectories retain their root/service-only modes.
     await chmod(staging, directoryMode);
     await rename(staging, target);
     await session.input.hooks?.afterStageRename?.(Object.freeze({ target, staging }));

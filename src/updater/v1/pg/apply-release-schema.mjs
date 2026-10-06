@@ -63,7 +63,8 @@ import {
 // re-exported through the contract module, so there is a single definition.
 import { isMainModuleV1 } from "../../../installer/shared/is-main-module.mjs";
 import { postgresProfileParametersV1 } from "./database-phase-process.mjs";
-import { makeSessionClientV1, runSessionStatementV1, runSessionTransactionV1 } from "./sql-session.mjs";
+import { makeSessionClientV1, runSessionStatementV1, runSessionTransactionV1,
+  waitForSessionReadyV1 } from "./sql-session.mjs";
 import { readUpdaterDdlFilesV1 } from "./updater-ddl.mjs";
 import { digestReleaseSchemaRowsV1, readPinnedReleaseSchemaDigestV1, readReleaseSchemaDigestSqlV1 } from "./release-schema-digest.mjs";
 
@@ -691,6 +692,16 @@ export async function applyReleaseSchemaV1(request, passwords, dependencies = {}
       refuse(`release_schema_ledger_head_mismatch:${request.expectedLedgerHead}:${head}`);
     }
     steps.push(`ledger-verified:${files.length}`);
+
+    // --- 0a. THE SERVER IS UP. The installer bootstraps the database LaunchDaemon
+    // and starts this phase straight away, and a bootstrap returns when launchd
+    // accepts the job, not when the postmaster listens. So the first statement is
+    // preceded by a bounded wait (about a minute) for a real session as the same
+    // identity, in the same profile, on the same socket. Only "not up yet" answers
+    // are waited out; an authentication, role, database or sandbox failure is
+    // refused at once (`waitForSessionReadyV1`).
+    await waitForSessionReadyV1({ user: "postgres", database: databaseName }, context,
+      { timeoutMs: dependencies.readinessTimeoutMs, intervalMs: dependencies.readinessIntervalMs });
 
     // --- 0b. SESSIONS A KILLED RUN LEFT BEHIND (H3). A run SIGKILLed while a
     // `psql` child was executing leaves that child running: it is detached and it

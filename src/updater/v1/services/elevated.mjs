@@ -76,7 +76,7 @@ function defaultRuntime() {
     enforceMetadata: true,
     isServiceLoaded: async label => runFile("/bin/launchctl", ["print", `system/${label}`], {
       env: { PATH: "/usr/bin:/bin", HOME: "/var/root" }, timeout: 30_000, maxBuffer: 1024 * 1024,
-    }).then(() => true, error => error?.code === 3 || error?.code === "ESRCH" ? false : Promise.reject(error)),
+    }).then(() => true, error => launchctlNotLoadedV1(error) ? false : Promise.reject(error)),
     verifyPostgresShutdown: verifyPostgresShutdownV1,
   });
 }
@@ -268,9 +268,15 @@ async function removeCreatedFile(runtime, entry) {
   await runtime.unlink(entry.path);
 }
 
+/** launchctl's "no such service" answers: 3 (ESRCH) on older macOS, 113 ("Could not find
+ * service ... in domain for system") on macOS 26, measured. Any other failure is a real error. */
+export function launchctlNotLoadedV1(error) {
+  return error?.code === 3 || error?.code === 113 || error?.code === "ESRCH";
+}
+
 async function bootout(runtime, label) {
   await runtime.execute("/bin/launchctl", ["bootout", `system/${label}`]).catch(error => {
-    if (error?.code !== "ESRCH" && error?.code !== 3) refuse("launchctl_refused");
+    if (!launchctlNotLoadedV1(error)) refuse("launchctl_refused");
   });
 }
 
