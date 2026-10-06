@@ -309,6 +309,9 @@ export async function checkOwnerBotsStoppedV1({ ownerUid = process.getuid?.(), r
   const sipEnabled = await readSipEnabledV1(run);
   if (!sipEnabled) warn("SIP is not fully on, so Apple background programs may be listed. Show the lead.");
   const rows = new Map(), facts = new Map();
+  // Root-owned login rows are kept only so the invoking Terminal window's chain can be
+  // walked (Terminal -> login -> zsh); they are never candidates for listing.
+  const logins = new Map();
   const ingest = kernel => {
     for (const [pid, fact] of kernel) {
       if (fact.uid !== undefined && fact.uid !== ownerUid) { rows.delete(Number(pid)); continue; }
@@ -322,6 +325,7 @@ export async function checkOwnerBotsStoppedV1({ ownerUid = process.getuid?.(), r
     for (const row of await readPs(run)) {
       if (row.uid === ownerUid) rows.set(row.pid, row);
       else rows.delete(row.pid);
+      if (row.uid === 0 && ["login", "/usr/bin/login"].includes(row.words[0])) logins.set(row.pid, row);
     }
     // Earlier facts must not exempt a reused PID or a process now unreadable.
     facts.clear();
@@ -365,7 +369,7 @@ export async function checkOwnerBotsStoppedV1({ ownerUid = process.getuid?.(), r
     } catch { /* changed or unreadable: deny by default */ }
   }
   if (Date.now() >= deadline) refuse("bot_check_command_refused");
-  return parseOwnerBotProcessesV1("", ownerUid, { facts, identities, rows: finalRows, selfPid });
+  return parseOwnerBotProcessesV1("", ownerUid, { facts, identities, rows: [...finalRows, ...logins.values()], selfPid });
 }
 
 function exactArguments(argv) {
