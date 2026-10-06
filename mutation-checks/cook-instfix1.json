@@ -71,8 +71,8 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "      terminal, authorize: async () => authorizeAttendedInstallV1(parsed.root, context), ports });",
-    "replace": "      authorize: async () => authorizeAttendedInstallV1(parsed.root, context), ports });",
+    "find": "      terminal, authorize: async () => parsed.confirmedByCommand",
+    "replace": "      authorize: async () => parsed.confirmedByCommand",
     "test": "node --test --test-name-pattern='single CLI sends install' tests/control-room-installer.test.mjs",
     "why": "the installer receives the same terminal reader for the later six-character code"
   },
