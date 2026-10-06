@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import {
   abortAttendedV1, buildFixedBundleV1, buildReleaseV1, fetchVerifiedSourceV1, installAttendedCommitV1,
-  parseAttendedTreeV1, parseBuilderPidsV1, runningBundleDigestV1, stageReleaseV1, stageUpdaterBundleV1, switchPairV1,
+  parseAttendedTreeV1, parseBuilderPidsV1, crontabStateV1, runningBundleDigestV1, stageReleaseV1, stageUpdaterBundleV1, switchPairV1,
   validateResolvedBuilderIdentityV1,
 } from "../src/updater/v1/attended-source.mjs";
 import { buildAttendedReleaseV1 } from "../src/updater/v1/build-attended-release.mjs";
@@ -752,4 +752,16 @@ test("connrel production root phase refuses changed trust custody and disagreeme
       await assert.rejects(buildReleaseV1({ ...input, ...fetched }), /updater_release_trust_refused/u);
     } finally { if (fetched) await abortAttendedV1(fetched); }
   }
+});
+
+test("cron check: the installer's own cron.deny answer means no table only when root's tabs file is absent", () => {
+  const denied = { code: 1, stdout: "", stderr: "crontab: you (_crbuild_rehearsal) are not allowed to use this program\n" };
+  // Exact macOS 26 text once the installer has added the builder to cron.deny.
+  assert.equal(crontabStateV1(denied, "_crbuild_rehearsal", false), "none");
+  assert.equal(crontabStateV1(denied, "_crbuild_rehearsal", true), "scheduled");
+  assert.equal(crontabStateV1({ code: 1, stdout: "", stderr: "crontab: no crontab for _crbuild_rehearsal\n" }, "_crbuild_rehearsal", true), "none");
+  // Another account's denial, unknown text, or any listed table never reads as "none".
+  assert.throws(() => crontabStateV1({ ...denied, stderr: "crontab: you (_other) are not allowed to use this program" }, "_crbuild_rehearsal", false), /builder_left_process/u);
+  assert.throws(() => crontabStateV1({ code: 1, stdout: "", stderr: "crontab: something else" }, "_crbuild_rehearsal", false), /builder_left_process/u);
+  assert.throws(() => crontabStateV1({ code: 1, stdout: "* * * * * x", stderr: "" }, "_crbuild_rehearsal", false), /builder_left_process/u);
 });

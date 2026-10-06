@@ -614,6 +614,21 @@ export function parseBuilderPidsV1(text, builderUid) {
   return [...new Set(pids)];
 }
 
+/**
+ * Reads `crontab -l -u <builder>` when it exits 1. "no crontab for X" means none. The installer
+ * itself puts the builder in cron.deny, after which crontab answers "you (X) are not allowed to use
+ * this program" (seen on a real Mac, VM dry run 2026-10-05); that answer says nothing about an
+ * existing table, so it counts as none only when root's tabs directory has no file for X.
+ */
+export function crontabStateV1(cron, builderAccount, tabFileExists) {
+  const escaped = builderAccount.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), stderr = String(cron?.stderr ?? "").trim();
+  if (String(cron?.stdout ?? "").trim() !== "") refuse("builder_left_process");
+  if (new RegExp(`^(?:crontab:\\s*)?no crontab for ${escaped}\\s*$`, "iu").test(stderr)) return "none";
+  if (new RegExp(`^(?:crontab:\\s*)?you \\(${escaped}\\) are not allowed to use this program\\s*$`, "iu").test(stderr))
+    return tabFileExists === false ? "none" : "scheduled";
+  refuse("builder_left_process");
+}
+
 function defaultBuilderProcessControl(input) {
   return Object.freeze({
     async listPids(builderUid) {
@@ -625,9 +640,10 @@ function defaultBuilderProcessControl(input) {
       const cron = await run(input, "/usr/bin/crontab", ["-l", "-u", builderAccount],
         { env: buildTrustedEnvironment(), timeoutMs: 10_000, acceptExitCodes: [1] });
       if (cron.code === 1) {
-        const escaped = builderAccount.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-        if (cron.stdout.trim() !== "" || !new RegExp(`^(?:crontab:\\s*)?no crontab for ${escaped}\\s*$`, "iu")
-          .test(cron.stderr.trim())) refuse("builder_left_process");
+        const state = crontabStateV1(cron, builderAccount,
+          await lstat(join("/usr/lib/cron/tabs", builderAccount)).then(() => true,
+            error => error?.code === "ENOENT" ? false : refuse("builder_left_process")));
+        if (state === "scheduled") return true;
       } else if (cron.stdout.trim() !== "") return true;
       const at = await run(input, "/usr/bin/atq", [], { env: buildTrustedEnvironment(), timeoutMs: 10_000 });
       return at.stdout.split(/\r?\n/u).some(line => line.trim() !== ""
