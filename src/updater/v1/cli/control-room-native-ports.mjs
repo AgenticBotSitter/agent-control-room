@@ -627,6 +627,15 @@ export const DATABASE_PHASE_ORDER_V1 = Object.freeze(["init", "release"]);
 // because this file runs from the git-archive copy, which has no `node_modules`.
 export { registerInitialPasskeyProductionV1 };
 
+/** macOS's fixed, root-owned system aliases. Only these spellings gain a canonical twin. */
+const MACOS_SYSTEM_ALIASES_V1 = Object.freeze([["/etc", "/private/etc"], ["/var", "/private/var"], ["/tmp", "/private/tmp"]]);
+export function macosSystemAliasCanonicalV1(path) {
+  for (const [alias, target] of MACOS_SYSTEM_ALIASES_V1) {
+    if (path === alias || path.startsWith(`${alias}/`)) return `${target}${path.slice(alias.length)}`;
+  }
+  return path;
+}
+
 export default Object.freeze({
   geteuid: () => process.geteuid?.() ?? -1,
   randomBytes,
@@ -651,12 +660,12 @@ export default Object.freeze({
   removeRootFile: path => rm(path, { force: true }),
   async validateSudoers(path) { try { await command("/usr/sbin/visudo", ["-cf", path]); return true; } catch { return false; } },
   sudoSecurePathIsActive: sudoSecurePathIsActiveV1,
-  // The root is the path itself AND its canonical location: on macOS /etc and /var are
-  // symlinks into /private, and assertT1Path compares the resolved path against the roots.
-  // With only the spelled path, /etc/sudoers.d resolved to /private/etc/sudoers.d and was
-  // refused as t1_path_outside_roots on every real Mac. Ownership/ACL checks are unchanged.
+  // The root is the spelled path AND, only for macOS's fixed system aliases (/etc, /var, /tmp
+  // -> /private/...), its canonical spelling: assertT1Path compares the resolved path against
+  // the roots, so /etc/sudoers.d (-> /private/etc/sudoers.d) was refused as t1_path_outside_roots
+  // on every real Mac. Never the path's own realpath: a user-made symlink must stay refused.
   assertT1Path: async (path, options = {}) => assertTrustedPath(path, {
-    allowedRoots: [path, await realpath(path).catch(() => path)], executable: options.executable === true,
+    allowedRoots: [...new Set([path, macosSystemAliasCanonicalV1(path)])], executable: options.executable === true,
   }),
   assertRuntimeTreeRootMetadata: assertRuntimeTreeRootMetadataPortV1,
   assertRehearsalOwnerDenied: assertRehearsalOwnerDeniedV1,

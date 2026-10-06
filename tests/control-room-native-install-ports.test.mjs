@@ -532,3 +532,21 @@ test("assertT1Path accepts a system folder reached through macOS's /etc -> /priv
   // A path that is NOT inside the requested root is still refused.
   await assert.rejects(nativePorts.assertT1Path("/nonexistent-control-room-path"), /t1_path_missing/u);
 });
+
+test("assertT1Path still refuses a user-made symlink into a system folder (only macOS's fixed aliases map)", async t => {
+  const { default: nativePorts, macosSystemAliasCanonicalV1 } = await import("../src/updater/v1/cli/control-room-native-ports.mjs");
+  assert.equal(macosSystemAliasCanonicalV1("/etc/sudoers.d"), "/private/etc/sudoers.d");
+  assert.equal(macosSystemAliasCanonicalV1("/var"), "/private/var");
+  assert.equal(macosSystemAliasCanonicalV1("/etcetera/x"), "/etcetera/x");
+  assert.equal(macosSystemAliasCanonicalV1("/usr/local/bin"), "/usr/local/bin");
+  const { mkdtemp, mkdir, realpath: realpathOf, rm: remove, symlink: link } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+  const scratch = await mkdtemp(join(tmpdir(), "acr-t1-link-")); t.after(() => remove(scratch, { recursive: true, force: true }));
+  const etc = await realpathOf("/etc");
+  await link(join(etc, "hosts"), join(scratch, "leaf"));
+  await link(etc, join(scratch, "dir"));
+  await mkdir(join(scratch, "nest")); await link(etc, join(scratch, "nest", "anc"));
+  for (const path of [join(scratch, "leaf"), join(scratch, "dir"), join(scratch, "nest", "anc", "hosts")]) {
+    await assert.rejects(nativePorts.assertT1Path(path), /t1_path_outside_roots/u, path);
+  }
+});
