@@ -602,10 +602,13 @@ async function defaultTools(input, root, trustedRuntime, toolRoot, identity) {
 export function parseBuilderPidsV1(text, builderUid) {
   const pids = [];
   for (const line of text.split(/\r?\n/u).filter(Boolean)) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
+    // macOS prints the nobody account's uid as -2 (e.g. dhcp6d). A negative uid is never the
+    // builder; refusing the whole listing stopped every real-Mac build (VM dry run, 2026-10-05).
+    const match = /^\s*(\d+)\s+(-?\d+)\s*$/u.exec(line);
     if (!match) refuse("builder_left_process");
     const pid = Number(match[1]), uid = Number(match[2]);
-    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(uid) || uid < 0) refuse("builder_left_process");
+    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(uid)) refuse("builder_left_process");
+    if (uid < 0) continue;
     if (uid === builderUid) pids.push(pid);
   }
   return [...new Set(pids)];

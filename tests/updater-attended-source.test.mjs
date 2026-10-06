@@ -396,6 +396,9 @@ test("the raw tree parser refuses .git, node_modules, symlink, and gitlink entri
 test("builder process discovery matches only the exact numeric uid", () => {
   assert.deepEqual(parseBuilderPidsV1(" 10 501\n 11 1501\n 12 501\n", 501), [10, 12]);
   assert.throws(() => parseBuilderPidsV1("not ps output\n", 501), /builder_left_process/u);
+  // Exact macOS shape: dhcp6d runs as nobody, printed as uid -2. It is never the builder.
+  assert.deepEqual(parseBuilderPidsV1(" 77687    -2\n 10 501\n", 501), [10]);
+  assert.throws(() => parseBuilderPidsV1(" 10 --2\n", 501), /builder_left_process/u);
 });
 
 test("the fixed attended release builder emits only its reviewed manifest policy and refuses links", async t => {
