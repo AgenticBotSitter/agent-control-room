@@ -242,7 +242,8 @@ export async function createLayoutV1(root, accounts, ports, reserve = ports.disk
   const rootOwner = { uid: 0, gid: 0 }, service = ids(accounts, "service"), database = ids(accounts, "database");
   const directoryRows = [
     ["", 0o755, rootOwner], ["runtime", 0o555, rootOwner], ["updater", 0o755, rootOwner], ["guard", 0o555, rootOwner],
-    ["updater-state", 0o700, rootOwner], ["updater-state/plans", 0o700, rootOwner], ["updater-state/tmp", 0o700, rootOwner],
+    ["updater-state", 0o700, rootOwner], ["updater-state/plans", 0o700, rootOwner],
+    ["updater-state/confirmations", 0o700, rootOwner], ["updater-state/tmp", 0o700, rootOwner],
     ["releases", 0o750, { uid: 0, gid: service.gid }], ["Protected", 0o750, { uid: 0, gid: service.gid }],
     ["Protected/service", 0o700, service], ["Protected/config", 0o750, { uid: 0, gid: service.gid }],
     ["Protected/runtime-state", 0o700, service], ["pg", 0o755, rootOwner],
