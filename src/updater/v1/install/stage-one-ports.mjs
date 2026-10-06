@@ -172,11 +172,16 @@ export async function killAccountProcessesV1(input, runtime = {}) {
     refuse("account_process_sweep_refused");
   }
   if (input.checkLaunchDomain === true) {
-    const active = await run("/bin/launchctl", ["print", `user/${input.uid}`]).then(() => true, error => {
+    const domainActive = () => run("/bin/launchctl", ["print", `user/${input.uid}`]).then(() => true, error => {
       if (typeof error?.code === "number" && error.code !== 0) return false;
       refuse("builder_launch_domain_refused");
     });
-    if (active) refuse("builder_launch_domain_refused");
+    // launchd keeps a user domain for an account that has run anything (the builder after a
+    // build). Tear it down and look again; refuse only if it is still there.
+    if (await domainActive()) {
+      await run("/bin/launchctl", ["bootout", `user/${input.uid}`]).catch(() => {});
+      if (await domainActive()) refuse("builder_launch_domain_refused");
+    }
   }
   return Object.freeze({ swept: true, uid: input.uid });
 }
