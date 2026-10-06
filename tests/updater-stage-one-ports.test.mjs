@@ -322,10 +322,14 @@ test("macOS 26 builder launch domain: Apple's idle agents pass, a builder-starte
     return { calls, run: () => killAccountProcessesV1({ uid: 311, checkLaunchDomain: true }, { execute }) }; };
   const clean = sweep(idle);
   assert.deepEqual(await clean.run(), { swept: true, uid: 311 });
-  assert.equal(clean.calls.some(call => call[1] === "bootout"), false, "an idle Apple-only domain needs no bootout");
+  // The print creates the domain, so it is always booted out again afterwards: macOS starts
+  // distnoted in a leftover domain as soon as the account runs anything (VM: builder_left_process).
+  assert.deepEqual(clean.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1]), ["print", "bootout"]);
+  assert.equal(clean.calls.at(-1)[0], "/bin/ps", "the account is re-checked after the domain is removed");
   const recovered = sweep(withLeftover, idle);
   assert.deepEqual(await recovered.run(), { swept: true, uid: 311 });
-  assert.deepEqual(recovered.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1]), ["print", "bootout", "print"]);
+  assert.deepEqual(recovered.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1]),
+    ["print", "bootout", "print", "bootout"]);
   await assert.rejects(sweep(withLeftover).run(), /builder_launch_domain_refused/u);
   await assert.rejects(sweep(withRunning).run(), /builder_launch_domain_refused/u);
 });

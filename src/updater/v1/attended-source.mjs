@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  chmod, copyFile, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink,
-} from "node:fs/promises";
+import { chmod, copyFile, lchmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   buildTrustedEnvironment, trustedToolEnvironment, verifyTrustedRuntimeInstallation,
@@ -516,6 +514,7 @@ async function replaceLink(root, name, target) {
   await assertPointerLeaf(path);
   await custody();
   await symlink(target, temporary);
+  if (process.platform === "darwin") await lchmod(temporary, 0o755);
   await custody();
   const owned = await lstat(temporary);
   try {

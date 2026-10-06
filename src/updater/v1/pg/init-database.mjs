@@ -54,7 +54,7 @@
 // no server log line and nothing this script writes.
 
 import { spawn } from "node:child_process";
-import { constants, lchown, lstat, mkdir, open, readFile, readdir, readlink, rename, symlink, unlink } from "node:fs/promises";
+import { constants, lchmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, rename, symlink, unlink } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -1112,6 +1112,7 @@ export async function initializeDatabaseV1(request, passwords, dependencies = {}
     if (await lstat(currentLink).catch(() => null) !== null) refuse("database_init_current_link_target_refused");
     const staging = join(paths.pgRoot, `.current.${pgDataId}.${(dependencies.randomBytes ?? randomBytes)(6).toString("hex")}.tmp`);
     await symlink(pgDataId, staging);
+    if (process.platform === "darwin") await lchmod(staging, 0o755);
     await rename(staging, currentLink);
     steps.push("current");
 
