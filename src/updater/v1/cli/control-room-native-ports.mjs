@@ -143,48 +143,63 @@ export function parseDirectoryRowsV1(output, valueName) {
   });
 }
 
-async function dsclRead(path, key) {
-  try { return (await command("/usr/bin/dscl", [".", "-read", path, key])).stdout.trim().split(/\s+/u).slice(1).join(" "); }
+// macOS's directory service answers a request with "DS Error: -14071 (eDSInvalidReference)"
+// (exit 247) when it is cold or busy, for example when two dscl requests run at once on a Mac
+// whose directory service has been idle (measured on a fresh macOS 26 VM: the first install
+// always failed at create-accounts). Directory requests therefore run one at a time, and only
+// that transient answer is retried, a bounded number of times.
+const DSCL_TRANSIENT = /eDSInvalidReference|-14071/u;
+export async function runDsclV1(args, execute = command, sleep = milliseconds => new Promise(done => setTimeout(done, milliseconds))) {
+  for (let attempt = 1; ; attempt += 1) {
+    try { return await execute("/usr/bin/dscl", args); } catch (error) {
+      const transient = error?.code === 247 || DSCL_TRANSIENT.test(String(error?.stderr ?? ""));
+      if (!transient || attempt >= 6) throw error;
+      await sleep(250 * attempt);
+    }
+  }
+}
+
+async function dsclRead(path, key, execute) {
+  try { return (await runDsclV1([".", "-read", path, key], execute)).stdout.trim().split(/\s+/u).slice(1).join(" "); }
   catch { return null; }
 }
 
-async function readAccountInventory() {
-  const [usersOutput, groupsOutput] = await Promise.all([
-    command("/usr/bin/dscl", [".", "-list", "/Users", "UniqueID"]),
-    command("/usr/bin/dscl", [".", "-list", "/Groups", "PrimaryGroupID"]),
-  ]);
+export async function readAccountInventoryV1(execute = command) {
+  const usersOutput = await runDsclV1([".", "-list", "/Users", "UniqueID"], execute);
+  const groupsOutput = await runDsclV1([".", "-list", "/Groups", "PrimaryGroupID"], execute);
   const rawUsers = parseDirectoryRowsV1(usersOutput.stdout, "uid"), groups = parseDirectoryRowsV1(groupsOutput.stdout, "gid");
   const users = [];
   for (const row of rawUsers) {
-    const path = `/Users/${row.name}`;
-    const [gid, home, shell, hidden, password, memberships] = await Promise.all([
-      dsclRead(path, "PrimaryGroupID"), dsclRead(path, "NFSHomeDirectory"), dsclRead(path, "UserShell"), dsclRead(path, "IsHidden"),
-      dsclRead(path, "Password"), command("/usr/bin/id", ["-Gn", row.name]).then(result => result.stdout.trim().split(/\s+/u), () => []),
-    ]);
+    const path = `/Users/${row.name}`, read = key => dsclRead(path, key, execute);
+    const gid = await read("PrimaryGroupID"), home = await read("NFSHomeDirectory"), shell = await read("UserShell");
+    const hidden = await read("IsHidden"), password = await read("Password");
+    const memberships = await execute("/usr/bin/id", ["-Gn", row.name]).then(result => result.stdout.trim().split(/\s+/u), () => []);
     users.push({ ...row, gid: Number(gid), home, shell, hidden: hidden === "1", password, memberships });
   }
   return { users, groups };
 }
+const readAccountInventory = () => readAccountInventoryV1();
 
 async function createAccount(input) {
-  await command("/usr/bin/dscl", [".", "-create", `/Groups/${input.name}`]);
+  const dscl = args => runDsclV1(args);
+  await dscl([".", "-create", `/Groups/${input.name}`]);
   try {
-    await command("/usr/bin/dscl", [".", "-create", `/Groups/${input.name}`, "PrimaryGroupID", String(input.gid)]);
-    await command("/usr/bin/dscl", [".", "-create", `/Users/${input.name}`]);
+    await dscl([".", "-create", `/Groups/${input.name}`, "PrimaryGroupID", String(input.gid)]);
+    await dscl([".", "-create", `/Users/${input.name}`]);
     for (const [key, value] of [["UniqueID", input.uid], ["PrimaryGroupID", input.gid], ["NFSHomeDirectory", input.home],
       ["UserShell", input.shell], ["IsHidden", 1], ["Password", input.password]]) {
-      await command("/usr/bin/dscl", [".", "-create", `/Users/${input.name}`, key, String(value)]);
+      await dscl([".", "-create", `/Users/${input.name}`, key, String(value)]);
     }
   } catch (error) {
-    await command("/usr/bin/dscl", [".", "-delete", `/Users/${input.name}`]).catch(() => {});
-    await command("/usr/bin/dscl", [".", "-delete", `/Groups/${input.name}`]).catch(() => {});
+    await dscl([".", "-delete", `/Users/${input.name}`]).catch(() => {});
+    await dscl([".", "-delete", `/Groups/${input.name}`]).catch(() => {});
     throw error;
   }
 }
 
 async function deleteAccount(name) {
-  await command("/usr/bin/dscl", [".", "-delete", `/Users/${name}`]).catch(() => {});
-  await command("/usr/bin/dscl", [".", "-delete", `/Groups/${name}`]).catch(() => {});
+  await runDsclV1([".", "-delete", `/Users/${name}`]).catch(() => {});
+  await runDsclV1([".", "-delete", `/Groups/${name}`]).catch(() => {});
 }
 
 async function atomicTextFile(path, text, mode, uid = 0, gid = 0) {

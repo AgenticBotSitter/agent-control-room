@@ -550,3 +550,39 @@ test("assertT1Path still refuses a user-made symlink into a system folder (only 
     await assert.rejects(nativePorts.assertT1Path(path), /t1_path_outside_roots/u, path);
   }
 });
+
+test("account inventory asks the directory service one request at a time and retries only its transient -14071 answer", async () => {
+  const { readAccountInventoryV1, runDsclV1 } = await import("../src/updater/v1/cli/control-room-native-ports.mjs");
+  // A directory service that refuses any request made while another is in flight, exactly as
+  // a cold macOS 26 opendirectoryd did ("DS Error: -14071 (eDSInvalidReference)", exit 247).
+  let inFlight = 0, calls = 0;
+  const transient = () => Object.assign(new Error("Command failed"), { code: 247, stderr: "<dscl_cmd> DS Error: -14071 (eDSInvalidReference)\n" });
+  const execute = async (file, args) => {
+    calls += 1; inFlight += 1;
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      if (inFlight > 1) throw transient();
+      if (file === "/usr/bin/id") return { stdout: "everyone\n" };
+      if (args[1] === "-list") return { stdout: args[2] === "/Users" ? "root 0\nnobody -2\n" : "wheel 0\nnogroup -1\n" };
+      return { stdout: `${args[3]}: value\n` };
+    } finally { inFlight -= 1; }
+  };
+  const inventory = await readAccountInventoryV1(execute);
+  assert.deepEqual(inventory.users.map(row => [row.name, row.uid]), [["root", 0], ["nobody", -2]]);
+  assert.deepEqual(inventory.groups.map(row => row.gid), [0, -1]);
+  assert.equal(inventory.users[0].home, "value");
+  assert.ok(calls >= 2 + 2 * 6);
+
+  // The transient answer is retried a bounded number of times; anything else is not retried.
+  let attempts = 0;
+  const flaky = async () => { attempts += 1; if (attempts < 3) throw transient(); return { stdout: "ok\n" }; };
+  assert.equal((await runDsclV1([".", "-list", "/Users", "UniqueID"], flaky, async () => {})).stdout, "ok\n");
+  assert.equal(attempts, 3);
+  attempts = 0;
+  await assert.rejects(runDsclV1(["."], async () => { attempts += 1; throw transient(); }, async () => {}), /Command failed/u);
+  assert.equal(attempts, 6);
+  attempts = 0;
+  await assert.rejects(runDsclV1(["."], async () => { attempts += 1; throw Object.assign(new Error("denied"), { code: 1, stderr: "eDSPermissionError" }); },
+    async () => {}), /denied/u);
+  assert.equal(attempts, 1);
+});

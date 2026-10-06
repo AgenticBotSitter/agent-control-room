@@ -87,3 +87,12 @@ test("standalone type checking covers every build entry and routes without gener
   assert.equal(sources.has("vite.config.ts"), false);
   assert.equal([...sources].some(file => file.startsWith(".next/")), false);
 });
+
+test("the build asks git for the developer build-source record only inside a git checkout", () => {
+  // The attended installer builds from a git archive with no .git; asking git there made
+  // `pnpm run build` exit 7 ("not a git repository") on every real install (macOS 26 VM).
+  const build = readFileSync("scripts/build-vps.mjs", "utf8");
+  const guard = build.indexOf('if (existsSync(join(root, ".git"))) {'), record = build.indexOf("macLocalBuildSourceV1(root)");
+  assert.ok(guard > 0 && record > guard, "the git-based record is written only under the .git guard");
+  assert.equal(build.match(/macLocalBuildSourceV1\(root\)/g)?.length, 1);
+});

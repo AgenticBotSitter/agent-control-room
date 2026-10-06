@@ -303,3 +303,16 @@ test("account sweep is bounded, verifies the builder launch domain, retries afte
   assert.equal(burst.length, 32);
 });
 
+test("a builder launch domain left by a finished build is booted out, then the sweep passes; one that stays is refused", async () => {
+  // launchd keeps user/<uid> for an account that has run anything; a retry after a failed build
+  // must not stop on it (measured on a macOS 26 VM: builder_launch_domain_refused on the retry).
+  let bootedOut = false; const calls = [];
+  const execute = async (file, args) => { calls.push([file, ...args]);
+    if (file === "/bin/launchctl" && args[0] === "bootout") { bootedOut = true; return { stdout: "" }; }
+    if (file === "/bin/launchctl" && bootedOut) throw Object.assign(new Error("not found"), { code: 113 });
+    return { stdout: file === "/bin/ps" ? "0\n" : "" }; };
+  assert.deepEqual(await killAccountProcessesV1({ uid: 311, checkLaunchDomain: true }, { execute }), { swept: true, uid: 311 });
+  assert.deepEqual(calls.filter(call => call[0] === "/bin/launchctl"),
+    [["/bin/launchctl", "print", "user/311"], ["/bin/launchctl", "bootout", "user/311"], ["/bin/launchctl", "print", "user/311"]]);
+});
+
