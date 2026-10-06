@@ -633,6 +633,11 @@ function defaultBuilderProcessControl(input) {
       return at.stdout.split(/\r?\n/u).some(line => line.trim() !== ""
         && line.trim().split(/\s+/u).includes(builderAccount));
     },
+    async describePids(pids) {
+      const result = await run(input, "/bin/ps", ["-o", "pid=,uid=,comm=", "-p", pids.slice(0, 20).join(",")],
+        { env: buildTrustedEnvironment(), timeoutMs: 10_000, acceptExitCodes: [1] });
+      return result.stdout.trim().split(/\r?\n/u).map(line => line.trim()).join("; ");
+    },
     async killPid(pid) {
       try { process.kill(pid, "SIGKILL"); } catch (error) { if (error?.code !== "ESRCH") refuse("builder_left_process"); }
     },
@@ -655,16 +660,29 @@ async function inspectBuilderState(control, identity) {
   return { pids: [...new Set(pids)], scheduled };
 }
 
-async function assertBuilderIdle(control, identity) {
-  const state = await inspectBuilderState(control, identity);
-  if (state.pids.length > 0 || state.scheduled) refuse("builder_left_process");
+// Name what was left before refusing, so a refusal says which program it was.
+async function describeBuilderLeftovers(control, state) {
+  if (typeof control.describePids !== "function" || state.pids.length === 0) return;
+  try { process.stderr.write(`builder account still running: ${await control.describePids(state.pids)}\n`); } catch { /* diagnostic only */ }
 }
 
-async function killAndVerifyBuilder(control, identity) {
+async function assertBuilderIdle(control, identity) {
+  const state = await inspectBuilderState(control, identity);
+  if (state.pids.length > 0 || state.scheduled) { await describeBuilderLeftovers(control, state); refuse("builder_left_process"); }
+}
+
+async function killAndVerifyBuilder(control, identity, { settleMs = 5000, pollMs = 100 } = {}) {
   const before = await inspectBuilderState(control, identity);
   for (const pid of before.pids) await control.killPid(pid);
-  const after = await inspectBuilderState(control, identity);
-  if (after.pids.length > 0 || after.scheduled) refuse("builder_left_process");
+  // SIGKILL is asynchronous: a killed process can still be listed for a moment.
+  // Poll until the account is empty or the bounded settle time ends.
+  let after = await inspectBuilderState(control, identity);
+  for (const deadline = Date.now() + settleMs; (after.pids.length > 0 || after.scheduled) && Date.now() < deadline;) {
+    for (const pid of after.pids) await control.killPid(pid);
+    await new Promise(done => setTimeout(done, pollMs));
+    after = await inspectBuilderState(control, identity);
+  }
+  if (after.pids.length > 0 || after.scheduled) { await describeBuilderLeftovers(control, after); refuse("builder_left_process"); }
 }
 
 async function runBuilderStep(input, identity, step, cwd, env, timeoutMs) {
