@@ -323,8 +323,15 @@ export async function buildFixedUpdaterBundleV1(input) {
     }
     await chmod(join(staging, "guard.sh"), 0o500); await chmod(join(staging, "bin/control-room"), 0o500);
     await chmod(join(staging, "bin/git-credential-control-room"), 0o500);
+    // Every service profile is read by `sandbox-exec` with the rights of the account
+    // launchd (or a database phase) dropped to. The service profiles are 0440 for the
+    // service group. The PostgreSQL profile alone is 0444: the database account is
+    // NOT in the service group (its group would then read Protected configuration),
+    // so it reaches its profile as "other", through a searchable `policy/` that the
+    // staging step derives from this mode. The profile text is public and root-owned;
+    // nothing can write it.
     for (const name of (await readdir(join(staging, "policy"))).filter(name => /^service-[a-z-]+\.sb$/u.test(name))) {
-      await chmod(join(staging, "policy", name), 0o440);
+      await chmod(join(staging, "policy", name), name === "service-postgres.sb" ? 0o444 : 0o440);
     }
     const manifest = { schema: "control-room.updater-bundle-manifest/v1", files: await manifestFiles(staging) };
     await writeFile(join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o400 });

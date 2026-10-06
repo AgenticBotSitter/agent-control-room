@@ -99,6 +99,15 @@ test("the fixed step builds updater and CLI from source with pinned arguments an
   assert.equal((await lstat(join(fixture.output, "updater.mjs"))).mode & 0o777, 0o500);
   assert.equal((await lstat(join(fixture.output, "service-output.mjs"))).mode & 0o777, 0o555);
   assert.equal((await lstat(fixture.output)).mode & 0o777, 0o711);
+  // The database account reads its profile as "other"; every service profile stays
+  // service-group only, and a manifest that widened one of those is refused.
+  assert.equal((await lstat(join(fixture.output, "policy/service-postgres.sb"))).mode & 0o777, 0o444);
+  for (const role of ["supervisor", "gateway", "builder", "upgrader"]) {
+    assert.equal((await lstat(join(fixture.output, `policy/service-${role}.sb`))).mode & 0o777, 0o440, role);
+  }
+  const widenedProfile = structuredClone(result.manifest);
+  widenedProfile.files.find(item => item.path === "policy/service-supervisor.sb").mode = 0o444;
+  await assert.rejects(verifyBundleManifestV1(fixture.output, widenedProfile), /updater_bundle_manifest_refused/u);
   const collector = await import(pathToFileURL(join(fixture.output, "service-output.mjs")).href);
   assert.equal(typeof collector.collectServiceOutputV1, "function");
   assert.doesNotMatch(await readFile(join(fixture.output, "updater.mjs"), "utf8"), /from ["']pg["']/u,

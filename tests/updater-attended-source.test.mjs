@@ -336,6 +336,35 @@ test("the default tools path completes with generated outputs and simulated sepa
     "the staged release keeps executable files executable for its service group");
   assert.equal((await lstat(join(updaterTarget, "policy/service-supervisor.sb"))).mode & 0o777, 0o440,
     "the service account can open its sandbox profile after launchd drops privileges");
+  // The DATABASE account is neither the owner (root) nor in the service group, and
+  // `sandbox-exec` opens the profile with that account's rights (init-database,
+  // apply-release-schema and the database LaunchDaemon all do). So from the bundle
+  // root down, every directory needs the other-search bit and the profile the
+  // other-read bit -- and nothing else in `policy/` may become other-readable, and
+  // nothing may become writable beyond root.
+  const otherReachable = async (base, relativePath) => {
+    let path = base;
+    for (const part of ["", ...relativePath.split("/")]) {
+      path = part ? join(path, part) : path;
+      const entry = await lstat(path);
+      if (entry.isSymbolicLink()) return false;
+      if (entry.isDirectory() ? (entry.mode & 0o001) === 0 : (entry.mode & 0o004) === 0) return false;
+    }
+    return true;
+  };
+  assert.equal(await otherReachable(updaterTarget, "policy/service-postgres.sb"), true,
+    "the database account (not in the service group) can open its own Seatbelt profile");
+  assert.equal((await lstat(join(updaterTarget, "policy"))).mode & 0o777, 0o551,
+    "policy/ is searchable but not listable by other accounts");
+  assert.equal((await lstat(join(updaterTarget, "policy/service-postgres.sb"))).mode & 0o777, 0o444,
+    "the PostgreSQL profile is read-only for everyone and writable by nobody");
+  for (const name of await readdir(join(updaterTarget, "policy"))) {
+    if (name === "service-postgres.sb") continue;
+    assert.equal(await otherReachable(updaterTarget, `policy/${name}`), false, `policy/${name} stays private`);
+  }
+  for (const [name, mode] of [["", 0o551], ["policy", 0o551], ["lib", 0o550], ["bin", 0o550]]) {
+    assert.equal((await lstat(join(updaterTarget, name))).mode & 0o777, mode, `updater/${name || "."} mode`);
+  }
 });
 
 test("post-build source verification refuses a changed archived file before adoption", async t => {
