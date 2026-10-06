@@ -1,0 +1,44 @@
+[
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;",
+    "replace": "throw error;",
+    "test": "node --test --test-name-pattern='services launchd has just started' tests/updater-health-terminal.test.mjs",
+    "why": "the install health step waits, bounded, for services launchd has just started instead of refusing the first unanswered probe"
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;",
+    "replace": "if (error?.healthUnreachable !== true) throw error;",
+    "test": "node --test --test-name-pattern='never listens is refused after the bounded startup wait' tests/updater-health-terminal.test.mjs",
+    "why": "the startup wait is bounded: a service that never listens is still refused"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "allowedRoots: [...new Set([path, macosSystemAliasCanonicalV1(path)])]",
+    "replace": "allowedRoots: [path, await realpath(path).catch(() => path)]",
+    "test": "node --test --test-name-pattern='user-made symlink into a system folder' tests/control-room-native-install-ports.test.mjs",
+    "why": "only macOS's fixed system aliases gain a canonical root; a user-made symlink into /private/etc stays refused"
+  },
+  {
+    "file": "src/updater/v1/cli/control-room-native-ports.mjs",
+    "find": "[[\"/etc\", \"/private/etc\"], ",
+    "replace": "[",
+    "test": "node --test --test-name-pattern='user-made symlink into a system folder' tests/control-room-native-install-ports.test.mjs",
+    "why": "/etc maps to its /private/etc spelling on every platform's check (the macOS sudoers.d path), portable to Linux CI"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": " || plan.artifact?.commit !== commit\n",
+    "replace": "\n",
+    "test": "node --test --test-name-pattern='confirms only a plan for exactly that commit' tests/updater-cli-flip.test.mjs",
+    "why": "the one-command confirmation applies only to a plan for exactly the commit in the owner's command"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "    || plan.updaterDerived?.downgrade === true) throw updaterRefuseV1(\"updater_command_confirmation_refused\");",
+    "replace": "    ) throw updaterRefuseV1(\"updater_command_confirmation_refused\");",
+    "test": "node --test --test-name-pattern='confirms only a plan for exactly that commit' tests/updater-cli-flip.test.mjs",
+    "why": "a downgrade is never confirmed by the command; it needs the typed words"
+  }
+]

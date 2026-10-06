@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import {
   abortAttendedV1, buildFixedBundleV1, buildReleaseV1, fetchVerifiedSourceV1, installAttendedCommitV1,
-  parseAttendedTreeV1, parseBuilderPidsV1, runningBundleDigestV1, stageReleaseV1, stageUpdaterBundleV1, switchPairV1,
+  parseAttendedTreeV1, parseBuilderPidsV1, crontabStateV1, runningBundleDigestV1, stageReleaseV1, stageUpdaterBundleV1, switchPairV1,
   validateResolvedBuilderIdentityV1,
 } from "../src/updater/v1/attended-source.mjs";
 import { buildAttendedReleaseV1 } from "../src/updater/v1/build-attended-release.mjs";
@@ -396,6 +396,9 @@ test("the raw tree parser refuses .git, node_modules, symlink, and gitlink entri
 test("builder process discovery matches only the exact numeric uid", () => {
   assert.deepEqual(parseBuilderPidsV1(" 10 501\n 11 1501\n 12 501\n", 501), [10, 12]);
   assert.throws(() => parseBuilderPidsV1("not ps output\n", 501), /builder_left_process/u);
+  // Exact macOS shape: dhcp6d runs as nobody, printed as uid -2. It is never the builder.
+  assert.deepEqual(parseBuilderPidsV1(" 77687    -2\n 10 501\n", 501), [10]);
+  assert.throws(() => parseBuilderPidsV1(" 10 --2\n", 501), /builder_left_process/u);
 });
 
 test("the fixed attended release builder emits only its reviewed manifest policy and refuses links", async t => {
@@ -606,6 +609,21 @@ test("the real account lookup refuses a uid-zero builder before repository or bu
   assert.deepEqual(f.spawned, [], "a uid-zero builder is refused before any real child process is spawned");
 });
 
+test("a killed builder pid that is still listed for a moment does not fail the build (SIGKILL is asynchronous)", async t => {
+  const f = await fixture(t); let inspections = 0;
+  const builderProcessControl = {
+    // start: idle; after build: one helper left; right after the kill it is still listed once; then gone.
+    async listPids() { inspections += 1; return inspections === 2 || inspections === 3 ? [424_243] : []; },
+    async hasScheduledEntries() { return false; },
+    async killPid() {},
+  };
+  const result = await installAttendedCommitV1({ ...f.materialize({ builderProcessControl }), authorize: value => authorize(f.root, value) })
+    .then(() => "installed", error => error?.code ?? error?.message);
+  // The whole install completes: the sweep re-listed until the killed pid was gone.
+  assert.equal(result, "installed");
+  assert.ok(inspections >= 4, `inspections ${inspections}`);
+});
+
 test("post-kill verification refuses when the same builder pid survives a no-op kill", async t => {
   const f = await fixture(t); let inspections = 0, kills = 0;
   const builderProcessControl = {
@@ -615,7 +633,9 @@ test("post-kill verification refuses when the same builder pid survives a no-op 
   };
   await assert.rejects(installAttendedCommitV1({ ...f.materialize({ builderProcessControl }),
     authorize: value => authorize(f.root, value) }), /builder_left_process/u);
-  assert.equal(kills, 2); assert.equal(inspections, 5,
+  // The sweep now polls (SIGKILL is asynchronous), so it kills and re-lists more than once
+  // before refusing a pid that never goes away.
+  assert.ok(kills >= 2, `kills ${kills}`); assert.ok(inspections >= 5,
     "the primary cleanup and its finally retry both re-list the uid after attempting the kill");
   assert.equal(f.spawned.some(call => call.args?.includes(f.fake) && call.args?.includes("bundle")), false,
     "a surviving builder process prevents the fixed bundle phase");
@@ -734,4 +754,16 @@ test("connrel production root phase refuses changed trust custody and disagreeme
       await assert.rejects(buildReleaseV1({ ...input, ...fetched }), /updater_release_trust_refused/u);
     } finally { if (fetched) await abortAttendedV1(fetched); }
   }
+});
+
+test("cron check: the installer's own cron.deny answer means no table only when root's tabs file is absent", () => {
+  const denied = { code: 1, stdout: "", stderr: "crontab: you (_crbuild_rehearsal) are not allowed to use this program\n" };
+  // Exact macOS 26 text once the installer has added the builder to cron.deny.
+  assert.equal(crontabStateV1(denied, "_crbuild_rehearsal", false), "none");
+  assert.equal(crontabStateV1(denied, "_crbuild_rehearsal", true), "scheduled");
+  assert.equal(crontabStateV1({ code: 1, stdout: "", stderr: "crontab: no crontab for _crbuild_rehearsal\n" }, "_crbuild_rehearsal", true), "none");
+  // Another account's denial, unknown text, or any listed table never reads as "none".
+  assert.throws(() => crontabStateV1({ ...denied, stderr: "crontab: you (_other) are not allowed to use this program" }, "_crbuild_rehearsal", false), /builder_left_process/u);
+  assert.throws(() => crontabStateV1({ code: 1, stdout: "", stderr: "crontab: something else" }, "_crbuild_rehearsal", false), /builder_left_process/u);
+  assert.throws(() => crontabStateV1({ code: 1, stdout: "* * * * * x", stderr: "" }, "_crbuild_rehearsal", false), /builder_left_process/u);
 });

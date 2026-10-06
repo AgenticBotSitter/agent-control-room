@@ -68,7 +68,9 @@ export async function makeOwnerPasteFile(input) {
       literal("'LIVE_LABEL_PREFIXES'", input.liveLabelPrefixes.join(',')),
       literal("'REHEARSAL_TAILNET'", input.rehearsalTailnetName),
       code => code.replaceAll("  LIVE_SNAPSHOT_SHA256='LIVE_SNAPSHOT_SHA256'\n", () => ''),
-      literal("'LIVE_SNAPSHOT_SHA256'", '"$LIVE_SNAPSHOT_SHA256"'),
+      // A shell variable, not a literal: literal() would single-quote it and pass the text
+      // "$LIVE_SNAPSHOT_SHA256" itself, which check-serve refuses (seen on install night).
+      code => code.replaceAll("'LIVE_SNAPSHOT_SHA256'", () => '"$LIVE_SNAPSHOT_SHA256"'),
     ].reduce((text, step) => step(text), code);
   }
   const blocks = sections.map((section, index) => {

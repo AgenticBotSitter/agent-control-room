@@ -9,8 +9,8 @@ import { readCodeV1 } from "../src/updater/v1/terminal/read-code.mjs";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { AttendedUpdaterFlipV1 } from "../src/updater/v1/attended-flip.mjs";
-import { authorizeAttendedInstallV1, bufferedLineReaderV1, canonicalJsonV1, confirmationWordsV1,
-  runUpdaterCliV1 } from "../src/updater/v1/cli.mjs";
+import { authorizeAttendedInstallV1, authorizeByCommandV1, bufferedLineReaderV1, canonicalJsonV1, confirmationWordsV1,
+  parseInstallerArgumentsV1, runUpdaterCliV1 } from "../src/updater/v1/cli.mjs";
 
 const digestV1 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -52,6 +52,45 @@ test("attended install prints the phone commit first and allows three six-word a
     async stdinLine() { reads += 1; return ["wrong", ...refused.words.slice(1)].join(" "); } }),
   /updater_confirm_words_refused/u);
   assert.equal(reads, 3);
+});
+
+test("one-command install: the commit in the owner's command confirms only a plan for exactly that commit", async t => {
+  const commit = "c".repeat(40), now = () => new Date("2026-10-06T08:00:00Z");
+  const root = await rootV1(t); await planFixtureV1(root, { planId: "u4", commit });
+  const output = [];
+  const context = { getuid: () => 0, now, stdout: text => output.push(text),
+    async stdinLine() { throw new Error("the one-command install must not read the terminal"); } };
+  assert.equal(await authorizeByCommandV1(root, commit, context), 0);
+  assert.ok(output[0].startsWith(`Commit: ${commit} (compare to the phone)\n`));
+  assert.ok(output.some(text => text === `Confirmed by your install command: ${commit}\n`));
+  assert.equal(JSON.parse(await readFile(join(root, "updater-state/confirmations/u4.json"), "utf8")).confirmed, true);
+  // A plan for any other commit, a plan with no commit, a downgrade, or a malformed commit is refused.
+  for (const [planCommit, typed, extra] of [["d".repeat(40), commit], [undefined, commit], [commit, "C".repeat(40)],
+    [commit, commit.slice(1)], [commit, commit, { downgrade: true }]]) {
+    const other = await rootV1(t);
+    const plan = { schema: "control-room.install-plan/v2", planId: "u5", kind: "updater", from: { releaseId: "r1" },
+      artifact: { releaseId: "r2", ...(planCommit === undefined ? {} : { commit: planCommit }) },
+      updaterDerived: { changesDatabase: false, changesUpdater: true, ...(extra ?? {}) } };
+    const planDigest = digestV1(Buffer.from(canonicalJsonV1(plan)));
+    await writeFile(join(other, "updater-state/plans/u5.json"), JSON.stringify(plan));
+    await writeFile(join(other, "updater-state/open-confirmation.json"), JSON.stringify({ planId: "u5", planDigest }));
+    await assert.rejects(authorizeByCommandV1(other, typed, { ...context, stdout: () => {} }),
+      /updater_command_confirmation_refused/u);
+    await assert.rejects(readFile(join(other, "updater-state/confirmations/u5.json")), { code: "ENOENT" });
+  }
+});
+
+test("one-command install flag: only 'yes', only with an exact --commit", () => {
+  const invokingUser = { user: "fixture-owner", uid: 501, gid: 20 }, commit = "e".repeat(40);
+  assert.equal(parseInstallerArgumentsV1("install", ["--commit", commit, "--confirmed-by-command", "yes"],
+    { root: "/Library/Application Support/Control Room", invokingUser }).confirmedByCommand, true);
+  assert.equal(parseInstallerArgumentsV1("install", ["--commit", commit],
+    { root: "/Library/Application Support/Control Room", invokingUser }).confirmedByCommand, false);
+  for (const args of [["--confirmed-by-command", "yes"], ["--commit", commit, "--confirmed-by-command", "no"],
+    ["--commit", commit, "--confirmed-by-command", "YES"]]) {
+    assert.throws(() => parseInstallerArgumentsV1("install", args,
+      { root: "/Library/Application Support/Control Room", invokingUser }), /arguments_refused/u, args.join(" "));
+  }
 });
 
 test("the real piped line reader survives two wrong confirmations and supplies the later passkey code", async t => {

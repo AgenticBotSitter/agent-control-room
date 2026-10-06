@@ -31,6 +31,7 @@ rehearsal_config=
 fresh_database=
 authenticator=
 e2e2_evidence_log=
+confirmed_by_command=
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || refuse 'bootstrap_arguments_refused'
   case "$1" in
@@ -38,12 +39,14 @@ while [ "$#" -gt 0 ]; do
     --fresh-database) [ -z "$fresh_database" ] || refuse 'bootstrap_arguments_refused'; fresh_database=$2 ;;
     --authenticator) [ -z "$authenticator" ] || refuse 'bootstrap_arguments_refused'; authenticator=$2 ;;
     --e2e2-evidence-log) [ -z "$e2e2_evidence_log" ] || refuse 'bootstrap_arguments_refused'; e2e2_evidence_log=$2 ;;
+    --confirmed-by-command) [ -z "$confirmed_by_command" ] && [ "$2" = yes ] || refuse 'bootstrap_arguments_refused'; confirmed_by_command=$2 ;;
     *) refuse 'bootstrap_arguments_refused' ;;
   esac
   shift 2
 done
 [ -z "$rehearsal_config" ] || { case "$rehearsal_config" in /*) ;; *) refuse 'bootstrap_rehearsal_config_refused' ;; esac; refuse_dotdot "$rehearsal_config" 'bootstrap_rehearsal_config_refused'; }
 [ -z "$fresh_database" ] || [ "$fresh_database" = yes ] || refuse 'bootstrap_fresh_database_refused'
+[ -z "$confirmed_by_command" ] || [ "$confirmed_by_command" = yes ] || refuse 'bootstrap_arguments_refused'
 [ -z "$authenticator" ] || [ "$authenticator" = software ] || refuse 'bootstrap_authenticator_refused'
 [ -z "$e2e2_evidence_log" ] || { case "$e2e2_evidence_log" in /*/e2e2-evidence.jsonl) ;; *) refuse 'bootstrap_evidence_log_refused' ;; esac; refuse_dotdot "$e2e2_evidence_log" 'bootstrap_evidence_log_refused'; }
 if [ -n "$rehearsal_config" ]; then
@@ -259,11 +262,13 @@ if [ "$testing" -eq 1 ]; then
       "$node_root/bin/node" "$source_root/src/updater/v1/cli.mjs" install --commit "$commit" --bootstrap "$d" \
       --rehearsal-config "$rehearsal_config" --fresh-database "$fresh_database" \
       --authenticator "$authenticator" --e2e2-evidence-log "$e2e2_evidence_log" \
+      ${confirmed_by_command:+--confirmed-by-command "$confirmed_by_command"} \
       --invoking-user "$SUDO_USER" --invoking-uid "$SUDO_UID" --invoking-gid "$SUDO_GID"
   else
     "$ENV" -i LANG=C LC_ALL=C HOME=/var/empty TMPDIR="$test_tmpdir" CONTROL_ROOM_BOOTSTRAP_TESTING=1 \
       "$node_root/bin/node" "$source_root/src/updater/v1/cli.mjs" install --commit "$commit" --bootstrap "$d" \
       ${fresh_database:+--fresh-database "$fresh_database"} \
+      ${confirmed_by_command:+--confirmed-by-command "$confirmed_by_command"} \
       --invoking-user "$SUDO_USER" --invoking-uid "$SUDO_UID" --invoking-gid "$SUDO_GID"
   fi
   exit $?
@@ -273,10 +278,12 @@ if [ -n "$rehearsal_config" ]; then
     "$node_root/bin/node" "$source_root/src/updater/v1/cli.mjs" install --commit "$commit" --bootstrap "$d" \
     --rehearsal-config "$rehearsal_config" --fresh-database "$fresh_database" \
     --authenticator "$authenticator" --e2e2-evidence-log "$e2e2_evidence_log" \
+    ${confirmed_by_command:+--confirmed-by-command "$confirmed_by_command"} \
     --invoking-user "$SUDO_USER" --invoking-uid "$SUDO_UID" --invoking-gid "$SUDO_GID"
 else
   "$ENV" -i LANG=C LC_ALL=C HOME=/var/empty TMPDIR=/var/tmp \
     "$node_root/bin/node" "$source_root/src/updater/v1/cli.mjs" install --commit "$commit" --bootstrap "$d" \
     ${fresh_database:+--fresh-database "$fresh_database"} \
+    ${confirmed_by_command:+--confirmed-by-command "$confirmed_by_command"} \
     --invoking-user "$SUDO_USER" --invoking-uid "$SUDO_UID" --invoking-gid "$SUDO_GID"
 fi

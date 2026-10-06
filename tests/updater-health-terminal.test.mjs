@@ -47,6 +47,10 @@ function serviceResponse(url, init) {
   return responseFor(init);
 }
 
+/** What the real fetch throws when nothing listens on the port yet. */
+const notListening = () => Object.assign(new TypeError("fetch failed"),
+  { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
+
 const input = overrides => ({ root: "/private/tmp/control-room-c7", expectedRelease: RELEASE, pgDataId: "data-one",
   schemaDigest: SCHEMA, updaterSchemaDigest: UPDATER_SCHEMA, samples: 3, ...overrides });
 const databasePort = async () => ({ healthy: true, schemaDigest: SCHEMA, updaterSchemaDigest: UPDATER_SCHEMA });
@@ -87,7 +91,7 @@ test("checkHealthV1 uses the existing web route, the default port, three samples
     () => Response.json({ ready: true }), () => Response.json({ ready: true, extra: 1 }),
     () => new Response("{}", { status: 404, headers: { "content-type": "application/json" } })]) {
     await assert.rejects(checkHealthV1(input({ gatewayPort: 3299 }), { readCurrentRelease: async () => RELEASE,
-      checkDatabase: databasePort }, { healthProbeKey: KEY, delay: async () => {},
+      checkDatabase: databasePort }, { healthProbeKey: KEY, delay: async () => {}, startupWaitMs: 0,
       transport: async (url, init) => url === "http://127.0.0.1:3299/fleet/v1/local-health" ? gatewayAnswer() : serviceResponse(url, init),
     }), /health_gateway_refused/u);
   }
@@ -151,6 +155,96 @@ test("health retries cleanly after a dropped/slow failure, stops halfway, and ha
     { root: input().root, expectedRelease: RELEASE }, { healthProbeKey: KEY,
       transport: async (_url, init) => responseFor(init) })));
   assert.equal(burst.length, 50); assert.equal(burst.every(value => value.releaseId === RELEASE_ID), true);
+});
+
+test("services launchd has just started pass health once they listen; the three strict samples are unchanged", async () => {
+  let clock = 0, webCalls = 0, gatewayCalls = 0; const databaseCalls = [], waits = [];
+  const result = await checkHealthV1(input(), { readCurrentRelease: async () => RELEASE,
+    checkDatabase: async value => { databaseCalls.push(value); return databasePort(); } }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { waits.push(milliseconds); clock += milliseconds; },
+    transport: async (url, init) => {
+      if (url.endsWith("/fleet/v1/local-health")) { gatewayCalls += 1; if (gatewayCalls <= 2) throw notListening(); }
+      else { webCalls += 1; if (webCalls <= 6) throw notListening(); }
+      return serviceResponse(url, init);
+    } });
+  assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
+  assert.equal(databaseCalls.length, 3);
+  assert.equal(webCalls, 7 + 2); assert.equal(gatewayCalls, 3 + 2);
+  assert.deepEqual(waits, [...Array(8).fill(500), 5_000, 5_000]);
+});
+
+test("a service that never listens is refused after the bounded startup wait, and a wrong answer at once", async () => {
+  let clock = 0, calls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => {
+      clock += milliseconds; assert.ok(clock <= 130_000, "the startup wait must be bounded"); },
+    transport: async () => { calls += 1; throw notListening(); } }), /health_web_refused/u);
+  assert.equal(clock, 120_000); assert.equal(calls, 241);
+  for (const failure of [new TypeError("fetch failed", { cause: new Error("unexpected redirect") }), new Error("dropped"),
+    Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) })]) {
+    calls = 0;
+    await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+      healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+      transport: async () => { calls += 1; throw failure; } }), /health_web_refused/u);
+    assert.equal(calls, 1, "only a connection that is refused outright, or times out, waits for startup");
+  }
+  calls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (_url, init) => { calls += 1; return responseFor(init, { releaseId: "other-release" }); } }), /health_web_refused/u);
+  assert.equal(calls, 1);
+  calls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (url, init) => { calls += 1; return url.endsWith("/fleet/v1/local-health") ? Response.json({ ready: true })
+      : serviceResponse(url, init); } }), /health_gateway_refused/u);
+  assert.equal(calls, 2);
+});
+
+test("the real loopback transport: a web host and gateway that start listening late pass the health step", async t => {
+  const freePort = async () => { const probe = createServer(); await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
+    const { port } = probe.address(); await new Promise(resolve => probe.close(resolve)); return port; };
+  const webPort = await freePort(), gatewayPort = await freePort();
+  const servers = [];
+  t.after(() => Promise.all(servers.map(server => new Promise(resolve => server.close(resolve)))));
+  const late = setTimeout(() => {
+    for (const port of [webPort, gatewayPort]) {
+      const server = createServer((request, response) => {
+        let body = ""; request.on("data", chunk => { body += chunk; });
+        request.on("end", () => {
+          const init = { body };
+          const answer = port === gatewayPort ? gatewayValue(JSON.parse(body).nonce) : healthValue(JSON.parse(init.body).nonce);
+          response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(answer));
+        });
+      });
+      servers.push(server); server.listen(port, "127.0.0.1");
+    }
+  }, 1_500);
+  t.after(() => clearTimeout(late));
+  const result = await checkHealthV1(input({ webPort, gatewayPort }), { readCurrentRelease: async () => RELEASE,
+    checkDatabase: databasePort }, { healthProbeKey: KEY, startupPollMs: 100, sampleIntervalMs: 10 });
+  assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
+});
+
+test("the real loopback transport: a redirecting web host or gateway is refused at once, not waited for", async t => {
+  for (const service of ["web", "gateway"]) {
+    let requests = 0;
+    const redirecting = createServer((_request, response) => { requests += 1;
+      response.writeHead(302, { location: "http://127.0.0.1:9/" }); response.end(); });
+    const good = createServer((request, response) => {
+      let body = ""; request.on("data", chunk => { body += chunk; });
+      request.on("end", () => { response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(healthValue(JSON.parse(body).nonce))); });
+    });
+    for (const server of [redirecting, good]) await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => Promise.all([redirecting, good].map(server => new Promise(resolve => server.close(resolve)))));
+    const webPort = (service === "web" ? redirecting : good).address().port;
+    const gatewayPort = (service === "web" ? good : redirecting).address().port;
+    await assert.rejects(checkHealthV1(input({ webPort, gatewayPort }), { readCurrentRelease: async () => RELEASE,
+      checkDatabase: databasePort }, { healthProbeKey: KEY, startupPollMs: 10 }),
+      service === "web" ? /health_web_refused/u : /health_gateway_refused/u);
+    assert.equal(requests, 1, `${service}: a redirect is refused after one request`);
+  }
 });
 
 test("the real loopback transport bounds a dropped and a slow connection", async t => {

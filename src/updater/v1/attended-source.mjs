@@ -602,13 +602,31 @@ async function defaultTools(input, root, trustedRuntime, toolRoot, identity) {
 export function parseBuilderPidsV1(text, builderUid) {
   const pids = [];
   for (const line of text.split(/\r?\n/u).filter(Boolean)) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
+    // macOS prints the nobody account's uid as -2 (e.g. dhcp6d). A negative uid is never the
+    // builder; refusing the whole listing stopped every real-Mac build (VM dry run, 2026-10-05).
+    const match = /^\s*(\d+)\s+(-?\d+)\s*$/u.exec(line);
     if (!match) refuse("builder_left_process");
     const pid = Number(match[1]), uid = Number(match[2]);
-    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(uid) || uid < 0) refuse("builder_left_process");
+    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(uid)) refuse("builder_left_process");
+    if (uid < 0) continue;
     if (uid === builderUid) pids.push(pid);
   }
   return [...new Set(pids)];
+}
+
+/**
+ * Reads `crontab -l -u <builder>` when it exits 1. "no crontab for X" means none. The installer
+ * itself puts the builder in cron.deny, after which crontab answers "you (X) are not allowed to use
+ * this program" (seen on a real Mac, VM dry run 2026-10-05); that answer says nothing about an
+ * existing table, so it counts as none only when root's tabs directory has no file for X.
+ */
+export function crontabStateV1(cron, builderAccount, tabFileExists) {
+  const escaped = builderAccount.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), stderr = String(cron?.stderr ?? "").trim();
+  if (String(cron?.stdout ?? "").trim() !== "") refuse("builder_left_process");
+  if (new RegExp(`^(?:crontab:\\s*)?no crontab for ${escaped}\\s*$`, "iu").test(stderr)) return "none";
+  if (new RegExp(`^(?:crontab:\\s*)?you \\(${escaped}\\) are not allowed to use this program\\s*$`, "iu").test(stderr))
+    return tabFileExists === false ? "none" : "scheduled";
+  refuse("builder_left_process");
 }
 
 function defaultBuilderProcessControl(input) {
@@ -622,13 +640,19 @@ function defaultBuilderProcessControl(input) {
       const cron = await run(input, "/usr/bin/crontab", ["-l", "-u", builderAccount],
         { env: buildTrustedEnvironment(), timeoutMs: 10_000, acceptExitCodes: [1] });
       if (cron.code === 1) {
-        const escaped = builderAccount.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-        if (cron.stdout.trim() !== "" || !new RegExp(`^(?:crontab:\\s*)?no crontab for ${escaped}\\s*$`, "iu")
-          .test(cron.stderr.trim())) refuse("builder_left_process");
+        const state = crontabStateV1(cron, builderAccount,
+          await lstat(join("/usr/lib/cron/tabs", builderAccount)).then(() => true,
+            error => error?.code === "ENOENT" ? false : refuse("builder_left_process")));
+        if (state === "scheduled") return true;
       } else if (cron.stdout.trim() !== "") return true;
       const at = await run(input, "/usr/bin/atq", [], { env: buildTrustedEnvironment(), timeoutMs: 10_000 });
       return at.stdout.split(/\r?\n/u).some(line => line.trim() !== ""
         && line.trim().split(/\s+/u).includes(builderAccount));
+    },
+    async describePids(pids) {
+      const result = await run(input, "/bin/ps", ["-o", "pid=,uid=,comm=", "-p", pids.slice(0, 20).join(",")],
+        { env: buildTrustedEnvironment(), timeoutMs: 10_000, acceptExitCodes: [1] });
+      return result.stdout.trim().split(/\r?\n/u).map(line => line.trim()).join("; ");
     },
     async killPid(pid) {
       try { process.kill(pid, "SIGKILL"); } catch (error) { if (error?.code !== "ESRCH") refuse("builder_left_process"); }
@@ -652,16 +676,31 @@ async function inspectBuilderState(control, identity) {
   return { pids: [...new Set(pids)], scheduled };
 }
 
-async function assertBuilderIdle(control, identity) {
-  const state = await inspectBuilderState(control, identity);
-  if (state.pids.length > 0 || state.scheduled) refuse("builder_left_process");
+// Name what was left before refusing, so a refusal says which program it was.
+async function describeBuilderLeftovers(control, state) {
+  if (typeof control.describePids !== "function" || state.pids.length === 0) return;
+  try { process.stderr.write(`builder account still running: ${await control.describePids(state.pids)}\n`); } catch { /* diagnostic only */ }
 }
 
-async function killAndVerifyBuilder(control, identity) {
+async function assertBuilderIdle(control, identity) {
+  const state = await inspectBuilderState(control, identity);
+  if (state.pids.length > 0 || state.scheduled) { await describeBuilderLeftovers(control, state); refuse("builder_left_process"); }
+}
+
+async function killAndVerifyBuilder(control, identity, { settleMs = 5000, pollMs = 100 } = {}) {
   const before = await inspectBuilderState(control, identity);
   for (const pid of before.pids) await control.killPid(pid);
-  const after = await inspectBuilderState(control, identity);
-  if (after.pids.length > 0 || after.scheduled) refuse("builder_left_process");
+  // SIGKILL is asynchronous: a killed process can still be listed for a moment.
+  // Poll until the account is empty or the settle budget (monotonic, started before the
+  // first re-list) is spent; an empty listing is accepted only when actually observed.
+  const deadline = performance.now() + settleMs;
+  let after = await inspectBuilderState(control, identity);
+  while ((after.pids.length > 0 || after.scheduled) && performance.now() < deadline) {
+    for (const pid of after.pids) await control.killPid(pid);
+    await new Promise(done => setTimeout(done, pollMs));
+    after = await inspectBuilderState(control, identity);
+  }
+  if (after.pids.length > 0 || after.scheduled) { await describeBuilderLeftovers(control, after); refuse("builder_left_process"); }
 }
 
 async function runBuilderStep(input, identity, step, cwd, env, timeoutMs) {

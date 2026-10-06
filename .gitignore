@@ -78,3 +78,6 @@ scripts/fleet/release/
 
 # m-r5brest local reproduction scratch (never committed).
 .bk4-repro/
+
+# The pnpm content store must never be committed (v1.0.0 shipped one by accident; the installer refuses its symlink).
+.pnpm-store/

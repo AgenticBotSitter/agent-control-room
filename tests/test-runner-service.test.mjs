@@ -209,7 +209,11 @@ seatbeltTest("port lease guard gives overlapping runs disjoint blocks and releas
 });
 
 seatbeltTest("timeout guard kills the complete process group", async t => {
-  const f = await fixture(t, { timeoutMs: 150 });
+  // The budget must cover node startup plus the test runner before the hang
+  // writes its pid: 150 ms was below a hosted macOS runner's startup time, so the
+  // run was killed before the grandchild existed. The hang never ends, so a
+  // longer budget still proves the group kill.
+  const f = await fixture(t, { timeoutMs: 3_000 });
   const worktree = await f.makeWorktree("timeout", {
     "tests/timeout.test.mjs": `
       import { spawn } from "node:child_process";
@@ -227,7 +231,11 @@ seatbeltTest("timeout guard kills the complete process group", async t => {
   const result = await f.call({ worktree, file: "tests/timeout.test.mjs" });
   assert.equal(result.status, 200);
   assert.equal(result.body.timedOut, true);
-  const pid = Number(await readFile(join(worktree, "grandchild.pid"), "utf8"));
+  const pidText = await readFile(join(worktree, "grandchild.pid"), "utf8").catch(error => {
+    if (error?.code === "ENOENT") assert.fail("the run timed out before the hang started its grandchild; the budget is below startup time");
+    throw error;
+  });
+  const pid = Number(pidText);
   await eventually(() => {
     try { process.kill(pid, 0); return false; } catch (error) { return error.code === "ESRCH"; }
   });

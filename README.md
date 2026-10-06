@@ -52,6 +52,8 @@ work still needed before these transitions can be operated.
 
 ## How installation will work
 
+Preview for an Apple silicon Mac: [one-command install](docs/install/INSTALL_MAC.md).
+
 The supported installation is being built now; it is **not downloadable yet**.
 When the first release is ready, a user will download one versioned package from
 GitHub Releases and open one launcher. The launcher will verify the release,

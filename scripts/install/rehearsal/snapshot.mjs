@@ -70,12 +70,22 @@ function commandPath(name) {
   }
   return Object.freeze({ dscl: "/usr/bin/dscl", launchctl: "/bin/launchctl", tailscale: "/usr/local/bin/tailscale" })[name];
 }
-async function command(name, args) {
+// launchd and Tailscale can refuse a read for a moment while services are being stopped or
+// started (seen on install night right after the owner paused services). A read is retried a
+// few times before the snapshot refuses; the refusal then names the command that kept failing.
+async function command(name, args, attempts = 4) {
   let result;
-  try { result = await runFile(commandPath(name), args, { encoding: "utf8", maxBuffer: MAX_OUTPUT,
-    env: { PATH: "/usr/bin:/bin:/usr/sbin:/usr/local/bin", LANG: "C", LC_ALL: "C" } }); } catch { refuse("snapshot_command_refused"); }
-  if (result.stderr) refuse("snapshot_command_stderr_refused");
-  return result.stdout;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      result = await runFile(commandPath(name), args, { encoding: "utf8", maxBuffer: MAX_OUTPUT,
+        env: { PATH: "/usr/bin:/bin:/usr/sbin:/usr/local/bin", LANG: "C", LC_ALL: "C" } });
+      if (!result.stderr) return result.stdout;
+    } catch { result = undefined; }
+    if (attempt >= attempts) break;
+    await new Promise(done => setTimeout(done, 1500));
+  }
+  process.stderr.write(`snapshot command kept failing: ${name} ${args.join(" ")}\n`);
+  refuse(result ? "snapshot_command_stderr_refused" : "snapshot_command_refused");
 }
 function systemPath(systemRoot, absolutePath) { return join(systemRoot, absolutePath.slice(1)); }
 async function fileContents(path) {

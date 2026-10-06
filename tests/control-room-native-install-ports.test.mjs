@@ -521,3 +521,32 @@ test("the native registerInitialPasskey builds its own session and refuses befor
   await assert.rejects(nativePorts.registerInitialPasskey(installerInput),
     error => /^passkey_deployer_session_refused:/u.test(error?.code ?? ""));
 });
+
+test("assertT1Path accepts a system folder reached through macOS's /etc -> /private/etc symlink", async () => {
+  const { default: nativePorts } = await import("../src/updater/v1/cli/control-room-native-ports.mjs");
+  // On macOS /etc is a symlink into /private; the installer checks /etc/sudoers.d and
+  // was refused with t1_path_outside_roots on every real Mac. On Linux /etc is a real
+  // directory, so the same call checks the ordinary path. /etc itself always exists.
+  const resolved = await nativePorts.assertT1Path("/etc");
+  assert.equal(resolved, process.platform === "darwin" ? "/private/etc" : "/etc");
+  // A path that is NOT inside the requested root is still refused.
+  await assert.rejects(nativePorts.assertT1Path("/nonexistent-control-room-path"), /t1_path_missing/u);
+});
+
+test("assertT1Path still refuses a user-made symlink into a system folder (only macOS's fixed aliases map)", async t => {
+  const { default: nativePorts, macosSystemAliasCanonicalV1 } = await import("../src/updater/v1/cli/control-room-native-ports.mjs");
+  assert.equal(macosSystemAliasCanonicalV1("/etc/sudoers.d"), "/private/etc/sudoers.d");
+  assert.equal(macosSystemAliasCanonicalV1("/var"), "/private/var");
+  assert.equal(macosSystemAliasCanonicalV1("/etcetera/x"), "/etcetera/x");
+  assert.equal(macosSystemAliasCanonicalV1("/usr/local/bin"), "/usr/local/bin");
+  const { mkdtemp, mkdir, realpath: realpathOf, rm: remove, symlink: link } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+  const scratch = await mkdtemp(join(tmpdir(), "acr-t1-link-")); t.after(() => remove(scratch, { recursive: true, force: true }));
+  const etc = await realpathOf("/etc");
+  await link(join(etc, "hosts"), join(scratch, "leaf"));
+  await link(etc, join(scratch, "dir"));
+  await mkdir(join(scratch, "nest")); await link(etc, join(scratch, "nest", "anc"));
+  for (const path of [join(scratch, "leaf"), join(scratch, "dir"), join(scratch, "nest", "anc", "hosts")]) {
+    await assert.rejects(nativePorts.assertT1Path(path), /t1_path_outside_roots/u, path);
+  }
+});

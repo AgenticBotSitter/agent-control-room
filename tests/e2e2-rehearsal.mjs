@@ -561,6 +561,16 @@ test('R5SD: generic modules, inline code, readable files and self-authored title
   assert.equal(parseOwnerBotProcessesV1(psRow(501, 700, 1, '/opt/unknown'), 501)[0].executable, null);
 });
 
+test('R5SD: a system process running as nobody (uid -2) parses and is never the owner', () => {
+  // Exact shape from a real Mac: dhcp6d runs as nobody, which ps prints as -2.
+  const nobody = '   -2 77687     1 /usr/libexec/dhc /usr/libexec/dhcp6d';
+  assert.deepEqual(parseOwnerBotProcessesV1(nobody, 501), []);
+  const mixed = `${nobody}\n${psRow(501, 700, 1, '/opt/unknown')}`;
+  assert.equal(parseOwnerBotProcessesV1(mixed, 501).length, 1);
+  for (const row of ['- 1 0 /usr/libexec/dhc /usr/libexec/dhcp6d', '--2 1 0 /usr/libexec/dhc /usr/libexec/dhcp6d'])
+    assert.throws(() => parseOwnerBotProcessesV1(row, 501), /bot_check_output_refused/u, row);
+});
+
 test('R5SD: malformed process and kernel input, invalid uid and missing identity refuse', () => {
   for (const row of ['501 1', '501 1 0 /opt/node', '501 1 0 /usr/bin/xyz         /opt/bin/abc',
     `501 1 0 ${'/opt/bin/opencode'.slice(0, 16)}`, '501 1 0 /long/cut/program', '999999999999999999999 1 0 /opt/bin/plain    /opt/bin/plain']) {
@@ -760,6 +770,19 @@ test('R5SD: only the check tree and verified invoking shell chain are exempt', (
   // Being an ancestor or calling itself an interactive shell cannot exempt a runtime.
   identities.set(10, 'terminal'); identities.delete(11);
   assert.deepEqual(parseOwnerBotProcessesV1(rows, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [11, 14, 15]);
+});
+
+test('R5SD: the real macOS Terminal chain (Terminal -> root login -> zsh) exempts the invoking window only', () => {
+  const rows = [psRow(501, 10, 1, '/terminal'), psRow(0, 20, 10, 'login', 'login -pf owner'), psRow(501, 11, 20, '/bin/zsh'),
+    psRow(501, 12, 11, '/node'), psRow(0, 21, 10, 'login', 'login -pf owner'), psRow(501, 14, 21, '/bin/zsh')].join('\n');
+  const identities = new Map([[10, 'terminal'], [11, 'shell'], [14, 'shell']]);
+  const facts = new Map([['12', { uid: 501, ppid: 11 }], ['11', { uid: 501, ppid: 20 }]]);
+  assert.deepEqual(parseOwnerBotProcessesV1(rows, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [14], 'only the other window is listed');
+  // A login hop owned by the user, or not named login, never counts.
+  const fake = rows.replace(psRow(0, 20, 10, 'login', 'login -pf owner'), psRow(501, 20, 10, 'login', 'login -pf owner'));
+  assert.deepEqual(parseOwnerBotProcessesV1(fake, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [11, 14, 20]);
+  const renamed = rows.replace(psRow(0, 20, 10, 'login', 'login -pf owner'), psRow(0, 20, 10, 'helper', 'helper -pf owner'));
+  assert.deepEqual(parseOwnerBotProcessesV1(renamed, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [11, 14]);
 });
 
 const kernelRow = (pid, executable = '/fixture/plain', uid = 501, ppid = 1) => `p${pid}\nu${uid}\nR${ppid}\nfcwd\ntDIR\nn/fixture/plain\nftxt\ntREG\ni77\nn${executable}\n`;

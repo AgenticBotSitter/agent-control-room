@@ -34,6 +34,9 @@ const APPS = Object.freeze([
   { bundle: "/Applications/Google Chrome.app", id: "com.google.Chrome", team: "EQHXZ8M8AV" },
   { bundle: "/Applications/Firefox.app", id: "org.mozilla.firefox", team: "43AQ936H96" },
   { bundle: "/Applications/Visual Studio Code.app", id: "com.microsoft.VSCode", team: "UBF8T346G9" },
+  // The install needs Tailscale running (its Serve status is checked before and after);
+  // quitting the app to pass this check would change what the install verifies.
+  { bundle: "/Applications/Tailscale.app", id: "io.tailscale.ipn.macsys", team: "W5364U7YZB" },
 ]);
 
 function commandPath(name) {
@@ -76,7 +79,9 @@ function processRows(output) {
   const rows = [];
   for (const line of `${output}`.split(/\r?\n/u)) {
     if (!line.trim()) continue;
-    const fields = /^\s*(\d+)\s+(\d+)\s+(\d+)\s(.*)$/u.exec(line);
+    // macOS shows the "nobody" account as uid -2 (e.g. /usr/libexec/dhcp6d).
+    // A negative uid is never the owner, but it must parse rather than refuse the whole check.
+    const fields = /^\s*(-?\d+)\s+(\d+)\s+(\d+)\s(.*)$/u.exec(line);
     if (!fields) refuse("bot_check_output_refused");
     const [uid, pid, ppid] = fields.slice(1, 4).map(Number);
     if (![uid, pid, ppid].every(Number.isSafeInteger) || pid < 1) refuse("bot_check_output_refused");
@@ -225,6 +230,10 @@ function ownTree(rows, identities, selfPid, facts) {
     && facts.get(String(parent))?.ppid === byPid.get(parent)?.ppid) {
     seen.add(parent); chain.push(parent); parent = byPid.get(parent)?.ppid;
   }
+  // macOS Terminal starts each window as Terminal -> login (root) -> zsh. One root-owned
+  // login hop is allowed: a bot cannot create a root process, and only its parent counts.
+  const hop = byPid.get(parent);
+  if (hop && hop.uid === 0 && ["login", "/usr/bin/login"].includes(hop.words[0]) && identities.get(hop.ppid) === "terminal") parent = hop.ppid;
   if (identities.get(parent) === "terminal") for (const pid of chain) safe.add(pid);
   return safe;
 }
@@ -233,7 +242,9 @@ export function parseOwnerBotProcessesV1(output, ownerUid, kernel = {}) {
   if (!Number.isSafeInteger(ownerUid) || ownerUid < 1) refuse("bot_check_uid_refused");
   const facts = kernel.facts ?? new Map(), identities = kernel.identities ?? new Map();
   const rows = kernel.rows ?? processRows(output);
-  const safe = ownTree(rows.filter(row => row.uid === ownerUid), identities, kernel.selfPid, facts);
+  // The chain walk needs every row: the Terminal window's login step is root-owned. Only owner
+  // rows can be listed below, and only owner processes carry kernel facts or identities.
+  const safe = ownTree(rows, identities, kernel.selfPid, facts);
   const matches = [];
   for (const row of rows) {
     if (row.uid !== ownerUid || safe.has(row.pid)) continue;
@@ -260,18 +271,23 @@ function aliveV1(pid) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return error?.code !== "ESRCH"; }
 }
+// One retry: lsof and ps can fail for a moment while apps are quitting (seen on install night).
+async function readOnceRetried(run, path, args) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const result = await run(path, args, OPTIONS);
+      if (!result.stderr) return result;
+    } catch (error) { if (error?.code === "bot_check_command_refused") throw error; }
+    if (attempt === 1) await new Promise(done => setTimeout(done, 1000));
+  }
+  refuse("bot_check_command_refused");
+}
 async function readPs(run) {
-  let result;
-  try { result = await run(commandPath("ps"), ["-axo", PS_FIELDS], OPTIONS); }
-  catch { refuse("bot_check_command_refused"); }
-  if (result.stderr) refuse("bot_check_command_refused");
+  const result = await readOnceRetried(run, commandPath("ps"), ["-axo", PS_FIELDS]);
   return processRows(result.stdout);
 }
 async function readKernel(run, selector) {
-  let result;
-  try { result = await run(commandPath("lsof"), ["-nP", "-a", ...selector, "-R", "-d", "txt,cwd", "-FpuRftin"], OPTIONS); }
-  catch { refuse("bot_check_command_refused"); }
-  if (result.stderr) refuse("bot_check_command_refused");
+  const result = await readOnceRetried(run, commandPath("lsof"), ["-nP", "-a", ...selector, "-R", "-d", "txt,cwd", "-FpuRftin"]);
   return parseKernelFactsV1(result.stdout);
 }
 
@@ -298,6 +314,9 @@ export async function checkOwnerBotsStoppedV1({ ownerUid = process.getuid?.(), r
   const sipEnabled = await readSipEnabledV1(run);
   if (!sipEnabled) warn("SIP is not fully on, so Apple background programs may be listed. Show the lead.");
   const rows = new Map(), facts = new Map();
+  // Root-owned login rows are kept only so the invoking Terminal window's chain can be
+  // walked (Terminal -> login -> zsh); they are never candidates for listing.
+  const logins = new Map();
   const ingest = kernel => {
     for (const [pid, fact] of kernel) {
       if (fact.uid !== undefined && fact.uid !== ownerUid) { rows.delete(Number(pid)); continue; }
@@ -311,6 +330,7 @@ export async function checkOwnerBotsStoppedV1({ ownerUid = process.getuid?.(), r
     for (const row of await readPs(run)) {
       if (row.uid === ownerUid) rows.set(row.pid, row);
       else rows.delete(row.pid);
+      if (row.uid === 0 && ["login", "/usr/bin/login"].includes(row.words[0])) logins.set(row.pid, row);
     }
     // Earlier facts must not exempt a reused PID or a process now unreadable.
     facts.clear();
@@ -354,7 +374,7 @@ export async function checkOwnerBotsStoppedV1({ ownerUid = process.getuid?.(), r
     } catch { /* changed or unreadable: deny by default */ }
   }
   if (Date.now() >= deadline) refuse("bot_check_command_refused");
-  return parseOwnerBotProcessesV1("", ownerUid, { facts, identities, rows: finalRows, selfPid });
+  return parseOwnerBotProcessesV1("", ownerUid, { facts, identities, rows: [...finalRows, ...logins.values()], selfPid });
 }
 
 function exactArguments(argv) {
