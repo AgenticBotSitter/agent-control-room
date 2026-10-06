@@ -5,7 +5,6 @@
 # is the install confirmation. You are asked for your Mac password, then the GitHub read token,
 # and at the end you scan a QR code with your phone to set up sign-in.
 set -eu
-REPOSITORY=AgenticBotSitter/agent-control-room
 stop() { printf 'Control Room install stopped: %s\n' "$1" >&2; exit 1; }
 
 commit=${1:-}
@@ -15,14 +14,19 @@ case "$commit" in *[!0-9a-f]*|'') stop 'give the 40-character release commit aft
 [ "$(/usr/bin/id -u)" != 0 ] || stop 'run it as yourself, not with sudo; it asks for your password itself'
 [ -t 0 ] || stop 'run it in a Terminal window (the phone code at the end is typed there)'
 
-work=$(/usr/bin/mktemp -d /private/tmp/control-room-install.XXXXXX) || stop 'could not make a temporary folder'
-trap '/bin/rm -rf "$work"' 0 1 2 3 15
-/usr/bin/curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 -o "$work/bootstrap.sh" \
-  "https://raw.githubusercontent.com/$REPOSITORY/$commit/scripts/install-night/bootstrap.sh" \
-  || stop 'could not download the installer for that commit'
+/usr/bin/xcode-select -p >/dev/null 2>&1 && /usr/bin/xcrun --find git >/dev/null 2>&1 \
+  || stop "Apple's Command Line Tools are needed first: run  xcode-select --install  then run this line again"
 
 printf '%s\n' "Installing Control Room release $commit." \
   'Next: your Mac password, then the GitHub read token (nothing shows while you type or paste).'
-root=$(/usr/bin/sudo /usr/bin/mktemp -d /var/root/cr-boot.XXXXXX) || stop 'the Mac password was not accepted'
-# The bootstrap proves its own bytes equal this commit's copy before it installs anything.
-/usr/bin/sudo /bin/sh "$work/bootstrap.sh" "$commit" "$root" --confirmed-by-command yes
+# Everything privileged happens inside one fixed root command: it makes the private root-owned
+# folder, downloads the bootstrap pinned to this commit straight into it, and runs it from there,
+# so no file your login can write is ever run as root. The bootstrap then proves its own bytes
+# equal this commit's copy before it installs anything.
+exec /usr/bin/sudo /bin/sh -c 'set -eu
+commit=$1
+root=$(/usr/bin/mktemp -d /var/root/cr-boot.XXXXXX)
+/usr/bin/curl -fsSL --proto "=https" --tlsv1.2 --max-time 120 -o "$root/bootstrap.sh" \
+  "https://raw.githubusercontent.com/AgenticBotSitter/agent-control-room/$commit/scripts/install-night/bootstrap.sh" || {
+  /bin/rm -rf "$root"; printf "%s\n" "Control Room install stopped: could not download the installer for that commit" >&2; exit 1; }
+exec /bin/sh "$root/bootstrap.sh" "$commit" "$root" --confirmed-by-command yes' control-room-install "$commit"

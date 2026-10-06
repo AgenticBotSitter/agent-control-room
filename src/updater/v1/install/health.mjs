@@ -169,25 +169,25 @@ export async function checkHealthV1(input, ports = {}, runtime = {}) {
   const current = await (ports.readCurrentRelease ?? readCurrentReleaseV1)(input.root);
   if (current !== input.expectedRelease) refuse("health_release_mismatch");
   const delay = runtime.delay ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
-  // launchd has only just started the web host and gateway: wait, bounded, until each one
-  // answers at all. A wrong answer is refused at once; the three strict samples are unchanged.
+  // launchd has only just started the web host and gateway: in the first sample, wait (bounded)
+  // until each one answers at all. A wrong answer is refused at once; later samples never wait.
   const now = runtime.now ?? Date.now, startupDeadline = now() + (runtime.startupWaitMs ?? HEALTH_STARTUP_WAIT_MS_V1);
-  for (const probe of [checkWebHealthV1, checkGatewayHealthV1]) {
+  const answering = async probe => {
     for (;;) {
-      try { await probe(input, runtime); break; } catch (error) {
+      try { return await probe(input, runtime); } catch (error) {
         if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;
       }
       await delay(runtime.startupPollMs ?? 500);
     }
-  }
+  };
   for (let sample = 0; sample < samples; sample += 1) {
     const database = await ports.checkDatabase({ root: input.root, pgDataId: input.pgDataId,
       schemaDigest: input.schemaDigest, updaterSchemaDigest: input.updaterSchemaDigest });
     if (!exactKeys(database, ["healthy", "schemaDigest", "updaterSchemaDigest"])
       || database.healthy !== true || database.schemaDigest !== input.schemaDigest
       || database.updaterSchemaDigest !== input.updaterSchemaDigest) refuse("health_database_refused");
-    await checkWebHealthV1(input, runtime);
-    await checkGatewayHealthV1(input, runtime);
+    if (sample === 0) { await answering(checkWebHealthV1); await answering(checkGatewayHealthV1); }
+    else { await checkWebHealthV1(input, runtime); await checkGatewayHealthV1(input, runtime); }
     if (sample + 1 < samples) await delay(runtime.sampleIntervalMs ?? 5_000);
   }
   return Object.freeze({ healthy: true, samples, schemaDigest: input.schemaDigest });

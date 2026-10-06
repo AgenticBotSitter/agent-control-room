@@ -63,8 +63,8 @@ test("checkHealthV1 uses the existing web route, the default port, three samples
       return serviceResponse(url, init); },
   });
   assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
-  assert.equal(databaseCalls.length, 3); assert.equal(urls.length, 8);
-  // One startup probe of each, then every sample probes BOTH services: the web host, then the gateway (cl-bringup N-H).
+  assert.equal(databaseCalls.length, 3); assert.equal(urls.length, 6);
+  // Every sample probes BOTH services: the web host, then the gateway (cl-bringup N-H).
   const gateway = urls.filter((_request, index) => index % 2 === 1);
   for (const request of gateway) {
     assert.equal(request.url, `http://127.0.0.1:${DEFAULT_HEALTH_GATEWAY_PORT_V1}/fleet/v1/local-health`);
@@ -169,7 +169,7 @@ test("services launchd has just started pass health once they listen; the three 
     } });
   assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
   assert.equal(databaseCalls.length, 3);
-  assert.equal(webCalls, 7 + 3); assert.equal(gatewayCalls, 3 + 3);
+  assert.equal(webCalls, 7 + 2); assert.equal(gatewayCalls, 3 + 2);
   assert.deepEqual(waits, [...Array(8).fill(500), 5_000, 5_000]);
 });
 

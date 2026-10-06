@@ -3,7 +3,8 @@
 For an Apple silicon Mac. You need:
 - your Mac password;
 - a GitHub read token;
-- your phone, on the same tailnet as the Mac.
+- your phone, on the same tailnet as the Mac;
+- Apple's Command Line Tools. If you don't have them, run `xcode-select --install` once; the installer checks for them first.
 
 1. Find the release commit (40 characters) on the release page.
 2. Open Terminal and paste this one line, with that commit in both places:
