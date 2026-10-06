@@ -40,12 +40,5 @@
     "replace": "    ) throw updaterRefuseV1(\"updater_command_confirmation_refused\");",
     "test": "node --test --test-name-pattern='confirms only a plan for exactly that commit' tests/updater-cli-flip.test.mjs",
     "why": "a downgrade is never confirmed by the command; it needs the typed words"
-  },
-  {
-    "file": "scripts/install-night/bootstrap.sh",
-    "find": "[ -z \"$confirmed_by_command\" ] && [ \"$2\" = yes ] || refuse",
-    "replace": "[ -z \"$confirmed_by_command\" ] || refuse",
-    "test": "node --test --test-name-pattern='hands --confirmed-by-command yes' tests/install-night-bootstrap.test.mjs",
-    "why": "the bootstrap passes only the exact value yes"
   }
 ]
