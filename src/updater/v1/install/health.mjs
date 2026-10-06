@@ -16,9 +16,13 @@ const releaseTargetPattern = /^releases\/([A-Za-z0-9._-]{1,160})$/u;
 const exactKeys = (value, names) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...names].sort().join(",");
 const refuse = code => { throw updaterRefuseV1(code); };
-/** A probe that could not connect at all (nothing listening yet, or no answer within the
- * probe timeout). Only this kind is retried while services start; a wrong answer never is. */
-const unreachable = code => { throw Object.assign(updaterRefuseV1(code), { healthUnreachable: true }); };
+/** A probe that could not connect at all: nothing listening yet (ECONNREFUSED) or no answer
+ * before the probe timeout. Only this kind is retried while services start; a redirect, a
+ * reset or any wrong answer is refused at once. */
+const notListening = error => error?.name === "TimeoutError" || error?.cause?.code === "ECONNREFUSED";
+const fetchRefused = (code, error) => {
+  throw notListening(error) ? Object.assign(updaterRefuseV1(code), { healthUnreachable: true }) : updaterRefuseV1(code);
+};
 export const HEALTH_STARTUP_WAIT_MS_V1 = 120_000;
 
 async function readHealthProbeKeyV1(root) {
@@ -110,7 +114,7 @@ export async function checkWebHealthV1(input, runtime = {}) {
     response = await (runtime.transport ?? fetch)(`${origin}/api/v1/local-host-health`, { method: "POST",
       headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }), redirect: "error",
       signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });
-  } catch { unreachable("health_web_refused"); }
+  } catch (error) { fetchRefused("health_web_refused", error); }
   return verifyWebHealthV1(await boundedJsonV1(response, runtime.responseLimitBytes ?? HEALTH_RESPONSE_LIMIT_BYTES_V1),
     { key, nonce, expectedRelease: release[1] });
 }
@@ -146,7 +150,7 @@ export async function checkGatewayHealthV1(input, runtime = {}) {
     response = await (runtime.transport ?? fetch)(`http://127.0.0.1:${port}/fleet/v1/local-health`, { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ nonce }), redirect: "error",
       signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });
-  } catch { unreachable("health_gateway_refused"); }
+  } catch (error) { fetchRefused("health_gateway_refused", error); }
   return verifyGatewayHealthV1(await boundedJsonV1(response, runtime.responseLimitBytes ?? HEALTH_RESPONSE_LIMIT_BYTES_V1,
     "health_gateway_refused"), { key, nonce });
 }

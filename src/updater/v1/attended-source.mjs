@@ -691,9 +691,11 @@ async function killAndVerifyBuilder(control, identity, { settleMs = 5000, pollMs
   const before = await inspectBuilderState(control, identity);
   for (const pid of before.pids) await control.killPid(pid);
   // SIGKILL is asynchronous: a killed process can still be listed for a moment.
-  // Poll until the account is empty or the bounded settle time ends.
+  // Poll until the account is empty or the settle budget (monotonic, started before the
+  // first re-list) is spent; an empty listing is accepted only when actually observed.
+  const deadline = performance.now() + settleMs;
   let after = await inspectBuilderState(control, identity);
-  for (const deadline = Date.now() + settleMs; (after.pids.length > 0 || after.scheduled) && Date.now() < deadline;) {
+  while ((after.pids.length > 0 || after.scheduled) && performance.now() < deadline) {
     for (const pid of after.pids) await control.killPid(pid);
     await new Promise(done => setTimeout(done, pollMs));
     after = await inspectBuilderState(control, identity);

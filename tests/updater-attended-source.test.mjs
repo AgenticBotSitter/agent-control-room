@@ -619,7 +619,9 @@ test("a killed builder pid that is still listed for a moment does not fail the b
   };
   const result = await installAttendedCommitV1({ ...f.materialize({ builderProcessControl }), authorize: value => authorize(f.root, value) })
     .then(() => "installed", error => error?.code ?? error?.message);
-  assert.notEqual(result, "builder_left_process");
+  // The whole install completes: the sweep re-listed until the killed pid was gone.
+  assert.equal(result, "installed");
+  assert.ok(inspections >= 4, `inspections ${inspections}`);
 });
 
 test("post-kill verification refuses when the same builder pid survives a no-op kill", async t => {

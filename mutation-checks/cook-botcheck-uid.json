@@ -22,9 +22,16 @@
   },
   {
     "file": "src/updater/v1/cli/control-room-native-ports.mjs",
-    "find": "allowedRoots: [...new Set([path, macosSystemAliasCanonicalV1(path)])]",
-    "replace": "allowedRoots: [path]",
-    "test": "node --test --test-name-pattern='reached through macOS' tests/control-room-native-install-ports.test.mjs",
-    "why": "/etc/sudoers.d on a real Mac resolves to /private/etc/sudoers.d and must be accepted"
+    "find": "[[\"/etc\", \"/private/etc\"], ",
+    "replace": "[",
+    "test": "node --test --test-name-pattern='user-made symlink into a system folder' tests/control-room-native-install-ports.test.mjs",
+    "why": "/etc maps to its /private/etc spelling on every platform's check (the macOS sudoers.d path), portable to Linux CI"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "while ((after.pids.length > 0 || after.scheduled) && performance.now() < deadline) {",
+    "replace": "while (false) {",
+    "test": "node --test --test-name-pattern='still listed for a moment' tests/updater-attended-source.test.mjs",
+    "why": "the builder sweep re-lists until a just-killed pid is gone instead of refusing the first listing"
   }
 ]
