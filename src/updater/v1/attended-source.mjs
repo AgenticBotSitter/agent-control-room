@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
-  chmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink,
+  chmod, copyFile, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
@@ -873,6 +873,16 @@ export async function buildFixedBundleV1(input) {
     bundle = join(bundleJob, "bundle"), bundleStore = join(bundleJob, "store");
   await mkdir(bundleJob); await mkdir(bundleStore); await mkdir(join(bundleJob, "tmp"));
   await stageFixedBundleInputs(source, bundleSource, { rootUid: identity.rootUid, rootGid: identity.rootGid });
+  // pnpm 11 `fetch` also links the virtual store (node_modules) into its working directory, and
+  // the bundle build refuses an updater source that holds node_modules (macOS VM: every real
+  // install stopped with updater_bundle_source_modules_refused). Fetch into the store from a
+  // separate folder holding only the updater's manifest and lockfile.
+  const bundleFetchRoot = join(bundleJob, "fetch");
+  await mkdir(bundleFetchRoot);
+  for (const name of ["package.json", "pnpm-lock.yaml"]) {
+    await copyFile(join(bundleSource, "src/updater/v1", name), join(bundleFetchRoot, name))
+      .catch(error => { if (error?.code !== "ENOENT") throw error; });
+  }
   if (session.input.tools === undefined) tools = await stageBuilderTools(tools, join(bundleJob, "builder-tools"),
     { rootUid: identity.rootUid, rootGid: identity.rootGid }, ["bundleEntry", "bundlePolicy"]);
   await changeOwnership(session.input, bundleJob, identity.builderUid, identity.builderGid);
@@ -883,7 +893,7 @@ export async function buildFixedBundleV1(input) {
   { explicitlySet: ["PATH", "HOME", "TMPDIR", "NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG"] });
   const bundleFetchStep = session.input.bundleFetchStep === undefined ? { file: tools.pnpm,
     args: ["fetch", "--ignore-scripts", "--frozen-lockfile", `--store-dir=${bundleStore}`],
-    cwd: join(bundleSource, "src/updater/v1") } : session.input.bundleFetchStep;
+    cwd: bundleFetchRoot } : session.input.bundleFetchStep;
   session.builderActive = true;
   if (bundleFetchStep !== null) await runBuilderStep(session.input, identity, bundleFetchStep,
     bundleFetchStep.cwd ?? bundleSource, bundleEnv, session.input.fetchTimeoutMs ?? 10 * 60 * 1000);
