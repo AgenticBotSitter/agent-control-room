@@ -338,6 +338,73 @@ export async function runSessionStatementV1(statement, {
 }
 
 /**
+ * Is this failed connection attempt "the server is not up YET", and only that?
+ *
+ * `psql` exits 2 when it could not connect. Three answers mean the postmaster has
+ * not reached the point of accepting connections, and are worth waiting out:
+ *
+ *   - the socket file does not exist yet (`No such file or directory`);
+ *   - it exists but nothing is listening yet (`Connection refused`);
+ *   - the server answered 57P03 (`the database system is starting up`, `... is not
+ *     yet accepting connections`, `... is in recovery mode`).
+ *
+ * Everything else -- an authentication or role refusal, a missing database, a
+ * permission error on the socket, a sandbox denial, a psql usage error, a server
+ * that is shutting down -- is NOT readiness, and the caller refuses it at once.
+ */
+export function sessionNotReadyV1(result) {
+  if (result?.code !== 2) return false;
+  const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
+  if (!/connection to server\b[^\n]*\bfailed:/u.test(text)) return false;
+  return /\bfailed: (?:No such file or directory|Connection refused)\b/u.test(text)
+    || /\bFATAL:\s+the database system is (?:starting up|not yet accepting connections|in recovery mode)\b/u.test(text);
+}
+
+/**
+ * Wait, bounded, until the server accepts a real session for `statement.user`.
+ *
+ * A LaunchDaemon bootstrap returns when launchd has ACCEPTED the job, not when the
+ * postmaster is listening: launchd still has to start the collector, then
+ * `sandbox-exec`, then a freshly copied and re-signed `postgres` that the system
+ * evaluates on its first run. The release phase's first statement used to run
+ * straight after the bootstrap and fail on a socket that did not exist yet.
+ *
+ * The probe is a real `SELECT 1` through the same `psql`, identity, profile,
+ * environment and socket the phase's statements use -- so "ready" means "a
+ * session as this identity works", not merely "a socket file exists". Only
+ * `sessionNotReadyV1` answers are retried; any other failure is refused at once
+ * with the server's own line, because waiting out an authentication or identity
+ * failure would only delay the same refusal by a minute.
+ *
+ * @returns {Promise<number>} the attempt on which the session succeeded
+ */
+export async function waitForSessionReadyV1(statement, {
+  root, layout, identity, environment, port, profile, profileParameters, pgRoot, onSpawn,
+}, { timeoutMs = 60_000, intervalMs = 500, spawn = spawnPgFamily, now = Date.now,
+  sleep = milliseconds => new Promise(resolveWait => { setTimeout(resolveWait, milliseconds); }) } = {}) {
+  const parsed = parseSessionStatementV1({ ...statement, sql: "SELECT 1" });
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || !Number.isSafeInteger(intervalMs) || intervalMs < 1) {
+    refuse("pg_phase_readiness_bounds_refused");
+  }
+  const deadline = now() + timeoutMs;
+  for (let attempt = 1; ; attempt += 1) {
+    const result = await spawn({
+      executable: join(root, "runtime", "pg-current", "bin", "psql"),
+      args: psqlStatementArgumentsV1(parsed, { socketDirectory: layout.socketDirectory, port, returnsRows: true }),
+      environment, uid: identity.uid, gid: identity.gid,
+      role: parsed.user === "control_room_deployer" ? "deployer" : "database",
+      profile, profileParameters, stdio: ["pipe", "pipe", "pipe"], cwd: pgRoot,
+      stdin: "SELECT 1;\n", onSpawn, timeoutMs: 30_000 });
+    if (result.code === 0) return attempt;
+    const line = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim().split("\n").map(value => value.trim())
+      .filter(Boolean).slice(0, 2).join(" | ").slice(0, 200);
+    if (!sessionNotReadyV1(result)) refuse(`pg_phase_session_refused:${result.code ?? result.signal}:${line}`);
+    if (now() + intervalMs > deadline) refuse(`pg_phase_session_not_ready:${attempt}:${line}`);
+    await sleep(intervalMs);
+  }
+}
+
+/**
  * Run SEVERAL statements in ONE transaction, as the given identity.
  *
  * This exists because `runSessionStatementV1` opens a connection per statement,
