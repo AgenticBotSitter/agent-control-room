@@ -195,16 +195,28 @@ export async function killAccountProcessesV1(input, runtime = {}) {
     // background domain pre-filled with Apple's on-demand agents, none running (measured on a
     // VM; the old "domain exists" test refused every retry). What must not survive the builder
     // is something it started: a running process or a service that is not Apple's.
+    let domainPrinted = false;
     const leftovers = async () => {
       const printed = await run("/bin/launchctl", ["print", `user/${input.uid}`]).then(result => result, error => {
         if (typeof error?.code === "number" && error.code !== 0) return null;
         refuse("builder_launch_domain_refused");
       });
+      if (printed !== null) domainPrinted = true;
       return printed === null ? [] : launchDomainLeftoversV1(String(printed?.stdout ?? ""));
     };
     if ((await leftovers()).length > 0) {
       await run("/bin/launchctl", ["bootout", `user/${input.uid}`]).catch(() => {});
       if ((await leftovers()).length > 0) refuse("builder_launch_domain_refused");
+    }
+    // The print above created that domain if it was absent, and macOS then starts Apple agents
+    // (distnoted) in it as soon as the account runs anything, which the next build's idle check
+    // refuses (VM: builder_left_process on the retry). Remove it again and re-check the account.
+    if (domainPrinted) {
+      await run("/bin/launchctl", ["bootout", `user/${input.uid}`]).catch(() => {});
+      const after = await run("/bin/ps", ["-axo", "uid="]).catch(() => refuse("account_process_sweep_refused"));
+      if (String(after?.stdout ?? "").split(/\r?\n/u).some(line => Number(line.trim()) === input.uid)) {
+        refuse("account_process_sweep_refused");
+      }
     }
   }
   return Object.freeze({ swept: true, uid: input.uid });
