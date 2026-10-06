@@ -271,18 +271,23 @@ function aliveV1(pid) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return error?.code !== "ESRCH"; }
 }
+// One retry: lsof and ps can fail for a moment while apps are quitting (seen on install night).
+async function readOnceRetried(run, path, args) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const result = await run(path, args, OPTIONS);
+      if (!result.stderr) return result;
+    } catch (error) { if (error?.code === "bot_check_command_refused") throw error; }
+    if (attempt === 1) await new Promise(done => setTimeout(done, 1000));
+  }
+  refuse("bot_check_command_refused");
+}
 async function readPs(run) {
-  let result;
-  try { result = await run(commandPath("ps"), ["-axo", PS_FIELDS], OPTIONS); }
-  catch { refuse("bot_check_command_refused"); }
-  if (result.stderr) refuse("bot_check_command_refused");
+  const result = await readOnceRetried(run, commandPath("ps"), ["-axo", PS_FIELDS]);
   return processRows(result.stdout);
 }
 async function readKernel(run, selector) {
-  let result;
-  try { result = await run(commandPath("lsof"), ["-nP", "-a", ...selector, "-R", "-d", "txt,cwd", "-FpuRftin"], OPTIONS); }
-  catch { refuse("bot_check_command_refused"); }
-  if (result.stderr) refuse("bot_check_command_refused");
+  const result = await readOnceRetried(run, commandPath("lsof"), ["-nP", "-a", ...selector, "-R", "-d", "txt,cwd", "-FpuRftin"]);
   return parseKernelFactsV1(result.stdout);
 }
 
