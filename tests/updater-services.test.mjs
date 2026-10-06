@@ -100,6 +100,26 @@ test("the supervisor and the gateway get RUNTIME_STATE in their environment, equ
   assert.equal(Object.hasOwn(environment(postgres), "RUNTIME_STATE"), false);
 });
 
+test("the database LaunchDaemon pins the same C locale the init phase's postmaster runs with", async t => {
+  // launchd starts the job with its own environment, never the installer's `env -i`
+  // plus layout pins, and a macOS postmaster without a valid locale refuses to start
+  // ("postmaster became multithreaded during startup"). Only the database job gets it.
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "control-room-locale-")));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const root = join(temporary, "install");
+  const environment = contents => Object.fromEntries([...(/<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/u
+    .exec(contents)?.[1] ?? "").matchAll(/<key>([\s\S]*?)<\/key>\s*<string>([\s\S]*?)<\/string>/gu)].map(match => [match[1], match[2]]));
+  const postgres = environment(plists(composeServiceBundleV1(input(root, ["postgresql17"]))).get("postgresql17"));
+  assert.equal(postgres.LC_ALL, "C");
+  assert.equal(postgres.LANG, "C");
+  assert.deepEqual(Object.keys(postgres).sort(),
+    ["KRB5_CONFIG", "KRB5_KDC_PROFILE", "LANG", "LC_ALL", "OPENSSL_CONF", "OPENSSL_MODULES"]);
+  for (const [role, contents] of [...plists(composeServiceBundleV1(input(root, CORE_SERVICE_ROLES_V1))),
+    ...plists(composeServiceBundleV1(input(root, POST_HEALTH_SERVICE_ROLES_V1)))]) {
+    assert.equal(Object.hasOwn(environment(contents), "LC_ALL"), false, role);
+  }
+});
+
 function programArguments(contents) {
   const block = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/u.exec(contents)?.[1] ?? "";
   return [...block.matchAll(/<string>([\s\S]*?)<\/string>/gu)].map(match => match[1]

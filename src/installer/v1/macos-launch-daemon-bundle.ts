@@ -204,6 +204,11 @@ export function createMacosLaunchDaemonBundleV1(input: unknown): MacosLaunchDaem
       OPENSSL_CONF: join(parsed.installRoot, "runtime", "pg-current", "etc", "openssl.cnf"),
       OPENSSL_MODULES: join(parsed.installRoot, "runtime", "pg-current", "lib", "ossl-modules"),
       KRB5_CONFIG: "/dev/null", KRB5_KDC_PROFILE: "/dev/null",
+      // The locale pin the init phase's temporary postmaster already gets from the
+      // layout (`pg-cluster-layout.ts`). launchd starts this job with ITS environment,
+      // not the installer's, and a macOS postmaster without a valid locale refuses to
+      // start ("postmaster became multithreaded during startup").
+      LANG: "C", LC_ALL: "C",
     // The sandbox's one writable tree, as the PROCESS sees it: `-D RUNTIME_STATE` only
     // parameterises the Seatbelt profile and never reaches the environment, and the
     // supervisor, its task host and the gateway read it from there
