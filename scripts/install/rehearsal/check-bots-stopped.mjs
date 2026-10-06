@@ -34,6 +34,9 @@ const APPS = Object.freeze([
   { bundle: "/Applications/Google Chrome.app", id: "com.google.Chrome", team: "EQHXZ8M8AV" },
   { bundle: "/Applications/Firefox.app", id: "org.mozilla.firefox", team: "43AQ936H96" },
   { bundle: "/Applications/Visual Studio Code.app", id: "com.microsoft.VSCode", team: "UBF8T346G9" },
+  // The install needs Tailscale running (its Serve status is checked before and after);
+  // quitting the app to pass this check would change what the install verifies.
+  { bundle: "/Applications/Tailscale.app", id: "io.tailscale.ipn.macsys", team: "W5364U7YZB" },
 ]);
 
 function commandPath(name) {

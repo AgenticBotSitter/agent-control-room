@@ -476,3 +476,9 @@ test('R5G legacy diagnostic command reaches the unchanged parser with a fixture 
     await assert.rejects(run('pnpm', ['mac:check-database', '--', '/fixture/Protected'], { cwd: directory }), error => error.code === 2 && error.stdout.includes('Usage:'));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('the snapshot checksum reaches check-serve as the shell variable, never as quoted literal text', async () => {
+  const output = await makeOwnerPasteFile(input);
+  assert.ok(!output.includes(`'"$LIVE_SNAPSHOT_SHA256"'`), 'a single-quoted variable passes the literal text and check-serve refuses it');
+  assert.match(output, /--checksum "\$LIVE_SNAPSHOT_SHA256"/u);
+});
