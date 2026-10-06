@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import {
-  chmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile,
-} from "node:fs/promises";
+import { chmod, lchmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { validateRuntimeInventoryV1, sha256File } from "../trusted-runtime.mjs";
 
@@ -274,6 +272,9 @@ async function installLink(runtimeRoot, name, target) {
   const entry = await lstat(path).catch(error => error?.code === "ENOENT" ? undefined : Promise.reject(error));
   if (entry && !entry.isSymbolicLink()) refuse("runtime_link_refused");
   await symlink(target, temporary);
+  // macOS checks a link's own mode on readlink, and the installer runs under umask 077: a 0700
+  // runtime link made every other account's realpath fail (VM: the builder's pnpm exited 1 silently).
+  if (process.platform === "darwin") await lchmod(temporary, 0o755);
   await rename(temporary, path).catch(async () => { await rm(temporary, { force: true }); refuse("runtime_link_refused"); });
 }
 

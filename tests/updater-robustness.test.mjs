@@ -567,3 +567,20 @@ test("int11: the owner's acknowledgement runs while self-update is Off; an updat
   assert.deepEqual(finished, [[1, "acted"], [2, "refused"]], "acknowledging is allowed while Off; rollback is not");
   assert.deepEqual(handled, ["acknowledge_attention"]);
 });
+
+test("installer pointers stay readable to other accounts when the installer runs under umask 077 (macOS link modes)", async t => {
+  // macOS checks a symlink's own mode on readlink; under the installer's umask 077 a root-made
+  // pointer was 0700 and every other account's realpath through it failed (VM: the builder's
+  // pnpm exited 1 silently on runtime/pnpm-current).
+  const { atomicSymlinkNoFollowV1 } = await import("../src/updater/v1/fs-safety.mjs");
+  const fsp = await import("node:fs/promises"), { tmpdir } = await import("node:os"), path = await import("node:path");
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(tmpdir(), "acr-link-mode-")));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  await fsp.mkdir(path.join(root, "releases/r1"), { recursive: true });
+  const previous = process.umask(0o077);
+  try { await atomicSymlinkNoFollowV1(root, path.join(root, "current"), "releases/r1"); }
+  finally { process.umask(previous); }
+  const mode = (await fsp.lstat(path.join(root, "current"))).mode & 0o777;
+  if (process.platform === "darwin") assert.equal(mode.toString(8), "755");
+  assert.equal(await fsp.readlink(path.join(root, "current")), "releases/r1");
+});

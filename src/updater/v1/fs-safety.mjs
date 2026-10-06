@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { chmod, lchown, lstat, mkdir, open, readlink, rename, symlink, unlink } from "node:fs/promises";
+import { chmod, lchmod, lchown, lstat, mkdir, open, readlink, rename, symlink, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { removeOwnedFileV1 } from "../../installer/shared/file-custody.mjs";
@@ -110,6 +110,7 @@ export async function atomicSymlinkNoFollowV1(root, candidate, target) {
   } catch (error) { if (error?.code !== "ENOENT") throw error; }
   const temporary = join(parent, `.${basename(absolute)}.${process.pid}.${randomBytes(8).toString("hex")}.link`);
   await symlink(target, temporary);
+  if (process.platform === "darwin") await lchmod(temporary, 0o755);
   try { await rename(temporary, absolute); }
   finally { await unlink(temporary).catch(() => {}); }
   const directory = await open(parent, constants.O_RDONLY);
