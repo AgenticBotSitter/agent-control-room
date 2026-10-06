@@ -156,6 +156,25 @@ async function registerInitialPasskeyWithAuthorityV1(input, authority) {
 export const recordPasskeyStatusV1 = input => databasePortNotYetSuppliedV1("recordPasskeyStatus", input);
 export const checkHealthDatabaseV1 = input => databasePortNotYetSuppliedV1("checkHealth.database", input);
 
+/** Entries in a `launchctl print user/<uid>` listing that the account itself left behind: any
+ * running service (pid > 0) or any service that is not one of Apple's own. An unreadable
+ * listing is refused rather than read as empty. */
+export function launchDomainLeftoversV1(text) {
+  const start = text.indexOf("\tservices = {");
+  if (start < 0) refuse("builder_launch_domain_refused");
+  const end = text.indexOf("\n\t}", start);
+  if (end < 0) refuse("builder_launch_domain_refused");
+  const leftovers = [];
+  for (const line of text.slice(text.indexOf("\n", start) + 1, end).split("\n")) {
+    if (line.trim() === "") continue;
+    const match = /^\s*(\d+|-)\s+(\S+)\s+(\S+)\s*$/u.exec(line);
+    if (!match) refuse("builder_launch_domain_refused");
+    const [, pid, , label] = match;
+    if ((pid !== "-" && Number(pid) > 0) || !/^com\.apple\.[A-Za-z0-9._-]+$/u.test(label)) leftovers.push(label);
+  }
+  return leftovers;
+}
+
 export async function killAccountProcessesV1(input, runtime = {}) {
   if (!exactKeys(input, input?.checkLaunchDomain === undefined ? ["uid"] : ["uid", "checkLaunchDomain"])
     || !Number.isSafeInteger(input.uid) || input.uid < 1 || input.uid > 0x7fffffff
@@ -172,15 +191,20 @@ export async function killAccountProcessesV1(input, runtime = {}) {
     refuse("account_process_sweep_refused");
   }
   if (input.checkLaunchDomain === true) {
-    const domainActive = () => run("/bin/launchctl", ["print", `user/${input.uid}`]).then(() => true, error => {
-      if (typeof error?.code === "number" && error.code !== 0) return false;
-      refuse("builder_launch_domain_refused");
-    });
-    // launchd keeps a user domain for an account that has run anything (the builder after a
-    // build). Tear it down and look again; refuse only if it is still there.
-    if (await domainActive()) {
+    // macOS 26 answers `launchctl print user/<uid>` for ANY uid: printing creates an empty
+    // background domain pre-filled with Apple's on-demand agents, none running (measured on a
+    // VM; the old "domain exists" test refused every retry). What must not survive the builder
+    // is something it started: a running process or a service that is not Apple's.
+    const leftovers = async () => {
+      const printed = await run("/bin/launchctl", ["print", `user/${input.uid}`]).then(result => result, error => {
+        if (typeof error?.code === "number" && error.code !== 0) return null;
+        refuse("builder_launch_domain_refused");
+      });
+      return printed === null ? [] : launchDomainLeftoversV1(String(printed?.stdout ?? ""));
+    };
+    if ((await leftovers()).length > 0) {
       await run("/bin/launchctl", ["bootout", `user/${input.uid}`]).catch(() => {});
-      if (await domainActive()) refuse("builder_launch_domain_refused");
+      if ((await leftovers()).length > 0) refuse("builder_launch_domain_refused");
     }
   }
   return Object.freeze({ swept: true, uid: input.uid });

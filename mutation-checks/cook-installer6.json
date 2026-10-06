@@ -57,10 +57,10 @@
   },
   {
     "file": "src/updater/v1/install/stage-one-ports.mjs",
-    "find": "if (await domainActive()) refuse(\"builder_launch_domain_refused\");",
+    "find": "if ((await leftovers()).length > 0) refuse(\"builder_launch_domain_refused\");",
     "replace": "if (false) refuse(\"builder_launch_domain_refused\");",
-    "test": "node --import tsx --test --test-name-pattern='account sweep is bounded' tests/updater-stage-one-ports.test.mjs",
-    "why": "recovery must refuse while launchd still has the detached builder user domain"
+    "test": "node --import tsx --test --test-name-pattern='macOS 26 builder launch domain' tests/updater-stage-one-ports.test.mjs",
+    "why": "recovery must refuse while the builder's launch domain still holds a service it started or a running process"
   },
   {
     "file": "src/updater/v1/install/stage-one-ports.mjs",
