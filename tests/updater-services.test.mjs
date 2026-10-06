@@ -559,3 +559,16 @@ test("the postgres shutdown check answers yes with no cluster, and still asks pg
   await writeFile(join(root, "pg", "socket", ".s.PGSQL.5432"), "");
   assert.equal(await verifyPostgresShutdownV1({ root, execute }), false, "a live socket is never shut down");
 });
+
+test("launchctl's 'no such service' answers count as not loaded, including macOS 26's 113, measured on this Mac", async t => {
+  const { launchctlNotLoadedV1 } = await import("../src/updater/v1/services/elevated.mjs");
+  for (const code of [3, 113, "ESRCH"]) assert.equal(launchctlNotLoadedV1({ code }), true, String(code));
+  for (const code of [1, 5, 37, 125, "EPERM", undefined]) assert.equal(launchctlNotLoadedV1({ code }), false, String(code));
+  if (process.platform !== "darwin") { t.diagnostic("real launchctl contract needs macOS"); return; }
+  // The real contract, not a fake: a label that cannot exist, read-only.
+  const { execFile } = await import("node:child_process");
+  const error = await new Promise(resolve => execFile("/bin/launchctl", ["print", "system/control-room.test.never-loaded"],
+    { env: { PATH: "/usr/bin:/bin" } }, failure => resolve(failure)));
+  assert.ok(error, "printing a label that is not loaded must fail");
+  assert.equal(launchctlNotLoadedV1(error), true, `launchctl answered ${error?.code}`);
+});
