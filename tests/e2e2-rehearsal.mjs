@@ -561,6 +561,16 @@ test('R5SD: generic modules, inline code, readable files and self-authored title
   assert.equal(parseOwnerBotProcessesV1(psRow(501, 700, 1, '/opt/unknown'), 501)[0].executable, null);
 });
 
+test('R5SD: a system process running as nobody (uid -2) parses and is never the owner', () => {
+  // Exact shape from a real Mac: dhcp6d runs as nobody, which ps prints as -2.
+  const nobody = '   -2 77687     1 /usr/libexec/dhc /usr/libexec/dhcp6d';
+  assert.deepEqual(parseOwnerBotProcessesV1(nobody, 501), []);
+  const mixed = `${nobody}\n${psRow(501, 700, 1, '/opt/unknown')}`;
+  assert.equal(parseOwnerBotProcessesV1(mixed, 501).length, 1);
+  for (const row of ['- 1 0 /usr/libexec/dhc /usr/libexec/dhcp6d', '--2 1 0 /usr/libexec/dhc /usr/libexec/dhcp6d'])
+    assert.throws(() => parseOwnerBotProcessesV1(row, 501), /bot_check_output_refused/u, row);
+});
+
 test('R5SD: malformed process and kernel input, invalid uid and missing identity refuse', () => {
   for (const row of ['501 1', '501 1 0 /opt/node', '501 1 0 /usr/bin/xyz         /opt/bin/abc',
     `501 1 0 ${'/opt/bin/opencode'.slice(0, 16)}`, '501 1 0 /long/cut/program', '999999999999999999999 1 0 /opt/bin/plain    /opt/bin/plain']) {

@@ -76,7 +76,9 @@ function processRows(output) {
   const rows = [];
   for (const line of `${output}`.split(/\r?\n/u)) {
     if (!line.trim()) continue;
-    const fields = /^\s*(\d+)\s+(\d+)\s+(\d+)\s(.*)$/u.exec(line);
+    // macOS shows the "nobody" account as uid -2 (e.g. /usr/libexec/dhcp6d).
+    // A negative uid is never the owner, but it must parse rather than refuse the whole check.
+    const fields = /^\s*(-?\d+)\s+(\d+)\s+(\d+)\s(.*)$/u.exec(line);
     if (!fields) refuse("bot_check_output_refused");
     const [uid, pid, ppid] = fields.slice(1, 4).map(Number);
     if (![uid, pid, ppid].every(Number.isSafeInteger) || pid < 1) refuse("bot_check_output_refused");
