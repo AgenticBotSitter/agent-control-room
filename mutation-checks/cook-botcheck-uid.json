@@ -28,13 +28,6 @@
     "why": "/etc maps to its /private/etc spelling on every platform's check (the macOS sudoers.d path), portable to Linux CI"
   },
   {
-    "file": "src/updater/v1/attended-source.mjs",
-    "find": "while ((after.pids.length > 0 || after.scheduled) && performance.now() < deadline) {",
-    "replace": "while (false) {",
-    "test": "node --test --test-name-pattern='still listed for a moment' tests/updater-attended-source.test.mjs",
-    "why": "the builder sweep re-lists until a just-killed pid is gone instead of refusing the first listing"
-  },
-  {
     "file": "src/updater/v1/cli.mjs",
     "find": " || plan.artifact?.commit !== commit\n",
     "replace": "\n",
