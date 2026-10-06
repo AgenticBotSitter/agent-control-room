@@ -371,6 +371,18 @@ test("stage B refuses dot-dot path components before touching tools", async t =>
   assert.notEqual(result.code, 0); assert.match(result.stderr, /bootstrap_root_refused/u);
 });
 
+test("one-command install: the bootstrap hands --confirmed-by-command yes to the installer, nothing else", async t => {
+  const fixture = await harness(t);
+  const run = await makeRun(fixture, { bootstrapArguments: ["--confirmed-by-command", "yes"] });
+  assert.equal(run.result.code, 0, run.result.stderr);
+  assert.match(await readFile(fixture.log, "utf8"),
+    new RegExp(`install --commit ${commit} --bootstrap [^\\n]+ --confirmed-by-command yes --invoking-user `, "u"));
+  for (const value of ["no", "YES", ""]) {
+    const refused = await makeRun(await harness(t), { bootstrapArguments: ["--confirmed-by-command", value] });
+    assert.notEqual(refused.result.code, 0, value); assert.match(refused.result.stderr, /bootstrap_arguments_refused/u);
+  }
+});
+
 test("stage B refuses malformed or incomplete rehearsal-only arguments", async t => {
   const fixture = await harness(t);
   const relative = await makeRun(fixture, { bootstrapArguments: ["--rehearsal-config", "relative.json",

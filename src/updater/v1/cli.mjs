@@ -132,7 +132,7 @@ export function parseInstallerArgumentsV1(verb, args, { root = DEFAULT_CONTROL_R
   }
   if (verb === "install") {
     const flags = parsePairsV1(args, new Set(["--root", "--commit", "--bootstrap", "--web-port", "--i-am-replacing-live",
-      "--rehearsal-config", "--fresh-database", "--authenticator", "--e2e2-evidence-log"]));
+      "--rehearsal-config", "--fresh-database", "--authenticator", "--e2e2-evidence-log", "--confirmed-by-command"]));
     if (flags["--commit"] !== undefined && !/^[a-f0-9]{40}$/u.test(flags["--commit"]))
       throw updaterRefuseV1("arguments_refused");
     if (flags["--web-port"] !== undefined && (!/^\d{1,5}$/u.test(flags["--web-port"])
@@ -145,6 +145,10 @@ export function parseInstallerArgumentsV1(verb, args, { root = DEFAULT_CONTROL_R
       throw updaterRefuseV1("arguments_refused");
     if (flags["--authenticator"] !== undefined && flags["--authenticator"] !== "software")
       throw updaterRefuseV1("arguments_refused");
+    // One-command install (owner decision 2026-10-06): the owner's own command names the exact
+    // 40-character commit, and that is the confirmation. It requires --commit.
+    if (flags["--confirmed-by-command"] !== undefined && (flags["--confirmed-by-command"] !== "yes"
+      || flags["--commit"] === undefined)) throw updaterRefuseV1("arguments_refused");
     if (flags["--rehearsal-config"] !== undefined) installerPathV1(flags["--rehearsal-config"]);
     if (flags["--e2e2-evidence-log"] !== undefined) installerPathV1(flags["--e2e2-evidence-log"]);
     if (!invokingUser) throw updaterRefuseV1("invoking_user_refused");
@@ -159,7 +163,8 @@ export function parseInstallerArgumentsV1(verb, args, { root = DEFAULT_CONTROL_R
         ? flags["--rehearsal-config"] === undefined ? DEFAULT_CONTROL_ROOM_WEB_PORT_V1 : undefined : Number(flags["--web-port"]),
       replacingLive: flags["--i-am-replacing-live"] === "yes", rehearsalConfig: flags["--rehearsal-config"],
       freshDatabase: flags["--fresh-database"] === "yes", authenticator: flags["--authenticator"],
-      e2e2EvidenceLog: flags["--e2e2-evidence-log"], invokingUser });
+      e2e2EvidenceLog: flags["--e2e2-evidence-log"], confirmedByCommand: flags["--confirmed-by-command"] === "yes",
+      invokingUser });
   }
   throw updaterRefuseV1("arguments_refused");
 }
@@ -276,6 +281,17 @@ export async function authorizeAttendedInstallV1(root, context) {
   throw updaterRefuseV1("updater_confirm_words_refused");
 }
 
+/** One-command install: the commit in the owner's own install command is the confirmation.
+ * The plan must be for exactly that commit and must not be a downgrade; the plan is still
+ * shown and the same confirmation record is written. */
+export async function authorizeByCommandV1(root, commit, context) {
+  const { plan, consentWords } = await confirmationPlanV1(root, context, { announce: false, render: true });
+  if (!/^[a-f0-9]{40}$/u.test(commit ?? "") || plan.artifact?.commit !== commit
+    || plan.updaterDerived?.downgrade === true) throw updaterRefuseV1("updater_command_confirmation_refused");
+  context.stdout(`Confirmed by your install command: ${commit}\n`);
+  return confirmV1(root, consentWords, context, { announce: false, render: false });
+}
+
 export function bufferedLineReaderV1(input) {
   let buffer = "", queuedBytes = 0, ended = false, pendingLf = false, failure;
   let raw = false;
@@ -390,7 +406,9 @@ try {
     const ports = await installerPortsV1(options); requireInstallerRootV1(ports);
     const parsed = parseInstallerArgumentsV1(verb, args, { root, invokingUser: invocation.invokingUser });
     const result = await installControlRoomV1({ ...(options.installerOptions ?? {}), ...parsed,
-      terminal, authorize: async () => authorizeAttendedInstallV1(parsed.root, context), ports });
+      terminal, authorize: async () => parsed.confirmedByCommand
+        ? authorizeByCommandV1(parsed.root, parsed.commit, context) : authorizeAttendedInstallV1(parsed.root, context),
+      ports });
     // A stopped Face ID step is not Ready (atk-fa F8): say so plainly, and what the guide says to do.
     if (result.passkey && result.passkey.status !== "registered") {
       context.stdout(`Not ready: Face ID is NOT set up (the passkey step stopped: ${result.passkey.reason}). `
