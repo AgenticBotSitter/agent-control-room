@@ -16,6 +16,10 @@ const releaseTargetPattern = /^releases\/([A-Za-z0-9._-]{1,160})$/u;
 const exactKeys = (value, names) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...names].sort().join(",");
 const refuse = code => { throw updaterRefuseV1(code); };
+/** A probe that could not connect at all (nothing listening yet, or no answer within the
+ * probe timeout). Only this kind is retried while services start; a wrong answer never is. */
+const unreachable = code => { throw Object.assign(updaterRefuseV1(code), { healthUnreachable: true }); };
+export const HEALTH_STARTUP_WAIT_MS_V1 = 120_000;
 
 async function readHealthProbeKeyV1(root) {
   let handle;
@@ -106,7 +110,7 @@ export async function checkWebHealthV1(input, runtime = {}) {
     response = await (runtime.transport ?? fetch)(`${origin}/api/v1/local-host-health`, { method: "POST",
       headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }), redirect: "error",
       signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });
-  } catch { refuse("health_web_refused"); }
+  } catch { unreachable("health_web_refused"); }
   return verifyWebHealthV1(await boundedJsonV1(response, runtime.responseLimitBytes ?? HEALTH_RESPONSE_LIMIT_BYTES_V1),
     { key, nonce, expectedRelease: release[1] });
 }
@@ -142,7 +146,7 @@ export async function checkGatewayHealthV1(input, runtime = {}) {
     response = await (runtime.transport ?? fetch)(`http://127.0.0.1:${port}/fleet/v1/local-health`, { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ nonce }), redirect: "error",
       signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });
-  } catch { refuse("health_gateway_refused"); }
+  } catch { unreachable("health_gateway_refused"); }
   return verifyGatewayHealthV1(await boundedJsonV1(response, runtime.responseLimitBytes ?? HEALTH_RESPONSE_LIMIT_BYTES_V1,
     "health_gateway_refused"), { key, nonce });
 }
@@ -160,6 +164,18 @@ export async function checkHealthV1(input, ports = {}, runtime = {}) {
   if (samples !== 3) refuse("health_input_refused");
   const current = await (ports.readCurrentRelease ?? readCurrentReleaseV1)(input.root);
   if (current !== input.expectedRelease) refuse("health_release_mismatch");
+  const delay = runtime.delay ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
+  // launchd has only just started the web host and gateway: wait, bounded, until each one
+  // answers at all. A wrong answer is refused at once; the three strict samples are unchanged.
+  const now = runtime.now ?? Date.now, startupDeadline = now() + (runtime.startupWaitMs ?? HEALTH_STARTUP_WAIT_MS_V1);
+  for (const probe of [checkWebHealthV1, checkGatewayHealthV1]) {
+    for (;;) {
+      try { await probe(input, runtime); break; } catch (error) {
+        if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;
+      }
+      await delay(runtime.startupPollMs ?? 500);
+    }
+  }
   for (let sample = 0; sample < samples; sample += 1) {
     const database = await ports.checkDatabase({ root: input.root, pgDataId: input.pgDataId,
       schemaDigest: input.schemaDigest, updaterSchemaDigest: input.updaterSchemaDigest });
@@ -168,8 +184,7 @@ export async function checkHealthV1(input, ports = {}, runtime = {}) {
       || database.updaterSchemaDigest !== input.updaterSchemaDigest) refuse("health_database_refused");
     await checkWebHealthV1(input, runtime);
     await checkGatewayHealthV1(input, runtime);
-    if (sample + 1 < samples) await (runtime.delay ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))))(
-      runtime.sampleIntervalMs ?? 5_000);
+    if (sample + 1 < samples) await delay(runtime.sampleIntervalMs ?? 5_000);
   }
   return Object.freeze({ healthy: true, samples, schemaDigest: input.schemaDigest });
 }

@@ -59,8 +59,8 @@ test("checkHealthV1 uses the existing web route, the default port, three samples
       return serviceResponse(url, init); },
   });
   assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
-  assert.equal(databaseCalls.length, 3); assert.equal(urls.length, 6);
-  // Every sample probes BOTH services: the web host, then the gateway (cl-bringup N-H).
+  assert.equal(databaseCalls.length, 3); assert.equal(urls.length, 8);
+  // One startup probe of each, then every sample probes BOTH services: the web host, then the gateway (cl-bringup N-H).
   const gateway = urls.filter((_request, index) => index % 2 === 1);
   for (const request of gateway) {
     assert.equal(request.url, `http://127.0.0.1:${DEFAULT_HEALTH_GATEWAY_PORT_V1}/fleet/v1/local-health`);
@@ -87,7 +87,7 @@ test("checkHealthV1 uses the existing web route, the default port, three samples
     () => Response.json({ ready: true }), () => Response.json({ ready: true, extra: 1 }),
     () => new Response("{}", { status: 404, headers: { "content-type": "application/json" } })]) {
     await assert.rejects(checkHealthV1(input({ gatewayPort: 3299 }), { readCurrentRelease: async () => RELEASE,
-      checkDatabase: databasePort }, { healthProbeKey: KEY, delay: async () => {},
+      checkDatabase: databasePort }, { healthProbeKey: KEY, delay: async () => {}, startupWaitMs: 0,
       transport: async (url, init) => url === "http://127.0.0.1:3299/fleet/v1/local-health" ? gatewayAnswer() : serviceResponse(url, init),
     }), /health_gateway_refused/u);
   }
@@ -151,6 +151,66 @@ test("health retries cleanly after a dropped/slow failure, stops halfway, and ha
     { root: input().root, expectedRelease: RELEASE }, { healthProbeKey: KEY,
       transport: async (_url, init) => responseFor(init) })));
   assert.equal(burst.length, 50); assert.equal(burst.every(value => value.releaseId === RELEASE_ID), true);
+});
+
+test("services launchd has just started pass health once they listen; the three strict samples are unchanged", async () => {
+  let clock = 0, webCalls = 0, gatewayCalls = 0; const databaseCalls = [], waits = [];
+  const result = await checkHealthV1(input(), { readCurrentRelease: async () => RELEASE,
+    checkDatabase: async value => { databaseCalls.push(value); return databasePort(); } }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { waits.push(milliseconds); clock += milliseconds; },
+    transport: async (url, init) => {
+      if (url.endsWith("/fleet/v1/local-health")) { gatewayCalls += 1; if (gatewayCalls <= 2) throw new Error("ECONNREFUSED"); }
+      else { webCalls += 1; if (webCalls <= 6) throw new Error("ECONNREFUSED"); }
+      return serviceResponse(url, init);
+    } });
+  assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
+  assert.equal(databaseCalls.length, 3);
+  assert.equal(webCalls, 7 + 3); assert.equal(gatewayCalls, 3 + 3);
+  assert.deepEqual(waits, [...Array(8).fill(500), 5_000, 5_000]);
+});
+
+test("a service that never listens is refused after the bounded startup wait, and a wrong answer at once", async () => {
+  let clock = 0, calls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async () => { calls += 1; throw new Error("ECONNREFUSED"); } }), /health_web_refused/u);
+  assert.equal(clock, 120_000); assert.equal(calls, 241);
+  calls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (_url, init) => { calls += 1; return responseFor(init, { releaseId: "other-release" }); } }), /health_web_refused/u);
+  assert.equal(calls, 1);
+  calls = 0;
+  await assert.rejects(checkHealthV1(input(), { readCurrentRelease: async () => RELEASE, checkDatabase: databasePort }, {
+    healthProbeKey: KEY, now: () => clock, delay: async milliseconds => { clock += milliseconds; },
+    transport: async (url, init) => { calls += 1; return url.endsWith("/fleet/v1/local-health") ? Response.json({ ready: true })
+      : serviceResponse(url, init); } }), /health_gateway_refused/u);
+  assert.equal(calls, 2);
+});
+
+test("the real loopback transport: a web host and gateway that start listening late pass the health step", async t => {
+  const freePort = async () => { const probe = createServer(); await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
+    const { port } = probe.address(); await new Promise(resolve => probe.close(resolve)); return port; };
+  const webPort = await freePort(), gatewayPort = await freePort();
+  const servers = [];
+  t.after(() => Promise.all(servers.map(server => new Promise(resolve => server.close(resolve)))));
+  const late = setTimeout(() => {
+    for (const port of [webPort, gatewayPort]) {
+      const server = createServer((request, response) => {
+        let body = ""; request.on("data", chunk => { body += chunk; });
+        request.on("end", () => {
+          const init = { body };
+          const answer = port === gatewayPort ? gatewayValue(JSON.parse(body).nonce) : healthValue(JSON.parse(init.body).nonce);
+          response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(answer));
+        });
+      });
+      servers.push(server); server.listen(port, "127.0.0.1");
+    }
+  }, 1_500);
+  t.after(() => clearTimeout(late));
+  const result = await checkHealthV1(input({ webPort, gatewayPort }), { readCurrentRelease: async () => RELEASE,
+    checkDatabase: databasePort }, { healthProbeKey: KEY, startupPollMs: 100, sampleIntervalMs: 10 });
+  assert.deepEqual(result, { healthy: true, samples: 3, schemaDigest: SCHEMA });
 });
 
 test("the real loopback transport bounds a dropped and a slow connection", async t => {

@@ -1,0 +1,16 @@
+[
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;",
+    "replace": "throw error;",
+    "test": "node --test --test-name-pattern='services launchd has just started' tests/updater-health-terminal.test.mjs",
+    "why": "the install health step waits, bounded, for services launchd has just started instead of refusing the first unanswered probe"
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "if (error?.healthUnreachable !== true || now() >= startupDeadline) throw error;",
+    "replace": "if (error?.healthUnreachable !== true) throw error;",
+    "test": "node --test --test-name-pattern='never listens is refused after the bounded startup wait' tests/updater-health-terminal.test.mjs",
+    "why": "the startup wait is bounded: a service that never listens is still refused"
+  }
+]
