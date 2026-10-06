@@ -44,6 +44,11 @@ test("D01/D05: installer layout allocates and verifies the reserve with a produc
   assert.equal(entry.size, 4096); assert.ok(entry.blocks * 512 >= 4096);
   assert.equal(entry.mode & 0o777, 0o600); assert.equal(entry.nlink, 1);
   assert.ok(owners.some(([path, uid, gid]) => path === pathOf(root) && uid === 0 && gid === 0));
+  // The attended confirmation is written into updater-state/confirmations; the layout must make it
+  // (VM: every real install stopped at the confirm step with ENOENT).
+  const confirmations = await lstat(join(root, "updater-state/confirmations"));
+  assert.equal(confirmations.isDirectory(), true); assert.equal(confirmations.mode & 0o777, 0o700);
+  assert.ok(owners.some(([path, uid, gid]) => path === join(root, "updater-state/confirmations") && uid === 0 && gid === 0));
   // An existing damaged reserve must not be replaced or silently accepted.
   await truncate(pathOf(root), 2048);
   await assert.rejects(createLayoutV1(root, accounts, ports, productionReserve), { code: "updater_rescue_reserve_refused" });
