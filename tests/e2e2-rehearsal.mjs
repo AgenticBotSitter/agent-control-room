@@ -772,6 +772,19 @@ test('R5SD: only the check tree and verified invoking shell chain are exempt', (
   assert.deepEqual(parseOwnerBotProcessesV1(rows, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [11, 14, 15]);
 });
 
+test('R5SD: the real macOS Terminal chain (Terminal -> root login -> zsh) exempts the invoking window only', () => {
+  const rows = [psRow(501, 10, 1, '/terminal'), psRow(0, 20, 10, 'login', 'login -pf owner'), psRow(501, 11, 20, '/bin/zsh'),
+    psRow(501, 12, 11, '/node'), psRow(0, 21, 10, 'login', 'login -pf owner'), psRow(501, 14, 21, '/bin/zsh')].join('\n');
+  const identities = new Map([[10, 'terminal'], [11, 'shell'], [14, 'shell']]);
+  const facts = new Map([['12', { uid: 501, ppid: 11 }], ['11', { uid: 501, ppid: 20 }]]);
+  assert.deepEqual(parseOwnerBotProcessesV1(rows, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [14], 'only the other window is listed');
+  // A login hop owned by the user, or not named login, never counts.
+  const fake = rows.replace(psRow(0, 20, 10, 'login', 'login -pf owner'), psRow(501, 20, 10, 'login', 'login -pf owner'));
+  assert.deepEqual(parseOwnerBotProcessesV1(fake, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [11, 14, 20]);
+  const renamed = rows.replace(psRow(0, 20, 10, 'login', 'login -pf owner'), psRow(0, 20, 10, 'helper', 'helper -pf owner'));
+  assert.deepEqual(parseOwnerBotProcessesV1(renamed, 501, { selfPid: 12, identities, facts }).map(row => row.pid), [11, 14]);
+});
+
 const kernelRow = (pid, executable = '/fixture/plain', uid = 501, ppid = 1) => `p${pid}\nu${uid}\nR${ppid}\nfcwd\ntDIR\nn/fixture/plain\nftxt\ntREG\ni77\nn${executable}\n`;
 function scanPort(ps, kernel) {
   let psRead = 0, kernelRead = 0;

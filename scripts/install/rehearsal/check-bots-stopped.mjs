@@ -230,6 +230,10 @@ function ownTree(rows, identities, selfPid, facts) {
     && facts.get(String(parent))?.ppid === byPid.get(parent)?.ppid) {
     seen.add(parent); chain.push(parent); parent = byPid.get(parent)?.ppid;
   }
+  // macOS Terminal starts each window as Terminal -> login (root) -> zsh. One root-owned
+  // login hop is allowed: a bot cannot create a root process, and only its parent counts.
+  const hop = byPid.get(parent);
+  if (hop && hop.uid === 0 && ["login", "/usr/bin/login"].includes(hop.words[0]) && identities.get(hop.ppid) === "terminal") parent = hop.ppid;
   if (identities.get(parent) === "terminal") for (const pid of chain) safe.add(pid);
   return safe;
 }
@@ -238,7 +242,9 @@ export function parseOwnerBotProcessesV1(output, ownerUid, kernel = {}) {
   if (!Number.isSafeInteger(ownerUid) || ownerUid < 1) refuse("bot_check_uid_refused");
   const facts = kernel.facts ?? new Map(), identities = kernel.identities ?? new Map();
   const rows = kernel.rows ?? processRows(output);
-  const safe = ownTree(rows.filter(row => row.uid === ownerUid), identities, kernel.selfPid, facts);
+  // The chain walk needs every row: the Terminal window's login step is root-owned. Only owner
+  // rows can be listed below, and only owner processes carry kernel facts or identities.
+  const safe = ownTree(rows, identities, kernel.selfPid, facts);
   const matches = [];
   for (const row of rows) {
     if (row.uid !== ownerUid || safe.has(row.pid)) continue;
