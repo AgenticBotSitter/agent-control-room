@@ -197,8 +197,8 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "if (after.pids.length > 0 || after.scheduled) refuse(\"builder_left_process\");",
-    "replace": "if (false) refuse(\"builder_left_process\");",
+    "find": "if (after.pids.length > 0 || after.scheduled) { await describeBuilderLeftovers(control, after); refuse(\"builder_left_process\"); }",
+    "replace": "if (false) { await describeBuilderLeftovers(control, after); refuse(\"builder_left_process\"); }",
     "test": "node --test --test-name-pattern='post-kill verification' tests/updater-attended-source.test.mjs",
     "why": "builder cleanup rechecks the uid and refuses when a process survives the kill attempt"
   },

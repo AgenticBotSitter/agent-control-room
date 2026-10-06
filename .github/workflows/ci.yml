@@ -80,6 +80,14 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: node scripts/ci/affected-tests.mjs --github-output "${BASE_SHA:-HEAD^}"
+      - name: Install zsh for selected macOS paste-file checks
+        # The owner paste-file tests run the generated blocks under zsh. Selecting them
+        # here (a change to the paste-file generator) must not fail on a missing shell.
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh
       - name: Install PostgreSQL 17 when selected tests require it
         if: ${{ steps.selection.outputs.needs-pg == 'true' }}
         env:
