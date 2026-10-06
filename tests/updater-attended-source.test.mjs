@@ -609,6 +609,19 @@ test("the real account lookup refuses a uid-zero builder before repository or bu
   assert.deepEqual(f.spawned, [], "a uid-zero builder is refused before any real child process is spawned");
 });
 
+test("a killed builder pid that is still listed for a moment does not fail the build (SIGKILL is asynchronous)", async t => {
+  const f = await fixture(t); let inspections = 0;
+  const builderProcessControl = {
+    // start: idle; after build: one helper left; right after the kill it is still listed once; then gone.
+    async listPids() { inspections += 1; return inspections === 2 || inspections === 3 ? [424_243] : []; },
+    async hasScheduledEntries() { return false; },
+    async killPid() {},
+  };
+  const result = await installAttendedCommitV1({ ...f.materialize({ builderProcessControl }), authorize: value => authorize(f.root, value) })
+    .then(() => "installed", error => error?.code ?? error?.message);
+  assert.notEqual(result, "builder_left_process");
+});
+
 test("post-kill verification refuses when the same builder pid survives a no-op kill", async t => {
   const f = await fixture(t); let inspections = 0, kills = 0;
   const builderProcessControl = {
@@ -618,7 +631,9 @@ test("post-kill verification refuses when the same builder pid survives a no-op 
   };
   await assert.rejects(installAttendedCommitV1({ ...f.materialize({ builderProcessControl }),
     authorize: value => authorize(f.root, value) }), /builder_left_process/u);
-  assert.equal(kills, 2); assert.equal(inspections, 5,
+  // The sweep now polls (SIGKILL is asynchronous), so it kills and re-lists more than once
+  // before refusing a pid that never goes away.
+  assert.ok(kills >= 2, `kills ${kills}`); assert.ok(inspections >= 5,
     "the primary cleanup and its finally retry both re-list the uid after attempting the kill");
   assert.equal(f.spawned.some(call => call.args?.includes(f.fake) && call.args?.includes("bundle")), false,
     "a surviving builder process prevents the fixed bundle phase");
