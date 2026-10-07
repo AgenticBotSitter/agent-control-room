@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import { chmodSync } from "node:fs";
+import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:https";
@@ -581,7 +583,20 @@ test("CI verifier binds esbuild bytes to the npm registry integrity proof", asyn
 const recordedWriteFailure = "curl: (56) Failure writing output to destination, passed 1369 returned 4294967295";
 const recordedConnectFailure = "curl: (7) Failed to connect to 127.0.0.1 port 63017 after 0 ms: Couldn't connect to server\n";
 
-async function downloadReplayFixture(t, responses, { deny } = {}) {
+function downloadTestClock() {
+  let time = 0;
+  const waits = [], timers = [];
+  return { waits, timers, now: () => time, advance: ms => { time += ms; },
+    async sleep(ms) { waits.push(ms); time += ms; },
+    setTimeout(callback, ms) { timers.push({ callback, ms }); return setTimeout(callback, ms); },
+    clearTimeout: timer => clearTimeout(timer) };
+}
+
+async function downloadStateAbsent(path) {
+  return lstat(path).then(() => false, error => error.code === "ENOENT" ? true : Promise.reject(error));
+}
+
+async function downloadReplayFixture(t, responses, { deny, outageMs } = {}) {
   const scratch = join(repositoryRoot, ".test-tmp");
   await mkdir(scratch, { recursive: true });
   const root = await realpath(await mkdtemp(join(scratch, "v101-replay-")));
@@ -591,19 +606,23 @@ async function downloadReplayFixture(t, responses, { deny } = {}) {
   const artifacts = await Promise.all(["node", "pnpm", "esbuild"].map(tool => archiveFixture(root, tool)));
   const artifact = artifacts[0];
   const { inventory } = inventoryFor("https://runtime.example.test", artifacts);
-  const script = join(root, "replay.mjs"), counter = join(root, "attempts.json");
+  const script = join(root, "replay.mjs"), counter = join(root, "attempts.json"), clockFile = join(root, "clock.json");
+  const clock = downloadTestClock();
   await writeFile(script, `import {existsSync,readFileSync,writeFileSync} from "node:fs";
 const rows=${JSON.stringify(responses)}, counter=${JSON.stringify(counter)};
 const args=process.argv.slice(2), output=args[args.indexOf("--output")+1];
 const seen=existsSync(counter)?JSON.parse(readFileSync(counter,"utf8")):[];
 seen.push({partialPresent:existsSync(output)});writeFileSync(counter,JSON.stringify(seen));
-const row=rows[Math.min(seen.length-1,rows.length-1)];
+const row=${outageMs === undefined ? 'rows[Math.min(seen.length-1,rows.length-1)]'
+    : `JSON.parse(readFileSync(${JSON.stringify(clockFile)},"utf8")) < ${outageMs} ? rows[0] : rows[1]`};
 writeFileSync(output,row.exit===0?Buffer.from(${JSON.stringify(artifact.bytes.toString('base64'))},"base64"):"partial",{flag:"wx"});
 process.stderr.write(row.stderr);process.exitCode=row.exit;
 `);
   const input = { ...frozenInput(root, inventory), tools: ["node"], transactionId: "download-proof" };
   const observations = [];
   const runtime = { curlPath: process.execPath, curlArgumentsPrefix: [script], skipMacMetadata: true,
+    downloadClock: clock,
+    async observeDownloadSpawn() { await writeFile(clockFile, JSON.stringify(clock.now())); },
     spawn(file, args, options) {
       observations.push({ probe: file === "/bin/sh", uid: options.uid, gid: options.gid });
       if (deny === "collision" && file === "/bin/sh") {
@@ -611,14 +630,19 @@ process.stderr.write(row.stderr);process.exitCode=row.exit;
           "import {writeFileSync} from \"node:fs\"; writeFileSync(process.argv[1], \"adversary\", {flag: \"wx\"});", args.at(-1)]);
         assert.equal(collision.status, 0, "adversary creates a probe collision at the actual spawn boundary");
       }
-      return spawn(file, args, options);
+      const child = spawn(file, args, options);
+      if (deny === "traversal" && file === "/bin/sh") {
+        // Retain real account denial, then restore traversal before the product's cleanup runs.
+        child.prependOnceListener("close", () => chmodSync(join(root, "build"), 0o755));
+      }
+      return child;
     },
     async lchown(path, uid, gid) {
       await lchown(path, uid, gid);
       if (deny === "write") await chmod(path, 0o500);
       if (deny === "traversal") await chmod(join(root, "build"), 0o600);
     } };
-  return { root, artifact, input, runtime, observations,
+  return { root, artifact, input, runtime, observations, clock,
     attempts: () => readFile(counter, "utf8").then(JSON.parse, error => error.code === "ENOENT" ? [] : Promise.reject(error)) };
 }
 
@@ -626,8 +650,8 @@ async function downloadFailure(fixture) {
   let failure;
   try { await vendorRuntimeV1(fixture.input, fixture.runtime); } catch (error) { failure = error; }
   assert.ok(failure, "download must refuse");
-  assert.equal(await lstat(join(fixture.root, "build/download-download-proof")).catch(() => null), null,
-    "download refusal reaches partial cleanup");
+  assert.equal(await downloadStateAbsent(join(fixture.root, "build/download-download-proof")), true,
+    "download refusal removes the actual folder; permission errors are not absence");
   return failure;
 }
 
@@ -702,4 +726,70 @@ test("V101 fifty isolated callers recover transient partials and clean their own
     assert.equal(await readlink(join(fixture.root, "runtime/node-current")), "node-1.2.3");
     assert.equal(await lstat(join(fixture.root, "build/download-download-proof")).catch(() => null), null);
   }));
+});
+
+
+test("V101 backoff survives multi-second outages with five then fifteen second waits", async t => {
+  // Synthetic virtual outage windows; subprocess answers replay the recorded curl 7 failure.
+  for (const outageMs of [2000, 6000, 19000]) {
+    const fixture = await downloadReplayFixture(t,
+      [{ exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" }], { outageMs });
+    await assert.doesNotReject(() => vendorRuntimeV1(fixture.input, fixture.runtime),
+      `a ${outageMs} ms outage must be survived within three attempts`);
+    assert.deepEqual(fixture.clock.waits, outageMs < 5000 ? [5000] : [5000, 15000],
+      "retry waits follow the independently specified five and fifteen seconds");
+    assert.equal((await fixture.attempts()).length, outageMs < 5000 ? 2 : 3);
+    assert.equal(await readFile(join(fixture.root, "runtime/node-current/bin/node"), "utf8"),
+      "#!/bin/sh\nprintf 'node 1.2.3\\n'\n", "real installed reader sees the requested runtime");
+  }
+});
+
+test("V101 overall archive deadline stops further attempts and clips the retry wait", async t => {
+  const fixture = await downloadReplayFixture(t, [
+    { exit: 7, stderr: recordedConnectFailure }, { exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" },
+  ]);
+  const launch = fixture.runtime.spawn;
+  let attempt = 0;
+  fixture.runtime.spawn = (file, args, options) => {
+    const child = launch(file, args, options);
+    if (file !== "/bin/sh") {
+      const duration = attempt++ === 0 ? 29 * 60 * 1000 : (15 * 60 + 54) * 1000;
+      child.prependOnceListener("close", () => fixture.clock.advance(duration));
+    }
+    return child;
+  };
+  const error = await downloadFailure(fixture);
+  assert.equal(error.runtimeDownload?.stderr, "Download timed out", "overall expiry gives a safe timeout");
+  assert.equal((await fixture.attempts()).length, 2, "overall deadline refuses the third attempt");
+  assert.deepEqual(fixture.clock.waits, [5000, 1000], "retry wait cannot exceed the remaining archive budget");
+  assert.equal(fixture.clock.now(), 45 * 60 * 1000, "archive consumes no more than forty-five minutes");
+});
+
+test("V101 overall archive deadline bounds an in-flight attempt watchdog", async t => {
+  const fixture = await downloadReplayFixture(t, [{ exit: 7, stderr: recordedConnectFailure }]);
+  const launch = fixture.runtime.spawn;
+  let attempts = 0, kills = 0;
+  fixture.runtime.spawn = (file, args, options) => {
+    if (file === "/bin/sh" || ++attempts === 1) {
+      const child = launch(file, args, options);
+      if (file !== "/bin/sh") child.prependOnceListener("close", () => fixture.clock.advance(29 * 60 * 1000));
+      return child;
+    }
+    // Synthetic hung curl; observable kill/close exercises the real watchdog and refusal path.
+    const child = new EventEmitter(); child.stderr = new EventEmitter();
+    child.kill = signal => { kills += 1; queueMicrotask(() => child.emit("close", null, signal)); };
+    queueMicrotask(() => {
+      const timer = fixture.clock.timers.at(-1);
+      if (timer) { fixture.clock.advance(timer.ms); timer.callback(); }
+      else { child.stderr.emit("data", Buffer.from(recordedConnectFailure)); child.emit("close", 7, null); }
+    });
+    return child;
+  };
+  const error = await downloadFailure(fixture);
+  assert.equal(error.runtimeDownload?.stderr, "Download timed out", "remaining budget kills an in-flight attempt");
+  assert.equal(attempts, 2, "watchdog expiry must not spawn another attempt");
+  assert.equal(kills, 1, "expired attempt is retired before cleanup");
+  assert.deepEqual(fixture.clock.timers.map(timer => timer.ms), [1800000, 1800000, 955000],
+    "per-attempt watchdog stays thirty minutes and then uses only the remaining budget");
+  assert.equal(fixture.clock.now(), 2700000, "hung attempt ends at the overall forty-five minute deadline");
 });

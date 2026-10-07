@@ -66,13 +66,21 @@ function transientDownloadFailure(diagnostic) {
     || diagnostic.exitCode === 56 && diagnostic.stderr === "Receive failure";
 }
 
-function run(file, args, options, runtime) {
+const DOWNLOAD_CLOCK = Object.freeze({
+  now: () => performance.now(),
+  sleep: ms => new Promise(resolvePromise => setTimeout(resolvePromise, ms)),
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: timer => clearTimeout(timer),
+});
+
+function run(file, args, options, runtime, timeoutMs = Infinity) {
   return new Promise((resolvePromise, reject) => {
     const launch = runtime.spawn ?? spawn;
+    const clock = runtime.downloadClock ?? DOWNLOAD_CLOCK;
     let child, stderr = "", bytes = 0, settled = false, stoppedReason = null, timer;
     const finish = (code, signal) => {
       if (settled) return;
-      settled = true; clearTimeout(timer);
+      settled = true; clock.clearTimeout(timer);
       if (code === 0 && signal === null && stoppedReason === null) { resolvePromise(); return; }
       const error = new Error("runtime_download_failed");
       error.code = "runtime_download_failed";
@@ -83,8 +91,8 @@ function run(file, args, options, runtime) {
     };
     try { child = launch(file, args, { ...options, shell: false, stdio: ["ignore", "ignore", "pipe"] }); }
     catch { stoppedReason = "Could not start download"; finish(null, null); return; }
-    timer = setTimeout(() => { stoppedReason = "Download timed out"; child.kill("SIGKILL"); },
-      runtime.downloadTimeoutMs ?? 30 * 60 * 1000);
+    timer = clock.setTimeout(() => { stoppedReason = "Download timed out"; child.kill("SIGKILL"); },
+      Math.min(runtime.downloadTimeoutMs ?? 30 * 60 * 1000, timeoutMs));
     child.stderr?.on("data", chunk => {
       bytes += chunk.length;
       if (bytes > 64 * 1024) { stoppedReason = "Download diagnostic exceeded limit"; child.kill("SIGKILL"); return; }
@@ -96,32 +104,46 @@ function run(file, args, options, runtime) {
   });
 }
 
-async function assertDownloadDestination(destination, identity, runtime) {
+async function assertDownloadDestination(destination, identity, runtime, timeoutMs) {
   const probe = join(dirname(destination), `.write-probe-${randomBytes(8).toString("hex")}`);
   // The same uid/gid and environment as curl exercise every ancestor's traversal and a real write.
   // Bootstrap Node can live under a root-only 0700 folder. Use the system shell's builtin write,
   // with a fixed script and a positional path (never interpolated shell input). Noclobber refuses links.
   const script = 'umask 077; set -C; printf probe > "$1"';
   try {
-    await run("/bin/sh", ["-c", script, "runtime-write-probe", probe], { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);
+    await run("/bin/sh", ["-c", script, "runtime-write-probe", probe], { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime, timeoutMs);
   } catch { refuse("runtime_download_destination_unwritable"); }
   finally { await rm(probe, { force: true }).catch(() => refuse("runtime_download_destination_unwritable")); }
 }
 
 async function downloadArchive(artifact, destination, identity, runtime) {
-  await assertDownloadDestination(destination, identity, runtime);
+  const clock = runtime.downloadClock ?? DOWNLOAD_CLOCK;
+  // One monotonic budget per archive includes the identity probe, retries and waits.
+  const deadline = clock.now() + 45 * 60 * 1000;
+  const remaining = () => {
+    const ms = deadline - clock.now();
+    if (ms <= 0) {
+      const error = new Error("runtime_download_failed"); error.code = "runtime_download_failed";
+      error.runtimeDownload = Object.freeze({ exitCode: null, stderr: "Download timed out" });
+      throw error;
+    }
+    return ms;
+  };
+  await assertDownloadDestination(destination, identity, runtime, remaining());
   const args = [...(runtime.curlArgumentsPrefix ?? []), "-q", "--proto", "=https", "--tlsv1.2", "--fail", "--silent", "--show-error", "--location",
     "--max-filesize", String(artifact.archiveBytes), "--output", destination, artifact.url];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    remaining();
     await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? "/usr/bin/curl", args: [...args],
       uid: identity.uid, gid: identity.gid });
     try {
-      await run(runtime.curlPath ?? "/usr/bin/curl", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);
+      await run(runtime.curlPath ?? "/usr/bin/curl", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime, remaining());
+      remaining();
       return;
     } catch (error) {
       if (attempt === 3 || !transientDownloadFailure(error.runtimeDownload)) throw error;
       await rm(destination, { force: true });
-      await new Promise(resolvePromise => setTimeout(resolvePromise, attempt * 100));
+      await clock.sleep(Math.min(attempt === 1 ? 5000 : 15000, remaining()));
     }
   }
 }

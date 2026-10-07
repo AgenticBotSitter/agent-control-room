@@ -22,21 +22,21 @@
   },
   {
     "file": "src/updater/v1/install/runtime.mjs",
-    "find": "  for (let attempt = 1; attempt <= 3; attempt += 1) {\n    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? \"/usr/bin/curl\", args: [...args],\n      uid: identity.uid, gid: identity.gid });\n    try {\n      await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);\n      return;\n    } catch (error) {\n      if (attempt === 3 || !transientDownloadFailure(error.runtimeDownload)) throw error;",
-    "replace": "  for (let attempt = 1; attempt <= 4; attempt += 1) {\n    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? \"/usr/bin/curl\", args: [...args],\n      uid: identity.uid, gid: identity.gid });\n    try {\n      await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);\n      return;\n    } catch (error) {\n      if (attempt === 4 || !transientDownloadFailure(error.runtimeDownload)) throw error;",
+    "find": "  for (let attempt = 1; attempt <= 3; attempt += 1) {\n    remaining();\n    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? \"/usr/bin/curl\", args: [...args],\n      uid: identity.uid, gid: identity.gid });\n    try {\n      await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime, remaining());\n      remaining();\n      return;\n    } catch (error) {\n      if (attempt === 3 || !transientDownloadFailure(error.runtimeDownload)) throw error;",
+    "replace": "  for (let attempt = 1; attempt <= 4; attempt += 1) {\n    remaining();\n    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? \"/usr/bin/curl\", args: [...args],\n      uid: identity.uid, gid: identity.gid });\n    try {\n      await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime, remaining());\n      remaining();\n      return;\n    } catch (error) {\n      if (attempt === 4 || !transientDownloadFailure(error.runtimeDownload)) throw error;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 transient retries stop\" tests/updater-runtime-vendor.test.mjs",
     "why": "the loop and terminal refusal together enforce the independently specified maximum three attempts"
   },
   {
     "file": "src/updater/v1/install/runtime.mjs",
-    "find": "await rm(destination, { force: true });\n      await new Promise",
-    "replace": "void destination;\n      await new Promise",
+    "find": "await rm(destination, { force: true });\n      await clock.sleep",
+    "replace": "void destination;\n      await clock.sleep",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recorded transient failure\" tests/updater-runtime-vendor.test.mjs",
     "why": "exclusive fake curl verifies actual partial deletion before retry"
   },
   {
     "file": "src/updater/v1/install/runtime.mjs",
-    "find": "await assertDownloadDestination(destination, identity, runtime);",
+    "find": "await assertDownloadDestination(destination, identity, runtime, remaining());",
     "replace": "void identity;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
     "why": "real identity permission refusals must precede curl"
@@ -96,5 +96,54 @@
     "replace": "umask 077; printf probe",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
     "why": "a collision before the actual account probe must refuse without starting curl"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "attempt === 1 ? 5000 : 15000",
+    "replace": "attempt === 1 ? 100 : 15000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 backoff survives\" tests/updater-runtime-vendor.test.mjs",
+    "why": "lead five-second first retry wait survives a two-second outage"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "attempt === 1 ? 5000 : 15000",
+    "replace": "attempt === 1 ? 5000 : 200",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 backoff survives\" tests/updater-runtime-vendor.test.mjs",
+    "why": "lead fifteen-second second retry wait survives a nineteen-second outage"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (ms <= 0) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
+    "why": "literal forty-five-minute deadline refuses further attempts"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "Math.min(runtime.downloadTimeoutMs ?? 30 * 60 * 1000, timeoutMs)",
+    "replace": "runtime.downloadTimeoutMs ?? 30 * 60 * 1000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline bounds\" tests/updater-runtime-vendor.test.mjs",
+    "why": "hung attempt watchdog uses only remaining archive budget"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "Math.min(attempt === 1 ? 5000 : 15000, remaining())",
+    "replace": "attempt === 1 ? 5000 : 15000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
+    "why": "backoff cannot extend the literal forty-five-minute archive budget"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "await rm(downloadRoot, { recursive: true, force: true }).catch(() => {});",
+    "replace": "void downloadRoot;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
+    "why": "strict ENOENT cleanup assertion detects a retained folder with parent traversal restored"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "const deadline = clock.now() + 45 * 60 * 1000;",
+    "replace": "const deadline = clock.now() + 90 * 60 * 1000;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
+    "why": "overall ceiling is an independent lead-specified forty-five minutes, not three thirty-minute attempts"
   }
 ]
