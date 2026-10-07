@@ -40,6 +40,9 @@ export const skippedTestExemptions = new Map([
   ["tests/pg-runtime-vendor-synthetic.test.ts", "its Mach-O signing case needs the real /usr/bin/clang and /usr/bin/codesign, which are macOS-only; its other cases still run"],
   ["tests/pg-clone-probe.test.ts", "its clonefile(2) sidecar needs the macOS toolchain (xcrun, clang) and hdiutil, and its ENOSYS case measures macOS libuv; Linux has none of them"],
   ["tests/test-runner-service.test.mjs", "its native-code case (T1) compiles a macOS process-table probe with the Xcode C compiler; its other cases still run"],
+  ["tests/macos-launch-daemon-bundle.test.ts", "its native plutil case runs in the macOS updater tests job (test-updater, test:launch-daemons); its other cases still run here"],
+  ["tests/owner-small-screen-regressions.test.tsx", "its Chromium cases run in the Component lanes job (test-components), which provisions Chromium and runs test:components -> test:product-shell; its other cases still run here"],
+  ["tests/phone-resume-update.test.tsx", "its Chromium cases run in the Component lanes job (test-components), which provisions Chromium and runs test:components -> test:product-shell; its other cases still run here"],
   ["tests/mac-local-pg17-rehearsal.test.mjs", "runs in the full-mac-local-rehearsal job, which provides CONTROL_ROOM_MAC_REHEARSAL_ROOT (see PR #429)"],
 ]);
 

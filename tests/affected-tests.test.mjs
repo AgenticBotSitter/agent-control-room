@@ -302,13 +302,43 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
 });
 
 test("every skipped-test exemption names an existing file and non-empty reason", () => {
-  assert.equal(skippedTestExemptions.size, 25, "the documented exemption list must stay deliberately bounded");
+  assert.equal(skippedTestExemptions.size, 28, "the documented exemption list must stay deliberately bounded");
   for (const [file, reason] of skippedTestExemptions) {
     assert.ok(existsSync(join(process.cwd(), file)), `exemption file must exist: ${file}`);
     assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);
     assert.ok(reason.trim().length > 0, `exemption reason must not be empty: ${file}`);
   }
 });
+
+test("native plist validation has a macOS CI home before PostgreSQL installation", () => {
+  const workflow = readFileSync(join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+  const job = workflow.split("  test-updater:\n")[1]?.split("\n  test-articles:")[0];
+  assert.ok(job, "the macOS updater job must exist");
+  assert.match(job, /runs-on: macos-26/u);
+  const install = job.indexOf("run: pnpm install --frozen-lockfile --ignore-scripts");
+  const native = job.indexOf("run: pnpm run test:launch-daemons");
+  const postgres = job.indexOf("- name: Install PostgreSQL 17");
+  assert.ok(install >= 0 && native > install && postgres > native,
+    "native plutil must run after dependency installation and before PostgreSQL setup");
+  assert.equal(job.split("run: pnpm run test:launch-daemons").length - 1, 1);
+});
+
+for (const [file, job] of [
+  ["tests/macos-launch-daemon-bundle.test.ts", "macOS updater tests"],
+  ["tests/owner-small-screen-regressions.test.tsx", "Component lanes"],
+  ["tests/phone-resume-update.test.tsx", "Component lanes"],
+]) {
+  test(`CI-backed skip exemption: ${file}`, () => {
+    const reason = skippedTestExemptions.get(file);
+    assert.ok(reason?.includes(job), `the exemption must name its real CI job: ${job}`);
+    const root = fixture({ [file]: "", "tests/capability.test.mjs": "import test from 'node:test'; test('capability absent', { skip: true }, () => {});" });
+    try {
+      assert.equal(runAffectedTests([file], [file], root, () => 0, () => true,
+        (command, args, cwd, env) => executePlainFixture(command, [...args.slice(0, -1), "tests/capability.test.mjs"], cwd, env)), 0,
+        "the named CI route must allow a genuine local capability skip");
+    } finally { rmSync(root, { recursive: true }); }
+  });
+}
 
 test("the real-Codex-sandbox suite is exempted, since CI has no qualified sandbox binary to run it", () => {
   assert.ok(skippedTestExemptions.has("tests/codex-owner-trusted-local-exec.test.ts"),
