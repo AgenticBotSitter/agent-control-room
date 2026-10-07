@@ -579,8 +579,11 @@ export function cliFailureMessageV1(error) {
   // `cause`, and the refusing undo steps as `undoFailures` (VM, main 66fb6a29: the line read
   // only `updater_cli_failed`). Their codes follow, bounded, so the owner's one line names them.
   const causes = [];
-  for (let cause = error?.cause; cause && causes.length < 3; cause = cause.cause) {
-    causes.push(typeof cause.code === "string" ? cause.code : firstLine(cause).slice(0, 80) || "uncoded");
+  for (let cause = error?.cause, depth = 0; cause && depth < 6 && causes.length < 3; cause = cause.cause, depth += 1) {
+    const label = typeof cause.code === "string" ? cause.code : firstLine(cause).slice(0, 80) || "uncoded";
+    // A wrapper that re-throws under its own cause's code adds nothing (VM: "services_heartbeat_refused;
+    // cause: services_heartbeat_refused").
+    if (label !== (causes.at(-1) ?? error?.code)) causes.push(label);
   }
   const undo = Array.isArray(error?.undoFailures) ? error.undoFailures.filter(value => typeof value === "string")
     .slice(0, 4).map(value => value.slice(0, 80)) : [];

@@ -666,6 +666,9 @@ test("the stop line names what started an incomplete rollback and which undo ste
   assert.equal(cliFailureMessageV1(new Error("x_refused", { cause: new Error("spawn EACCES\nstack") })),
     "updater_cli_failed: x_refused; cause: spawn EACCES");
   assert.doesNotMatch(cliFailureMessageV1(Object.assign(new Error("a"), { undoFailures: ["b\u001b[31m"] })), /\u001b/u);
+  const heartbeat = Object.assign(new Error("services_heartbeat_refused"), { code: "services_heartbeat_refused" });
+  assert.equal(cliFailureMessageV1(Object.assign(new Error("services_heartbeat_refused", { cause: heartbeat }),
+    { code: "services_heartbeat_refused" })), "services_heartbeat_refused", "a repeated code is not printed twice");
   assert.ok(cliFailureMessageV1(Object.assign(new Error("y".repeat(300)), {
     cause: new Error("z".repeat(300)), undoFailures: Array(9).fill("w".repeat(300)) })).length <= 400);
 });
