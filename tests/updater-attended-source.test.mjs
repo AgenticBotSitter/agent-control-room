@@ -1259,3 +1259,22 @@ test("history metadata written while the classifier asks about ancestry is still
     assert.equal(result.baseline, "unproven"); assert.equal(result.changesDatabase, true);
   } finally { await abortAttendedV1(fetched); }
 });
+
+test("a stop while the ancestry question is asked is reported as a stop, not as a history answer", async t => {
+  // The mirror check runs first, so a stop that is already set never reaches the
+  // ancestry question; this one arrives as that question is spawned.
+  const f = await fixture(t), controller = new AbortController();
+  const target = await commitFiles(f.repository, "code", { "src/app.mjs": "export const c = 1;\n" });
+  await markInstalled(f, f.commit);
+  await git(f.repository, "branch", "-f", "classify-main", target); await publishLocalFixtureV1(f.repository, "classify-main");
+  let armed = false, stoppedAt = null;
+  const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: target, signal: controller.signal, onSpawn: async call => {
+    f.spawned.push(call);
+    if (armed && stoppedAt === null && call.args.includes("merge-base")) { stoppedAt = call.args.join(" "); controller.abort(); }
+  } });
+  try {
+    armed = true;
+    await assert.rejects(classifyAttendedSourceV1(fetched), /updater_attended_stopped/u);
+    assert.match(stoppedAt ?? "", /merge-base --is-ancestor/u, "the stop arrived at the ancestry question");
+  } finally { await abortAttendedV1(fetched); }
+});

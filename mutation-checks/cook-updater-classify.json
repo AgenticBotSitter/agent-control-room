@@ -73,7 +73,7 @@
     "file": "src/updater/v1/attended-source.mjs",
     "find": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;",
     "replace": "    .catch(() => null))?.code === 0;",
-    "test": "node --test --test-name-pattern='a stop during classification' tests/updater-attended-source.test.mjs",
+    "test": "node --test --test-name-pattern='a stop while the ancestry question is asked' tests/updater-attended-source.test.mjs",
     "why": "a stop or timeout during the ancestry check is reported as itself, never turned into a history answer"
   },
   {
