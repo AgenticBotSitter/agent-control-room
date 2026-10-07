@@ -1,0 +1,65 @@
+[
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    paths = [...await names([\"diff-tree\", \"-r\", \"--no-renames\", \"--name-only\", \"-z\", from.commit, target]),\n      ...await names([\"log\", \"--no-renames\", \"--diff-merges=separate\", \"--name-only\", \"--format=\", \"-z\", range])];",
+    "replace": "    paths = await names([\"diff-tree\", \"--root\", \"-m\", \"--no-commit-id\", \"--name-only\", \"-r\", \"-z\", target]);",
+    "test": "node --test --test-name-pattern='reproducer: a migration in an earlier commit' tests/updater-attended-source.test.mjs",
+    "why": "the change set is measured from the installed release, not from the target commit's own parent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": ",\n      ...await names([\"log\", \"--no-renames\", \"--diff-merges=separate\", \"--name-only\", \"--format=\", \"-z\", range])];",
+    "replace": "];",
+    "test": "node --test --test-name-pattern='added and reverted inside the update' tests/updater-attended-source.test.mjs",
+    "why": "every commit in the range counts, so a migration added and reverted inside one update is still a change"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"deploy/postgres/\", \"src/updater/v1/ddl/\"]);",
+    "replace": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"deploy/postgres/\"]);",
+    "test": "node --test --test-name-pattern='any file under the updater DDL directory' tests/updater-attended-source.test.mjs",
+    "why": "the updater's fixed DDL is applied by the release schema phase, which a non-fresh install does not run"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"deploy/postgres/\", \"src/updater/v1/ddl/\"]);",
+    "replace": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"src/updater/v1/ddl/\"]);",
+    "test": "node --test --test-name-pattern='any file under the updater DDL directory' tests/updater-attended-source.test.mjs",
+    "why": "the grants, role manifest, ledger and queue data the release schema phase reads live in deploy/postgres"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    || DATABASE_PATH_FILES.includes(lower) || lower.endsWith(\".sql\");",
+    "replace": "    || DATABASE_PATH_FILES.includes(lower);",
+    "test": "node --test --test-name-pattern='database path rule' tests/updater-attended-source.test.mjs",
+    "why": "any .sql file is a database change, matching the referee's classes.json database patterns"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  const lower = path.toLowerCase();\n  return DATABASE_PATH_PREFIXES",
+    "replace": "  const lower = path;\n  return DATABASE_PATH_PREFIXES",
+    "test": "node --test --test-name-pattern='database path rule' tests/updater-attended-source.test.mjs",
+    "why": "APFS folds case, so DB/x lands in db/ and must classify like it"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    changesDatabase: !proven || changedPaths.some(isAttendedDatabasePathV1),",
+    "replace": "    changesDatabase: changedPaths.some(isAttendedDatabasePathV1),",
+    "test": "node --test --test-name-pattern='not an ancestor of the target, or is unknown' tests/updater-attended-source.test.mjs",
+    "why": "an installed commit that is unknown or not related to the target proves nothing and fails closed"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "{ acceptExitCodes: [1] }).catch(() => null))?.code === 0;",
+    "replace": "{ acceptExitCodes: [1] }).catch(() => null))?.code !== undefined;",
+    "test": "node --test --test-name-pattern='not an ancestor of the target, or is unknown' tests/updater-attended-source.test.mjs",
+    "why": "git's exit 1 means not an ancestor; only exit 0 proves the installed commit is in the target's history"
+  },
+  {
+    "file": "src/updater/v1/referee/cli.ts",
+    "find": "\"--ignore-submodules=none\", \"--no-relative\", revisions[0]!, revisions[1]!, \"--\");",
+    "replace": "\"--ignore-submodules=none\", \"--no-relative\", `${revisions[1]!}^`, revisions[1]!, \"--\");",
+    "test": "node --import tsx --test --test-name-pattern='classified from the installed commit' tests/updater-referee.test.ts",
+    "why": "the referee diffs from the installed release's commit, never from the candidate's own parent"
+  }
+]

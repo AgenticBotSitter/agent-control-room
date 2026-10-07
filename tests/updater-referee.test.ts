@@ -248,6 +248,26 @@ test("real commits refuse node_modules segments in the diff and anywhere in the 
   });
 });
 
+test("real commits are classified from the installed commit, so an earlier migration is a database change", () => {
+  // The same history the attended classifier's reproducer uses: the referee diffs
+  // from.commit..candidate, so commit B's migration is in the update to C.
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "src/a.mjs");
+    const installed = commitRepository(repository, "installed release");
+    writeRepositoryFile(repository, "db/migrations/0002_b.sql", "select 2;\n");
+    commitRepository(repository, "B adds a migration");
+    writeRepositoryFile(repository, "src/c.mjs");
+    const candidate = commitRepository(repository, "C changes only src");
+    const result = runRefereeCli(repository, installed, candidate);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout) as ReturnType<typeof classify>;
+    assert.deepEqual(parsed.changedPaths, ["db/migrations/0002_b.sql", "src/c.mjs"]);
+    assert.equal(parsed.changesDatabase, true);
+    assert.equal(parsed.classification, "database");
+  });
+});
+
 test("an absolute symlink target is refused as symlink_escape", () => {
   const row = pathRow("A", "docs/link", { oldMode: "000000", newMode: "120000", oldOid: zero, newOid: oid("1") });
   assert.deepEqual(refusalIds(classOf([row], { [oid("1")]: "/outside" })), ["symlink_escape"]);

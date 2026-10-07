@@ -168,7 +168,10 @@ async function commandResult(file, args, options = {}) {
     child.stdout.on("data", chunk => { stdout = append(stdout, chunk); });
     child.stderr.on("data", chunk => { stderr = append(stderr, chunk); });
     child.once("error", error => finish(reject, error));
-    child.once("exit", (code, signal) => {
+    // "exit" can fire before the last stdout chunk arrives. A caller that decides
+    // from the whole output (the change classifier) waits for "close" instead; the
+    // builder steps keep "exit", because a daemonised child can hold the pipe open.
+    child.once(options.waitForClose ? "close" : "exit", (code, signal) => {
       if (options.detached) killGroup(child.pid);
       const result = { stdout, stderr, pid: child.pid, code };
       if (code === 0 || options.acceptExitCodes?.includes(code)) finish(resolvePromise, result);
@@ -206,7 +209,8 @@ async function acquireLock(root) {
 async function git(input, gitPath, mirror, args, options = {}) {
   const env = trustedToolEnvironment("git");
   return run(input, gitPath, ["--git-dir", mirror, ...args], { env, timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
-    cwd: options.cwd });
+    cwd: options.cwd, acceptExitCodes: options.acceptExitCodes, maxOutputBytes: options.maxOutputBytes,
+    waitForClose: options.waitForClose });
 }
 
 function parseTree(text, limits) {
@@ -1012,19 +1016,67 @@ export async function confirmAttendedV1(input) {
   return Object.freeze({ planId, planDigest });
 }
 
-/** Classifies the verified commit before the owner is asked to confirm it. */
+// Paths whose change leaves the installed database behind the new release.
+// `db/` and `deploy/postgres/` are what the release schema phase reads from the
+// release (ledger, role files, grants, queue DDL); the updater's fixed DDL and the
+// schema digest pin are what it reads from the bundle; the role-manifest generator
+// and any `.sql` are the referee's own database patterns (`policy/classes.json`),
+// so the two classifiers never disagree towards "no change". Compared lower-case
+// because APFS folds case: `DB/x` lands in `db/`.
+const DATABASE_PATH_PREFIXES = Object.freeze(["db/", "deploy/postgres/", "src/updater/v1/ddl/"]);
+const DATABASE_PATH_FILES = Object.freeze(["scripts/mac-local/database-role-manifest.mjs",
+  "src/updater/v1/policy/release-schema-digest.json"]);
+const CLASSIFY_OUTPUT_BYTES = 64 * 1024 * 1024;
+
+export function isAttendedDatabasePathV1(path) {
+  const lower = path.toLowerCase();
+  return DATABASE_PATH_PREFIXES.some(prefix => lower.startsWith(prefix) || lower === prefix.slice(0, -1))
+    || DATABASE_PATH_FILES.includes(lower) || lower.endsWith(".sql");
+}
+
+/**
+ * Classifies the verified commit before the owner is asked to confirm it.
+ *
+ * The change set is measured from the INSTALLED release's commit, never from the
+ * target's own parent: one update spans every merge since the last install, and a
+ * migration in any of them leaves the database behind the code. The paths are the
+ * union of the end-to-end tree diff and every commit in the range (merges against
+ * each parent, no rename pairing), so a migration added and reverted inside the
+ * update, or carried by a merge's second parent, still counts. A downgrade
+ * classifies the commits it undoes. What cannot be proven - no installed release,
+ * an installed commit the mirror lacks, or history where neither commit descends
+ * from the other - is a database change.
+ */
 export async function classifyAttendedSourceV1(input) {
   const session = releaseSessions.get(input?.release) ?? bundleSessions.get(input?.bundle)
     ?? attendedSessions.get(input?.job);
   if (!session || input?.release && session.release !== input.release || input?.bundle && session.bundle !== input.bundle) {
     refuse("updater_attended_session_refused");
   }
-  const diff = await git(session.input, session.tools.git, session.mirror,
-    ["diff-tree", "--root", "-m", "--no-commit-id", "--name-only", "-r", "-z", session.commit]);
-  const changedPaths = [...new Set(diff.stdout.split("\0").filter(Boolean)
-    .map(path => safeRelative(path, "updater_tree_path_refused")))];
+  const from = await installedReleaseForPlanV1(session), target = session.commit;
+  const names = async args => (await git(session.input, session.tools.git, session.mirror, args,
+    { waitForClose: true, maxOutputBytes: CLASSIFY_OUTPUT_BYTES })).stdout.split("\0").filter(Boolean);
+  // Exit 1 is "not an ancestor"; anything else, including an unknown commit, proves nothing.
+  const descends = async (ancestor, descendant) => (await git(session.input, session.tools.git, session.mirror,
+    ["merge-base", "--is-ancestor", ancestor, descendant], { acceptExitCodes: [1] }).catch(() => null))?.code === 0;
+  let paths = [], baseline;
+  if (from.commit === undefined) {
+    baseline = "not-installed";
+    paths = await names(["ls-tree", "-r", "--name-only", "-z", target]);
+  } else if (from.commit === target) baseline = "same";
+  else if (await descends(from.commit, target)) baseline = "forward";
+  else if (await descends(target, from.commit)) baseline = "downgrade";
+  else baseline = "unproven";
+  if (baseline === "forward" || baseline === "downgrade") {
+    const range = baseline === "forward" ? `${from.commit}..${target}` : `${target}..${from.commit}`;
+    paths = [...await names(["diff-tree", "-r", "--no-renames", "--name-only", "-z", from.commit, target]),
+      ...await names(["log", "--no-renames", "--diff-merges=separate", "--name-only", "--format=", "-z", range])];
+  }
+  const changedPaths = [...new Set(paths.map(path => safeRelative(path, "updater_tree_path_refused")))];
+  const proven = baseline === "same" || baseline === "forward" || baseline === "downgrade";
   return Object.freeze({ changedPaths: Object.freeze(changedPaths),
-    changesDatabase: changedPaths.some(path => path.startsWith("db/")) });
+    changesDatabase: !proven || changedPaths.some(isAttendedDatabasePathV1),
+    installedCommit: from.commit ?? null, baseline });
 }
 
 export async function stageVerifiedTreeV1(session, source, snapshot, target, staging, serviceGid, modeForFile) {
