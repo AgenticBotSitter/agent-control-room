@@ -99,8 +99,8 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "message.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \").slice(0, 200)",
-    "replace": "message",
+    "find": "const clean = value => value.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \");",
+    "replace": "const clean = value => value;",
     "test": "node --import tsx --test --test-name-pattern='A2-11 CLI' tests/control-room-installer.test.mjs",
     "why": "The actual CLI error sink must strip terminal controls and bound output."
   },
@@ -218,8 +218,8 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "message.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \").slice(0, 200)",
-    "replace": "message.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/gu, \" \")",
+    "find": "return clean(`${clean(message).slice(0, 200)}${clean(tail)}`).slice(0, 400);",
+    "replace": "return clean(`${clean(message)}${clean(tail)}`);",
     "test": "node --import tsx --test --test-name-pattern='A2-11 CLI' tests/control-room-installer.test.mjs",
     "why": "Public CLI failure lines must remain bounded after controls are sanitized."
   },

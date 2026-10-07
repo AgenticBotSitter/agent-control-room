@@ -568,12 +568,25 @@ export function updaterRecoveryLineV1(error) {
  * "updater_cli_failed", which hid the reason on every real-Mac failure; its first message line
  * now follows. Control characters are stripped and the line is bounded. */
 export function cliFailureMessageV1(error) {
-  const detail = typeof error?.message === "string" ? error.message.split("\n", 1)[0].trim() : "";
+  const clean = value => value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ");
+  const firstLine = value => typeof value?.message === "string" ? value.message.split("\n", 1)[0].trim() : "";
+  const detail = firstLine(error);
   const message = typeof error?.userMessage === "string" ? error.userMessage
     : typeof error?.code === "string" ? (detail === "" || detail === error.code ? error.code
       : detail.startsWith(error.code) ? detail : `${error.code}: ${detail}`)
       : detail ? `updater_cli_failed: ${detail}` : "updater_cli_failed";
-  return message.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").slice(0, 200);
+  // A wrapper such as `install_rollback_incomplete` carries the failure that started it as its
+  // `cause`, and the refusing undo steps as `undoFailures` (VM, main 66fb6a29: the line read
+  // only `updater_cli_failed`). Their codes follow, bounded, so the owner's one line names them.
+  const causes = [];
+  for (let cause = error?.cause; cause && causes.length < 3; cause = cause.cause) {
+    causes.push(typeof cause.code === "string" ? cause.code : firstLine(cause).slice(0, 80) || "uncoded");
+  }
+  const undo = Array.isArray(error?.undoFailures) ? error.undoFailures.filter(value => typeof value === "string")
+    .slice(0, 4).map(value => value.slice(0, 80)) : [];
+  const tail = (causes.length ? `; cause: ${causes.join(" <- ")}` : "")
+    + (undo.length ? `; undo failed: ${undo.join(", ")}` : "");
+  return clean(`${clean(message).slice(0, 200)}${clean(tail)}`).slice(0, 400);
 }
 
 if (isMainModuleV1(process.argv[1], import.meta.url)) runUpdaterCliV1(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {

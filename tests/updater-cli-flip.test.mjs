@@ -651,3 +651,22 @@ test("the CLI's stop line keeps refusal codes as they are and shows the real rea
   assert.equal(cliFailureMessageV1(new Error(`bad\u0007bell${"x".repeat(400)}`)).length, 200);
   assert.doesNotMatch(cliFailureMessageV1(new Error("a\u0007b")), /\u0007/u);
 });
+
+test("the stop line names what started an incomplete rollback and which undo steps refused", async () => {
+  // VM, main 66fb6a29: the install stopped at install-services, two undo steps refused, and the
+  // owner's whole stop line was "updater_cli_failed" - neither reason was printed anywhere.
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const uncertain = Object.assign(new Error("services_batch_uncertain"), { code: "services_batch_uncertain" });
+  const started = Object.assign(new Error("services_batch_rolled_back", { cause: uncertain }), { code: "services_batch_rolled_back" });
+  const incomplete = Object.assign(new Error("install_rollback_incomplete", { cause: started }), {
+    code: "install_rollback_incomplete", failures: 2, undoFailures: ["postgres_not_shut_down", "postgres_not_shut_down"] });
+  assert.equal(cliFailureMessageV1(incomplete), "install_rollback_incomplete; cause: services_batch_rolled_back"
+    + " <- services_batch_uncertain; undo failed: postgres_not_shut_down, postgres_not_shut_down");
+  // An uncoded cause shows its first line; control characters never reach the Terminal.
+  assert.equal(cliFailureMessageV1(new Error("x_refused", { cause: new Error("spawn EACCES\nstack") })),
+    "updater_cli_failed: x_refused; cause: spawn EACCES");
+  assert.doesNotMatch(cliFailureMessageV1(Object.assign(new Error("a"), { undoFailures: ["b\u001b[31m"] })), /\u001b/u);
+  assert.ok(cliFailureMessageV1(Object.assign(new Error("y".repeat(300)), {
+    cause: new Error("z".repeat(300)), undoFailures: Array(9).fill("w".repeat(300)) })).length <= 400);
+});
+

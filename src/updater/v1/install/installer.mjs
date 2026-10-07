@@ -1235,9 +1235,14 @@ export async function installControlRoomV1(options) {
     const rollbackErrors = [];
     for (const rollback of undo.reverse()) await rollback().catch(rollbackError => rollbackErrors.push(rollbackError));
     if (rollbackErrors.length > 0) {
-      const rollbackError = new Error("install_rollback_incomplete", { cause: error });
-      rollbackError.failures = rollbackErrors.length;
-      throw rollbackError;
+      // The CODE and each failed undo's reason travel with it (VM, main 66fb6a29): with only a
+      // count, the owner's stop line read `updater_cli_failed` and neither the failure that
+      // started the rollback nor the undo steps that refused were visible anywhere.
+      const reason = value => typeof value?.code === "string" ? value.code
+        : typeof value?.message === "string" ? value.message.split("\n", 1)[0].slice(0, 80) : "uncoded";
+      throw Object.assign(new Error("install_rollback_incomplete", { cause: error }), {
+        code: "install_rollback_incomplete", failures: rollbackErrors.length,
+        undoFailures: Object.freeze(rollbackErrors.map(reason)) });
     }
     error.installRollbackComplete = true;
     throw error;

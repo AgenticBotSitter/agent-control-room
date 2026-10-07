@@ -564,6 +564,20 @@ test("fresh database is the default and a failed database init rolls back before
   assert.equal((await statusControlRoomV1({ root: f.root })).current, "releases/1.2.4-aaaaaaaaaaaa");
 });
 
+test("an undo that refuses leaves install_rollback_incomplete carrying the cause and each undo's reason", async t => {
+  // VM, main 66fb6a29: install-services failed, two undo steps refused postgres_not_shut_down,
+  // and the error kept only a count, so the owner's stop line named neither.
+  const f = await fixture(t, "rollback-reasons", { failStep: "install-services" });
+  const refused = () => Object.assign(new Error("postgres_not_shut_down"), { code: "postgres_not_shut_down" });
+  f.ports.uninstallServices = async input => { f.ports.calls.push(["uninstall-services", input]); throw refused(); };
+  f.ports.recoverServices = async input => { f.ports.calls.push(["recover-services", input]); throw refused(); };
+  const error = await installControlRoomV1(f.options).then(() => assert.fail("the install must stop"), value => value);
+  assert.equal(error.code, "install_rollback_incomplete");
+  assert.equal(error.cause?.message, "services_failed");
+  assert.equal(error.failures, 2);
+  assert.deepEqual(error.undoFailures, ["postgres_not_shut_down", "postgres_not_shut_down"]);
+});
+
 test("self-update On refuses a repeat install before build effects", async t => {
   const f = await fixture(t, "self-update-on"); await installControlRoomV1(f.options);
   await writeFile(join(f.root, "updater-state", "self-update"), "On\n", { mode: 0o600 });
