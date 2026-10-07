@@ -75,5 +75,33 @@
     "replace": "    .catch(() => null))?.code === 0;",
     "test": "node --test --test-name-pattern='a stop during classification' tests/updater-attended-source.test.mjs",
     "why": "a stop or timeout during the ancestry check is reported as itself, never turned into a history answer"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    [\"rev-parse\", \"--is-shallow-repository\"])).stdout.trim() === \"false\"",
+    "replace": "    [\"rev-parse\", \"--is-shallow-repository\"])).stdout.trim() !== \"\"",
+    "test": "node --test --test-name-pattern='reproducer: a shallow side parent' tests/updater-attended-source.test.mjs",
+    "why": "a shallow mirror can drop a merge's side history while the installed commit is still an ancestor"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "      [\"for-each-ref\", \"--count=1\", \"--format=%(refname)\", \"refs/replace/\"])).stdout === \"\"",
+    "replace": "      [\"for-each-ref\", \"--count=1\", \"--format=%(refname)\", \"refs/replace/\"])).stdout !== null",
+    "test": "node --test --test-name-pattern='shallow, grafted or replaced' tests/updater-attended-source.test.mjs",
+    "why": "a replace ref can rewrite a commit's parents and hide history from the range walk"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    && !await lstat(join(session.mirror, \"info\", \"grafts\")).then(() => true,",
+    "replace": "    && !await lstat(join(session.mirror, \"info\", \"grafts\")).then(() => false,",
+    "test": "node --test --test-name-pattern='shallow, grafted or replaced' tests/updater-attended-source.test.mjs",
+    "why": "a grafts file can cut a commit's parents and hide history from the range walk"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if ((baseline === \"forward\" || baseline === \"downgrade\") && !await complete()) baseline = \"unproven\";\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='reproducer: a shallow side parent' tests/updater-attended-source.test.mjs",
+    "why": "ancestry alone is not proof of complete history; the completeness check must run before the range walk"
   }
 ]

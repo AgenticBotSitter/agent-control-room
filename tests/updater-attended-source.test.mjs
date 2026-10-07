@@ -827,13 +827,31 @@ async function markInstalled(f, commit) {
   await symlink(`releases/${releaseId}`, join(f.root, "current"));
 }
 
-async function classifyInstalled(f, { installed, target, main = target }) {
+async function classifyInstalled(f, { installed, target, main = target, beforeClassify }) {
   await markInstalled(f, installed);
   await git(f.repository, "branch", "-f", "classify-main", main);
   await publishLocalFixtureV1(f.repository, "classify-main");
   const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: target });
-  try { return await classifyAttendedSourceV1(fetched); } finally { await abortAttendedV1(fetched); }
+  try {
+    await beforeClassify?.(join(f.root, "updater-state/mirror.git"));
+    return await classifyAttendedSourceV1(fetched);
+  } finally { await abortAttendedV1(fetched); }
 }
+
+// A side branch that adds a migration and reverts it, merged into a code-only
+// main line: only the side branch's commits show the migration.
+async function hiddenSideMigration(f) {
+  await git(f.repository, "checkout", "-q", "-b", "side", f.commit);
+  const added = await commitFiles(f.repository, "side migration", { "db/migrations/0007_side.sql": "select 7;\n" });
+  await git(f.repository, "revert", "--no-edit", added);
+  const sideTip = await git(f.repository, "rev-parse", "HEAD");
+  await git(f.repository, "checkout", "-q", "main");
+  await commitFiles(f.repository, "mainline code", { "src/main-line.mjs": "export const m = 1;\n" });
+  await git(f.repository, "merge", "-q", "--no-ff", "-m", "merge side", "side");
+  return { added, sideTip, merge: await git(f.repository, "rev-parse", "HEAD") };
+}
+const mirrorGit = (mirror, ...args) => exec(gitPath, ["--git-dir", mirror, "-c", "user.name=Builder",
+  "-c", "user.email=builder@example.invalid", ...args], { env: { PATH: "/usr/bin:/bin", HOME: "/var/empty" } });
 
 test("the database path rule covers every release schema input and the referee's database patterns", () => {
   // Expected values written by hand from apply-release-schema.mjs, database-phase-data.mjs,
@@ -969,6 +987,53 @@ test("an installed commit that is not an ancestor of the target, or is unknown, 
   const unknown = await classifyInstalled(f, { installed: "f".repeat(40), target });
   assert.equal(unknown.changesDatabase, true, "an installed commit the mirror never saw proves nothing");
   assert.equal(unknown.baseline, "unproven");
+});
+
+test("reproducer: a shallow side parent that hides a migration is a database change", async t => {
+  const f = await fixture(t);
+  const { sideTip, merge } = await hiddenSideMigration(f);
+  // The complete mirror sees the side branch's migration: the expected answer.
+  assert.equal((await classifyInstalled(f, { installed: f.commit, target: merge })).changesDatabase, true);
+  // Cutting history at the side tip keeps the installed commit an ancestor
+  // through the first parent; the mirror's own log.showRoot=false hides the cut
+  // commit's root listing, so only a completeness check can see the gap.
+  const shallow = await classifyInstalled(f, { installed: f.commit, target: merge, beforeClassify: async mirror => {
+    await writeFile(join(mirror, "shallow"), `${sideTip}\n`);
+    await mirrorGit(mirror, "config", "log.showRoot", "false");
+  } });
+  assert.equal(shallow.changesDatabase, true, "a shallow mirror cannot prove the side branch had no migration");
+  assert.equal(shallow.baseline, "unproven");
+});
+
+test("a shallow, grafted or replaced mirror proves nothing, forward or back", async t => {
+  const f = await fixture(t);
+  const { sideTip, merge } = await hiddenSideMigration(f);
+  const cuts = {
+    shallow: mirror => writeFile(join(mirror, "shallow"), `${sideTip}\n`),
+    graft: async mirror => { await mkdir(join(mirror, "info"), { recursive: true });
+      await writeFile(join(mirror, "info", "grafts"), `${sideTip}\n`); },
+    replace: mirror => mirrorGit(mirror, "replace", "--graft", sideTip),
+  };
+  const undo = async mirror => {
+    await rm(join(mirror, "shallow"), { force: true }); await rm(join(mirror, "info", "grafts"), { force: true });
+    for (const ref of (await mirrorGit(mirror, "for-each-ref", "--format=%(refname)", "refs/replace/")).stdout.split("\n").filter(Boolean))
+      await mirrorGit(mirror, "update-ref", "-d", ref);
+  };
+  for (const [name, cut] of Object.entries(cuts)) {
+    for (const [installed, target, main] of [[f.commit, merge, merge], [merge, f.commit, merge]]) {
+      const result = await classifyInstalled(f, { installed, target, main, beforeClassify: async mirror => {
+        await undo(mirror); await cut(mirror); await mirrorGit(mirror, "config", "log.showRoot", "false");
+        // Independent check that the cut works: git's own range walk loses the migration.
+        const walk = (await mirrorGit(mirror, "log", "--no-renames", "--diff-merges=separate", "--name-only",
+          "--format=", `${f.commit}..${merge}`)).stdout;
+        assert.ok(!walk.includes("db/migrations/0007_side.sql"), `${name} hides the side migration from the walk`);
+      } });
+      assert.equal(result.baseline, "unproven", `${name} ${installed === f.commit ? "forward" : "downgrade"}`);
+      assert.equal(result.changesDatabase, true, name);
+    }
+  }
+  const restored = await classifyInstalled(f, { installed: f.commit, target: merge, beforeClassify: undo });
+  assert.equal(restored.baseline, "forward", "the same mirror with its history whole is proven again");
 });
 
 test("a stop during classification is reported as a stop, not as a database change", async t => {

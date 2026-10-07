@@ -1045,8 +1045,9 @@ export function isAttendedDatabasePathV1(path) {
  * each parent, no rename pairing), so a migration added and reverted inside the
  * update, or carried by a merge's second parent, still counts. A downgrade
  * classifies the commits it undoes. What cannot be proven - no installed release,
- * an installed commit the mirror lacks, or history where neither commit descends
- * from the other - is a database change.
+ * an installed commit the mirror lacks, history where neither commit descends
+ * from the other, or a mirror whose history is shallow, grafted or replaced - is a
+ * database change.
  */
 export async function classifyAttendedSourceV1(input) {
   const session = releaseSessions.get(input?.release) ?? bundleSessions.get(input?.bundle)
@@ -1062,6 +1063,15 @@ export async function classifyAttendedSourceV1(input) {
   const descends = async (ancestor, descendant) => (await git(session.input, session.tools.git, session.mirror,
     ["merge-base", "--is-ancestor", ancestor, descendant], { acceptExitCodes: [1] })
     .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;
+  // Ancestry holds through any one parent, so a shallow boundary, a graft or a
+  // replacement object on another parent can drop commits from the range walk
+  // while the installed commit is still "an ancestor". Such a mirror proves nothing.
+  const complete = async () => (await git(session.input, session.tools.git, session.mirror,
+    ["rev-parse", "--is-shallow-repository"])).stdout.trim() === "false"
+    && (await git(session.input, session.tools.git, session.mirror,
+      ["for-each-ref", "--count=1", "--format=%(refname)", "refs/replace/"])).stdout === ""
+    && !await lstat(join(session.mirror, "info", "grafts")).then(() => true,
+      error => error?.code === "ENOENT" ? false : Promise.reject(error));
   let paths = [], baseline;
   if (from.commit === undefined) {
     baseline = "not-installed";
@@ -1070,6 +1080,7 @@ export async function classifyAttendedSourceV1(input) {
   else if (await descends(from.commit, target)) baseline = "forward";
   else if (await descends(target, from.commit)) baseline = "downgrade";
   else baseline = "unproven";
+  if ((baseline === "forward" || baseline === "downgrade") && !await complete()) baseline = "unproven";
   if (baseline === "forward" || baseline === "downgrade") {
     const range = baseline === "forward" ? `${from.commit}..${target}` : `${target}..${from.commit}`;
     paths = [...await names(["diff-tree", "-r", "--no-renames", "--name-only", "-z", from.commit, target]),
