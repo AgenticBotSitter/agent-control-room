@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -165,6 +167,57 @@ test('R4B-06: a replaced temporary symlink is refused before publication', async
   const after = await original(planted);
   assert.deepEqual([after.dev,after.ino,after.mode],[before.dev,before.ino,before.mode]);
   assert.equal(outcome.error,'file_custody_refused');
+});
+
+test('R4B-06: a FIFO at the temporary Darwin open promptly refuses and stays untouched', async t => {
+  const f = await pair(t), originalOpen = fs.open, originalLstat = fs.lstat;
+  let temporary, before, unblock, timer, deadlineReached = false, temporaryReads = 0;
+  const plant = async path => {
+    temporary = path;
+    await fs.rename(path,`${path}.owned`);
+    execFileSync('mkfifo',[path]);
+    before = await originalLstat(path);
+    assert.equal(before.isFIFO(),true,'the real FIFO attack reached the publication boundary');
+    // Drain a blocking baseline open before asserting, so red leaves no pending I/O.
+    timer = setTimeout(() => {
+      deadlineReached = true;
+      unblock = originalOpen(path,constants.O_RDWR | constants.O_NONBLOCK);
+    },2000);
+  };
+  fs.open = async (...args) => {
+    if (!temporary && String(args[0]).includes('/updater/.current.')) await plant(args[0]);
+    return originalOpen(...args);
+  };
+  // Linux has no Darwin chmod open; exercise the same foreign FIFO refusal at
+  // its final inode check. The O_NONBLOCK mutation requires the macOS lane.
+  fs.lstat = async (...args) => {
+    if (process.platform !== 'darwin' && !temporary
+      && String(args[0]).includes('/updater/.current.') && ++temporaryReads === 2) await plant(args[0]);
+    return originalLstat(...args);
+  };
+  syncBuiltinESMExports();
+  let outcome, elapsed;
+  try {
+    const started = performance.now();
+    outcome = await capture(switchPairV1({root:f.value,restore:f.restore}));
+    elapsed = performance.now() - started;
+  } finally {
+    clearTimeout(timer);
+    fs.open = originalOpen; fs.lstat = originalLstat; syncBuiltinESMExports();
+    if (unblock) await (await unblock).close();
+  }
+  assert.ok(before,'the FIFO substitution must run');
+  assert.equal(deadlineReached,false,'a planted FIFO must refuse before the 2-second deadline');
+  assert.ok(elapsed < 2000,'FIFO publication refusal must take less than 2 seconds');
+  assert.equal(outcome.error,'file_custody_refused');
+  const after = await originalLstat(temporary);
+  assert.equal(after.isFIFO(),true,'refusal must preserve the foreign FIFO');
+  assert.deepEqual([after.dev,after.ino,after.mode],[before.dev,before.ino,before.mode]);
+  assert.equal(await fs.readlink(join(f.value,'updater/current')),'new-updater');
+  await fs.rm(temporary);
+  await fs.rm(`${temporary}.owned`);
+  await switchPairV1({root:f.value,restore:f.restore});
+  assert.deepEqual(await f.snapshot(),['releases/old-app','ENOENT','old-updater','ENOENT']);
 });
 
 test('R4B-06: late parent substitution refuses before temporary inspection and rename', async t => {

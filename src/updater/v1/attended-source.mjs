@@ -526,7 +526,7 @@ async function replaceLink(root, name, target) {
   try {
     await custody();
     if (process.platform === "darwin") {
-      const handle = await open(temporary, constants.O_RDONLY | constants.O_SYMLINK);
+      const handle = await open(temporary, constants.O_RDONLY | constants.O_SYMLINK | constants.O_NONBLOCK);
       try {
         assertOwned(await handle.stat());
         await custody();

@@ -33,5 +33,12 @@
     "replace": "assertOwned(await lstat(temporary));\n    await rename(temporary, path);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='late parent substitution refuses' tests/updater-pair-restore.test.mjs",
     "why": "The temporary-stage named assertion compares the foreign current pointer to independent keep after substitution during the final temporary read."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const handle = await open(temporary, constants.O_RDONLY | constants.O_SYMLINK | constants.O_NONBLOCK);",
+    "replace": "const handle = await open(temporary, constants.O_RDONLY | constants.O_SYMLINK);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"a FIFO at the temporary Darwin open\" tests/updater-pair-restore.test.mjs",
+    "why": "On macOS, the real FIFO planted before the acting open must fail the named 2-second deadline assertion when O_NONBLOCK is removed; the baseline is drained and the foreign entry preserved. Requires the macOS updater lane; Linux does not execute the Darwin open."
   }
 ]
