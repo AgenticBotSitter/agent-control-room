@@ -271,9 +271,10 @@ test("web delivery retains the bounded provider rejection body for diagnosis and
   assert.equal(failure.rejectionReason, "BadJwtToken" + "x".repeat(1013));
   assert.deepEqual(messages.map(message => JSON.parse(message)), [{ event: "owner_push_rejected",
     subscriptionId: "push:a", statusCode: 403, rejectionReason: "BadJwtToken" + "x".repeat(1013) }]);
-  await deliverOwnerPushV1({ tenantId: "tenant:test", kind: "test", link: "/needs-me", dedupeKey: "test:no-provider-body",
+  await assert.doesNotReject(deliverOwnerPushV1({ tenantId: "tenant:test", kind: "test", link: "/needs-me", dedupeKey: "test:no-provider-body",
     now: "2026-10-06T00:00:01.000Z", store: memory,
-    channel: { kind: "web-push", async send() { throw { statusCode: 503 }; } } });
+    channel: { kind: "web-push", async send() { throw { statusCode: 503 }; } } }),
+    "an absent response body must preserve the delivery failure result without an incidental exception");
   assert.equal(messages.length, 1, "an absent provider body creates no diagnostic text log");
   assert.equal(memory.reservations.get("push:a:test:provider-rejection"), "failed");
   const { pushRejectionReasonV1 } = await import("../src/installer/shared/vapid.mjs");

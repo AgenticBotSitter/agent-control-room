@@ -717,8 +717,10 @@ test("a 200 second backup stop completes within its own launchd definition", asy
   const fake = await fakeRuntime(t, "backup-200-second-stop");
   const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": 800 }), port = createInProcessServiceElevatedPortV1(slow.runtime);
   const installed = await installServicesV1(input(fake.root, POST_HEALTH_SERVICE_ROLES_V1), { elevatedPort: port });
-  assert.deepEqual(await uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
-    { outcome: "removed" });
+  await assert.doesNotReject(async () => {
+    assert.deepEqual(await uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+      { outcome: "removed" });
+  }, "a backup that stops after 200 seconds must complete without a stop-bound refusal");
   assert.equal(slow.slept(), 800, "200 seconds observed in 250 ms polls");
   assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.nightly-backup.plist")), true);
 });
