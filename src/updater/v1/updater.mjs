@@ -431,8 +431,9 @@ export async function prepareUpdaterAlertsV1(alerts, reportError) {
 export function withUpdaterAlertWarningV1(stateFiles, alertWarning) {
   if (alertWarning) {
     const writeStatus = stateFiles.writeStatus.bind(stateFiles);
-    // Keep an outstanding update's own reason ahead of the notification warning.
-    stateFiles.writeStatus = value => writeStatus({ ...value, reason: value.reason ?? alertWarning });
+    // Rescue actions and outstanding outcomes take precedence over notification warnings.
+    stateFiles.writeStatus = value => writeStatus({ ...value, reason: value.reason ?? (
+      value.nextAction == null && ["idle", "running"].includes(value.state) ? alertWarning : undefined) });
   }
   return stateFiles;
 }

@@ -309,8 +309,8 @@
   },
   {
     "file": "src/updater/v1/updater.mjs",
-    "find": "reason: value.reason ?? alertWarning",
-    "replace": "reason: alertWarning",
+    "find": "reason: value.reason ?? (",
+    "replace": "reason: (",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
     "why": "Notification warnings must not hide an outstanding update reason."
   },
@@ -320,5 +320,33 @@
     "replace": "updater_vapid_invalid:\n    \"Phone notifications are unavailable.\",",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
     "why": "The warning is checked against an independent literal, not cloned from the contract table."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "value.nextAction == null && [\"idle\", \"running\"].includes(value.state)",
+    "replace": "[\"idle\", \"running\"].includes(value.state)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: notification warning preserves idle rescue resolved\" tests/updater-home-status.test.tsx",
+    "why": "The independent rescue-resolved action must keep its instruction instead of a notification warning."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "[\"idle\", \"running\"].includes(value.state) ? alertWarning : undefined",
+    "replace": "true ? alertWarning : undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: notification warning preserves uncertain default rescue\" tests/updater-home-status.test.tsx",
+    "why": "Uncertain without an explicit next action must keep the writer-derived check-and-continue instruction."
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "reason !== UPDATER_RUN_REASON_V1.updater_vapid_invalid",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: VAPID warning 1\" tests/updater-home-status.test.tsx",
+    "why": "The invalid-contact sentence has no durable outcome to acknowledge in configured and fallback cards."
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "reason !== UPDATER_RUN_REASON_V1.updater_vapid_unavailable",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: VAPID warning 2\" tests/updater-home-status.test.tsx",
+    "why": "The missing-key sentence has no durable outcome to acknowledge in configured and fallback cards."
   }
 ]

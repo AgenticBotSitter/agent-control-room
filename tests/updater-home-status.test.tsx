@@ -10,6 +10,8 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { createUpdaterHomeStatusReaderV1 } from "../src/web/v1/updater-home-status";
 import { UPDATER_RUN_REASON_V1, UPDATER_RUN_STATE_REASON_V1 } from "../src/updater/v1/contracts.mjs";
+import { withUpdaterAlertWarningV1 } from "../src/updater/v1/updater.mjs";
+import { UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 import { publicStatusV1 } from "../src/updater/v1/contracts.mjs";
 import { readUpdaterHomeStatusV1 } from "../src/web/v1/updater-home-status-browser";
 import { UPDATER_OWNER_UI_SCHEMA_V1, type UpdaterOwnerUiPortV1, type UpdaterOwnerUiReadV1 } from "../src/web/v1/updater-owner-ui-wire";
@@ -475,4 +477,69 @@ test("SELFUPD-04: default Home distinguishes healthy, progress, refused, rollbac
   assert.equal((await reader.read()).state, "needs_owner");
   await f.write(publicStatus({ selfUpdate: "Unexpected" })); assert.equal((await reader.read()).state, "attention");
   assert.equal((await readUpdaterHomeStatusV1(async () => Response.json({ schema: "control-room.updater-home-status/v1", state: "Unexpected" }))).state, "attention");
+});
+
+// Literal scenarios and sentences come from the rescue ticket and owner contract.
+const vapidWarnings = [
+  "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+  "Phone notifications are off because their key is missing. Rerun the installer to repair them; updates continue.",
+] as const;
+
+for (const scenario of [
+  { name: "uncertain rescue review", state: "uncertain", nextAction: "review_rescue_on_mac", expectedAction: "review_rescue_on_mac", words: /clear the rescue marker/u },
+  { name: "idle rescue resolved", state: "idle", nextAction: "rescue_resolved", expectedAction: "rescue_resolved", words: /rescue review is resolved/u },
+  { name: "uncertain default rescue", state: "uncertain", expectedAction: "check_and_continue", words: /Tap Check and continue/u },
+] as const) test(`R2-1: notification warning preserves ${scenario.name} through the real status writer and reader`, async t => {
+  const root = await mkdtemp(join(tmpdir(), "updater-warning-rescue-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "status"));
+  const file = join(root, "status/status.json");
+  await assert.rejects(import("node:fs/promises").then(fs => fs.stat(file)), { code: "ENOENT" }, "setup leaves the product status file absent");
+  for (const warning of vapidWarnings) {
+    const files = withUpdaterAlertWarningV1(new UpdaterStateFilesV1(root, "lease-rescue"), warning);
+    await files.writeStatus({ state: scenario.state, selfUpdate: "On",
+      ...("nextAction" in scenario ? { nextAction: scenario.nextAction } : {}) });
+    const status = await createUpdaterHomeStatusReaderV1({ root }).read();
+    assert.equal(status.reason, undefined, "notification warning must not become the rescue reason");
+    assert.equal(status.nextAction, scenario.expectedAction, "the rescue action survives the real writer and reader");
+    const reads = await Promise.all(Array.from({ length: 50 }, () => createUpdaterHomeStatusReaderV1({ root }).read()));
+    assert.ok(reads.every(read => read.reason === undefined && read.nextAction === scenario.expectedAction), "50 simultaneous rescue reads preserve the instruction");
+    for (const response of [Response.json(ownerUi({ state: "idle", plan: null })), new Response(null, { status: 404 })]) {
+      const card = await mountedStatus(response, Response.json(status));
+      assert.match(card.text, scenario.words);
+      assert.doesNotMatch(card.text, /Phone notifications are off|I have seen this/u);
+    }
+  }
+});
+
+test("R2-1: notification warning appears only for idle or running without an action or reason", async t => {
+  const root = await mkdtemp(join(tmpdir(), "updater-warning-quiet-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "status"));
+  for (const warning of vapidWarnings) {
+    const files = withUpdaterAlertWarningV1(new UpdaterStateFilesV1(root, "lease-quiet"), warning);
+    for (const state of ["idle", "running"]) {
+      await files.writeStatus({ state, selfUpdate: "On", reason: null, nextAction: null });
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, warning, `${state}: quiet status shows the warning`);
+    }
+    for (const state of ["watching", "building", "awaiting_approval", "paused", "stopped", "refused", "rolled_back", "needs_attention", "attended_upgrade_required"]) {
+      await files.writeStatus({ state, selfUpdate: "On" });
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, undefined, `${state}: warning must not supply a reason`);
+    }
+    const reason = "An update could not finish cleanly. Control Room needs you.";
+    await files.writeStatus({ state: "idle", selfUpdate: "On", reason });
+    assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, reason, "an existing reason wins even on idle");
+  }
+});
+
+for (const [index, warning] of vapidWarnings.entries()) test(`R2-1: VAPID warning ${index + 1} never offers card acknowledgement`, async () => {
+  const status = { schema: "control-room.updater-home-status/v1", state: "needs_owner", reason: warning };
+  for (const response of [Response.json(ownerUi({ state: "idle", plan: null })), new Response(null, { status: 404 })]) {
+    const card = await mountedStatus(response, Response.json(status));
+    assert.ok(card.text.includes(warning), "the warning remains visible");
+    assert.doesNotMatch(card.text, /I have seen this/u, "a notification warning has no durable outcome to acknowledge");
+    const outstanding = await mountedStatus(response, Response.json({ ...status,
+      reason: "An update could not finish cleanly. Control Room needs you.", nextAction: "review_recovery" }));
+    assert.match(outstanding.text, /I have seen this/u, "a durable outcome still offers acknowledgement");
+  }
 });
