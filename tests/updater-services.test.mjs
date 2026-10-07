@@ -592,3 +592,70 @@ test("launchctl's 'no such service' answers count as not loaded, including macOS
   assert.ok(error, "printing a label that is not loaded must fail");
   assert.equal(launchctlNotLoadedV1(error), true, `launchctl answered ${error?.code}`);
 });
+
+// MEASURED (VM cr-install-dryrun, macOS 26, main 66fb6a29): every real install refused
+// `services_batch_uncertain` at `install-services`, because the core batch's newsyslog file
+// is under `/etc/newsyslog.d`, `/etc` is a symlink to `private/etc` on every Mac, and
+// `ensureDirectory` refuses any symlinked component. The fakes above map `/etc` into a
+// temporary tree with no link, so none of them could see it. This system tree has the link.
+test("the core batch installs on a Mac-shaped system where /etc is a symlink to private/etc", async t => {
+  const elevated = await import("../src/updater/v1/services/elevated.mjs");
+  const systemPath = elevated.macosSystemPathV1 ?? (path => path);
+  const fake = await fakeRuntime(t, "etc-symlink");
+  await mkdir(join(fake.system, "private", "etc", "newsyslog.d"), { recursive: true });
+  await symlink("private/etc", join(fake.system, "etc"));
+  // `/private/etc` only: the temporary install root itself is under `/private/var` on a Mac.
+  const pathFor = path => /^\/(?:Library|etc|private\/etc)\//u.test(path) ? join(fake.system, path.slice(1)) : path;
+  const port = createInProcessServiceElevatedPortV1({ ...fake.runtime, pathFor: path => pathFor(systemPath(path, "darwin")) });
+  const batch = input(fake.root, CORE_SERVICE_ROLES_V1);
+  const installed = await installServicesV1(batch, { elevatedPort: port });
+  assert.deepEqual(installed.receipt.roles, [...CORE_SERVICE_ROLES_V1]);
+  const rotation = installed.receipt.resources.find(resource => resource.kind === "newsyslog_config");
+  assert.equal(rotation.path, "/etc/newsyslog.d/xyz.agentcontrolroom.conf", "the receipt keeps the system's own name");
+  assert.equal(await absent(join(fake.system, "private", "etc", "newsyslog.d", "xyz.agentcontrolroom.conf")), false);
+  // The link itself is never followed and never replaced.
+  assert.equal((await lstat(join(fake.system, "etc"))).isSymbolicLink(), true);
+  // A symlink anywhere ELSE on the walk is still refused: the mapping is literal, not "follow links".
+  const other = await fakeRuntime(t, "etc-symlink-elsewhere");
+  await mkdir(join(other.system, "elsewhere"), { recursive: true });
+  await symlink("elsewhere", join(other.system, "Library"));
+  const otherPort = createInProcessServiceElevatedPortV1({ ...other.runtime,
+    pathFor: path => (/^\/(?:Library|etc|private\/etc)\//u.test(path) ? join(other.system, path.slice(1)) : path) });
+  await assert.rejects(installServicesV1(input(other.root, CORE_SERVICE_ROLES_V1), { elevatedPort: otherPort }),
+    /services_batch_rolled_back/u);
+});
+
+test("macOS system aliases map to their real /private path, literally and only on macOS", async () => {
+  const { macosSystemPathV1 } = await import("../src/updater/v1/services/elevated.mjs");
+  assert.equal(typeof macosSystemPathV1, "function");
+  assert.equal(macosSystemPathV1("/etc/newsyslog.d/x.conf", "darwin"), "/private/etc/newsyslog.d/x.conf");
+  assert.equal(macosSystemPathV1("/etc", "darwin"), "/private/etc");
+  assert.equal(macosSystemPathV1("/var/tmp/x", "darwin"), "/private/var/tmp/x");
+  assert.equal(macosSystemPathV1("/tmp/x", "darwin"), "/private/tmp/x");
+  for (const path of ["/etcetera/x", "/Library/LaunchDaemons/x.plist", "/private/etc/x", "/usr/etc/x", "etc/x"]) {
+    assert.equal(macosSystemPathV1(path, "darwin"), path, path);
+  }
+  assert.equal(macosSystemPathV1("/etc/newsyslog.d/x.conf", "linux"), "/etc/newsyslog.d/x.conf");
+});
+
+test("the default elevated runtime reads the core batch's system files through their real macOS path", async t => {
+  // Read-only: every open answers ENOENT and the first launchd question stops the batch.
+  const opened = [], stop = Object.assign(new Error("probe stop"), { code: "probe_stop" });
+  const port = createInProcessServiceElevatedPortV1({ geteuid: () => 0,
+    open: async path => { opened.push(path); throw Object.assign(new Error("absent"), { code: "ENOENT" }); },
+    isServiceLoaded: async () => { throw stop; } });
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "control-room-services-default-path-")));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  await assert.rejects(installServicesV1(input(join(temporary, "install"), CORE_SERVICE_ROLES_V1), { elevatedPort: port }),
+    /probe stop/u);
+  const expected = process.platform === "darwin" ? "/private/etc/newsyslog.d/xyz.agentcontrolroom.conf"
+    : "/etc/newsyslog.d/xyz.agentcontrolroom.conf";
+  assert.ok(opened.includes(expected), `opened ${JSON.stringify(opened.filter(path => path.includes("newsyslog")))}`);
+  if (process.platform !== "darwin") { t.diagnostic("the real /etc link needs macOS"); return; }
+  // On this Mac, every directory the core batch walks outside the install root has no symlink left in it.
+  for (const resource of composeServiceBundleV1(input(join(temporary, "install"), CORE_SERVICE_ROLES_V1)).resources
+    .filter(resource => resource.kind !== "protected_config")) {
+    const directory = dirname(opened.find(path => path.endsWith(resource.path.split("/").at(-1))));
+    assert.equal(await realpath(directory), directory, resource.path);
+  }
+});

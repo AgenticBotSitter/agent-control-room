@@ -66,10 +66,24 @@ export function verifyServiceReceiptV1(value, root, servicePolicyValue) {
   return Object.freeze({ ...unsigned, receiptDigest: value.receiptDigest });
 }
 
+/**
+ * macOS's three root-owned system aliases (`/etc`, `/var`, `/tmp` -> `/private/...`), read
+ * as their real path. `ensureDirectory` refuses EVERY symlinked component, and that rule
+ * stays strict: this fixed, literal mapping is applied instead of following a link.
+ * MEASURED (VM, macOS 26, main 66fb6a29): the core batch's newsyslog file lives under
+ * `/etc/newsyslog.d`, `/etc` is a symlink, and every real install refused
+ * `services_batch_uncertain` at `install-services`. The fake runtimes map `/etc` into a
+ * temporary tree with no link, which is why no test saw it.
+ */
+export function macosSystemPathV1(path, platform = process.platform) {
+  return platform === "darwin" && typeof path === "string" && /^\/(?:etc|var|tmp)(?:\/|$)/u.test(path)
+    ? `/private${path}` : path;
+}
+
 function defaultRuntime() {
   return Object.freeze({
     geteuid: () => process.geteuid?.() ?? -1,
-    pathFor: path => path,
+    pathFor: path => macosSystemPathV1(path),
     lstat, mkdir, open, readFile, unlink, rmdir, lchown,
     execute: (file, args) => runFile(file, args, { env: { PATH: "/usr/bin:/bin", HOME: "/var/root" },
       timeout: 30_000, maxBuffer: 1024 * 1024 }),
