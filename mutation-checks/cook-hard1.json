@@ -225,8 +225,8 @@
   },
   {
     "file": "scripts/updater/build-fixed-updater-bundle.mjs",
-    "find": "[\"is-main-module\", \"strict-json\", \"rehearsal-hostname\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\"]",
-    "replace": "[\"is-main-module\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\"]",
+    "find": "[\"is-main-module\", \"strict-json\", \"rehearsal-hostname\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\", \"vapid\"]",
+    "replace": "[\"is-main-module\", \"file-custody\", \"private-process-lock\", \"jsonl-prefix\", \"vapid\"]",
     "test": "node --import tsx --test --test-name-pattern='fixed step builds updater' tests/updater-fixed-bundle.test.mjs",
     "why": "Isolated updater bundles include the shared validation dependencies."
   },

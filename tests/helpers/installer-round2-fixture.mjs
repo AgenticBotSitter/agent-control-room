@@ -281,7 +281,7 @@ function fakePorts(options = {}) {
       await cleanup(dirname(input.release.output));
       return { oldCurrent, oldPrevious, oldUpdaterCurrent, oldUpdaterPrevious }; },
     async abortAttendedV1(input) { calls.push(["abort-attended", input]); await cleanup(input.job); },
-    generateVapidKeys: async () => ({ publicKey: "fixture-public", privateKey: "fixture-private" }),
+    generateVapidKeys: async () => nativePorts.generateVapidKeys(),
     generateWorkIntakeKeys: async () => ({ schema: "fixture", signingKey: "fixture-private-value" }),
     readGithubCredential: async () => "fixture-read-only-credential",
     async initializeDatabase(input) { calls.push(["database-phase", input]);

@@ -58,7 +58,7 @@ const CREDENTIAL = "Y3JlZGVudGlhbC1maXh0dXJlLTMyLWJ5dGVzLWxvbmc";
  * send path is exercised in `tests/updater-alerts-postgres.test.ts` against a
  * fake endpoint. */
 const ROOT_HELD_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1",
-  subject: "mailto:owner@example.invalid", publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
+  subject: "https://fixture.ts.net", publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 
 type Postgres = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
 

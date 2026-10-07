@@ -29,8 +29,8 @@
   },
   {
     "file": "src/updater/v1/services/bundle.mjs",
-    "find": "keepAlive: \"failed\", exitTimeOut: 45 },",
-    "replace": "keepAlive: true, exitTimeOut: 45 },",
+    "find": "keepAlive: \"failed\", exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1[\"fleet-gateway\"] },",
+    "replace": "keepAlive: true, exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1[\"fleet-gateway\"] },",
     "test": "node --import tsx --test --test-name-pattern='byte-identical' tests/updater-services.test.mjs",
     "why": "a known gateway configuration refusal must not enter an unconditional crash loop"
   },
@@ -85,8 +85,8 @@
   },
   {
     "file": "src/updater/v1/services/elevated.mjs",
-    "find": "await bootout(runtime, service.label);\n      if (service.role === \"postgresql17\") await verifyPostgres(runtime, root);",
-    "replace": "if (service.role === \"postgresql17\") await verifyPostgres(runtime, root);\n      await bootout(runtime, service.label);",
+    "find": "await bootout(runtime, service);\n      if (service.role === \"postgresql17\") await verifyPostgres(runtime, root);",
+    "replace": "if (service.role === \"postgresql17\") await verifyPostgres(runtime, root);\n      await bootout(runtime, service);",
     "test": "node --import tsx --test --test-name-pattern='uninstall boots PostgreSQL out before' tests/updater-services.test.mjs",
     "why": "PostgreSQL must be booted out before clean-shutdown proof or resource removal"
   },

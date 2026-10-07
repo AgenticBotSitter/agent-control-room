@@ -282,7 +282,7 @@ function fakePorts(options = {}) {
       await cleanup(dirname(input.release.output));
       return { oldCurrent, oldPrevious, oldUpdaterCurrent, oldUpdaterPrevious }; },
     async abortAttendedV1(input) { calls.push(["abort-attended", input]); await cleanup(input.job); },
-    generateVapidKeys: async () => ({ publicKey: "fixture-public", privateKey: "fixture-private" }),
+    generateVapidKeys: async () => nativePorts.generateVapidKeys(),
     generateWorkIntakeKeys: async () => ({ schema: "fixture", signingKey: "fixture-private-value" }),
     readGithubCredential: async () => "fixture-read-only-credential",
     async initializeDatabase(input) { calls.push(["database-phase", input]);
@@ -461,11 +461,11 @@ test("install creates isolated accounts, exact layout, root-only custody, secure
   assert.equal(await readFile(f.systemPaths.sudoers, "utf8"), CONTROL_ROOM_SUDOERS_V1);
   assert.equal((await stat(f.systemPaths.sudoers)).mode & 0o777, 0o440);
   assert.equal(await readFile(join(f.root, "updater-state", "self-update"), "utf8"), "Off\n");
-  assert.equal(await readFile(join(f.root, "updater-state", "vapid.json"), "utf8"),
-    '{"schema":"control-room.updater-vapid/v1","subject":"mailto:owner@control-room.invalid",'
-    + '"publicKey":"fixture-public","privateKey":"fixture-private"}\n');
-  assert.equal(await readFile(join(f.root, "Protected", "service", "vapid-public.json"), "utf8"),
-    '{"publicKey":"fixture-public"}\n');
+  const vapid = JSON.parse(await readFile(join(f.root, "updater-state", "vapid.json"), "utf8"));
+  assert.equal(vapid.schema, "control-room.updater-vapid/v1");
+  assert.equal(vapid.subject, "https://fixture.ts.net");
+  assert.equal(JSON.parse(await readFile(join(f.root, "Protected", "config", "owner-web-push.json"), "utf8")).publicKey, vapid.publicKey);
+  await assert.rejects(readFile(join(f.root, "Protected", "service", "vapid-public.json")), { code: "ENOENT" });
   await assert.rejects(readFile(join(f.root, "Protected", "service", "vapid.json")), { code: "ENOENT" });
   for (const role of ["supervisor", "gateway", "postgres", "builder", "upgrader", "updater", "updater-guard"]) {
     assert.equal((await stat(join(f.root, "logs", role))).mode & 0o777, 0o755);
@@ -602,7 +602,7 @@ test("the installer writes vapid.json in the updater's own format, and the insta
   const loaded = await loadUpdaterVapidV1(f.root, { getuid: () => 0, lstat: asRoot });
   const written = JSON.parse(await readFile(join(f.root, "updater-state", "vapid.json"), "utf8"));
   assert.equal(loaded.publicKey, written.publicKey);
-  assert.equal(JSON.parse(await readFile(join(f.root, "Protected", "service", "vapid-public.json"), "utf8")).publicKey,
+  assert.equal(JSON.parse(await readFile(join(f.root, "Protected", "config", "owner-web-push.json"), "utf8")).publicKey,
     written.publicKey);
 
   // A two-key file left by an earlier attempt keeps its keys and is rewritten in the updater's form.
@@ -829,7 +829,7 @@ export default Object.freeze({
   stageReleaseV1: async input => {const target=input.root+"/releases/"+input.releaseId;await mkdir(target,{recursive:true});return {target};},
   stageUpdaterBundleV1: async input => {const target=input.root+"/updater/"+input.uver;await mkdir(target,{recursive:true});return {target};},
   switchPairV1: async input => {if(input.restore){await setLink(input.root+"/current",input.restore.oldCurrent);await setLink(input.root+"/previous",input.restore.oldPrevious);await setLink(input.root+"/updater/current",input.restore.oldUpdaterCurrent);await setLink(input.root+"/updater/previous",input.restore.oldUpdaterPrevious);return {restored:true};}const oldCurrent=await oldLink(input.root+"/current"),oldPrevious=await oldLink(input.root+"/previous"),oldUpdaterCurrent=await oldLink(input.root+"/updater/current"),oldUpdaterPrevious=await oldLink(input.root+"/updater/previous");await setLink(input.root+"/previous",oldCurrent??"releases/"+input.release.releaseId);await setLink(input.root+"/current","releases/"+input.release.releaseId);if(input.updateUpdater){await setLink(input.root+"/updater/previous",oldUpdaterCurrent??input.bundle.uver);await setLink(input.root+"/updater/current",input.bundle.uver);}return {oldCurrent,oldPrevious,oldUpdaterCurrent,oldUpdaterPrevious};},
-  abortAttendedV1: async () => {}, generateVapidKeys: async () => ({publicKey:"public",privateKey:"private"}),
+  abortAttendedV1: async () => {}, generateVapidKeys: async () => (await import(${JSON.stringify(pathToFileURL(join(repository, "src/updater/v1/cli/control-room-native-ports.mjs")).href)})).generateVapidKeysV1(),
   generateWorkIntakeKeys: async () => ({key:"private"}), readGithubCredential: async () => "read-only",
   initializeDatabase: async input => { if (process.env.CR_REAL_RETIRE === "1" && input.phase === "init") {
     // What the real init leaves: a data directory and, LAST, pg/current naming it. A
@@ -1535,7 +1535,7 @@ test("Serve exclusivity is scoped to :443 and accepts the real two-entry shape",
 test("rerun key reads refuse a symlink without following or blocking", async t => {
   const f = await fixture(t, "key-rerun", { failC4: "seed" });
   await assert.rejects(installControlRoomV1(f.options), /c4_seed_failed/u);
-  const publicPath = join(f.root, "Protected/service/vapid-public.json"), outside = join(f.base, "outside.json");
+  const publicPath = join(f.root, "Protected/config/owner-web-push.json"), outside = join(f.base, "outside.json");
   await writeFile(outside, '{"publicKey":"fixture-public"}\n'); await rm(publicPath); await symlink(outside, publicPath);
   const retry = fakePorts({ users: f.ports.users, groups: f.ports.groups });
   await assert.rejects(installControlRoomV1({ ...f.options, ports: retry }), /existing_key_refused/u);
@@ -1672,9 +1672,9 @@ test("E2E-1 fake-root install night completes against a local bare GitHub, repea
     "install-database-service", "fresh-database", "apply-release-schema", "write-database-logins", "first-owner", "install-guard", "install-services",
     "capture-tailscale", "activate-tailscale", "record-serve", "health-check", "seed-known-good", "mint-owner-session",
     "install-post-health-services", "transaction"]);
-  assert.deepEqual(completedActions(transactions[1]), ["fetch-source", "build-release", "build-updater-bundle", "confirm",
+  assert.deepEqual(completedActions(transactions[1]), ["generate-keys", "fetch-source", "build-release", "build-updater-bundle", "confirm",
     "stage", "switch-pointers", "restart-services", "health-check", "transaction"]);
-  assert.deepEqual(completedActions(transactions[2]), ["fetch-source", "build-release", "build-updater-bundle", "confirm",
+  assert.deepEqual(completedActions(transactions[2]), ["generate-keys", "fetch-source", "build-release", "build-updater-bundle", "confirm",
     "stage", "switch-pointers", "restart-services"]);
   const passkeyTransaction = records.find(record => record.command === "passkey")?.transactionId;
   assert.deepEqual(completedActions(passkeyTransaction), ["register-passkey", "cleanup-bootstrap", "transaction"]);
@@ -2190,7 +2190,7 @@ test("the installer's journal.key is the updater's own hex format, so the instal
 test("a stop inside generate-keys leaves no partial key, and the retry installs with one probe key", async t => {
   // atk-fa F12: a stop between a key's create and its chown, or between a pair of key
   // files, left a file every retry refused, or a probe key root and the service disagreed on.
-  for (const victim of ["updater-state/journal.key", "updater-state/vapid.json", "Protected/service/vapid-public.json",
+  for (const victim of ["updater-state/journal.key", "updater-state/vapid.json", "Protected/config/owner-web-push.json",
     "updater-state/health-probe.key", "Protected/service/health-probe.key", "Protected/service/web-hmac.key"]) {
     const f = await fixture(t, "partial-keys");
     let calls = 0, armed = true;
@@ -2513,4 +2513,121 @@ test("the Tailscale app binary needs TERM to act as a CLI; without it it exits 0
   assert.equal(bare.code, 0); assert.match(bare.stdout, /GUI failed to start/u);
   const cli = await version({ LANG: "C", LC_ALL: "C", TERM: "dumb" });
   assert.equal(cli.code, 0); assert.match(cli.stdout, /^\d+\.\d+\.\d+/u);
+});
+
+test("fresh installer creates one pair for the web reader and updater and signs the installation origin", async t => {
+  const f = await fixture(t, "one-push-pair"), expectedSubject = "https://fixture.ts.net";
+  for (const name of ["updater-state/vapid.json", "Protected/config/owner-web-push.json"])
+    await assert.rejects(lstat(join(f.root, name)), { code: "ENOENT" }, "setup must not create a product key file");
+  let mints = 0;
+  f.ports.generateVapidKeys = async () => { mints++; return nativePorts.generateVapidKeys(); };
+  await installControlRoomV1(f.options);
+  assert.equal(mints, 1, "exactly one real P-256 generation");
+  const { loadUpdaterVapidV1 } = await import("../src/updater/v1/alerts.mjs");
+  const { loadOwnerWebPushConfigFromRootV1 } = await tsImport("../src/web/v1/mac-local-protected-loader.ts", import.meta.url);
+  const runtime = { getuid: () => 0, getgid: () => 0, getgroups: () => [], readFile,
+    lstat: async path => Object.assign(await lstat(path), { uid: 0, gid: 0 }) };
+  const updater = await loadUpdaterVapidV1(f.root, runtime);
+  const web = await loadOwnerWebPushConfigFromRootV1(join(f.root, "Protected"), runtime);
+  assert.equal(updater.subject, expectedSubject);
+  assert.equal(web.subject, expectedSubject);
+  assert.equal(web.publicKey, updater.publicKey, "the browser's subscription key is the updater's signing key");
+  assert.equal(web.privateKey, updater.privateKey);
+  const { createMacLocalWebProcessV1 } = await tsImport("../src/web/v1/mac-local-web-process.ts", import.meta.url);
+  const { boundPrivateDatabase } = await tsImport("../src/web/v1/bounded-database.ts", import.meta.url);
+  const { createPrivatePgDriver } = await tsImport("../src/web/v1/private-pg-driver.ts", import.meta.url);
+  const { sha256Digest } = await tsImport("../src/security/index.ts", import.meta.url);
+  const database = boundPrivateDatabase(createPrivatePgDriver({ async connect() { assert.fail("the public-key read needs no database query"); }, async end() {} }));
+  t.after(() => database.close());
+  const origin = "http://127.0.0.1:4383", ownerCode = "fixture-owner-code-long-enough";
+  const app = createMacLocalWebProcessV1({ origin, workspaceId: "workspace:fixture", database,
+    localOwnerSession: { schema: "control-room.local-owner-session/v1", origin, tenantId: "tenant:fixture",
+      provider: "local", subject: "owner:fixture", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 }, ownerWebPush: web });
+  const request = (path, init) => new Request(`${origin}${path}`, init);
+  assert.equal((await app.handle(request("/api/v1/owner-web-push"), () => new Response())).status, 401);
+  const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST",
+    headers: { origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response());
+  assert.equal(signedIn.status, 201);
+  const publicResponse = await app.handle(request("/api/v1/owner-web-push", {
+    headers: { cookie: signedIn.headers.get("set-cookie").split(";")[0] } }), () => new Response());
+  assert.equal(publicResponse.status, 200);
+  assert.equal((await publicResponse.json()).publicKey, updater.publicKey);
+  const { default: webpush } = await import("web-push");
+  const signed = webpush.getVapidHeaders("https://web.push.apple.com", updater.subject,
+    updater.publicKey, updater.privateKey, "aes128gcm");
+  const token = /^vapid t=([^,]+), k=(.+)$/u.exec(signed.Authorization);
+  assert.ok(token);
+  assert.equal(token[2], web.publicKey);
+  const jwt = JSON.parse(Buffer.from(token[1].split(".")[1], "base64url").toString("utf8"));
+  assert.equal(jwt.sub, expectedSubject);
+  assert.equal(jwt.aud, "https://web.push.apple.com");
+  assert.ok(jwt.exp > Date.now() / 1000 && jwt.exp < Date.now() / 1000 + 86400);
+  const burst = await Promise.all(Array.from({ length: 50 }, () => loadOwnerWebPushConfigFromRootV1(join(f.root, "Protected"), runtime)));
+  assert.ok(burst.every(value => value.publicKey === updater.publicKey));
+  await assert.rejects(lstat(join(f.root, "Protected/service/vapid-public.json")), { code: "ENOENT" });
+  for (const keys of [{ publicKey: "broken", privateKey: "broken" }, null]) {
+    const invalid = await fixture(t, "bad-generated-vapid");
+    invalid.ports.generateVapidKeys = async () => keys;
+    await assert.rejects(installControlRoomV1(invalid.options), /vapid_generation_refused/u);
+    await assert.rejects(lstat(join(invalid.root, "updater-state/vapid.json")), { code: "ENOENT" });
+  }
+});
+
+test("installer retries repair missing and placeholder subjects without regenerating adopted keys", async t => {
+  for (const subject of [undefined, "mailto:owner@control-room.invalid", "https://localhost"]) {
+    const f = await fixture(t, "subject-repair", { failStep: "init-database" });
+    await assert.rejects(installControlRoomV1(f.options), /fixture_step_failure/u);
+    const path = join(f.root, "updater-state/vapid.json"), first = JSON.parse(await readFile(path, "utf8"));
+    await writeFile(path, JSON.stringify({ ...first, subject }), { mode: 0o600 });
+    const webPath = join(f.root, "Protected/config/owner-web-push.json"), web = JSON.parse(await readFile(webPath, "utf8"));
+    await writeFile(webPath, JSON.stringify({ ...web, subject }), { mode: 0o600 });
+    const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups });
+    ports.generateVapidKeys = async () => assert.fail("adopted keys must survive a retry");
+    await installControlRoomV1({ ...f.options, ports });
+    const repaired = JSON.parse(await readFile(path, "utf8"));
+    assert.equal(repaired.subject, "https://fixture.ts.net");
+    assert.equal(JSON.parse(await readFile(webPath, "utf8")).subject, "https://fixture.ts.net");
+    assert.deepEqual([repaired.publicKey, repaired.privateKey], [first.publicKey, first.privateKey]);
+  }
+});
+
+test("installed update rewrites only the VAPID subject and keeps the browser subscription pair", async t => {
+  const f = await fixture(t, "installed-subject-repair");
+  await installControlRoomV1(f.options);
+  const path = join(f.root, "updater-state/vapid.json"), first = JSON.parse(await readFile(path, "utf8"));
+  await writeFile(path, JSON.stringify({ ...first, subject: "mailto:owner@control-room.invalid" }), { mode: 0o600 });
+  const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups, version: "1.2.4" });
+  ports.generateVapidKeys = async () => assert.fail("an update must not mint new keys");
+  await installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "b".repeat(40), ports });
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { ...first, subject: "https://fixture.ts.net" });
+  const web = JSON.parse(await readFile(join(f.root, "Protected/config/owner-web-push.json"), "utf8"));
+  assert.deepEqual([web.publicKey, web.privateKey], [first.publicKey, first.privateKey]);
+  const mismatch = await nativePorts.generateVapidKeys();
+  await writeFile(join(f.root, "Protected/config/owner-web-push.json"), JSON.stringify({ ...web, ...mismatch }), { mode: 0o600 });
+  const mismatchPorts = fakePorts({ users: f.ports.users, groups: f.ports.groups, version: "1.2.5" });
+  await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "c".repeat(40), ports: mismatchPorts }), /existing_key_refused/u);
+  assert.equal(mismatchPorts.calls.some(call => call[0] === "build-release"), false, "a mismatched pair is refused before release changes");
+});
+
+test("installer refuses malformed adopted key shapes before account or release effects", async t => {
+  for (const corrupt of [value => ({ ...value, extra: true }), value => ({ ...value, schema: "unknown" }),
+    value => ({ ...value, publicKey: "broken" }), value => ({ ...value, privateKey: null })]) {
+    const f = await fixture(t, "adoption-shape", { failStep: "init-database" });
+    await assert.rejects(installControlRoomV1(f.options), /fixture_step_failure/u);
+    const path = join(f.root, "updater-state/vapid.json"), before = corrupt(JSON.parse(await readFile(path, "utf8")));
+    await writeFile(path, JSON.stringify(before), { mode: 0o600 });
+    const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups });
+    await assert.rejects(installControlRoomV1({ ...f.options, ports }), /existing_key_refused/u);
+    assert.equal(ports.calls.some(call => ["create-account", "build-release", "install-services"].includes(call[0])), false);
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")), before);
+  }
+});
+
+test("installer refuses a reserved Tailscale origin before it creates keys or accounts", async t => {
+  for (const rpId of ["localhost", "fixture.invalid", "example.com", "fixture.ts.net/", "", "fixture.ts.net:443", ["fixture.ts.net"]]) {
+    const f = await fixture(t, "refused-push-origin", { rpId });
+    await assert.rejects(installControlRoomV1(f.options), /vapid_subject_refused/u);
+    assert.equal(f.ports.calls.some(call => call[0] === "create-account"), false);
+    await assert.rejects(lstat(join(f.root, "updater-state/vapid.json")), { code: "ENOENT" });
+  }
 });

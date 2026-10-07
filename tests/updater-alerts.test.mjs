@@ -6,7 +6,7 @@ import test from "node:test";
 import { UPDATER_PUSH_RETRY_MS_V1, UpdaterAlertSenderV1, loadUpdaterVapidV1 } from "../src/updater/v1/alerts.mjs";
 import { ownerPushEndpointAllowedV1 } from "../src/updater/v1/push-policy.mjs";
 
-const vapid = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+const vapid = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "https://fixture.ts.net",
   publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 const id = n => `push:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
@@ -141,4 +141,38 @@ test("a slow push is timed out, retried on a bounded schedule, and never piles u
   assert.equal(rows[0].attempts, 1, "a slow service cannot burn through the retry budget in a loop");
   assert.ok(store.subscriptionReads >= 1, "subscriptions were cached from the database before the outage");
   assert.ok((await readFile(join(root, "updater-state/push-subscriptions.json"), "utf8")).includes("fcm.googleapis.com"));
+});
+
+test("updater VAPID accepts installation HTTPS origin and fails closed on missing and reserved contacts", async t => {
+  const root = await fixture(t), path = join(root, "updater-state/vapid.json");
+  const runtime = { getuid: () => 0, lstat: async name => Object.assign(await lstat(name), { uid: 0 }) };
+  await writeFile(path, JSON.stringify({ ...vapid, subject: "https://fixture.ts.net" }), { mode: 0o600 });
+  assert.equal((await loadUpdaterVapidV1(root, runtime)).subject, "https://fixture.ts.net");
+  for (const subject of [undefined, "", "mailto:owner@example.invalid", "mailto:owner@localhost", "https://example.org",
+    "https://fixture.ts.net/", "https://fixture.ts.net:443", "https://fixture.ts.net?x", "https://fixture.invalid"]) {
+    await writeFile(path, JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
+    await assert.rejects(loadUpdaterVapidV1(root, runtime), /updater_vapid_invalid/u, String(subject));
+  }
+});
+
+test("updater send results retain the bounded push service rejection body", async t => {
+  const root = await fixture(t), row = { id: id(1), template: "control-room-updater.web-down", attempts: 0 };
+  const store = new MemoryStore([row]);
+  const sender = new UpdaterAlertSenderV1({ root, store, loadVapid: async () => ({ ...vapid, subject: "https://fixture.ts.net" }),
+    send: async () => { throw { statusCode: 403, body: "VapidPkHashMismatch" + "x".repeat(2048) }; } });
+  const result = await sender.tick();
+  assert.equal(result.sent, 0);
+  assert.deepEqual(result.failures, [{ subscriptionId: "phone:one", statusCode: 403,
+    rejectionReason: "VapidPkHashMismatch" + "x".repeat(1005) }]);
+  assert.equal(row.sent, false);
+  const burstRoot = await fixture(t), burstStore = new MemoryStore([
+    { id: id(1), template: "control-room-updater.web-down", attempts: 0 },
+    { id: id(2), template: "control-room-updater.backup-failed", attempts: 0 },
+  ]);
+  // The production query returns at most 100 subscriptions. Two templates exercise 200 rejections.
+  burstStore.subscriptionsValue = Array.from({ length: 100 }, (_, n) => ({ id: `phone:${n}`,
+    endpoint: `https://fcm.googleapis.com/fcm/send/${n}`, p256dh: "A", auth: "B", expires_at: null }));
+  const burst = new UpdaterAlertSenderV1({ root: burstRoot, store: burstStore, loadVapid: async () => vapid,
+    send: async () => { throw { statusCode: 403, body: "BadJwtToken" }; } });
+  assert.equal((await burst.tick()).failures.length, 100, "the send result retains at most 100 diagnostic records");
 });

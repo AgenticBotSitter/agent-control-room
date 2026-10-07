@@ -10,6 +10,7 @@ import { spawnTrusted } from "../trusted-runtime.mjs";
 import { assertRehearsalInvocationV1, loadRehearsalConfigV1 } from "./rehearsal-config.mjs";
 import { DiskReserveV1 } from "../actuator.mjs";
 import { safeErrorLabelV1 } from "../contracts.mjs";
+import { vapidConfigAllowedV1, vapidSubjectAllowedV1 } from "../../../installer/shared/vapid.mjs";
 
 export const CONTROL_ROOM_INSTALL_JOURNAL_SCHEMA_V2 = "control-room.install-journal/v2";
 export const CONTROL_ROOM_INSTALLER_JOURNAL_FILE_V1 = "installer-journal.jsonl";
@@ -20,8 +21,6 @@ export const DEFAULT_CONTROL_ROOM_WEB_PORT_V1 = 3210;
 export const DEFAULT_CONTROL_ROOM_GATEWAY_PORT_V1 = 3211;
 /** `alerts.mjs` reads `updater-state/vapid.json` in this schema; the installer writes it. */
 export const UPDATER_VAPID_SCHEMA_V1 = "control-room.updater-vapid/v1";
-/** The VAPID contact the updater's pushes carry until the owner sets one. Not a real mailbox. */
-export const INSTALL_VAPID_SUBJECT_V1 = "mailto:owner@control-room.invalid";
 export const CONTROL_ROOM_SUDOERS_V1 = "Defaults secure_path=\"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n";
 
 const accountPolicyPath = fileURLToPath(new URL("../policy/accounts.json", import.meta.url));
@@ -369,7 +368,70 @@ async function installShimAndSudoers(paths, ports, undo) {
   return { shimCreated, sudoersCreated };
 }
 
-async function generateKeys(root, accounts, ports, { credentialAlreadyAdopted = false } = {}) {
+/** Validate the repaired reader shape before any installation effect. Only subject may be repaired. */
+async function readInstallVapidV1(root, subject) {
+  const path = join(root, "updater-state", "vapid.json");
+  const entry = await lstat(path).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (!entry) return null;
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse("existing_key_refused");
+  const bytes = await readRegularFileNoFollowV1(path, { maximumBytes: 4096, uid: 0, gid: 0 });
+  if (bytes.byteLength === 0) return null;
+  let value; try { value = JSON.parse(bytes.toString("utf8")); } catch { refuse("existing_key_refused"); }
+  const shape = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort().join(",") : "";
+  if (shape !== "privateKey,publicKey" && !(value?.schema === UPDATER_VAPID_SCHEMA_V1
+    && ["privateKey,publicKey,schema", "privateKey,publicKey,schema,subject"].includes(shape))) refuse("existing_key_refused");
+  const repaired = { schema: UPDATER_VAPID_SCHEMA_V1, subject, publicKey: value.publicKey, privateKey: value.privateKey };
+  if (!vapidConfigAllowedV1(repaired, UPDATER_VAPID_SCHEMA_V1)) refuse("existing_key_refused");
+  return repaired;
+}
+
+async function assertInstallWebVapidV1(root, vapid) {
+  const path = join(root, "Protected", "config", "owner-web-push.json");
+  const entry = await lstat(path).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (!entry) return;
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse("existing_key_refused");
+  const bytes = await readRegularFileNoFollowV1(path, { maximumBytes: 4096 });
+  if (bytes.byteLength === 0) return;
+  let before; try { before = JSON.parse(bytes.toString("utf8")); } catch { refuse("existing_key_refused"); }
+  if (!before || !["privateKey,publicKey,schema", "privateKey,publicKey,schema,subject"].includes(Object.keys(before).sort().join(","))
+    || before.schema !== "control-room.owner-web-push-config/v1" || !vapid
+    || before.publicKey !== vapid.publicKey || before.privateKey !== vapid.privateKey) refuse("existing_key_refused");
+}
+
+/** One pair; the service copy uses the web reader's schema and private mode. */
+async function writeInstallVapidV1(root, accounts, ports, subject) {
+  const existing = await readInstallVapidV1(root, subject);
+  const keys = existing ?? await ports.generateVapidKeys();
+  const vapid = { schema: UPDATER_VAPID_SCHEMA_V1, subject, publicKey: keys?.publicKey, privateKey: keys?.privateKey };
+  if (!vapidConfigAllowedV1(vapid, UPDATER_VAPID_SCHEMA_V1)) refuse("vapid_generation_refused");
+  await assertInstallWebVapidV1(root, vapid);
+  const write = async (path, value, owner) => {
+    const entry = await lstat(path).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
+    if (entry) {
+      if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse("existing_key_refused");
+      const bytes = await readRegularFileNoFollowV1(path, { maximumBytes: 4096, uid: owner.uid, gid: owner.gid });
+      const desired = `${JSON.stringify(value)}\n`;
+      if (bytes.toString("utf8") === desired) return;
+    }
+    const temporary = join(dirname(path), `.${basename(path)}.installing`);
+    await rm(temporary, { force: true }); await safeWrite(temporary, `${JSON.stringify(value)}\n`, 0o600);
+    try { await ports.lchownPath(temporary, owner.uid, owner.gid); await rename(temporary, path); }
+    catch (error) { await rm(temporary, { force: true }); throw error; }
+    await syncDirectory(dirname(path));
+  };
+  await write(join(root, "updater-state", "vapid.json"), vapid, { uid: 0, gid: 0 });
+  await write(join(root, "Protected", "config", "owner-web-push.json"), { ...vapid, schema: "control-room.owner-web-push-config/v1" }, ids(accounts, "service"));
+  // Retire the unused public-only projection, checking custody before unlinking it.
+  const retired = join(root, "Protected", "service", "vapid-public.json");
+  const entry = await lstat(retired).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (entry) {
+    if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse("existing_key_refused");
+    await readRegularFileNoFollowV1(retired, { maximumBytes: 4096, ...ids(accounts, "service") });
+    await unlink(retired); await syncDirectory(dirname(retired));
+  }
+}
+
+async function generateKeys(root, accounts, ports, { credentialAlreadyAdopted = false, subject } = {}) {
   const service = ids(accounts, "service"), state = join(root, "updater-state"), protectedService = join(root, "Protected", "service");
   const key = size => ports.randomBytes?.(size) ?? randomBytes(size);
   // atk-fa F12: each key reaches its name only complete and owned (temporary, chown,
@@ -402,32 +464,7 @@ async function generateKeys(root, accounts, ports, { credentialAlreadyAdopted = 
   // The updater's own format (`journal.mjs`): 64 hex characters and a newline (atk-fa F7).
   await writeOwned(join(state, "journal.key"), `${key(32).toString("hex")}\n`, { uid: 0, gid: 0 },
     text => /^[a-f0-9]{64}\n$/u.test(text));
-  const vapidPath = join(state, "vapid.json"), publicPath = join(protectedService, "vapid-public.json");
-  // The file is the UPDATER's own format (`alerts.mjs` `loadUpdaterVapidV1`: schema, subject and the
-  // two keys). MEASURED (VM, main 66fb6a29): the installer wrote only the two keys, the installed
-  // updater exited at start with `updater_vapid_invalid`, no heartbeat came, and the install was
-  // undone at `install-post-health-services`. A key pair in the old two-key form, left by an earlier
-  // attempt, is kept and rewritten in place (same keys) rather than refused or regenerated.
-  const vapidFile = keys => `${JSON.stringify({ schema: UPDATER_VAPID_SCHEMA_V1, subject: INSTALL_VAPID_SUBJECT_V1,
-    publicKey: keys.publicKey, privateKey: keys.privateKey })}\n`;
-  const validVapid = text => typeof jsonObject(text)?.publicKey === "string" && typeof jsonObject(text)?.privateKey === "string";
-  const adoptedVapid = await existingKey(vapidPath, { uid: 0, gid: 0 }, validVapid);
-  let vapid = adoptedVapid === null ? null : JSON.parse(adoptedVapid);
-  if (!vapid) {
-    vapid = await ports.generateVapidKeys();
-    if (!vapid || typeof vapid.publicKey !== "string" || typeof vapid.privateKey !== "string") refuse("vapid_generation_refused");
-    await writeOwned(vapidPath, vapidFile(vapid), { uid: 0, gid: 0 }, validVapid);
-  } else if (vapid.schema !== UPDATER_VAPID_SCHEMA_V1) {
-    if (Object.keys(vapid).sort().join(",") !== "privateKey,publicKey") refuse("existing_key_refused");
-    const temporary = join(state, ".vapid.json.installing");
-    await rm(temporary, { force: true }); await safeWrite(temporary, vapidFile(vapid), 0o600);
-    try { await ports.lchownPath(temporary, 0, 0); await rename(temporary, vapidPath); }
-    catch (error) { await rm(temporary, { force: true }); throw error; }
-    await syncDirectory(state);
-  }
-  // Written, or re-derived after a stop between the two files, from the private file's public half.
-  await writeOwned(publicPath, `${JSON.stringify({ publicKey: vapid.publicKey })}\n`, service,
-    text => jsonObject(text)?.publicKey === vapid.publicKey);
+  await writeInstallVapidV1(root, accounts, ports, subject);
   const releaseKey = await generateInstallationReleaseKeyV1({ protectedRoot: join(root, "Protected"),
     versionFloor: "0.0.0" }, { expectedUid: process.geteuid?.() ?? 0 });
   // The service's probe copy is ALWAYS root's key: after a stop between the two
@@ -1088,7 +1125,11 @@ export async function installControlRoomV1(options) {
     }
     if (options.bootstrap !== undefined) absolute(options.bootstrap, "bootstrap_root_refused");
     const paths = systemPaths(effectiveOptions), names = await loadAccountsPolicy(effectiveOptions);
+    const rpId = rehearsal ? rehearsal.tailnetIdentity : await ports.readTailscaleRpId({ identity: options.invokingUser });
+    const vapidSubject = `https://${rpId}`;
+    if (typeof rpId !== "string" || !vapidSubjectAllowedV1(vapidSubject)) refuse("vapid_subject_refused");
     releaseLock = await acquireLock(root, ports);
+    await assertInstallWebVapidV1(root, await readInstallVapidV1(root, vapidSubject));
     await ensureDirectory(join(root, "updater-state"), 0o700, { uid: 0, gid: 0 }, ports);
     await repairJournalTail(root);
     await assertSelfUpdateOff(root);
@@ -1142,6 +1183,7 @@ export async function installControlRoomV1(options) {
       const accountState = recoveryAccounts(actionFor(priorEntries, freshInstall?.transactionId, "create-accounts"), names);
       const initialized = actionFor(priorEntries, freshInstall?.transactionId, "init-database")?.data;
       const schema = actionFor(priorEntries, freshInstall?.transactionId, "apply-release-schema")?.data;
+      await journalStep(write, "generate-keys", () => writeInstallVapidV1(root, accountState, ports, vapidSubject));
       const attended = await runAttendedCoreV1({ root, commit: options.commit, accounts: accountState,
         fresh: false, write, ports, options: { ...effectiveOptions, inventoryDigest, onSpawn }, undo });
       await recomposeGatewayFile(root, id, write, ports, undo);
@@ -1218,7 +1260,7 @@ export async function installControlRoomV1(options) {
     }
     let releaseTrust;
     await journalStep(write, "generate-keys", async () => {
-      releaseTrust = await generateKeys(root, accountState.accounts, ports, { credentialAlreadyAdopted: true });
+      releaseTrust = await generateKeys(root, accountState.accounts, ports, { credentialAlreadyAdopted: true, subject: vapidSubject });
       return {};
     });
     await journalStep(write, "sudoers", async () => {
@@ -1239,7 +1281,7 @@ export async function installControlRoomV1(options) {
     const stageOnePorts = loaded.createStageOnePortsV1(ports);
     const stageOne = await loaded.continueInstallV1(Object.freeze({ root, transactionId: id,
       accounts: accountState.accounts, invokingUser: options.invokingUser, write, undo, ports: stageOnePorts,
-      options: Object.freeze({ ...effectiveOptions, releaseTrust, webPort, gatewayPort, spawnTrusted, writeEvidence }), attended,
+      options: Object.freeze({ ...effectiveOptions, releaseTrust, vapidRpId: rpId, webPort, gatewayPort, spawnTrusted, writeEvidence }), attended,
       runtimeInventory: Object.freeze(runtimeInventory) }));
     if (rehearsal) await writeEvidence("spawn-count", { expected: spawnEvidenceCount });
     await recordInstalled(root, id, write, undo);

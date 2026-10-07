@@ -2,6 +2,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { ownerPushEndpointAllowedV1 } from "./push-policy.mjs";
+import { pushRejectionReasonV1, vapidConfigAllowedV1 } from "../../installer/shared/vapid.mjs";
 
 export const UPDATER_PUSH_CACHE_MS_V1 = 10 * 60_000;
 export const UPDATER_PUSH_RATE_MS_V1 = 60 * 60_000;
@@ -56,14 +57,7 @@ function safeErrorCode(error) {
   return /^[a-z][a-z0-9_]{1,63}$/u.test(code) ? code : "updater_push_send_failed";
 }
 
-function validVapid(value) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    && Object.keys(value).sort().join(",") === "privateKey,publicKey,schema,subject"
-    && value.schema === "control-room.updater-vapid/v1"
-    && typeof value.subject === "string" && /^mailto:[^\s@]+@[^\s@]+$/u.test(value.subject)
-    && typeof value.publicKey === "string" && /^[A-Za-z0-9_-]{80,100}$/u.test(value.publicKey)
-    && typeof value.privateKey === "string" && /^[A-Za-z0-9_-]{40,100}$/u.test(value.privateKey);
-}
+function validVapid(value) { return vapidConfigAllowedV1(value, "control-room.updater-vapid/v1"); }
 
 /** Read the root-held VAPID key. A non-root process must fail before it opens it. */
 export async function loadUpdaterVapidV1(root, runtime = {}) {
@@ -93,6 +87,7 @@ async function defaultSend(vapid, subscription, payload, signal) {
 }
 
 export class UpdaterAlertSenderV1 {
+  #rejections = [];
   #running = false; #inflight = new Set(); #retry = new Map(); #rate = {}; #active = new Set(); #deliveries = {}; #dead = new Set(); #writes = Promise.resolve(); #loaded = false;
   /** THIS process's claim identity (U02/U03/U07).
    *
@@ -254,8 +249,14 @@ export class UpdaterAlertSenderV1 {
       try {
         const response = await this.send(vapid, subscription, payload, controller.signal);
         if (response?.statusCode !== undefined && !(response.statusCode >= 200 && response.statusCode < 300))
-          throw { statusCode: response.statusCode };
+          throw { statusCode: response.statusCode, body: response.body };
       } catch (error) {
+        const reason = pushRejectionReasonV1(error);
+        if (reason !== undefined) {
+          const failure = { subscriptionId: subscription.id, statusCode: error?.statusCode, rejectionReason: reason };
+          if (this.#rejections.length < 100) this.#rejections.push(failure);
+          console.warn(JSON.stringify({ event: "updater_push_rejected", ...failure }));
+        }
         if (error?.statusCode !== 404 && error?.statusCode !== 410) throw error;
         // The deployer has no DELETE grant. Invalidate locally and durably;
         // database pruning remains a separate, authorized store responsibility.
@@ -354,8 +355,11 @@ export class UpdaterAlertSenderV1 {
     if (claimed) row.__claimed = this.#claimToken;
     return claimed;
   }
+  /** @returns {Promise<{status: string, sent: number, subscriptions?: number,
+   * failures?: Array<{subscriptionId: string, statusCode: number | undefined, rejectionReason: string}>}>} */
   async tick() {
     if (this.#running) return { status: "busy", sent: 0 };
+    this.#rejections = [];
     this.#running = true;
     try {
       // Load the durable checkpoint once. Accepted receipts remain in memory
@@ -425,7 +429,8 @@ export class UpdaterAlertSenderV1 {
           } catch (error) { await this.#finish(claimed, false, safeErrorCode(error)); }
         }
       }
-      await this.#writeState(); return { status: "ok", sent, subscriptions: subscriptions.length };
+      await this.#writeState(); return { status: "ok", sent, subscriptions: subscriptions.length,
+        ...(this.#rejections.length ? { failures: this.#rejections } : {}) };
     } finally { this.#running = false; }
   }
 }

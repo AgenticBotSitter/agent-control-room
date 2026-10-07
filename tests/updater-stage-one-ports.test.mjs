@@ -211,7 +211,7 @@ test("protected configuration captures the default protected key files before ca
     // so the fixture supplies one from the release's test helper rather than a literal.
     releaseTrust: createFleetReleaseTrustForTestV1().trust,
     ownerCodeDigest: digest("d"), dbLogins, keys: { vapidPrivate: join(f.root, "updater-state/vapid.json"),
-      vapidPublic: join(service, "vapid-public.json"), healthProbeRoot: join(f.root, "updater-state/health-probe.key"),
+      vapidPublic: join(f.root, "Protected", "config", "owner-web-push.json"), healthProbeRoot: join(f.root, "updater-state/health-probe.key"),
       healthProbeService: join(service, "health-probe.key"), webHmac: join(service, "web-hmac.key"),
       workIntake: join(service, "work-intake.json") } }, { loadReleaseParsers: async () => releaseParsers });
   assert.equal(result.length, 9);

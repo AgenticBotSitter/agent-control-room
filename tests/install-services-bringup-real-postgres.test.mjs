@@ -281,7 +281,7 @@ async function generateInstallerKeys(root, owners) {
 /** `install-steps.mjs` `keyReferences`. */
 const keyReferences = root => Object.freeze({
   vapidPrivate: join(root, "updater-state", "vapid.json"),
-  vapidPublic: join(root, "Protected", "service", "vapid-public.json"),
+  vapidPublic: join(root, "Protected", "config", "owner-web-push.json"),
   healthProbeRoot: join(root, "updater-state", "health-probe.key"),
   healthProbeService: join(root, "Protected", "service", "health-probe.key"),
   webHmac: join(root, "Protected", "service", "web-hmac.key"),

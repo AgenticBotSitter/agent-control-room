@@ -99,7 +99,7 @@ test("the channel refuses an off-list endpoint before it makes any request", asy
   // repeated-character placeholder is refused there, which would make this
   // test fail for a reason that has nothing to do with the allow list.
   const pair = await import("node:crypto").then(crypto => crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" }));
-  const channel = createWebPushChannelV1({ subject: "mailto:owner@example.invalid",
+  const channel = createWebPushChannelV1({ subject: "https://fixture.ts.net",
     publicKey: pair.publicKey.export({ type: "spki", format: "der" }).subarray(-65).toString("base64url"),
     privateKey: pair.privateKey.export({ type: "pkcs8", format: "der" }).subarray(-32).toString("base64url") });
   const payload = ownerPushPayloadV1("needs_you", "/needs-me", "needs:record-1");
@@ -212,4 +212,58 @@ test("subscription reads prune expired endpoints before returning send targets",
   await new PostgresOwnerPushStoreV1(db as never).list("tenant:test");
   assert.match(statements[0]!, /DELETE FROM owner_web_push_subscriptions/);
   assert.match(statements[0]!, /expires_at<=now\(\)/);
+});
+
+test("VAPID contacts accept HTTPS origins and real mail addresses and refuse placeholders in both web readers", async () => {
+  const { captureOwnerWebPushConfigV1, createWebPushChannelV1 } = await import("../src/web-push/v1");
+  const { default: webpush } = await import("web-push");
+  const keys = webpush.generateVAPIDKeys();
+  const config = (subject: unknown) => ({ schema: "control-room.owner-web-push-config/v1", subject, ...keys });
+  for (const subject of ["https://fixture.ts.net", "mailto:push@control-room.org"]) {
+    assert.equal(captureOwnerWebPushConfigV1(config(subject)).subject, subject);
+    assert.equal(createWebPushChannelV1({ subject, ...keys }).kind, "web-push");
+  }
+  for (const change of [{ extra: true }, { schema: "unknown" }, { publicKey: "broken" }, { privateKey: "broken" }])
+    assert.throws(() => captureOwnerWebPushConfigV1({ ...config("https://fixture.ts.net"), ...change }), /owner_web_push_config_invalid/);
+  for (const subject of [undefined, null, "", "mailto:owner@example.invalid", "mailto:owner@localhost",
+    "mailto:owner@example.com", "mailto:owner@control-room.invalid", "https://localhost", "https://example.org",
+    "https://fixture.invalid", "https://fixture.test", "https://fixture.local", "https://127.0.0.1", "https://[::1]",
+    "https://fixture.ts.net/", "https://fixture.ts.net/path", "https://fixture.ts.net:443", "https://fixture.ts.net?x=1",
+    "https://fixture.ts.net#x", "https://user@fixture.ts.net", " https://fixture.ts.net", "https://fixture..ts.net",
+    "https://-fixture.ts.net", "https://" + "a".repeat(64) + ".ts.net", "https://fixture.ts.net\n", "http://fixture.ts.net", "https://org", "https://fixture.123",
+    `https://${Array(5).fill("a".repeat(60)).join(".")}.org`, `mailto:${"a".repeat(310)}@control-room.org`,
+    new String("https://fixture.ts.net"), ["https://fixture.ts.net"]]) {
+    assert.throws(() => captureOwnerWebPushConfigV1(config(subject)), /owner_web_push_config_invalid/, String(subject));
+    assert.throws(() => createWebPushChannelV1({ subject, ...keys } as never), /web_push_config_invalid/, String(subject));
+  }
+});
+
+test("VAPID subject parsing agrees with web-push for accepted generated hostname boundaries", async () => {
+  const { captureOwnerWebPushConfigV1 } = await import("../src/web-push/v1");
+  const { default: webpush } = await import("web-push");
+  const keys = webpush.generateVAPIDKeys();
+  for (let n = 1; n <= 63; n++) {
+    const subject = `https://${"a".repeat(n)}.ts.net`;
+    assert.equal(captureOwnerWebPushConfigV1({ schema: "control-room.owner-web-push-config/v1", subject, ...keys }).subject, subject);
+    assert.doesNotThrow(() => webpush.setVapidDetails(subject, keys.publicKey, keys.privateKey));
+    assert.throws(() => captureOwnerWebPushConfigV1({ schema: "control-room.owner-web-push-config/v1", subject: subject + "/", ...keys }));
+  }
+});
+
+test("web delivery retains the bounded provider rejection body for diagnosis and retries", async () => {
+  const memory = store(), failures: unknown[] = [];
+  await deliverOwnerPushV1({ tenantId: "tenant:test", kind: "test", link: "/needs-me", dedupeKey: "test:provider-rejection",
+    now: "2026-10-06T00:00:00.000Z", store: memory,
+    channel: { kind: "web-push", async send() { throw { statusCode: 403, body: "BadJwtToken" + "x".repeat(2048) }; } },
+    onFailure: failure => failures.push(failure) });
+  assert.equal(failures.length, 1);
+  const failure = failures[0] as { rejectionReason: string; statusCode: number };
+  assert.equal(failure.statusCode, 403);
+  assert.equal(failure.rejectionReason, "BadJwtToken" + "x".repeat(1013));
+  assert.equal(memory.reservations.get("push:a:test:provider-rejection"), "failed");
+  const { pushRejectionReasonV1 } = await import("../src/installer/shared/vapid.mjs");
+  for (const body of [undefined, null, {}, 42]) {
+    assert.doesNotThrow(() => pushRejectionReasonV1({ body }));
+    assert.equal(pushRejectionReasonV1({ body }), undefined, "a response without body text has no diagnostic text");
+  }
 });

@@ -670,7 +670,10 @@ function slowStopRuntime(fake, polls) {
     now: () => clock, sleep: async milliseconds => { slept += 1; clock += milliseconds; },
     async execute(file, args) {
       const result = await fake.runtime.execute(file, args);
-      if (args[0] === "bootout") stopping.set(args[1].replace(/^system\//u, ""), polls);
+      if (args[0] === "bootout") {
+        const label = args[1].replace(/^system\//u, "");
+        stopping.set(label, typeof polls === "number" ? polls : polls[label] ?? 0);
+      }
       return result;
     },
     async isServiceLoaded(label) {
@@ -705,8 +708,32 @@ test("a job that never leaves launchd after bootout is refused at the bound, not
   const installed = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
   await assert.rejects(uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
     /launchctl_bootout_timeout/u);
-  const { SERVICE_STOP_TIMEOUT_MS_V1 } = await import("../src/updater/v1/services/elevated.mjs");
-  assert.equal(slow.slept(), SERVICE_STOP_TIMEOUT_MS_V1 / 250);
+  assert.equal(slow.slept(), 130_000 / 250, "120 s PostgreSQL definition plus a 10 s observation margin");
   assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.postgres.plist")), false,
     "a job still loaded keeps its plist");
+});
+
+test("a 200 second backup stop completes within its own launchd definition", async t => {
+  const fake = await fakeRuntime(t, "backup-200-second-stop");
+  const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": 800 }), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, POST_HEALTH_SERVICE_ROLES_V1), { elevatedPort: port });
+  assert.deepEqual(await uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    { outcome: "removed" });
+  assert.equal(slow.slept(), 800, "200 seconds observed in 250 ms polls");
+  assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.nightly-backup.plist")), true);
+});
+
+test("a stuck backup is refused at its 2760 second definition plus margin and retains its resources", async t => {
+  const fake = await fakeRuntime(t, "backup-stuck-stop");
+  const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": Number.MAX_SAFE_INTEGER }), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const sleep = slow.runtime.sleep;
+  slow.runtime.sleep = async milliseconds => {
+    assert.ok(slow.slept() < 11_081, "the stop observer continued beyond its independently specified bound");
+    await sleep(milliseconds);
+  };
+  const installed = await installServicesV1(input(fake.root, POST_HEALTH_SERVICE_ROLES_V1), { elevatedPort: port });
+  await assert.rejects(uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    { code: "launchctl_bootout_timeout", role: "nightly-backup" });
+  assert.equal(slow.slept(), 2_770_000 / 250);
+  assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.nightly-backup.plist")), false);
 });

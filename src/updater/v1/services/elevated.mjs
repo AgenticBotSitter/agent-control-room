@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { canonicalJsonV1 } from "../canonical-json.mjs";
 import { CORE_SERVICE_ROLES_V1, newsyslogPathForPolicyV1, serviceBundleDigestV1, servicePolicyForRolesV1,
+  SERVICE_EXIT_TIMEOUT_SECONDS_V1,
   validateServicePolicyV1,
   validateServiceRolesV1, verifyServiceBundleV1 } from "./bundle.mjs";
 
@@ -89,7 +90,6 @@ function defaultRuntime() {
     pathFor: path => macosSystemPathV1(path),
     now: () => Date.now(),
     sleep: milliseconds => new Promise(resolveSleep => setTimeout(resolveSleep, milliseconds)),
-    stopTimeoutMs: SERVICE_STOP_TIMEOUT_MS_V1,
     lstat, mkdir, open, readFile, unlink, rmdir, lchown,
     execute: (file, args) => runFile(file, args, { env: { PATH: "/usr/bin:/bin", HOME: "/var/root" },
       timeout: 30_000, maxBuffer: 1024 * 1024 }),
@@ -301,13 +301,15 @@ export function launchctlNotLoadedV1(error) {
  * found `postmaster.pid` still there and refused `postgres_not_shut_down`, so the install's
  * undo left the postgres plist and the cluster behind. Wait, bounded, for launchd to drop it.
  */
-async function bootout(runtime, label) {
+async function bootout(runtime, service) {
+  const { label, role } = service;
   await runtime.execute("/bin/launchctl", ["bootout", `system/${label}`]).catch(error => {
     if (!launchctlNotLoadedV1(error)) refuse("launchctl_refused");
   });
-  const deadline = runtime.now() + runtime.stopTimeoutMs;
+  const deadline = runtime.now() + (SERVICE_EXIT_TIMEOUT_SECONDS_V1[role] + 10) * 1000;
   while (await runtime.isServiceLoaded(label)) {
-    if (runtime.now() >= deadline) refuse("launchctl_bootout_timeout");
+    if (runtime.now() >= deadline) throw Object.assign(new Error("launchctl_bootout_timeout"), {
+      code: "launchctl_bootout_timeout", role });
     await runtime.sleep(250);
   }
 }
@@ -322,7 +324,7 @@ async function bootoutRoles(runtime, root, roles, servicePolicy, onError) {
   if (roles.length === 0) return;
   for (const service of servicePolicyForRolesV1(roles, servicePolicy)) {
     try {
-      await bootout(runtime, service.label);
+      await bootout(runtime, service);
       if (service.role === "postgresql17") await verifyPostgres(runtime, root);
     } catch (error) {
       if (!onError) throw error;

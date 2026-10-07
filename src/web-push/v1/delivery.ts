@@ -1,5 +1,6 @@
 import type { OwnerNotificationChannelV1, OwnerPushEventKindV1, OwnerPushStoreV1 } from "./types";
 import { ownerPushPayloadV1 } from "./policy";
+import { pushRejectionReasonV1 } from "../../installer/shared/vapid.mjs";
 
 /** What happened to one send. `onFailure` is the ONLY way a caller learns that a
  * send failed: the outcome counters deliberately do not carry it, because
@@ -12,6 +13,7 @@ export interface OwnerPushFailureV1 {
   readonly subscriptionId: string;
   readonly statusCode: number | undefined;
   readonly removed: boolean;
+  readonly rejectionReason?: string;
   readonly retryAfterMs?: number;
 }
 
@@ -102,6 +104,7 @@ export async function deliverOwnerPushV1(input: Readonly<{ tenantId: string; kin
       const gone = statusCode === 404 || statusCode === 410;
       if (gone) { await input.store.unsubscribe(input.tenantId, subscription.endpoint); removed++; }
       input.onFailure?.({ subscriptionId: subscription.id, statusCode, removed: gone,
+        rejectionReason: pushRejectionReasonV1(error),
         retryAfterMs: statusCode === 429 && typeof error === "object" && error !== null && "headers" in error
           ? ownerPushRetryAfterMsV1(error.headers, input.now) : undefined });
     }
