@@ -236,5 +236,12 @@
     "replace": "true &&",
     "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
     "why": "Reject coercible private-key values instead of accepting their regex stringification."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const keys = existing ?? await ports.generateVapidKeys();",
+    "replace": "const keys = await ports.generateVapidKeys();",
+    "test": "node --import tsx --test --test-name-pattern='installer retries repair' tests/control-room-installer.test.mjs",
+    "why": "A retry after the canonical file is durable must not rotate the pair before publishing its web copy."
   }
 ]

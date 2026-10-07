@@ -2574,6 +2574,20 @@ test("fresh installer creates one pair for the web reader and updater and signs 
 });
 
 test("installer retries repair missing and placeholder subjects without regenerating adopted keys", async t => {
+  const stopped = await fixture(t, "one-pair-halfway");
+  const chown = stopped.ports.lchownPath;
+  stopped.ports.lchownPath = async (path, uid, gid) => {
+    if (path.endsWith(".owner-web-push.json.installing")) throw new Error("fixture_key_publication_stopped");
+    return chown(path, uid, gid);
+  };
+  await assert.rejects(installControlRoomV1(stopped.options), /fixture_key_publication_stopped/u);
+  const first = JSON.parse(await readFile(join(stopped.root, "updater-state/vapid.json"), "utf8"));
+  await assert.rejects(lstat(join(stopped.root, "Protected/config/owner-web-push.json")), { code: "ENOENT" });
+  const resumed = fakePorts({ users: stopped.ports.users, groups: stopped.ports.groups });
+  resumed.generateVapidKeys = async () => assert.fail("a stopped publication must reuse its durable canonical pair");
+  await installControlRoomV1({ ...stopped.options, ports: resumed });
+  const completed = JSON.parse(await readFile(join(stopped.root, "Protected/config/owner-web-push.json"), "utf8"));
+  assert.deepEqual([completed.publicKey, completed.privateKey], [first.publicKey, first.privateKey]);
   for (const subject of [undefined, "mailto:owner@control-room.invalid", "https://localhost"]) {
     const f = await fixture(t, "subject-repair", { failStep: "init-database" });
     await assert.rejects(installControlRoomV1(f.options), /fixture_step_failure/u);

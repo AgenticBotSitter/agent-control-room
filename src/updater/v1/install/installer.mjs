@@ -1154,8 +1154,8 @@ export async function installControlRoomV1(options) {
     // Repair the credential projections on a same-commit retry, then refuse before
     // any install journal or staging step can arm recovery to rename a live release.
     if (installed && (await pointer(root, "current"))?.endsWith(`-${options.commit.slice(0, 12)}`)) {
-      const freshInstall = completedInstalls.find(entry => actionFor(priorEntries, entry.transactionId, "create-accounts"));
-      const accounts = recoveryAccounts(actionFor(priorEntries, freshInstall?.transactionId, "create-accounts"), names);
+      const initialTransaction = completedInstalls.find(entry => actionFor(priorEntries, entry.transactionId, "create-accounts"));
+      const accounts = recoveryAccounts(actionFor(priorEntries, initialTransaction?.transactionId, "create-accounts"), names);
       await writeInstallVapidV1(root, accounts, ports, vapidSubject);
       const error = new Error("this commit is already installed");
       error.code = "commit_already_installed"; error.userMessage = "this commit is already installed"; throw error;
