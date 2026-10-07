@@ -23,9 +23,9 @@
   {
     "file": "src/updater/v1/install/installer.mjs",
     "find": "const prior = entries[requestStart - 1];",
-    "replace": "const prior = entries.findLast(row => row.command === \"recovery\" && row.action === \"transaction\" && row.phase === \"done\");",
+    "replace": "const prior = entries.findLast(row => row.command === \"recovery\" && row.action === \"transaction\" && row.phase === \"done\" && entries.some(progress => progress.command === \"install\" && progress.transactionId === row.data?.installTransactionId && progress.phase === \"planned\" && [\"confirm\", \"stage\", \"switch-pointers\"].includes(progress.action)));",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='interrupted switch-pointers done then database refusal reports recovery' tests/control-room-installer.test.mjs",
-    "why": "historical recovery must not describe a later refusal after a completed intervening install"
+    "why": "historical classification-passed recovery must not label a later refusal after scratch-only cleanup or a completed intervening install"
   },
   {
     "file": "src/updater/v1/cli.mjs",
