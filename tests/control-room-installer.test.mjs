@@ -579,6 +579,16 @@ test("an undo that refuses leaves install_rollback_incomplete carrying the cause
   assert.deepEqual(error.undoFailures, ["postgres_not_shut_down", "postgres_not_shut_down"]);
 });
 
+test("an undo's reason is built from safe parts only: no path or command line reaches undoFailures", async t => {
+  const f = await fixture(t, "rollback-reasons-private", { failStep: "install-services" });
+  f.ports.uninstallServices = async () => { throw Object.assign(new Error("Command failed: /bin/launchctl bootout UNDOSENTINEL-arg"),
+    { code: 5, cmd: "/bin/launchctl bootout UNDOSENTINEL-arg" }); };
+  f.ports.recoverServices = async () => { throw new Error("open /Users/someone/UNDOSENTINEL-folder/pid failed"); };
+  const error = await installControlRoomV1(f.options).then(() => assert.fail("the install must stop"), value => value);
+  assert.equal(error.code, "install_rollback_incomplete");
+  assert.deepEqual(error.undoFailures, ["exit 5, launchctl", "uncoded"]);
+});
+
 test("the installer writes vapid.json in the updater's own format, and the installed updater accepts it", async t => {
   // MEASURED (VM, main 66fb6a29): the installer wrote only the two keys, the updater exited at start
   // with `updater_vapid_invalid`, no heartbeat came, and the install was undone at
@@ -2131,6 +2141,19 @@ test("A2-11 PostgreSQL failure lines contain bounded printable diagnostics", asy
     assert.ok(line.length <= 200); assert.match(line, /^(FATAL|PANIC|ERROR):/u);
   }
   assert.equal(pgFailureLineV1('noise\nFATAL: readable detail\ntrailer'), 'FATAL: readable detail');
+});
+
+test("A2-11b CLI stop line on stderr carries no command line or private path from the error", async t => {
+  const base = await temporary("cli-diagnostic-private"); t.after(() => cleanup(base));
+  const modulePath = join(base, "failing-ports-private.mjs");
+  await writeFile(modulePath, 'throw Object.assign(new Error("Command failed: /usr/bin/git -c http.extraheader=E2ESENTINEL fetch"), '
+    + '{ code: 128, cmd: "/usr/bin/git -c http.extraheader=E2ESENTINEL fetch", cause: Object.assign(new Error('
+    + '"ENOENT: no such file or directory, open \'/Users/someone/E2ESENTINEL/x\'"), { code: "ENOENT", syscall: "open" }) });\n');
+  const result = spawnSync(process.execPath, [join(repository, "src/updater/v1/cli.mjs"), "install"], {
+    env: { ...process.env, CONTROL_ROOM_INSTALLER_PORT_MODULE: modulePath }, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stderr, /E2ESENTINEL/u);
+  assert.equal(result.stderr.trimEnd().split("\n").at(-1), "updater_cli_failed (exit 128, git); cause: ENOENT (open)");
 });
 
 test("A2-11 CLI failure output strips terminal controls before writing stderr", async t => {

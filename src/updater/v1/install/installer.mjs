@@ -9,6 +9,7 @@ import { generateInstallationReleaseKeyV1 } from "../../../../scripts/release-si
 import { spawnTrusted } from "../trusted-runtime.mjs";
 import { assertRehearsalInvocationV1, loadRehearsalConfigV1 } from "./rehearsal-config.mjs";
 import { DiskReserveV1 } from "../actuator.mjs";
+import { safeErrorLabelV1 } from "../contracts.mjs";
 
 export const CONTROL_ROOM_INSTALL_JOURNAL_SCHEMA_V2 = "control-room.install-journal/v2";
 export const CONTROL_ROOM_INSTALLER_JOURNAL_FILE_V1 = "installer-journal.jsonl";
@@ -1256,11 +1257,10 @@ export async function installControlRoomV1(options) {
       // The CODE and each failed undo's reason travel with it (VM, main 66fb6a29): with only a
       // count, the owner's stop line read `updater_cli_failed` and neither the failure that
       // started the rollback nor the undo steps that refused were visible anywhere.
-      const reason = value => typeof value?.code === "string" ? value.code
-        : typeof value?.message === "string" ? value.message.split("\n", 1)[0].slice(0, 80) : "uncoded";
+      // Safe parts only (fix round 2): a message can carry a private path or a command line.
       throw Object.assign(new Error("install_rollback_incomplete", { cause: error }), {
         code: "install_rollback_incomplete", failures: rollbackErrors.length,
-        undoFailures: Object.freeze(rollbackErrors.map(reason)) });
+        undoFailures: Object.freeze(rollbackErrors.map(safeErrorLabelV1)) });
     }
     error.installRollbackComplete = true;
     throw error;

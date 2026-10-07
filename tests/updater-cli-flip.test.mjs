@@ -644,11 +644,13 @@ test("the CLI's stop line keeps refusal codes as they are and shows the real rea
   assert.equal(cliFailureMessageV1({ userMessage: "this commit is already installed", code: "x" }), "this commit is already installed");
   // A plain Error from a port used to print only "updater_cli_failed" (VM: install-services hid its reason).
   assert.equal(cliFailureMessageV1(new Error("tailscale_json_refused")), "updater_cli_failed: tailscale_json_refused");
+  // Fix round 2: a coded error prints its code only - its message can carry a private path.
   const enoent = Object.assign(new Error("ENOENT: no such file or directory, open '/x/y'\n    at stack"), { code: "ENOENT" });
-  assert.equal(cliFailureMessageV1(enoent), "ENOENT: no such file or directory, open '/x/y'");
-  assert.equal(cliFailureMessageV1(Object.assign(new Error("child exited"), { code: 7 })), "updater_cli_failed: child exited");
+  assert.equal(cliFailureMessageV1(enoent), "ENOENT");
+  assert.equal(cliFailureMessageV1(Object.assign(new Error("child exited"), { code: 7 })), "updater_cli_failed (exit 7)");
   assert.equal(cliFailureMessageV1(undefined), "updater_cli_failed");
-  assert.equal(cliFailureMessageV1(new Error(`bad\u0007bell${"x".repeat(400)}`)).length, 200);
+  assert.equal(cliFailureMessageV1({ userMessage: `bad\u0007bell${"x".repeat(400)}` }).length, 200);
+  assert.equal(cliFailureMessageV1(new Error(`bad\u0007bell${"x".repeat(400)}`)), "updater_cli_failed");
   assert.doesNotMatch(cliFailureMessageV1(new Error("a\u0007b")), /\u0007/u);
 });
 
@@ -662,9 +664,9 @@ test("the stop line names what started an incomplete rollback and which undo ste
     code: "install_rollback_incomplete", failures: 2, undoFailures: ["postgres_not_shut_down", "postgres_not_shut_down"] });
   assert.equal(cliFailureMessageV1(incomplete), "install_rollback_incomplete; cause: services_batch_rolled_back"
     + " <- services_batch_uncertain; undo failed: postgres_not_shut_down, postgres_not_shut_down");
-  // An uncoded cause shows its first line; control characters never reach the Terminal.
+  // An uncoded cause whose message is not a code prints as "uncoded" (fix round 2: no message text).
   assert.equal(cliFailureMessageV1(new Error("x_refused", { cause: new Error("spawn EACCES\nstack") })),
-    "updater_cli_failed: x_refused; cause: spawn EACCES");
+    "updater_cli_failed: x_refused; cause: uncoded");
   assert.doesNotMatch(cliFailureMessageV1(Object.assign(new Error("a"), { undoFailures: ["b\u001b[31m"] })), /\u001b/u);
   const heartbeat = Object.assign(new Error("services_heartbeat_refused"), { code: "services_heartbeat_refused" });
   assert.equal(cliFailureMessageV1(Object.assign(new Error("services_heartbeat_refused", { cause: heartbeat }),
@@ -673,3 +675,57 @@ test("the stop line names what started an incomplete rollback and which undo ste
     cause: new Error("z".repeat(300)), undoFailures: Array(9).fill("w".repeat(300)) })).length <= 400);
 });
 
+
+// Fix round 2 (lead review, climsg-codex.md): the stop line printed error.message unscreened. Node
+// filesystem errors carry private paths, execFile failures carry the whole command line, and coded
+// errors such as updater_command_failed changed their printed line. Literals here are independent.
+test("the stop line never prints a command line: an execFile failure's argv sentinel stays out", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const { execFile } = await import("node:child_process");
+  const sentinel = "SENTINEL-argv-secret-4b1d9e";
+  const failure = await new Promise(resolve => execFile("/usr/bin/false", ["--token", sentinel], error => resolve(error)));
+  assert.ok(failure && failure.message.includes(sentinel), "the raw error does carry the argv");
+  const line = cliFailureMessageV1(failure);
+  assert.doesNotMatch(line, /SENTINEL-argv-secret/u);
+  assert.equal(line, "updater_cli_failed (exit 1, false)");
+  // The same failure as a cause and as a refusing undo step.
+  const wrapped = Object.assign(new Error("install_rollback_incomplete", { cause: failure }),
+    { code: "install_rollback_incomplete", undoFailures: [`Command failed: /usr/bin/false --token ${sentinel}`] });
+  const wrappedLine = cliFailureMessageV1(wrapped);
+  assert.doesNotMatch(wrappedLine, /SENTINEL-argv-secret/u);
+  assert.equal(wrappedLine, "install_rollback_incomplete; cause: exit 1, false; undo failed: uncoded");
+});
+
+test("the stop line never prints a private path from a filesystem error", async t => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cli-private-path-")));
+  const privateFolder = join(base, "owner-private-folder-PATHSENTINEL");
+  const missing = await readFile(join(privateFolder, "missing.json")).then(() => assert.fail("must not exist"), error => error);
+  assert.equal(missing.code, "ENOENT");
+  assert.ok(missing.message.includes("PATHSENTINEL"), "the raw error does carry the path");
+  assert.equal(cliFailureMessageV1(missing), "ENOENT");
+  const asCause = Object.assign(new Error("updater_confirm_refused", { cause: missing }), { code: "updater_confirm_refused" });
+  assert.equal(cliFailureMessageV1(asCause), "updater_confirm_refused; cause: ENOENT (open)");
+  const uncoded = new Error(`open ${privateFolder}/x failed`);
+  assert.equal(cliFailureMessageV1(uncoded), "updater_cli_failed");
+  assert.doesNotMatch(cliFailureMessageV1(Object.assign(new Error("w_refused", { cause: uncoded }), { code: "w_refused" })),
+    /PATHSENTINEL|owner-private-folder/u);
+  // A spawn failure names only the executable's basename, never its folder.
+  const spawned = Object.assign(new Error(`spawn ${privateFolder}/tool ENOENT`),
+    { code: "ENOENT", errno: -2, syscall: `spawn ${privateFolder}/tool`, path: `${privateFolder}/tool` });
+  assert.equal(cliFailureMessageV1(Object.assign(new Error("v_refused", { cause: spawned }), { code: "v_refused" })),
+    "v_refused; cause: ENOENT (tool)");
+});
+
+test("refusal codes print exactly as before the stop-line change", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const coded = (code, message) => Object.assign(new Error(message), { code });
+  assert.equal(cliFailureMessageV1(coded("updater_command_failed", "updater_command_failed:1")), "updater_command_failed");
+  assert.equal(cliFailureMessageV1(coded("updater_confirm_words_refused", "updater_confirm_words_refused")),
+    "updater_confirm_words_refused");
+  assert.equal(cliFailureMessageV1(coded("EACCES", "EACCES: permission denied, open '/Users/someone/x'")), "EACCES");
+  assert.equal(cliFailureMessageV1(coded("updater_fetch_refused", "something else entirely")), "updater_fetch_refused");
+  assert.equal(cliFailureMessageV1(coded("updater_x", "updater_x_with_suffix")), "updater_x");
+  assert.equal(cliFailureMessageV1({ userMessage: "this commit is already installed", code: "x" }), "this commit is already installed");
+  assert.equal(cliFailureMessageV1(undefined), "updater_cli_failed");
+});

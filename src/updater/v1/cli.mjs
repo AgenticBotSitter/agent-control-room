@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
-import { PHONE_FALLBACK_VERBS_V1, SUDO_ONLY_VERBS_V1, publicStatusV1, updaterRefuseV1 } from "./contracts.mjs";
+import { PHONE_FALLBACK_VERBS_V1, SAFE_ERROR_LABEL_PATTERN_V1, SUDO_ONLY_VERBS_V1, publicStatusV1, safeErrorLabelV1,
+  safeErrorPartsV1, updaterRefuseV1 } from "./contracts.mjs";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { sendControlRequestV1 } from "./control-socket.mjs";
 import { canonicalJsonV1 } from "./canonical-json.mjs";
@@ -563,30 +564,35 @@ export function updaterRecoveryLineV1(error) {
 // files. It is gone with the second copy of the guard; the helper is the one
 // definition, and the repository-wide policy test still rejects any direct
 // comparison outside it.
-/** The one line the CLI prints when it stops. An error with no code (a plain Error from a port,
- * such as `new Error("tailscale_json_refused")`, or a Node system error) used to print only
- * "updater_cli_failed", which hid the reason on every real-Mac failure; its first message line
- * now follows. Control characters are stripped and the line is bounded. */
+/** The one line the CLI prints when it stops. A string code prints EXACTLY as it always has
+ * (fix round 2: `updater_command_failed` had started printing its message instead). An error with
+ * no code used to print only "updater_cli_failed"; it now adds what `safeErrorPartsV1` admits: a
+ * message that is itself a refusal code, an exit status or signal, the executable's basename or the
+ * syscall. Never message text otherwise: Node filesystem errors carry private paths and execFile
+ * failures carry their whole command line. The cause chain and refusing undo steps follow, built
+ * from the same safe parts. Control characters are stripped; head 200, line 400. */
 export function cliFailureMessageV1(error) {
   const clean = value => value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ");
-  const firstLine = value => typeof value?.message === "string" ? value.message.split("\n", 1)[0].trim() : "";
-  const detail = firstLine(error);
-  const message = typeof error?.userMessage === "string" ? error.userMessage
-    : typeof error?.code === "string" ? (detail === "" || detail === error.code ? error.code
-      : detail.startsWith(error.code) ? detail : `${error.code}: ${detail}`)
-      : detail ? `updater_cli_failed: ${detail}` : "updater_cli_failed";
+  let message;
+  if (typeof error?.userMessage === "string") message = error.userMessage;
+  else if (typeof error?.code === "string") message = error.code;
+  else {
+    const { code, details } = safeErrorPartsV1(error);
+    message = `updater_cli_failed${code ? `: ${code}` : ""}${details.length ? ` (${details.join(", ")})` : ""}`;
+  }
   // A wrapper such as `install_rollback_incomplete` carries the failure that started it as its
   // `cause`, and the refusing undo steps as `undoFailures` (VM, main 66fb6a29: the line read
-  // only `updater_cli_failed`). Their codes follow, bounded, so the owner's one line names them.
+  // only `updater_cli_failed`). Their safe labels follow, bounded, so the owner's one line names them.
   const causes = [];
   for (let cause = error?.cause, depth = 0; cause && depth < 6 && causes.length < 3; cause = cause.cause, depth += 1) {
-    const label = typeof cause.code === "string" ? cause.code : firstLine(cause).slice(0, 80) || "uncoded";
+    const label = safeErrorLabelV1(cause);
     // A wrapper that re-throws under its own cause's code adds nothing (VM: "services_heartbeat_refused;
     // cause: services_heartbeat_refused").
     if (label !== (causes.at(-1) ?? error?.code)) causes.push(label);
   }
-  const undo = Array.isArray(error?.undoFailures) ? error.undoFailures.filter(value => typeof value === "string")
-    .slice(0, 4).map(value => value.slice(0, 80)) : [];
+  // Stored labels are re-screened: anything that does not look like one prints as "uncoded".
+  const undo = Array.isArray(error?.undoFailures) ? error.undoFailures.slice(0, 4)
+    .map(value => typeof value === "string" && SAFE_ERROR_LABEL_PATTERN_V1.test(value) ? value : "uncoded") : [];
   const tail = (causes.length ? `; cause: ${causes.join(" <- ")}` : "")
     + (undo.length ? `; undo failed: ${undo.join(", ")}` : "");
   return clean(`${clean(message).slice(0, 200)}${clean(tail)}`).slice(0, 400);
