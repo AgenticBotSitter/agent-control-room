@@ -576,7 +576,9 @@ export function cliFailureMessageV1(error) {
   const clean = value => value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ");
   let message;
   if (error?.code === "attended_database_change_requires_upgrader")
-    message = "Update stopped: this commit changes the database. Your installed version and database were not changed. Wait for the database upgrader and tell the lead. (attended_database_change_requires_upgrader)";
+    message = error.unfinishedUpdateRecovered === true
+      ? "Update stopped: requested commit changes the database. Not applied. Earlier unfinished update rolled back. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)"
+      : "Update stopped: requested commit changes the database. This update was not applied. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)";
   else if (typeof error?.userMessage === "string") message = error.userMessage;
   else if (typeof error?.code === "string") message = error.code;
   else {

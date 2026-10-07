@@ -733,7 +733,7 @@ test("refusal codes print exactly as before the stop-line change", async () => {
 
 test("database update refusal prints fixed owner guidance and retains the lead code", async () => {
   const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
-  const expected = "Update stopped: this commit changes the database. Your installed version and database were not changed. Wait for the database upgrader and tell the lead. (attended_database_change_requires_upgrader)";
+  const expected = "Update stopped: requested commit changes the database. This update was not applied. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)";
   const refusal = { code: "attended_database_change_requires_upgrader" };
   assert.equal(cliFailureMessageV1(refusal), expected, "database refusal owner guidance is complete");
   // The explanation is selected by the exact code, never port-supplied text.
@@ -746,4 +746,15 @@ test("database update refusal prints fixed owner guidance and retains the lead c
   assert.equal(withCause, `${expected}; cause: updater_fetch_refused`);
   assert.ok(withCause.length <= 400);
   assert.doesNotMatch(withCause, /[\u0000-\u001f\u007f-\u009f]/u);
+});
+
+
+test("database refusal renderer reports only explicit unfinished recovery", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const refusal = { code: "attended_database_change_requires_upgrader", userMessage: "UNTRUSTED-OWNER-TEXT" };
+  assert.equal(cliFailureMessageV1({ ...refusal, unfinishedUpdateRecovered: true }),
+    "Update stopped: requested commit changes the database. Not applied. Earlier unfinished update rolled back. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)", "recovered refusal retains complete guidance and code");
+  for (const value of [undefined, false, null, 0, 1, "true", {}, []])
+    assert.equal(cliFailureMessageV1({ ...refusal, unfinishedUpdateRecovered: value }),
+      "Update stopped: requested commit changes the database. This update was not applied. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)", "only a boolean recovery receipt admits the recovery assurance");
 });

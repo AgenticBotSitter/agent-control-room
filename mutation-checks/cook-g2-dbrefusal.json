@@ -11,6 +11,34 @@
     "find": "if (!fresh && classification.changesDatabase) refuse(\"attended_database_change_requires_upgrader\");",
     "replace": "if (false) refuse(\"attended_database_change_requires_upgrader\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='a repeat whose verified diff touches db' tests/control-room-installer.test.mjs",
-    "why": "an installed database change must refuse before confirmation, staging, pointer switching or service and database changes, including retry"
+    "why": "requested database-changing update refuses before confirmation or staging; earlier recovery is allowed and reported"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "error.unfinishedUpdateRecovered = prior?.command === \"recovery\"",
+    "replace": "error.unfinishedUpdateRecovered = false && prior?.command === \"recovery\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='interrupted switch-pointers done then database refusal reports recovery' tests/control-room-installer.test.mjs",
+    "why": "completed recovery in this command must select the independent recovery message"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const prior = entries[requestStart - 1];",
+    "replace": "const prior = entries.findLast(row => row.command === \"recovery\" && row.action === \"transaction\" && row.phase === \"done\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='interrupted switch-pointers done then database refusal reports recovery' tests/control-room-installer.test.mjs",
+    "why": "historical recovery must not describe a later refusal after a completed intervening install"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message = error.unfinishedUpdateRecovered === true",
+    "replace": "message = false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='database refusal renderer' tests/updater-cli-flip.test.mjs",
+    "why": "explicit recovery state must select the bounded recovery guidance"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message = error.unfinishedUpdateRecovered === true",
+    "replace": "message = Boolean(error.unfinishedUpdateRecovered)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='database refusal renderer' tests/updater-cli-flip.test.mjs",
+    "why": "truthy untrusted values must not claim an earlier update was rolled back"
   }
 ]

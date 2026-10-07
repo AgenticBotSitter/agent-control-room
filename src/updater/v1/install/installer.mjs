@@ -968,7 +968,19 @@ async function runAttendedCoreV1({ root, commit, accounts, fresh, write, ports, 
     classification = await ports.classifyAttendedSourceV1({ ...common, ...fetched, release, bundle });
     if (!classification || typeof classification.changesDatabase !== "boolean"
       || !Array.isArray(classification.changedPaths)) refuse("attended_classification_refused");
-    if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
+    try {
+      if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
+    } catch (error) {
+      // Recovery precedes this request. Only its immediately preceding completed
+      // receipt describes this command; historical recoveries must not label retries.
+      const entries = await readJournal(root);
+      const requestStart = entries.findLastIndex(row => row.command === "install"
+        && row.action === "transaction" && row.phase === "planned");
+      const prior = entries[requestStart - 1];
+      error.unfinishedUpdateRecovered = prior?.command === "recovery" && prior.action === "transaction"
+        && prior.phase === "done" && prior.data?.state === "recovered";
+      throw error;
+    }
     const runningBundleDigest = options.runningBundleDigest === undefined
       ? await ports.runningBundleDigestV1({ root }) : options.runningBundleDigest;
     const updateUpdater = runningBundleDigest !== bundle.bundleDigest;

@@ -1,6 +1,6 @@
 import { DiskReserveV1 } from "../src/updater/v1/actuator.mjs";
 import { recordPasskeyStatusV1 } from "../src/updater/v1/pg/initial-passkey-ports.mjs";
-import { createHash, createPublicKey } from "node:crypto";
+import { createHash, createPublicKey, randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmod, cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -1448,10 +1448,92 @@ test("a repeat whose verified diff touches db is refused before confirmation or 
     assert.equal(next.calls.filter(call => call[0] === "abort-attended").length, 1, "refusal cleans build scratch");
     assert.deepEqual(await snapshot(), before, "database refusal preserves installed trees, pointers and service state");
     await assert.rejects(lstat(join(f.root, "build", "job-bbbbbbbbbbbb")), { code: "ENOENT" });
-    assert.equal(cliFailureMessageV1(refusal), "Update stopped: this commit changes the database. Your installed version and database were not changed. Wait for the database upgrader and tell the lead. (attended_database_change_requires_upgrader)",
+    assert.equal(cliFailureMessageV1(refusal), attempt === 0
+      ? "Update stopped: requested commit changes the database. This update was not applied. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)"
+      : "Update stopped: requested commit changes the database. Not applied. Earlier unfinished update rolled back. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)",
       "real CLI database refusal includes owner guidance and the lead code");
   }
 });
+
+for (const [action, phase] of [["stage", "done"], ["switch-pointers", "planned"], ["switch-pointers", "done"]]) {
+  const name = `interrupted ${action} ${phase} then database refusal reports recovery`;
+  test(name, { timeout: 60_000 }, async t => {
+    // A direct child uses the same fixture ports and real installer to create the
+    // interrupted state. No test-written journal or release pointer stands in for it.
+    if (process.env.CR_DB_REFUSAL_CRASH_INPUT) {
+      const input = JSON.parse(await readFile(process.env.CR_DB_REFUSAL_CRASH_INPUT, "utf8"));
+      const ports = fakePorts({ version: "1.2.4", users: input.users, groups: input.groups,
+        afterJournalEntry: async row => {
+          if (row.action === action && row.phase === phase) process.kill(process.pid, "SIGKILL");
+        } });
+      ports.randomId = randomUUID;
+      await installControlRoomV1({ ...input.options, bootstrap: undefined, commit: "b".repeat(40), ports,
+        terminal: { write() {}, async readLine() { return "ABC234"; }, isTTY: true } });
+      assert.fail("the child must stop at the requested durable journal boundary");
+    }
+    const f = await fixture(t, "db-refusal-recovery");
+    await assert.rejects(lstat(f.root), { code: "ENOENT" }, "setup leaves product state absent");
+    await installControlRoomV1(f.options);
+    const inputPath = join(f.base, "crash-input.json");
+    const { ports, terminal, ...options } = f.options;
+    await writeFile(inputPath, JSON.stringify({ options, users: ports.users, groups: ports.groups }));
+    const childEnvironment = { ...process.env, CR_DB_REFUSAL_CRASH_INPUT: inputPath };
+    delete childEnvironment.NODE_TEST_CONTEXT;
+    const child = spawn(process.execPath, ["--import", "tsx", `--test-name-pattern=^${name}$`,
+      fileURLToPath(import.meta.url)], { cwd: repository,
+      env: childEnvironment, stdio: ["pipe", "pipe", "pipe"] });
+    let stderr = "";
+    child.stdout.resume(); child.stderr.on("data", bytes => { stderr += bytes; });
+    const closed = new Promise((resolveChild, reject) => {
+      child.once("error", reject); child.once("close", (code, signal) => resolveChild({ code, signal }));
+    });
+    try {
+      assert.equal((await closed).signal, "SIGKILL", stderr);
+    } finally {
+      child.kill("SIGKILL"); child.stdin.end(); await closed;
+    }
+    const before = await readlink(join(f.root, "current"));
+    assert.equal(before, action === "switch-pointers" && phase === "done"
+      ? "releases/1.2.4-bbbbbbbbbbbb" : "releases/1.2.3-aaaaaaaaaaaa", "crash reached its pointer boundary");
+    const rows = (await readFile(join(f.root, "updater-state", CONTROL_ROOM_INSTALLER_JOURNAL_FILE_V1), "utf8"))
+      .trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(rows.at(-1).action, action); assert.equal(rows.at(-1).phase, phase);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const next = fakePorts({ changesDatabase: true, users: ports.users, groups: ports.groups });
+      next.randomId = randomUUID;
+      let refusal;
+      await assert.rejects(runUpdaterCliV1(["install", "--commit", "c".repeat(40),
+        "--invoking-user", "fixture-owner", "--invoking-uid", "501", "--invoking-gid", "20"], {
+        root: f.root, getuid: () => 0, installerPorts: next,
+        installerOptions: { accountsPolicy: accountPolicy, systemPaths: f.systemPaths }, stdout() {}, stderr() {},
+      }), error => { refusal = error; return error?.code === "attended_database_change_requires_upgrader"; });
+      assert.equal(await readlink(join(f.root, "current")), "releases/1.2.3-aaaaaaaaaaaa",
+        "recovery restores the initial installed release before refusing the requested update");
+      for (const call of ["confirm", "stage-release", "stage-updater", "database-phase"])
+        assert.equal(next.calls.some(row => row[0] === call), false, `requested update never calls ${call}`);
+      assert.equal(next.calls.filter(row => row[0] === "switch-pair").length,
+        attempt === 0 && action === "switch-pointers" ? 1 : 0, "only first recovery can restore pointers");
+      assert.equal(cliFailureMessageV1(refusal),
+        "Update stopped: requested commit changes the database. Not applied. Earlier unfinished update rolled back. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)",
+      "database refusal guidance describes recovery during this command only");
+      await assert.rejects(lstat(join(f.root, ".install.lock")), { code: "ENOENT" });
+    }
+    // A completed intervening install leaves historical recovery receipts behind.
+    // They must not make a later refusal claim recovery during that command.
+    const completed = fakePorts({ version: "1.2.5", users: ports.users, groups: ports.groups });
+    completed.randomId = randomUUID;
+    await installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "d".repeat(40), ports: completed });
+    const next = fakePorts({ changesDatabase: true, users: ports.users, groups: ports.groups });
+    next.randomId = randomUUID;
+    let refusal;
+    await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "e".repeat(40), ports: next }),
+      error => { refusal = error; return error?.code === "attended_database_change_requires_upgrader"; });
+    assert.equal(await readlink(join(f.root, "current")), "releases/1.2.5-dddddddddddd");
+    assert.equal(cliFailureMessageV1(refusal),
+      "Update stopped: requested commit changes the database. This update was not applied. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)",
+      "historical recovery must not describe a later command");
+  });
+}
 
 test("the single CLI sends install --commit through the installer repeat journal and never the retired attended entry", async t => {
   const f = await fixture(t, "single-cli-repeat");
