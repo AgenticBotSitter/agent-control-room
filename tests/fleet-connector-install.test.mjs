@@ -1096,37 +1096,123 @@ test("a live process generation is never cleaned merely because its lock is old"
 
 test("the lock stress probe completes every requested acquisition", async () => {
   const workers = 2, acquisitions = 40;
-  const child = spawn(process.execPath, ["scripts/fleet/stress-connector-lock.mjs",
-    String(workers), String(acquisitions), "0.05"], {
-    cwd: resolve("."),
-    env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1",
-      CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "30000" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "", stderr = "";
-  child.stdout.on("data", chunk => { stdout += chunk; });
-  child.stderr.on("data", chunk => { stderr += chunk; });
-  const force = setTimeout(() => child.kill("SIGKILL"), 60_000);
-  let code;
-  try {
-    code = await new Promise((resolveClose, reject) => {
-      child.once("error", reject);
-      child.once("close", resolveClose);
+  const exerciseDeadline = process.env.CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE === "1";
+  const root = await mkdtemp(join(tmpdir(), "connector-stress-deadline-"));
+  let ownedGroup;
+  const groupAlive = () => {
+    if (!ownedGroup) return false;
+    try { process.kill(-ownedGroup, 0); return true; }
+    catch (error) { if (error.code === "ESRCH") return false; throw error; }
+  };
+  const waitForGroup = async () => {
+    const deadline = Date.now() + 5_000;
+    while (groupAlive() && Date.now() < deadline)
+      await new Promise(done => setTimeout(done, 10));
+  };
+  const run = async () => {
+    let forced = false, stdout = "", stderr = "";
+    try {
+      const env = { ...process.env, TMPDIR: root, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1",
+        CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "30000" };
+      if (exerciseDeadline) {
+        // Replay the review's fault: pause a real worker and its real parent
+        // only after IPC proves a successful acquisition. No timing guess.
+        const stall = join(root, "stall.mjs");
+        await writeFile(stall, `import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { writeFileSync } from "node:fs";
+if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
+  const spawn = cp.spawn;
+  let stopped = false;
+  cp.spawn = function(command, args, options) {
+    const child = spawn(command, args, options);
+    child.on("message", message => {
+      if (!stopped && message?.type === "progress") {
+        stopped = true;
+        writeFileSync(process.env.CONTROL_ROOM_STRESS_STALL_RECORD,
+          JSON.stringify({ parent: process.pid, worker: child.pid }));
+        process.kill(child.pid, "SIGSTOP");
+        process.kill(process.pid, "SIGSTOP");
+      }
     });
+    return child;
+  };
+  syncBuiltinESMExports();
+}
+`);
+        env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(stall).href}`;
+        env.CONTROL_ROOM_STRESS_STALL_RECORD = join(root, "stalled.json");
+      }
+      // setpgrp keeps this direct child attached, unlike detached/setsid.
+      // exec preserves its PID as the group ID inherited by every worker.
+      const child = spawn("python3", ["-c",
+        "import os,sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])",
+        process.execPath, "scripts/fleet/stress-connector-lock.mjs",
+        String(workers), String(acquisitions), "0.05"], {
+        cwd: resolve("."), env, stdio: ["ignore", "pipe", "pipe"],
+      });
+      ownedGroup = child.pid;
+      const stop = () => {
+        if (!child.pid) return;
+        try { process.kill(-child.pid, "SIGKILL"); }
+        catch (error) { if (error.code !== "ESRCH") throw error; }
+      };
+      child.stdout.on("data", chunk => { stdout += chunk; });
+      child.stderr.on("data", chunk => { stderr += chunk; });
+      let force;
+      let code;
+      try {
+        code = await new Promise((resolveClose, reject) => {
+          child.once("error", reject);
+          child.once("close", resolveClose);
+          force = setTimeout(() => {
+            forced = true;
+            try { stop(); } catch (error) { reject(error); }
+          }, 60_000);
+        });
+      } finally {
+        clearTimeout(force);
+        stop();
+        await waitForGroup();
+      }
+      assert.equal(groupAlive(), false, "outer test timeout must leave no live owned descendants");
+      if (exerciseDeadline) {
+        const stalled = JSON.parse(await readFile(join(root, "stalled.json"), "utf8"));
+        assert.equal(stalled.parent, child.pid, "fault injection must pause the real stress parent");
+        assert.equal(Number.isSafeInteger(stalled.worker), true, "fault injection must observe a real worker");
+      }
+      assert.equal(forced, false, "stress probe exceeded its 60-second outer deadline");
+      const summary = JSON.parse(stdout);
+      assert.equal(summary.workers, workers);
+      assert.equal(summary.acquisitionsPerWorker, acquisitions);
+      assert.equal(summary.completed, workers * acquisitions,
+        "every requested acquisition must complete");
+      assert.equal(summary.violations, 0, "acquisitions must remain exclusive");
+      assert.equal(summary.failures, 0, "no worker may fail");
+      assert.equal(summary.markerLeft, false, "no live critical holder may remain");
+      assert.deepEqual(summary.leftovers, [], "no temporary lock state may remain");
+      assert.equal(code, 0, `the stress probe must exit successfully: ${stderr}`);
+    } finally {
+      // Contain even a deliberately broken cleanup mutation before returning.
+      // This external safety fallback is never the guard being mutated.
+      if (ownedGroup) {
+        try { process.kill(-ownedGroup, "SIGKILL"); }
+        catch (error) { if (error.code !== "ESRCH") throw error; }
+        await waitForGroup();
+      }
+      await rm(root, { recursive: true, force: true });
+      await assert.rejects(stat(root), { code: "ENOENT" }, "outer test timeout must clean product scratch");
+    }
+  };
+  try {
+    if (exerciseDeadline)
+      await assert.rejects(run(), { code: "ERR_ASSERTION",
+        message: /stress probe exceeded its 60-second outer deadline/u });
+    else await run();
   } finally {
-    clearTimeout(force);
-    child.kill("SIGKILL");
+    // Keep a scratch-deletion mutation confined to this test's private root.
+    await rm(root, { recursive: true, force: true });
   }
-  const summary = JSON.parse(stdout);
-  assert.equal(summary.workers, workers);
-  assert.equal(summary.acquisitionsPerWorker, acquisitions);
-  assert.equal(summary.completed, workers * acquisitions,
-    "every requested acquisition must complete");
-  assert.equal(summary.violations, 0, "acquisitions must remain exclusive");
-  assert.equal(summary.failures, 0, "no worker may fail");
-  assert.equal(summary.markerLeft, false, "no live critical holder may remain");
-  assert.deepEqual(summary.leftovers, [], "no temporary lock state may remain");
-  assert.equal(code, 0, `the stress probe must exit successfully: ${stderr}`);
 });
 
 test("the lock stress probe stops children after a no-progress timeout", async () => {

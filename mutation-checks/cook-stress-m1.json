@@ -12,5 +12,19 @@
     "replace": "!name.includes(\".reap-\")",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the lock stress probe completes every requested acquisition\" tests/fleet-connector-install.test.mjs",
     "why": "the permanent production kernel guard is expected state and must not be mistaken for temporary lock leftovers"
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "try { process.kill(-child.pid, \"SIGKILL\"); }",
+    "replace": "try { child.kill(\"SIGKILL\"); }",
+    "test": "CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the lock stress probe completes every requested acquisition\" tests/fleet-connector-install.test.mjs",
+    "why": "removing the stress process-group kill must fail outer test timeout must leave no live owned descendants against the independently required empty group; the unmutated external safety fallback contains the probe"
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "      await rm(root, { recursive: true, force: true });\n      await assert.rejects(stat(root)",
+    "replace": "      // Mutation: omit primary scratch deletion.\n      await assert.rejects(stat(root)",
+    "test": "CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the lock stress probe completes every requested acquisition\" tests/fleet-connector-install.test.mjs",
+    "why": "omitting private scratch removal must fail outer test timeout must clean product scratch against independent ENOENT; the outer unmutated test safety cleanup removes the mutation fixture"
   }
 ]
