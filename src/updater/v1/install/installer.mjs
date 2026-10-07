@@ -389,16 +389,16 @@ async function assertInstallWebVapidV1(root, vapid) {
   const path = join(root, "Protected", "config", "owner-web-push.json");
   const entry = await lstat(path).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (!entry) return;
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse("existing_key_refused");
+  const bytes = await readRegularFileNoFollowV1(path, { maximumBytes: 4096 });
+  if (bytes.byteLength === 0) return;
+  let before; try { before = JSON.parse(bytes.toString("utf8")); } catch { refuse("existing_key_refused"); }
   if (!vapid) {
     const error = new Error("Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.");
     error.code = "existing_key_refused";
     error.userMessage = error.message;
     throw error;
   }
-  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse("existing_key_refused");
-  const bytes = await readRegularFileNoFollowV1(path, { maximumBytes: 4096 });
-  if (bytes.byteLength === 0) return;
-  let before; try { before = JSON.parse(bytes.toString("utf8")); } catch { refuse("existing_key_refused"); }
   if (!before || !["privateKey,publicKey,schema", "privateKey,publicKey,schema,subject"].includes(Object.keys(before).sort().join(","))
     || before.schema !== "control-room.owner-web-push-config/v1" || !vapid
     || before.publicKey !== vapid.publicKey || before.privateKey !== vapid.privateKey) refuse("existing_key_refused");

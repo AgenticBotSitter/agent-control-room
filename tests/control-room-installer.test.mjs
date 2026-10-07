@@ -2020,6 +2020,7 @@ test("connrel installer ships a trusted connector and Connect a bot can make its
   assert.deepEqual(await readFile(manifestPath), original);
 });
 
+
 test("A2-01 rehearsal loader refuses overlapping, folded and filesystem-aliased roots", async t => {
   const base = await temporary("root-overlap"); t.after(() => cleanup(base));
   const { loadRehearsalConfigV1, LIVE_ROOT_V1 } = await import("../src/updater/v1/install/rehearsal-config.mjs");
@@ -2716,4 +2717,16 @@ test("a retired manual web key without updater vapid names the file and recovery
   });
   assert.equal(await readFile(path, "utf8"), before, "the manual pair is not adopted or changed");
   assert.equal(f.ports.calls.some(([name]) => ["create-accounts", "install-services", "build-release"].includes(name)), false, "refuse before install effects");
+  // Preserve existing refusal behavior for adjacent malformed/custody cases.
+  for (const content of ["{", JSON.stringify({ schema: "unknown", publicKey: "broken" })]) {
+    await writeFile(path, content);
+    await assert.rejects(installControlRoomV1(f.options), { code: "existing_key_refused" });
+    assert.equal(await readFile(path, "utf8"), content);
+  }
+  await chmod(path, 0o644);
+  await assert.rejects(installControlRoomV1(f.options), { code: "existing_key_refused" });
+  // An empty reservation file was already allowed; guidance must not change that.
+  await chmod(path, 0o600); await writeFile(path, "");
+  await installControlRoomV1(f.options);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).subject, "https://fixture.ts.net");
 });
