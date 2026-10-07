@@ -65,7 +65,17 @@ const oracles = {
   "updater-configuration": (input, v) => v.database.host !== `${ROOT}/pg/socket` || v.database.user !== "control_room_deployer" ? "non-canonical database wiring accepted" : undefined,
   "passkey-config": (input, v) => { const u = new URL(v.expectedOrigin); if (u.protocol !== "https:" || u.hostname !== v.rpId || (u.port && v.rehearsal !== true)) return "origin/rpId mismatch accepted"; if (/[A-Z]/u.test(v.rpId)) return "uppercase rpId accepted"; },
   "rehearsal-config": (input, v) => v.rehearsalRoot.startsWith("/Library/Application Support/Control Room") || v.rehearsalRoot === "/" ? "live root accepted" : (v.expectedOrigin !== `https://${v.rehearsalHostname}:${v.ports.web}` ? "origin mismatch accepted" : undefined),
-  "owner-web-push-config": (input, v) => !/^mailto:[^\s@]+@[^\s@]+$/u.test(v.subject) || v.privateKey.length < 40 ? "bad VAPID shape accepted" : undefined,
+  "owner-web-push-config": (input, v) => {
+    // An independent URL parse keeps this oracle separate from the product validator.
+    let hostname;
+    try {
+      const contact = new URL(v.subject);
+      if (contact.protocol === "https:" && contact.origin === v.subject) hostname = contact.hostname;
+      else if (contact.protocol === "mailto:" && /^[^\s@]+@[^\s@]+$/u.test(contact.pathname)) hostname = contact.pathname.split("@")[1];
+    } catch { return "bad VAPID shape accepted"; }
+    return !hostname || /(?:^|\.)(?:invalid|localhost|example|test|local)(?:\.|$)/u.test(hostname)
+      || v.privateKey.length < 40 ? "bad VAPID shape accepted" : undefined;
+  },
   "local-owner-session-profile": (input, v) => { const o = new URL(v.origin); if (o.hostname !== "127.0.0.1" || o.protocol !== "http:") return "non-loopback origin accepted"; if (v.trustedOrigin && !v.trustedOrigin.startsWith("https://")) return "non-https trusted origin accepted"; if (v.remoteOrigins?.some(r => !/^https:\/\//u.test(r) || r === v.origin)) return "bad remote origin accepted"; if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(v.tenantId + v.provider + v.subject)) return "hidden chars in identity accepted"; },
   "nightly-backup": (input, v) => JSON.stringify(input) !== JSON.stringify(v) && typeof input === "object" && input && Object.keys(input).length !== Object.keys(v).length ? "non-identical backup config accepted" : undefined,
   "release-trust": (input, v) => v.keyId !== releaseKeyIdV1(v.publicKey) || v.revokedKeyIds.includes(v.keyId) ? "trust with wrong/revoked key accepted" : undefined,
