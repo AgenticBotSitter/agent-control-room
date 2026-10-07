@@ -263,13 +263,14 @@ export class UpdaterMainLoopV1 {
           const watching = Promise.resolve().then(() => this.watcher.tick());
           this.#watching = watching;
           watching.finally(() => { if (this.#watching === watching) this.#watching = undefined; }).catch(() => {});
+          // The hold follows the watcher's own settled answer (registered before the
+          // race below, so it is recorded before this tick publishes).
+          watching.then(() => { this.#watcherHold = null; },
+            error => { if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code; });
           let timer;
           try { await Promise.race([watching, new Promise((_, reject) => {
             timer = setTimeout(() => reject(updaterRefuseV1("updater_watcher_timeout")), this.watcherTimeoutMs);
-          })]); this.#watcherHold = null; } catch (error) {
-            if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code;
-            try { this.onError(error); } catch { /* reporting cannot block the runner */ }
-          }
+          })]); } catch (error) { try { this.onError(error); } catch { /* reporting cannot block the runner */ } }
           finally { clearTimeout(timer); }
         }
       }
@@ -437,8 +438,8 @@ export class UpdaterMainLoopV1 {
       // that never happened.
       await this.stateFiles.writeStatus({ ...refreshedFacts, state: finalState, needsYou: finalNeedsYou, selfUpdate: flag,
         ...(nextAction === undefined ? holdNamesState ? { nextAction: null } : {} : { nextAction }),
-        ...(attention ? { reason: attention.reason }
-          : watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}) });
+        ...(watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}),
+        ...(attention ? { reason: attention.reason } : {}) });
       if (resolved) await this.stateFiles.confirmRescueResolution?.();
       if (this.alerts) {
         const facts = await this.alertFacts();

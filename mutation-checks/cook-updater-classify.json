@@ -197,15 +197,15 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "            if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code;\n",
-    "replace": "",
+    "find": "            error => { if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code; });",
+    "replace": "            () => {});",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
     "why": "a watcher refused for untrusted history holds every update, so the hold must be recorded for the owner"
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "})]); this.#watcherHold = null; } catch (error) {",
-    "replace": "})]); } catch (error) {",
+    "find": "          watching.then(() => { this.#watcherHold = null; },",
+    "replace": "          watching.then(() => {},",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
     "why": "the hold clears on the next successful watcher tick, so a repaired mirror does not keep a stale attention item"
   },
@@ -218,8 +218,8 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "          : watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}) });",
-    "replace": "          : {}) });",
+    "find": "        ...(watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}),\n",
+    "replace": "",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
     "why": "the held card carries its plain sentence, not silence"
   },
