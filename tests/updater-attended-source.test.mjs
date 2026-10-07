@@ -971,6 +971,19 @@ test("an installed commit that is not an ancestor of the target, or is unknown, 
   assert.equal(unknown.baseline, "unproven");
 });
 
+test("a stop during classification is reported as a stop, not as a database change", async t => {
+  const f = await fixture(t), controller = new AbortController();
+  const target = await commitFiles(f.repository, "code", { "src/app.mjs": "export const c = 1;\n" });
+  await markInstalled(f, f.commit);
+  await git(f.repository, "branch", "-f", "classify-main", target);
+  await publishLocalFixtureV1(f.repository, "classify-main");
+  const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: target, signal: controller.signal });
+  try {
+    controller.abort();
+    await assert.rejects(classifyAttendedSourceV1(fetched), /updater_attended_stopped/u);
+  } finally { await abortAttendedV1(fetched); }
+});
+
 test("a fresh install has no installed release, so the whole tree is new and the database is created", async t => {
   const f = await fixture(t);
   const target = await commitFiles(f.repository, "code", { "src/app.mjs": "export const c = 1;\n" });

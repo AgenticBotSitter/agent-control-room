@@ -1027,6 +1027,7 @@ const DATABASE_PATH_PREFIXES = Object.freeze(["db/", "deploy/postgres/", "src/up
 const DATABASE_PATH_FILES = Object.freeze(["scripts/mac-local/database-role-manifest.mjs",
   "src/updater/v1/policy/release-schema-digest.json"]);
 const CLASSIFY_OUTPUT_BYTES = 64 * 1024 * 1024;
+const STOPPED_CODES = Object.freeze(["updater_attended_stopped", "updater_command_timeout"]);
 
 export function isAttendedDatabasePathV1(path) {
   const lower = path.toLowerCase();
@@ -1056,9 +1057,11 @@ export async function classifyAttendedSourceV1(input) {
   const from = await installedReleaseForPlanV1(session), target = session.commit;
   const names = async args => (await git(session.input, session.tools.git, session.mirror, args,
     { waitForClose: true, maxOutputBytes: CLASSIFY_OUTPUT_BYTES })).stdout.split("\0").filter(Boolean);
-  // Exit 1 is "not an ancestor"; anything else, including an unknown commit, proves nothing.
+  // Exit 1 is "not an ancestor"; any other failure, such as an unknown commit,
+  // proves nothing. Only a stop or timeout propagates, so it is reported as itself.
   const descends = async (ancestor, descendant) => (await git(session.input, session.tools.git, session.mirror,
-    ["merge-base", "--is-ancestor", ancestor, descendant], { acceptExitCodes: [1] }).catch(() => null))?.code === 0;
+    ["merge-base", "--is-ancestor", ancestor, descendant], { acceptExitCodes: [1] })
+    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;
   let paths = [], baseline;
   if (from.commit === undefined) {
     baseline = "not-installed";

@@ -50,8 +50,8 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "{ acceptExitCodes: [1] }).catch(() => null))?.code === 0;",
-    "replace": "{ acceptExitCodes: [1] }).catch(() => null))?.code !== undefined;",
+    "find": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;",
+    "replace": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code !== undefined;",
     "test": "node --test --test-name-pattern='not an ancestor of the target, or is unknown' tests/updater-attended-source.test.mjs",
     "why": "git's exit 1 means not an ancestor; only exit 0 proves the installed commit is in the target's history"
   },
@@ -68,5 +68,12 @@
     "replace": "    || lower.endsWith(\".sql\");",
     "test": "node --import tsx --test --test-name-pattern='attended install gate counts every path' tests/updater-referee.test.ts",
     "why": "the attended install gate is never looser than the referee's database rule (role-manifest generator included)"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;",
+    "replace": "    .catch(() => null))?.code === 0;",
+    "test": "node --test --test-name-pattern='a stop during classification' tests/updater-attended-source.test.mjs",
+    "why": "a stop or timeout during the ancestry check is reported as itself, never turned into a history answer"
   }
 ]
