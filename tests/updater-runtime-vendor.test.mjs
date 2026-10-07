@@ -646,10 +646,11 @@ process.stderr.write(row.stderr);process.exitCode=row.exit;
     attempts: () => readFile(counter, "utf8").then(JSON.parse, error => error.code === "ENOENT" ? [] : Promise.reject(error)) };
 }
 
-async function downloadFailure(fixture) {
+async function downloadFailure(fixture, expectedCode) {
   let failure;
   try { await vendorRuntimeV1(fixture.input, fixture.runtime); } catch (error) { failure = error; }
   assert.ok(failure, "download must refuse");
+  if (expectedCode !== undefined) assert.equal(failure.code, expectedCode, `${fixture.deny}: identity probe refuses early`);
   assert.equal(await downloadStateAbsent(join(fixture.root, "build/download-download-proof")), true,
     `${fixture.deny ?? "download"}: refusal removes the actual folder; permission errors are not absence`);
   return failure;
@@ -711,8 +712,7 @@ test("V101 transient retries stop at three and unknown or permanent errors refus
 test("V101 real account write and traversal refusals happen before curl", async t => {
   for (const deny of ["traversal", "write", "collision"]) {
     const fixture = await downloadReplayFixture(t, [{ exit: 0, stderr: "" }], { deny });
-    const error = await downloadFailure(fixture);
-    assert.equal(error.code, "runtime_download_destination_unwritable", `${deny}: identity probe refuses early`);
+    await downloadFailure(fixture, "runtime_download_destination_unwritable");
     assert.equal((await fixture.attempts()).length, 0, `${deny}: no large download starts`);
   }
 });
