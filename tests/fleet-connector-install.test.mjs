@@ -1094,6 +1094,41 @@ test("a live process generation is never cleaned merely because its lock is old"
     { pid: process.pid, processIdentity: "same-process", token });
 });
 
+test("the lock stress probe completes every requested acquisition", async () => {
+  const workers = 2, acquisitions = 40;
+  const child = spawn(process.execPath, ["scripts/fleet/stress-connector-lock.mjs",
+    String(workers), String(acquisitions), "0.05"], {
+    cwd: resolve("."),
+    env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1",
+      CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "30000" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; });
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  const force = setTimeout(() => child.kill("SIGKILL"), 60_000);
+  let code;
+  try {
+    code = await new Promise((resolveClose, reject) => {
+      child.once("error", reject);
+      child.once("close", resolveClose);
+    });
+  } finally {
+    clearTimeout(force);
+    child.kill("SIGKILL");
+  }
+  const summary = JSON.parse(stdout);
+  assert.equal(summary.workers, workers);
+  assert.equal(summary.acquisitionsPerWorker, acquisitions);
+  assert.equal(summary.completed, workers * acquisitions,
+    "every requested acquisition must complete");
+  assert.equal(summary.violations, 0, "acquisitions must remain exclusive");
+  assert.equal(summary.failures, 0, "no worker may fail");
+  assert.equal(summary.markerLeft, false, "no live critical holder may remain");
+  assert.deepEqual(summary.leftovers, [], "no temporary lock state may remain");
+  assert.equal(code, 0, `the stress probe must exit successfully: ${stderr}`);
+});
+
 test("the lock stress probe stops children after a no-progress timeout", async () => {
   const child = spawn(process.execPath, ["scripts/fleet/stress-connector-lock.mjs", "1", "40", "0.05"], {
     cwd: resolve("."),

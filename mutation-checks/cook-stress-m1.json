@@ -1,0 +1,16 @@
+[
+  {
+    "file": "scripts/fleet/stress-connector-lock.mjs",
+    "find": "    while (completed < loops) {",
+    "replace": "    while (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the lock stress probe completes every requested acquisition\" tests/fleet-connector-install.test.mjs",
+    "why": "skipping real acquisitions must fail every requested acquisition must complete against the requested two times forty literal expectation"
+  },
+  {
+    "file": "scripts/fleet/stress-connector-lock.mjs",
+    "find": "name !== \"credential.rotate.lock.guard\" && !name.includes(\".reap-\")",
+    "replace": "!name.includes(\".reap-\")",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the lock stress probe completes every requested acquisition\" tests/fleet-connector-install.test.mjs",
+    "why": "the permanent production kernel guard is expected state and must not be mistaken for temporary lock leftovers"
+  }
+]
