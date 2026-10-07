@@ -577,8 +577,8 @@ export function cliFailureMessageV1(error) {
   let message;
   if (error?.code === "attended_database_change_requires_upgrader")
     message = error.unfinishedUpdateRecovered === true
-      ? "Update stopped: requested commit changes the database. Not applied. Earlier unfinished update rolled back. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)"
-      : "Update stopped: requested commit changes the database. This update was not applied. Wait for the database upgrader; tell the lead. (attended_database_change_requires_upgrader)";
+      ? "Not installed: this version needs a database upgrade step that isn't built yet. Earlier unfinished update rolled back. Tell the lead. (attended_database_change_requires_upgrader)"
+      : "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)";
   else if (typeof error?.userMessage === "string") message = error.userMessage;
   else if (typeof error?.code === "string") message = error.code;
   else {

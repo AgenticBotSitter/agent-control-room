@@ -971,14 +971,19 @@ async function runAttendedCoreV1({ root, commit, accounts, fresh, write, ports, 
     try {
       if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
     } catch (error) {
-      // Recovery precedes this request. Only its immediately preceding completed
-      // receipt describes this command; historical recoveries must not label retries.
-      const entries = await readJournal(root);
-      const requestStart = entries.findLastIndex(row => row.command === "install"
-        && row.action === "transaction" && row.phase === "planned");
-      const prior = entries[requestStart - 1];
-      error.unfinishedUpdateRecovered = prior?.command === "recovery" && prior.action === "transaction"
-        && prior.phase === "done" && prior.data?.state === "recovered";
+      // Scratch-only cleanup after a refusal is not a rolled-back update.
+      // Guidance is optional: a failed journal read must not replace the refusal.
+      try {
+        const entries = await readJournal(root);
+        const requestStart = entries.findLastIndex(row => row.command === "install"
+          && row.action === "transaction" && row.phase === "planned");
+        const prior = entries[requestStart - 1];
+        const recoveredPastClassification = entries.some(row => row.command === "install"
+          && row.transactionId === prior?.data?.installTransactionId && row.phase === "planned"
+          && ["confirm", "stage", "switch-pointers"].includes(row.action));
+        error.unfinishedUpdateRecovered = prior?.command === "recovery" && prior.action === "transaction"
+          && prior.phase === "done" && prior.data?.state === "recovered" && recoveredPastClassification;
+      } catch { error.unfinishedUpdateRecovered = false; }
       throw error;
     }
     const runningBundleDigest = options.runningBundleDigest === undefined
