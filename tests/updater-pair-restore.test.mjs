@@ -220,6 +220,59 @@ test('R4B-06: a FIFO at the temporary Darwin open promptly refuses and stays unt
   assert.deepEqual(await f.snapshot(),['releases/old-app','ENOENT','old-updater','ENOENT']);
 });
 
+test('R4B-06: Darwin parent substitution after descriptor stat refuses before chmod',
+  {skip:process.platform !== 'darwin'}, async t => {
+  const f = await pair(t), foreign = await root(t,'pair-chmod-foreign');
+  await fs.symlink('keep',join(foreign,'current'));
+  const originalOpen = fs.open, originalLstat = fs.lstat;
+  let swapped = false, planted, before, descriptorStats = 0, chmodCalls = 0, closes = 0, foreignReads = 0;
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).startsWith(join(f.value,'updater/.current.'))) {
+      const stat = handle.stat.bind(handle), chmod = handle.chmod.bind(handle), close = handle.close.bind(handle);
+      handle.stat = async (...statArgs) => {
+        const entry = await stat(...statArgs);
+        descriptorStats++;
+        // Keep the real descriptor answer; substitute its parent before it returns.
+        planted = join(foreign,String(args[0]).split('/').at(-1));
+        await fs.writeFile(planted,'foreign bytes',{mode:0o600});
+        before = await originalLstat(planted);
+        await fs.rename(join(f.value,'updater'),join(f.value,'updater-owned'));
+        await fs.symlink(foreign,join(f.value,'updater'));
+        swapped = true;
+        return entry;
+      };
+      handle.chmod = async (...chmodArgs) => { chmodCalls++; return chmod(...chmodArgs); };
+      handle.close = async (...closeArgs) => { await close(...closeArgs); closes++; };
+    }
+    return handle;
+  };
+  fs.lstat = async (...args) => {
+    if (swapped && String(args[0]) === join(f.value,'updater/current')) foreignReads++;
+    return originalLstat(...args);
+  };
+  syncBuiltinESMExports();
+  let outcome;
+  try { outcome = await capture(switchPairV1({root:f.value,restore:f.restore})); }
+  finally { fs.open = originalOpen; fs.lstat = originalLstat; syncBuiltinESMExports(); }
+  assert.equal(swapped,true,'the stat-to-chmod parent substitution reached the real descriptor');
+  assert.equal(descriptorStats,1,'the substitution follows one real descriptor stat');
+  assert.equal(closes,1,'custody refusal closes the real descriptor');
+  assert.equal(outcome.error,'file_custody_refused');
+  const after = await fs.lstat(planted);
+  assert.deepEqual([after.dev,after.ino,after.mode],[before.dev,before.ino,before.mode],
+    'the foreign temporary entry keeps its identity and mode');
+  assert.equal(await fs.readFile(planted,'utf8'),'foreign bytes');
+  assert.equal(await fs.readlink(join(foreign,'current')),'keep');
+  assert.equal(await fs.readlink(join(f.value,'updater-owned/current')),'new-updater');
+  assert.equal(chmodCalls,0,'custody must be rechecked after descriptor stat before any chmod');
+  assert.equal(foreignReads,0,'no foreign leaf inspection after the stat-to-chmod parent substitution');
+  await fs.unlink(join(f.value,'updater'));
+  await fs.rename(join(f.value,'updater-owned'),join(f.value,'updater'));
+  await switchPairV1({root:f.value,restore:f.restore});
+  assert.deepEqual(await f.snapshot(),['releases/old-app','ENOENT','old-updater','ENOENT']);
+});
+
 test('R4B-06: late parent substitution refuses before temporary inspection and rename', async t => {
   for (const stage of ['leaf','temporary']) {
     const f = await pair(t), foreign = await root(t,'pair-final-custody');
