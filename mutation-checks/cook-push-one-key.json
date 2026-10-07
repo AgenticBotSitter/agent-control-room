@@ -29,10 +29,10 @@
   },
   {
     "file": "src/installer/shared/vapid.mjs",
-    "find": "return !labels.some(label => [\"invalid\", \"localhost\", \"example\", \"test\", \"local\"].includes(label));",
-    "replace": "return true;",
+    "find": "!labels.some(label => [\"invalid\", \"localhost\", \"example\"].includes(label))",
+    "replace": "true",
     "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
-    "why": "Refuse reserved and placeholder contact domains."
+    "why": "Refuse placeholder labels in contact domains."
   },
   {
     "file": "src/installer/shared/vapid.mjs",
@@ -257,5 +257,12 @@
     "replace": "if (true) console.warn",
     "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
     "why": "Do not fabricate diagnostic text records for errors with no provider body."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "![\"test\", \"local\"].includes(labels.at(-1))",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse reserved test/local suffixes while allowing those words in real DNS hostnames."
   }
 ]

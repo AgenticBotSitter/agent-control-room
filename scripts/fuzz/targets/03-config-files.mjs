@@ -73,7 +73,8 @@ const oracles = {
       if (contact.protocol === "https:" && contact.origin === v.subject) hostname = contact.hostname;
       else if (contact.protocol === "mailto:" && /^[^\s@]+@[^\s@]+$/u.test(contact.pathname)) hostname = contact.pathname.split("@")[1];
     } catch { return "bad VAPID shape accepted"; }
-    return !hostname || /(?:^|\.)(?:invalid|localhost|example|test|local)(?:\.|$)/u.test(hostname)
+    return !hostname || /(?:^|\.)(?:invalid|localhost|example)(?:\.|$)/u.test(hostname)
+      || /\.(?:test|local)$/u.test(hostname)
       || v.privateKey.length < 40 ? "bad VAPID shape accepted" : undefined;
   },
   "local-owner-session-profile": (input, v) => { const o = new URL(v.origin); if (o.hostname !== "127.0.0.1" || o.protocol !== "http:") return "non-loopback origin accepted"; if (v.trustedOrigin && !v.trustedOrigin.startsWith("https://")) return "non-https trusted origin accepted"; if (v.remoteOrigins?.some(r => !/^https:\/\//u.test(r) || r === v.origin)) return "bad remote origin accepted"; if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(v.tenantId + v.provider + v.subject)) return "hidden chars in identity accepted"; },

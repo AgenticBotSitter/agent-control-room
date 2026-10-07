@@ -8,7 +8,8 @@ export function vapidSubjectAllowedV1(value) {
   const labels = hostname.split(".");
   if (labels.length < 2 || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))) return false;
   if (!/^[a-z]{2,63}$/u.test(labels.at(-1))) return false;
-  return !labels.some(label => ["invalid", "localhost", "example", "test", "local"].includes(label));
+  return !labels.some(label => ["invalid", "localhost", "example"].includes(label))
+    && !["test", "local"].includes(labels.at(-1));
 }
 
 /** The complete shape accepted by both credential readers. */

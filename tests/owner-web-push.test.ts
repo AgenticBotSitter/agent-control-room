@@ -219,7 +219,8 @@ test("VAPID contacts accept HTTPS origins and real mail addresses and refuse pla
   const { default: webpush } = await import("web-push");
   const keys = webpush.generateVAPIDKeys();
   const config = (subject: unknown) => ({ schema: "control-room.owner-web-push-config/v1", subject, ...keys });
-  for (const subject of ["https://fixture.ts.net", "mailto:push@control-room.org"]) {
+  for (const subject of ["https://fixture.ts.net", "mailto:push@control-room.org",
+    "https://test.tail123.ts.net", "https://local.tail123.ts.net", "mailto:push@test.control-room.org"]) {
     assert.equal(captureOwnerWebPushConfigV1(config(subject)).subject, subject);
     assert.equal(createWebPushChannelV1({ subject, ...keys }).kind, "web-push");
   }
