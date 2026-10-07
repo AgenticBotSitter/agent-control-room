@@ -159,5 +159,82 @@
     "replace": "if (false) refuse(\"tailscale_rp_id_changed\");",
     "test": "node --import tsx --test --test-name-pattern='installer refuses a reserved' tests/control-room-installer.test.mjs",
     "why": "Keep the web origin and the signed VAPID contact on the same measured hostname before composing services."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "value.schema === schema && vapidSubjectAllowedV1(value.subject)",
+    "replace": "value.schema === schema",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Both credential readers must reject a missing or reserved subject even with valid keys and schema."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "![\"privateKey,publicKey,schema\", \"privateKey,publicKey,schema,subject\"].includes(Object.keys(before).sort().join(\",\"))",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse unknown properties in an existing web credential before installation effects."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "before.schema !== \"control-room.owner-web-push-config/v1\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse a web credential in an unknown schema rather than silently adopting it."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "async function readInstallVapidV1(root, subject) {\n  const path = join(root, \"updater-state\", \"vapid.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return null;\n  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "async function readInstallVapidV1(root, subject) {\n  const path = join(root, \"updater-state\", \"vapid.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return null;\n  if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse publicly readable canonical credentials before install effects."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse publicly readable web credentials before install effects."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "  const write = async (path, value, owner) => {\n    const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n    if (entry) {\n      if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "  const write = async (path, value, owner) => {\n    const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n    if (entry) {\n      if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Recheck credential custody immediately before publishing a rewritten web copy."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "  const retired = join(root, \"Protected\", \"service\", \"vapid-public.json\");\n  const entry = await lstat(retired).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (entry) {\n    if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "  const retired = join(root, \"Protected\", \"service\", \"vapid-public.json\");\n  const entry = await lstat(retired).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (entry) {\n    if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installed update rewrites' tests/control-room-installer.test.mjs",
+    "why": "Validate the custody of the legacy public file before retiring it."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await writeInstallVapidV1(root, accounts, ports, vapidSubject);",
+    "replace": "void accounts;",
+    "test": "node --import tsx --test --test-name-pattern='installed update rewrites' tests/control-room-installer.test.mjs",
+    "why": "A same-commit retry repairs the subject while preserving the existing refusal and unchanged install journal."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "value !== null && typeof value === \"object\" && !Array.isArray(value)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Reject non-object credential inputs without throwing incidental parser exceptions."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "typeof value.publicKey === \"string\" &&",
+    "replace": "true &&",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Reject coercible public-key values instead of accepting their regex stringification."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "typeof value.privateKey === \"string\" &&",
+    "replace": "true &&",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Reject coercible private-key values instead of accepting their regex stringification."
   }
 ]

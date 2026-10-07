@@ -223,8 +223,14 @@ test("VAPID contacts accept HTTPS origins and real mail addresses and refuse pla
     assert.equal(captureOwnerWebPushConfigV1(config(subject)).subject, subject);
     assert.equal(createWebPushChannelV1({ subject, ...keys }).kind, "web-push");
   }
-  for (const change of [{ extra: true }, { schema: "unknown" }, { publicKey: "broken" }, { privateKey: "broken" }])
+  for (const change of [{ extra: true }, { schema: "unknown" }, { publicKey: "broken" }, { privateKey: "broken" },
+    { publicKey: [keys.publicKey] }, { privateKey: [keys.privateKey] }])
     assert.throws(() => captureOwnerWebPushConfigV1({ ...config("https://fixture.ts.net"), ...change }), /owner_web_push_config_invalid/);
+  const { vapidConfigAllowedV1 } = await import("../src/installer/shared/vapid.mjs");
+  for (const value of [null, undefined, [], 42, Object.assign(() => {}, config("https://fixture.ts.net"))]) {
+    assert.doesNotThrow(() => vapidConfigAllowedV1(value, "control-room.owner-web-push-config/v1"));
+    assert.equal(vapidConfigAllowedV1(value, "control-room.owner-web-push-config/v1"), false);
+  }
   for (const subject of [undefined, null, "", "mailto:owner@example.invalid", "mailto:owner@localhost",
     "mailto:owner@example.com", "mailto:owner@control-room.invalid", "https://localhost", "https://example.org",
     "https://fixture.invalid", "https://fixture.test", "https://fixture.local", "https://127.0.0.1", "https://[::1]",

@@ -2596,31 +2596,79 @@ test("installed update rewrites only the VAPID subject and keeps the browser sub
   await installControlRoomV1(f.options);
   const path = join(f.root, "updater-state/vapid.json"), first = JSON.parse(await readFile(path, "utf8"));
   await writeFile(path, JSON.stringify({ ...first, subject: "mailto:owner@control-room.invalid" }), { mode: 0o600 });
+  const journalPath = join(f.root, "updater-state", CONTROL_ROOM_INSTALLER_JOURNAL_FILE_V1);
+  const journal = await readFile(journalPath, "utf8");
+  await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined }), { code: "commit_already_installed" });
+  assert.equal(await readFile(journalPath, "utf8"), journal, "a same-commit repair never arms install recovery");
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { ...first, subject: "https://fixture.ts.net" });
+  await writeFile(path, JSON.stringify({ ...first, subject: "mailto:owner@control-room.invalid" }), { mode: 0o600 });
   const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups, version: "1.2.4" });
   ports.generateVapidKeys = async () => assert.fail("an update must not mint new keys");
   await installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "b".repeat(40), ports });
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { ...first, subject: "https://fixture.ts.net" });
   const web = JSON.parse(await readFile(join(f.root, "Protected/config/owner-web-push.json"), "utf8"));
   assert.deepEqual([web.publicKey, web.privateKey], [first.publicKey, first.privateKey]);
+  const legacyPublic = join(f.root, "Protected/service/vapid-public.json");
+  await writeFile(legacyPublic, JSON.stringify({ publicKey: first.publicKey }), { mode: 0o644 });
+  const retirePorts = fakePorts({ users: f.ports.users, groups: f.ports.groups, version: "1.2.5" });
+  await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "c".repeat(40), ports: retirePorts }), /existing_key_refused/u);
+  await chmod(legacyPublic, 0o600);
+  await installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "c".repeat(40), ports: retirePorts });
+  await assert.rejects(lstat(legacyPublic), { code: "ENOENT" });
   const mismatch = await nativePorts.generateVapidKeys();
   await writeFile(join(f.root, "Protected/config/owner-web-push.json"), JSON.stringify({ ...web, ...mismatch }), { mode: 0o600 });
-  const mismatchPorts = fakePorts({ users: f.ports.users, groups: f.ports.groups, version: "1.2.5" });
-  await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "c".repeat(40), ports: mismatchPorts }), /existing_key_refused/u);
+  const mismatchPorts = fakePorts({ users: f.ports.users, groups: f.ports.groups, version: "1.2.6" });
+  await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "d".repeat(40), ports: mismatchPorts }), /existing_key_refused/u);
   assert.equal(mismatchPorts.calls.some(call => call[0] === "build-release"), false, "a mismatched pair is refused before release changes");
 });
 
 test("installer refuses malformed adopted key shapes before account or release effects", async t => {
+  for (const name of ["updater-state/vapid.json", "Protected/config/owner-web-push.json"]) {
+    const f = await fixture(t, "adoption-custody", { failStep: "init-database" });
+    await assert.rejects(installControlRoomV1(f.options), /fixture_step_failure/u);
+    await chmod(join(f.root, name), 0o644);
+    const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups });
+    await assert.rejects(installControlRoomV1({ ...f.options, ports }), /existing_key_refused/u);
+    assert.equal(ports.calls.some(call => ["build-release", "install-services"].includes(call[0])), false,
+      "publicly readable credentials must be refused during preflight");
+  }
   for (const corrupt of [value => ({ ...value, extra: true }), value => ({ ...value, schema: "unknown" }),
     value => ({ ...value, publicKey: "broken" }), value => ({ ...value, privateKey: null })]) {
     const f = await fixture(t, "adoption-shape", { failStep: "init-database" });
     await assert.rejects(installControlRoomV1(f.options), /fixture_step_failure/u);
     const path = join(f.root, "updater-state/vapid.json"), before = corrupt(JSON.parse(await readFile(path, "utf8")));
     await writeFile(path, JSON.stringify(before), { mode: 0o600 });
+    await rm(join(f.root, "Protected/config/owner-web-push.json"));
     const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups });
     await assert.rejects(installControlRoomV1({ ...f.options, ports }), /existing_key_refused/u);
     assert.equal(ports.calls.some(call => ["create-account", "build-release", "install-services"].includes(call[0])), false);
     assert.deepEqual(JSON.parse(await readFile(path, "utf8")), before);
   }
+  for (const corrupt of [value => ({ ...value, extra: true }), value => ({ ...value, schema: "unknown" })]) {
+    const f = await fixture(t, "web-adoption-shape", { failStep: "init-database" });
+    await assert.rejects(installControlRoomV1(f.options), /fixture_step_failure/u);
+    const path = join(f.root, "Protected/config/owner-web-push.json");
+    const before = corrupt(JSON.parse(await readFile(path, "utf8")));
+    await writeFile(path, JSON.stringify(before), { mode: 0o600 });
+    const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups });
+    await assert.rejects(installControlRoomV1({ ...f.options, ports }), /existing_key_refused/u);
+    assert.equal(ports.calls.some(call => ["create-account", "build-release", "install-services"].includes(call[0])), false);
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")), before);
+  }
+  const changing = await fixture(t, "changing-web-custody", { failStep: "init-database" });
+  await assert.rejects(installControlRoomV1(changing.options), /fixture_step_failure/u);
+  const rootPath = join(changing.root, "updater-state/vapid.json"), webPath = join(changing.root, "Protected/config/owner-web-push.json");
+  const rootKeys = JSON.parse(await readFile(rootPath, "utf8"));
+  await writeFile(rootPath, JSON.stringify({ ...rootKeys, subject: "mailto:owner@control-room.invalid" }), { mode: 0o600 });
+  const ports = fakePorts({ users: changing.ports.users, groups: changing.ports.groups });
+  const chown = ports.lchownPath;
+  let changed = false;
+  ports.lchownPath = async (path, uid, gid) => {
+    await chown(path, uid, gid);
+    if (path.endsWith(".vapid.json.installing")) { changed = true; await chmod(webPath, 0o644); }
+  };
+  await assert.rejects(installControlRoomV1({ ...changing.options, ports }), /existing_key_refused/u);
+  assert.equal(changed, true, "the custody change reached the interval before publishing the web copy");
 });
 
 test("installer refuses a reserved Tailscale origin before it creates keys or accounts", async t => {

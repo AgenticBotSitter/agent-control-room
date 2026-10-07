@@ -725,12 +725,13 @@ test("a 200 second backup stop completes within its own launchd definition", asy
 
 test("a stuck backup is refused at its 2760 second definition plus margin and retains its resources", async t => {
   const fake = await fakeRuntime(t, "backup-stuck-stop");
-  const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": Number.MAX_SAFE_INTEGER }), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": Number.MAX_SAFE_INTEGER });
   const sleep = slow.runtime.sleep;
   slow.runtime.sleep = async milliseconds => {
     assert.ok(slow.slept() < 11_081, "the stop observer continued beyond its independently specified bound");
     await sleep(milliseconds);
   };
+  const port = createInProcessServiceElevatedPortV1(slow.runtime);
   const installed = await installServicesV1(input(fake.root, POST_HEALTH_SERVICE_ROLES_V1), { elevatedPort: port });
   await assert.rejects(uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
     { code: "launchctl_bootout_timeout", role: "nightly-backup" });

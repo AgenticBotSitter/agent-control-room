@@ -1151,10 +1151,12 @@ export async function installControlRoomV1(options) {
     const completedInstalls = [...priorEntries].reverse().filter(entry => entry.command === "install"
       && entry.action === "transaction" && entry.phase === "done" && entry.data?.state === "installed");
     const installed = completedInstalls[0];
-    // A re-run for the commit `current` already runs is refused before any journal
-    // record or effect (atk-fa F5): it can only fail at the stage, and a failure
-    // there armed recovery to rename the live release and updater folders.
+    // Repair the credential projections on a same-commit retry, then refuse before
+    // any install journal or staging step can arm recovery to rename a live release.
     if (installed && (await pointer(root, "current"))?.endsWith(`-${options.commit.slice(0, 12)}`)) {
+      const freshInstall = completedInstalls.find(entry => actionFor(priorEntries, entry.transactionId, "create-accounts"));
+      const accounts = recoveryAccounts(actionFor(priorEntries, freshInstall?.transactionId, "create-accounts"), names);
+      await writeInstallVapidV1(root, accounts, ports, vapidSubject);
       const error = new Error("this commit is already installed");
       error.code = "commit_already_installed"; error.userMessage = "this commit is already installed"; throw error;
     }
