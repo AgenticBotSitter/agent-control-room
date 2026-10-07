@@ -1093,6 +1093,9 @@ export async function classifyAttendedSourceV1(input) {
     baseline = "not-installed";
     paths = await names(["ls-tree", "-r", "--name-only", "-z", target]);
   } else if (from.commit === target) baseline = "same";
+  // Checked before the ancestry questions (an incomplete mirror is never asked)
+  // and again after them, for metadata that appears while they are asked.
+  else if (!await complete()) baseline = "unproven";
   else if (await descends(from.commit, target)) baseline = "forward";
   else if (await descends(target, from.commit)) baseline = "downgrade";
   else baseline = "unproven";

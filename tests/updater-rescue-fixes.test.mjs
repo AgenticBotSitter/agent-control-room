@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { chmod, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { installAttendedCommitV1 } from '../src/updater/v1/attended-source.mjs';
+import { installAttendedCommitV1, verifyAttendedBuildOutputV1 } from '../src/updater/v1/attended-source.mjs';
 import { authorizeAttendedInstallV1, canonicalJsonV1, confirmationWordsV1, confirmV1 } from '../src/updater/v1/cli.mjs';
-import { digest, initialPair, installedReleaseId, newRoot, sourceFixture } from './support/updater-rescue-fixes.mjs';
+import { digest, initialPair, installedPayloadV1, installedReleaseId, newRoot, sourceFixture } from './support/updater-rescue-fixes.mjs';
 
 async function publishPlan(root, plan) {
   const planDigest = digest(Buffer.from(canonicalJsonV1(plan)));
@@ -123,6 +123,7 @@ test('installed plan identity refuses malformed, missing or substituted release 
   for (const bad of ['version', 'commit', 'missing', 'symlink', 'schema', 'other-commit', 'other-version']) {
     const f = await sourceFixture(t); await initialPair(f.root);
     const path = join(f.root, 'releases', installedReleaseId, 'RELEASE_MANIFEST.json');
+    await chmod(path, 0o600); // the producer leaves it read-only; this test rewrites it
     if (bad === 'missing') await import('node:fs/promises').then(fs => fs.rm(path));
     else if (bad === 'symlink') { await import('node:fs/promises').then(async fs => { await fs.rm(path); await fs.symlink('../absent', path); }); }
     else if (bad === 'schema') await writeFile(path, JSON.stringify({ version: '2.0.0', commit: 'c'.repeat(40) }));
@@ -136,4 +137,22 @@ test('installed plan identity refuses malformed, missing or substituted release 
     assert.equal(asked, false);
     assert.equal(await readlink(join(f.root, 'current')), `releases/${installedReleaseId}`);
   }
+});
+
+test('the installed rescue pair carries the producer manifest and a payload that matches it', { timeout: 10000 }, async t => {
+  const root = await newRoot(t, 'installed-pair'); await initialPair(root);
+  const release = join(root, 'releases', installedReleaseId);
+  assert.equal(await readlink(join(root, 'current')), `releases/${installedReleaseId}`);
+  const manifest = JSON.parse(await readFile(join(release, 'RELEASE_MANIFEST.json'), 'utf8'));
+  // The producer's field list (build-attended-release.mjs), written out here.
+  assert.deepEqual(Object.keys(manifest), ['schema', 'commit', 'version', 'fileCount', 'byteCount', 'files']);
+  assert.deepEqual(manifest.files.map(item => Object.keys(item)), [['path', 'sha256', 'mode', 'bytes']]);
+  // Independent bytes, mode and hash for the payload, checked on disk.
+  const bytes = await readFile(join(release, 'package.json'));
+  assert.equal(bytes.length, 42); assert.equal(digest(bytes), 'sha256:e4577b7842dd1e2265350fe71dfd5b24f83d08090efa4ba4260591f5b552d70a');
+  assert.equal((await stat(join(release, 'package.json'))).mode & 0o777, 0o400);
+  assert.equal(installedPayloadV1.sha256, digest(bytes));
+  // The product's own build-output verifier accepts the installed tree as a builder output.
+  const verified = await verifyAttendedBuildOutputV1(release, { commit: 'c'.repeat(40) });
+  assert.equal(verified.fileCount, 1); assert.equal(verified.byteCount, 42);
 });

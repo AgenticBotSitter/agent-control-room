@@ -101,7 +101,7 @@
     "file": "src/updater/v1/attended-source.mjs",
     "find": "  if ((baseline === \"forward\" || baseline === \"downgrade\") && !await complete()) baseline = \"unproven\";\n",
     "replace": "",
-    "test": "node --test --test-name-pattern='reproducer: a shallow side parent' tests/updater-attended-source.test.mjs",
+    "test": "node --test --test-name-pattern='written while the classifier asks about ancestry' tests/updater-attended-source.test.mjs",
     "why": "ancestry alone is not proof of complete history; the completeness check must run before the range walk"
   },
   {
@@ -194,5 +194,54 @@
     "replace": "    catch { downgrade = true; }\n",
     "test": "node --test --test-name-pattern='graft written after classification' tests/updater-attended-source.test.mjs",
     "why": "a graft written while the downgrade ancestry question is asked is caught after it, so the answer is refused"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "            if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code;\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "a watcher refused for untrusted history holds every update, so the hold must be recorded for the owner"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "})]); this.#watcherHold = null; } catch (error) {",
+    "replace": "})]); } catch (error) {",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "the hold clears on the next successful watcher tick, so a repaired mirror does not keep a stale attention item"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "Boolean(outstanding) || watcherHold !== null",
+    "replace": "Boolean(outstanding)",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "a held update needs the owner: needsYou is what turns the card red"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "          : watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}) });",
+    "replace": "          : {}) });",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "the held card carries its plain sentence, not silence"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        : this.#watcherHold !== null ? \"needs_attention\"\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "a held update is an attention item, not a quiet idle card"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "holdNamesState ? { nextAction: null } : {}",
+    "replace": "holdNamesState ? {} : {}",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "the hold has no reviewed action; the derived review_recovery would send the owner to a recovery that never happened"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  else if (!await complete()) baseline = \"unproven\";\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='shallow, grafted or replaced mirror proves nothing' tests/updater-attended-source.test.mjs",
+    "why": "the classifier never asks an incomplete mirror about ancestry"
   }
 ]

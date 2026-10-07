@@ -73,9 +73,20 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
   return {root,input,calls,build};
 }
 // The installed pair in the one form a real install leaves: buildReleaseV1 names
-// the release `<version>-<first 12 of commit>` from the builder's own manifest.
+// the release `<version>-<first 12 of commit>`, and build-attended-release.mjs
+// writes the payload plus its six-field manifest (schema, commit, version,
+// fileCount, byteCount, files of {path, sha256, mode, bytes}). The payload is one
+// file whose bytes, mode and hash are written out here, independently of any
+// hashing code: sha256 measured with `shasum -a 256` over these 42 bytes.
 export const installedReleaseId = `2.0.0-${'c'.repeat(12)}`;
+export const installedPayloadV1 = Object.freeze({ path: 'package.json', body: '{"name":"control-room","version":"2.0.0"}\n',
+  sha256: 'sha256:e4577b7842dd1e2265350fe71dfd5b24f83d08090efa4ba4260591f5b552d70a', mode: 0o400, bytes: 42 });
 export async function initialPair(root) {
-  await mkdir(join(root,'releases',installedReleaseId));await writeFile(join(root,'releases',installedReleaseId,'RELEASE_MANIFEST.json'),JSON.stringify({schema:'control-room.attended-build-manifest/v1',version:'2.0.0',commit:'c'.repeat(40)}));await mkdir(join(root,'updater',installedReleaseId));
+  const release=join(root,'releases',installedReleaseId), p=installedPayloadV1;
+  await mkdir(release);
+  await writeFile(join(release,p.path),p.body,{mode:p.mode});await chmod(join(release,p.path),p.mode);
+  await writeFile(join(release,'RELEASE_MANIFEST.json'),`${JSON.stringify({schema:'control-room.attended-build-manifest/v1',commit:'c'.repeat(40),version:'2.0.0',
+    fileCount:1,byteCount:p.bytes,files:[{path:p.path,sha256:p.sha256,mode:p.mode,bytes:p.bytes}]},null,2)}\n`,{mode:0o400});
+  await mkdir(join(root,'updater',installedReleaseId));
   await symlink(`releases/${installedReleaseId}`,join(root,'current'));await symlink(installedReleaseId,join(root,'updater/current'));
 }

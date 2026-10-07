@@ -3,7 +3,7 @@ import { lstat, readlink, unlink } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
-import { parseSelfUpdateFlagV1, publicStatusV1, SAFE_ID_V1, updaterRefuseV1, updaterRunAttentionV1 } from "./contracts.mjs";
+import { parseSelfUpdateFlagV1, publicStatusV1, SAFE_ID_V1, UPDATER_RUN_REASON_V1, updaterRefuseV1, updaterRunAttentionV1 } from "./contracts.mjs";
 export { FileStepJournalV1, RefusalAggregatorV1, reconcileJournalDisplayV1 } from "./journal.mjs";
 
 /** R7U-01: a durable run state, as the PUBLIC status state the owner reads.
@@ -175,8 +175,15 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 const cleanReason = error => String(error?.code ?? error?.message ?? "unknown")
   .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ").slice(0, 120);
 
+// Watcher refusals that HOLD every future update until the owner acts: the
+// update copy's history cannot be trusted, so no candidate can be admitted. The
+// hold is published as an attention item and lasts until a watcher tick
+// succeeds. Other watcher failures (network, CI not green, a timeout) are
+// ordinary waiting and stay on the error sink only.
+const WATCHER_HOLD_CODES_V1 = Object.freeze(["watcher_history_unproven"]);
+
 export class UpdaterMainLoopV1 {
-  #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false;
+  #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false; #watcherHold = null;
   constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, alerts = null,
     alertFacts = async () => ({}), intervalMs = 5_000, watcherTimeoutMs = 5000, ownerActionTimeoutMs = 300_000, onError = () => {} }) {
     assertOwnerActionTimeoutV1(ownerActionTimeoutMs);
@@ -259,7 +266,10 @@ export class UpdaterMainLoopV1 {
           let timer;
           try { await Promise.race([watching, new Promise((_, reject) => {
             timer = setTimeout(() => reject(updaterRefuseV1("updater_watcher_timeout")), this.watcherTimeoutMs);
-          })]); } catch (error) { try { this.onError(error); } catch { /* reporting cannot block the runner */ } }
+          })]); this.#watcherHold = null; } catch (error) {
+            if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code;
+            try { this.onError(error); } catch { /* reporting cannot block the runner */ }
+          }
           finally { clearTimeout(timer); }
         }
       }
@@ -362,11 +372,19 @@ export class UpdaterMainLoopV1 {
         : status === "rolled_back" ? "rolled_back"
         : status === "refused" ? "refused"
         : ["busy", "needs_attention", "error"].includes(status) ? "needs_attention"
+        : this.#watcherHold !== null ? "needs_attention"
         : mode !== "running" ? mode
         : "idle";
+      // A held watcher is published only when nothing above it names the state,
+      // so an active run's own progress and outcome still reach the card; it
+      // always raises needsYou and carries its own sentence when no outstanding
+      // row's sentence is already shown.
+      const watcherHold = this.#watcherHold;
+      const holdNamesState = watcherHold !== null && publicState === "needs_attention" && !damagedSwitch && !outstanding
+        && !["busy", "needs_attention", "error"].includes(status);
       // A damaged switch is Off AND needs the owner: it is not a normal quiet Off, so `needsYou` must
       // be true for it regardless of the outcome status, or the damage is invisible.
-      const needsYou = damagedSwitch || switchUnreadable !== undefined || Boolean(outstanding)
+      const needsYou = damagedSwitch || switchUnreadable !== undefined || Boolean(outstanding) || watcherHold !== null
         || ["busy", "uncertain", "attended_upgrade_required", "needs_attention", "error", "rolled_back"]
           .includes(status);
       // `damagedSwitch` ALREADY ORS the refreshed read into the chain above, so
@@ -414,9 +432,13 @@ export class UpdaterMainLoopV1 {
       // The two fields describe different things and are allowed to disagree —
       // that is the merge's whole point — so there is no rule here that one must
       // imply the other.
+      // The hold has no reviewed action key, so it publishes none rather than the
+      // derived "review_recovery", which would send the owner to a recovery
+      // that never happened.
       await this.stateFiles.writeStatus({ ...refreshedFacts, state: finalState, needsYou: finalNeedsYou, selfUpdate: flag,
-        ...(nextAction === undefined ? {} : { nextAction }),
-        ...(attention ? { reason: attention.reason } : {}) });
+        ...(nextAction === undefined ? holdNamesState ? { nextAction: null } : {} : { nextAction }),
+        ...(attention ? { reason: attention.reason }
+          : watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}) });
       if (resolved) await this.stateFiles.confirmRescueResolution?.();
       if (this.alerts) {
         const facts = await this.alertFacts();

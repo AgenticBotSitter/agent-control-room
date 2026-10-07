@@ -171,6 +171,11 @@ export const UPDATER_RUN_REASON_V1 = Object.freeze({
     "Control Room could not confirm the new version was healthy, so it is recovering automatically.",
   updater_resumed_failure:
     "Control Room is finishing the recovery it started earlier.",
+  // Not a run outcome: the watcher's hold, published by the main loop while the
+  // update copy's history cannot be trusted. It lives in this table so that the
+  // writer's and both readers' sentence allowlists accept it by construction.
+  watcher_history_unproven:
+    "Update held: the update copy's history can't be trusted. Nothing was installed.",
 });
 
 /** The state-level fallback, for an outcome whose code this tree has no

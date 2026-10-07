@@ -1021,8 +1021,10 @@ test("a shallow, grafted or replaced mirror proves nothing, forward or back", as
   };
   for (const [name, cut] of Object.entries(cuts)) {
     for (const [installed, target, main] of [[f.commit, merge, merge], [merge, f.commit, merge]]) {
+      let mark;
       const result = await classifyInstalled(f, { installed, target, main, beforeClassify: async mirror => {
         await undo(mirror); await cut(mirror); await mirrorGit(mirror, "config", "log.showRoot", "false");
+        mark = f.spawned.length;
         // Independent check that the cut works: git's own range walk loses the migration.
         const walk = (await mirrorGit(mirror, "log", "--no-renames", "--diff-merges=separate", "--name-only",
           "--format=", `${f.commit}..${merge}`)).stdout;
@@ -1030,6 +1032,8 @@ test("a shallow, grafted or replaced mirror proves nothing, forward or back", as
       } });
       assert.equal(result.baseline, "unproven", `${name} ${installed === f.commit ? "forward" : "downgrade"}`);
       assert.equal(result.changesDatabase, true, name);
+      assert.ok(f.spawned.slice(mark).length > 0 && !f.spawned.slice(mark).some(call => call.args.includes("merge-base")),
+        `${name}: the classifier never asks an incomplete mirror about ancestry`);
       // The next fetch would refuse a cut mirror outright; this test is about the classifier.
       await undo(join(f.root, "updater-state/mirror.git"));
     }
@@ -1227,5 +1231,31 @@ test("reproducer: a graft written after classification cannot waive downgrade co
     }
     const restored = await confirmOnce();
     assert.equal(restored.plan.updaterDerived.downgrade, true, "with the graft gone, consent is required again");
+  } finally { await abortAttendedV1(fetched); }
+});
+
+test("history metadata written while the classifier asks about ancestry is still caught", async t => {
+  // The classifier checks the mirror before its ancestry questions and again
+  // after them. A shallow cut written as the first question is spawned passes the
+  // first check, and only the second one can see it.
+  const f = await fixture(t);
+  const { sideTip, merge } = await hiddenSideMigration(f);
+  await markInstalled(f, f.commit);
+  await git(f.repository, "branch", "-f", "classify-main", merge); await publishLocalFixtureV1(f.repository, "classify-main");
+  const mirror = join(f.root, "updater-state/mirror.git");
+  let armed = false, injected = false;
+  const input = { ...f.materialize(), commit: merge, onSpawn: async call => {
+    f.spawned.push(call);
+    if (armed && !injected && call.args.includes("merge-base")) {
+      await writeFile(join(mirror, "shallow"), `${sideTip}\n`); injected = true;
+    }
+  } };
+  const fetched = await fetchVerifiedSourceV1(input);
+  try {
+    await mirrorGit(mirror, "config", "log.showRoot", "false");
+    armed = true;
+    const result = await classifyAttendedSourceV1(fetched);
+    assert.equal(injected, true, "the cut was written as the ancestry question was spawned");
+    assert.equal(result.baseline, "unproven"); assert.equal(result.changesDatabase, true);
   } finally { await abortAttendedV1(fetched); }
 });

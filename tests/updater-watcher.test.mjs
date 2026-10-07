@@ -11,6 +11,7 @@ import { once } from "node:events";
 import test from "node:test";
 import { FilePlanAuthorityV1, GitMirrorSourceV1, RefereeGitClassifierV1, UpdaterWatcherV1,
 } from "../src/updater/v1/watcher.mjs";
+import { UpdaterMainLoopV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 
 const run = promisify(execFile);
 const SHA = /^[0-9a-f]{40,64}$/u;
@@ -288,4 +289,46 @@ test("a replace ref or a shallow boundary in the mirror proves no history, and r
       await mirrorGitV1(source.mirror, "update-ref", "-d", ref);
     assert.equal((await source.fetchMain()).commit, candidate, `${name} removed: the real history is admitted`);
   }
+});
+
+test("reproducer: a watcher held by untrusted history reaches the owner until a tick succeeds, and the runner keeps running", async t => {
+  // The real watcher and mirror refuse; the real status writer (publicStatusV1)
+  // publishes what the owner's card reads.
+  const fixture = await repository(t), plans = new Plans();
+  const source = new GitMirrorSourceV1({ root: fixture.updaterRoot, origin: fixture.origin, fromCommit: fixture.fromCommit, testing: true });
+  await mkdir(join(fixture.updaterRoot, "status"), { recursive: true });
+  const files = new UpdaterStateFilesV1(fixture.updaterRoot), errors = [];
+  let runs = 0;
+  const loop = new UpdaterMainLoopV1({
+    runner: { async runOnce() { runs += 1; return { status: runs === 3 ? "succeeded" : "idle" }; } },
+    store: { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {}, async openRunAttention() { return null; } },
+    stateFiles: { async readSelfUpdate() { return "On\n"; }, async hasRescueMarker() { return false; },
+      async publicFacts() { return {}; }, writeStatus: value => files.writeStatus(value) },
+    mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: watcher({ source, plans, root: fixture.updaterRoot, ci: { async statusForCommit(sha) { return green(sha); } } }),
+    onError: error => errors.push(error?.code) });
+  const published = async () => {
+    const { state, needsYou, reason, nextAction } = JSON.parse(await readFile(join(fixture.updaterRoot, "status", "status.json"), "utf8"));
+    return { state, needsYou, reason, nextAction };
+  };
+  const healthy = { state: "idle", needsYou: false, reason: undefined, nextAction: undefined };
+  await loop.tick();
+  assert.deepEqual(await published(), healthy, "a whole mirror is a quiet idle card");
+  await mkdir(join(source.mirror, "info"), { recursive: true });
+  await writeFile(join(source.mirror, "info", "grafts"), `${fixture.fromCommit}\n`);
+  // Literal sentence, written here rather than read from the table under test.
+  const held = { state: "needs_attention", needsYou: true, nextAction: undefined,
+    reason: "Update held: the update copy's history can't be trusted. Nothing was installed." };
+  for (const round of ["first held tick", "a later held tick, after the runner finished a run"]) {
+    errors.length = 0;
+    await loop.tick();
+    assert.deepEqual(errors, ["watcher_history_unproven"], round);
+    assert.deepEqual(await published(), held, round);
+  }
+  assert.equal(runs, 3, "the runner ran on every tick while the watcher was held");
+  await rm(join(source.mirror, "info", "grafts"));
+  errors.length = 0;
+  await loop.tick();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(await published(), healthy, "the next successful watcher tick clears the hold");
 });
