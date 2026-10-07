@@ -30,7 +30,7 @@ const corpus = {
   "rehearsal-config": () => ({ schema: "control-room.updater-rehearsal-config/v1", mode: "throwaway", rehearsalRoot: "/private/tmp/control-room-rehearsal-abc",
     rehearsalHostname: "rehearsal-abc.control-room.test", expectedOrigin: "https://rehearsal-abc.control-room.test:8444", ports: { web: 8444, gateway: 8445, postgres: 5444 },
     accounts: { service: "_crrehearsalsvc", database: "_crrehearsaldb", builder: "_crrehearsalbld" }, daemonLabelPrefix: "xyz.agentcontrolroom.rehearsal.abc", allowRealRoot: false }),
-  "owner-web-push-config": () => ({ schema: "control-room.owner-web-push-config/v1", subject: "mailto:owner@example.com", publicKey: "B".repeat(87), privateKey: "a".repeat(43) }),
+  "owner-web-push-config": () => ({ schema: "control-room.owner-web-push-config/v1", subject: "https://fixture.ts.net", publicKey: "B".repeat(87), privateKey: "a".repeat(43) }),
   "local-owner-session-profile": () => ({ schema: "control-room.local-owner-session/v1", origin: "http://127.0.0.1:3310", tenantId: "tenant:1", provider: "local-owner", subject: "owner", ownerCodeDigest: `sha256:${"a".repeat(64)}`, sessionSeconds: 3600, trustedOrigin: "https://control.example.com", remoteOrigins: ["https://remote.example.com"] }),
   "nightly-backup": () => createNightlyBackupConfigurationV1("/Library/Application Support/Control Room"),
   "release-trust": () => ({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1, keyId: releaseKeyIdV1(publicKey), publicKey, versionFloor: "0.5.0", revokedKeyIds: [] }),
