@@ -1099,10 +1099,16 @@ test("the lock stress probe completes every requested acquisition", async () => 
   const exerciseDeadline = process.env.CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE === "1";
   const root = await mkdtemp(join(tmpdir(), "connector-stress-deadline-"));
   let ownedGroup;
+  let killSent = false;
   const groupAlive = () => {
     if (!ownedGroup) return false;
     try { process.kill(-ownedGroup, 0); return true; }
-    catch (error) { if (error.code === "ESRCH") return false; throw error; }
+    catch (error) {
+      if (error.code === "ESRCH") return false;
+      // macOS can report EPERM while killed group members await reaping.
+      if (killSent && error.code === "EPERM") return true;
+      throw error;
+    }
   };
   const waitForGroup = async () => {
     const deadline = Date.now() + 5_000;
@@ -1115,13 +1121,26 @@ test("the lock stress probe completes every requested acquisition", async () => 
       const env = { ...process.env, TMPDIR: root, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1",
         CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "30000" };
       if (exerciseDeadline) {
-        // Replay the review's fault: pause a real worker and its real parent
+        // Replay the review's fault: block a real worker and its real parent
         // only after IPC proves a successful acquisition. No timing guess.
+        // SIGSTOP would let orphan-group SIGHUP hide a missing group kill.
         const stall = join(root, "stall.mjs");
         await writeFile(stall, `import cp from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { writeFileSync } from "node:fs";
-if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
+const block = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+if (typeof process.send === "function") {
+  const send = process.send;
+  let blocked = false;
+  process.send = function(message, ...args) {
+    const result = send.call(this, message, ...args);
+    if (!blocked && message?.type === "progress") {
+      blocked = true;
+      setImmediate(block);
+    }
+    return result;
+  };
+} else if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
   const spawn = cp.spawn;
   let stopped = false;
   cp.spawn = function(command, args, options) {
@@ -1131,8 +1150,7 @@ if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
         stopped = true;
         writeFileSync(process.env.CONTROL_ROOM_STRESS_STALL_RECORD,
           JSON.stringify({ parent: process.pid, worker: child.pid }));
-        process.kill(child.pid, "SIGSTOP");
-        process.kill(process.pid, "SIGSTOP");
+        block();
       }
     });
     return child;
@@ -1155,7 +1173,10 @@ if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
       const stop = () => {
         if (!child.pid) return;
         try { process.kill(-child.pid, "SIGKILL"); }
-        catch (error) { if (error.code !== "ESRCH") throw error; }
+        catch (error) {
+          if (error.code !== "ESRCH" && !(killSent && error.code === "EPERM")) throw error;
+        }
+        killSent = true;
       };
       child.stdout.on("data", chunk => { stdout += chunk; });
       child.stderr.on("data", chunk => { stderr += chunk; });
@@ -1178,7 +1199,7 @@ if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
       assert.equal(groupAlive(), false, "outer test timeout must leave no live owned descendants");
       if (exerciseDeadline) {
         const stalled = JSON.parse(await readFile(join(root, "stalled.json"), "utf8"));
-        assert.equal(stalled.parent, child.pid, "fault injection must pause the real stress parent");
+        assert.equal(stalled.parent, child.pid, "fault injection must block the real stress parent");
         assert.equal(Number.isSafeInteger(stalled.worker), true, "fault injection must observe a real worker");
       }
       assert.equal(forced, false, "stress probe exceeded its 60-second outer deadline");
@@ -1197,7 +1218,10 @@ if (process.argv[1]?.endsWith("/stress-connector-lock.mjs")) {
       // This external safety fallback is never the guard being mutated.
       if (ownedGroup) {
         try { process.kill(-ownedGroup, "SIGKILL"); }
-        catch (error) { if (error.code !== "ESRCH") throw error; }
+        catch (error) {
+          if (error.code !== "ESRCH" && !(killSent && error.code === "EPERM")) throw error;
+        }
+        killSent = true;
         await waitForGroup();
       }
       await rm(root, { recursive: true, force: true });
