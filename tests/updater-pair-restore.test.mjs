@@ -107,6 +107,66 @@ test('R4B-06: changed updater custody during publication refuses and preserves t
   assert.equal((await fs.readdir(foreign)).length,1);
 });
 
+test('R4B-06: substituted parent with the same temporary leaf stays untouched', async t => {
+  const f = await pair(t), foreign = await root(t,'pair-foreign-leaf');
+  await fs.symlink('keep',join(foreign,'current'));
+  const original = fs.symlink, originalLstat = fs.lstat;
+  let planted, before, temporary, substituted = false, foreignReads = 0;
+  fs.symlink = async (...args) => {
+    await original(...args);
+    if (args[1].includes('/updater/.current.')) {
+      temporary = args[1];
+      planted = join(foreign,args[1].split('/').at(-1));
+      await fs.writeFile(planted,'foreign bytes',{mode:0o600});
+      before = await originalLstat(planted);
+      await fs.rename(join(f.value,'updater'),join(f.value,'updater-owned'));
+      await original(foreign,join(f.value,'updater'));
+      substituted = true;
+    }
+  };
+  fs.lstat = async (...args) => {
+    if (substituted && args[0] === temporary) foreignReads++;
+    return originalLstat(...args);
+  };
+  syncBuiltinESMExports();
+  let outcome;
+  try { outcome = await capture(switchPairV1({root:f.value,restore:f.restore})); }
+  finally { fs.symlink = original; fs.lstat = originalLstat; syncBuiltinESMExports(); }
+  assert.equal(foreignReads,0,'no foreign temporary path may be inspected after custody changes');
+  const after = await fs.lstat(planted);
+  assert.equal(after.mode,before.mode,'foreign temporary leaf mode must stay untouched');
+  assert.deepEqual([after.dev,after.ino],[before.dev,before.ino]);
+  assert.equal(await fs.readFile(planted,'utf8'),'foreign bytes');
+  assert.equal(await fs.readlink(join(foreign,'current')),'keep');
+  assert.equal(outcome.error,'file_custody_refused');
+});
+
+test('R4B-06: a replaced temporary symlink is refused before publication', async t => {
+  const f = await pair(t), original = fs.lstat;
+  let planted, before;
+  fs.lstat = async (...args) => {
+    const entry = await original(...args);
+    const path = String(args[0]);
+    if (!planted && path.includes('/updater/.current.')) {
+      planted = path;
+      await fs.rename(path,`${path}.owned`);
+      await fs.symlink('replacement',path);
+      before = await original(path);
+    }
+    return entry;
+  };
+  syncBuiltinESMExports();
+  let outcome;
+  try { outcome = await capture(switchPairV1({root:f.value,restore:f.restore})); }
+  finally { fs.lstat = original; syncBuiltinESMExports(); }
+  assert.equal(await fs.readlink(join(f.value,'updater/current')),'new-updater',
+    'a replacement temporary inode must never become the published pointer');
+  assert.equal(await fs.readlink(planted),'replacement');
+  const after = await original(planted);
+  assert.deepEqual([after.dev,after.ino,after.mode],[before.dev,before.ino,before.mode]);
+  assert.equal(outcome.error,'file_custody_refused');
+});
+
 test('R4B-07: fifty restorations on independent and shared roots finish with the exact saved pair', async t => {
   const fixtures = await Promise.all(Array.from({length:50},()=>pair(t)));
   await Promise.all(fixtures.map(f=>switchPairV1({root:f.value,restore:f.restore})));
