@@ -10,7 +10,7 @@ import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
   newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { acquireUpdaterLocalLockV1 } from "./fs-safety.mjs";
-import { updaterRefuseV1 } from "./contracts.mjs";
+import { updaterRefuseV1, UPDATER_RUN_REASON_V1 } from "./contracts.mjs";
 import { UpdaterAlertSenderV1 } from "./alerts.mjs";
 import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
 import { UPDATER_CONFIGURATION_SCHEMA_V1 } from "./services/protected-config.mjs";
@@ -452,22 +452,17 @@ async function startLockedUpdaterV1(options = {}) {
   // scope to release — a stranded lock is a permanent, silent refusal to ever
   // update again.
   //
-  // A key that is simply not installed yet is NOT a refusal. §15 item 21 states
-  // install-night pushes come from item 8's minimal sender, and the key is
-  // written by the installer, so a root-only updater that starts before it
-  // would otherwise refuse to apply the release it was woken for. The absence
-  // is reported once, as a warning, and the sender is left off so no send is
-  // attempted without a key. Every other custody refusal — `not_root`,
-  // `permissions_refused`, `invalid` — stops the updater rather than starting a
-  // process that could never alert.
-  let alertSender = alerts;
+  // A missing or invalid contact disables sending, not updates. Older installed
+  // code can leave a placeholder contact when staging this updater. Custody
+  // failures still refuse before lease acquisition.
+  let alertSender = alerts, alertWarning = null;
   if (alerts) {
     startupStep = "alert_preflight";
     try { await alerts.preflight(); }
     catch (error) {
-      if (error?.code !== "updater_vapid_unavailable") throw error;
-      reportError(Object.assign(new Error("updater_vapid_unavailable"),
-        { code: "updater_vapid_unavailable", warning: true }));
+      if (!["updater_vapid_unavailable", "updater_vapid_invalid"].includes(error?.code)) throw error;
+      alertWarning = UPDATER_RUN_REASON_V1[error.code];
+      reportError(Object.assign(new Error(error.code), { code: error.code, warning: true }));
       alertSender = null;
     }
   }
@@ -484,6 +479,12 @@ async function startLockedUpdaterV1(options = {}) {
   }
   const identity = Object.freeze({ ...requestedIdentity, leaseToken: acquisition.leaseToken });
   const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1(stateFiles);
+  if (alertWarning) {
+    const writeStatus = stateFiles.writeStatus.bind(stateFiles);
+    // Keep an outstanding update's own reason ahead of the notification warning.
+    // Applying it at the real writer covers initial, running, idle and Off ticks.
+    stateFiles.writeStatus = value => writeStatus({ ...value, reason: value.reason ?? alertWarning });
+  }
   const unavailable = async () => { throw updaterRefuseV1("updater_actuator_port_unbound"); };
   const effects = options.effects ?? { precheck: unavailable, stage: unavailable, quickBackup: unavailable,
     drain: unavailable, switchPair: unavailable, restart: unavailable, health: unavailable,

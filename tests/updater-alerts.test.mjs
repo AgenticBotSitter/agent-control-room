@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -201,4 +201,91 @@ test("production defaultSend Authorization signs the installation origin", async
   assert.equal(jwt.sub, "https://fixture.ts.net", "production defaultSend JWT sub is the installation origin");
   assert.equal(jwt.aud, "https://web.push.apple.com");
   assert.equal(token[2], keys.publicKey);
+});
+
+
+test("legacy invalid VAPID keeps the production updater running with a status-card warning and no sends", async t => {
+  const { startUpdaterV1 } = await import("../src/updater/v1/updater.mjs");
+  const { createUpdaterHomeStatusReaderV1 } = await import("../src/web/v1/updater-home-status.ts");
+  const { readUpdaterHomeStatusV1 } = await import("../src/web/v1/updater-home-status-browser.ts");
+  // Use a short job-local root: Darwin's UNIX socket path has a 103-byte limit.
+  const root = await mkdtemp(join(process.cwd(), ".test-tmp/p-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const warnings = [], store = new MemoryStore([{ id: id(702), template: "control-room-updater.web-down", attempts: 0 }]);
+  let beats = 0, acquisitions = 0;
+  Object.assign(store, { liveRun: async () => null,
+    acquire: async token => { acquisitions++; return { status: "acquired", run: null, leaseToken: token }; }, heartbeat: async () => { beats++; },
+    unhandledOwnerRequests: async () => [] });
+  const runtime = { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) };
+  for (const subject of ["mailto:owner@control-room.invalid", "", undefined, "https://fixture.invalid"]) {
+    await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
+    let updater;
+    await assert.doesNotReject(async () => {
+      updater = await startUpdaterV1({ root, store, alertRuntime: runtime,
+        identity: { bootId: "boot-legacy", leaseToken: "lease-legacy" }, onTimerError: error => warnings.push(error.code) });
+    }, "a legacy invalid contact must not stop production startup");
+    try {
+      assert.equal(updater.alerts, null, "invalid contacts disable only sending");
+      assert.ok(beats > 0, "the production updater heartbeats after startup");
+      await Promise.all(Array.from({ length: 50 }, () => updater.loop.tick()));
+      const card = await createUpdaterHomeStatusReaderV1({ root }).read();
+      const browserCard = await readUpdaterHomeStatusV1(async () => Response.json(card));
+      assert.equal(browserCard.reason, "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "the browser accepts the warning captured from the real status reader");
+      assert.equal(card.reason, "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "the real status-card reader retains the owner-readable warning");
+      assert.equal(store.subscriptionReads, 0, "no send path is entered");
+      assert.equal(store.rows[0].attempts, 0, "the queued alert is untouched");
+      await writeFile(join(root, "updater-state/self-update"), "Off\n");
+      await updater.loop.tick();
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason,
+        "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "turning self-update Off does not hide the notification warning");
+      await writeFile(join(root, "updater-state/self-update"), "On\n");
+      const updateReason = "An update could not finish cleanly. Control Room needs you.";
+      await updater.loop.stateFiles.writeStatus({ state: "needs_attention", selfUpdate: "On", reason: updateReason });
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, updateReason,
+        "an outstanding update reason is not hidden by the notification warning");
+    } finally { await updater.stop(); }
+  }
+  assert.deepEqual(warnings, Array(4).fill("updater_vapid_invalid"));
+  for (const content of ["{", null]) {
+    const key = join(root, "updater-state/vapid.json");
+    if (content === null) await rm(key); else await writeFile(key, content);
+    let updater;
+    await assert.doesNotReject(async () => { updater = await startUpdaterV1({ root, store, alertRuntime: runtime,
+      onTimerError: error => warnings.push(error.code) }); }, "missing or unreadable contact data leaves updates running");
+    try {
+      assert.equal(updater.alerts, null);
+      const expected = content === null
+        ? "Phone notifications are off because their key is missing. Rerun the installer to repair them; updates continue."
+        : "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.";
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, expected);
+      assert.equal(store.subscriptionReads, 0);
+    } finally { await updater.stop(); }
+  }
+  assert.deepEqual(warnings, [...Array(5).fill("updater_vapid_invalid"), "updater_vapid_unavailable"]);
+  // Repair and retry uses the same default sender, and stopping retires all timers/socket.
+  await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify(vapid), { mode: 0o600 });
+  store.rows = [];
+  const repaired = await startUpdaterV1({ root, store, alertRuntime: runtime,
+    identity: { bootId: "boot-repaired", leaseToken: "lease-repaired" } });
+  try { assert.ok(repaired.alerts); } finally { await repaired.stop(); }
+  await assert.rejects(lstat(join(root, "updater-state/control.sock")), { code: "ENOENT" });
+  const unexpected = [];
+  t.after(async () => { for (const updater of unexpected) await updater.stop(); });
+  const start = async alertRuntime => {
+    const updater = await startUpdaterV1({ root, store, alertRuntime });
+    unexpected.push(updater); return updater;
+  };
+  const before = acquisitions;
+  await chmod(join(root, "updater-state/vapid.json"), 0o644);
+  await assert.rejects(start(runtime), /updater_vapid_permissions_refused/u,
+    "custody failures still stop startup before the lease");
+  await chmod(join(root, "updater-state/vapid.json"), 0o600);
+  await assert.rejects(start({ getuid: () => 501 }), /updater_vapid_not_root/u,
+    "wrong authority still stops startup before the lease");
+  assert.equal(acquisitions, before, "custody refusals never acquire a lease");
 });

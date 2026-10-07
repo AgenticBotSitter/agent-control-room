@@ -145,6 +145,10 @@ export function parseControlRequestV1(line) {
  * make the display refuse — but it also cannot invent wording.
  */
 export const UPDATER_RUN_REASON_V1 = Object.freeze({
+  updater_vapid_invalid:
+    "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+  updater_vapid_unavailable:
+    "Phone notifications are off because their key is missing. Rerun the installer to repair them; updates continue.",
   updater_rollback_chain_exhausted:
     "Automatic recovery could not finish. Nothing changed on its own; Control Room needs you.",
   updater_rollback_failed:

@@ -285,5 +285,40 @@
     "replace": "if (false) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"a retired manual web key\" tests/control-room-installer.test.mjs",
     "why": "The retired manual-file refusal must identify the file and recovery in the CLI user message, with no adoption."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (![\"updater_vapid_unavailable\", \"updater_vapid_invalid\"].includes(error?.code)) throw error;",
+    "replace": "if (error?.code !== \"updater_vapid_unavailable\") throw error;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "Legacy invalid contacts disable sending while startup must continue."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (![\"updater_vapid_unavailable\", \"updater_vapid_invalid\"].includes(error?.code)) throw error;",
+    "replace": "if (false) throw error;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "Wrong authority and permissive credential custody remain fatal before lease acquisition."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (alertWarning) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "A disabled alert sender must publish its warning through the real status writer and browser reader."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "reason: value.reason ?? alertWarning",
+    "replace": "reason: alertWarning",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "Notification warnings must not hide an outstanding update reason."
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+    "replace": "Phone notifications are unavailable.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "The warning is checked against an independent literal, not cloned from the contract table."
   }
 ]

@@ -505,7 +505,7 @@
   },
   {
     "file": "src/updater/v1/updater.mjs",
-    "find": "if (error?.code !== \"updater_vapid_unavailable\") throw error;",
+    "find": "if (![\"updater_vapid_unavailable\", \"updater_vapid_invalid\"].includes(error?.code)) throw error;",
     "replace": "if (false) throw error;",
     "test": "node --test --test-name-pattern='not root-held, and does not strand the lease' tests/updater-skeleton.test.mjs",
     "why": "a VAPID key that is not root-held is a custody refusal that stops the updater, not a warning it runs through"
