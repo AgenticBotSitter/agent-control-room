@@ -256,8 +256,11 @@ test("VAPID subject parsing agrees with web-push for accepted generated hostname
   }
 });
 
-test("web delivery retains the bounded provider rejection body for diagnosis and retries", async () => {
+test("web delivery retains the bounded provider rejection body for diagnosis and retries", async t => {
   const memory = store(), failures: unknown[] = [];
+  const messages: string[] = [], warn = console.warn;
+  console.warn = message => messages.push(String(message));
+  t.after(() => { console.warn = warn; });
   await deliverOwnerPushV1({ tenantId: "tenant:test", kind: "test", link: "/needs-me", dedupeKey: "test:provider-rejection",
     now: "2026-10-06T00:00:00.000Z", store: memory,
     channel: { kind: "web-push", async send() { throw { statusCode: 403, body: "BadJwtToken" + "x".repeat(2048) }; } },
@@ -266,6 +269,12 @@ test("web delivery retains the bounded provider rejection body for diagnosis and
   const failure = failures[0] as { rejectionReason: string; statusCode: number };
   assert.equal(failure.statusCode, 403);
   assert.equal(failure.rejectionReason, "BadJwtToken" + "x".repeat(1013));
+  assert.deepEqual(messages.map(message => JSON.parse(message)), [{ event: "owner_push_rejected",
+    subscriptionId: "push:a", statusCode: 403, rejectionReason: "BadJwtToken" + "x".repeat(1013) }]);
+  await deliverOwnerPushV1({ tenantId: "tenant:test", kind: "test", link: "/needs-me", dedupeKey: "test:no-provider-body",
+    now: "2026-10-06T00:00:01.000Z", store: memory,
+    channel: { kind: "web-push", async send() { throw { statusCode: 503 }; } } });
+  assert.equal(messages.length, 1, "an absent provider body creates no diagnostic text log");
   assert.equal(memory.reservations.get("push:a:test:provider-rejection"), "failed");
   const { pushRejectionReasonV1 } = await import("../src/installer/shared/vapid.mjs");
   for (const body of [undefined, null, {}, 42]) {

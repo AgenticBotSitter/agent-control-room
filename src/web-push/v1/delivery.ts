@@ -103,8 +103,11 @@ export async function deliverOwnerPushV1(input: Readonly<{ tenantId: string; kin
       await input.store.failed(input.tenantId, subscription.id, input.dedupeKey, statusCode, input.now);
       const gone = statusCode === 404 || statusCode === 410;
       if (gone) { await input.store.unsubscribe(input.tenantId, subscription.endpoint); removed++; }
+      const rejectionReason = pushRejectionReasonV1(error);
+      if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: "owner_push_rejected",
+        subscriptionId: subscription.id, statusCode, rejectionReason }));
       input.onFailure?.({ subscriptionId: subscription.id, statusCode, removed: gone,
-        rejectionReason: pushRejectionReasonV1(error),
+        rejectionReason,
         retryAfterMs: statusCode === 429 && typeof error === "object" && error !== null && "headers" in error
           ? ownerPushRetryAfterMsV1(error.headers, input.now) : undefined });
     }

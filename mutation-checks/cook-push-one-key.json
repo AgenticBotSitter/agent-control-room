@@ -243,5 +243,19 @@
     "replace": "const keys = await ports.generateVapidKeys();",
     "test": "node --import tsx --test --test-name-pattern='installer retries repair' tests/control-room-installer.test.mjs",
     "why": "A retry after the canonical file is durable must not rotate the pair before publishing its web copy."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode, rejectionReason }));",
+    "replace": "if (false) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode, rejectionReason }));",
+    "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
+    "why": "Record a bounded web-provider diagnosis even when the production dispatcher discards its failure callback fields."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (rejectionReason !== undefined) console.warn",
+    "replace": "if (true) console.warn",
+    "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
+    "why": "Do not fabricate diagnostic text records for errors with no provider body."
   }
 ]

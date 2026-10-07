@@ -450,7 +450,7 @@ test('web custody: optional installed readers reject substituted or oversized fi
   const root=await fixture(t), protectedRoot=join(root,'Protected'), dir=join(protectedRoot,'config');await fs.mkdir(dir,{recursive:true,mode:0o700});
   const roles=JSON.parse(composeProtectedConfigV1(composer(root),{captureMacLocalProtectedConfigurationV1,captureMacLocalDatabaseRolesV1,captureReleaseTrustV1}).find(x=>x.path.endsWith('/database-roles.json')).contents);
   const cases=[['work-intake-server.json',loadWorkIntakeServerConfigurationFromRootV1,{schema:'control-room.work-intake-server/v1',port:12345,database:{...base.database,username:'control_room_work_intake_agent'},integrityKey:'a'.repeat(43),queueDepthLimit:1,credentials:[]}],
-    ['owner-web-push.json',loadOwnerWebPushConfigFromRootV1,{schema:'control-room.owner-web-push-config/v1',subject:'mailto:fixture@example.invalid',publicKey:'a'.repeat(87),privateKey:'b'.repeat(43)}],
+    ['owner-web-push.json',loadOwnerWebPushConfigFromRootV1,{schema:'control-room.owner-web-push-config/v1',subject:'https://fixture.ts.net',publicKey:'a'.repeat(87),privateKey:'b'.repeat(43)}],
     ['database-roles.json',loadMacLocalDatabaseRolesFromRootV1,roles]];
   for(const [name,read,value] of cases){
     const path=join(dir,name);await write(path,JSON.stringify(value));assert.ok(await read(protectedRoot));
