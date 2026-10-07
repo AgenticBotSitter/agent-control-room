@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { abortAttendedV1, buildFixedBundleV1, buildReleaseV1, fetchVerifiedSourceV1 } from '../../src/updater/v1/attended-source.mjs';
 export const scratch = resolve('.test-tmp/r6u-fixtures');
@@ -14,6 +14,8 @@ export async function writableRemove(root) {
 }
 export async function newRoot(t, prefix='probe') {
   await mkdir(scratch,{recursive:true}); const root=await mkdtemp(join(scratch,prefix+'-')); t.after(()=>writableRemove(root));
+  // BSD inherits the parent directory's group; match the declared fixture identity.
+  await chown(root,process.getuid(),process.getgid());
   for(const name of ['updater-state/plans','updater-state/confirmations','build','releases','updater','runtime','pg']) await mkdir(join(root,name),{recursive:true});
   await writeFile(join(root,'updater-state/self-update'),'Off\n',{mode:0o600}); return root;
 }
