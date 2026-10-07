@@ -210,6 +210,7 @@ test("legacy invalid VAPID keeps the production updater running with a status-ca
   const { createUpdaterHomeStatusReaderV1 } = await import("../src/web/v1/updater-home-status.ts");
   const { readUpdaterHomeStatusV1 } = await import("../src/web/v1/updater-home-status-browser.ts");
   // Use a short job-local root: Darwin's UNIX socket path has a 103-byte limit.
+  await mkdir(join(process.cwd(), ".test-tmp"), { recursive: true });
   const root = await mkdtemp(join(process.cwd(), ".test-tmp/p-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
