@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:https";
 import {
-  chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile,
+  chmod, copyFile, lchown, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -411,11 +411,11 @@ test("SIGKILL after a runtime tree rename is recovered and the real vendor rerun
   const root = await realpath(await mkdtemp(join(tmpdir(), "acr-vendor-sigkill-")));
   t.after(() => cleanup(root));
   const transactionId = "sigkill-runtime", helper = join(repositoryRoot, "tests/helpers/updater-runtime-sigkill-runner.mjs");
-  const child = spawn(process.execPath, [helper, root, transactionId], { detached: true, stdio: "ignore" });
+  const child = spawn(process.execPath, [helper, root, transactionId], { stdio: ["pipe", "ignore", "ignore"] });
   const stopped = new Promise((resolvePromise, reject) => {
     child.once("error", reject); child.once("exit", (code, signal) => resolvePromise({ code, signal }));
   });
-  t.after(() => { try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } });
+  t.after(() => { child.kill("SIGKILL"); child.stdin.destroy(); });
   const marker = join(root, "kill-fixture/tree-installed");
   for (let attempt = 0; attempt < 400 && !await lstat(marker).then(() => true, () => false); attempt += 1) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
@@ -435,11 +435,11 @@ test("SIGKILL inside PostgreSQL vendoring is recovered and the fixture archive r
   const root = await realpath(await mkdtemp(join(tmpdir(), "acr-vendor-pg-sigkill-")));
   t.after(() => cleanup(root));
   const transactionId = "sigkill-postgresql", helper = join(repositoryRoot, "tests/helpers/updater-runtime-sigkill-runner.mjs");
-  const child = spawn(process.execPath, [helper, root, transactionId, "postgresql"], { detached: true, stdio: "ignore" });
+  const child = spawn(process.execPath, [helper, root, transactionId, "postgresql"], { stdio: ["pipe", "ignore", "ignore"] });
   const stopped = new Promise((resolvePromise, reject) => {
     child.once("error", reject); child.once("exit", (code, signal) => resolvePromise({ code, signal }));
   });
-  t.after(() => { try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } });
+  t.after(() => { child.kill("SIGKILL"); child.stdin.destroy(); });
   const marker = join(root, "kill-fixture/tree-installed");
   for (let attempt = 0; attempt < 400 && !await lstat(marker).then(() => true, () => false); attempt += 1)
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
@@ -573,4 +573,127 @@ test("CI verifier binds esbuild bytes to the npm registry integrity proof", asyn
   };
   await run(esbuild.publisherProof.sha512);
   await assert.rejects(run(Buffer.from("wrong").toString("base64")), /runtime_inventory_verification_failed/u);
+});
+
+
+// Lead capture (curl 56) and local curl 8.7.1 closed-port capture (curl 7).
+// Other curl answers below are explicitly synthetic adjacent cases, from curl's exit-code contract.
+const recordedWriteFailure = "curl: (56) Failure writing output to destination, passed 1369 returned 4294967295";
+const recordedConnectFailure = "curl: (7) Failed to connect to 127.0.0.1 port 63017 after 0 ms: Couldn't connect to server\n";
+
+async function downloadReplayFixture(t, responses, { deny } = {}) {
+  const scratch = join(repositoryRoot, ".test-tmp");
+  await mkdir(scratch, { recursive: true });
+  const root = await realpath(await mkdtemp(join(scratch, "v101-replay-")));
+  t.after(async () => { await cleanup(root); assert.equal(await lstat(root).catch(() => null), null); });
+  assert.equal(await lstat(join(root, "build")).catch(() => null), null, "product creates download state");
+  assert.equal(await lstat(join(root, "runtime")).catch(() => null), null, "product creates runtime state");
+  const artifacts = await Promise.all(["node", "pnpm", "esbuild"].map(tool => archiveFixture(root, tool)));
+  const artifact = artifacts[0];
+  const { inventory } = inventoryFor("https://runtime.example.test", artifacts);
+  const script = join(root, "replay.mjs"), counter = join(root, "attempts.json");
+  await writeFile(script, `import {existsSync,readFileSync,writeFileSync} from "node:fs";
+const rows=${JSON.stringify(responses)}, counter=${JSON.stringify(counter)};
+const args=process.argv.slice(2), output=args[args.indexOf("--output")+1];
+const seen=existsSync(counter)?JSON.parse(readFileSync(counter,"utf8")):[];
+seen.push({partialPresent:existsSync(output)});writeFileSync(counter,JSON.stringify(seen));
+const row=rows[Math.min(seen.length-1,rows.length-1)];
+writeFileSync(output,row.exit===0?Buffer.from(${JSON.stringify(artifact.bytes.toString('base64'))},"base64"):"partial",{flag:"wx"});
+process.stderr.write(row.stderr);process.exitCode=row.exit;
+`);
+  const input = { ...frozenInput(root, inventory), tools: ["node"], transactionId: "download-proof" };
+  const observations = [];
+  const runtime = { curlPath: process.execPath, curlArgumentsPrefix: [script], skipMacMetadata: true,
+    spawn(file, args, options) {
+      observations.push({ probe: file === "/bin/sh", uid: options.uid, gid: options.gid });
+      return spawn(file, args, options);
+    },
+    async lchown(path, uid, gid) {
+      await lchown(path, uid, gid);
+      if (deny === "write") await chmod(path, 0o500);
+      if (deny === "traversal") await chmod(join(root, "build"), 0o600);
+    } };
+  return { root, artifact, input, runtime, observations,
+    attempts: () => readFile(counter, "utf8").then(JSON.parse, error => error.code === "ENOENT" ? [] : Promise.reject(error)) };
+}
+
+async function downloadFailure(fixture) {
+  let failure;
+  try { await vendorRuntimeV1(fixture.input, fixture.runtime); } catch (error) { failure = error; }
+  assert.ok(failure, "download must refuse");
+  assert.equal(await lstat(join(fixture.root, "build/download-download-proof")).catch(() => null), null,
+    "download refusal reaches partial cleanup");
+  return failure;
+}
+
+test("V101 recorded write failure preserves safe cause and never retries", async t => {
+  const fixture = await downloadReplayFixture(t, [{ exit: 56, stderr: recordedWriteFailure }]);
+  const failure = await downloadFailure(fixture);
+  const { safeErrorLabelV1 } = await import("../src/updater/v1/contracts.mjs");
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const expected = "runtime_download_failed (exit 56, Failure writing output to destination)";
+  assert.equal(safeErrorLabelV1(failure), expected, "recorded write cause survives safe refusal");
+  assert.equal(cliFailureMessageV1(failure), expected, "owner reads the admitted cause");
+  assert.equal((await fixture.attempts()).length, 1, "write failures never retry");
+  assert.ok(failure.runtimeDownload.stderr.length <= 300, "diagnostic stays bounded");
+  const hostile = await downloadReplayFixture(t, [{ exit: 56, stderr: recordedWriteFailure
+    + "\nhttps://user:SENTINEL-secret@private.invalid/archive /private/SENTINEL-path\u001b[31m" }]);
+  const hostileError = await downloadFailure(hostile);
+  assert.equal(safeErrorLabelV1(hostileError), expected, "variable curl text cannot enter safe refusal");
+  assert.ok(fixture.observations[0].probe, "identity write probe precedes curl");
+  assert.ok(fixture.observations.every(row => row.uid === process.getuid() && row.gid === process.getgid()));
+});
+
+test("V101 recorded transient failure retries after removing partial and reads installed runtime", async t => {
+  const fixture = await downloadReplayFixture(t, [{ exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" }]);
+  await vendorRuntimeV1(fixture.input, fixture.runtime);
+  assert.deepEqual(await fixture.attempts(), [{ partialPresent: false }, { partialPresent: false }],
+    "retry deletes the actual partial before the next curl opens exclusively");
+  assert.equal(await readlink(join(fixture.root, "runtime/node-current")), "node-1.2.3");
+  assert.equal(await readFile(join(fixture.root, "runtime/node-current/bin/node"), "utf8"), "#!/bin/sh\nprintf 'node 1.2.3\\n'\n");
+  assert.equal(await lstat(join(fixture.root, "build/download-download-proof")).catch(() => null), null);
+});
+
+test("V101 transient retries stop at three and unknown or permanent errors refuse once", async t => {
+  const { safeErrorLabelV1 } = await import("../src/updater/v1/contracts.mjs");
+  const cases = [
+    [7, recordedConnectFailure, 3, "Could not connect to server"],
+    [6, "curl: (6) Could not resolve host: private-host", 3, "Could not resolve host"],
+    [18, "curl: (18) transfer closed with outstanding read data remaining", 3, "Incomplete transfer"],
+    [28, "curl: (28) Operation timed out", 3, "Download timed out"],
+    [35, "curl: (35) TLS connect error", 3, "TLS connection failed"],
+    [52, "curl: (52) Empty reply from server", 3, "Empty reply from server"],
+    [56, "curl: (56) Recv failure: Connection reset by peer", 3, "Receive failure"],
+    [56, "curl: (56) unrecognized failure", 1, "Download failed"],
+    [23, "curl: (23) Failure writing output to destination", 1, "Failure writing output to destination"],
+    [22, "curl: (22) The requested URL returned error: 403", 1, "HTTP request refused"],
+    [63, "curl: (63) Exceeded the maximum allowed file size", 1, "Archive exceeds size limit"],
+    [56, "curl: (56) Recv failure: Connection reset by peer\nFailure writing output to destination", 1, "Failure writing output to destination"],
+  ];
+  for (const [exit, stderr, attempts, reason] of cases) {
+    const fixture = await downloadReplayFixture(t, [{ exit, stderr }]);
+    const error = await downloadFailure(fixture);
+    assert.equal(safeErrorLabelV1(error), `runtime_download_failed (exit ${exit}, ${reason})`, "bounded safe cause");
+    assert.equal((await fixture.attempts()).length, attempts, `exit ${exit}: expected attempt bound`);
+  }
+});
+
+test("V101 real account write and traversal refusals happen before curl", async t => {
+  for (const deny of ["write", "traversal"]) {
+    const fixture = await downloadReplayFixture(t, [{ exit: 56, stderr: recordedWriteFailure }], { deny });
+    const error = await downloadFailure(fixture);
+    assert.equal(error.code, "runtime_download_destination_unwritable", `${deny}: identity probe refuses early`);
+    assert.equal((await fixture.attempts()).length, 0, `${deny}: no large download starts`);
+  }
+});
+
+test("V101 fifty isolated callers recover transient partials and clean their own downloads", async t => {
+  const fixtures = await Promise.all(Array.from({ length: 50 }, () => downloadReplayFixture(t,
+    [{ exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" }])));
+  await Promise.all(fixtures.map(async fixture => {
+    await vendorRuntimeV1(fixture.input, fixture.runtime);
+    assert.equal((await fixture.attempts()).length, 2, "each parallel caller reaches its retry");
+    assert.equal(await readlink(join(fixture.root, "runtime/node-current")), "node-1.2.3");
+    assert.equal(await lstat(join(fixture.root, "build/download-download-proof")).catch(() => null), null);
+  }));
 });

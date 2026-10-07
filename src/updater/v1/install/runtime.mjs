@@ -43,35 +43,87 @@ function validateInput(input) {
   return { input, inventory };
 }
 
+// Only fixed phrases survive: curl may put credential URLs, hostnames and private paths in stderr.
+function downloadDiagnostic(exitCode, stderr) {
+  let reason = "Download failed";
+  if (/Failure writing output|Failed writing|Write error/iu.test(stderr)) reason = "Failure writing output to destination";
+  else if (exitCode === 6) reason = "Could not resolve host";
+  else if (exitCode === 7) reason = "Could not connect to server";
+  else if (exitCode === 18) reason = "Incomplete transfer";
+  else if (exitCode === 28) reason = "Download timed out";
+  else if (exitCode === 35) reason = "TLS connection failed";
+  else if (exitCode === 52) reason = "Empty reply from server";
+  else if (exitCode === 56 && /^curl: \(56\) (?:Recv failure:|Failure when receiving data from the peer)/u.test(stderr.trim())) reason = "Receive failure";
+  else if (exitCode === 22) reason = "HTTP request refused";
+  else if (exitCode === 23) reason = "Failure writing output to destination";
+  else if (exitCode === 63) reason = "Archive exceeds size limit";
+  return Object.freeze({ exitCode, stderr: reason });
+}
+
+function transientDownloadFailure(diagnostic) {
+  if (diagnostic.stderr === "Failure writing output to destination") return false;
+  return [6, 7, 18, 28, 35, 52].includes(diagnostic.exitCode)
+    || diagnostic.exitCode === 56 && diagnostic.stderr === "Receive failure";
+}
+
 function run(file, args, options, runtime) {
   return new Promise((resolvePromise, reject) => {
     const launch = runtime.spawn ?? spawn;
-    const child = launch(file, args, { ...options, shell: false, stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "", bytes = 0, settled = false;
-    const finish = (action, value) => {
+    let child, stderr = "", bytes = 0, settled = false, stoppedReason = null, timer;
+    const finish = (code, signal) => {
       if (settled) return;
-      settled = true; clearTimeout(timer); action(value);
+      settled = true; clearTimeout(timer);
+      if (code === 0 && signal === null && stoppedReason === null) { resolvePromise(); return; }
+      const error = new Error("runtime_download_failed");
+      error.code = "runtime_download_failed";
+      error.runtimeDownload = stoppedReason === null
+        ? downloadDiagnostic(Number.isInteger(code) && code >= 1 && code <= 255 ? code : null, stderr)
+        : Object.freeze({ exitCode: null, stderr: stoppedReason });
+      reject(error);
     };
-    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(reject, new Error("runtime_download_failed")); },
+    try { child = launch(file, args, { ...options, shell: false, stdio: ["ignore", "ignore", "pipe"] }); }
+    catch { stoppedReason = "Could not start download"; finish(null, null); return; }
+    timer = setTimeout(() => { stoppedReason = "Download timed out"; child.kill("SIGKILL"); },
       runtime.downloadTimeoutMs ?? 30 * 60 * 1000);
     child.stderr?.on("data", chunk => {
       bytes += chunk.length;
-      if (bytes > 64 * 1024) { child.kill("SIGKILL"); finish(reject, new Error("runtime_download_failed")); return; }
+      if (bytes > 64 * 1024) { stoppedReason = "Download diagnostic exceeded limit"; child.kill("SIGKILL"); return; }
       stderr += chunk.toString("utf8");
     });
-    child.once("error", () => finish(reject, new Error("runtime_download_failed")));
-    child.once("close", (code, signal) => code === 0 && signal === null
-      ? finish(resolvePromise, undefined) : finish(reject, new Error("runtime_download_failed")));
+    child.once("error", () => { stoppedReason = "Could not start download"; });
+    // close, not exit: stderr must be drained and a killed child retired before cleanup/retry.
+    child.once("close", finish);
   });
 }
 
+async function assertDownloadDestination(destination, identity, runtime) {
+  const probe = join(dirname(destination), `.write-probe-${randomBytes(8).toString("hex")}`);
+  // The same uid/gid and environment as curl exercise every ancestor's traversal and a real write.
+  // Bootstrap Node can live under a root-only 0700 folder. Use the system shell's builtin write,
+  // with a fixed script and a positional path (never interpolated shell input). Noclobber refuses links.
+  const script = 'umask 077; set -C; printf probe > "$1"';
+  try {
+    await run("/bin/sh", ["-c", script, "runtime-write-probe", probe], { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);
+  } catch { refuse("runtime_download_destination_unwritable"); }
+  finally { await rm(probe, { force: true }).catch(() => refuse("runtime_download_destination_unwritable")); }
+}
+
 async function downloadArchive(artifact, destination, identity, runtime) {
+  await assertDownloadDestination(destination, identity, runtime);
   const args = [...(runtime.curlArgumentsPrefix ?? []), "-q", "--proto", "=https", "--tlsv1.2", "--fail", "--silent", "--show-error", "--location",
     "--max-filesize", String(artifact.archiveBytes), "--output", destination, artifact.url];
-  await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? "/usr/bin/curl", args: [...args],
-    uid: identity.uid, gid: identity.gid });
-  await run(runtime.curlPath ?? "/usr/bin/curl", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime)
-    .catch(() => refuse("runtime_download_failed"));
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? "/usr/bin/curl", args: [...args],
+      uid: identity.uid, gid: identity.gid });
+    try {
+      await run(runtime.curlPath ?? "/usr/bin/curl", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);
+      return;
+    } catch (error) {
+      if (attempt === 3 || !transientDownloadFailure(error.runtimeDownload)) throw error;
+      await rm(destination, { force: true });
+      await new Promise(resolvePromise => setTimeout(resolvePromise, attempt * 100));
+    }
+  }
 }
 
 async function copyArchiveOnce(source, destination, expectedBytes) {

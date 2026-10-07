@@ -729,3 +729,39 @@ test("refusal codes print exactly as before the stop-line change", async () => {
   assert.equal(cliFailureMessageV1({ userMessage: "this commit is already installed", code: "x" }), "this commit is already installed");
   assert.equal(cliFailureMessageV1(undefined), "updater_cli_failed");
 });
+
+
+test("V101 direct runtime refusal prints only validated diagnostic detail", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const { safeErrorPartsV1 } = await import("../src/updater/v1/contracts.mjs");
+  const refusal = diagnostic => Object.assign(new Error("raw tool SECRET sentinel"), {
+    code: "runtime_download_failed", runtimeDownload: diagnostic });
+  assert.equal(cliFailureMessageV1(refusal({ exitCode: 56, stderr: "Failure writing output to destination" })),
+    "runtime_download_failed (exit 56, Failure writing output to destination)", "owner gets the bounded curl cause");
+  assert.equal(cliFailureMessageV1(refusal({ exitCode: 7, stderr: "Could not connect to server" })),
+    "runtime_download_failed (exit 7, Could not connect to server)");
+  for (const diagnostic of [
+    { exitCode: 56, stderr: "open /private/SECRET/file failed" },
+    { exitCode: 56, stderr: "https://user:SECRET@host.invalid/archive" },
+    { exitCode: 56, stderr: "Receive failure\u001b[31m" },
+    { exitCode: 56, stderr: "x".repeat(301) },
+    { exitCode: -1, stderr: "Receive failure" },
+    { exitCode: 0, stderr: "Receive failure" },
+    { exitCode: 256, stderr: "Receive failure" },
+    { exitCode: 1.5, stderr: "Receive failure" },
+    { exitCode: 56, stderr: "Receive failure", extra: "SECRET" },
+    Object.assign([], { exitCode: 56, stderr: "Receive failure" }),
+  ]) {
+    assert.deepEqual(safeErrorPartsV1(refusal(diagnostic)).details, [], "unadmitted tool text stays excluded");
+    assert.equal(cliFailureMessageV1(refusal(diagnostic)), "runtime_download_failed");
+  }
+  for (let index = 0; index < 500; index += 1) {
+    const stderr = `unknown-${index}-${String.fromCodePoint(32 + index % 90)}-SECRET`;
+    assert.equal(cliFailureMessageV1(refusal({ exitCode: index % 256, stderr })), "runtime_download_failed",
+      "unknown diagnostics are refused even when printable");
+  }
+  assert.equal(cliFailureMessageV1(refusal({ exitCode: null, stderr: "Download timed out" })),
+    "runtime_download_failed (Download timed out)");
+  assert.deepEqual(safeErrorPartsV1({ code: "ENOENT", runtimeDownload: { exitCode: 56, stderr: "Receive failure" } }).details, []);
+  assert.equal(cliFailureMessageV1({ code: "ENOENT", runtimeDownload: { exitCode: 56, stderr: "Receive failure" } }), "ENOENT");
+});
