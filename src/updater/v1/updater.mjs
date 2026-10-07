@@ -413,7 +413,9 @@ export async function startUpdaterV1(options = {}) {
   } catch (error) { await release(); throw error; }
 }
 
-async function startLockedUpdaterV1(options = {}) {
+// The caller owns the local kernel lock. The exported composition also permits
+// portable qualification of startup without substituting macOS lockf answers.
+export async function startLockedUpdaterV1(options = {}) {
   const env = options.env ?? process.env, root = options.root ?? updaterRootV1(env);
   let client = options.client, ownsClient = false, store = options.store, startupStep = "configuration";
   try {

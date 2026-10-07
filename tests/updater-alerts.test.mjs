@@ -205,7 +205,10 @@ test("production defaultSend Authorization signs the installation origin", async
 
 
 test("legacy invalid VAPID keeps the production updater running with a status-card warning and no sends", async t => {
-  const { startUpdaterV1 } = await import("../src/updater/v1/updater.mjs");
+  const startup = await import("../src/updater/v1/updater.mjs");
+  // Full native lock composition runs on Mac; Linux exercises the same startup
+  // body. This test makes no Linux local-lock or cross-process guarantee.
+  const startUpdaterV1 = process.platform === "darwin" ? startup.startUpdaterV1 : startup.startLockedUpdaterV1;
   const { createUpdaterHomeStatusReaderV1 } = await import("../src/web/v1/updater-home-status.ts");
   const { readUpdaterHomeStatusV1 } = await import("../src/web/v1/updater-home-status-browser.ts");
   // Use a short job-local root: Darwin's UNIX socket path has a 103-byte limit.
