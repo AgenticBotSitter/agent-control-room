@@ -61,5 +61,12 @@
     "replace": "\"--ignore-submodules=none\", \"--no-relative\", `${revisions[1]!}^`, revisions[1]!, \"--\");",
     "test": "node --import tsx --test --test-name-pattern='classified from the installed commit' tests/updater-referee.test.ts",
     "why": "the referee diffs from the installed release's commit, never from the candidate's own parent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    || DATABASE_PATH_FILES.includes(lower) || lower.endsWith(\".sql\");",
+    "replace": "    || lower.endsWith(\".sql\");",
+    "test": "node --import tsx --test --test-name-pattern='attended install gate counts every path' tests/updater-referee.test.ts",
+    "why": "the attended install gate is never looser than the referee's database rule (role-manifest generator included)"
   }
 ]
