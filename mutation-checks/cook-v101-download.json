@@ -43,7 +43,7 @@
   },
   {
     "file": "src/updater/v1/contracts.mjs",
-    "find": "&& RUNTIME_DOWNLOAD_REASONS_V1.has(diagnostic.stderr)) {",
+    "find": "&& RUNTIME_DOWNLOAD_REASONS_V1.has(stderr)) {",
     "replace": "&& true) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
     "why": "private paths URLs and control bytes cannot enter safe detail"
@@ -57,7 +57,7 @@
   },
   {
     "file": "src/updater/v1/contracts.mjs",
-    "find": "&& (diagnostic.exitCode === null || Number.isInteger(diagnostic.exitCode) && diagnostic.exitCode >= 1 && diagnostic.exitCode <= 255)",
+    "find": "&& (exitCode === null || Number.isInteger(exitCode) && exitCode >= 1 && exitCode <= 255)",
     "replace": "&& true",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
     "why": "diagnostic exit code must be null or an OS exit status"
@@ -71,7 +71,7 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "message = error.code === \"runtime_download_failed\" && details.length ? safeErrorLabelV1(error) : error.code;",
+    "find": "message = error.code === \"runtime_download_failed\" ? safeErrorLabelV1(error) : error.code;",
     "replace": "message = error.code;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
     "why": "the owner direct-code stop line keeps the admitted runtime cause"
@@ -82,5 +82,12 @@
     "replace": "&& true",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
     "why": "non-record diagnostic values cannot enter the runtime safe-error channel"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "details.push(stderr);",
+    "replace": "details.push(diagnostic.stderr);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "validation and printing must use the same captured diagnostic value"
   }
 ]

@@ -21,6 +21,13 @@ export const SUDO_ONLY_VERBS_V1 = Object.freeze(new Set([
 const CODE_LIKE_MESSAGE_V1 = /^[a-z][a-z0-9]*(?:_[a-z0-9]+){1,10}$/u;
 const SAFE_CODE_CHARACTERS_V1 = /[^A-Za-z0-9_.:-]/gu;
 
+const RUNTIME_DOWNLOAD_REASONS_V1 = new Set([
+  "Download failed", "Failure writing output to destination", "Could not resolve host",
+  "Could not connect to server", "Incomplete transfer", "Download timed out", "TLS connection failed",
+  "Empty reply from server", "Receive failure", "HTTP request refused", "Archive exceeds size limit",
+  "Could not start download", "Download diagnostic exceeded limit",
+]);
+
 /**
  * The parts of an error that are safe to print on the owner's Terminal or keep in a receipt: its
  * code, a message that is itself a refusal code, the syscall name, the BASENAME of the executable,
@@ -30,25 +37,20 @@ const SAFE_CODE_CHARACTERS_V1 = /[^A-Za-z0-9_.:-]/gu;
  * command line (fix round 2, climsg-codex.md). Returns `{ code, details }`; `code` is null when
  * the error has none.
  */
-const RUNTIME_DOWNLOAD_REASONS_V1 = new Set([
-  "Download failed", "Failure writing output to destination", "Could not resolve host",
-  "Could not connect to server", "Incomplete transfer", "Download timed out", "TLS connection failed",
-  "Empty reply from server", "Receive failure", "HTTP request refused", "Archive exceeds size limit",
-  "Could not start download", "Download diagnostic exceeded limit",
-]);
-
 export function safeErrorPartsV1(error) {
   const details = [];
   const diagnostic = error?.runtimeDownload;
+  // Validate and print the same captured values, including errors supplied by ports with getters.
+  const exitCode = diagnostic?.exitCode, stderr = diagnostic?.stderr;
   // Admit only this producer's exact shape and fixed vocabulary, never arbitrary tool/filesystem text.
   if (error?.code === "runtime_download_failed" && diagnostic !== null && typeof diagnostic === "object"
     && (Object.getPrototypeOf(diagnostic) === Object.prototype || Object.getPrototypeOf(diagnostic) === null)
     && Object.keys(diagnostic).sort().join(",") === "exitCode,stderr"
-    && (diagnostic.exitCode === null || Number.isInteger(diagnostic.exitCode) && diagnostic.exitCode >= 1 && diagnostic.exitCode <= 255)
-    && typeof diagnostic.stderr === "string" && diagnostic.stderr.length <= 300
-    && RUNTIME_DOWNLOAD_REASONS_V1.has(diagnostic.stderr)) {
-    if (diagnostic.exitCode !== null) details.push(`exit ${diagnostic.exitCode}`);
-    details.push(diagnostic.stderr);
+    && (exitCode === null || Number.isInteger(exitCode) && exitCode >= 1 && exitCode <= 255)
+    && typeof stderr === "string" && stderr.length <= 300
+    && RUNTIME_DOWNLOAD_REASONS_V1.has(stderr)) {
+    if (exitCode !== null) details.push(`exit ${exitCode}`);
+    details.push(stderr);
   }
   const word = (value, pattern) => typeof value === "string" && pattern.test(value) ? value : null;
   if (Number.isSafeInteger(error?.code)) details.push(`exit ${error.code}`);

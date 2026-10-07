@@ -577,8 +577,7 @@ export function cliFailureMessageV1(error) {
   let message;
   if (typeof error?.userMessage === "string") message = error.userMessage;
   else if (typeof error?.code === "string") {
-    const { details } = safeErrorPartsV1(error);
-    message = error.code === "runtime_download_failed" && details.length ? safeErrorLabelV1(error) : error.code;
+    message = error.code === "runtime_download_failed" ? safeErrorLabelV1(error) : error.code;
   }
   else {
     const { code, details } = safeErrorPartsV1(error);

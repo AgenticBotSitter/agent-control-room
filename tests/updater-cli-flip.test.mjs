@@ -755,6 +755,13 @@ test("V101 direct runtime refusal prints only validated diagnostic detail", asyn
     assert.deepEqual(safeErrorPartsV1(refusal(diagnostic)).details, [], "unadmitted tool text stays excluded");
     assert.equal(cliFailureMessageV1(refusal(diagnostic)), "runtime_download_failed");
   }
+  let reads = 0;
+  const changing = { exitCode: 56, get stderr() {
+    reads += 1; return reads <= 3 ? "Receive failure" : "https://user:SECRET@private.invalid/archive";
+  } };
+  assert.deepEqual(safeErrorPartsV1(refusal(changing)).details, ["exit 56", "Receive failure"],
+    "diagnostic admission and printing use the same captured value");
+  assert.equal(reads, 1, "each diagnostic value is captured only once");
   for (let index = 0; index < 500; index += 1) {
     const stderr = `unknown-${index}-${String.fromCodePoint(32 + index % 90)}-SECRET`;
     assert.equal(cliFailureMessageV1(refusal({ exitCode: index % 256, stderr })), "runtime_download_failed",

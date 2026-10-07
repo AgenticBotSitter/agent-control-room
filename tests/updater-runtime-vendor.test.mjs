@@ -646,7 +646,8 @@ test("V101 recorded write failure preserves safe cause and never retries", async
 
 test("V101 recorded transient failure retries after removing partial and reads installed runtime", async t => {
   const fixture = await downloadReplayFixture(t, [{ exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" }]);
-  await vendorRuntimeV1(fixture.input, fixture.runtime);
+  await assert.doesNotReject(() => vendorRuntimeV1(fixture.input, fixture.runtime),
+    "recorded transient failure must retry and install");
   assert.deepEqual(await fixture.attempts(), [{ partialPresent: false }, { partialPresent: false }],
     "retry deletes the actual partial before the next curl opens exclusively");
   assert.equal(await readlink(join(fixture.root, "runtime/node-current")), "node-1.2.3");
