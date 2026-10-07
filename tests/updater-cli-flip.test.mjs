@@ -636,3 +636,18 @@ test("R5S-05: every CRLF split and fifty fragmented answers preserve real blank 
     }
   } finally { input.end(); reader.close(); }
 });
+
+test("the CLI's stop line keeps refusal codes as they are and shows the real reason for uncoded errors", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const refusal = Object.assign(new Error("updater_confirm_words_refused"), { code: "updater_confirm_words_refused" });
+  assert.equal(cliFailureMessageV1(refusal), "updater_confirm_words_refused");
+  assert.equal(cliFailureMessageV1({ userMessage: "this commit is already installed", code: "x" }), "this commit is already installed");
+  // A plain Error from a port used to print only "updater_cli_failed" (VM: install-services hid its reason).
+  assert.equal(cliFailureMessageV1(new Error("tailscale_json_refused")), "updater_cli_failed: tailscale_json_refused");
+  const enoent = Object.assign(new Error("ENOENT: no such file or directory, open '/x/y'\n    at stack"), { code: "ENOENT" });
+  assert.equal(cliFailureMessageV1(enoent), "ENOENT: no such file or directory, open '/x/y'");
+  assert.equal(cliFailureMessageV1(Object.assign(new Error("child exited"), { code: 7 })), "updater_cli_failed: child exited");
+  assert.equal(cliFailureMessageV1(undefined), "updater_cli_failed");
+  assert.equal(cliFailureMessageV1(new Error(`bad\u0007bell${"x".repeat(400)}`)).length, 200);
+  assert.doesNotMatch(cliFailureMessageV1(new Error("a\u0007b")), /\u0007/u);
+});

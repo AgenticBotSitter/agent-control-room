@@ -563,8 +563,19 @@ export function updaterRecoveryLineV1(error) {
 // files. It is gone with the second copy of the guard; the helper is the one
 // definition, and the repository-wide policy test still rejects any direct
 // comparison outside it.
-if (isMainModuleV1(process.argv[1], import.meta.url)) runUpdaterCliV1(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
+/** The one line the CLI prints when it stops. An error with no code (a plain Error from a port,
+ * such as `new Error("tailscale_json_refused")`, or a Node system error) used to print only
+ * "updater_cli_failed", which hid the reason on every real-Mac failure; its first message line
+ * now follows. Control characters are stripped and the line is bounded. */
+export function cliFailureMessageV1(error) {
+  const detail = typeof error?.message === "string" ? error.message.split("\n", 1)[0].trim() : "";
   const message = typeof error?.userMessage === "string" ? error.userMessage
-    : typeof error?.code === "string" ? error.code : "updater_cli_failed";
-  process.stderr.write(`${message.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").slice(0, 200)}\n`); process.exitCode = 1;
+    : typeof error?.code === "string" ? (detail === "" || detail === error.code ? error.code
+      : detail.startsWith(error.code) ? detail : `${error.code}: ${detail}`)
+      : detail ? `updater_cli_failed: ${detail}` : "updater_cli_failed";
+  return message.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").slice(0, 200);
+}
+
+if (isMainModuleV1(process.argv[1], import.meta.url)) runUpdaterCliV1(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
+  process.stderr.write(`${cliFailureMessageV1(error)}\n`); process.exitCode = 1;
 });
