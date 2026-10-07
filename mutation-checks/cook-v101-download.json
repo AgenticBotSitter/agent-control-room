@@ -145,5 +145,12 @@
     "replace": "const deadline = clock.now() + 90 * 60 * 1000;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
     "why": "overall ceiling is an independent lead-specified forty-five minutes, not three thirty-minute attempts"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "      remaining();\n      return;",
+    "replace": "      return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline refuses success\" tests/updater-runtime-vendor.test.mjs",
+    "why": "success delivered after the independently specified overall deadline must not install the archive"
   }
 ]

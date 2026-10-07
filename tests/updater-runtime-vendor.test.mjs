@@ -642,7 +642,7 @@ process.stderr.write(row.stderr);process.exitCode=row.exit;
       if (deny === "write") await chmod(path, 0o500);
       if (deny === "traversal") await chmod(join(root, "build"), 0o600);
     } };
-  return { root, artifact, input, runtime, observations, clock,
+  return { root, artifact, input, runtime, observations, clock, deny,
     attempts: () => readFile(counter, "utf8").then(JSON.parse, error => error.code === "ENOENT" ? [] : Promise.reject(error)) };
 }
 
@@ -651,7 +651,7 @@ async function downloadFailure(fixture) {
   try { await vendorRuntimeV1(fixture.input, fixture.runtime); } catch (error) { failure = error; }
   assert.ok(failure, "download must refuse");
   assert.equal(await downloadStateAbsent(join(fixture.root, "build/download-download-proof")), true,
-    "download refusal removes the actual folder; permission errors are not absence");
+    `${fixture.deny ?? "download"}: refusal removes the actual folder; permission errors are not absence`);
   return failure;
 }
 
@@ -709,7 +709,7 @@ test("V101 transient retries stop at three and unknown or permanent errors refus
 });
 
 test("V101 real account write and traversal refusals happen before curl", async t => {
-  for (const deny of ["write", "traversal", "collision"]) {
+  for (const deny of ["traversal", "write", "collision"]) {
     const fixture = await downloadReplayFixture(t, [{ exit: 0, stderr: "" }], { deny });
     const error = await downloadFailure(fixture);
     assert.equal(error.code, "runtime_download_destination_unwritable", `${deny}: identity probe refuses early`);
@@ -731,7 +731,7 @@ test("V101 fifty isolated callers recover transient partials and clean their own
 
 test("V101 backoff survives multi-second outages with five then fifteen second waits", async t => {
   // Synthetic virtual outage windows; subprocess answers replay the recorded curl 7 failure.
-  for (const outageMs of [2000, 6000, 19000]) {
+  for (const outageMs of [2000, 6000, 19000, 20000]) {
     const fixture = await downloadReplayFixture(t,
       [{ exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" }], { outageMs });
     await assert.doesNotReject(() => vendorRuntimeV1(fixture.input, fixture.runtime),
@@ -792,4 +792,26 @@ test("V101 overall archive deadline bounds an in-flight attempt watchdog", async
   assert.deepEqual(fixture.clock.timers.map(timer => timer.ms), [1800000, 1800000, 955000],
     "per-attempt watchdog stays thirty minutes and then uses only the remaining budget");
   assert.equal(fixture.clock.now(), 2700000, "hung attempt ends at the overall forty-five minute deadline");
+});
+
+
+test("V101 overall archive deadline refuses success delivered after expiry", async t => {
+  const fixture = await downloadReplayFixture(t,
+    [{ exit: 7, stderr: recordedConnectFailure }, { exit: 0, stderr: "" }]);
+  const launch = fixture.runtime.spawn;
+  let attempt = 0;
+  fixture.runtime.spawn = (file, args, options) => {
+    const child = launch(file, args, options);
+    if (file !== "/bin/sh") {
+      // Synthetic event-loop delivery lag: the child completes before its timer callback is dispatched.
+      const duration = attempt++ === 0 ? 29 * 60 * 1000 : 16 * 60 * 1000;
+      child.prependOnceListener("close", () => fixture.clock.advance(duration));
+    }
+    return child;
+  };
+  const error = await downloadFailure(fixture);
+  assert.equal(error.runtimeDownload?.stderr, "Download timed out", "late child success cannot bypass overall expiry");
+  assert.equal((await fixture.attempts()).length, 2, "late success never starts another attempt");
+  assert.equal(await downloadStateAbsent(join(fixture.root, "runtime/node-current")), true,
+    "archive delivered after expiry cannot become the installed runtime");
 });
