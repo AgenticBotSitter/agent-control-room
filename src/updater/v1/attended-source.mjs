@@ -10,6 +10,7 @@ import { directoryCustodyV1, removeOwnedFileV1 } from "../../installer/shared/fi
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { verifyBundleManifestV1 } from "./attended-flip.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
+import { mirrorHistoryCompleteV1 } from "./mirror-history.mjs";
 
 import { signAttendedConnectorReleaseV1 } from "./install/connector-release.mjs";
 import { captureReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
@@ -813,6 +814,8 @@ export async function fetchVerifiedSourceV1(input) {
     const fetched = (await git(input, tools.git, mirror, ["rev-parse", `${MAIN_REF}^{commit}`])).stdout.trim();
     if (!COMMIT.test(fetched)) refuse("updater_main_ref_refused");
     await git(input, tools.git, mirror, ["cat-file", "-e", `${commit}^{commit}`]);
+    // A graft, replace ref or shallow boundary could put a commit main never had on main.
+    if (!await mirrorHistoryCompleteV1(mirror, args => git(input, tools.git, mirror, args))) refuse("updater_mirror_history_refused");
     await git(input, tools.git, mirror, ["merge-base", "--is-ancestor", commit, MAIN_REF])
       .catch(() => refuse("updater_commit_not_on_main"));
     const limits = { maxTreeFiles: input.maxTreeFiles ?? MAX_TREE_FILES, maxTreeBytes: input.maxTreeBytes ?? MAX_TREE_BYTES,
@@ -975,6 +978,15 @@ async function installedReleaseForPlanV1(session) {
   if (!RELEASE_ID.test(releaseId)) refuse("updater_installed_release_refused");
   const manifest = JSON.parse(await readFileNoFollowV1(session.root, `${target}/RELEASE_MANIFEST.json`, { maxBytes: 16 * 1024 * 1024 }));
   if (!VERSION.test(manifest?.version ?? "") || !COMMIT.test(manifest?.commit ?? "")) refuse("updater_installed_release_refused");
+  // Only the attended release builder (build-attended-release.mjs) writes an
+  // installed manifest, and buildReleaseV1 names the release directory from that
+  // same manifest's version and commit: `current` -> releases/<version>-<commit
+  // prefix> is the one identity form any installed Mac has. A manifest that is not
+  // the builder's, or that claims a version or commit other than the ones its own
+  // release directory was named for, is not the installed release; trusting it
+  // could classify the update from the wrong commit and skip the database gate.
+  if (manifest.schema !== BUILD_MANIFEST) refuse("updater_installed_release_refused");
+  if (releaseId !== `${manifest.version}-${manifest.commit.slice(0, 12)}`) refuse("updater_installed_release_mismatch");
   return { releaseId, version: manifest.version, commit: manifest.commit };
 }
 
@@ -1066,12 +1078,8 @@ export async function classifyAttendedSourceV1(input) {
   // Ancestry holds through any one parent, so a shallow boundary, a graft or a
   // replacement object on another parent can drop commits from the range walk
   // while the installed commit is still "an ancestor". Such a mirror proves nothing.
-  const complete = async () => (await git(session.input, session.tools.git, session.mirror,
-    ["rev-parse", "--is-shallow-repository"])).stdout.trim() === "false"
-    && (await git(session.input, session.tools.git, session.mirror,
-      ["for-each-ref", "--count=1", "--format=%(refname)", "refs/replace/"])).stdout === ""
-    && !await lstat(join(session.mirror, "info", "grafts")).then(() => true,
-      error => error?.code === "ENOENT" ? false : Promise.reject(error));
+  const complete = () => mirrorHistoryCompleteV1(session.mirror,
+    args => git(session.input, session.tools.git, session.mirror, args));
   let paths = [], baseline;
   if (from.commit === undefined) {
     baseline = "not-installed";

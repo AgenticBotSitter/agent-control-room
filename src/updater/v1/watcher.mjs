@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { canonicalJsonV1 } from "./cli.mjs";
 import { assertPlainObjectV1, assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
+import { mirrorHistoryCompleteV1 } from "./mirror-history.mjs";
 
 async function execFileAsync(file, args, options) {
   const child = spawn(file, args, { env: options.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -133,13 +134,24 @@ export class GitMirrorSourceV1 {
     if (remote !== this.origin) throw updaterRefuseV1("watcher_origin_changed");
   }
 
+  // A graft, replace ref or shallow boundary rewrites parents locally, so the
+  // mirror would answer yes for history the fetched commits do not have - and a
+  // fetch would fast-forward the trusted main ref along it. Asked before the
+  // fetch and before every ancestry answer (admission and the existing-plan check).
+  async #assertHistoryComplete() {
+    if (!await mirrorHistoryCompleteV1(this.mirror, args => this.#git(args)))
+      throw updaterRefuseV1("watcher_history_unproven");
+  }
+
   async #isAncestor(ancestor, descendant) {
+    await this.#assertHistoryComplete();
     try { await this.#git(["merge-base", "--is-ancestor", ancestor, descendant]); return true; }
     catch { return false; }
   }
 
   async fetchMain() {
     await this.#ensureMirror();
+    await this.#assertHistoryComplete();
     // Deliberately no '+' on the refspec. Git rejects a forced update rather
     // than silently replacing the last trusted main tip in the mirror.
     await this.#git(["fetch", "--no-tags", "origin", "refs/heads/main:refs/updater/main"],

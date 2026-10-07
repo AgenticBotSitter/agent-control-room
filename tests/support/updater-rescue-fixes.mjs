@@ -45,6 +45,7 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
     calls.push({file,args});
     const result={stdout:'',stderr:'',code:0};
     if(args.includes('init')) await writeFile(join(args.at(-1),'HEAD'),'stand-in');
+    else if(args.includes('--is-shallow-repository')) result.stdout='false\n';
     else if(args.includes('rev-parse')) result.stdout='b'.repeat(40)+'\n';
     else if(args.includes('ls-tree')) result.stdout=[...files].map(([name,b])=>`100644 blob ${oid(b)}\t${name}\0`).join('');
     else if(args.includes('cat-file') && args.includes('-s')) result.stdout=String([...files.values()].find(b=>oid(b)===args.at(-1)).length);
@@ -71,7 +72,10 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
   async function build() { fetched=await fetchVerifiedSourceV1(input);const release=await buildReleaseV1({...input,...fetched});const bundle=await buildFixedBundleV1({...input,...fetched});return{fetched,release,bundle}; }
   return {root,input,calls,build};
 }
+// The installed pair in the one form a real install leaves: buildReleaseV1 names
+// the release `<version>-<first 12 of commit>` from the builder's own manifest.
+export const installedReleaseId = `2.0.0-${'c'.repeat(12)}`;
 export async function initialPair(root) {
-  await mkdir(join(root,'releases/2.0.0-old'));await writeFile(join(root,'releases/2.0.0-old/RELEASE_MANIFEST.json'),JSON.stringify({version:'2.0.0',commit:'c'.repeat(40)}));await mkdir(join(root,'updater/2.0.0-old'));
-  await symlink('releases/2.0.0-old',join(root,'current'));await symlink('2.0.0-old',join(root,'updater/current'));
+  await mkdir(join(root,'releases',installedReleaseId));await writeFile(join(root,'releases',installedReleaseId,'RELEASE_MANIFEST.json'),JSON.stringify({schema:'control-room.attended-build-manifest/v1',version:'2.0.0',commit:'c'.repeat(40)}));await mkdir(join(root,'updater',installedReleaseId));
+  await symlink(`releases/${installedReleaseId}`,join(root,'current'));await symlink(installedReleaseId,join(root,'updater/current'));
 }

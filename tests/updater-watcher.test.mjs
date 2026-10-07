@@ -232,3 +232,60 @@ test("real Git invokes the shared helper with argv get for an authenticated loca
   assert.ok(https.counts().rejected >= 1, "the server required basic authentication before serving Git");
   assert.ok(https.counts().authenticated >= 1, "real Git retried with the shared helper's token response");
 });
+
+// Git rewrites parents from local metadata - info/grafts, refs/replace/ and a
+// shallow file - so a mirror carrying any of them can answer "is an ancestor" for
+// history the fetched commits do not have. The watcher shares the attended
+// classifier's completeness check before every ancestry answer.
+const mirrorGitV1 = (mirror, ...args) => git(["--git-dir", mirror, "-c", "user.name=Watcher Test",
+  "-c", "user.email=watcher@example.invalid", ...args]);
+
+test("reproducer: a graft cannot manufacture ancestry that admits an unrelated main", async t => {
+  const fixture = await repository(t), plans = new Plans();
+  const source = new GitMirrorSourceV1({ root: fixture.updaterRoot, origin: fixture.origin, fromCommit: fixture.fromCommit, testing: true });
+  assert.equal((await source.fetchMain()).commit, fixture.fromCommit);
+  // An unrelated root commit replaces main: nothing in it descends from the installed commit.
+  await git(["checkout", "-q", "--orphan", "unrelated"], fixture.work);
+  await git(["rm", "-q", "--cached", "README.md"], fixture.work);
+  const unrelated = await commit(fixture.work, "README.md", "unrelated\n", "unrelated", false);
+  await git(["branch", "-f", "main", unrelated], fixture.work); await publishLocalFixtureV1(fixture.work);
+  await assert.rejects(source.fetchMain(), /watcher_source_fetch_refused|watcher_history_rewritten/u, "pristine mirror refuses");
+  const grafts = join(source.mirror, "info", "grafts");
+  await mkdir(join(source.mirror, "info"), { recursive: true });
+  await writeFile(grafts, `${unrelated} ${fixture.fromCommit}\n`);
+  // Independent check that the graft fabricates what it claims: plain git now says yes.
+  await mirrorGitV1(source.mirror, "merge-base", "--is-ancestor", fixture.fromCommit, unrelated);
+  const ci = { async statusForCommit(sha) { return green(sha); } };
+  await assert.rejects(source.fetchMain(), error => error?.code === "watcher_history_unproven", "fetch admission");
+  assert.equal((await mirrorGitV1(source.mirror, "rev-parse", "refs/updater/main")).stdout.trim(), fixture.fromCommit,
+    "the refused fetch never moved the trusted main ref along the graft");
+  await assert.rejects(source.isAncestor(fixture.fromCommit, unrelated), error => error?.code === "watcher_history_unproven",
+    "the existing-plan ancestry check");
+  await assert.rejects(watcher({ source, plans, root: fixture.updaterRoot, ci }).tick(),
+    error => error?.code === "watcher_history_unproven", "a tick");
+  assert.equal(plans.rows.length, 0, "no plan is created from fabricated ancestry");
+  await rm(grafts);
+  await assert.rejects(source.fetchMain(), /watcher_source_fetch_refused|watcher_history_rewritten/u, "graft removed");
+});
+
+test("a replace ref or a shallow boundary in the mirror proves no history, and removing it restores admission", async t => {
+  const fixture = await repository(t);
+  const source = new GitMirrorSourceV1({ root: fixture.updaterRoot, origin: fixture.origin, fromCommit: fixture.fromCommit, testing: true });
+  const fetched = await commit(fixture.work, "src/first.ts", "export const f = 1;\n");
+  assert.equal((await source.fetchMain()).commit, fetched);
+  const candidate = await commit(fixture.work, "src/next.ts", "export const n = 1;\n");
+  // Both cut the already-fetched commit off from the installed one.
+  const cuts = {
+    replace: () => mirrorGitV1(source.mirror, "replace", "--graft", fetched),
+    shallow: () => writeFile(join(source.mirror, "shallow"), `${fetched}\n`),
+  };
+  for (const [name, cut] of Object.entries(cuts)) {
+    await cut();
+    await assert.rejects(source.fetchMain(), error => error?.code === "watcher_history_unproven", name);
+    await assert.rejects(source.isAncestor(fixture.fromCommit, candidate), error => error?.code === "watcher_history_unproven", name);
+    await rm(join(source.mirror, "shallow"), { force: true });
+    for (const ref of (await mirrorGitV1(source.mirror, "for-each-ref", "--format=%(refname)", "refs/replace/")).stdout.split("\n").filter(Boolean))
+      await mirrorGitV1(source.mirror, "update-ref", "-d", ref);
+    assert.equal((await source.fetchMain()).commit, candidate, `${name} removed: the real history is admitted`);
+  }
+});

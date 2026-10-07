@@ -1030,6 +1030,8 @@ test("a shallow, grafted or replaced mirror proves nothing, forward or back", as
       } });
       assert.equal(result.baseline, "unproven", `${name} ${installed === f.commit ? "forward" : "downgrade"}`);
       assert.equal(result.changesDatabase, true, name);
+      // The next fetch would refuse a cut mirror outright; this test is about the classifier.
+      await undo(join(f.root, "updater-state/mirror.git"));
     }
   }
   const restored = await classifyInstalled(f, { installed: f.commit, target: merge, beforeClassify: undo });
@@ -1055,4 +1057,110 @@ test("a fresh install has no installed release, so the whole tree is new and the
   const result = await classifyInstalled(f, { installed: null, target });
   assert.ok(result.changedPaths.includes("db/migrations/0001.sql") && result.changedPaths.includes("src/app.mjs"));
   assert.equal(result.changesDatabase, true); assert.equal(result.baseline, "not-installed");
+});
+
+// The installed identity is the release directory `current` names, and
+// buildReleaseV1 names it `<version>-<first 12 of commit>` from the manifest that
+// build-attended-release.mjs writes. A well-formed manifest that belongs to some
+// other release must not become the commit the update is classified from.
+test("reproducer: an installed manifest that disagrees with its own release directory is refused", async t => {
+  const f = await fixture(t);
+  await commitFiles(f.repository, "B adds a migration", { "db/migrations/0002_b.sql": "select 2;\n" });
+  const target = await commitFiles(f.repository, "C changes only src", { "src/app.mjs": "export const c = 1;\n" });
+  const schema = "control-room.attended-build-manifest/v1";
+  // Literal: the fixture's package.json version and the installed commit's prefix.
+  const manifest = join(f.root, "releases", `1.2.3-${f.commit.slice(0, 12)}`, "RELEASE_MANIFEST.json");
+  for (const [label, record, code] of [
+    ["claims the offered commit C", { schema, commit: target, version: "1.2.3" }, /^updater_installed_release_mismatch$/u],
+    ["claims C under another schema", { schema: "wrong", commit: target, version: "1.2.3" }, /^updater_installed_release_refused$/u],
+    ["claims C under another version", { schema, commit: target, version: "9.9.9" }, /^updater_installed_release_mismatch$/u],
+    ["installed commit under another schema", { schema: "wrong", commit: f.commit, version: "1.2.3" }, /^updater_installed_release_refused$/u],
+    ["installed commit with no schema", { commit: f.commit, version: "1.2.3" }, /^updater_installed_release_refused$/u],
+    ["installed commit under another version", { schema, commit: f.commit, version: "9.9.9" }, /^updater_installed_release_mismatch$/u],
+  ]) {
+    await t.test(label, () => assert.rejects(classifyInstalled(f, { installed: f.commit, target,
+      beforeClassify: () => writeFile(manifest, `${JSON.stringify(record)}\n`) }), error => code.test(error?.code)));
+  }
+  await t.test("restored to the installed commit A", async () => {
+    const restored = await classifyInstalled(f, { installed: f.commit, target });
+    assert.equal(restored.baseline, "forward"); assert.equal(restored.installedCommit, f.commit);
+    assert.equal(restored.changesDatabase, true, "commit B's migration is in the update to C");
+  });
+});
+
+test("a real installed release rewritten to claim the offered commit is refused before the owner is asked", async t => {
+  // The installed record is made by the real first install (stageReleaseV1 and
+  // switchPairV1), not by the test, so the reader is checked against what the
+  // producer actually leaves behind.
+  const f = await fixture(t);
+  const installed = await installAttendedCommitV1({ ...f.materialize(), authorize: value => authorize(f.root, value) });
+  assert.equal(installed.releaseId, `1.2.3-${f.commit.slice(0, 12)}`);
+  await commitFiles(f.repository, "B adds a migration", { "db/migrations/0002_b.sql": "select 2;\n" });
+  const target = await commitFiles(f.repository, "C changes only src", { "src/app.mjs": "export const c = 1;\n" });
+  await publishLocalFixtureV1(f.repository);
+  const update = () => ({ ...f.materialize(), commit: target,
+    buildSteps: [{ file: process.execPath, args: [f.fake, "build", "AUTO", target] }] });
+  const manifest = join(f.root, "releases", installed.releaseId, "RELEASE_MANIFEST.json");
+  const original = await readFile(manifest, "utf8");
+  await chmod(manifest, 0o640);
+  await writeFile(manifest, `${JSON.stringify({ ...JSON.parse(original), commit: target })}\n`);
+  let asked = false;
+  await assert.rejects(installAttendedCommitV1({ ...update(), authorize: async () => { asked = true; } }),
+    error => error?.code === "updater_installed_release_mismatch");
+  assert.equal(asked, false, "the owner is never shown a plan built from the wrong installed commit");
+  assert.equal(await readlink(join(f.root, "current")), `releases/${installed.releaseId}`);
+  await writeFile(manifest, original);
+  let plan;
+  await assert.rejects(installAttendedCommitV1({ ...update(), authorize: async value => { plan = value.plan; } }),
+    /updater_install_confirmation_missing/u);
+  assert.equal(plan.from.commit, f.commit); assert.equal(plan.from.releaseId, installed.releaseId);
+  assert.equal(plan.updaterDerived.changesDatabase, true); assert.ok(plan.classes.includes("database"));
+});
+
+test("a database path added by one merge and removed by another is a database change", async t => {
+  // Neither end of the update, nor any ordinary commit, touches db/: only the two
+  // merge commits' own changes against their first parents do.
+  const f = await fixture(t);
+  await git(f.repository, "checkout", "-q", "-b", "side1", f.commit);
+  await commitFiles(f.repository, "side1", { "src/side1.mjs": "export const s = 1;\n" });
+  await git(f.repository, "checkout", "-q", "main");
+  await commitFiles(f.repository, "main", { "src/main.mjs": "export const m = 1;\n" });
+  await git(f.repository, "merge", "-q", "--no-ff", "--no-commit", "side1");
+  await commitFiles(f.repository, "merge adds database input", { "db/transient.txt": "database input\n" });
+  await git(f.repository, "checkout", "-q", "-b", "side2", f.commit);
+  await commitFiles(f.repository, "side2", { "src/side2.mjs": "export const s = 2;\n" });
+  await git(f.repository, "checkout", "-q", "main");
+  await git(f.repository, "merge", "-q", "--no-ff", "--no-commit", "side2");
+  await commitFiles(f.repository, "merge removes database input", { "db/transient.txt": null });
+  const target = await commitFiles(f.repository, "tail", { "src/tail.mjs": "export const t = 1;\n" });
+  // Independent check of the shape: no non-merge commit and no end-to-end diff names it.
+  assert.equal(await git(f.repository, "log", "--no-merges", "--name-only", "--format=", `${f.commit}..${target}`, "--", "db/transient.txt"), "");
+  assert.equal(await git(f.repository, "diff", "--name-only", f.commit, target, "--", "db/"), "");
+  const result = await classifyInstalled(f, { installed: f.commit, target });
+  assert.equal(result.baseline, "forward");
+  assert.ok(result.changedPaths.includes("db/transient.txt"), JSON.stringify(result.changedPaths));
+  assert.equal(result.changesDatabase, true);
+});
+
+test("a graft cannot put a commit main never had on main for the attended fetch", async t => {
+  const f = await fixture(t);
+  await git(f.repository, "checkout", "-q", "-b", "dropped", f.commit);
+  const dropped = await commitFiles(f.repository, "later dropped from main", { "src/dropped.mjs": "export const d = 1;\n" });
+  await publishLocalFixtureV1(f.repository, "dropped");
+  await abortAttendedV1(await fetchVerifiedSourceV1({ ...f.materialize(), commit: dropped }));
+  await git(f.repository, "checkout", "-q", "main");
+  const tip = await commitFiles(f.repository, "main moves on without it", { "src/main.mjs": "export const m = 1;\n" });
+  await publishLocalFixtureV1(f.repository);
+  await assert.rejects(fetchVerifiedSourceV1({ ...f.materialize(), commit: dropped }), /updater_commit_not_on_main/u);
+  const mirror = join(f.root, "updater-state/mirror.git");
+  await mkdir(join(mirror, "info"), { recursive: true });
+  await writeFile(join(mirror, "info", "grafts"), `${tip} ${f.commit} ${dropped}\n`);
+  // Independent check that the graft fabricates what it claims: plain git now says yes.
+  await mirrorGit(mirror, "merge-base", "--is-ancestor", dropped, tip);
+  await assert.rejects(fetchVerifiedSourceV1({ ...f.materialize(), commit: dropped }),
+    error => error?.code === "updater_mirror_history_refused");
+  await assert.rejects(fetchVerifiedSourceV1({ ...f.materialize(), commit: tip }),
+    error => error?.code === "updater_mirror_history_refused", "a grafted mirror proves nothing, even for main's own tip");
+  await rm(join(mirror, "info", "grafts"));
+  await abortAttendedV1(await fetchVerifiedSourceV1({ ...f.materialize(), commit: tip }));
 });
