@@ -73,10 +73,11 @@ const DOWNLOAD_CLOCK = Object.freeze({
   clearTimeout: timer => clearTimeout(timer),
 });
 
-function run(file, args, options, runtime, timeoutMs = Infinity) {
+function run(file, args, options, runtime) {
   return new Promise((resolvePromise, reject) => {
     const launch = runtime.spawn ?? spawn;
     const clock = runtime.downloadClock ?? DOWNLOAD_CLOCK;
+    const timeoutMs = Math.min(runtime.downloadTimeoutMs ?? 30 * 60 * 1000, runtime.remainingDownloadMs?.() ?? Infinity);
     let child, stderr = "", bytes = 0, settled = false, stoppedReason = null, timer;
     const finish = (code, signal) => {
       if (settled) return;
@@ -92,7 +93,7 @@ function run(file, args, options, runtime, timeoutMs = Infinity) {
     try { child = launch(file, args, { ...options, shell: false, stdio: ["ignore", "ignore", "pipe"] }); }
     catch { stoppedReason = "Could not start download"; finish(null, null); return; }
     timer = clock.setTimeout(() => { stoppedReason = "Download timed out"; child.kill("SIGKILL"); },
-      Math.min(runtime.downloadTimeoutMs ?? 30 * 60 * 1000, timeoutMs));
+      timeoutMs);
     child.stderr?.on("data", chunk => {
       bytes += chunk.length;
       if (bytes > 64 * 1024) { stoppedReason = "Download diagnostic exceeded limit"; child.kill("SIGKILL"); return; }
@@ -104,14 +105,14 @@ function run(file, args, options, runtime, timeoutMs = Infinity) {
   });
 }
 
-async function assertDownloadDestination(destination, identity, runtime, timeoutMs) {
+async function assertDownloadDestination(destination, identity, runtime) {
   const probe = join(dirname(destination), `.write-probe-${randomBytes(8).toString("hex")}`);
   // The same uid/gid and environment as curl exercise every ancestor's traversal and a real write.
   // Bootstrap Node can live under a root-only 0700 folder. Use the system shell's builtin write,
   // with a fixed script and a positional path (never interpolated shell input). Noclobber refuses links.
   const script = 'umask 077; set -C; printf probe > "$1"';
   try {
-    await run("/bin/sh", ["-c", script, "runtime-write-probe", probe], { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime, timeoutMs);
+    await run("/bin/sh", ["-c", script, "runtime-write-probe", probe], { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);
   } catch { refuse("runtime_download_destination_unwritable"); }
   finally { await rm(probe, { force: true }).catch(() => refuse("runtime_download_destination_unwritable")); }
 }
@@ -129,7 +130,8 @@ async function downloadArchive(artifact, destination, identity, runtime) {
     }
     return ms;
   };
-  await assertDownloadDestination(destination, identity, runtime, remaining());
+  runtime = { ...runtime, remainingDownloadMs: remaining };
+  await assertDownloadDestination(destination, identity, runtime);
   const args = [...(runtime.curlArgumentsPrefix ?? []), "-q", "--proto", "=https", "--tlsv1.2", "--fail", "--silent", "--show-error", "--location",
     "--max-filesize", String(artifact.archiveBytes), "--output", destination, artifact.url];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -137,7 +139,7 @@ async function downloadArchive(artifact, destination, identity, runtime) {
     await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? "/usr/bin/curl", args: [...args],
       uid: identity.uid, gid: identity.gid });
     try {
-      await run(runtime.curlPath ?? "/usr/bin/curl", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime, remaining());
+      await run(runtime.curlPath ?? "/usr/bin/curl", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);
       remaining();
       return;
     } catch (error) {
