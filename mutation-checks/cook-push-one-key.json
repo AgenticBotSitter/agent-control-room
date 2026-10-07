@@ -152,5 +152,12 @@
     "replace": "this.#rejections.push(failure);",
     "test": "node --import tsx --test --test-name-pattern='bounded push service' tests/updater-alerts.test.mjs",
     "why": "Bound retained diagnostic records even across multiple template fan-outs."
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "if (options.vapidRpId !== undefined && rpId !== options.vapidRpId) refuse(\"tailscale_rp_id_changed\");",
+    "replace": "if (false) refuse(\"tailscale_rp_id_changed\");",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses a reserved' tests/control-room-installer.test.mjs",
+    "why": "Keep the web origin and the signed VAPID contact on the same measured hostname before composing services."
   }
 ]

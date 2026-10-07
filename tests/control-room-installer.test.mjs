@@ -2630,4 +2630,10 @@ test("installer refuses a reserved Tailscale origin before it creates keys or ac
     assert.equal(f.ports.calls.some(call => call[0] === "create-account"), false);
     await assert.rejects(lstat(join(f.root, "updater-state/vapid.json")), { code: "ENOENT" });
   }
+  const changed = await fixture(t, "changed-push-origin");
+  let reads = 0;
+  changed.ports.readTailscaleRpId = async () => ++reads === 1 ? "fixture.ts.net" : "other.ts.net";
+  await assert.rejects(installControlRoomV1(changed.options), /tailscale_rp_id_changed/u);
+  assert.equal(changed.ports.calls.some(call => call[0] === "compose-protected-config"), false,
+    "a hostname change is refused before composing a web origin different from the signed contact");
 });
