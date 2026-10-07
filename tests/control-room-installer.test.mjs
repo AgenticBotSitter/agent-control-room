@@ -2020,7 +2020,6 @@ test("connrel installer ships a trusted connector and Connect a bot can make its
   assert.deepEqual(await readFile(manifestPath), original);
 });
 
-
 test("A2-01 rehearsal loader refuses overlapping, folded and filesystem-aliased roots", async t => {
   const base = await temporary("root-overlap"); t.after(() => cleanup(base));
   const { loadRehearsalConfigV1, LIVE_ROOT_V1 } = await import("../src/updater/v1/install/rehearsal-config.mjs");
@@ -2698,4 +2697,23 @@ test("installer refuses a reserved Tailscale origin before it creates keys or ac
   await assert.rejects(installControlRoomV1(changed.options), /tailscale_rp_id_changed/u);
   assert.equal(changed.ports.calls.some(call => call[0] === "compose-protected-config"), false,
     "a hostname change is refused before composing a web origin different from the signed contact");
+});
+
+test("a retired manual web key without updater vapid names the file and recovery before effects", async t => {
+  const f = await fixture(t, "manual-web-key");
+  const path = join(f.root, "Protected/config/owner-web-push.json");
+  await mkdir(dirname(path), { recursive: true });
+  const before = JSON.stringify({ schema: "control-room.owner-web-push-config/v1", subject: "https://fixture.ts.net",
+    ...await nativePorts.generateVapidKeys() });
+  await writeFile(path, before, { mode: 0o600 });
+  await assert.rejects(lstat(join(f.root, "updater-state/vapid.json")), { code: "ENOENT" });
+  await assert.rejects(installControlRoomV1(f.options), error => {
+    assert.equal(error.code, "existing_key_refused");
+    assert.equal(error.userMessage, error.message, "CLI displays the recovery guidance");
+    assert.match(error.message, /Protected\/config\/owner-web-push\.json/u, "refusal names the retired manual file");
+    assert.match(error.message, /move .* aside.*rerun.*subscribe again/iu, "refusal gives the recovery step and subscription consequence");
+    return true;
+  });
+  assert.equal(await readFile(path, "utf8"), before, "the manual pair is not adopted or changed");
+  assert.equal(f.ports.calls.some(([name]) => ["create-accounts", "install-services", "build-release"].includes(name)), false, "refuse before install effects");
 });

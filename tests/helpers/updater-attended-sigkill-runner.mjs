@@ -27,7 +27,7 @@ if (!await lstat(remote).then(() => true, () => false)) {
   // step with `updater_bundle_input_refused` and never reaches the SIGKILL window
   // it exists to exercise — the same trap the layout line above was written for.
   await mkdir(join(repository, "src/installer/shared"), { recursive: true });
-  for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix"])
+  for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix", "vapid"])
     await copyFile(join(process.cwd(), `src/installer/shared/${name}.mjs`),
       join(repository, `src/installer/shared/${name}.mjs`));
   // The nightly backup's recency reader, the other file `FIXED_BUNDLE_INPUTS` now

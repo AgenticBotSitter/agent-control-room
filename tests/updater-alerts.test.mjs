@@ -3,6 +3,8 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import https from "node:https";
+import { createECDH, randomBytes } from "node:crypto";
 import { UPDATER_PUSH_RETRY_MS_V1, UpdaterAlertSenderV1, loadUpdaterVapidV1 } from "../src/updater/v1/alerts.mjs";
 import { ownerPushEndpointAllowedV1 } from "../src/updater/v1/push-policy.mjs";
 
@@ -175,4 +177,28 @@ test("updater send results retain the bounded push service rejection body", asyn
   const burst = new UpdaterAlertSenderV1({ root: burstRoot, store: burstStore, loadVapid: async () => vapid,
     send: async () => { throw { statusCode: 403, body: "BadJwtToken" }; } });
   assert.equal((await burst.tick()).failures.length, 100, "the send result retains at most 100 diagnostic records");
+});
+
+test("production defaultSend Authorization signs the installation origin", async t => {
+  const { default: webpush } = await import("web-push");
+  const root = await fixture(t), keys = webpush.generateVAPIDKeys();
+  await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, ...keys }), { mode: 0o600 });
+  const phone = createECDH("prime256v1"); phone.generateKeys();
+  const store = new MemoryStore([{ id: id(701), template: "control-room-updater.web-down", attempts: 0 }]);
+  store.subscriptionsValue = [{ id: "phone:production", endpoint: "https://web.push.apple.com/3/device/fixture",
+    p256dh: phone.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url"), expires_at: null }];
+  const requests = [];
+  // Intercept only the network boundary, AFTER the real library encrypted and signed.
+  // No provider answer is fabricated: the transport is deliberately unavailable offline.
+  t.mock.method(https, "request", options => { requests.push(options); throw new Error("offline_transport_stop"); });
+  const sender = new UpdaterAlertSenderV1({ root, store, getuid: () => 0,
+    lstat: async path => Object.assign(await lstat(path), { uid: 0 }) });
+  await sender.tick();
+  assert.equal(requests.length, 1, "defaultSend reached the real HTTPS transport exactly once");
+  const token = /^vapid t=([^,]+), k=(.+)$/u.exec(requests[0].headers.Authorization);
+  assert.ok(token, "production defaultSend supplies a VAPID Authorization header");
+  const jwt = JSON.parse(Buffer.from(token[1].split(".")[1], "base64url").toString("utf8"));
+  assert.equal(jwt.sub, "https://fixture.ts.net", "production defaultSend JWT sub is the installation origin");
+  assert.equal(jwt.aud, "https://web.push.apple.com");
+  assert.equal(token[2], keys.publicKey);
 });

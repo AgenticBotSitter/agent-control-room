@@ -81,9 +81,6 @@ export function macosSystemPathV1(path, platform = process.platform) {
     ? `/private${path}` : path;
 }
 
-/** Bound on waiting for launchd to drop a booted-out job: postgres's ExitTimeOut (120 s) plus margin. */
-export const SERVICE_STOP_TIMEOUT_MS_V1 = 130_000;
-
 function defaultRuntime() {
   return Object.freeze({
     geteuid: () => process.geteuid?.() ?? -1,

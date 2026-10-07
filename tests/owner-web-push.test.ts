@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import https from "node:https";
+import { createECDH, randomBytes } from "node:crypto";
 import { deliverOwnerPushV1, ownerPushEndpointAllowedV1, ownerPushPayloadIsMinimalV1, ownerPushPayloadV1,
   parseWebPushSubscriptionV1, type OwnerNotificationChannelV1, type OwnerPushStoreV1 } from "../src/web-push/v1";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -283,4 +285,26 @@ test("web delivery retains the bounded provider rejection body for diagnosis and
     assert.doesNotThrow(() => pushRejectionReasonV1({ body }));
     assert.equal(pushRejectionReasonV1({ body }), undefined, "a response without body text has no diagnostic text");
   }
+});
+
+test("production web channel Authorization signs the installation origin", async t => {
+  const { createWebPushChannelV1 } = await import("../src/web-push/v1/channel");
+  const { default: webpush } = await import("web-push");
+  const keys = webpush.generateVAPIDKeys(), phone = createECDH("prime256v1"); phone.generateKeys();
+  const requests: { headers: Record<string, string> }[] = [];
+  // Stop at the transport only; the production channel and library build the JWT.
+  t.mock.method(https, "request", (options: { headers: Record<string, string> }) => {
+    requests.push(options); throw new Error("offline_transport_stop");
+  });
+  const channel = createWebPushChannelV1({ subject: "https://fixture.ts.net", ...keys });
+  await assert.rejects(channel.send({ ...subscription, endpoint: "https://web.push.apple.com/3/device/fixture",
+    p256dh: phone.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url") },
+  { title: "Control Room needs you", link: "/needs-me", tag: "control-room:test" }), /offline_transport_stop/u);
+  assert.equal(requests.length, 1);
+  const token = /^vapid t=([^,]+), k=(.+)$/u.exec(requests[0].headers.Authorization);
+  assert.ok(token, "production web channel supplies a VAPID Authorization header");
+  const jwt = JSON.parse(Buffer.from(token[1].split(".")[1], "base64url").toString("utf8"));
+  assert.equal(jwt.sub, "https://fixture.ts.net", "production web channel JWT sub is the installation origin");
+  assert.equal(jwt.aud, "https://web.push.apple.com");
+  assert.equal(token[2], keys.publicKey);
 });

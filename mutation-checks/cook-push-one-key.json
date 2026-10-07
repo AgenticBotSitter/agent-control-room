@@ -190,8 +190,8 @@
   },
   {
     "file": "src/updater/v1/install/installer.mjs",
-    "find": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
-    "replace": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (false) refuse(\"existing_key_refused\");\n",
+    "find": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (!vapid) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");\n    error.code = \"existing_key_refused\";\n    error.userMessage = error.message;\n    throw error;\n  }\n  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (!vapid) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");\n    error.code = \"existing_key_refused\";\n    error.userMessage = error.message;\n    throw error;\n  }\n  if (false) refuse(\"existing_key_refused\");\n",
     "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
     "why": "Refuse publicly readable web credentials before install effects."
   },
@@ -264,5 +264,26 @@
     "replace": "true",
     "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
     "why": "Refuse reserved test/local suffixes while allowing those words in real DNS hostnames."
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);",
+    "replace": "webpush.setVapidDetails(\"https://wrong.ts.net\", vapid.publicKey, vapid.privateKey);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"production defaultSend Authorization\" tests/updater-alerts.test.mjs",
+    "why": "The production default sender JWT sub must equal the independently specified installation origin."
+  },
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);",
+    "replace": "webpush.setVapidDetails(\"https://wrong.ts.net\", config.publicKey, config.privateKey);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"production web channel Authorization\" tests/owner-web-push.test.ts",
+    "why": "The production web channel JWT sub must equal the independently specified installation origin."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!vapid) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");",
+    "replace": "if (false) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"a retired manual web key\" tests/control-room-installer.test.mjs",
+    "why": "The retired manual-file refusal must identify the file and recovery in the CLI user message, with no adoption."
   }
 ]

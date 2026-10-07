@@ -31,7 +31,7 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
     ['src/pg-runtime/v1/pg-cluster-layout.ts',Buffer.from('export const standIn=true;\n')],
     // r5bk's recency reader and r7journal's jsonl-prefix are staged inputs too.
     ['src/installer/v1/nightly-backup-recency.ts',Buffer.from('export const standIn=true;\n')],
-    ...['is-main-module','strict-json','rehearsal-hostname','file-custody','private-process-lock','jsonl-prefix'].map(n=>[`src/installer/shared/${n}.mjs`,Buffer.from('export const standIn=true;\n')])
+    ...['is-main-module','strict-json','rehearsal-hostname','file-custody','private-process-lock','jsonl-prefix','vapid'].map(n=>[`src/installer/shared/${n}.mjs`,Buffer.from('export const standIn=true;\n')])
   ]);
   const oid=b=>createHash('sha1').update(Buffer.from(`blob ${b.length}\0`)).update(b).digest('hex');
   const helper=join(root,'helper'), fakeGit=join(root,'fake-git.mjs'), token=join(root,'updater-state/github-read.token');
