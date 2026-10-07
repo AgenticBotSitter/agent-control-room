@@ -1128,7 +1128,10 @@ test("the lock stress probe completes every requested acquisition", async () => 
         await writeFile(stall, `import cp from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { writeFileSync } from "node:fs";
-const block = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+const block = () => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 90_000);
+  process.exit(70);
+};
 if (typeof process.send === "function") {
   const send = process.send;
   let blocked = false;
@@ -1235,6 +1238,78 @@ if (typeof process.send === "function") {
     else await run();
   } finally {
     // Keep a scratch-deletion mutation confined to this test's private root.
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Deliberately slow (about 90 seconds): CI runs this through test:fleet.
+// Kill the outer runner, so its finally cannot hide an unbounded stall.
+test("the deadline stall group expires after external test interruption", { timeout: 140_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "connector-stress-interrupt-"));
+  let outer, stressGroup;
+  const alive = group => {
+    if (!group) return false;
+    try { process.kill(-group, 0); return true; }
+    catch (error) {
+      if (error.code === "ESRCH") return false;
+      if (error.code === "EPERM") return true;
+      throw error;
+    }
+  };
+  const kill = group => {
+    if (!group) return;
+    try { process.kill(-group, "SIGKILL"); }
+    catch (error) { if (!["ESRCH", "EPERM"].includes(error.code)) throw error; }
+  };
+  const waitGone = async (group, milliseconds) => {
+    const deadline = Date.now() + milliseconds;
+    while (alive(group) && Date.now() < deadline)
+      await new Promise(done => setTimeout(done, 25));
+  };
+  try {
+    outer = spawn("python3", ["-c",
+      "import os,sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])",
+      process.execPath, "scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",
+      "--test-concurrency=1", "--test-name-pattern=^the lock stress probe completes every requested acquisition$",
+      "tests/fleet-connector-install.test.mjs"], {
+      cwd: resolve("."), stdio: "ignore",
+      env: { ...process.env, TMPDIR: root, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1",
+        CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE: "1" },
+    });
+    const closed = new Promise((done, reject) => {
+      outer.once("error", reject);
+      outer.once("close", done);
+    });
+    // A real IPC acquisition publishes the record; do not guess when to kill.
+    const progressDeadline = Date.now() + 30_000;
+    let record;
+    while (!record && Date.now() < progressDeadline) {
+      for (const name of await readdir(root)) {
+        if (!name.startsWith("connector-stress-deadline-")) continue;
+        try { record = JSON.parse(await readFile(join(root, name, "stalled.json"), "utf8")); }
+        catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; }
+      }
+      if (!record) await new Promise(done => setTimeout(done, 25));
+    }
+    assert.ok(record, "external interruption must observe real stress progress before killing the runner");
+    assert.ok(Number.isSafeInteger(record.parent) && record.parent > 0);
+    assert.ok(Number.isSafeInteger(record.worker) && record.worker > 0);
+    stressGroup = record.parent;
+    assert.equal(alive(stressGroup), true, "the recorded stress group must exist before interruption");
+    kill(outer.pid);
+    await closed;
+    assert.equal(alive(stressGroup), true, "outer runner kill must leave the separate stress group to expire itself");
+    await waitGone(stressGroup, 100_000);
+    assert.equal(alive(stressGroup), false,
+      "external test interruption must leave no live stress group within 100 seconds");
+  } finally {
+    // External safety containment, including an intentionally unbounded mutant.
+    kill(outer?.pid);
+    kill(stressGroup);
+    await waitGone(outer?.pid, 5_000);
+    await waitGone(stressGroup, 5_000);
+    assert.equal(alive(outer?.pid), false, "interruption probe must clean its outer runner group");
+    assert.equal(alive(stressGroup), false, "interruption probe must clean its stress group");
     await rm(root, { recursive: true, force: true });
   }
 });

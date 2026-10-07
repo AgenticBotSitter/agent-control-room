@@ -26,5 +26,12 @@
     "replace": "      // Mutation: omit primary scratch deletion.\n      await assert.rejects(stat(root)",
     "test": "CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the lock stress probe completes every requested acquisition\" tests/fleet-connector-install.test.mjs",
     "why": "omitting private scratch removal must fail outer test timeout must clean product scratch against independent ENOENT; the outer unmutated test safety cleanup removes the mutation fixture"
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 90_000);\n  process.exit(70);",
+    "replace": "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the deadline stall group expires after external test interruption\" tests/fleet-connector-install.test.mjs",
+    "why": "removing the bounded stall must fail external test interruption must leave no live stress group within 100 seconds against independent ESRCH; the external safety fallback is unchanged"
   }
 ]
