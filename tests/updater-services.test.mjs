@@ -659,3 +659,54 @@ test("the default elevated runtime reads the core batch's system files through t
     assert.equal(await realpath(directory), directory, resource.path);
   }
 });
+
+// MEASURED (VM, macOS 26): `launchctl bootout` returns while the job is still stopping, and
+// `launchctl print` answers 0 until it has exited. The undo of `install-database-service`
+// checked postgres at once, found `postmaster.pid`, refused `postgres_not_shut_down`, and
+// left the postgres plist and the cluster behind (`install_rollback_incomplete`).
+function slowStopRuntime(fake, polls) {
+  const stopping = new Map(); let clock = 0, slept = 0;
+  const runtime = { ...fake.runtime,
+    now: () => clock, sleep: async milliseconds => { slept += 1; clock += milliseconds; },
+    async execute(file, args) {
+      const result = await fake.runtime.execute(file, args);
+      if (args[0] === "bootout") stopping.set(args[1].replace(/^system\//u, ""), polls);
+      return result;
+    },
+    async isServiceLoaded(label) {
+      const left = stopping.get(label) ?? 0;
+      if (left > 0) { stopping.set(label, left - 1); return true; }
+      return fake.runtime.isServiceLoaded(label);
+    },
+    verifyPostgresShutdown: async () => (stopping.get("xyz.agentcontrolroom.postgres") ?? 0) === 0,
+  };
+  return { runtime, slept: () => slept };
+}
+
+test("uninstall waits for a booted-out postgres to exit before checking it, then removes its plist", async t => {
+  const fake = await fakeRuntime(t, "slow-stop");
+  const slow = slowStopRuntime(fake, 6), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
+  const plist = fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.postgres.plist");
+  assert.equal(await absent(plist), false);
+  assert.deepEqual(await uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    { outcome: "removed" });
+  assert.equal(await absent(plist), true, "the postgres plist is removed once the job has exited");
+  assert.equal(slow.slept(), 6, "it polled until launchd dropped the job");
+  // The same wait protects the planned-row recovery the init-database undo runs.
+  const again = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
+  assert.equal((await recoverServicesV1({ root: fake.root, roles: ["postgresql17"], receipt: again.receipt },
+    { elevatedPort: port })).usedReceipt, true);
+});
+
+test("a job that never leaves launchd after bootout is refused at the bound, not waited on forever", async t => {
+  const fake = await fakeRuntime(t, "never-stops");
+  const slow = slowStopRuntime(fake, Number.MAX_SAFE_INTEGER), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
+  await assert.rejects(uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    /launchctl_bootout_timeout/u);
+  const { SERVICE_STOP_TIMEOUT_MS_V1 } = await import("../src/updater/v1/services/elevated.mjs");
+  assert.equal(slow.slept(), SERVICE_STOP_TIMEOUT_MS_V1 / 250);
+  assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.postgres.plist")), false,
+    "a job still loaded keeps its plist");
+});

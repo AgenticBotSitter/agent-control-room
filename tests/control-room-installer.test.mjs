@@ -2261,7 +2261,9 @@ test("after a clean rollback past init-database or post-health services, the ret
   // replayed port must be repeatable. The postgres shutdown check ran pg_controldata on
   // the retired cluster (ENOENT), and the owner-code rollback refused a file the core
   // services rollback had already removed - every retry, until root's journal was edited.
-  const notLoaded = { geteuid: () => 0, execute: async file => {
+  // `isServiceLoaded` answers too: bootout now waits for launchd to drop the job, and the
+  // default would ask this host's real launchd.
+  const notLoaded = { geteuid: () => 0, isServiceLoaded: async () => false, execute: async file => {
     if (file === "/bin/launchctl") throw Object.assign(new Error("not loaded"), { code: 3 });
     throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
   } };

@@ -80,10 +80,16 @@ export function macosSystemPathV1(path, platform = process.platform) {
     ? `/private${path}` : path;
 }
 
+/** Bound on waiting for launchd to drop a booted-out job: postgres's ExitTimeOut (120 s) plus margin. */
+export const SERVICE_STOP_TIMEOUT_MS_V1 = 130_000;
+
 function defaultRuntime() {
   return Object.freeze({
     geteuid: () => process.geteuid?.() ?? -1,
     pathFor: path => macosSystemPathV1(path),
+    now: () => Date.now(),
+    sleep: milliseconds => new Promise(resolveSleep => setTimeout(resolveSleep, milliseconds)),
+    stopTimeoutMs: SERVICE_STOP_TIMEOUT_MS_V1,
     lstat, mkdir, open, readFile, unlink, rmdir, lchown,
     execute: (file, args) => runFile(file, args, { env: { PATH: "/usr/bin:/bin", HOME: "/var/root" },
       timeout: 30_000, maxBuffer: 1024 * 1024 }),
@@ -288,10 +294,22 @@ export function launchctlNotLoadedV1(error) {
   return error?.code === 3 || error?.code === 113 || error?.code === "ESRCH";
 }
 
+/**
+ * `launchctl bootout` RETURNS BEFORE THE JOB HAS EXITED. MEASURED (VM, macOS 26): a job that
+ * needs 3 s to stop after SIGTERM had bootout return at once, and `launchctl print` kept
+ * answering 0 until the process was gone. Checking postgres right after bootout therefore
+ * found `postmaster.pid` still there and refused `postgres_not_shut_down`, so the install's
+ * undo left the postgres plist and the cluster behind. Wait, bounded, for launchd to drop it.
+ */
 async function bootout(runtime, label) {
   await runtime.execute("/bin/launchctl", ["bootout", `system/${label}`]).catch(error => {
     if (!launchctlNotLoadedV1(error)) refuse("launchctl_refused");
   });
+  const deadline = runtime.now() + runtime.stopTimeoutMs;
+  while (await runtime.isServiceLoaded(label)) {
+    if (runtime.now() >= deadline) refuse("launchctl_bootout_timeout");
+    await runtime.sleep(250);
+  }
 }
 
 async function verifyPostgres(runtime, root) {
