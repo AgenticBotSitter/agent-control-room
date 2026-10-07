@@ -206,9 +206,7 @@ test("production defaultSend Authorization signs the installation origin", async
 
 test("legacy invalid VAPID keeps the production updater running with a status-card warning and no sends", async t => {
   const startup = await import("../src/updater/v1/updater.mjs");
-  // Full native lock composition runs on Mac; Linux exercises the same startup
-  // body. This test makes no Linux local-lock or cross-process guarantee.
-  const startUpdaterV1 = process.platform === "darwin" ? startup.startUpdaterV1 : startup.startLockedUpdaterV1;
+  const { startUpdaterV1 } = startup;
   const { createUpdaterHomeStatusReaderV1 } = await import("../src/web/v1/updater-home-status.ts");
   const { readUpdaterHomeStatusV1 } = await import("../src/web/v1/updater-home-status-browser.ts");
   // Use a short job-local root: Darwin's UNIX socket path has a 103-byte limit.
@@ -222,6 +220,38 @@ test("legacy invalid VAPID keeps the production updater running with a status-ca
     acquire: async token => { acquisitions++; return { status: "acquired", run: null, leaseToken: token }; }, heartbeat: async () => { beats++; },
     unhandledOwnerRequests: async () => [] });
   const runtime = { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) };
+  if (process.platform !== "darwin") {
+    // Portable alternative: real production preflight and status ports. Native
+    // updater/control socket locks remain qualified by the Mac branch below.
+    const { UpdaterStateFilesV1 } = await import("../src/updater/v1/runtime.mjs");
+    for (const subject of ["mailto:owner@control-room.invalid", "", undefined, "https://fixture.invalid"]) {
+      await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
+      let prepared;
+      await assert.doesNotReject(async () => { prepared = await startup.prepareUpdaterAlertsV1(
+        new UpdaterAlertSenderV1({ root, store, ...runtime }), error => warnings.push(error.code)); },
+      "a legacy invalid contact must not stop production preflight");
+      assert.equal(prepared.alertSender, null, "invalid contacts disable only sending");
+      const state = startup.withUpdaterAlertWarningV1(new UpdaterStateFilesV1(root, "lease-portable"), prepared.alertWarning);
+      await state.writeStatus({ state: "idle", selfUpdate: "On" });
+      const card = await createUpdaterHomeStatusReaderV1({ root }).read();
+      const browserCard = await readUpdaterHomeStatusV1(async () => Response.json(card));
+      assert.equal(browserCard.reason, "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "the browser accepts the warning captured from the real status reader");
+      const updateReason = "An update could not finish cleanly. Control Room needs you.";
+      await state.writeStatus({ state: "needs_attention", selfUpdate: "On", reason: updateReason });
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, updateReason,
+        "an outstanding update reason is not hidden by the notification warning");
+      assert.equal(store.subscriptionReads, 0); assert.equal(store.rows[0].attempts, 0);
+    }
+    await chmod(join(root, "updater-state/vapid.json"), 0o644);
+    await assert.rejects(startup.prepareUpdaterAlertsV1(new UpdaterAlertSenderV1({ root, store, ...runtime }), () => {}),
+      /updater_vapid_permissions_refused/u, "custody failures remain fatal");
+    await chmod(join(root, "updater-state/vapid.json"), 0o600);
+    await assert.rejects(startup.prepareUpdaterAlertsV1(new UpdaterAlertSenderV1({ root, store, getuid: () => 501 }), () => {}),
+      /updater_vapid_not_root/u, "wrong authority remains fatal");
+    t.diagnostic("Portable production preflight/status round trip completed; native startup locks require the Mac run.");
+    return;
+  }
   for (const subject of ["mailto:owner@control-room.invalid", "", undefined, "https://fixture.invalid"]) {
     await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
     let updater;

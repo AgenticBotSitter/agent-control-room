@@ -316,8 +316,8 @@
   },
   {
     "file": "src/updater/v1/contracts.mjs",
-    "find": "updater_vapid_invalid: \"Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.\",",
-    "replace": "updater_vapid_invalid: \"Phone notifications are unavailable.\",",
+    "find": "updater_vapid_invalid:\n    \"Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.\",",
+    "replace": "updater_vapid_invalid:\n    \"Phone notifications are unavailable.\",",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
     "why": "The warning is checked against an independent literal, not cloned from the contract table."
   }

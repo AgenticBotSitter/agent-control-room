@@ -413,9 +413,31 @@ export async function startUpdaterV1(options = {}) {
   } catch (error) { await release(); throw error; }
 }
 
-// The caller owns the local kernel lock. The exported composition also permits
-// portable qualification of startup without substituting macOS lockf answers.
-export async function startLockedUpdaterV1(options = {}) {
+// These production preflight/status ports have no native-tool dependency.
+export async function prepareUpdaterAlertsV1(alerts, reportError) {
+  let alertSender = alerts, alertWarning = null;
+  if (alerts) {
+    try { await alerts.preflight(); }
+    catch (error) {
+      if (!["updater_vapid_unavailable", "updater_vapid_invalid"].includes(error?.code)) throw error;
+      alertWarning = UPDATER_RUN_REASON_V1[error.code];
+      reportError(Object.assign(new Error(error.code), { code: error.code, warning: true }));
+      alertSender = null;
+    }
+  }
+  return { alertSender, alertWarning };
+}
+
+export function withUpdaterAlertWarningV1(stateFiles, alertWarning) {
+  if (alertWarning) {
+    const writeStatus = stateFiles.writeStatus.bind(stateFiles);
+    // Keep an outstanding update's own reason ahead of the notification warning.
+    stateFiles.writeStatus = value => writeStatus({ ...value, reason: value.reason ?? alertWarning });
+  }
+  return stateFiles;
+}
+
+async function startLockedUpdaterV1(options = {}) {
   const env = options.env ?? process.env, root = options.root ?? updaterRootV1(env);
   let client = options.client, ownsClient = false, store = options.store, startupStep = "configuration";
   try {
@@ -457,17 +479,8 @@ export async function startLockedUpdaterV1(options = {}) {
   // A missing or invalid contact disables sending, not updates. Older installed
   // code can leave a placeholder contact when staging this updater. Custody
   // failures still refuse before lease acquisition.
-  let alertSender = alerts, alertWarning = null;
-  if (alerts) {
-    startupStep = "alert_preflight";
-    try { await alerts.preflight(); }
-    catch (error) {
-      if (!["updater_vapid_unavailable", "updater_vapid_invalid"].includes(error?.code)) throw error;
-      alertWarning = UPDATER_RUN_REASON_V1[error.code];
-      reportError(Object.assign(new Error(error.code), { code: error.code, warning: true }));
-      alertSender = null;
-    }
-  }
+  if (alerts) startupStep = "alert_preflight";
+  const { alertSender, alertWarning } = await prepareUpdaterAlertsV1(alerts, reportError);
   const requestedIdentity = options.identity ?? newUpdaterIdentityV1();
   let acquisition;
   startupStep = "lease_acquire";
@@ -481,12 +494,7 @@ export async function startLockedUpdaterV1(options = {}) {
   }
   const identity = Object.freeze({ ...requestedIdentity, leaseToken: acquisition.leaseToken });
   const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1(stateFiles);
-  if (alertWarning) {
-    const writeStatus = stateFiles.writeStatus.bind(stateFiles);
-    // Keep an outstanding update's own reason ahead of the notification warning.
-    // Applying it at the real writer covers initial, running, idle and Off ticks.
-    stateFiles.writeStatus = value => writeStatus({ ...value, reason: value.reason ?? alertWarning });
-  }
+  withUpdaterAlertWarningV1(stateFiles, alertWarning);
   const unavailable = async () => { throw updaterRefuseV1("updater_actuator_port_unbound"); };
   const effects = options.effects ?? { precheck: unavailable, stage: unavailable, quickBackup: unavailable,
     drain: unavailable, switchPair: unavailable, restart: unavailable, health: unavailable,
