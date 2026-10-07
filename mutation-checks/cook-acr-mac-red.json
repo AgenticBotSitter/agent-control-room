@@ -19,5 +19,19 @@
     "replace": "if (false)\n      refuse(\"file_custody_refused\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='a replaced temporary symlink' tests/updater-pair-restore.test.mjs",
     "why": "The named pointer assertion compares the real reader with the independent pre-operation new-updater literal; disabling inode identity must publish replacement and fail it."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await assertPointerLeaf(path);\n    await custody();\n    assertOwned(await lstat(temporary));",
+    "replace": "await assertPointerLeaf(path);\n    assertOwned(await lstat(temporary));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='late parent substitution refuses' tests/updater-pair-restore.test.mjs",
+    "why": "The leaf-stage named assertion requires zero foreign temporary-path reads after substitution during the final destination inspection."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "assertOwned(await lstat(temporary));\n    await custody();\n    await rename(temporary, path);",
+    "replace": "assertOwned(await lstat(temporary));\n    await rename(temporary, path);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='late parent substitution refuses' tests/updater-pair-restore.test.mjs",
+    "why": "The temporary-stage named assertion compares the foreign current pointer to independent keep after substitution during the final temporary read."
   }
 ]

@@ -535,6 +535,7 @@ async function replaceLink(root, name, target) {
       } finally { await handle.close(); }
     }
     await assertPointerLeaf(path);
+    await custody();
     assertOwned(await lstat(temporary));
     await custody();
     await rename(temporary, path);

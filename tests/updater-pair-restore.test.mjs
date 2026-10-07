@@ -167,6 +167,40 @@ test('R4B-06: a replaced temporary symlink is refused before publication', async
   assert.equal(outcome.error,'file_custody_refused');
 });
 
+test('R4B-06: late parent substitution refuses before temporary inspection and rename', async t => {
+  for (const stage of ['leaf','temporary']) {
+    const f = await pair(t), foreign = await root(t,'pair-final-custody');
+    await fs.symlink('keep',join(foreign,'current'));
+    const original = fs.lstat;
+    let leafReads = 0, temporaryReads = 0, switched = false, foreignReads = 0, temporary;
+    fs.lstat = async (...args) => {
+      const path = String(args[0]);
+      if (switched && path === temporary) foreignReads++;
+      const entry = await original(...args);
+      if (path.includes('/updater/.current.')) { temporary = path; temporaryReads++; }
+      const trigger = stage === 'leaf' ? path === join(f.value,'updater/current') && ++leafReads === 3
+        : path.includes('/updater/.current.') && temporaryReads === 2;
+      if (!switched && trigger) {
+        await fs.rename(join(f.value,'updater'),join(f.value,'updater-owned'));
+        await fs.symlink(foreign,join(f.value,'updater'));
+        const leaf = temporary.split('/').at(-1);
+        await fs.symlink('planted',join(foreign,leaf));
+        switched = true;
+      }
+      return entry;
+    };
+    syncBuiltinESMExports();
+    let outcome;
+    try { outcome = await capture(switchPairV1({root:f.value,restore:f.restore})); }
+    finally { fs.lstat = original; syncBuiltinESMExports(); }
+    assert.equal(switched,true,`${stage}: adversarial branch reached`);
+    assert.equal(await fs.readlink(join(foreign,'current')),'keep',`${stage}: foreign pointer stays untouched before rename`);
+    assert.equal(foreignReads,0,`${stage}: no foreign temporary inspection after the destination leaf check`);
+    assert.equal(await fs.readlink(join(foreign,temporary.split('/').at(-1))),'planted');
+    assert.equal(outcome.error,'file_custody_refused');
+  }
+});
+
 test('R4B-07: fifty restorations on independent and shared roots finish with the exact saved pair', async t => {
   const fixtures = await Promise.all(Array.from({length:50},()=>pair(t)));
   await Promise.all(fixtures.map(f=>switchPairV1({root:f.value,restore:f.restore})));
