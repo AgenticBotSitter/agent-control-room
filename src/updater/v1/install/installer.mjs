@@ -17,6 +17,10 @@ export const CONTROL_ROOM_E2E2_EVIDENCE_FILE_V1 = "e2e2-evidence.jsonl";
 export const DEFAULT_CONTROL_ROOM_ROOT_V1 = "/Library/Application Support/Control Room";
 export const DEFAULT_CONTROL_ROOM_WEB_PORT_V1 = 3210;
 export const DEFAULT_CONTROL_ROOM_GATEWAY_PORT_V1 = 3211;
+/** `alerts.mjs` reads `updater-state/vapid.json` in this schema; the installer writes it. */
+export const UPDATER_VAPID_SCHEMA_V1 = "control-room.updater-vapid/v1";
+/** The VAPID contact the updater's pushes carry until the owner sets one. Not a real mailbox. */
+export const INSTALL_VAPID_SUBJECT_V1 = "mailto:owner@control-room.invalid";
 export const CONTROL_ROOM_SUDOERS_V1 = "Defaults secure_path=\"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n";
 
 const accountPolicyPath = fileURLToPath(new URL("../policy/accounts.json", import.meta.url));
@@ -398,13 +402,27 @@ async function generateKeys(root, accounts, ports, { credentialAlreadyAdopted = 
   await writeOwned(join(state, "journal.key"), `${key(32).toString("hex")}\n`, { uid: 0, gid: 0 },
     text => /^[a-f0-9]{64}\n$/u.test(text));
   const vapidPath = join(state, "vapid.json"), publicPath = join(protectedService, "vapid-public.json");
+  // The file is the UPDATER's own format (`alerts.mjs` `loadUpdaterVapidV1`: schema, subject and the
+  // two keys). MEASURED (VM, main 66fb6a29): the installer wrote only the two keys, the installed
+  // updater exited at start with `updater_vapid_invalid`, no heartbeat came, and the install was
+  // undone at `install-post-health-services`. A key pair in the old two-key form, left by an earlier
+  // attempt, is kept and rewritten in place (same keys) rather than refused or regenerated.
+  const vapidFile = keys => `${JSON.stringify({ schema: UPDATER_VAPID_SCHEMA_V1, subject: INSTALL_VAPID_SUBJECT_V1,
+    publicKey: keys.publicKey, privateKey: keys.privateKey })}\n`;
   const validVapid = text => typeof jsonObject(text)?.publicKey === "string" && typeof jsonObject(text)?.privateKey === "string";
   const adoptedVapid = await existingKey(vapidPath, { uid: 0, gid: 0 }, validVapid);
   let vapid = adoptedVapid === null ? null : JSON.parse(adoptedVapid);
   if (!vapid) {
     vapid = await ports.generateVapidKeys();
     if (!vapid || typeof vapid.publicKey !== "string" || typeof vapid.privateKey !== "string") refuse("vapid_generation_refused");
-    await writeOwned(vapidPath, `${JSON.stringify(vapid)}\n`, { uid: 0, gid: 0 }, validVapid);
+    await writeOwned(vapidPath, vapidFile(vapid), { uid: 0, gid: 0 }, validVapid);
+  } else if (vapid.schema !== UPDATER_VAPID_SCHEMA_V1) {
+    if (Object.keys(vapid).sort().join(",") !== "privateKey,publicKey") refuse("existing_key_refused");
+    const temporary = join(state, ".vapid.json.installing");
+    await rm(temporary, { force: true }); await safeWrite(temporary, vapidFile(vapid), 0o600);
+    try { await ports.lchownPath(temporary, 0, 0); await rename(temporary, vapidPath); }
+    catch (error) { await rm(temporary, { force: true }); throw error; }
+    await syncDirectory(state);
   }
   // Written, or re-derived after a stop between the two files, from the private file's public half.
   await writeOwned(publicPath, `${JSON.stringify({ publicKey: vapid.publicKey })}\n`, service,

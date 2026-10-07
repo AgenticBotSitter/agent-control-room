@@ -462,7 +462,8 @@ test("install creates isolated accounts, exact layout, root-only custody, secure
   assert.equal((await stat(f.systemPaths.sudoers)).mode & 0o777, 0o440);
   assert.equal(await readFile(join(f.root, "updater-state", "self-update"), "utf8"), "Off\n");
   assert.equal(await readFile(join(f.root, "updater-state", "vapid.json"), "utf8"),
-    '{"publicKey":"fixture-public","privateKey":"fixture-private"}\n');
+    '{"schema":"control-room.updater-vapid/v1","subject":"mailto:owner@control-room.invalid",'
+    + '"publicKey":"fixture-public","privateKey":"fixture-private"}\n');
   assert.equal(await readFile(join(f.root, "Protected", "service", "vapid-public.json"), "utf8"),
     '{"publicKey":"fixture-public"}\n');
   await assert.rejects(readFile(join(f.root, "Protected", "service", "vapid.json")), { code: "ENOENT" });
@@ -576,6 +577,36 @@ test("an undo that refuses leaves install_rollback_incomplete carrying the cause
   assert.equal(error.cause?.message, "services_failed");
   assert.equal(error.failures, 2);
   assert.deepEqual(error.undoFailures, ["postgres_not_shut_down", "postgres_not_shut_down"]);
+});
+
+test("the installer writes vapid.json in the updater's own format, and the installed updater accepts it", async t => {
+  // MEASURED (VM, main 66fb6a29): the installer wrote only the two keys, the updater exited at start
+  // with `updater_vapid_invalid`, no heartbeat came, and the install was undone at
+  // install-post-health-services. This reads the file back through the UPDATER's own loader.
+  const { loadUpdaterVapidV1 } = await import("../src/updater/v1/alerts.mjs");
+  const asRoot = path => lstat(path).then(entry => ({ isFile: () => entry.isFile(), isSymbolicLink: () => entry.isSymbolicLink(),
+    nlink: entry.nlink, uid: 0, mode: entry.mode, size: entry.size }));
+  const f = await fixture(t, "vapid-updater-format");
+  f.ports.generateVapidKeys = async () => nativePorts.generateVapidKeys();
+  await installControlRoomV1(f.options);
+  const loaded = await loadUpdaterVapidV1(f.root, { getuid: () => 0, lstat: asRoot });
+  const written = JSON.parse(await readFile(join(f.root, "updater-state", "vapid.json"), "utf8"));
+  assert.equal(loaded.publicKey, written.publicKey);
+  assert.equal(JSON.parse(await readFile(join(f.root, "Protected", "service", "vapid-public.json"), "utf8")).publicKey,
+    written.publicKey);
+
+  // A two-key file left by an earlier attempt keeps its keys and is rewritten in the updater's form.
+  const legacy = await fixture(t, "vapid-legacy", { failStep: "init-database" });
+  legacy.ports.generateVapidKeys = async () => nativePorts.generateVapidKeys();
+  await assert.rejects(installControlRoomV1(legacy.options), /fixture_step_failure/u);
+  const path = join(legacy.root, "updater-state", "vapid.json");
+  const first = JSON.parse(await readFile(path, "utf8"));
+  await writeFile(path, `${JSON.stringify({ publicKey: first.publicKey, privateKey: first.privateKey })}\n`, { mode: 0o600 });
+  const retryPorts = fakePorts({ version: "1.2.4", users: legacy.ports.users, groups: legacy.ports.groups });
+  retryPorts.generateVapidKeys = async () => assert.fail("an adopted key pair is never regenerated");
+  await installControlRoomV1({ ...legacy.options, ports: retryPorts });
+  const upgraded = await loadUpdaterVapidV1(legacy.root, { getuid: () => 0, lstat: asRoot });
+  assert.deepEqual([upgraded.publicKey, upgraded.privateKey], [first.publicKey, first.privateKey]);
 });
 
 test("self-update On refuses a repeat install before build effects", async t => {
