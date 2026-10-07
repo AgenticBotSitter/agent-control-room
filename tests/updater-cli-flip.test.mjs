@@ -729,3 +729,21 @@ test("refusal codes print exactly as before the stop-line change", async () => {
   assert.equal(cliFailureMessageV1({ userMessage: "this commit is already installed", code: "x" }), "this commit is already installed");
   assert.equal(cliFailureMessageV1(undefined), "updater_cli_failed");
 });
+
+
+test("database update refusal prints fixed owner guidance and retains the lead code", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const expected = "Update stopped: this commit changes the database. Your installed version and database were not changed. Wait for the database upgrader and tell the lead. (attended_database_change_requires_upgrader)";
+  const refusal = { code: "attended_database_change_requires_upgrader" };
+  assert.equal(cliFailureMessageV1(refusal), expected, "database refusal owner guidance is complete");
+  // The explanation is selected by the exact code, never port-supplied text.
+  assert.equal(cliFailureMessageV1({ ...refusal, message: "UNTRUSTED-MESSAGE", userMessage: "UNTRUSTED-OWNER-TEXT" }), expected);
+  for (const code of ["attended_database_change_requires_upgrader_extra", "ATTENDED_DATABASE_CHANGE_REQUIRES_UPGRADER", "attended_classification_refused"])
+    assert.equal(cliFailureMessageV1({ code, message: "UNTRUSTED-MESSAGE" }), code);
+  assert.equal(cliFailureMessageV1(new Error("attended_database_change_requires_upgrader")),
+    "updater_cli_failed: attended_database_change_requires_upgrader", "an uncoded error does not claim installed state");
+  const withCause = cliFailureMessageV1({ ...refusal, cause: { code: "updater_fetch_refused" } });
+  assert.equal(withCause, `${expected}; cause: updater_fetch_refused`);
+  assert.ok(withCause.length <= 400);
+  assert.doesNotMatch(withCause, /[\u0000-\u001f\u007f-\u009f]/u);
+});

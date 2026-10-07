@@ -1,0 +1,16 @@
+[
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (error?.code === \"attended_database_change_requires_upgrader\")",
+    "replace": "if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='database update refusal prints fixed owner guidance' tests/updater-cli-flip.test.mjs",
+    "why": "exact database refusal code must select the independently specified owner guidance and retain the lead code"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!fresh && classification.changesDatabase) refuse(\"attended_database_change_requires_upgrader\");",
+    "replace": "if (false) refuse(\"attended_database_change_requires_upgrader\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='a repeat whose verified diff touches db' tests/control-room-installer.test.mjs",
+    "why": "an installed database change must refuse before confirmation, staging, pointer switching or service and database changes, including retry"
+  }
+]

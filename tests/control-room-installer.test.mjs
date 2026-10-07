@@ -28,7 +28,7 @@ import { assertRehearsalInvocationV1, assertNoLiveRehearsalCollisionsV1 } from "
 import nativePorts, { invalidateSudoTimestampV1, parseTailscaleJsonV1, readTailscaleRpIdV1,
   runTailscaleCliV1, sudoSecurePathIsActiveV1 } from "../src/updater/v1/cli/control-room-native-ports.mjs";
 import { installerPortModulePathV1, parseInstallerArgumentsV1, parseInvokingArgumentsV1,
-  CONTROL_ROOM_INSTALLER_CAPABILITIES_V1, canonicalJsonV1, runUpdaterCliV1 } from "../src/updater/v1/cli.mjs";
+  CONTROL_ROOM_INSTALLER_CAPABILITIES_V1, canonicalJsonV1, cliFailureMessageV1, runUpdaterCliV1 } from "../src/updater/v1/cli.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONTROL_ROOM_SHIM_V1 = await readFile(join(repository, "src/updater/v1/bin/control-room"), "utf8");
@@ -1421,12 +1421,36 @@ test("an unchanged fixed bundle advances only the release pair", async t => {
 });
 
 test("a repeat whose verified diff touches db is refused before confirmation or staging", async t => {
-  const f = await fixture(t, "repeat-db-refusal"); await installControlRoomV1(f.options);
-  const next = fakePorts({ changesDatabase: true, users: f.ports.users, groups: f.ports.groups });
-  await assert.rejects(installControlRoomV1({ ...f.options, bootstrap: undefined, commit: "b".repeat(40), ports: next }),
-    /attended_database_change_requires_upgrader/u);
-  assert.equal(next.calls.some(call => call[0] === "confirm"), false);
-  assert.equal(next.calls.some(call => call[0] === "stage-release"), false);
+  const f = await fixture(t, "repeat-db-refusal");
+  await assert.rejects(lstat(f.root), { code: "ENOENT" }, "setup leaves product state absent");
+  await installControlRoomV1(f.options);
+  const snapshot = async () => ({
+    pointers: await Promise.all(["current", "previous", "updater/current", "updater/previous"]
+      .map(path => readlink(join(f.root, path)))),
+    releases: (await readdir(join(f.root, "releases"))).sort(),
+    updater: (await readdir(join(f.root, "updater"))).sort(),
+    database: (await readdir(join(f.root, "pg"))).sort(),
+    serve: f.ports.serveState(),
+  });
+  const before = await snapshot();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const next = fakePorts({ changesDatabase: true, users: f.ports.users, groups: f.ports.groups });
+    let refusal;
+    await assert.rejects(runUpdaterCliV1(["install", "--commit", "b".repeat(40),
+      "--invoking-user", "fixture-owner", "--invoking-uid", "501", "--invoking-gid", "20"], {
+      root: f.root, getuid: () => 0, installerPorts: next,
+      installerOptions: { accountsPolicy: accountPolicy, systemPaths: f.systemPaths }, stdout() {}, stderr() {},
+    }), error => { refusal = error; return error?.code === "attended_database_change_requires_upgrader"; });
+    for (const name of ["confirm", "stage-release", "stage-updater", "switch-pair", "restart-services",
+      "install-services", "database-phase", "activate", "health"])
+      assert.equal(next.calls.some(call => call[0] === name), false, `database refusal never calls ${name}`);
+    assert.equal(next.calls.filter(call => call[0] === "classify-source").length, 1, "the refusal reaches classification");
+    assert.equal(next.calls.filter(call => call[0] === "abort-attended").length, 1, "refusal cleans build scratch");
+    assert.deepEqual(await snapshot(), before, "database refusal preserves installed trees, pointers and service state");
+    await assert.rejects(lstat(join(f.root, "build", "job-bbbbbbbbbbbb")), { code: "ENOENT" });
+    assert.equal(cliFailureMessageV1(refusal), "Update stopped: this commit changes the database. Your installed version and database were not changed. Wait for the database upgrader and tell the lead. (attended_database_change_requires_upgrader)",
+      "real CLI database refusal includes owner guidance and the lead code");
+  }
 });
 
 test("the single CLI sends install --commit through the installer repeat journal and never the retired attended entry", async t => {
