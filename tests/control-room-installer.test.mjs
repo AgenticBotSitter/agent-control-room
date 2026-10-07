@@ -2643,7 +2643,7 @@ test("installer refuses malformed adopted key shapes before account or release e
     await chmod(join(f.root, name), 0o644);
     const ports = fakePorts({ users: f.ports.users, groups: f.ports.groups });
     await assert.rejects(installControlRoomV1({ ...f.options, ports }), /existing_key_refused/u);
-    assert.equal(ports.calls.some(call => ["build-release", "install-services"].includes(call[0])), false,
+    assert.equal(ports.calls.some(call => ["lchown", "recover-services", "build-release", "install-services"].includes(call[0])), false,
       "publicly readable credentials must be refused during preflight");
   }
   for (const corrupt of [value => ({ ...value, extra: true }), value => ({ ...value, schema: "unknown" }),
