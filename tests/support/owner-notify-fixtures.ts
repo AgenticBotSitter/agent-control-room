@@ -8,7 +8,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 export const now = Date.parse("2026-10-01T12:00:00Z");
-export const vapid = { subject: "mailto:fixture@example.invalid", ...webpush.generateVAPIDKeys() };
+export const vapid = { subject: "https://fixture.ts.net", ...webpush.generateVAPIDKeys() };
 const ecdh = createECDH("prime256v1"); ecdh.generateKeys();
 export const subscription = { id: "push:fixture", tenantId: "tenant:fixture",
   endpoint: "https://fcm.googleapis.com/fcm/send/fixture", p256dh: ecdh.getPublicKey().toString("base64url"),

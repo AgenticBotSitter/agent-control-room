@@ -256,7 +256,7 @@ export async function buildFixedUpdaterBundleV1(input) {
     // list aligned with the attended source inputs so isolated bundles can load.
     const guardRoot = resolve(join(workspace, "../../installer/shared"));
     await mkdir(guardRoot, { recursive: true, mode: 0o700 });
-    for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix"])
+    for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix", "vapid"])
       await copyFile(join(source, `src/installer/shared/${name}.mjs`), join(guardRoot, `${name}.mjs`));
     // And the staged copy of THIS file is itself a bundle entry (`policy/bundle.json`
     // lists it). It carries its entry guard INLINE (rv-9b B3: the seed runs it

@@ -58,7 +58,7 @@ async function transport(f, path, method, body, cookie, extra = {}) {
 }
 
 function pushFixture(t) {
-  return fixture(t, { ownerWebPush: { subject: "mailto:test@example.invalid", ...webpush.generateVAPIDKeys() },
+  return fixture(t, { ownerWebPush: { subject: "https://fixture.ts.net", ...webpush.generateVAPIDKeys() },
     ownerPushDispatch: false });
 }
 

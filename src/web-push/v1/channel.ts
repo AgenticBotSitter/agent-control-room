@@ -1,9 +1,10 @@
 import webpush from "web-push";
+import { vapidSubjectAllowedV1 } from "../../installer/shared/vapid.mjs";
 import type { OwnerNotificationChannelV1, OwnerPushPayloadV1, OwnerPushSubscriptionRecordV1, OwnerWebPushConfigV1 } from "./types";
 import { ownerPushEndpointAllowedV1, ownerPushPayloadIsMinimalV1 } from "./policy";
 
 export function createWebPushChannelV1(config: OwnerWebPushConfigV1): OwnerNotificationChannelV1 {
-  if (!/^mailto:[^\s@]+@[^\s@]+$/.test(config.subject) || !/^[A-Za-z0-9_-]{80,100}$/.test(config.publicKey)
+  if (!vapidSubjectAllowedV1(config.subject) || !/^[A-Za-z0-9_-]{80,100}$/.test(config.publicKey)
     || !/^[A-Za-z0-9_-]{40,100}$/.test(config.privateKey)) throw new Error("web_push_config_invalid");
   webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);
   return Object.freeze({ kind: "web-push", async send(subscription: OwnerPushSubscriptionRecordV1, payload: OwnerPushPayloadV1) {

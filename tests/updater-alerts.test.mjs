@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import https from "node:https";
+import { createECDH, randomBytes } from "node:crypto";
 import { UPDATER_PUSH_RETRY_MS_V1, UpdaterAlertSenderV1, loadUpdaterVapidV1 } from "../src/updater/v1/alerts.mjs";
 import { ownerPushEndpointAllowedV1 } from "../src/updater/v1/push-policy.mjs";
 
-const vapid = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+const vapid = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "https://fixture.ts.net",
   publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 const id = n => `push:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
@@ -141,4 +143,183 @@ test("a slow push is timed out, retried on a bounded schedule, and never piles u
   assert.equal(rows[0].attempts, 1, "a slow service cannot burn through the retry budget in a loop");
   assert.ok(store.subscriptionReads >= 1, "subscriptions were cached from the database before the outage");
   assert.ok((await readFile(join(root, "updater-state/push-subscriptions.json"), "utf8")).includes("fcm.googleapis.com"));
+});
+
+test("updater VAPID accepts installation HTTPS origin and fails closed on missing and reserved contacts", async t => {
+  const root = await fixture(t), path = join(root, "updater-state/vapid.json");
+  const runtime = { getuid: () => 0, lstat: async name => Object.assign(await lstat(name), { uid: 0 }) };
+  await writeFile(path, JSON.stringify({ ...vapid, subject: "https://fixture.ts.net" }), { mode: 0o600 });
+  assert.equal((await loadUpdaterVapidV1(root, runtime)).subject, "https://fixture.ts.net");
+  for (const subject of [undefined, "", "mailto:owner@example.invalid", "mailto:owner@localhost", "https://example.org",
+    "https://fixture.ts.net/", "https://fixture.ts.net:443", "https://fixture.ts.net?x", "https://fixture.invalid"]) {
+    await writeFile(path, JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
+    await assert.rejects(loadUpdaterVapidV1(root, runtime), /updater_vapid_invalid/u, String(subject));
+  }
+});
+
+test("updater send results retain the bounded push service rejection body", async t => {
+  const root = await fixture(t), row = { id: id(1), template: "control-room-updater.web-down", attempts: 0 };
+  const store = new MemoryStore([row]);
+  const sender = new UpdaterAlertSenderV1({ root, store, loadVapid: async () => ({ ...vapid, subject: "https://fixture.ts.net" }),
+    send: async () => { throw { statusCode: 403, body: "VapidPkHashMismatch" + "x".repeat(2048) }; } });
+  const result = await sender.tick();
+  assert.equal(result.sent, 0);
+  assert.deepEqual(result.failures, [{ subscriptionId: "phone:one", statusCode: 403,
+    rejectionReason: "VapidPkHashMismatch" + "x".repeat(1005) }]);
+  assert.equal(row.sent, false);
+  const burstRoot = await fixture(t), burstStore = new MemoryStore([
+    { id: id(1), template: "control-room-updater.web-down", attempts: 0 },
+    { id: id(2), template: "control-room-updater.backup-failed", attempts: 0 },
+  ]);
+  // The production query returns at most 100 subscriptions. Two templates exercise 200 rejections.
+  burstStore.subscriptionsValue = Array.from({ length: 100 }, (_, n) => ({ id: `phone:${n}`,
+    endpoint: `https://fcm.googleapis.com/fcm/send/${n}`, p256dh: "A", auth: "B", expires_at: null }));
+  const burst = new UpdaterAlertSenderV1({ root: burstRoot, store: burstStore, loadVapid: async () => vapid,
+    send: async () => { throw { statusCode: 403, body: "BadJwtToken" }; } });
+  assert.equal((await burst.tick()).failures.length, 100, "the send result retains at most 100 diagnostic records");
+});
+
+test("production defaultSend Authorization signs the installation origin", async t => {
+  const { default: webpush } = await import("web-push");
+  const root = await fixture(t), keys = webpush.generateVAPIDKeys();
+  await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, ...keys }), { mode: 0o600 });
+  const phone = createECDH("prime256v1"); phone.generateKeys();
+  const store = new MemoryStore([{ id: id(701), template: "control-room-updater.web-down", attempts: 0 }]);
+  store.subscriptionsValue = [{ id: "phone:production", endpoint: "https://web.push.apple.com/3/device/fixture",
+    p256dh: phone.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url"), expires_at: null }];
+  const requests = [];
+  // Intercept only the network boundary, AFTER the real library encrypted and signed.
+  // No provider answer is fabricated: the transport is deliberately unavailable offline.
+  t.mock.method(https, "request", options => { requests.push(options); throw new Error("offline_transport_stop"); });
+  const sender = new UpdaterAlertSenderV1({ root, store, getuid: () => 0,
+    lstat: async path => Object.assign(await lstat(path), { uid: 0 }) });
+  await sender.tick();
+  assert.equal(requests.length, 1, "defaultSend reached the real HTTPS transport exactly once");
+  const token = /^vapid t=([^,]+), k=(.+)$/u.exec(requests[0].headers.Authorization);
+  assert.ok(token, "production defaultSend supplies a VAPID Authorization header");
+  const jwt = JSON.parse(Buffer.from(token[1].split(".")[1], "base64url").toString("utf8"));
+  assert.equal(jwt.sub, "https://fixture.ts.net", "production defaultSend JWT sub is the installation origin");
+  assert.equal(jwt.aud, "https://web.push.apple.com");
+  assert.equal(token[2], keys.publicKey);
+});
+
+
+test("legacy invalid VAPID keeps the production updater running with a status-card warning and no sends", async t => {
+  const startup = await import("../src/updater/v1/updater.mjs");
+  const { startUpdaterV1 } = startup;
+  const { createUpdaterHomeStatusReaderV1 } = await import("../src/web/v1/updater-home-status.ts");
+  const { readUpdaterHomeStatusV1 } = await import("../src/web/v1/updater-home-status-browser.ts");
+  // Use a short job-local root: Darwin's UNIX socket path has a 103-byte limit.
+  await mkdir(join(process.cwd(), ".test-tmp"), { recursive: true });
+  const root = await mkdtemp(join(process.cwd(), ".test-tmp/p-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const warnings = [], store = new MemoryStore([{ id: id(702), template: "control-room-updater.web-down", attempts: 0 }]);
+  let beats = 0, acquisitions = 0;
+  Object.assign(store, { liveRun: async () => null,
+    acquire: async token => { acquisitions++; return { status: "acquired", run: null, leaseToken: token }; }, heartbeat: async () => { beats++; },
+    unhandledOwnerRequests: async () => [] });
+  const runtime = { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) };
+  if (process.platform !== "darwin") {
+    // Portable alternative: real production preflight and status ports. Native
+    // updater/control socket locks remain qualified by the Mac branch below.
+    const { UpdaterStateFilesV1 } = await import("../src/updater/v1/runtime.mjs");
+    for (const subject of ["mailto:owner@control-room.invalid", "", undefined, "https://fixture.invalid"]) {
+      await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
+      let prepared;
+      await assert.doesNotReject(async () => { prepared = await startup.prepareUpdaterAlertsV1(
+        new UpdaterAlertSenderV1({ root, store, ...runtime }), error => warnings.push(error.code)); },
+      "a legacy invalid contact must not stop production preflight");
+      assert.equal(prepared.alertSender, null, "invalid contacts disable only sending");
+      const state = startup.withUpdaterAlertWarningV1(new UpdaterStateFilesV1(root, "lease-portable"), prepared.alertWarning);
+      await state.writeStatus({ state: "idle", selfUpdate: "On" });
+      const card = await createUpdaterHomeStatusReaderV1({ root }).read();
+      const browserCard = await readUpdaterHomeStatusV1(async () => Response.json(card));
+      assert.equal(browserCard.reason, "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "the browser accepts the warning captured from the real status reader");
+      const updateReason = "An update could not finish cleanly. Control Room needs you.";
+      await state.writeStatus({ state: "needs_attention", selfUpdate: "On", reason: updateReason });
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, updateReason,
+        "an outstanding update reason is not hidden by the notification warning");
+      assert.equal(store.subscriptionReads, 0); assert.equal(store.rows[0].attempts, 0);
+    }
+    await chmod(join(root, "updater-state/vapid.json"), 0o644);
+    await assert.rejects(startup.prepareUpdaterAlertsV1(new UpdaterAlertSenderV1({ root, store, ...runtime }), () => {}),
+      /updater_vapid_permissions_refused/u, "custody failures remain fatal");
+    await chmod(join(root, "updater-state/vapid.json"), 0o600);
+    await assert.rejects(startup.prepareUpdaterAlertsV1(new UpdaterAlertSenderV1({ root, store, getuid: () => 501 }), () => {}),
+      /updater_vapid_not_root/u, "wrong authority remains fatal");
+    t.diagnostic("Portable production preflight/status round trip completed; native startup locks require the Mac run.");
+    return;
+  }
+  for (const subject of ["mailto:owner@control-room.invalid", "", undefined, "https://fixture.invalid"]) {
+    await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify({ ...vapid, subject }), { mode: 0o600 });
+    let updater;
+    await assert.doesNotReject(async () => {
+      updater = await startUpdaterV1({ root, store, alertRuntime: runtime,
+        identity: { bootId: "boot-legacy", leaseToken: "lease-legacy" }, onTimerError: error => warnings.push(error.code) });
+    }, "a legacy invalid contact must not stop production startup");
+    try {
+      assert.equal(updater.alerts, null, "invalid contacts disable only sending");
+      assert.ok(beats > 0, "the production updater heartbeats after startup");
+      await Promise.all(Array.from({ length: 50 }, () => updater.loop.tick()));
+      const card = await createUpdaterHomeStatusReaderV1({ root }).read();
+      const browserCard = await readUpdaterHomeStatusV1(async () => Response.json(card));
+      assert.equal(browserCard.reason, "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "the browser accepts the warning captured from the real status reader");
+      assert.equal(card.reason, "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "the real status-card reader retains the owner-readable warning");
+      assert.equal(store.subscriptionReads, 0, "no send path is entered");
+      assert.equal(store.rows[0].attempts, 0, "the queued alert is untouched");
+      await writeFile(join(root, "updater-state/self-update"), "Off\n");
+      await updater.loop.tick();
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason,
+        "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+        "turning self-update Off does not hide the notification warning");
+      await writeFile(join(root, "updater-state/self-update"), "On\n");
+      const updateReason = "An update could not finish cleanly. Control Room needs you.";
+      await updater.loop.stateFiles.writeStatus({ state: "needs_attention", selfUpdate: "On", reason: updateReason });
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, updateReason,
+        "an outstanding update reason is not hidden by the notification warning");
+    } finally { await updater.stop(); }
+  }
+  assert.deepEqual(warnings, Array(4).fill("updater_vapid_invalid"));
+  for (const content of ["{", null]) {
+    const key = join(root, "updater-state/vapid.json");
+    if (content === null) await rm(key); else await writeFile(key, content);
+    let updater;
+    await assert.doesNotReject(async () => { updater = await startUpdaterV1({ root, store, alertRuntime: runtime,
+      onTimerError: error => warnings.push(error.code) }); }, "missing or unreadable contact data leaves updates running");
+    try {
+      assert.equal(updater.alerts, null);
+      const expected = content === null
+        ? "Phone notifications are off because their key is missing. Rerun the installer to repair them; updates continue."
+        : "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.";
+      assert.equal((await createUpdaterHomeStatusReaderV1({ root }).read()).reason, expected);
+      assert.equal(store.subscriptionReads, 0);
+    } finally { await updater.stop(); }
+  }
+  assert.deepEqual(warnings, [...Array(5).fill("updater_vapid_invalid"), "updater_vapid_unavailable"]);
+  // Repair and retry uses the same default sender, and stopping retires all timers/socket.
+  await writeFile(join(root, "updater-state/vapid.json"), JSON.stringify(vapid), { mode: 0o600 });
+  store.rows = [];
+  const repaired = await startUpdaterV1({ root, store, alertRuntime: runtime,
+    identity: { bootId: "boot-repaired", leaseToken: "lease-repaired" } });
+  try { assert.ok(repaired.alerts); } finally { await repaired.stop(); }
+  await assert.rejects(lstat(join(root, "updater-state/control.sock")), { code: "ENOENT" });
+  const unexpected = [];
+  t.after(async () => { for (const updater of unexpected) await updater.stop(); });
+  const start = async alertRuntime => {
+    const updater = await startUpdaterV1({ root, store, alertRuntime });
+    unexpected.push(updater); return updater;
+  };
+  const before = acquisitions;
+  await chmod(join(root, "updater-state/vapid.json"), 0o644);
+  await assert.rejects(start(runtime), /updater_vapid_permissions_refused/u,
+    "custody failures still stop startup before the lease");
+  await chmod(join(root, "updater-state/vapid.json"), 0o600);
+  await assert.rejects(start({ getuid: () => 501 }), /updater_vapid_not_root/u,
+    "wrong authority still stops startup before the lease");
+  assert.equal(acquisitions, before, "custody refusals never acquire a lease");
 });

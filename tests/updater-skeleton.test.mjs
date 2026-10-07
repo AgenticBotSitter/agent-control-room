@@ -74,7 +74,7 @@ const makeRun = () => ({ run_id: "run:00000000-0000-4000-8000-000000000001", pla
  * root-owned 0600; a developer test is neither, so the ONLY thing injected is
  * the identity the custody check reads. The sender, its store and its send
  * path are the real ones, so these tests still run the default construction. */
-const ROOT_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+const ROOT_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "https://fixture.ts.net",
   publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 async function rootHeldVapid(root) {
   await writeFile(join(root, "updater-state/vapid.json"), `${JSON.stringify(ROOT_VAPID)}\n`, { mode: 0o600 });

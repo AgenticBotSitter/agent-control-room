@@ -261,9 +261,9 @@ async function generateInstallerKeys(root, owners) {
     await chmod(path, 0o600);
     owners.set(path, owner);
   };
-  const vapid = await nativePorts.generateVapidKeys();
+  const vapid = { ...await nativePorts.generateVapidKeys(), schema: "control-room.updater-vapid/v1", subject: "https://fixture.ts.net" };
   await write(join(root, "updater-state", "vapid.json"), `${JSON.stringify(vapid)}\n`, ROOT_ID);
-  await write(join(root, "Protected", "service", "vapid-public.json"), `${JSON.stringify({ publicKey: vapid.publicKey })}\n`,
+  await write(join(root, "Protected", "config", "owner-web-push.json"), `${JSON.stringify({ ...vapid, schema: "control-room.owner-web-push-config/v1" })}\n`,
     SERVICE_ID);
   const probe = `${randomBytes(32).toString("base64url")}\n`;
   await write(join(root, "updater-state", "health-probe.key"), probe, ROOT_ID);
@@ -281,7 +281,7 @@ async function generateInstallerKeys(root, owners) {
 /** `install-steps.mjs` `keyReferences`. */
 const keyReferences = root => Object.freeze({
   vapidPrivate: join(root, "updater-state", "vapid.json"),
-  vapidPublic: join(root, "Protected", "service", "vapid-public.json"),
+  vapidPublic: join(root, "Protected", "config", "owner-web-push.json"),
   healthProbeRoot: join(root, "updater-state", "health-probe.key"),
   healthProbeService: join(root, "Protected", "service", "health-probe.key"),
   webHmac: join(root, "Protected", "service", "web-hmac.key"),

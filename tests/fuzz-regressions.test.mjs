@@ -159,7 +159,7 @@ function pushApp(t) {
   let calls = 0;
   const origin = "http://127.0.0.1:3210", code = "fuzz-synthetic-owner-code-for-tests";
   const client = { query: async () => { calls++; return { rows: [] }; }, transaction: async () => { throw new Error("fake_db"); }, transactionWithPreCommitCheck: async () => { throw new Error("fake_db"); } };
-  const app = createMacLocalWebProcessV1({ origin, workspaceId: "workspace:fuzz", localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:fuzz", provider: "local", subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode: code }), sessionSeconds: 300 }, database: { client, close: async () => {}, isAvailable: () => true }, clock: () => Date.parse("2026-10-02T00:00:00.000Z"), workerReadiness: { read: () => [] }, workBatchIntegrityKey: new Uint8Array(32).fill(1), fleet: { ownerAuthority: client }, ownerWebPush: { subject: "mailto:test@example.invalid", ...webpush.generateVAPIDKeys() }, ownerPushDispatch: false });
+  const app = createMacLocalWebProcessV1({ origin, workspaceId: "workspace:fuzz", localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:fuzz", provider: "local", subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode: code }), sessionSeconds: 300 }, database: { client, close: async () => {}, isAvailable: () => true }, clock: () => Date.parse("2026-10-02T00:00:00.000Z"), workerReadiness: { read: () => [] }, workBatchIntegrityKey: new Uint8Array(32).fill(1), fleet: { ownerAuthority: client }, ownerWebPush: { subject: "https://fixture.ts.net", ...webpush.generateVAPIDKeys() }, ownerPushDispatch: false });
   t.after(() => app.close());
   return { app, origin, code, calls: () => calls };
 }

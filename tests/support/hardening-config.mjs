@@ -14,6 +14,6 @@ export function composer(root = '/neutral/install') {
   return { root, accounts: structuredClone(accounts), installationId: 'qa-install', rpId: 'qa.example.ts.net', webPort: 13210, gatewayPort: 13211,
     tenant: { tenantId: 'tenant:qa', workspaceId: 'workspace:qa', provider: 'local-owner', subject: 'owner:qa' }, ownerCodeDigest: digest('synthetic-only'), releaseTrust: trust,
     dbLogins: names.map((name, i) => { const password = Buffer.alloc(32,i+1).toString('base64url'); return { name, password, passwordDigest: digest(password), fileRef: `${root}/Protected/config/database-passwords/${name}.txt` }; }),
-    keys: { vapidPrivate: `${root}/updater-state/vapid.json`, vapidPublic: `${root}/Protected/service/vapid-public.json`, healthProbeRoot: `${root}/updater-state/health-probe.key`, healthProbeService: `${root}/Protected/service/health-probe.key`,
+    keys: { vapidPrivate: `${root}/updater-state/vapid.json`, vapidPublic: `${root}/Protected/config/owner-web-push.json`, healthProbeRoot: `${root}/updater-state/health-probe.key`, healthProbeService: `${root}/Protected/service/health-probe.key`,
       webHmac: { fileRef: `${root}/Protected/service/web-hmac.key`, value: Buffer.alloc(32,30).toString('base64url') }, workIntake: { fileRef: `${root}/Protected/service/work-intake.json`, integrityKey: Buffer.alloc(32,31).toString('base64url') } } };
 }

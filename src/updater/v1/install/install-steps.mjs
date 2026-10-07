@@ -113,7 +113,7 @@ function extractRpId(serve) {
 function keyReferences(root) {
   return Object.freeze({
     vapidPrivate: join(root, "updater-state", "vapid.json"),
-    vapidPublic: join(root, "Protected", "service", "vapid-public.json"),
+    vapidPublic: join(root, "Protected", "config", "owner-web-push.json"),
     healthProbeRoot: join(root, "updater-state", "health-probe.key"),
     healthProbeService: join(root, "Protected", "service", "health-probe.key"),
     webHmac: join(root, "Protected", "service", "web-hmac.key"),
@@ -254,6 +254,7 @@ export async function continueInstallV1(rawContext) {
     rpId = options.rehearsalMode === true ? options.tailnetIdentity
       : await ports.readTailscaleRpId({ identity: context.invokingUser });
     if (typeof rpId !== "string" || !/^[A-Za-z0-9.-]{1,253}$/u.test(rpId)) refuse("tailscale_rp_id_refused");
+    if (options.vapidRpId !== undefined && rpId !== options.vapidRpId) refuse("tailscale_rp_id_changed");
     configuration = await ports.composeProtectedConfig({ root, accounts: context.accounts,
       installationId: options.installationId ?? context.transactionId, rpId, webPort: options.webPort,
       gatewayPort: options.gatewayPort, tenant: owner, ownerCodeDigest: ownerCodeDigest(inactiveOwnerCode),

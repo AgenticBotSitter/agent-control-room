@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
-import { PHONE_FALLBACK_VERBS_V1, SUDO_ONLY_VERBS_V1, publicStatusV1, updaterRefuseV1 } from "./contracts.mjs";
+import { PHONE_FALLBACK_VERBS_V1, SAFE_ERROR_LABEL_PATTERN_V1, SUDO_ONLY_VERBS_V1, publicStatusV1, safeErrorLabelV1,
+  safeErrorPartsV1, updaterRefuseV1 } from "./contracts.mjs";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { sendControlRequestV1 } from "./control-socket.mjs";
 import { canonicalJsonV1 } from "./canonical-json.mjs";
@@ -563,8 +564,40 @@ export function updaterRecoveryLineV1(error) {
 // files. It is gone with the second copy of the guard; the helper is the one
 // definition, and the repository-wide policy test still rejects any direct
 // comparison outside it.
+/** The one line the CLI prints when it stops. A string code prints EXACTLY as it always has
+ * (fix round 2: `updater_command_failed` had started printing its message instead). An error with
+ * no code used to print only "updater_cli_failed"; it now adds what `safeErrorPartsV1` admits: a
+ * message that is itself a refusal code, an exit status or signal, the executable's basename or the
+ * syscall. Never message text otherwise: Node filesystem errors carry private paths and execFile
+ * failures carry their whole command line. The cause chain and refusing undo steps follow, built
+ * from the same safe parts. Control characters are stripped; head 200, line 400. */
+export function cliFailureMessageV1(error) {
+  const clean = value => value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ");
+  let message;
+  if (typeof error?.userMessage === "string") message = error.userMessage;
+  else if (typeof error?.code === "string") message = error.code;
+  else {
+    const { code, details } = safeErrorPartsV1(error);
+    message = `updater_cli_failed${code ? `: ${code}` : ""}${details.length ? ` (${details.join(", ")})` : ""}`;
+  }
+  // A wrapper such as `install_rollback_incomplete` carries the failure that started it as its
+  // `cause`, and the refusing undo steps as `undoFailures` (VM, main 66fb6a29: the line read
+  // only `updater_cli_failed`). Their safe labels follow, bounded, so the owner's one line names them.
+  const causes = [];
+  for (let cause = error?.cause, depth = 0; cause && depth < 6 && causes.length < 3; cause = cause.cause, depth += 1) {
+    const label = safeErrorLabelV1(cause);
+    // A wrapper that re-throws under its own cause's code adds nothing (VM: "services_heartbeat_refused;
+    // cause: services_heartbeat_refused").
+    if (label !== (causes.at(-1) ?? error?.code)) causes.push(label);
+  }
+  // Stored labels are re-screened: anything that does not look like one prints as "uncoded".
+  const undo = Array.isArray(error?.undoFailures) ? error.undoFailures.slice(0, 4)
+    .map(value => typeof value === "string" && SAFE_ERROR_LABEL_PATTERN_V1.test(value) ? value : "uncoded") : [];
+  const tail = (causes.length ? `; cause: ${causes.join(" <- ")}` : "")
+    + (undo.length ? `; undo failed: ${undo.join(", ")}` : "");
+  return clean(`${clean(message).slice(0, 200)}${clean(tail)}`).slice(0, 400);
+}
+
 if (isMainModuleV1(process.argv[1], import.meta.url)) runUpdaterCliV1(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
-  const message = typeof error?.userMessage === "string" ? error.userMessage
-    : typeof error?.code === "string" ? error.code : "updater_cli_failed";
-  process.stderr.write(`${message.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").slice(0, 200)}\n`); process.exitCode = 1;
+  process.stderr.write(`${cliFailureMessageV1(error)}\n`); process.exitCode = 1;
 });

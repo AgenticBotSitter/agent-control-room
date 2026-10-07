@@ -592,3 +592,151 @@ test("launchctl's 'no such service' answers count as not loaded, including macOS
   assert.ok(error, "printing a label that is not loaded must fail");
   assert.equal(launchctlNotLoadedV1(error), true, `launchctl answered ${error?.code}`);
 });
+
+// MEASURED (VM cr-install-dryrun, macOS 26, main 66fb6a29): every real install refused
+// `services_batch_uncertain` at `install-services`, because the core batch's newsyslog file
+// is under `/etc/newsyslog.d`, `/etc` is a symlink to `private/etc` on every Mac, and
+// `ensureDirectory` refuses any symlinked component. The fakes above map `/etc` into a
+// temporary tree with no link, so none of them could see it. This system tree has the link.
+test("the core batch installs on a Mac-shaped system where /etc is a symlink to private/etc", async t => {
+  const elevated = await import("../src/updater/v1/services/elevated.mjs");
+  const systemPath = elevated.macosSystemPathV1 ?? (path => path);
+  const fake = await fakeRuntime(t, "etc-symlink");
+  await mkdir(join(fake.system, "private", "etc", "newsyslog.d"), { recursive: true });
+  await symlink("private/etc", join(fake.system, "etc"));
+  // `/private/etc` only: the temporary install root itself is under `/private/var` on a Mac.
+  const pathFor = path => /^\/(?:Library|etc|private\/etc)\//u.test(path) ? join(fake.system, path.slice(1)) : path;
+  const port = createInProcessServiceElevatedPortV1({ ...fake.runtime, pathFor: path => pathFor(systemPath(path, "darwin")) });
+  const batch = input(fake.root, CORE_SERVICE_ROLES_V1);
+  const installed = await installServicesV1(batch, { elevatedPort: port });
+  assert.deepEqual(installed.receipt.roles, [...CORE_SERVICE_ROLES_V1]);
+  const rotation = installed.receipt.resources.find(resource => resource.kind === "newsyslog_config");
+  assert.equal(rotation.path, "/etc/newsyslog.d/xyz.agentcontrolroom.conf", "the receipt keeps the system's own name");
+  assert.equal(await absent(join(fake.system, "private", "etc", "newsyslog.d", "xyz.agentcontrolroom.conf")), false);
+  // The link itself is never followed and never replaced.
+  assert.equal((await lstat(join(fake.system, "etc"))).isSymbolicLink(), true);
+  // A symlink anywhere ELSE on the walk is still refused: the mapping is literal, not "follow links".
+  const other = await fakeRuntime(t, "etc-symlink-elsewhere");
+  await mkdir(join(other.system, "elsewhere"), { recursive: true });
+  await symlink("elsewhere", join(other.system, "Library"));
+  const otherPort = createInProcessServiceElevatedPortV1({ ...other.runtime,
+    pathFor: path => (/^\/(?:Library|etc|private\/etc)\//u.test(path) ? join(other.system, path.slice(1)) : path) });
+  await assert.rejects(installServicesV1(input(other.root, CORE_SERVICE_ROLES_V1), { elevatedPort: otherPort }),
+    /services_batch_rolled_back/u);
+});
+
+test("macOS system aliases map to their real /private path, literally and only on macOS", async () => {
+  const { macosSystemPathV1 } = await import("../src/updater/v1/services/elevated.mjs");
+  assert.equal(typeof macosSystemPathV1, "function");
+  assert.equal(macosSystemPathV1("/etc/newsyslog.d/x.conf", "darwin"), "/private/etc/newsyslog.d/x.conf");
+  assert.equal(macosSystemPathV1("/etc", "darwin"), "/private/etc");
+  assert.equal(macosSystemPathV1("/var/tmp/x", "darwin"), "/private/var/tmp/x");
+  assert.equal(macosSystemPathV1("/tmp/x", "darwin"), "/private/tmp/x");
+  for (const path of ["/etcetera/x", "/Library/LaunchDaemons/x.plist", "/private/etc/x", "/usr/etc/x", "etc/x"]) {
+    assert.equal(macosSystemPathV1(path, "darwin"), path, path);
+  }
+  assert.equal(macosSystemPathV1("/etc/newsyslog.d/x.conf", "linux"), "/etc/newsyslog.d/x.conf");
+});
+
+test("the default elevated runtime reads the core batch's system files through their real macOS path", async t => {
+  // Read-only: every open answers ENOENT and the first launchd question stops the batch.
+  const opened = [], stop = Object.assign(new Error("probe stop"), { code: "probe_stop" });
+  const port = createInProcessServiceElevatedPortV1({ geteuid: () => 0,
+    open: async path => { opened.push(path); throw Object.assign(new Error("absent"), { code: "ENOENT" }); },
+    isServiceLoaded: async () => { throw stop; } });
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "control-room-services-default-path-")));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  await assert.rejects(installServicesV1(input(join(temporary, "install"), CORE_SERVICE_ROLES_V1), { elevatedPort: port }),
+    /probe stop/u);
+  const expected = process.platform === "darwin" ? "/private/etc/newsyslog.d/xyz.agentcontrolroom.conf"
+    : "/etc/newsyslog.d/xyz.agentcontrolroom.conf";
+  assert.ok(opened.includes(expected), `opened ${JSON.stringify(opened.filter(path => path.includes("newsyslog")))}`);
+  if (process.platform !== "darwin") { t.diagnostic("the real /etc link needs macOS"); return; }
+  // On this Mac, every directory the core batch walks outside the install root has no symlink left in it.
+  for (const resource of composeServiceBundleV1(input(join(temporary, "install"), CORE_SERVICE_ROLES_V1)).resources
+    .filter(resource => resource.kind !== "protected_config")) {
+    const directory = dirname(opened.find(path => path.endsWith(resource.path.split("/").at(-1))));
+    assert.equal(await realpath(directory), directory, resource.path);
+  }
+});
+
+// MEASURED (VM, macOS 26): `launchctl bootout` returns while the job is still stopping, and
+// `launchctl print` answers 0 until it has exited. The undo of `install-database-service`
+// checked postgres at once, found `postmaster.pid`, refused `postgres_not_shut_down`, and
+// left the postgres plist and the cluster behind (`install_rollback_incomplete`).
+function slowStopRuntime(fake, polls) {
+  const stopping = new Map(); let clock = 0, slept = 0;
+  const runtime = { ...fake.runtime,
+    now: () => clock, sleep: async milliseconds => { slept += 1; clock += milliseconds; },
+    async execute(file, args) {
+      const result = await fake.runtime.execute(file, args);
+      if (args[0] === "bootout") {
+        const label = args[1].replace(/^system\//u, "");
+        stopping.set(label, typeof polls === "number" ? polls : polls[label] ?? 0);
+      }
+      return result;
+    },
+    async isServiceLoaded(label) {
+      const left = stopping.get(label) ?? 0;
+      if (left > 0) { stopping.set(label, left - 1); return true; }
+      return fake.runtime.isServiceLoaded(label);
+    },
+    verifyPostgresShutdown: async () => (stopping.get("xyz.agentcontrolroom.postgres") ?? 0) === 0,
+  };
+  return { runtime, slept: () => slept };
+}
+
+test("uninstall waits for a booted-out postgres to exit before checking it, then removes its plist", async t => {
+  const fake = await fakeRuntime(t, "slow-stop");
+  const slow = slowStopRuntime(fake, 6), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
+  const plist = fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.postgres.plist");
+  assert.equal(await absent(plist), false);
+  assert.deepEqual(await uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    { outcome: "removed" });
+  assert.equal(await absent(plist), true, "the postgres plist is removed once the job has exited");
+  assert.equal(slow.slept(), 6, "it polled until launchd dropped the job");
+  // The same wait protects the planned-row recovery the init-database undo runs.
+  const again = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
+  assert.equal((await recoverServicesV1({ root: fake.root, roles: ["postgresql17"], receipt: again.receipt },
+    { elevatedPort: port })).usedReceipt, true);
+});
+
+test("a job that never leaves launchd after bootout is refused at the bound, not waited on forever", async t => {
+  const fake = await fakeRuntime(t, "never-stops");
+  const slow = slowStopRuntime(fake, Number.MAX_SAFE_INTEGER), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, ["postgresql17"]), { elevatedPort: port });
+  await assert.rejects(uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    /launchctl_bootout_timeout/u);
+  assert.equal(slow.slept(), 130_000 / 250, "120 s PostgreSQL definition plus a 10 s observation margin");
+  assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.postgres.plist")), false,
+    "a job still loaded keeps its plist");
+});
+
+test("a 200 second backup stop completes within its own launchd definition", async t => {
+  const fake = await fakeRuntime(t, "backup-200-second-stop");
+  const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": 800 }), port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, POST_HEALTH_SERVICE_ROLES_V1), { elevatedPort: port });
+  await assert.doesNotReject(async () => {
+    assert.deepEqual(await uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+      { outcome: "removed" });
+  }, "a backup that stops after 200 seconds must complete without a stop-bound refusal");
+  assert.equal(slow.slept(), 800, "200 seconds observed in 250 ms polls");
+  assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.nightly-backup.plist")), true);
+});
+
+test("a stuck backup is refused at its 2760 second definition plus margin and retains its resources", async t => {
+  const fake = await fakeRuntime(t, "backup-stuck-stop");
+  const slow = slowStopRuntime(fake, { "xyz.agentcontrolroom.nightly-backup": Number.MAX_SAFE_INTEGER });
+  const sleep = slow.runtime.sleep;
+  slow.runtime.sleep = async milliseconds => {
+    assert.ok(slow.slept() < 11_081, "the stop observer continued beyond its independently specified bound");
+    await sleep(milliseconds);
+  };
+  const port = createInProcessServiceElevatedPortV1(slow.runtime);
+  const installed = await installServicesV1(input(fake.root, POST_HEALTH_SERVICE_ROLES_V1), { elevatedPort: port });
+  await assert.rejects(uninstallServicesV1({ root: fake.root, receipt: installed.receipt }, { elevatedPort: port }),
+    { code: "launchctl_bootout_timeout", role: "nightly-backup" });
+  assert.equal(slow.slept(), 2_770_000 / 250);
+  assert.equal(await absent(fake.pathFor("/Library/LaunchDaemons/xyz.agentcontrolroom.nightly-backup.plist")), false);
+});

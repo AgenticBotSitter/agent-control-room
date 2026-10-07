@@ -90,7 +90,7 @@ test("owner-attended setup validates an explicit model allowlist against the pin
 
 test("PLAN-05: installed web launcher passes the coordinator login and cleans a partial start", async () => {
   const calls = [];
-  const ownerWebPush = Object.freeze({ subject: "mailto:owner@example.invalid", publicKey: "p".repeat(87),
+  const ownerWebPush = Object.freeze({ subject: "https://fixture.ts.net", publicKey: "p".repeat(87),
     privateKey: "k".repeat(43) });
   const load = async path => {
     const name = path.split("/").at(-1);

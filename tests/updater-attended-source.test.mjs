@@ -62,7 +62,7 @@ async function fixture(t) {
   // this file at the staging step with `updater_bundle_input_refused` — the exact
   // symptom the note above was written about, one file over.
   await mkdir(join(repository, "src/installer/shared"), { recursive: true });
-  for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix"])
+  for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix", "vapid"])
     await copyFile(join(process.cwd(), `src/installer/shared/${name}.mjs`),
       join(repository, `src/installer/shared/${name}.mjs`));
   // The THIRD and fourth files `FIXED_BUNDLE_INPUTS` stages from outside
@@ -285,7 +285,7 @@ test("the default tools path completes with generated outputs and simulated sepa
       "src/installer/shared/rehearsal-hostname.mjs",
       "src/installer/shared/file-custody.mjs");
     expected.push("src/installer/shared/private-process-lock.mjs");
-    expected.push("src/installer/v1/nightly-backup-recency.ts", "src/installer/shared/jsonl-prefix.mjs");
+    expected.push("src/installer/v1/nightly-backup-recency.ts", "src/installer/shared/jsonl-prefix.mjs", "src/installer/shared/vapid.mjs");
     expected.sort();
     assert.deepEqual((await fileInventory(source)).sort(), expected, "the builder scratch tree contains only fixed-step inputs");
     assert.deepEqual((await readdir(source)).sort(), ["scripts", "src"]);
@@ -445,7 +445,7 @@ test("the fixed attended release builder emits only its reviewed manifest policy
     "scripts/mac-local/start-task-host.mjs", "scripts/mac-local/start-web-host.mjs",
     "src/installer/shared/is-main-module.mjs", "src/installer/shared/file-custody.mjs", "src/installer/shared/mac-local-runtime-directory.mjs",
     "src/installer/shared/private-process-lock.mjs", "src/installer/shared/backup-files.mjs",
-    "src/installer/shared/nightly-backup-constants.mjs"];
+    "src/installer/shared/nightly-backup-constants.mjs", "src/installer/shared/vapid.mjs"];
   for (const name of files) { await mkdir(join(source, name, ".."), { recursive: true });
     await writeFile(join(source, name), name === "package.json" ? '{"name":"control-room","version":"1.2.3"}\n' : `${name}\n`); }
   for (const name of ["db/migrations", "db/roles", "db/setup", "deploy/postgres", "dist-vps/client", "dist-vps/server", "third_party"]) {

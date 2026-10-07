@@ -60,7 +60,7 @@ async function fixture(t, name = "golden", short = false) {
     tenant: Object.freeze({ tenantId: "tenant:one", workspaceId: "workspace:one", provider: "local-owner",
       subject: "owner:one" }), ownerCodeDigest: digest("owner-code"), dbLogins: Object.freeze(dbLogins),
     keys: Object.freeze({ vapidPrivate: join(root, "updater-state", "vapid.json"),
-      vapidPublic: join(root, "Protected", "service", "vapid-public.json"),
+      vapidPublic: join(root, "Protected", "config", "owner-web-push.json"),
       healthProbeRoot: join(root, "updater-state", "health-probe.key"),
       healthProbeService: join(root, "Protected", "service", "health-probe.key"),
       webHmac: Object.freeze({ fileRef: join(root, "Protected", "service", "web-hmac.key"), value: secret(40) }),

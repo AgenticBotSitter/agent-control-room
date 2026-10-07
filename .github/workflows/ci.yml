@@ -530,6 +530,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Launch daemon bundle with native plutil
+        run: pnpm run test:launch-daemons
       # This lane uses macOS lockf, Developer Tools and BSD file metadata.
       # Default PostgreSQL artifacts are synthetic; live database lanes stay in components.
       # The opt-in HARD7 dump proof needs a separately supplied migrated fixture.

@@ -2,6 +2,7 @@
 
 import { ownerStatusLabels } from "./owner-status-labels";
 import { useCallback, useRef, useState } from "react";
+import { UPDATER_RUN_REASON_V1 } from "../../src/updater/v1/contracts.mjs";
 import nextActionsV1 from "../../src/updater/v1/policy/next-actions.json";
 import { acknowledgeUpdaterAttentionV1, beginUpdaterPasskeyV1, readUpdaterOwnerUiV1,
   sendUpdaterOwnerRequestV1, type UpdaterOwnerUiBrowserReadV1 } from "../../src/web/v1/updater-owner-ui-browser";
@@ -137,6 +138,9 @@ export function UpdaterHomeStatus() {
   //
   // A missing reason falls back to the key's words rather than to nothing, so a
   // status file written before this field existed still shows the instruction.
+  // Notification warnings describe sending, not an outstanding database outcome.
+  const canAcknowledge = !!reason && reason !== UPDATER_RUN_REASON_V1.updater_vapid_invalid
+    && reason !== UPDATER_RUN_REASON_V1.updater_vapid_unavailable;
   const instruction = (reason ?? (nextAction ? nextActionsV1[nextAction] : undefined)) ?? null;
   if (read.state === "not_configured" && nextAction === "rescue_resolved")
     return <p className="private-updater-status" role="status">{nextActionsV1[nextAction]}</p>;
@@ -151,10 +155,10 @@ export function UpdaterHomeStatus() {
   }
   if (read.state === "not_configured" && legacyState === "needs_owner")
     return <div className="private-updater-attention" role="alert"><p className="private-updater-status"><strong>Self-update needs your attention.</strong> {instruction ?? "Check the update on this Mac before continuing."}</p>
-      {/* Same gate as the configured path: `reason` means there is a durable row
-          to answer. A `needs_owner` card with no reason is a damaged switch or a
+      {/* Same gate as the configured path: an outcome reason means there is a
+          durable row to answer; notification warnings are excluded. A `needs_owner` card with no reason is a damaged switch or a
           rescue, and neither is answered by this button. */}
-      {reason ? <AcknowledgeButton onChanged={refresh} /> : null}</div>;
+      {canAcknowledge ? <AcknowledgeButton onChanged={refresh} /> : null}</div>;
   if (read.state === "not_configured") return legacyState === "off"
     ? <p className="private-updater-status">{ownerStatusLabels.updater.off} — fixes are installed by you on this Mac. {instruction}</p>
     : <p className="private-updater-status private-updater-attention" role="alert"><strong>Self-update needs your attention.</strong> {instruction ?? "The updater is not answering clearly."}</p>;
@@ -168,16 +172,16 @@ export function UpdaterHomeStatus() {
     {/* R7U-01: the answer, on the card itself and only while the row is
         outstanding.
 
-        GATED ON `reason`, NOT ON `nextAction`, and that is the whole reason this
+        GATED ON an outcome `reason`, excluding notification warnings, so this
         button is not on the rescue cards. `nextAction` is also written for
         `review_rescue_on_mac` and for `rescue_resolved`, neither of which is a
         durable run outcome — for those, "I have seen this" has nothing to
         acknowledge and would report "nothing outstanding" every time it was
-        pressed. `reason` is written by the loop on exactly one condition: the
-        database holds an unacknowledged row. So the button's presence IS the
-        answer to "is there something to answer", read off the same bytes as
+        pressed. An outcome `reason` is written by the loop when the
+        database holds an unacknowledged row; notification warnings are excluded.
+        So the button's presence IS the answer to "is there something to answer", read off the same bytes as
         everything else on the card rather than re-derived here. */}
-    {reason ? <AcknowledgeButton onChanged={refresh} /> : null}
+    {canAcknowledge ? <AcknowledgeButton onChanged={refresh} /> : null}
     <StateChip state={value.state} tone={isRedCard ? "bad" : value.state === "ready_for_approval" ? "warn" : "neutral"} label={stateWords[value.state]} />
     {value.activeSubscriptions === 0 ? <p className="private-updater-warning" role="alert"><strong>Phone alerts are off.</strong> No phone is subscribed, so update alerts cannot reach you.</p> : null}
     <Facts value={value} /><Controls value={value} onChanged={refresh} />

@@ -30,7 +30,7 @@ const corpus = {
   "rehearsal-config": () => ({ schema: "control-room.updater-rehearsal-config/v1", mode: "throwaway", rehearsalRoot: "/private/tmp/control-room-rehearsal-abc",
     rehearsalHostname: "rehearsal-abc.control-room.test", expectedOrigin: "https://rehearsal-abc.control-room.test:8444", ports: { web: 8444, gateway: 8445, postgres: 5444 },
     accounts: { service: "_crrehearsalsvc", database: "_crrehearsaldb", builder: "_crrehearsalbld" }, daemonLabelPrefix: "xyz.agentcontrolroom.rehearsal.abc", allowRealRoot: false }),
-  "owner-web-push-config": () => ({ schema: "control-room.owner-web-push-config/v1", subject: "mailto:owner@example.com", publicKey: "B".repeat(87), privateKey: "a".repeat(43) }),
+  "owner-web-push-config": () => ({ schema: "control-room.owner-web-push-config/v1", subject: "https://fixture.ts.net", publicKey: "B".repeat(87), privateKey: "a".repeat(43) }),
   "local-owner-session-profile": () => ({ schema: "control-room.local-owner-session/v1", origin: "http://127.0.0.1:3310", tenantId: "tenant:1", provider: "local-owner", subject: "owner", ownerCodeDigest: `sha256:${"a".repeat(64)}`, sessionSeconds: 3600, trustedOrigin: "https://control.example.com", remoteOrigins: ["https://remote.example.com"] }),
   "nightly-backup": () => createNightlyBackupConfigurationV1("/Library/Application Support/Control Room"),
   "release-trust": () => ({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1, keyId: releaseKeyIdV1(publicKey), publicKey, versionFloor: "0.5.0", revokedKeyIds: [] }),
@@ -65,7 +65,18 @@ const oracles = {
   "updater-configuration": (input, v) => v.database.host !== `${ROOT}/pg/socket` || v.database.user !== "control_room_deployer" ? "non-canonical database wiring accepted" : undefined,
   "passkey-config": (input, v) => { const u = new URL(v.expectedOrigin); if (u.protocol !== "https:" || u.hostname !== v.rpId || (u.port && v.rehearsal !== true)) return "origin/rpId mismatch accepted"; if (/[A-Z]/u.test(v.rpId)) return "uppercase rpId accepted"; },
   "rehearsal-config": (input, v) => v.rehearsalRoot.startsWith("/Library/Application Support/Control Room") || v.rehearsalRoot === "/" ? "live root accepted" : (v.expectedOrigin !== `https://${v.rehearsalHostname}:${v.ports.web}` ? "origin mismatch accepted" : undefined),
-  "owner-web-push-config": (input, v) => !/^mailto:[^\s@]+@[^\s@]+$/u.test(v.subject) || v.privateKey.length < 40 ? "bad VAPID shape accepted" : undefined,
+  "owner-web-push-config": (input, v) => {
+    // An independent URL parse keeps this oracle separate from the product validator.
+    let hostname;
+    try {
+      const contact = new URL(v.subject);
+      if (contact.protocol === "https:" && contact.origin === v.subject) hostname = contact.hostname;
+      else if (contact.protocol === "mailto:" && /^[^\s@]+@[^\s@]+$/u.test(contact.pathname)) hostname = contact.pathname.split("@")[1];
+    } catch { return "bad VAPID shape accepted"; }
+    return !hostname || /(?:^|\.)(?:invalid|localhost|example)(?:\.|$)/u.test(hostname)
+      || /\.(?:test|local)$/u.test(hostname)
+      || v.privateKey.length < 40 ? "bad VAPID shape accepted" : undefined;
+  },
   "local-owner-session-profile": (input, v) => { const o = new URL(v.origin); if (o.hostname !== "127.0.0.1" || o.protocol !== "http:") return "non-loopback origin accepted"; if (v.trustedOrigin && !v.trustedOrigin.startsWith("https://")) return "non-https trusted origin accepted"; if (v.remoteOrigins?.some(r => !/^https:\/\//u.test(r) || r === v.origin)) return "bad remote origin accepted"; if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(v.tenantId + v.provider + v.subject)) return "hidden chars in identity accepted"; },
   "nightly-backup": (input, v) => JSON.stringify(input) !== JSON.stringify(v) && typeof input === "object" && input && Object.keys(input).length !== Object.keys(v).length ? "non-identical backup config accepted" : undefined,
   "release-trust": (input, v) => v.keyId !== releaseKeyIdV1(v.publicKey) || v.revokedKeyIds.includes(v.keyId) ? "trust with wrong/revoked key accepted" : undefined,

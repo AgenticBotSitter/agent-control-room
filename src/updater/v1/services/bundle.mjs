@@ -43,6 +43,10 @@ const protectedConfigRelativePaths = Object.freeze([
 ]);
 
 const refuse = code => { throw Object.assign(new Error(code), { code }); };
+/** Shared by the launchd definition and its stop observer (seconds). */
+export const SERVICE_EXIT_TIMEOUT_SECONDS_V1 = Object.freeze({ postgresql17: 120, supervisor: 45,
+  "fleet-gateway": 45, "nightly-backup": Math.ceil((45 * 60 * 1000) / 1000) + 60,
+  updater: 60, "updater-guard": 60 });
 const sha256 = value => `sha256:${createHash("sha256").update(canonicalJsonV1(value), "utf8").digest("hex")}`;
 const exactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
@@ -217,17 +221,17 @@ export function composeServiceBundleV1(input) {
     { role: "postgresql17", executable: sandbox, workingDirectory: join(root, "pg", "current"),
       args: sandboxArgs("postgres", join(root, "pg", "current"), { DATA_ROOT: join(root, "pg"), SOCKET_ROOT: join(root, "pg", "socket"),
         OUT_LOG: logPath("postgresql17", "out"), ERR_LOG: logPath("postgresql17", "err") }, input.pgRuntime,
-      ["-D", join(root, "pg", "current"), "-k", join(root, "pg", "socket")]), keepAlive: true, exitTimeOut: 120 },
+      ["-D", join(root, "pg", "current"), "-k", join(root, "pg", "socket")]), keepAlive: true, exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1.postgresql17 },
     { role: "supervisor", executable: sandbox, workingDirectory: current,
       args: sandboxArgs("supervisor", current, { RUNTIME_STATE: join(protectedRoot, "runtime-state"),
         OUT_LOG: logPath("supervisor", "out"), ERR_LOG: logPath("supervisor", "err") }, runtimeNode,
       [join(current, "scripts", "mac-local", "task-host-supervisor.mjs"), "--protected-root", protectedRoot]),
-      keepAlive: true, exitTimeOut: 45 },
+      keepAlive: true, exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1.supervisor },
     { role: "fleet-gateway", executable: sandbox, workingDirectory: current,
       args: sandboxArgs("gateway", current, { RUNTIME_STATE: join(protectedRoot, "runtime-state"),
         OUT_LOG: logPath("fleet-gateway", "out"), ERR_LOG: logPath("fleet-gateway", "err") }, runtimeNode,
       [join(current, "dist-vps", "server", "fleetGateway.js"), "--configuration", join(protectedRoot, "config", "fleet-gateway.json")]),
-      keepAlive: "failed", exitTimeOut: 45 },
+      keepAlive: "failed", exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1["fleet-gateway"] },
     { role: "nightly-backup", executable: runtimeNode, workingDirectory: current,
       args: [join(current, "dist-vps", "server", "nightlyBackup.js"), "--configuration", join(protectedRoot, "config", "backup.json")],
       // R4S-11, kept in step with the TypeScript authority by the byte-identical
@@ -236,13 +240,13 @@ export function composeServiceBundleV1(input) {
       // in `src/installer/v1/nightly-backup-configuration.ts` is the source of
       // truth, and this expression is the same arithmetic over the same number.
       // If the authority's value moves and this does not, that test fails.
-      keepAlive: false, exitTimeOut: Math.ceil((45 * 60 * 1000) / 1000) + 60, nightly: true },
+      keepAlive: false, exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1["nightly-backup"], nightly: true },
     { role: "updater", executable: runtimeNode, workingDirectory: join(root, "updater", "current"),
       args: [join(root, "updater", "current", "updater.mjs"), "--configuration", join(root, "updater-state", "updater.json")],
-      keepAlive: true, exitTimeOut: 60 },
+      keepAlive: true, exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1.updater },
     { role: "updater-guard", executable: "/bin/sh", workingDirectory: join(root, "guard"),
       args: ["-p", join(root, "guard", "guard.sh"), "watch"],
-      keepAlive: false, exitTimeOut: 60, startInterval: 60 },
+      keepAlive: false, exitTimeOut: SERVICE_EXIT_TIMEOUT_SECONDS_V1["updater-guard"], startInterval: 60 },
   ];
   for (const definition of definitions) {
     const allowedRoots = ["runtime", "updater", "current", "guard"].map(name => join(root, name));

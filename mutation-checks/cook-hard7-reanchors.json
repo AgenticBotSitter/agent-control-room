@@ -36,8 +36,8 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "  \"src/installer/shared/jsonl-prefix.mjs\",\n]);",
-    "replace": "  \"src/installer/shared/jsonl-prefix.mjs\",\n  \"package.json\",\n]);",
+    "find": "  \"src/installer/shared/vapid.mjs\",\n]);",
+    "replace": "  \"src/installer/shared/vapid.mjs\",\n  \"package.json\",\n]);",
     "test": "node --test --test-name-pattern='default tools path' tests/updater-attended-source.test.mjs",
     "why": "the fixed bundle builder receives exactly its approved candidate inputs and no broader candidate tree"
   }

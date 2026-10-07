@@ -49,7 +49,7 @@ const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
 const TENANT = "tenant:push-claims-pg";
 const SUBSCRIPTION_ID = `push:${"b".repeat(64)}`;
 const ENDPOINT = "https://fcm.googleapis.com/fcm/send/fixture-endpoint";
-const VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+const VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "https://fixture.ts.net",
   publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 const PUSH_ID = () => `push:${randomUUID()}`;
 const TEMPLATE = "control-room-updater.needs-owner";

@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { canonicalJsonV1 } from "../canonical-json.mjs";
 import { CORE_SERVICE_ROLES_V1, newsyslogPathForPolicyV1, serviceBundleDigestV1, servicePolicyForRolesV1,
+  SERVICE_EXIT_TIMEOUT_SECONDS_V1,
   validateServicePolicyV1,
   validateServiceRolesV1, verifyServiceBundleV1 } from "./bundle.mjs";
 
@@ -66,10 +67,26 @@ export function verifyServiceReceiptV1(value, root, servicePolicyValue) {
   return Object.freeze({ ...unsigned, receiptDigest: value.receiptDigest });
 }
 
+/**
+ * macOS's three root-owned system aliases (`/etc`, `/var`, `/tmp` -> `/private/...`), read
+ * as their real path. `ensureDirectory` refuses EVERY symlinked component, and that rule
+ * stays strict: this fixed, literal mapping is applied instead of following a link.
+ * MEASURED (VM, macOS 26, main 66fb6a29): the core batch's newsyslog file lives under
+ * `/etc/newsyslog.d`, `/etc` is a symlink, and every real install refused
+ * `services_batch_uncertain` at `install-services`. The fake runtimes map `/etc` into a
+ * temporary tree with no link, which is why no test saw it.
+ */
+export function macosSystemPathV1(path, platform = process.platform) {
+  return platform === "darwin" && typeof path === "string" && /^\/(?:etc|var|tmp)(?:\/|$)/u.test(path)
+    ? `/private${path}` : path;
+}
+
 function defaultRuntime() {
   return Object.freeze({
     geteuid: () => process.geteuid?.() ?? -1,
-    pathFor: path => path,
+    pathFor: path => macosSystemPathV1(path),
+    now: () => Date.now(),
+    sleep: milliseconds => new Promise(resolveSleep => setTimeout(resolveSleep, milliseconds)),
     lstat, mkdir, open, readFile, unlink, rmdir, lchown,
     execute: (file, args) => runFile(file, args, { env: { PATH: "/usr/bin:/bin", HOME: "/var/root" },
       timeout: 30_000, maxBuffer: 1024 * 1024 }),
@@ -274,10 +291,24 @@ export function launchctlNotLoadedV1(error) {
   return error?.code === 3 || error?.code === 113 || error?.code === "ESRCH";
 }
 
-async function bootout(runtime, label) {
+/**
+ * `launchctl bootout` RETURNS BEFORE THE JOB HAS EXITED. MEASURED (VM, macOS 26): a job that
+ * needs 3 s to stop after SIGTERM had bootout return at once, and `launchctl print` kept
+ * answering 0 until the process was gone. Checking postgres right after bootout therefore
+ * found `postmaster.pid` still there and refused `postgres_not_shut_down`, so the install's
+ * undo left the postgres plist and the cluster behind. Wait, bounded, for launchd to drop it.
+ */
+async function bootout(runtime, service) {
+  const { label, role } = service;
   await runtime.execute("/bin/launchctl", ["bootout", `system/${label}`]).catch(error => {
     if (!launchctlNotLoadedV1(error)) refuse("launchctl_refused");
   });
+  const deadline = runtime.now() + (SERVICE_EXIT_TIMEOUT_SECONDS_V1[role] + 10) * 1000;
+  while (await runtime.isServiceLoaded(label)) {
+    if (runtime.now() >= deadline) throw Object.assign(new Error("launchctl_bootout_timeout"), {
+      code: "launchctl_bootout_timeout", role });
+    await runtime.sleep(250);
+  }
 }
 
 async function verifyPostgres(runtime, root) {
@@ -290,7 +321,7 @@ async function bootoutRoles(runtime, root, roles, servicePolicy, onError) {
   if (roles.length === 0) return;
   for (const service of servicePolicyForRolesV1(roles, servicePolicy)) {
     try {
-      await bootout(runtime, service.label);
+      await bootout(runtime, service);
       if (service.role === "postgresql17") await verifyPostgres(runtime, root);
     } catch (error) {
       if (!onError) throw error;

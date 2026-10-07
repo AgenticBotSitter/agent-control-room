@@ -17,6 +17,49 @@ export const SUDO_ONLY_VERBS_V1 = Object.freeze(new Set([
   "uninstall-fresh", "upgrade-attended",
 ]));
 
+/** A message that IS a refusal code (`new Error("tailscale_json_refused")`): lower snake case only. */
+const CODE_LIKE_MESSAGE_V1 = /^[a-z][a-z0-9]*(?:_[a-z0-9]+){1,10}$/u;
+const SAFE_CODE_CHARACTERS_V1 = /[^A-Za-z0-9_.:-]/gu;
+
+/**
+ * The parts of an error that are safe to print on the owner's Terminal or keep in a receipt: its
+ * code, a message that is itself a refusal code, the syscall name, the BASENAME of the executable,
+ * and an exit status or signal. Never `message` text otherwise, `cmd`, argv, env, stdin or a full
+ * path: Node filesystem errors carry private paths, and an execFile failure carries its whole
+ * command line (fix round 2, climsg-codex.md). Returns `{ code, details }`; `code` is null when
+ * the error has none.
+ */
+export function safeErrorPartsV1(error) {
+  const details = [];
+  const word = (value, pattern) => typeof value === "string" && pattern.test(value) ? value : null;
+  if (Number.isSafeInteger(error?.code)) details.push(`exit ${error.code}`);
+  const signal = word(error?.signal, /^SIG[A-Z0-9]{1,12}$/u);
+  if (signal) details.push(`signal ${signal}`);
+  // A spawn error's `syscall` is "spawn <full path>": only its first word is kept. Its `path` is the
+  // executable; a filesystem error's `path` is the FILE, which is never printed, not even its basename.
+  const syscall = word(typeof error?.syscall === "string" ? error.syscall.split(" ", 1)[0] : null, /^[a-z_]{1,32}$/u);
+  const executable = syscall === "spawn" && typeof error?.path === "string" ? error.path
+    : typeof error?.cmd === "string" ? error.cmd.split(" ", 1)[0] : null;
+  const name = word(executable?.split("/").at(-1), /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u);
+  if (name) details.push(name);
+  else if (syscall) details.push(syscall);
+  const message = typeof error?.message === "string" ? error.message.trim() : "";
+  const code = typeof error?.code === "string" ? error.code
+    : message.length <= 80 && CODE_LIKE_MESSAGE_V1.test(message) ? message : null;
+  return Object.freeze({ code, codeIsOwn: typeof error?.code === "string", details: Object.freeze(details) });
+}
+
+/** One bounded, printable label for an error, built only from `safeErrorPartsV1`. */
+export function safeErrorLabelV1(error) {
+  const { code, details } = safeErrorPartsV1(error);
+  const head = code === null ? null : code.replace(SAFE_CODE_CHARACTERS_V1, "?").slice(0, 80);
+  if (head && details.length) return `${head} (${details.join(", ")})`;
+  return head ?? (details.length ? details.join(", ") : "uncoded");
+}
+
+/** What a stored label may look like when it is printed again (a receipt is re-screened). */
+export const SAFE_ERROR_LABEL_PATTERN_V1 = /^[A-Za-z0-9_.:?-]{1,80}(?: \([A-Za-z0-9 ,._+-]{1,120}\))?$|^[A-Za-z0-9 ,._+-]{1,120}$/u;
+
 export function updaterRefuseV1(code) {
   const error = new Error(code);
   error.code = code;
@@ -102,6 +145,10 @@ export function parseControlRequestV1(line) {
  * make the display refuse — but it also cannot invent wording.
  */
 export const UPDATER_RUN_REASON_V1 = Object.freeze({
+  updater_vapid_invalid:
+    "Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.",
+  updater_vapid_unavailable:
+    "Phone notifications are off because their key is missing. Rerun the installer to repair them; updates continue.",
   updater_rollback_chain_exhausted:
     "Automatic recovery could not finish. Nothing changed on its own; Control Room needs you.",
   updater_rollback_failed:

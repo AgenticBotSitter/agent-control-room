@@ -92,6 +92,7 @@ const FIXED_BUNDLE_INPUTS = Object.freeze([
   // `dist-vps/server/nightlyBackup.js` the launchd service runs.
   "src/installer/v1/nightly-backup-recency.ts",
   "src/installer/shared/jsonl-prefix.mjs",
+  "src/installer/shared/vapid.mjs",
 ]);
 
 const refuse = code => { throw updaterRefuseV1(code); };

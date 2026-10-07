@@ -1,0 +1,352 @@
+[
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "if (typeof value !== \"string\" || value.length > 320) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse coercible non-string contacts and oversized mail identifiers."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "if (!hostname || hostname.length > 253) return false;",
+    "replace": "if (!hostname) return false;",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Bound DNS names independently of per-label syntax."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "if (labels.length < 2 || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Require a fully qualified hostname with valid DNS labels."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "if (!/^[a-z]{2,63}$/u.test(labels.at(-1))) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse numeric hosts and malformed top-level domains."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "!labels.some(label => [\"invalid\", \"localhost\", \"example\"].includes(label))",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse placeholder labels in contact domains."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "Object.keys(value).sort().join(\",\") === \"privateKey,publicKey,schema,subject\"",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Require the complete reader shape, without unknown properties."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "value.schema === schema && vapidSubjectAllowedV1(value.subject)",
+    "replace": "true && vapidSubjectAllowedV1(value.subject)",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Require the credential schema chosen by the reader."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "/^[A-Za-z0-9_-]{80,100}$/u.test(value.publicKey)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse malformed public credential material."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "/^[A-Za-z0-9_-]{40,100}$/u.test(value.privateKey)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse malformed private credential material."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "error.body.slice(0, 1024)",
+    "replace": "error.body",
+    "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
+    "why": "Bound the provider diagnostic before returning it."
+  },
+  {
+    "file": "src/web-push/v1/config.ts",
+    "find": "if (!vapidConfigAllowedV1(record, OWNER_WEB_PUSH_CONFIG_V1))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "The web config reader must apply shared credential validation."
+  },
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "!vapidSubjectAllowedV1(config.subject)",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "The outbound channel must validate its contact before using the library."
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (!validVapid(value)) throw updaterRefuseV1(\"updater_vapid_invalid\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_vapid_invalid\");",
+    "test": "node --import tsx --test --test-name-pattern='updater VAPID accepts' tests/updater-alerts.test.mjs",
+    "why": "The updater credential reader must apply shared subject validation."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (typeof rpId !== \"string\" || !vapidSubjectAllowedV1(vapidSubject)) refuse(\"vapid_subject_refused\");",
+    "replace": "if (false) refuse(\"vapid_subject_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses a reserved' tests/control-room-installer.test.mjs",
+    "why": "Reject a bad source hostname before creating accounts or files."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (shape !== \"privateKey,publicKey\" && !(value?.schema === UPDATER_VAPID_SCHEMA_V1\n    && [\"privateKey,publicKey,schema\", \"privateKey,publicKey,schema,subject\"].includes(shape))) refuse(\"existing_key_refused\");",
+    "replace": "if (false) refuse(\"existing_key_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Do not adopt unknown schema fields or unknown credential versions."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!vapidConfigAllowedV1(repaired, UPDATER_VAPID_SCHEMA_V1)) refuse(\"existing_key_refused\");",
+    "replace": "if (false) refuse(\"existing_key_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Adopted key material must match the complete reader format before effects."
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "(SERVICE_EXIT_TIMEOUT_SECONDS_V1[role] + 10) * 1000",
+    "replace": "130_000",
+    "test": "node --import tsx --test --test-name-pattern='200 second backup' tests/updater-services.test.mjs",
+    "why": "Observe each role using its own service-definition shutdown allowance."
+  },
+  {
+    "file": "src/updater/v1/services/elevated.mjs",
+    "find": "if (runtime.now() >= deadline) throw Object.assign(new Error(\"launchctl_bootout_timeout\"), {",
+    "replace": "if (false) throw Object.assign(new Error(\"launchctl_bootout_timeout\"), {",
+    "test": "node --import tsx --test --test-name-pattern='stuck backup' tests/updater-services.test.mjs",
+    "why": "Refuse a genuinely stuck backup rather than leaving an unbounded poll."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "typeof error?.body === \"string\" ? error.body.slice(0, 1024) : undefined",
+    "replace": "true ? error.body.slice(0, 1024) : undefined",
+    "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
+    "why": "Only body text may become a provider diagnostic."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "before.publicKey !== vapid.publicKey || before.privateKey !== vapid.privateKey",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='installed update rewrites' tests/control-room-installer.test.mjs",
+    "why": "Refuse a pre-existing web pair that disagrees with the canonical updater pair rather than rotating its keys."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!vapidConfigAllowedV1(vapid, UPDATER_VAPID_SCHEMA_V1)) refuse(\"vapid_generation_refused\");",
+    "replace": "if (false) refuse(\"vapid_generation_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='fresh installer creates one' tests/control-room-installer.test.mjs",
+    "why": "Never publish malformed generated key material in either credential file."
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "if (this.#rejections.length < 100) this.#rejections.push(failure);",
+    "replace": "this.#rejections.push(failure);",
+    "test": "node --import tsx --test --test-name-pattern='bounded push service' tests/updater-alerts.test.mjs",
+    "why": "Bound retained diagnostic records even across multiple template fan-outs."
+  },
+  {
+    "file": "src/updater/v1/install/install-steps.mjs",
+    "find": "if (options.vapidRpId !== undefined && rpId !== options.vapidRpId) refuse(\"tailscale_rp_id_changed\");",
+    "replace": "if (false) refuse(\"tailscale_rp_id_changed\");",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses a reserved' tests/control-room-installer.test.mjs",
+    "why": "Keep the web origin and the signed VAPID contact on the same measured hostname before composing services."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "value.schema === schema && vapidSubjectAllowedV1(value.subject)",
+    "replace": "value.schema === schema",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Both credential readers must reject a missing or reserved subject even with valid keys and schema."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "![\"privateKey,publicKey,schema\", \"privateKey,publicKey,schema,subject\"].includes(Object.keys(before).sort().join(\",\"))",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse unknown properties in an existing web credential before installation effects."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "before.schema !== \"control-room.owner-web-push-config/v1\"",
+    "replace": "false",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse a web credential in an unknown schema rather than silently adopting it."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "async function readInstallVapidV1(root, subject) {\n  const path = join(root, \"updater-state\", \"vapid.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return null;\n  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "async function readInstallVapidV1(root, subject) {\n  const path = join(root, \"updater-state\", \"vapid.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return null;\n  if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse publicly readable canonical credentials before install effects."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "async function assertInstallWebVapidV1(root, vapid) {\n  const path = join(root, \"Protected\", \"config\", \"owner-web-push.json\");\n  const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (!entry) return;\n  if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Refuse publicly readable web credentials before install effects."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "  const write = async (path, value, owner) => {\n    const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n    if (entry) {\n      if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "  const write = async (path, value, owner) => {\n    const entry = await lstat(path).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n    if (entry) {\n      if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installer refuses malformed adopted' tests/control-room-installer.test.mjs",
+    "why": "Recheck credential custody immediately before publishing a rewritten web copy."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "  const retired = join(root, \"Protected\", \"service\", \"vapid-public.json\");\n  const entry = await lstat(retired).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (entry) {\n    if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) refuse(\"existing_key_refused\");\n",
+    "replace": "  const retired = join(root, \"Protected\", \"service\", \"vapid-public.json\");\n  const entry = await lstat(retired).catch(error => error?.code === \"ENOENT\" ? null : Promise.reject(error));\n  if (entry) {\n    if (false) refuse(\"existing_key_refused\");\n",
+    "test": "node --import tsx --test --test-name-pattern='installed update rewrites' tests/control-room-installer.test.mjs",
+    "why": "Validate the custody of the legacy public file before retiring it."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "await writeInstallVapidV1(root, accounts, ports, vapidSubject);",
+    "replace": "void accounts;",
+    "test": "node --import tsx --test --test-name-pattern='installed update rewrites' tests/control-room-installer.test.mjs",
+    "why": "A same-commit retry repairs the subject while preserving the existing refusal and unchanged install journal."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "value !== null && typeof value === \"object\" && !Array.isArray(value)",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Reject non-object credential inputs without throwing incidental parser exceptions."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "typeof value.publicKey === \"string\" &&",
+    "replace": "true &&",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Reject coercible public-key values instead of accepting their regex stringification."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "typeof value.privateKey === \"string\" &&",
+    "replace": "true &&",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Reject coercible private-key values instead of accepting their regex stringification."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const keys = existing ?? await ports.generateVapidKeys();",
+    "replace": "const keys = await ports.generateVapidKeys();",
+    "test": "node --import tsx --test --test-name-pattern='installer retries repair' tests/control-room-installer.test.mjs",
+    "why": "A retry after the canonical file is durable must not rotate the pair before publishing its web copy."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode, rejectionReason }));",
+    "replace": "if (false) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode, rejectionReason }));",
+    "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
+    "why": "Record a bounded web-provider diagnosis even when the production dispatcher discards its failure callback fields."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (rejectionReason !== undefined) console.warn",
+    "replace": "if (true) console.warn",
+    "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
+    "why": "Do not fabricate diagnostic text records for errors with no provider body."
+  },
+  {
+    "file": "src/installer/shared/vapid.mjs",
+    "find": "![\"test\", \"local\"].includes(labels.at(-1))",
+    "replace": "true",
+    "test": "node --import tsx --test --test-name-pattern='VAPID contacts' tests/owner-web-push.test.ts",
+    "why": "Refuse reserved test/local suffixes while allowing those words in real DNS hostnames."
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);",
+    "replace": "webpush.setVapidDetails(\"https://wrong.ts.net\", vapid.publicKey, vapid.privateKey);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"production defaultSend Authorization\" tests/updater-alerts.test.mjs",
+    "why": "The production default sender JWT sub must equal the independently specified installation origin."
+  },
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);",
+    "replace": "webpush.setVapidDetails(\"https://wrong.ts.net\", config.publicKey, config.privateKey);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"production web channel Authorization\" tests/owner-web-push.test.ts",
+    "why": "The production web channel JWT sub must equal the independently specified installation origin."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!vapid) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");",
+    "replace": "if (false) {\n    const error = new Error(\"Protected/config/owner-web-push.json exists without updater-state/vapid.json. Move the manual key file aside after saving a private copy, then rerun the installer. Phone browsers must subscribe again.\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"a retired manual web key\" tests/control-room-installer.test.mjs",
+    "why": "The retired manual-file refusal must identify the file and recovery in the CLI user message, with no adoption."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (![\"updater_vapid_unavailable\", \"updater_vapid_invalid\"].includes(error?.code)) throw error;",
+    "replace": "if (error?.code !== \"updater_vapid_unavailable\") throw error;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "Legacy invalid contacts disable sending while startup must continue."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (![\"updater_vapid_unavailable\", \"updater_vapid_invalid\"].includes(error?.code)) throw error;",
+    "replace": "if (false) throw error;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "Wrong authority and permissive credential custody remain fatal before lease acquisition."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (alertWarning) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "A disabled alert sender must publish its warning through the real status writer and browser reader."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "reason: value.reason ?? (",
+    "replace": "reason: (",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "Notification warnings must not hide an outstanding update reason."
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "updater_vapid_invalid:\n    \"Phone notifications are off because their contact is invalid. Rerun the installer to repair them; updates continue.\",",
+    "replace": "updater_vapid_invalid:\n    \"Phone notifications are unavailable.\",",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"legacy invalid VAPID\" tests/updater-alerts.test.mjs",
+    "why": "The warning is checked against an independent literal, not cloned from the contract table."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "value.nextAction == null && [\"idle\", \"running\"].includes(value.state)",
+    "replace": "[\"idle\", \"running\"].includes(value.state)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: notification warning preserves idle rescue resolved\" tests/updater-home-status.test.tsx",
+    "why": "The independent rescue-resolved action must keep its instruction instead of a notification warning."
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "[\"idle\", \"running\"].includes(value.state) ? alertWarning : undefined",
+    "replace": "true ? alertWarning : undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: notification warning preserves uncertain default rescue\" tests/updater-home-status.test.tsx",
+    "why": "Uncertain without an explicit next action must keep the writer-derived check-and-continue instruction."
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "reason !== UPDATER_RUN_REASON_V1.updater_vapid_invalid",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: VAPID warning 1\" tests/updater-home-status.test.tsx",
+    "why": "The invalid-contact sentence has no durable outcome to acknowledge in configured and fallback cards."
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "reason !== UPDATER_RUN_REASON_V1.updater_vapid_unavailable",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"R2-1: VAPID warning 2\" tests/updater-home-status.test.tsx",
+    "why": "The missing-key sentence has no durable outcome to acknowledge in configured and fallback cards."
+  }
+]
