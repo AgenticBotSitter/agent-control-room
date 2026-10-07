@@ -180,5 +180,19 @@
     "replace": "  return !await lstat(join(mirror, \"info\", \"grafts\")).then(() => false,",
     "test": "node --test --test-name-pattern='a graft cannot manufacture ancestry' tests/updater-watcher.test.mjs",
     "why": "the watcher shares the classifier's completeness rule: a grafts file fabricates ancestry"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    if (!await complete()) refuse(\"updater_mirror_history_refused\");\n    try { await git(session.input, session.tools.git, session.mirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
+    "replace": "    try { await git(session.input, session.tools.git, session.mirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
+    "test": "node --test --test-name-pattern='graft written after classification' tests/updater-attended-source.test.mjs",
+    "why": "an incomplete mirror is never asked whether the installed commit is an ancestor; its answer could waive downgrade consent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    catch { downgrade = true; }\n    if (!await complete()) refuse(\"updater_mirror_history_refused\");\n",
+    "replace": "    catch { downgrade = true; }\n",
+    "test": "node --test --test-name-pattern='graft written after classification' tests/updater-attended-source.test.mjs",
+    "why": "a graft written while the downgrade ancestry question is asked is caught after it, so the answer is refused"
   }
 ]

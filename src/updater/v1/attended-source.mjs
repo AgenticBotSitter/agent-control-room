@@ -1006,8 +1006,16 @@ export async function confirmAttendedV1(input) {
   if (!downgrade && from.commit && from.commit !== session.commit) {
     // A same/newer version can still point to an older or divergent commit.
     // Missing ancestry proof is conservative: require explicit downgrade consent.
+    // A graft, replace ref or shallow boundary can answer "ancestor" for history the
+    // mirror does not have and so waive that consent. The mirror is checked right
+    // before the question and again after it, because metadata written while it is
+    // asked would otherwise go unseen: an answer from such a mirror is refused.
+    const complete = () => mirrorHistoryCompleteV1(session.mirror,
+      args => git(session.input, session.tools.git, session.mirror, args));
+    if (!await complete()) refuse("updater_mirror_history_refused");
     try { await git(session.input, session.tools.git, session.mirror, ["merge-base", "--is-ancestor", from.commit, session.commit]); }
     catch { downgrade = true; }
+    if (!await complete()) refuse("updater_mirror_history_refused");
   }
   const plan = { schema: "control-room.install-plan/v2", planId, kind: "updater", from,
     artifact: { releaseId: input.release.releaseId, commit: session.commit, sourceFileCount: session.sourceFileCount,

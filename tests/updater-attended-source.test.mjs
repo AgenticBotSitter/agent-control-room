@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
-  abortAttendedV1, buildFixedBundleV1, buildReleaseV1, classifyAttendedSourceV1, fetchVerifiedSourceV1, installAttendedCommitV1,
+  abortAttendedV1, buildFixedBundleV1, buildReleaseV1, classifyAttendedSourceV1, confirmAttendedV1, fetchVerifiedSourceV1, installAttendedCommitV1,
   isAttendedDatabasePathV1,
   parseAttendedTreeV1, parseBuilderPidsV1, crontabStateV1, runningBundleDigestV1, stageReleaseV1, stageUpdaterBundleV1, switchPairV1,
   validateResolvedBuilderIdentityV1,
@@ -1163,4 +1163,69 @@ test("a graft cannot put a commit main never had on main for the attended fetch"
     error => error?.code === "updater_mirror_history_refused", "a grafted mirror proves nothing, even for main's own tip");
   await rm(join(mirror, "info", "grafts"));
   await abortAttendedV1(await fetchVerifiedSourceV1({ ...f.materialize(), commit: tip }));
+});
+
+test("an installed commit that shares only the release directory's 12-character prefix proves nothing", async t => {
+  // The directory name binds 48 bits of the commit; a full commit that matches
+  // them but is not in the mirror is unknown history, so it fails closed.
+  const f = await fixture(t);
+  const target = await commitFiles(f.repository, "code only", { "src/only.mjs": "export const x = 1;\n" });
+  const substituted = f.commit.slice(0, 12) + (f.commit.slice(12) === "d".repeat(28) ? "e" : "d").repeat(28);
+  const manifest = join(f.root, "releases", `1.2.3-${f.commit.slice(0, 12)}`, "RELEASE_MANIFEST.json");
+  const result = await classifyInstalled(f, { installed: f.commit, target, beforeClassify: () => writeFile(manifest,
+    JSON.stringify({ schema: "control-room.attended-build-manifest/v1", version: "1.2.3", commit: substituted })) });
+  assert.equal(result.installedCommit, substituted);
+  assert.equal(result.baseline, "unproven"); assert.equal(result.changesDatabase, true);
+});
+
+test("reproducer: a graft written after classification cannot waive downgrade consent", async t => {
+  // Same version, older commit: only the ancestry answer says this is a downgrade.
+  // The graft makes the installed (newer) commit a parent of the target.
+  const f = await fixture(t);
+  const newer = await commitFiles(f.repository, "newer code", { "src/newer.mjs": "export const x = 2;\n" });
+  await publishLocalFixtureV1(f.repository); await markInstalled(f, newer);
+  const mirror = join(f.root, "updater-state/mirror.git"), grafts = join(mirror, "info", "grafts");
+  // "ancestry": written as confirmation's own ancestry question is spawned (the
+  // classifier asked twice before it). "before": written as the classifier's last
+  // step, its range walk, is spawned - after classification, before confirmation.
+  let injectAt = null, injected = false, ancestry = 0, askedAfterGraft = false;
+  const input = { ...f.materialize(), onSpawn: async call => {
+    f.spawned.push(call);
+    if (call.args.includes("merge-base")) { ancestry += 1; if (injected) askedAfterGraft = true; }
+    if (injectAt === "ancestry" && call.args.includes("merge-base") && ancestry === 3
+      || injectAt === "before" && call.args.includes("--diff-merges=separate")) {
+      await writeFile(grafts, `${f.commit} ${newer}\n${newer}\n`); injected = true;
+    }
+  } };
+  const fetched = await fetchVerifiedSourceV1(input);
+  try {
+    const release = await buildReleaseV1({ ...input, ...fetched }), bundle = await buildFixedBundleV1({ ...input, ...fetched });
+    const confirmOnce = async () => {
+      let plan;
+      const outcome = await confirmAttendedV1({ release, bundle, authorize: async value => { plan = value.plan; } })
+        .then(() => "confirmed", error => error?.code);
+      return { outcome, plan };
+    };
+    const pristine = await confirmOnce();
+    assert.equal(pristine.outcome, "updater_install_confirmation_missing");
+    assert.equal(pristine.plan.updaterDerived.downgrade, true, "the pristine mirror requires downgrade consent");
+    for (const point of ["ancestry", "before"]) {
+      await t.test(`graft written ${point === "ancestry" ? "as the ancestry question is asked" : "before the ancestry question"}`, async () => {
+        injectAt = point; injected = false; ancestry = 0; askedAfterGraft = false;
+        try {
+          // Independent check that this graft fabricates the ancestry it claims.
+          await writeFile(grafts, `${f.commit} ${newer}\n${newer}\n`);
+          await mirrorGit(mirror, "merge-base", "--is-ancestor", newer, f.commit);
+          await rm(grafts);
+          const altered = await confirmOnce();
+          assert.equal(injected, true, "the graft was written at the intended point");
+          assert.equal(altered.outcome, "updater_mirror_history_refused");
+          assert.equal(altered.plan, undefined, "the owner is never shown a plan without downgrade consent");
+          if (point === "before") assert.equal(askedAfterGraft, false, "an incomplete mirror is never asked the ancestry question");
+        } finally { injectAt = null; injected = false; await rm(grafts, { force: true }); }
+      });
+    }
+    const restored = await confirmOnce();
+    assert.equal(restored.plan.updaterDerived.downgrade, true, "with the graft gone, consent is required again");
+  } finally { await abortAttendedV1(fetched); }
 });

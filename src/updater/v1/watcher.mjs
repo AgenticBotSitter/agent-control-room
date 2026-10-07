@@ -126,7 +126,7 @@ export class GitMirrorSourceV1 {
       if (error?.code !== "ENOENT") throw updaterRefuseV1("watcher_mirror_refused");
       await execFileAsync(this.git, ["init", "--bare", this.mirror], { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: this.commandTimeoutMs, killSignal: "SIGKILL",
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: "/var/empty", GIT_CONFIG_NOSYSTEM: "1",
-          GIT_CONFIG_GLOBAL: "/dev/null", LC_ALL: "C" } }).catch(() => { throw updaterRefuseV1("watcher_mirror_refused"); });
+          GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", LC_ALL: "C" } }).catch(() => { throw updaterRefuseV1("watcher_mirror_refused"); });
     }
     let remote;
     try { remote = (await this.#git(["remote", "get-url", "origin"])).stdout.trim(); }
