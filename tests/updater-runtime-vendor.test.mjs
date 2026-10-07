@@ -606,6 +606,11 @@ process.stderr.write(row.stderr);process.exitCode=row.exit;
   const runtime = { curlPath: process.execPath, curlArgumentsPrefix: [script], skipMacMetadata: true,
     spawn(file, args, options) {
       observations.push({ probe: file === "/bin/sh", uid: options.uid, gid: options.gid });
+      if (deny === "collision" && file === "/bin/sh") {
+        const collision = spawnSync(process.execPath, ["--input-type=module", "-e",
+          "import {writeFileSync} from \"node:fs\"; writeFileSync(process.argv[1], \"adversary\", {flag: \"wx\"});", args.at(-1)]);
+        assert.equal(collision.status, 0, "adversary creates a probe collision at the actual spawn boundary");
+      }
       return spawn(file, args, options);
     },
     async lchown(path, uid, gid) {
@@ -680,8 +685,8 @@ test("V101 transient retries stop at three and unknown or permanent errors refus
 });
 
 test("V101 real account write and traversal refusals happen before curl", async t => {
-  for (const deny of ["write", "traversal"]) {
-    const fixture = await downloadReplayFixture(t, [{ exit: 56, stderr: recordedWriteFailure }], { deny });
+  for (const deny of ["write", "traversal", "collision"]) {
+    const fixture = await downloadReplayFixture(t, [{ exit: 0, stderr: "" }], { deny });
     const error = await downloadFailure(fixture);
     assert.equal(error.code, "runtime_download_destination_unwritable", `${deny}: identity probe refuses early`);
     assert.equal((await fixture.attempts()).length, 0, `${deny}: no large download starts`);

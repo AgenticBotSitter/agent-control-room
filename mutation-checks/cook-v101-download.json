@@ -89,5 +89,12 @@
     "replace": "details.push(diagnostic.stderr);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
     "why": "validation and printing must use the same captured diagnostic value"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "umask 077; set -C; printf probe",
+    "replace": "umask 077; printf probe",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
+    "why": "a collision before the actual account probe must refuse without starting curl"
   }
 ]
