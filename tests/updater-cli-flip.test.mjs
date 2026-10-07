@@ -733,7 +733,7 @@ test("refusal codes print exactly as before the stop-line change", async () => {
 
 test("database update refusal prints fixed owner guidance and retains the lead code", async () => {
   const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
-  const expected = "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)";
+  const expected = "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)";
   const refusal = { code: "attended_database_change_requires_upgrader" };
   assert.equal(cliFailureMessageV1(refusal), expected, "database refusal owner guidance is complete");
   assert.ok(expected.length <= 200, "fresh guidance fits the renderer head cap");
@@ -757,5 +757,5 @@ test("database refusal renderer reports only explicit unfinished recovery", asyn
     "Not installed: this version needs a database upgrade step that isn't built yet. Earlier unfinished update rolled back. Tell the lead. (attended_database_change_requires_upgrader)", "recovered refusal retains complete guidance and code");
   for (const value of [undefined, false, null, 0, 1, "true", {}, []])
     assert.equal(cliFailureMessageV1({ ...refusal, unfinishedUpdateRecovered: value }),
-      "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)", "only a boolean recovery receipt admits the recovery assurance");
+      "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)", "only a boolean recovery receipt admits the recovery assurance");
 });

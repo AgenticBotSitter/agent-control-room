@@ -1449,7 +1449,7 @@ test("a repeat whose verified diff touches db is refused before confirmation or 
     assert.deepEqual(await snapshot(), before, "database refusal preserves installed trees, pointers and service state");
     await assert.rejects(lstat(join(f.root, "build", "job-bbbbbbbbbbbb")), { code: "ENOENT" });
     assert.equal(cliFailureMessageV1(refusal),
-      "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)",
+      "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)",
       "real CLI database refusal includes owner guidance and the lead code");
   }
 });
@@ -1507,7 +1507,7 @@ test("database refusal survives an unreadable recovery journal", async t => {
   } finally { await chmod(journal, 0o600); }
   assert.equal(refusal.unfinishedUpdateRecovered, false, "journal uncertainty uses fresh guidance");
   assert.equal(cliFailureMessageV1(refusal),
-    "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)",
+    "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)",
     "journal failure falls back to the complete fresh refusal");
   assert.equal(await readlink(join(f.root, "current")), before);
   for (const name of ["confirm", "stage-release", "stage-updater", "switch-pair", "restart-services"])
@@ -1575,7 +1575,7 @@ for (const [action, phase] of [["fetch-source", "done"], ["confirm", "planned"],
         attempt === 0 && action === "switch-pointers" ? 1 : 0, "only first recovery can restore pointers");
       assert.equal(cliFailureMessageV1(refusal), attempt === 0 && action !== "fetch-source"
         ? "Not installed: this version needs a database upgrade step that isn't built yet. Earlier unfinished update rolled back. Tell the lead. (attended_database_change_requires_upgrader)"
-        : "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)",
+        : "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)",
       "database refusal guidance describes recovery during this command only");
       await assert.rejects(lstat(join(f.root, ".install.lock")), { code: "ENOENT" });
     }
@@ -1591,7 +1591,7 @@ for (const [action, phase] of [["fetch-source", "done"], ["confirm", "planned"],
       error => { refusal = error; return error?.code === "attended_database_change_requires_upgrader"; });
     assert.equal(await readlink(join(f.root, "current")), "releases/1.2.5-dddddddddddd");
     assert.equal(cliFailureMessageV1(refusal),
-      "Not installed: this version changes the database, which needs a database upgrade step that isn't built yet. Nothing changed. Tell the lead. (attended_database_change_requires_upgrader)",
+      "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)",
       "historical recovery must not describe a later command");
   });
 }
