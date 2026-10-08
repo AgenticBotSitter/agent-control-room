@@ -1220,17 +1220,39 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     import { resolve } from "node:path";
     import { pathToFileURL } from "node:url";
     const { rotate } = await import(pathToFileURL(resolve("scripts/fleet/connector.mjs")).href);
+    const { getProcessIdentity } = await import(pathToFileURL(resolve("scripts/fleet/connector-update.mjs")).href);
     const parentExited = () => process.exit(1);
     process.once("disconnect", parentExited);
     try {
       process.send("ready");
       await new Promise(resolveStart => process.once("message", resolveStart));
-      let acquisitionDeadline, holding = false;
+      let acquisitionDeadline, holding = false, admitted = false;
       const result = await rotate({ configPath: process.argv[1], lock: {
         clock: () => {
           const now = Date.now();
           acquisitionDeadline ??= now + 10_000;
           return now;
+        },
+        getProcessIdentity: async pid => {
+          if (!admitted) {
+            // rotate has read the real profile before inspecting its owner.
+            // Every caller must observe this generation before any writes it.
+            await new Promise((resolveAdmission, rejectAdmission) => {
+              const admit = () => {
+                clearTimeout(timer);
+                process.off("message", admit);
+                admitted = true;
+                resolveAdmission();
+              };
+              const timer = setTimeout(() => {
+                process.off("message", admit);
+                rejectAdmission(new Error("Snapshot admission exceeded the original 10s acquisition deadline."));
+              }, Math.max(0, acquisitionDeadline - Date.now()));
+              process.once("message", admit);
+              process.send("observed");
+            });
+          }
+          return getProcessIdentity(pid);
         },
         sleep: ms => new Promise(resolveRetry => {
           const resume = () => {
@@ -1259,6 +1281,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
   const launched = [];
   let closingChildren = false;
   const rotateInProcess = (lockState = (state, child) => {
+    if (state === "observed") child.send("admit");
     if (state === "waiting") child.send("retry");
   }) => {
     const child = spawn(process.execPath, ["--input-type=module", "--eval", childSource, configPath], {
@@ -1274,7 +1297,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
       child.once("close", () => rejectReady(new Error("child closed before readiness")));
     });
     child.on("message", message => {
-      if (message === "waiting" || message === "holding") lockState(message, child);
+      if (message === "observed" || message === "waiting" || message === "holding") lockState(message, child);
     });
     const done = new Promise(resolveChild => {
       child.once("error", error => { stderr += String(error); });
@@ -1288,13 +1311,21 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     return entry;
   };
   const runBurst = async () => {
-    // All fifty processes race initially. Only subsequent retries are queued:
+    // All fifty real profile reads precede a simultaneous lock race.
+    // Only subsequent retries are queued:
     // Linux's synchronous flock probes must not exhaust the unchanged 10s
     // product deadline by repeatedly competing with the holder for two CPUs.
-    const attempting = new Set(), waiting = new Set(), holding = new Set();
+    const observed = new Set(), attempting = new Set(), waiting = new Set(), holding = new Set();
     let retries = 0;
     const lockState = (state, child) => {
       if (closingChildren) return;
+      if (state === "observed") {
+        observed.add(child);
+        if (observed.size === processes.length) {
+          for (const entry of processes) entry.child.send("admit");
+        }
+        return;
+      }
       // The same sleep callback is also used to retry retirement. A holder
       // must finish releasing before queued acquisition retries can run.
       if (state === "waiting" && holding.has(child)) {
