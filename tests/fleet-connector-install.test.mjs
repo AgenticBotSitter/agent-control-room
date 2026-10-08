@@ -1225,12 +1225,27 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     try {
       process.send("ready");
       await new Promise(resolveStart => process.once("message", resolveStart));
+      let acquisitionDeadline, holding = false;
       const result = await rotate({ configPath: process.argv[1], lock: {
-        sleep: () => new Promise(resolveRetry => {
-          process.once("message", resolveRetry);
+        clock: () => {
+          const now = Date.now();
+          acquisitionDeadline ??= now + 10_000;
+          return now;
+        },
+        sleep: ms => new Promise(resolveRetry => {
+          const resume = () => {
+            clearTimeout(timer);
+            process.off("message", resume);
+            resolveRetry();
+          };
+          // Completion may wake us sooner, but a held owner cannot suspend
+          // the product's original acquisition deadline. Retirement is a
+          // separate bounded retry loop, so holders retain its normal sleep.
+          const timer = setTimeout(resume, holding ? ms : Math.max(0, acquisitionDeadline - Date.now()));
+          process.once("message", resume);
           process.send("waiting");
         }),
-        afterOwnerPublication: () => { process.send("holding"); },
+        afterOwnerPublication: () => { holding = true; process.send("holding"); },
       } });
       process.stdout.write(JSON.stringify(result));
     } catch (error) {

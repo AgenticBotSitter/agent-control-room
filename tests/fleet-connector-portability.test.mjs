@@ -210,16 +210,30 @@ test("R5V-02: 50 repoints and a queued rotation serialize without losing the new
     }
   };
   const run = async (index, operation) => {
+    let acquisitionDeadline, retryTimer;
     const lock = { deadlineMs: 30_000,
+      clock: () => {
+        const now = Date.now();
+        acquisitionDeadline ??= now + 30_000;
+        return now;
+      },
       sleep: () => new Promise(retry => {
         // Retirement also uses sleep; never queue a holder behind itself.
         if (holding.has(index)) { setImmediate(retry); return; }
-        attempting.delete(index); waiting.set(index, retry); retries++; resume();
+        const resumeRetry = () => {
+          clearTimeout(retryTimer);
+          waiting.delete(index); attempting.add(index); retry();
+        };
+        retryTimer = setTimeout(resumeRetry, Math.max(0, acquisitionDeadline - Date.now()));
+        attempting.delete(index); waiting.set(index, resumeRetry); retries++; resume();
       }),
       afterOwnerPublication: () => { attempting.delete(index); holding.add(index); },
     };
     try { return await operation(lock); }
-    finally { attempting.delete(index); holding.delete(index); waiting.delete(index); resume(); }
+    finally {
+      clearTimeout(retryTimer);
+      attempting.delete(index); holding.delete(index); waiting.delete(index); resume();
+    }
   };
   const results = await Promise.allSettled([...Array.from({ length: 50 }, (_, index) => run(index,
     lock => c.setServer({ server: "https://new.example", configPath, fetcher, lock }))),
