@@ -124,7 +124,7 @@ export function spawnPgFamily(options) {
         }
         return ["-D", `${name}=${value}`];
       }), "--", executable, ...args],
-    { uid, gid, env: environment, shell: false, stdio, detached: true });
+    { uid, gid, env: environment, cwd: options.cwd, shell: false, stdio, detached: true });
     let stdout = "", stderr = "", bytes = 0, settled = false;
     const MAXIMUM = 8 * 1024 * 1024;
     const finish = (action, value) => { if (settled) return; settled = true; clearTimeout(timer); action(value); };
