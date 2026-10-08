@@ -181,6 +181,6 @@ test("V101 stopped Face ID recovery uses a QR and an owner code in any browser",
   assert.doesNotMatch(row, /do not run.*passkey add/iu);
   assert.ok(row.includes("Keep the Terminal message on screen."));
   assert.ok(row.includes("Do not retry or reload the stopped phone page."));
-  assert.ok(row.includes("The link expires in 30 minutes; there is nothing to delete."));
+  assert.ok(row.includes("Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.<br>There is nothing to delete."));
   assert.match(guide.split("\n").find(line => line.startsWith("4. The health check")), /follow the Face ID row below/u);
 });

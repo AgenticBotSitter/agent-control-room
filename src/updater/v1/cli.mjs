@@ -465,14 +465,20 @@ try {
       const { terminalQrTextV1 } = await import("./terminal/qr.mjs");
       context.stdout(terminalQrTextV1(registrationUrl));
       context.stdout(`${registrationUrl}\n`);
-      context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the owner code.\n");
+      context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.\n");
+      const registrationRemainingMs = Date.parse(registration.expiresAt) - context.now().getTime();
+      const completionTimeoutMs = Number.isFinite(registrationRemainingMs)
+        ? Math.max(0, Math.min(300_000, registrationRemainingMs)) : 300_000;
+      const completionWindow = completionTimeoutMs === 300_000 ? "5 minutes"
+        : `${Math.floor(completionTimeoutMs / 1000)} seconds`;
+      context.stdout(`Finish within ${completionWindow}: scan, use Face ID, then type the 6-character code here.\n`);
       // The message is the only place the owner learns this passkey is live
       // tonight, so it is printed per mode rather than as one message with a
       // caveat: the INACTIVE case is the one that must not read as success.
       context.stdout(mode === "initial"
-        ? "The registration expires in 30 minutes. This is the first passkey on this Mac, so it is active as soon as you finish.\n"
-        : "The registration expires in 30 minutes. The new passkey needs approval from an active passkey, or it remains inactive for 24 hours.\n");
-      const typedCode = await readCodeV1(terminal);
+        ? "This is the first passkey on this Mac, so it is active as soon as you finish.\n"
+        : "The new passkey needs approval from an active passkey, or it remains inactive for 24 hours.\n");
+      const typedCode = await readCodeV1(terminal, { timeoutMs: completionTimeoutMs });
       const result = authority ? await authority.completeRegistration({ registrationSecret: registration.registrationSecret,
         typedCode }) : await context.send(join(root, "updater-state/control.sock"), {
           schema: "control-room.updater-control/v1", requestId: `cli-${process.pid}-${Date.now()}`,

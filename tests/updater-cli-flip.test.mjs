@@ -747,7 +747,9 @@ test("V101 passkey add prints a decodable QR before its link without reading the
     assert.ok(qrIndex >= 0, "passkey add prints a terminal QR code");
     const link = `https://control-room.example.test/setup#reg=${secret}&mode=${mode}`;
     assert.equal(output[qrIndex + 1], `${link}\n`, "text link follows QR");
-    assert.equal(output[qrIndex + 2], "Scan this QR code with your phone's camera. If the page asks, enter the owner code.\n");
+    assert.equal(output[qrIndex + 2], "Scan this QR code with your phone's camera. If the page asks, enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.\n");
+    assert.ok(output.includes("Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.\n"), "R2: effective deadline is printed on its own line");
+    assert.doesNotMatch(output.join(""), /expires in 30 minutes/u);
     assert.ok(!output.join("").includes("Owner code ("), "passkey add has no owner code to print");
     // Independent decoder reads the actual terminal block pixels, including the
     // quiet zone. Expected URL is the literal authority input plus specified mode.
@@ -761,5 +763,25 @@ test("V101 passkey add prints a decodable QR before its link without reading the
         }
     }));
     assert.equal(jsQR(pixels, width, height)?.data, link, "phone decoder recovers the complete fragment URL");
+  }
+});
+
+test("V101 R2 completion deadline is the earliest of the prompt and registration expiry", async t => {
+  const now = new Date("2026-10-07T00:00:00.000Z");
+  const realTimeout = globalThis.setTimeout;
+  const delays = [];
+  t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => { delays.push(delay); return realTimeout(callback, delay, ...args); });
+  for (const [seconds, expected, line] of [[1800, 300000, "5 minutes"], [120, 120000, "120 seconds"], [30, 30000, "30 seconds"]]) {
+    const output = [], secret = "D".repeat(43);
+    const authority = { listPasskeys: async () => [], beginRegistration: async () => ({ registrationSecret: secret,
+      expectedOrigin: "https://control-room.example.test", expiresAt: new Date(now.getTime() + seconds * 1000).toISOString() }),
+      completeRegistration: async () => ({ coolingOffUntil: null }) };
+    assert.equal(await runUpdaterCliV1(["passkey", "add"], { getuid: () => 0, now: () => now, passkeyAuthority: authority,
+      stdout: text => output.push(text), readComparisonCode: async () => {
+        assert.equal(delays.at(-1), expected, "R2: actual prompt timeout uses the independent earlier deadline");
+        return "ABC234";
+      } }), 0);
+    assert.ok(output.includes(`Finish within ${line}: scan, use Face ID, then type the 6-character code here.\n`),
+      "R2: printed effective deadline matches the independent expected duration");
   }
 });

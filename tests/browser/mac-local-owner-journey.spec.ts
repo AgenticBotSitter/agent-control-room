@@ -313,7 +313,7 @@ test("owner sends work to every connected bot on the real connector-only local w
 for (const includeOwnerCode of [true, false]) test(includeOwnerCode
   ? "V101: a fresh browser opens the installer fragment and reaches registration without leaking URL secrets"
   : "V101: a fresh browser scans a reg-only QR and signs in on setup without losing registration", async ({ browser }) => {
-  const code = "A".repeat(43), secret = "R".repeat(43);
+  const code = "A".repeat(43), secret = "R".repeat(43), nextSecret = "T".repeat(43);
   const bundle = await build({ stdin: { contents: `import React from 'react';
     import {createRoot} from 'react-dom/client';
     import {PasskeyRegistration} from './private-app/app/setup/passkey-registration';
@@ -330,9 +330,9 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
     });
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test_listener_address_invalid");
-    const localOrigin = `http://127.0.0.1:${address.port}`;
+    const localOrigin = `http://localhost:${address.port}`;
     const unavailable = async (): Promise<never> => { throw new Error("setup fixture must not touch database"); };
-    let inserted = 0, used = false;
+    let inserted = 0; const used = new Set<string>();
     app = createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:browser-setup",
       localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: localOrigin,
         tenantId: "tenant:browser-setup", provider: "local", subject: "owner:browser-setup",
@@ -341,16 +341,16 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         close: async () => {}, isAvailable: () => true },
       passkeyRegistration: {
         async options(input) {
-          expect(input.registrationSecret).toBe(secret);
+          expect([secret, nextSecret]).toContain(input.registrationSecret);
           expect(input.ownerSessionDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
-          if (used) throw Object.assign(new Error("synthetic used-link refusal"), { code: "updater_registration_expired" });
-          return { publicKey: { challenge: "B".repeat(43), rp: { name: "Disposable setup", id: "127.0.0.1" },
+          if (used.has(input.registrationSecret)) throw Object.assign(new Error("synthetic used-link refusal"), { code: "updater_registration_expired" });
+          return { publicKey: { challenge: "B".repeat(43), rp: { name: "Disposable setup", id: "localhost" },
             user: { id: "U".repeat(43), name: "owner", displayName: "Owner" },
             pubKeyCredParams: [{ type: "public-key", alg: -7 }],
             authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" } } };
         },
-        async insert(input) { expect(input.registrationSecret).toBe(secret); expect(input.comparisonCode).toMatch(/^[A-Z2-7]{6}$/);
-          used = true; inserted += 1; return { registered: true }; },
+        async insert(input) { expect([secret, nextSecret]).toContain(input.registrationSecret); expect(input.comparisonCode).toMatch(/^[A-Z2-7]{6}$/);
+          used.add(input.registrationSecret); inserted += 1; return { registered: true }; },
       } });
     const nodeHandler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
       assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
@@ -361,7 +361,7 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
       void nodeHandler.handle(input, output);
     });
     for (const width of [390, 1280]) {
-      used = false;
+      used.clear();
       const context = await browser.newContext({ viewport: { width, height: 844 } });
       try {
         expect(await context.cookies()).toEqual([]);
@@ -370,12 +370,24 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         await cdp.send("WebAuthn.enable");
         await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal",
           hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
+        if (includeOwnerCode) {
+          let first = true;
+          await page.route("**/api/v1/local-owner-session", async route => {
+            if (first) { first = false; await route.abort("connectionreset"); }
+            else await route.continue();
+          });
+        }
         const link = includeOwnerCode ? `${localOrigin}/setup#code=${code}&reg=${secret}`
           : `${localOrigin}/setup#reg=${secret}&mode=initial`;
         const response = await page.goto(link);
         expect(response!.status()).toBe(200);
         await expect(page.getByRole("heading", { name: "Register Face ID" })).toBeVisible();
-        if (!includeOwnerCode) {
+        if (includeOwnerCode) {
+          await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+          await expect(page.getByLabel("Owner code")).toHaveCount(0);
+          await expect(page.locator("body")).not.toContainText(code);
+          await page.getByRole("button", { name: "Try again" }).click();
+        } else {
           await expect(page.getByLabel("Owner code")).toBeVisible();
           expect(new URL(page.url()).hash).toBe("");
           expect(await context.cookies()).toEqual([]);
@@ -389,14 +401,22 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
         expect(new URL(page.url()).hash).toBe("");
         expect((await context.cookies()).some(cookie => cookie.name === "control_room_local_owner")).toBe(true);
+        // Same-document link replacement must be consumed by the product.
+        await page.goto(`${localOrigin}/setup#reg=${nextSecret}&mode=add`);
+        await expect.poll(() => used.has(nextSecret)).toBe(true);
+        await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
+        expect(new URL(page.url()).hash).toBe("");
+        // Replay is a full document navigation, separate from hashchange.
+        await page.goto("about:blank");
         await page.goto(link);
         await expect(page.getByRole("alert")).toContainText("Registration stopped");
         expect(new URL(page.url()).hash).toBe("");
+        await page.goto("about:blank");
         await page.goto(`${localOrigin}/setup#code=${code}&reg=${secret}&extra=1`);
         await expect(page.getByRole("alert")).toContainText("Registration stopped");
       } finally { await context.close(); }
     }
-    expect(inserted).toBe(2);
+    expect(inserted).toBe(4);
     expect(requests.some(request => new URL(request.url).pathname === "/setup")).toBe(true);
     for (const request of requests) {
       expect(request.url).not.toContain(code); expect(request.url).not.toContain(secret);

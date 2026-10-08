@@ -176,6 +176,7 @@ for (const scenario of ["fresh", "session", "forbidden", "expired", "limited", "
       assert.match(dom.window.document.body.textContent ?? "", scenario === "limited" ? /Too many tries — wait 37 seconds/ : /Registration stopped/);
       assert.equal(requests.length, 1); return;
     }
+    assert.match(dom.window.document.body.textContent ?? "", /the 43-character owner code printed in the Terminal window where you installed Control Room.*If that window is unavailable, ask the lead/u, "N1: manual code source is actionable");
     assert.ok(dom.window.document.querySelector('input[name="ownerCode"]'), "unauthenticated setup offers an owner-code field on the same page");
     const submit = async (code: string, burst = 1) => {
       const field = dom.window.document.querySelector('input[name="ownerCode"]') as HTMLInputElement;
@@ -206,8 +207,9 @@ for (const scenario of ["fresh", "session", "forbidden", "expired", "limited", "
 
 // Real HTTP session issuance and real body refusal; passkey options below are
 // synthetic WebAuthn-boundary data. No database or passkey record is created.
-for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "slow", "lost-success", "503", "unmount", "unmount-success"])
+for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "slow", "lost-success", "503", "unmount", "unmount-success", "qr-dropped", "qr-503", "qr-slow", "qr-lost-success"])
   test(`V101 F2 real HTTP sign-in recovery ${mode} retains same-page retry`, { timeout: 25_000 }, async () => {
+    const failureMode = mode.replace(/^qr-/, "");
     const { createServer } = await import("node:http");
     const { createMacLocalWebProcessV1 } = await import("../src/web/v1/mac-local-web-process");
     const { createMacLocalNodeHandler } = await import("../src/web/v1/private-node-handler");
@@ -242,7 +244,7 @@ for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "sl
         assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
         handler: async request => {
           const response = await app!.handle(request, () => new Response("shell"));
-          if (mode === "lost-success" && calls === 1 && new URL(request.url).pathname === "/api/v1/local-owner-session") {
+          if (failureMode === "lost-success" && calls === 1 && new URL(request.url).pathname === "/api/v1/local-owner-session") {
             lostIssued = response.status === 201 && response.headers.has("set-cookie");
             lostSocket!.destroy();
           }
@@ -251,10 +253,10 @@ for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "sl
       server.on("request", (request, response) => {
         if (request.url === "/api/v1/local-owner-session" && ++calls === 1) {
           entered();
-          if (mode === "dropped") { request.socket.destroy(); return; }
-          if (mode === "slow" || mode === "unmount") return;
-          if (mode === "503") { response.writeHead(503); response.end(); return; }
-          if (mode === "lost-success") {
+          if (failureMode === "dropped") { request.socket.destroy(); return; }
+          if (failureMode === "slow" || failureMode === "unmount") return;
+          if (failureMode === "503") { response.writeHead(503); response.end(); return; }
+          if (failureMode === "lost-success") {
             // Retain the socket until the application has issued its session,
             // then drop it before the Node adapter sends headers or body.
             lostSocket = request.socket;
@@ -267,7 +269,7 @@ for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "sl
         body: JSON.stringify({ registrationSecret: secret }),
       });
       assert.equal(denied.status, 401, "registration options still require session authority"); await denied.text();
-      dom = new JSDOM('<div id="root"></div>', { url: localOrigin + "/setup#reg=" + secret + "&mode=initial",
+      dom = new JSDOM('<div id="root"></div>', { url: localOrigin + "/setup#reg=" + secret + "&mode=initial" + (mode.startsWith("qr-") ? "&code=" + correctCode : ""),
         pretendToBeVisual: true });
       for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
         history: dom.window.history, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true,
@@ -277,7 +279,7 @@ for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "sl
           const response = await realFetch(localOrigin + url, { ...init,
             headers: { ...init.headers, origin: localOrigin, ...(cookie ? { cookie } : {}) } });
           const issued = response.headers.get("set-cookie"); if (issued) cookie = issued.split(";")[0]!;
-          if (mode === "unmount-success" && url.endsWith("local-owner-session")) {
+          if (failureMode === "unmount-success" && url.endsWith("local-owner-session")) {
             assert.equal(response.status, 201, "unmount follows real sign-in success");
             await act(async () => root!.unmount()); mounted = false;
           }
@@ -291,44 +293,55 @@ for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "sl
         assert.ok(predicate(), "observable recovery state reached within its independent deadline");
       };
       await act(async () => root!.render(createElement(PasskeyRegistration)));
+      const started = performance.now();
+      if (!mode.startsWith("qr-")) {
       await waitFor(() => !!dom!.window.document.querySelector("input"));
       const field = dom.window.document.querySelector("input")!;
-      field.value = mode === "large-ascii" ? "A".repeat(500) : mode === "large-link"
-        ? "https://example.test/setup#code=" + "A".repeat(480) : mode === "large-unicode" ? "é".repeat(260) : correctCode;
+      field.value = failureMode === "large-ascii" ? "A".repeat(500) : failureMode === "large-link"
+        ? "https://example.test/setup#code=" + "A".repeat(480) : failureMode === "large-unicode" ? "é".repeat(260) : correctCode;
       const form = field.form!;
-      const started = performance.now();
       await act(async () => { for (let index = 0; index < 50; index++) form.dispatchEvent(new dom!.window.Event("submit", { bubbles: true, cancelable: true })); });
+      }
       await firstSession;
       const waitingStatus = dom.window.document.querySelector('[role="status"]')?.textContent;
-      if (mode === "unmount-success") {
+      if (failureMode === "unmount-success") {
         await waitFor(() => !mounted);
         await act(async () => { await new Promise<void>(done => setImmediate(done)); });
         assert.equal(clientOptions, 1, "unmount after session success never starts a new options fetch");
         assert.deepEqual(optionSecrets, [], "unmount after success never begins registration"); return;
       }
-      if (mode === "unmount") {
+      if (failureMode === "unmount") {
         await act(async () => root!.unmount()); mounted = false;
         assert.equal(pendingSignal?.aborted, true, "unmount aborts the pending sign-in request");
         assert.deepEqual(optionSecrets, [], "unmount never resumes registration"); return;
       }
-      await waitFor(() => !!dom!.window.document.querySelector('form [role="alert"]'), mode === "slow" ? 11_000 : 2_000);
+      await waitFor(() => !!dom!.window.document.querySelector('form [role="alert"]'), failureMode === "slow" ? 11_000 : 2_000);
       assert.equal(calls, 1, "50 parallel submits issue exactly one request");
       assert.deepEqual(optionSecrets, [], "a failed sign-in never begins registration");
-      assert.ok(dom.window.document.querySelector("input"), "transient sign-in failure preserves retry form");
+      if (mode.startsWith("qr-")) {
+        assert.equal(!!dom.window.document.querySelector("input"), false, "R3: QR retry never asks for or redisplays the retained code");
+        assert.equal(dom.window.document.querySelector("button")?.textContent, "Try again", "R3: transient QR failure offers an in-memory retry");
+        assert.ok(!dom.window.document.body.textContent?.includes(correctCode));
+      } else assert.ok(dom.window.document.querySelector("input"), "transient sign-in failure preserves retry form");
       if (mode.startsWith("large")) assert.equal(dom.window.document.querySelector('[role="alert"]')!.textContent,
         "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.",
         "oversized copied input shows guidance rather than service outage");
-      else if (mode !== "503") assert.equal(dom.window.document.querySelector('[role="alert"]')!.textContent,
+      else if (failureMode !== "503") assert.equal(dom.window.document.querySelector('[role="alert"]')!.textContent,
         "Could not reach Control Room to sign in. Check your connection and try again on this page.",
         "transport failures are recoverable sign-in errors, not terminal registration errors");
-      if (mode === "lost-success") assert.equal(lostIssued, true, "the lost reply follows real session issuance");
-      if (mode === "slow") {
+      if (failureMode === "lost-success") assert.equal(lostIssued, true, "the lost reply follows real session issuance");
+      if (failureMode === "slow") {
         assert.equal(waitingStatus, "Signing in…", "slow sign-in never claims Face ID is already waiting");
         assert.equal(pendingSignal?.aborted, true, "application deadline aborts held sign-in response");
         assert.ok(performance.now() - started < 11_000, "sign-in deadline is bounded independently at eleven seconds");
       }
-      const retry = dom.window.document.querySelector("input")!; retry.value = correctCode;
-      await act(async () => retry.form!.dispatchEvent(new dom!.window.Event("submit", { bubbles: true, cancelable: true })));
+      if (mode.startsWith("qr-")) {
+        const retry = dom.window.document.querySelector("button")!;
+        await act(async () => { for (let n = 0; n < 50; n++) retry.click(); });
+      } else {
+        const retry = dom.window.document.querySelector("input")!; retry.value = correctCode;
+        await act(async () => retry.form!.dispatchEvent(new dom!.window.Event("submit", { bubbles: true, cancelable: true })));
+      }
       await waitFor(() => optionSecrets.length === 1 && !!dom!.window.document.querySelector('[role="alert"]'));
       assert.equal(calls, 2, "one retry issues one new sign-in");
       assert.equal(codes.at(-1), correctCode);
@@ -342,3 +355,76 @@ for (const mode of ["large-ascii", "large-link", "large-unicode", "dropped", "sl
       server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); await app?.close();
     }
   });
+
+// Synthetic WebAuthn replies isolate the hashchange lifecycle. Browser coverage
+// below separately uses Chromium; this fixture makes no persistence claim.
+for (const stage of ["ready", "pending", "insert", "credential"]) test(`V101 R4 new same-tab fragment replaces ${stage} registration`, async t => {
+  const pending = stage !== "ready";
+  const nextSecret = "Z".repeat(43);
+  const dom = new JSDOM('<div id="root"></div>', { url: `https://control-room.example.test/setup#reg=${secret}` });
+  const keys = ["window", "document", "history", "navigator", "fetch", "IS_REACT_ACT_ENVIRONMENT", "AuthenticatorAttestationResponse"];
+  const prior = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  class Attestation { clientDataJSON = buffer(32, 1); attestationObject = buffer(64, 2); getTransports() { return ["internal"]; } }
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
+    history: dom.window.history, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true,
+    AuthenticatorAttestationResponse: Attestation })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  let release!: () => void, oldSignal: AbortSignal | undefined;
+  let creates = 0;
+  Object.defineProperty(dom.window.navigator, "credentials", { configurable: true, value: { create: async (input: { signal?: AbortSignal }) => {
+    creates++;
+    if (stage === "credential") { oldSignal = input.signal; await new Promise<void>(done => { release = done; }); }
+    return ({
+    id: b64(buffer(32, 7)), rawId: buffer(32, 7), type: "public-key", getClientExtensionResults: () => ({}), response: new Attestation(),
+  }); } } });
+  const secrets: string[] = [], inserts: string[] = [];
+  globalThis.fetch = (async (_url, init) => {
+    const requested = JSON.parse(String(init!.body)).registrationSecret;
+    assert.equal(dom.window.location.hash, "", "new fragment is removed before requests");
+    if (String(_url).endsWith("/options")) {
+      secrets.push(requested);
+      if (requested === secret && stage === "pending") { oldSignal = init!.signal!; await new Promise<void>(done => { release = done; }); }
+      if (requested === nextSecret) return Response.json({}, { status: 410 });
+      return Response.json({ publicKey: { challenge: b64(buffer(32, 3)), user: { id: b64(buffer(32, 4)) } } });
+    }
+    inserts.push(requested);
+    if (requested === secret && stage === "insert") { oldSignal = init!.signal!; await new Promise<void>(done => { release = done; }); }
+    return Response.json({}, { status: 201 });
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  t.after(async () => { await act(async () => root.unmount()); dom.window.close();
+    for (const key of keys) { const descriptor = prior.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
+  const settle = async () => { for (let n = 0; n < 20; n++) await act(async () => new Promise<void>(done => setImmediate(done))); };
+  await act(async () => root.render(createElement(PasskeyRegistration))); await settle();
+  if (!pending) assert.ok(dom.window.document.querySelector('[aria-label="Passkey comparison code"]'), "first registration completed");
+  await act(async () => {
+    const changed = new Promise<void>(done => dom.window.addEventListener("hashchange", () => done(), { once: true }));
+    dom.window.location.hash = `reg=${nextSecret}&mode=add`; await changed;
+  }); await settle();
+  assert.deepEqual(secrets, [secret, nextSecret], "R4: same-tab link starts registration with new authority");
+  assert.equal(dom.window.location.hash, "");
+  assert.equal(!!dom.window.document.querySelector('[aria-label="Passkey comparison code"]'), false, "R4: old comparison code is cleared");
+  assert.match(dom.window.document.querySelector('[role="alert"]')!.textContent!, /Registration stopped/);
+  if (pending) {
+    assert.equal(oldSignal!.aborted, true, "R4: replacement aborts the old request");
+    await act(async () => release()); await settle();
+    assert.deepEqual(inserts, stage === "insert" ? [secret] : [], "R4: a late reply cannot insert the old registration");
+    assert.equal(creates, stage === "pending" ? 0 : 1, "R4: a late reply cannot start an old WebAuthn prompt");
+    assert.equal(!!dom.window.document.querySelector('[aria-label="Passkey comparison code"]'), false);
+  }
+  await act(async () => {
+    const changed = new Promise<void>(done => dom.window.addEventListener("hashchange", () => done(), { once: true }));
+    dom.window.location.hash = "reg=bad"; await changed;
+  }); await settle();
+  assert.equal(dom.window.location.hash, "", "malformed replacement is removed and refused");
+  assert.deepEqual(secrets, [secret, nextSecret], "malformed replacement never reaches the API");
+});
+
+test("V101 R1 browser fixture uses a WebAuthn hostname and a new document for replay", async () => {
+  const source = await readFile("tests/browser/mac-local-owner-journey.spec.ts", "utf8");
+  assert.match(source, /const localOrigin = `http:\/\/localhost:\$\{address\.port\}`/u,
+    "R1: browser origin is a hostname accepted by WebAuthn, rather than an IP literal");
+  assert.match(source, /rp: \{ name: "Disposable setup", id: "localhost" \}/u,
+    "R1: RP id is the independently specified matching hostname");
+  assert.match(source, /await page\.goto\("about:blank"\);\s*await page\.goto\(link\)/u,
+    "R1: replay loads a new document rather than assuming a fragment reload");
+});

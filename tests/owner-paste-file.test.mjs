@@ -490,5 +490,5 @@ test('V101 generated live guidance follows stopped Face ID recovery through the 
   assert.doesNotMatch(live, /do not run.*passkey add/iu);
   assert.ok(live.includes('Keep the Terminal message on screen.'));
   assert.ok(live.includes('Do not retry or reload the stopped phone page.'));
-  assert.ok(live.includes('The link expires in 30 minutes; there is nothing to delete.'));
+  assert.ok(live.includes('Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.<br>There is nothing to delete.'));
 });

@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 
-type RegistrationState = Readonly<{ status: "absent" | "working" | "ready" | "failed" | "limited" | "sign-in"; code?: string; retryAfterSeconds?: number; message?: string }>;
+type RegistrationState = Readonly<{ status: "absent" | "working" | "ready" | "failed" | "limited" | "sign-in"; code?: string; retryAfterSeconds?: number; message?: string; retry?: boolean }>;
 
 class RegistrationAttemptLimitError extends Error {
   constructor(readonly retryAfterSeconds: number) { super("owner_attempt_limit"); }
@@ -74,8 +74,11 @@ async function comparisonCode(credentialId: string): Promise<string> {
 /** Fragment secrets are copied once and removed before any network request or WebAuthn prompt. */
 export function PasskeyRegistration() {
   const [state, setState] = useState<RegistrationState>({ status: "absent" });
+  const retrySignIn = useRef<(() => void) | null>(null);
   const signIn = useRef<((code: string) => void) | null>(null);
   useLayoutEffect(() => {
+    const start = () => {
+    signIn.current = null; retrySignIn.current = null;
     if (!window.location.hash) return;
     if (window.location.hash.length > 1024) {
       history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
@@ -117,12 +120,14 @@ export function PasskeyRegistration() {
                     ? "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link."
                     : "Sign-in was not accepted. Check your owner code and try again."
                   : "Control Room could not sign you in. Try again when the service is available.";
-              if (!controller.signal.aborted) setState({ status: "sign-in", message });
+              if (!controller.signal.aborted) setState({ status: "sign-in", message,
+                retry: ownerCode !== null && code === ownerCode && sessionResponse.status >= 500 });
               return;
             }
           } catch {
             if (!controller.signal.aborted) setState({ status: "sign-in",
-              message: "Could not reach Control Room to sign in. Check your connection and try again on this page." });
+              message: "Could not reach Control Room to sign in. Check your connection and try again on this page.",
+              retry: ownerCode !== null && code === ownerCode });
             return;
           } finally {
             clearTimeout(timeout); controller.signal.removeEventListener("abort", abortSession);
@@ -139,6 +144,7 @@ export function PasskeyRegistration() {
         }
         requireRegistrationResponse(optionResponse, "registration_options_refused");
         const options = await optionResponse.json();
+        if (controller.signal.aborted) return;
         let authorizationAssertion: ReturnType<typeof responseJson> | null = null;
         if (options.authorization?.allowCredentials?.length) {
           try {
@@ -156,11 +162,12 @@ export function PasskeyRegistration() {
           signal: controller.signal }) as PublicKeyCredential | null;
         if (!created) throw new Error("registration_cancelled");
         const response = responseJson(created), displayCode = await comparisonCode(response.id);
+        if (controller.signal.aborted) return;
         const inserted = await fetch("/api/v1/passkeys/registration", { method: "POST", credentials: "same-origin",
           cache: "no-store", redirect: "error", signal: controller.signal, headers: { "content-type": "application/json" },
           body: JSON.stringify({ registrationSecret, comparisonCode: displayCode, response, authorizationAssertion }) });
         requireRegistrationResponse(inserted, "registration_insert_refused");
-        setState({ status: "ready", code: displayCode });
+        if (!controller.signal.aborted) setState({ status: "ready", code: displayCode });
       })().catch(error => {
         if (!controller.signal.aborted) setState(error instanceof RegistrationAttemptLimitError
           ? { status: "limited", retryAfterSeconds: error.retryAfterSeconds } : { status: "failed" });
@@ -168,8 +175,19 @@ export function PasskeyRegistration() {
     };
     // Keep the already-cleared fragment in this effect's closure during sign-in.
     signIn.current = code => run(code);
+    retrySignIn.current = () => run(ownerCode ?? undefined);
     run(ownerCode ?? undefined);
-    return () => { signIn.current = null; controller.abort(); };
+    return () => { signIn.current = null; retrySignIn.current = null; controller.abort(); };
+    };
+    let stop = start();
+    const onHashChange = () => {
+      if (!window.location.hash) return;
+      stop?.();
+      setState({ status: "absent" });
+      stop = start();
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => { window.removeEventListener("hashchange", onHashChange); stop?.(); };
   }, []);
   if (state.status === "absent") return null;
   return <section className="private-panel" aria-labelledby="passkey-registration-title">
@@ -179,10 +197,11 @@ export function PasskeyRegistration() {
       const code = String(new window.FormData(event.currentTarget).get("ownerCode") ?? "").replace(/^ | $/g, "");
       signIn.current?.(code);
     }}>
-      <p>Enter the owner code to continue Face ID setup on this page.</p>
+      {state.retry ? <button type="button" onClick={() => retrySignIn.current?.()}>Try again</button> : <>
+      <p>Enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.</p>
       <label htmlFor="setup-owner-code">Owner code</label>
       <input id="setup-owner-code" name="ownerCode" type="password" autoComplete="off" required />
-      <button type="submit">Sign in and continue</button>
+      <button type="submit">Sign in and continue</button></>}
       {state.message && <p role="alert">{state.message}</p>}
     </form>}
     {state.status === "working" && <p role="status">{state.message ?? "Waiting for Face ID. Keep this page open."}</p>}
