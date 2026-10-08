@@ -1,0 +1,226 @@
+[
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (entry.uid !== 0 && entry.uid !== expectedUid) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "directory-owner: wrong directory owner creates no lock"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (entry.isDirectory() && (entry.mode & 0o022) !== 0 && !protectedBySticky) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "directory-write: writable lock directory is refused at acquire"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!entry.isDirectory() || entry.isSymbolicLink()) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "directory-symlink: symlinked ancestor creates no lock"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "await checkDirectory();",
+    "replace": "// custody recheck disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "directory-recheck: directory-mode during acquire is refused"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!privateFile(owned, expectedUid) || !same(owned, named)) refuse();",
+    "replace": "if (!same(owned, named)) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "file-custody: mode lock is refused"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!privateFile(owned, expectedUid) || !same(owned, named)) refuse();",
+    "replace": "if (!privateFile(owned, expectedUid)) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acquire-identity: unproved descriptor is never truncated"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!same(owned, await lstat(path))) refuse();",
+    "replace": "// late identity check disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "late-identity: lock-identity during acquire is refused"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "// Keep the rendezvous inode: closing alone releases the kernel lock.",
+    "replace": "await import(\"node:fs/promises\").then(fs => fs.unlink(path));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "permanent-release: release retains the permanent rendezvous inode"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "// Keep even a freshly created name: another opener may already use it.",
+    "replace": "if (error.code === \"EIO\") await import(\"node:fs/promises\").then(fs => fs.unlink(path));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "permanent-failure: failed acquisition keeps the permanent name"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const platform = kernelFileLockPlatformV1(); let handle;",
+    "replace": "const platform = { openFlags: 0, tryLock: () => true }; let handle;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "kernel-exclusion: one descriptor excludes the independent writer"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "env: {}, detached: false, timeout: 5000",
+    "replace": "env: {}, detached: true, timeout: 5000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "helper-attached: Linux helper never detaches"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (result.status === 0 && !result.error && !result.signal) return true;",
+    "replace": "if (result.status !== 75) return true;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "helper-fail-closed: unknown helper results fail closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (result.status === 75 && !result.error && !result.signal) return false;",
+    "replace": "if (result.status === 75) return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "helper-conflict: unknown helper results fail closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "env: {}, detached: false, timeout: 5000",
+    "replace": "env: {}, detached: false, timeout: undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "helper-bounded: helper timeout remains bounded"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (platform !== \"linux\") throw new Error(\"kernel_file_lock_unsupported\");",
+    "replace": "if (false) throw new Error(\"kernel_file_lock_unsupported\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "platform-unsupported: Missing expected exception"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (closed) return;",
+    "replace": "// repeated-release guard disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "release-idempotence: completed release is idempotent even after the owner moves the name"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!same(owned, await lstat(path))) throw new Error(\"kernel_file_lock_owner_changed\");",
+    "replace": "// displaced-name diagnostic disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "release-identity: release reports a displaced name and still closes"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (entry.isDirectory() && (entry.mode & 0o022) !== 0 && !protectedBySticky) refuse();",
+    "replace": "if (current === parent && (entry.mode & 0o022) !== 0) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "ancestor-write: writable non-sticky grandparent refused"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "const protectedBySticky = current !== parent && (entry.mode & 0o1000) !== 0",
+    "replace": "const protectedBySticky = false && (entry.mode & 0o1000) !== 0",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "sticky-acceptance: sticky grandparent accepted"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (existing && !existing.isFile()) refuse();",
+    "replace": "// nonregular leaf refusal disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "socket-shape: socket gets named refusal"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!privateFile(owned, expectedUid) || !same(owned, named)) refuse();",
+    "replace": "if (!privateFile(owned, owned.uid) || !same(owned, named)) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "file-owner: wrong file owner refused with correct directory owner"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "return acl.some(row => / (?:inherited )?allow /u.test(row));",
+    "replace": "return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-entry: recorded folder ACL detected"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!result || result.status !== 0 || result.error || result.signal || result.stderr) failed();",
+    "replace": "if (false) failed();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-probe-failure: failed ACL probe fails closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (header[1] === \"+\" && acl.length === 0) failed();",
+    "replace": "// incomplete ACL output accepted",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-incomplete: unparseable ACL probe fails closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (!header) failed();",
+    "replace": "if (!header) return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-header: unparseable ACL probe fails closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (acl.some((row, index) => !new RegExp(`^\\\\s+${index}: (?:user|group):\\\\S+ (?:inherited )?(?:allow|deny) \\\\S.*$`, \"u\").test(row))) failed();",
+    "replace": "// ACL row syntax check disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-row: unparseable ACL probe fails closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (typeof result.stdout !== \"string\") failed();",
+    "replace": "if (typeof result.stdout !== \"string\") return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-stdout: failed ACL probe fails closed"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "catch { failed(); }",
+    "replace": "catch { throw new Error(\"raw tool failure\"); }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-throw: thrown ACL probe fails closed"
+  },
+  {
+    "file": "tests/passkey-ledger-lock.test.mjs",
+    "find": "const parent = tmpdir();",
+    "replace": "const parent = join(process.cwd(), '.test-tmp');\n  await fs.mkdir(parent, { recursive: true });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "fixture-temp-layout: fixture uses configured temporary directory rather than checkout ancestry"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "return acl.some(row => / (?:inherited )?allow /u.test(row));",
+    "replace": "return acl.length > 0;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-deny-only: recorded deny-only home ancestor ACL accepted"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "if (process.platform === \"darwin\" && macLockPathHasAclV1(current)) refuse();\n    entries.push([current, entry]);",
+    "replace": "// initial Darwin ancestor ACL wiring disabled\n    entries.push([current, entry]);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-darwin-wiring: Darwin ancestor allow ACL creates no lock"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "return acl.some(row => / (?:inherited )?allow /u.test(row));",
+    "replace": "return / (?:inherited )?allow /u.test(acl.at(-1) ?? \"\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "acl-allow-first: recorded allow-first ACL refused before inherited deny"
+  }
+]

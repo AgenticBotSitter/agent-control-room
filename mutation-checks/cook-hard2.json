@@ -8,15 +8,15 @@
   },
   {
     "file": "src/installer/shared/private-process-lock.mjs",
-    "find": "if (publishing) await removeOwnedFileV1(path, owned);",
-    "replace": "if (false) await removeOwnedFileV1(path, owned);",
+    "find": "await handle?.close();",
+    "replace": "if (error?.code !== \"ENOSPC\") await handle?.close();",
     "test": "node --import tsx --test --test-name-pattern='A1-07' tests/updater-file-hardening.test.mjs",
-    "why": "a failed lock initialization must remove only its owned inode so later updates can retry"
+    "why": "failed permanent-lock initialization must close its owned descriptor so a retry can acquire the retained inode"
   },
   {
     "file": "src/installer/shared/private-process-lock.mjs",
-    "find": "if (publishing) await removeOwnedFileV1(path, owned);",
-    "replace": "if (publishing) await import(\"node:fs/promises\").then(fs => fs.rm(path, { force: true }));",
+    "find": "await handle?.close();",
+    "replace": "await handle?.close(); if (error?.code === \"ENOSPC\") await import(\"node:fs/promises\").then(fs => fs.rm(path, { force: true }));",
     "test": "node --import tsx --test --test-name-pattern='trust lock:' tests/updater-file-hardening.test.mjs",
     "why": "failed initialization must not remove a replacement lock"
   },
