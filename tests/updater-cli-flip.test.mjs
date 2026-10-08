@@ -759,3 +759,45 @@ test("database refusal renderer reports only explicit unfinished recovery", asyn
     assert.equal(cliFailureMessageV1({ ...refusal, unfinishedUpdateRecovered: value }),
       "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)", "only a boolean recovery receipt admits the recovery assurance");
 });
+
+test("V101 direct runtime refusal prints only validated diagnostic detail", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const { safeErrorPartsV1 } = await import("../src/updater/v1/contracts.mjs");
+  const refusal = diagnostic => Object.assign(new Error("raw tool SECRET sentinel"), {
+    code: "runtime_download_failed", runtimeDownload: diagnostic });
+  assert.equal(cliFailureMessageV1(refusal({ exitCode: 56, stderr: "Failure writing output to destination" })),
+    "runtime_download_failed (exit 56, Failure writing output to destination)", "owner gets the bounded curl cause");
+  assert.equal(cliFailureMessageV1(refusal({ exitCode: 7, stderr: "Could not connect to server" })),
+    "runtime_download_failed (exit 7, Could not connect to server)");
+  for (const diagnostic of [
+    { exitCode: 56, stderr: "open /private/SECRET/file failed" },
+    { exitCode: 56, stderr: "https://user:SECRET@host.invalid/archive" },
+    { exitCode: 56, stderr: "Receive failure\u001b[31m" },
+    { exitCode: 56, stderr: "x".repeat(301) },
+    { exitCode: -1, stderr: "Receive failure" },
+    { exitCode: 0, stderr: "Receive failure" },
+    { exitCode: 256, stderr: "Receive failure" },
+    { exitCode: 1.5, stderr: "Receive failure" },
+    { exitCode: 56, stderr: "Receive failure", extra: "SECRET" },
+    Object.assign([], { exitCode: 56, stderr: "Receive failure" }),
+  ]) {
+    assert.deepEqual(safeErrorPartsV1(refusal(diagnostic)).details, [], "unadmitted tool text stays excluded");
+    assert.equal(cliFailureMessageV1(refusal(diagnostic)), "runtime_download_failed");
+  }
+  let reads = 0;
+  const changing = { exitCode: 56, get stderr() {
+    reads += 1; return reads <= 3 ? "Receive failure" : "https://user:SECRET@private.invalid/archive";
+  } };
+  assert.deepEqual(safeErrorPartsV1(refusal(changing)).details, ["exit 56", "Receive failure"],
+    "diagnostic admission and printing use the same captured value");
+  assert.equal(reads, 1, "each diagnostic value is captured only once");
+  for (let index = 0; index < 500; index += 1) {
+    const stderr = `unknown-${index}-${String.fromCodePoint(32 + index % 90)}-SECRET`;
+    assert.equal(cliFailureMessageV1(refusal({ exitCode: index % 256, stderr })), "runtime_download_failed",
+      "unknown diagnostics are refused even when printable");
+  }
+  assert.equal(cliFailureMessageV1(refusal({ exitCode: null, stderr: "Download timed out" })),
+    "runtime_download_failed (Download timed out)");
+  assert.deepEqual(safeErrorPartsV1({ code: "ENOENT", runtimeDownload: { exitCode: 56, stderr: "Receive failure" } }).details, []);
+  assert.equal(cliFailureMessageV1({ code: "ENOENT", runtimeDownload: { exitCode: 56, stderr: "Receive failure" } }), "ENOENT");
+});

@@ -565,7 +565,7 @@ export function updaterRecoveryLineV1(error) {
 // definition, and the repository-wide policy test still rejects any direct
 // comparison outside it.
 /** The one line the CLI prints when it stops. Database-change refusal gets fixed owner guidance;
- * other string codes print EXACTLY as they always have
+ * a runtime download code adds validated detail; other string codes print exactly as before
  * (fix round 2: `updater_command_failed` had started printing its message instead). An error with
  * no code used to print only "updater_cli_failed"; it now adds what `safeErrorPartsV1` admits: a
  * message that is itself a refusal code, an exit status or signal, the executable's basename or the
@@ -580,7 +580,9 @@ export function cliFailureMessageV1(error) {
       ? "Not installed: this version needs a database upgrade step that isn't built yet. Earlier unfinished update rolled back. Tell the lead. (attended_database_change_requires_upgrader)"
       : "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)";
   else if (typeof error?.userMessage === "string") message = error.userMessage;
-  else if (typeof error?.code === "string") message = error.code;
+  else if (typeof error?.code === "string") {
+    message = error.code === "runtime_download_failed" ? safeErrorLabelV1(error) : error.code;
+  }
   else {
     const { code, details } = safeErrorPartsV1(error);
     message = `updater_cli_failed${code ? `: ${code}` : ""}${details.length ? ` (${details.join(", ")})` : ""}`;
