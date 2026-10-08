@@ -28,8 +28,8 @@ export async function readGatewayLocalCapabilityV1(input, runtime = {}) {
   let declarationEntry;
   try { declarationEntry = await fs.lstat(path); }
   catch (error) {
-    // OLD's builder emits none. Absence is legacy only after checking custody
-    // and that the release manifest does not promise a declaration.
+    // OLD's builder emits none. If a manifest exists, absence is legacy only
+    // after checking custody and that it does not promise a declaration.
     if (error?.code === "ENOENT") declarationEntry = null;
     else refuse();
   }
