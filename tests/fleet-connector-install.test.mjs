@@ -1242,6 +1242,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     }
   `;
   const launched = [];
+  let closingChildren = false;
   const rotateInProcess = (lockState = (state, child) => {
     if (state === "waiting") child.send("retry");
   }) => {
@@ -1261,7 +1262,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
       if (message === "waiting" || message === "holding") lockState(message, child);
     });
     const done = new Promise(resolveChild => {
-      child.once("error", error => resolveChild({ code: null, stdout, stderr: String(error) }));
+      child.once("error", error => { stderr += String(error); });
       child.once("close", code => {
         lockState("finished", child);
         resolveChild({ code, stdout, stderr });
@@ -1278,6 +1279,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     const attempting = new Set(), waiting = new Set(), holding = new Set();
     let retries = 0;
     const lockState = (state, child) => {
+      if (closingChildren) return;
       // The same sleep callback is also used to retry retirement. A holder
       // must finish releasing before queued acquisition retries can run.
       if (state === "waiting" && holding.has(child)) {
@@ -1337,6 +1339,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 50);
     assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
   } finally {
+    closingChildren = true;
     allowBlockedRequest?.();
     for (const entry of launched) {
       if (entry.child.exitCode === null && entry.child.signalCode === null) entry.child.kill("SIGKILL");
