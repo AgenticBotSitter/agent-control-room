@@ -4,7 +4,8 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 import { RELEASE_TRUST_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
@@ -17,6 +18,7 @@ const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.v
 async function workspace(t) {
   const dir = await mkdtemp(join(tmpdir(), "fleet-tool-adapter-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
+  await createPrivateNodeTool(dir);
   return dir;
 }
 
@@ -30,7 +32,7 @@ async function executable(dir, source) {
 const entry = (script, extra = {}) => ({
   id: "whisper_local",
   capability: "tool.whisper",
-  executable: process.execPath,
+  executable: join(dirname(script), "node-tool"),
   arguments: [script, "{input:audio}", "{output:transcript}"],
   timeoutMs: 2_000,
   maxOutputBytes: 64 * 1024,
