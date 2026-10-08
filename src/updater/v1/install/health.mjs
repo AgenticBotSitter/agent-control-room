@@ -1,3 +1,4 @@
+import { readGatewayLocalCapabilityV1 } from "./gateway-local-capability.mjs";
 import { parseStrictJsonV1 } from "../../../installer/shared/strict-json.mjs";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -148,9 +149,14 @@ export async function checkGatewayHealthV1(input, runtime = {}) {
   if (!(key instanceof Uint8Array) || key.byteLength !== 32) refuse("health_probe_key_refused");
   const nonce = (runtime.randomBytes ?? randomBytes)(32).toString("base64url");
   if (!/^[A-Za-z0-9_-]{43}$/u.test(nonce)) refuse("health_gateway_refused");
+  // Preserve the standalone gateway caller with no release/root (fleet tests).
+  // Installed health always supplies both, so the target is read before dialing.
+  const host = input.root === undefined && input.expectedRelease === undefined ? "127.0.0.1"
+    : await readGatewayLocalCapabilityV1(input, runtime);
+  const origin = `http://${host === "::1" ? "[::1]" : host}:${port}`;
   let response;
   try {
-    response = await (runtime.transport ?? fetch)(`http://127.0.0.1:${port}/fleet/v1/local-health`, { method: "POST",
+    response = await (runtime.transport ?? fetch)(`${origin}/fleet/v1/local-health`, { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ nonce }), redirect: "error",
       signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });
   } catch (error) { fetchRefused("health_gateway_refused", error); }
@@ -167,6 +173,8 @@ export async function checkHealthV1(input, ports = {}, runtime = {}) {
     refuse("health_input_refused");
   }
   if (typeof ports.checkDatabase !== "function") refuse("health_database_port_unavailable");
+  // Validate before ANY health request, including the unchanged web IPv4 probe.
+  await readGatewayLocalCapabilityV1(input, runtime);
   const samples = input.samples ?? 3;
   if (samples !== 3) refuse("health_input_refused");
   const current = await (ports.readCurrentRelease ?? readCurrentReleaseV1)(input.root);
