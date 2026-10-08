@@ -50,10 +50,10 @@
   },
   {
     "file": "src/updater/v1/install/gateway-local-capability.mjs",
-    "find": "if (!manifestEntry) return await legacyHost();",
+    "find": "if (!manifestEntry) return \"127.0.0.1\";",
     "replace": "if (!manifestEntry) refuse();",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
-    "why": "Empty historical releases retain IPv4-only compatibility after custody checks."
+    "why": "Empty historical releases preserve the lead-decided IPv4-only compatibility contract."
   },
   {
     "file": "src/updater/v1/install/health.mjs",

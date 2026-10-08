@@ -34,6 +34,14 @@ export async function readGatewayLocalCapabilityV1(input, runtime = {}) {
     else refuse();
   }
   try {
+    const manifestPath = join(directories[2], "RELEASE_MANIFEST.json");
+    const manifestEntry = await fs.lstat(manifestPath).catch(error => {
+      // Historical empty-release callers have neither artifact. Preserve their
+      // IPv4-only contract; a manifest that exists is always checked below.
+      if (!declarationEntry && error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!manifestEntry) return "127.0.0.1";
     const parents = [];
     for (const directory of directories) {
       const entry = await fs.lstat(directory);
@@ -67,13 +75,6 @@ export async function readGatewayLocalCapabilityV1(input, runtime = {}) {
       if (now !== null) refuse();
       return "127.0.0.1";
     }
-    const manifestPath = join(directories[2], "RELEASE_MANIFEST.json");
-    const manifestEntry = await fs.lstat(manifestPath).catch(error => {
-      // Empty staged releases from historical installer callers have no manifest.
-      if (!declarationEntry && error?.code === "ENOENT") return null;
-      throw error;
-    });
-    if (!manifestEntry) return await legacyHost();
     const manifestBytes = await readImmutable(manifestPath, manifestEntry, 8 * 1024 * 1024);
     if (input.manifestDigest !== undefined && (!DIGEST.test(input.manifestDigest) || hash(manifestBytes) !== input.manifestDigest)) refuse();
     const manifest = parseStrictJsonV1(manifestBytes.toString("utf8"), { maxBytes: 8 * 1024 * 1024 });
