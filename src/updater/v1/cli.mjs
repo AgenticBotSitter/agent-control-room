@@ -564,7 +564,8 @@ export function updaterRecoveryLineV1(error) {
 // files. It is gone with the second copy of the guard; the helper is the one
 // definition, and the repository-wide policy test still rejects any direct
 // comparison outside it.
-/** The one line the CLI prints when it stops. A string code prints EXACTLY as it always has
+/** The one line the CLI prints when it stops. A runtime download code adds validated detail;
+ * other string codes print exactly as before
  * (fix round 2: `updater_command_failed` had started printing its message instead). An error with
  * no code used to print only "updater_cli_failed"; it now adds what `safeErrorPartsV1` admits: a
  * message that is itself a refusal code, an exit status or signal, the executable's basename or the
@@ -575,7 +576,9 @@ export function cliFailureMessageV1(error) {
   const clean = value => value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ");
   let message;
   if (typeof error?.userMessage === "string") message = error.userMessage;
-  else if (typeof error?.code === "string") message = error.code;
+  else if (typeof error?.code === "string") {
+    message = error.code === "runtime_download_failed" ? safeErrorLabelV1(error) : error.code;
+  }
   else {
     const { code, details } = safeErrorPartsV1(error);
     message = `updater_cli_failed${code ? `: ${code}` : ""}${details.length ? ` (${details.join(", ")})` : ""}`;
