@@ -120,6 +120,43 @@ export async function buildAttendedReleaseV1({ source: sourceInput, output: outp
     const mode = input.entry.mode & 0o111 ? 0o500 : 0o400; await chmod(destination, mode);
     files.push({ path: input.path, sha256: sha256(bytes), mode, bytes: bytes.length });
   }
+  // Read only this fixed, canonical host policy from the verified target tree.
+  // R1 has no policy file and declares IPv4. R2 supplies it; no port enters the
+  // signed declaration because the existing protected install config owns that.
+  let gatewayLocalHost = "127.0.0.1";
+  const hostPolicyPath = join(sourceInput, "src/updater/v1/policy/gateway-local-origin.json");
+  const hostPolicyEntry = await lstat(hostPolicyPath).catch(error => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (hostPolicyEntry) {
+    const before = await regular(hostPolicyPath, sourceInput);
+    if (before.size > 256) refuse("updater_gateway_host_refused");
+    const handle = await open(hostPolicyPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const bytes = Buffer.alloc(before.size + 1);
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      const after = await handle.stat(), current = await lstat(hostPolicyPath);
+      if (bytesRead !== before.size || [after, current].some(entry => entry.dev !== before.dev || entry.ino !== before.ino
+        || entry.size !== before.size || entry.mtimeMs !== before.mtimeMs || entry.ctimeMs !== before.ctimeMs))
+        refuse("updater_gateway_host_refused");
+      const text = bytes.subarray(0, bytesRead).toString("utf8");
+      const policy = JSON.parse(text);
+      if (!["127.0.0.1", "::1"].includes(policy?.gatewayLocalHost)
+        || text !== `${JSON.stringify({ schema: "control-room.gateway-local-host/v1", gatewayLocalHost: policy.gatewayLocalHost })}\n`)
+        refuse("updater_gateway_host_refused");
+      gatewayLocalHost = policy.gatewayLocalHost;
+    } catch { refuse("updater_gateway_host_refused"); } finally { await handle.close(); }
+  }
+  const capabilityBytes = Buffer.from(`${JSON.stringify({ schema: "control-room.gateway-local-capability/v1", commit,
+    version: packageValue.version, releaseId: `${packageValue.version}-${commit.slice(0, 12)}`, gatewayLocalHost,
+    updaterSupportsGatewayHosts: ["127.0.0.1", "::1"] })}\n`);
+  const capability = await open(join(outputInput, "gateway-local-capability.json"),
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o400);
+  try { await capability.writeFile(capabilityBytes); await capability.sync(); } finally { await capability.close(); }
+  files.push({ path: "gateway-local-capability.json", sha256: sha256(capabilityBytes), mode: 0o400, bytes: capabilityBytes.length });
+  files.sort((left, right) => left.path.localeCompare(right.path, "en"));
+  byteCount += capabilityBytes.length;
   const manifest = { schema: SCHEMA, commit, version: packageValue.version, fileCount: files.length, byteCount, files };
   const path = join(outputInput, "RELEASE_MANIFEST.json");
   const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o400);

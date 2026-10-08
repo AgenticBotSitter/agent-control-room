@@ -408,3 +408,18 @@ test("a local process squatting on the health ports, or redirecting them, never 
       { healthProbeKey: KEY }), /health_web_refused/u);
   }
 });
+
+test("R1 present capability refuses before the first web health request", async t => {
+  const scratch = join(process.cwd(), ".test-tmp"); await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(join(scratch, "gateway-r1-terminal-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, RELEASE), { recursive: true });
+  // Parser-only hostile bytes, never a fixture-created readiness declaration.
+  await writeFile(join(root, RELEASE, "gateway-local-capability.json"), "{broken", { mode: 0o400 });
+  const requests = [];
+  await assert.rejects(checkHealthV1(input({ root }), { readCurrentRelease: async () => RELEASE,
+    checkDatabase: databasePort }, { healthProbeKey: KEY, delay: async () => {}, transport: async (url, init) => {
+      requests.push(url); return serviceResponse(url, init);
+    } }), /gateway_capability_refused/u);
+  assert.deepEqual(requests, [], "no web or gateway request for a present invalid capability");
+});

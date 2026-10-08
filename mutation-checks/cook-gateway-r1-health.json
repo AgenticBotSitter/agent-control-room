@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "    if (!exactKeys(declaration, [\"schema\", \"commit\", \"version\", \"releaseId\", \"gatewayLocalHost\", \"updaterSupportsGatewayHosts\"])\n      || declaration.schema !== SCHEMA || !Array.isArray(declaration.updaterSupportsGatewayHosts)\n      || JSON.stringify(declaration.updaterSupportsGatewayHosts) !== '[\"127.0.0.1\",\"::1\"]') refuse();",
+    "replace": "    if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^malformed or duplicate capability receipt refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Unknown fields/schema/reader capability must refuse before any health request."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "parseStrictJsonV1(bytes.toString(\"utf8\"), { maxBytes: 4096 })",
+    "replace": "JSON.parse(bytes.toString(\"utf8\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^malformed or duplicate capability receipt refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Duplicate and escaped duplicate receipt keys must not use last-key-wins parsing."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "if (![\"127.0.0.1\", \"::1\"].includes(declaration.gatewayLocalHost)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unknown target origin refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "The signed host is exactly one independently specified loopback literal, never a URL or localhost."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "    if (manifest.schema !== \"control-room.attended-build-manifest/v1\" || !COMMIT.test(manifest.commit ?? \"\")\n      || !VERSION.test(manifest.version ?? \"\") || declaration.commit !== manifest.commit || declaration.version !== manifest.version\n      || declaration.releaseId !== id || id !== `${manifest.version}-${manifest.commit.slice(0, 12)}`) refuse();",
+    "replace": "    if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^mismatched release receipt refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Receipt identity must match the separately verified immutable manifest and selected release."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "    if (entries.length !== 1 || entries[0].bytes !== bytes.length || entries[0].sha256 !== hash(bytes)\n      || entries[0].mode !== 0o400) refuse();",
+    "replace": "    if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^mismatched release receipt refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Declaration bytes must match the verified manifest file entry, not a digest stored inside the declaration."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.uid !== uid\n        || (before.mode & 0o222) !== 0 || before.size < 1 || before.size > limit) refuse();",
+    "replace": "      if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^untrusted capability custody refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Writable declaration files must refuse even when their bytes and signature identity match."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "entry.uid !== uid || (entry.mode & 0o022) !== 0",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^untrusted capability custody refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Wrong-owner and writable parent directories cannot supply trusted target custody."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "if (error?.code === \"ENOENT\") return \"127.0.0.1\";",
+    "replace": "if (false) return \"127.0.0.1\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
+    "why": "Legacy-on-absence preserves OLD-built R1 and empty staged-release compatibility; no IPv6 fallback."
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "host === \"::1\" ? \"[::1]\" : host",
+    "replace": "\"127.0.0.1\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts IPv6 target$' tests/gateway-local-capability.test.mjs",
+    "why": "Only the selected verified host is probed, with the unchanged protected port."
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "redirect: \"error\",\n      signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });\n  } catch (error) { fetchRefused(\"health_gateway_refused\", error); }",
+    "replace": "redirect: \"follow\",\n      signal: AbortSignal.timeout(runtime.timeoutMs ?? 1_000) });\n  } catch (error) { fetchRefused(\"health_gateway_refused\", error); }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 health refuses cross-address answers without fallback$' tests/gateway-local-capability.test.mjs",
+    "why": "A correctly signed answer reached through another origin must not pass, and no wrong-origin request is allowed."
+  },
+  {
+    "file": "src/updater/v1/install/health.mjs",
+    "find": "  await readGatewayLocalCapabilityV1(input, runtime);",
+    "replace": "  // mutation: omit pre-web validation",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 present capability refuses before the first web health request$' tests/updater-health-terminal.test.mjs",
+    "why": "Present invalid capability must refuse before the first web request as well as before gateway dialing."
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "    await readGatewayLocalCapabilityV1({ root, expectedRelease: `releases/${release.releaseId}`,\n      manifestDigest: release.manifestDigest });",
+    "replace": "    // mutation: omit pre-switch validation",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unknown target origin refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "A reachable well-formed prohibited signed host must not reach the real installer pointer switch."
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "gatewayLocalHost = policy.gatewayLocalHost;",
+    "replace": "gatewayLocalHost = \"127.0.0.1\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
+    "why": "Running R1 builder reads the fixed host policy from the future verified source instead of a running-code constant."
+  },
+  {
+    "file": "src/updater/v1/build-attended-release.mjs",
+    "find": "      if (![\"127.0.0.1\", \"::1\"].includes(policy?.gatewayLocalHost)\n        || text !== `${JSON.stringify({ schema: \"control-room.gateway-local-host/v1\", gatewayLocalHost: policy.gatewayLocalHost })}\\n`)\n        refuse(\"updater_gateway_host_refused\");",
+    "replace": "      if (false) refuse(\"updater_gateway_host_refused\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^malformed or duplicate capability receipt refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Future source host policy has strict canonical keys with no port/URL or duplicate-key ambiguity."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "if (input.manifestDigest !== undefined && (!DIGEST.test(input.manifestDigest) || hash(manifestBytes) !== input.manifestDigest)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^mismatched release receipt refuses before request$' tests/gateway-local-capability.test.mjs",
+    "why": "Pre-switch binds to the independently verified build result manifestDigest; changing only staged manifest whitespace must refuse before pointer switch."
+  }
+]
