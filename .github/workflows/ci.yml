@@ -471,7 +471,34 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
-        run: node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:mac-upgrade
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+          import { expandScripts, parseArguments, runUnits } from './scripts/ci/run-scripts-keep-going.mjs';
+          const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'));
+          // Keep the executed lane command literal for the reachability checker.
+          const command = ` node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:mac-upgrade
+          `;
+          const { names, expand } = parseArguments(command.trim().split(/\s+/u).slice(2));
+          const units = expandScripts(scripts, names, expand);
+          const run = (file, args) => {
+            const child = spawnSync(file, args, { stdio: 'inherit' });
+            if (child.error) throw child.error;
+            return { status: child.status ?? 1 };
+          };
+          const testFile = file => run('node', ['scripts/run-tests-with-quarantine.mjs',
+            '--import', 'tsx', '--test', '--test-concurrency=1', file]);
+          process.exitCode = runUnits(units, unit => {
+            if (unit !== 'test:task-attention:postgres') return run('pnpm', ['run', unit]);
+            const status = runUnits([1, 2, 3, 4, 5], sample => {
+              console.log(`ATTN-DIAG sample ${sample}/5`);
+              return testFile('tests/task-attention-settled-candidates-postgres.test.ts');
+            });
+            const unhappy = testFile('tests/r7i-unhappy-paths-postgres.test.ts');
+            return { status: status || unhappy.status };
+          });
+          NODE
       # The shared attack-test kit and its own tests. This lane installs
       # PostgreSQL 17 above, so the kit's real-cluster tests must run here
       # rather than skip: tests/attack-kit.test.ts calls

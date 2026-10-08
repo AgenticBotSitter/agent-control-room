@@ -34,10 +34,13 @@
 //   M10 drop the required-scenario NOT EXISTS  -> FAILS
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
+import { privateDatabaseLimits } from "../src/web/v1/bounded-database";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { readTaskAttention } from "../src/web/v1/queue-attention-browser-client";
 import { readAllTaskAttention } from "../src/web/v1/task-attention-source";
@@ -153,11 +156,13 @@ async function seedJobChain(admin: Client, jobId: string, state: string, jobType
   return { draft, authority, workflow, request, job };
 }
 
-function webClient(postgres: { connection(role: string): { user: string; password: string; host: string }; port: number; database: string }) {
+function webClient(postgres: { connection(role: string): { user: string; password: string; host: string }; port: number; database: string }, observe?: (client: Client) => void) {
   const login = postgres.connection("web");
-  return bindPrivatePgPool(new Pool({ ...privatePgOptions({ host: "127.0.0.1", port: postgres.port,
+  const raw = new Pool({ ...privatePgOptions({ host: "127.0.0.1", port: postgres.port,
     database: postgres.database, username: login.user, password: login.password, majorVersion: 17 as const }),
-    host: login.host }));
+    host: login.host });
+  if (observe) raw.on("connect", observe);
+  return bindPrivatePgPool(raw);
 }
 
 /** The browser's real bounded traversal, over a real transport. */
@@ -318,11 +323,142 @@ async function seedPlannedProposals(admin: Client, tags: readonly string[]) {
 
 test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do not hide the three live attention items`,
   needsPg(), async t => {
+  const began = performance.now();
+  let diagnosticDirectory = ".";
+  const diag = (phase: string, detail: unknown = {}) =>
+    console.log(`ATTN-DIAG ${JSON.stringify({ phase, monotonicMs: Number((performance.now() - began).toFixed(3)), detail })}`);
+  const timed = async <T>(phase: string, work: () => Promise<T>): Promise<T> => {
+    const start = performance.now();
+    diag(`${phase}:start`);
+    try { const value = await work(); diag(`${phase}:end`, { ms: performance.now() - start }); return value; }
+    catch (error) { diag(`${phase}:failed`, { ms: performance.now() - start }); throw error; }
+  };
+  let migrationsBegan: number | undefined;
+  // Forward the real pg call unchanged, including its callback/Query overloads.
+  // CREATE DATABASE is after pg_ctl's ready acknowledgement and before the
+  // helper applies migrations. The latter interval includes queue/role setup.
+  const realQuery = Client.prototype.query;
+  Client.prototype.query = function(this: Client, ...args: unknown[]) {
+    if (typeof args[0] === "string" && args[0].startsWith("CREATE DATABASE")) {
+      diag("cluster-start:end", { ms: performance.now() - began, boundary: "first CREATE DATABASE after pg_ctl ready" });
+      migrationsBegan = performance.now();
+      diag("migrations-and-roles:start");
+    }
+    return Reflect.apply(realQuery, this, args);
+  } as Client["query"];
+  type Statement = { sql: string; params: unknown[]; call: string; ms?: number; sqlState?: string };
+  let activeRead = "none", readNumber = 0;
+  let lastStatement: Statement | undefined, failedStatement: Statement | undefined, candidateStatement: Statement | undefined;
+  let productSettings: unknown;
+  const observe = (client: Client) => {
+    const query = client.query;
+    client.query = function(this: Client, sql: string, params: unknown[] = []) {
+      const start = performance.now();
+      const statement: Statement = { sql, params, call: activeRead };
+      if (activeRead !== "none") {
+        lastStatement = statement;
+        if (sql.includes("attention_candidates")) candidateStatement = statement;
+      }
+      const result = Reflect.apply(query, this, [sql, params]);
+      // Observation only: return the original promise to the production driver.
+      void result.then(() => {
+        if (statement.call !== "none") diag("reader-sql:end", { call: statement.call, ms: performance.now() - start });
+      }, (error: { code?: string }) => {
+        statement.ms = performance.now() - start; statement.sqlState = error.code;
+        if (statement.call !== "none") failedStatement = statement;
+        diag("reader-sql:failed", { call: statement.call, ms: statement.ms, sqlState: error.code });
+      });
+      return result;
+    } as Client["query"];
+  };
+  const hostDump = async () => {
+    for (const [file, args] of [["df", ["-h", diagnosticDirectory]], ["nproc", []], ["uname", ["-m"]]] as const) {
+      try {
+        const { stdout, stderr } = await promisify(execFile)(file, [...args], { timeout: 5000, maxBuffer: 65536 });
+        for (const line of `${stdout}${stderr}`.trim().split("\n")) diag(file, line);
+      } catch (error) { diag(`${file}:unavailable`, { name: (error as Error).name }); }
+    }
+  };
+  let dumped = false;
+  diag("cluster-start:start");
+  try {
   await withRealPostgres(async postgres => {
+    diagnosticDirectory = postgres.dataDirectory;
+    diag("migrations-and-roles:end", { ms: migrationsBegan === undefined ? null : performance.now() - migrationsBegan,
+      appliedMigrations: postgres.appliedMigrations });
+    const dump = async (error: unknown) => {
+      dumped = true;
+      diag("failure", { name: (error as Error)?.name, message: (error as Error)?.message });
+      diag("product-timeouts", { server: productSettings ?? "not captured before failure", client: privateDatabaseLimits });
+      const observer = new Client({ ...postgres.admin(), application_name: "attn-diag-observer",
+        connectionTimeoutMillis: 5000, statement_timeout: 30000, options: "-c transaction_timeout=0" });
+      observer.on("error", () => {});
+      try {
+        await observer.connect();
+        for (const [phase, sql] of [
+          ["pg_stat_activity", `SELECT pid,usename,application_name,state,wait_event_type,wait_event,
+            xact_start,query_start,state_change,backend_type,query_id
+            FROM pg_stat_activity WHERE datname=current_database() ORDER BY pid`],
+          ["pg_locks-not-granted", `SELECT l.* FROM pg_locks l JOIN pg_stat_activity a USING(pid)
+            WHERE NOT l.granted AND a.datname=current_database()`],
+          ["pg_stat_bgwriter", "SELECT * FROM pg_stat_bgwriter"],
+          ["pg_stat_checkpointer", "SELECT * FROM pg_stat_checkpointer"],
+        ]) {
+          try { diag(phase!, (await observer.query(sql!)).rows); }
+          catch (failure) { diag(`${phase}:unavailable`, { name: (failure as Error).name }); }
+        }
+      } catch (failure) {
+        for (const phase of ["pg_stat_activity", "pg_locks-not-granted", "pg_stat_bgwriter", "pg_stat_checkpointer"])
+          diag(`${phase}:unavailable`, { name: (failure as Error).name });
+      }
+      finally { await observer.end().catch(() => {}); }
+      // Replay the exact intercepted production statement and bind parameters,
+      // as the web login on a separate connection. This observer has its own
+      // 30s ceiling; it never changes the tested reader's 5s/2s/10s limits.
+      const statement = failedStatement ?? candidateStatement ?? lastStatement;
+      diag("reader-query", statement ? { ...statement, params: "retained for replay; omitted from stdout" } : "none reached");
+      const login = postgres.connection("web");
+      const explain = new Client({ ...privatePgOptions({ host: "127.0.0.1", port: postgres.port,
+        database: postgres.database, username: login.user, password: login.password, majorVersion: 17 as const }),
+        host: login.host, application_name: "attn-diag-explain", statement_timeout: 30000,
+        options: "-c search_path=pg_catalog,\\ public -c timezone=UTC -c transaction_timeout=0" });
+      explain.on("error", () => {});
+      try {
+        await explain.connect();
+        // Last statement can be COMMIT when the cumulative transaction ceiling
+        // fires. Retain it above, and explain the captured candidate in that case.
+        const selected = statement && /^\s*SELECT\b/i.test(statement.sql) ? statement : candidateStatement;
+        if (selected) {
+          await explain.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+          diag("explain-reader-query", { sql: selected.sql, call: selected.call });
+          const plan = await timed("EXPLAIN-ANALYZE-BUFFERS", () => explain.query(
+            `EXPLAIN (ANALYZE, BUFFERS) ${selected.sql}`, selected.params));
+          for (const row of plan.rows) diag("EXPLAIN-ANALYZE-BUFFERS:plan", row);
+        } else diag("EXPLAIN-ANALYZE-BUFFERS:unavailable", "no reader SELECT was reached");
+      } catch (failure) { diag("EXPLAIN-ANALYZE-BUFFERS:unavailable", { name: (failure as Error).name, message: (failure as Error).message }); }
+      finally { await explain.end().catch(() => {}); }
+      await hostDump();
+      diag("failure-dump:end");
+    };
     const admin = new Client(postgres.admin());
-    await admin.connect();
-    const pool = webClient(postgres as never);
+    const pool = webClient(postgres as never, observe);
+    let timing: Client | undefined;
     try {
+      await admin.connect();
+      const settingsLogin = postgres.connection("web");
+      const settings = new Client({ ...privatePgOptions({ host: "127.0.0.1", port: postgres.port,
+        database: postgres.database, username: settingsLogin.user, password: settingsLogin.password, majorVersion: 17 as const }), host: settingsLogin.host });
+      settings.on("error", () => {});
+      try {
+        await settings.connect();
+        productSettings = (await settings.query(`SELECT current_user,
+          current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout,
+          current_setting('transaction_timeout') AS transaction_timeout,
+          current_setting('idle_in_transaction_session_timeout') AS idle_in_transaction_session_timeout`)).rows;
+        diag("product-timeouts", productSettings);
+      } finally { await settings.end().catch(() => {}); }
+      const seedBegan = performance.now();
+      diag("seed:start", { finishedJobs: FINISHED_JOBS });
       await seedScope(admin);
       const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
       const gate = new CompletionGateStoreV1(adminDatabaseClient(admin), REVIEW_KEY, checkpoints,
@@ -415,14 +551,17 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
           scenarioId, outcome: "passed", verifier: { actorId: "identity:attn", actorType: "human" },
           evidenceDigests: [settledDigest], verifiedAt: ISSUED_AT, grantsApproval: false, grantsExecutionAuthority: false });
 
+      diag("seed:end", { ms: performance.now() - seedBegan });
       const tasks = new WebTaskService(pool.client as DatabaseClient, SCOPE, () => Date.now(),
         { taskPlanIntegrityKey: PLAN_KEY, reviews: { integrityKey: REVIEW_KEY, checkpoints } });
-      // Opened on first use so the finally can close it whether or not the
-      // fixture got that far.
-      let timing: Client | undefined;
+      const readAttention = async (after?: string) => {
+        activeRead = `attention-${++readNumber}`;
+        try { return await timed(activeRead, () => tasks.attention(identity, after)); }
+        finally { activeRead = "none"; }
+      };
       const transport = (async (path: string) => {
         const url = new URL(String(path), "https://control.invalid");
-        return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined));
+        return Response.json(await readAttention(url.searchParams.get("after") ?? undefined));
       }) as unknown as typeof fetch;
 
       // 1. All three live items are found, in one or two pages, quickly.
@@ -430,7 +569,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
       // `unavailable` so nothing about the backend leaks into the page. That is
       // right for the product and wrong for a test, so this same read is made
       // directly first: a failure here names its own cause.
-      const probePage = await tasks.attention(identity);
+      const probePage = await readAttention();
       const started = performance.now();
       const walked = await traverse(transport, 40);
       const elapsedMs = performance.now() - started;
@@ -487,11 +626,11 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
       const instrument = client;
       const timePredicate = async (where: string) => {
         const began = performance.now();
-        const result = await instrument.query(`SELECT j.id FROM control_jobs j
+        const result = await timed("predicate-measurement", () => instrument.query(`SELECT j.id FROM control_jobs j
           JOIN control_workflows w ON w.tenant_id=j.tenant_id AND w.id=j.workflow_id AND w.project_id=j.project_id
           JOIN control_requests r ON r.tenant_id=w.tenant_id AND r.id=w.request_id AND r.project_id=j.project_id
           WHERE j.tenant_id=$1 AND j.project_id=$2 AND ${where}
-          ORDER BY j.id COLLATE "C" LIMIT 26`, [TENANT, PROJECT]);
+          ORDER BY j.id COLLATE "C" LIMIT 26`, [TENANT, PROJECT]));
         return { ms: performance.now() - began, rows: result.rows.length };
       };
       const prefix = `EXISTS (SELECT 1 FROM control_task_execution_plans ep
@@ -502,10 +641,10 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
         OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running'))
         OR EXISTS (SELECT 1 FROM control_native_artifact_receipts a
           WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id)`);
-      t.diagnostic(JSON.stringify({ coldReadMs: Number(elapsedMs.toFixed(1)),
+      diag("predicate-comparison", { coldReadMs: Number(elapsedMs.toFixed(1)),
         shippedPredicateMs: Number(shipped.ms.toFixed(1)), shippedPredicateRows: shipped.rows,
         preFixPredicateMs: Number(preFix.ms.toFixed(1)), preFixPredicateRows: preFix.rows,
-        pagesRead: walked.pages.length, plannedProposals: FINISHED_JOBS }));
+        pagesRead: walked.pages.length, plannedProposals: FINISHED_JOBS });
       const found = walked.pages.flatMap(page => page.items);
       const settledProposals = (await pool.client.query<{ n: string }>(`SELECT count(*)::text AS n FROM control_jobs j
         WHERE j.tenant_id=$1 AND j.state='proposed' AND j.payload->>'jobType'='task.proposal'
@@ -547,7 +686,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
       //    needing attention. The gate-status logic is asserted directly below,
       //    where it can be measured exactly rather than through a projection this
       //    lane deliberately leaves unconfigured.
-      const direct = await tasks.attention(identity);
+      const direct = await readAttention();
       const byId = new Map(direct.items.map(item => [item.task.jobId, item.reasons]));
       assert.ok(byId.get(approvalId)?.includes("approval"),
         `the waiting approval must raise approval: ${JSON.stringify(byId.get(approvalId))}`);
@@ -558,7 +697,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
 
       // 3. The settled RESULT is not a candidate either -- the half of the finding
       //    that is about accepted work rather than planned proposals.
-      const settledProbe = await tasks.attention(identity, "job:attn-hist-999998");
+      const settledProbe = await readAttention("job:attn-hist-999998");
       assert.equal(settledProbe.items.some(item => item.task.jobId === settledId), false,
         "a fully accepted and verified result must not be offered for review again");
 
@@ -636,7 +775,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
 
       // Read from a cursor BELOW every planned proposal, so what comes back is
       // decided by the settled rule alone and not by page position.
-      const afterVariants = await tasks.attention(identity, "job:attn-aa");
+      const afterVariants = await readAttention("job:attn-aa");
       const variantIds = new Set(afterVariants.items.map(item => item.task.jobId));
       assert.ok(variantIds.has(changesId),
         "a changes-requested result has an open finding and must stay attention work");
@@ -683,7 +822,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
           acceptanceProfileDigest: twoDigest, scenarioId, outcome: "passed",
           verifier: { actorId: "identity:attn", actorType: "human" }, evidenceDigests: [oneDigest],
           verifiedAt: ISSUED_AT, grantsApproval: false, grantsExecutionAuthority: false });
-      const withOneReview = await tasks.attention(identity, "job:attn-aa");
+      const withOneReview = await readAttention("job:attn-aa");
       assert.ok(new Set(withOneReview.items.map(item => item.task.jobId)).has(oneReviewId),
         "one accepted review against a profile that demands two is NOT settled");
 
@@ -746,7 +885,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
         .map(target => target.snapshot.status);
       assert.deepEqual(changedStatus, ["changes_requested"],
         `the accepted-then-changed fixture must leave the gate at changes_requested, saw ${JSON.stringify(changedStatus)}`);
-      const afterChanged = await tasks.attention(identity, "job:attn-aa");
+      const afterChanged = await readAttention("job:attn-aa");
       const afterChangedIds = new Set(afterChanged.items.map(item => item.task.jobId));
       assert.ok(afterChangedIds.has(changedId),
         "a result that was accepted and then sent back with a finding still needs the owner");
@@ -796,7 +935,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
         .map(target => `${target.snapshot.status}`).sort();
       assert.deepEqual(revisedStatus, ["pending", "superseded"],
         `the revised fixture must leave one superseded and one pending target, saw ${JSON.stringify(revisedStatus)}`);
-      const afterRevised = await tasks.attention(identity, "job:attn-aa");
+      const afterRevised = await readAttention("job:attn-aa");
       assert.ok(new Set(afterRevised.items.map(item => item.task.jobId)).has(revisedId),
         "a superseded result whose revision is still pending needs the owner");
 
@@ -805,7 +944,7 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
       //        above is still settled after both clauses were added. Without
       //        this, "add two NOT EXISTS" could pass by hiding everything, which
       //        is the same failure in the opposite direction.
-      const afterBoth = await tasks.attention(identity, "job:attn-aa");
+      const afterBoth = await readAttention("job:attn-aa");
       assert.equal(new Set(afterBoth.items.map(item => item.task.jobId)).has(settledId), false,
         "a fully accepted and verified result with no finding and no revision stays settled");
       // `timing.end()` must COMPLETE before the fixture returns, not merely be
@@ -819,8 +958,26 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
         await timing.end().catch(() => {});
         timing = undefined;
       }
-    } finally { await pool.close(); await admin.end(); }
+    } catch (error) {
+      await dump(error).catch(failure => diag("failure-dump:failed", { name: (failure as Error).name }));
+      throw error;
+    } finally {
+      await timing?.end().catch(() => {});
+      try { await pool.close(); } finally { await admin.end(); }
+    }
   }, { port: PORT, allowedPorts: PORTS, boundMs: 1_800_000 });
+  diag("cluster-cleanup:end");
+  } catch (error) {
+    if (!dumped) {
+      diag("setup-or-cleanup:failed", { name: (error as Error).name, message: (error as Error).message });
+      for (const phase of ["product-timeouts", "pg_stat_activity", "pg_locks-not-granted",
+        "pg_stat_bgwriter", "pg_stat_checkpointer", "EXPLAIN-ANALYZE-BUFFERS"])
+        diag(`${phase}:unavailable`, "cluster setup failed or teardown already completed");
+      await hostDump();
+      diag("failure-dump:end");
+    }
+    throw error;
+  } finally { Client.prototype.query = realQuery; }
 });
 
 // The revision clause, tested as the threat model it actually defends.
