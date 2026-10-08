@@ -420,7 +420,11 @@ for (const stage of ["ready", "pending", "insert", "credential"]) test(`V101 R4 
 });
 
 test("V101 R1 browser fixture uses a WebAuthn hostname and a new document for replay", async () => {
-  const source = await readFile("tests/browser/mac-local-owner-journey.spec.ts", "utf8");
+  const typescript = (await import("typescript")).default;
+  const fixture = await readFile("tests/browser/mac-local-owner-journey.spec.ts", "utf8");
+  const source = typescript.createPrinter({ removeComments: true }).printFile(
+    typescript.createSourceFile("journey.ts", fixture, typescript.ScriptTarget.Latest, true, typescript.ScriptKind.TS),
+  ).replace(/\s+/gu, " ");
   assert.match(source, /const localOrigin = `https:\/\/localhost:\$\{address\.port\}`/u,
     "R1: browser origin is a hostname accepted by WebAuthn, rather than an IP literal");
   assert.match(source, /origin: loopbackOrigin, trustedOrigin: localOrigin/u, "R1: HTTPS browser origin is trusted without changing the required HTTP loopback profile");
