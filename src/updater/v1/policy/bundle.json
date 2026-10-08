@@ -46,5 +46,13 @@
       "output": "bin/apply-release-schema.mjs"
     }
   ],
-  "candidateBuildOutputAccepted": false
+  "candidateBuildOutputAccepted": false,
+  "gatewayLocalCapability": {
+    "declaration": "gateway-local-capability.json",
+    "sourceHostPolicy": "src/updater/v1/policy/gateway-local-origin.json",
+    "hosts": [
+      "127.0.0.1",
+      "::1"
+    ]
+  }
 }

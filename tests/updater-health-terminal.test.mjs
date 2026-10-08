@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import jsQR from "jsqr";
 import { checkGatewayHealthV1, checkHealthV1, checkWebHealthV1, DEFAULT_HEALTH_GATEWAY_PORT_V1, DEFAULT_HEALTH_WEB_PORT_V1,
   HEALTH_RESPONSE_LIMIT_BYTES_V1 } from "../src/updater/v1/install/health.mjs";
@@ -51,7 +51,13 @@ function serviceResponse(url, init) {
 const notListening = () => Object.assign(new TypeError("fetch failed"),
   { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
 
-const input = overrides => ({ root: "/private/tmp/control-room-c7", expectedRelease: RELEASE, pgDataId: "data-one",
+// Synthetic historical release fixture for the existing transport tests. It has
+// no declaration or manifest, matching the lead's empty legacy-release contract;
+// current R1 release artifacts are produced by the separate real-builder tests.
+const legacyRoot = await mkdtemp(join(tmpdir(), "acr-c7-legacy-"));
+await mkdir(join(legacyRoot, RELEASE), { recursive: true });
+after(() => rm(legacyRoot, { recursive: true, force: true }));
+const input = overrides => ({ root: legacyRoot, expectedRelease: RELEASE, pgDataId: "data-one",
   schemaDigest: SCHEMA, updaterSchemaDigest: UPDATER_SCHEMA, samples: 3, ...overrides });
 const databasePort = async () => ({ healthy: true, schemaDigest: SCHEMA, updaterSchemaDigest: UPDATER_SCHEMA });
 
@@ -407,4 +413,19 @@ test("a local process squatting on the health ports, or redirecting them, never 
     await assert.rejects(checkWebHealthV1({ root: input().root, webPort: server.address().port, expectedRelease: RELEASE },
       { healthProbeKey: KEY }), /health_web_refused/u);
   }
+});
+
+test("R1 present capability refuses before the first web health request", async t => {
+  const scratch = join(process.cwd(), ".test-tmp"); await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(join(scratch, "gateway-r1-terminal-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, RELEASE), { recursive: true });
+  // Parser-only hostile bytes, never a fixture-created readiness declaration.
+  await writeFile(join(root, RELEASE, "gateway-local-capability.json"), "{broken", { mode: 0o400 });
+  const requests = [];
+  await assert.rejects(checkHealthV1(input({ root }), { readCurrentRelease: async () => RELEASE,
+    checkDatabase: databasePort }, { healthProbeKey: KEY, delay: async () => {}, transport: async (url, init) => {
+      requests.push(url); return serviceResponse(url, init);
+    } }), /gateway_capability_refused/u);
+  assert.deepEqual(requests, [], "no web or gateway request for a present invalid capability");
 });

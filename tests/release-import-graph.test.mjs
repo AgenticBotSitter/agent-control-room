@@ -33,3 +33,12 @@ test('R2S-09: imports outside the release and unresolved runtime packages fail t
     await assert.rejects(requiredReleaseFilesV1(source, ['entry.mjs']), /release import/);
   }
 });
+
+test('R1 health closure includes the capability reader and only shipped builtin dependencies', async () => {
+  const repository = join(import.meta.dirname, '..');
+  const closure = await requiredReleaseFilesV1(repository, ['src/updater/v1/install/health.mjs']);
+  assert.ok(closure.includes('src/updater/v1/install/gateway-local-capability.mjs'),
+    'fixed health import must include the new capability reader');
+  assert.ok(closure.includes('src/installer/shared/strict-json.mjs'));
+  assert.ok(closure.includes('src/updater/v1/contracts.mjs'));
+});

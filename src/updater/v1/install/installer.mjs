@@ -1,3 +1,4 @@
+import { readGatewayLocalCapabilityV1 } from "./gateway-local-capability.mjs";
 import { readJsonlPrefixV1 } from "../../../installer/shared/jsonl-prefix.mjs";
 import { acquirePrivateProcessLockV1 } from "../../../installer/shared/private-process-lock.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -1005,6 +1006,8 @@ async function runAttendedCoreV1({ root, commit, accounts, fresh, write, ports, 
       for (const target of [staged.updater?.target, staged.release.target].filter(Boolean))
         await retireStagedTarget(root, target, `${target}.rolled-back-${commit.slice(0, 12)}`).catch(() => {});
     });
+    await readGatewayLocalCapabilityV1({ root, expectedRelease: `releases/${release.releaseId}`,
+      manifestDigest: release.manifestDigest });
     // Persist all four old pointers before the first link changes. The planned
     // record is also the recovery receipt if the switch never returns.
     switchResult = { oldCurrent: await pointer(root, "current"), oldPrevious: await pointer(root, "previous"),
