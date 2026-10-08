@@ -1072,7 +1072,9 @@ test("unlock rejects replacement without birthtime and retries after interruptio
   const probe = await open(homeDir, "r");
   const prototype = Object.getPrototypeOf(probe), originalStat = prototype.stat;
   await probe.close();
+  let observedHandle;
   t.mock.method(prototype, "stat", async function (...args) {
+    observedHandle = this;
     const info = await originalStat.apply(this, args);
     info.birthtimeMs = 0;
     info.birthtime = new Date(0);
@@ -1081,13 +1083,19 @@ test("unlock rejects replacement without birthtime and retries after interruptio
   await mkdir(lockPath, { recursive: true });
   for (const restoreAge of [false, true]) {
     await utimes(lockPath, old, old);
+    let remainedPinned = false;
     await assert.rejects(connector.unlockConnector({ ...options,
       beforeRemovalCheck: async () => {
+        // Independent POSIX lifetime invariant: the observed directory must
+        // still have an open reference, even on a filesystem without reuse.
+        remainedPinned = observedHandle !== undefined
+          && await originalStat.call(observedHandle).then(() => true, () => false);
         await rmdir(lockPath);
         await mkdir(lockPath);
         if (restoreAge) await utimes(lockPath, old, old);
       },
     }), /changed while unlock was checking/u, "replacement must survive even without birthtime");
+    assert.equal(remainedPinned, true, "observed directory must stay open through the replacement check");
     assert.equal((await stat(lockPath)).isDirectory(), true);
     assert.deepEqual(await readdir(lockPath), []);
     assert.deepEqual((await readdir(dirname(lockPath))).filter(entry => entry.includes(".unlock-")), []);
