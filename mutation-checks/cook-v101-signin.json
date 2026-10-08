@@ -43,8 +43,8 @@
   },
   {
     "file": "src/web/v1/local-owner-session.ts",
-    "find": ".replace(/^ | $/g,\"\")",
-    "replace": "",
+    "find": "const code=String(new FormData(form).get(\"ownerCode\")||\"\").replace(/^ | $/g,\"\");",
+    "replace": "const code=String(new FormData(form).get(\"ownerCode\")||\"\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
     "why": "Exactly one ASCII space on each edge is tolerated by the UI; the literal posted code and unchanged real digest authentication must fail without trimming."
   },
@@ -57,8 +57,8 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.",
-    "replace": "Registration stopped.",
+    "find": "        + \"Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.\\n\");",
+    "replace": "        + \"Registration stopped.\\n\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='R2-08: repeating install' tests/installer-round2.test.mjs",
     "why": "Stopped install must explain the approved safe phone and same-browser recovery path."
   },
