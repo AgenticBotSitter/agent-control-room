@@ -1,3 +1,4 @@
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { promises as fs } from 'node:fs';
@@ -211,7 +212,7 @@ else writeFileSync(process.argv[4] + '/answer.txt', Buffer.concat([Buffer.from([
 `, {mode: 0o700});
   const manifestPath = join(p.root, 'tools.json');
   await fs.writeFile(manifestPath, JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 2, adapters: [{id: 'echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 2, adapters: [{id: 'echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 2000,
       maxOutputBytes: 65536, envAllowlist: []}]}), {mode: 0o600});
   const runner = c.createLocalToolAdapterRunner(await c.loadToolAdapters(manifestPath),

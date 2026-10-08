@@ -1,3 +1,4 @@
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { promises as fs } from 'node:fs';
@@ -247,7 +248,7 @@ const token = JSON.parse(readFileSync(process.argv[2], 'utf8')).secret;
 process.stdout.write(token);
 writeFileSync(process.argv[4] + '/answer.txt', token);\n`, {mode: 0o700});
   await fs.writeFile(c.defaultToolAdaptersPath(p.configPath), JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 1, adapters: [{id: 'qa_echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 1, adapters: [{id: 'qa_echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 1000,
       maxOutputBytes: 1024, envAllowlist: []}]}), {mode: 0o600});
   let textHasToken = false, fileHasToken = false;
@@ -332,7 +333,7 @@ test('R6F-07 runner refreshes secrets when a profile rotates after runner constr
   const p = await profile(t), script = join(p.root, 'echo.mjs');
   await fs.writeFile(script, "import {readFileSync} from 'node:fs'; process.stdout.write(JSON.parse(readFileSync(process.argv[2])).secret);", {mode: 0o700});
   await fs.writeFile(c.defaultToolAdaptersPath(p.configPath), JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 1, adapters: [{id: 'echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 1, adapters: [{id: 'echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 1000, maxOutputBytes: 1024, envAllowlist: []}]}), {mode: 0o600});
   const runner = c.createLocalToolAdapterRunner(await c.loadToolAdapters(c.defaultToolAdaptersPath(p.configPath)),
     {secrets: [p.secret], configPath: p.configPath, temporaryRoot: p.root});

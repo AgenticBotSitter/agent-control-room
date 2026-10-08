@@ -12,5 +12,12 @@
     "replace": "if (false || (uid !== undefined && info.uid !== 0 && info.uid !== uid))",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
     "why": "the manifest validation body must reject independently specified executable mode 0722; disabling the production file mode check must fail its expected rejection"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "((parent.mode & 0o022) !== 0 && !stickyRoot)",
+    "replace": "(false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern \"manifest validation refuses a writable non-sticky executable folder\" tests/fleet-tool-adapter.test.mjs",
+    "why": "the private 0700 executable in a non-sticky 0777 folder must be refused with the independently specified folder message; disabling only the folder-mode check fails the named rejection"
   }
 ]
