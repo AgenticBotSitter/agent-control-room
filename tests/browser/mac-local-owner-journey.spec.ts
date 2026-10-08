@@ -352,11 +352,12 @@ test("V101: a fresh browser opens the installer fragment and reaches registratio
       } });
     const nodeHandler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
       assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
-      handler: request => {
-        requests.push({ url: request.url, referer: request.headers.get("referer") ?? "" });
-        return app!.handle(request, () => new Response(html, { headers: { "content-type": "text/html" } }));
-      } });
-    server.on("request", (input, output) => { void nodeHandler.handle(input, output); });
+      handler: request => app!.handle(request, () => new Response(html, { headers: { "content-type": "text/html" } })) });
+    server.on("request", (input, output) => {
+      // Observe the wire before the production adapter filters headers.
+      requests.push({ url: new URL(input.url ?? "/", localOrigin).href, referer: input.headers.referer ?? "" });
+      void nodeHandler.handle(input, output);
+    });
     for (const width of [390, 1280]) {
       used = false;
       const context = await browser.newContext({ viewport: { width, height: 844 } });
