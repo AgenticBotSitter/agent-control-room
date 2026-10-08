@@ -1,0 +1,30 @@
+[
+  {
+    "file": "tests/fleet-connector-round6.test.mjs",
+    "find": "import './helpers/block-agent-cli.mjs';\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "The named load-time import-order assertion must identify tests/fleet-connector-round6.test.mjs when its self-contained guard is removed."
+  },
+  {
+    "file": "tests/fleet-connector-slow-body.test.mjs",
+    "find": "import './helpers/block-agent-cli.mjs';\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "The named load-time import-order assertion must identify tests/fleet-connector-slow-body.test.mjs when its self-contained guard is removed."
+  },
+  {
+    "file": "tests/fleet-connector-secret-encoding.test.mjs",
+    "find": "import './helpers/block-agent-cli.mjs';\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "The named load-time import-order assertion must identify tests/fleet-connector-secret-encoding.test.mjs when its self-contained guard is removed."
+  },
+  {
+    "file": "tests/helpers/block-agent-cli.mjs",
+    "find": "process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI = '1';",
+    "replace": "// Guard disabled for isolated mutation.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "The named fresh-process guard and real-reader refusal assertion must fail against the literal guard value and refusal messages."
+  }
+]
