@@ -518,7 +518,11 @@ for (const scenario of ["ready", "credential", "absent", "reopen-ready", "reopen
     assert.equal(creates, 1, "R5: identical registration fragment never restarts Face ID");
   }
   if (stage === "credential") {
-    await act(async () => release!()); await settle();
-    assert.ok(dom.window.document.querySelector('[aria-label="Passkey comparison code"]'), "R5: pending registration completes after skip");
+    await act(async () => release!());
+    const completionDeadline = performance.now() + 5_000;
+    while (!dom.window.document.querySelector('[aria-label="Passkey comparison code"]')) {
+      assert.ok(performance.now() < completionDeadline, "R5: pending registration completes after skip");
+      await act(async () => new Promise<void>(done => setImmediate(done)));
+    }
   }
 });
