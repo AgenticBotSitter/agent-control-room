@@ -421,8 +421,10 @@ for (const stage of ["ready", "pending", "insert", "credential"]) test(`V101 R4 
 
 test("V101 R1 browser fixture uses a WebAuthn hostname and a new document for replay", async () => {
   const source = await readFile("tests/browser/mac-local-owner-journey.spec.ts", "utf8");
-  assert.match(source, /const localOrigin = `http:\/\/localhost:\$\{address\.port\}`/u,
+  assert.match(source, /const localOrigin = `https:\/\/localhost:\$\{address\.port\}`/u,
     "R1: browser origin is a hostname accepted by WebAuthn, rather than an IP literal");
+  assert.match(source, /origin: loopbackOrigin, trustedOrigin: localOrigin/u, "R1: HTTPS browser origin is trusted without changing the required HTTP loopback profile");
+  assert.match(source, /origin: loopbackOrigin, secondaryOrigin: localOrigin/u, "R1: production Node adapter admits the HTTPS browser origin");
   assert.match(source, /rp: \{ name: "Disposable setup", id: "localhost" \}/u,
     "R1: RP id is the independently specified matching hostname");
   assert.match(source, /await page\.goto\("about:blank"\);\s*await page\.goto\(link\)/u,

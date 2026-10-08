@@ -267,8 +267,8 @@
   },
   {
     "file": "tests/browser/mac-local-owner-journey.spec.ts",
-    "find": "const localOrigin = `http://localhost:${address.port}`;",
-    "replace": "const localOrigin = `http://127.0.0.1:${address.port}`;",
+    "find": "const localOrigin = `https://localhost:${address.port}`;",
+    "replace": "const localOrigin = `https://127.0.0.1:${address.port}`;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R1\" tests/setup-passkey-page.test.tsx",
     "why": "R1: independent hostname contract is localhost; invalid-domain fixture mutation must fail the named fixture assertion. This source contract is supplemental; real Chromium execution remains mandatory."
   },

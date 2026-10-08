@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { createServer } from "node:http";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createServer } from "node:https";
+import { spawnSync } from "node:child_process";
 import { build } from "esbuild";
 import { sha256Digest } from "../../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
@@ -321,20 +322,27 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
     loader: "tsx", resolveDir: process.cwd() }, bundle: true, write: false, platform: "browser", jsx: "automatic" });
   const html = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
     <body><div id="registration"></div><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
-  const server = createServer();
+  const tlsRoot = await mkdtemp(join(process.cwd(), ".browser-setup-tls-"));
+  let server: ReturnType<typeof createServer> | undefined;
   const requests: Array<{ url: string; referer: string }> = [];
   let app: ReturnType<typeof createMacLocalWebProcessV1> | undefined;
   try {
+    const key = join(tlsRoot, "key.pem"), certificate = join(tlsRoot, "cert.pem");
+    const generated = spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key,
+      "-out", certificate, "-days", "1", "-subj", "/CN=localhost"], { encoding: "utf8", timeout: 10_000 });
+    expect(generated.status, `openssl must create the disposable certificate: ${generated.error ?? generated.stderr}`).toBe(0);
+    server = createServer({ key: await readFile(key), cert: await readFile(certificate) });
     await new Promise<void>((resolveListen, reject) => {
-      server.once("error", reject); server.listen(0, "127.0.0.1", resolveListen);
+      server!.once("error", reject); server!.listen(0, "127.0.0.1", resolveListen);
     });
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test_listener_address_invalid");
-    const localOrigin = `http://localhost:${address.port}`;
+    const loopbackOrigin = `http://127.0.0.1:${address.port}`;
+    const localOrigin = `https://localhost:${address.port}`;
     const unavailable = async (): Promise<never> => { throw new Error("setup fixture must not touch database"); };
     let inserted = 0; const used = new Set<string>();
-    app = createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:browser-setup",
-      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: localOrigin,
+    app = createMacLocalWebProcessV1({ origin: loopbackOrigin, workspaceId: "workspace:browser-setup",
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: loopbackOrigin, trustedOrigin: localOrigin,
         tenantId: "tenant:browser-setup", provider: "local", subject: "owner:browser-setup",
         ownerCodeDigest: sha256Digest({ ownerCode: code }), sessionSeconds: 900 },
       database: { client: { query: unavailable, transaction: unavailable, transactionWithPreCommitCheck: unavailable },
@@ -352,7 +360,7 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         async insert(input) { expect([secret, nextSecret]).toContain(input.registrationSecret); expect(input.comparisonCode).toMatch(/^[A-Z2-7]{6}$/);
           used.add(input.registrationSecret); inserted += 1; return { registered: true }; },
       } });
-    const nodeHandler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
+    const nodeHandler = createMacLocalNodeHandler({ origin: loopbackOrigin, secondaryOrigin: localOrigin, application: app,
       assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
       handler: request => app!.handle(request, () => new Response(html, { headers: { "content-type": "text/html" } })) });
     server.on("request", (input, output) => {
@@ -362,7 +370,7 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
     });
     for (const width of [390, 1280]) {
       used.clear();
-      const context = await browser.newContext({ viewport: { width, height: 844 } });
+      const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width, height: 844 } });
       try {
         expect(await context.cookies()).toEqual([]);
         const page = await context.newPage();
@@ -420,11 +428,15 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
     expect(requests.some(request => new URL(request.url).pathname === "/setup")).toBe(true);
     for (const request of requests) {
       expect(request.url).not.toContain(code); expect(request.url).not.toContain(secret);
+      expect(request.url).not.toContain(nextSecret); expect(request.referer).not.toContain(nextSecret);
       expect(request.url).not.toContain("#"); expect(request.referer).not.toContain(code); expect(request.referer).not.toContain(secret);
     }
   } finally {
-    server.closeAllConnections();
-    await new Promise<void>(resolveClose => server.close(() => resolveClose()));
-    await app?.close();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise<void>(resolveClose => server!.close(() => resolveClose()));
+    }
+    try { await app?.close(); }
+    finally { await rm(tlsRoot, { recursive: true, force: true }); }
   }
 });
