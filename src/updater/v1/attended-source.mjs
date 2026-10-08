@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, copyFile, lchmod, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink } from "node:fs/promises";
+import { chmod, copyFile, lchown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   buildTrustedEnvironment, trustedToolEnvironment, verifyTrustedRuntimeInstallation,
@@ -515,12 +515,29 @@ async function replaceLink(root, name, target) {
   await assertPointerLeaf(path);
   await custody();
   await symlink(target, temporary);
-  if (process.platform === "darwin") await lchmod(temporary, 0o755);
+  // The parent can move while symlink is in flight. Refuse before even
+  // inspecting the new path, especially before Darwin changes its mode.
   await custody();
   const owned = await lstat(temporary);
+  const assertOwned = entry => {
+    if (!entry.isSymbolicLink() || entry.dev !== owned.dev || entry.ino !== owned.ino)
+      refuse("file_custody_refused");
+  };
   try {
     await custody();
+    if (process.platform === "darwin") {
+      const handle = await open(temporary, constants.O_RDONLY | constants.O_SYMLINK | constants.O_NONBLOCK);
+      try {
+        assertOwned(await handle.stat());
+        await custody();
+        // Change the verified inode, even if its name moves after this check.
+        await handle.chmod(0o755);
+      } finally { await handle.close(); }
+    }
     await assertPointerLeaf(path);
+    await custody();
+    assertOwned(await lstat(temporary));
+    await custody();
     await rename(temporary, path);
   } finally {
     // Do not follow a substituted parent while cleaning a failed publication.
