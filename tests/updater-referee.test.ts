@@ -10,6 +10,7 @@ import { classifyUpdaterCandidateV1 as classify, parseUpdaterCandidateTreeV1, pa
   UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1,
   UpdaterRefereePlanTimeBudgetV1 } from
   "../src/updater/v1/referee";
+import { isAttendedDatabasePathV1 } from "../src/updater/v1/attended-source.mjs";
 
 const policyDirectory = new URL("../src/updater/v1/policy/", import.meta.url);
 const policies = {
@@ -246,6 +247,54 @@ test("real commits refuse node_modules segments in the diff and anywhere in the 
     assert.equal(second.status, 1);
     assert.deepEqual(refusalIds(JSON.parse(second.stdout) as ReturnType<typeof classify>), ["path_not_allowed"]);
   });
+});
+
+test("real commits are classified from the installed commit, so an earlier migration is a database change", () => {
+  // The same history the attended classifier's reproducer uses: the referee diffs
+  // from.commit..candidate, so commit B's migration is in the update to C.
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "src/a.mjs");
+    const installed = commitRepository(repository, "installed release");
+    writeRepositoryFile(repository, "db/migrations/0002_b.sql", "select 2;\n");
+    commitRepository(repository, "B adds a migration");
+    writeRepositoryFile(repository, "src/c.mjs");
+    const candidate = commitRepository(repository, "C changes only src");
+    const result = runRefereeCli(repository, installed, candidate);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout) as ReturnType<typeof classify>;
+    assert.deepEqual(parsed.changedPaths, ["db/migrations/0002_b.sql", "src/c.mjs"]);
+    assert.equal(parsed.changesDatabase, true);
+    assert.equal(parsed.classification, "database");
+  });
+});
+
+test("the attended install gate counts every path the referee calls database, and the updater DDL besides", () => {
+  // Differential: the attended classifier decides whether a non-fresh install is
+  // refused, so it must never be looser than the referee's database rule. Seeded
+  // generated paths plus the referee's own examples; a failing path is printed.
+  const segments = ["db", "DB", "Db", "deploy", "Deploy", "postgres", "POSTGRES", "src", "updater", "v1", "ddl", "DDL",
+    "scripts", "mac-local", "database-role-manifest.mjs", "migrations", "roles", "x.sql", "y.SQL", "z.txt", "a.json"];
+  let seed = 0x5eed;
+  const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32;
+  const paths = new Set(["db/migrations/0200_task_labels.sql", "deploy/postgres/migration-ledger.json",
+    "scripts/mac-local/database-role-manifest.mjs", "tests/fixtures/migrations/dangerous.sql", "db/roles/private_web_roles.sql",
+    "db", "deploy/postgres"]);
+  while (paths.size < 800) {
+    const length = 1 + Math.floor(next() * 5);
+    paths.add(Array.from({ length }, () => segments[Math.floor(next() * segments.length)]!).join("/"));
+  }
+  let refereeDatabase = 0;
+  for (const path of paths) {
+    if (!classOf([pathRow("M", path)]).classes.includes("database")) continue;
+    refereeDatabase += 1;
+    assert.equal(isAttendedDatabasePathV1(path), true, path);
+  }
+  assert.ok(refereeDatabase >= 100, `only ${refereeDatabase} generated paths reached the referee's database rule`);
+  for (const path of ["src/updater/v1/ddl/0002_schema.sql", "src/updater/v1/ddl/notes.txt"]) {
+    assert.equal(classOf([pathRow("M", path)]).classes.includes("database"), false, `${path} is updater-class in the referee`);
+    assert.equal(isAttendedDatabasePathV1(path), true, `${path} is applied only by the release schema phase`);
+  }
 });
 
 test("an absolute symlink target is refused as symlink_escape", () => {

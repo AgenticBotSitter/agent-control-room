@@ -1,0 +1,247 @@
+[
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    paths = [...await names([\"diff-tree\", \"-r\", \"--no-renames\", \"--name-only\", \"-z\", from.commit, target]),\n      ...await names([\"log\", \"--no-renames\", \"--diff-merges=separate\", \"--name-only\", \"--format=\", \"-z\", range])];",
+    "replace": "    paths = await names([\"diff-tree\", \"--root\", \"-m\", \"--no-commit-id\", \"--name-only\", \"-r\", \"-z\", target]);",
+    "test": "node --test --test-name-pattern='reproducer: a migration in an earlier commit' tests/updater-attended-source.test.mjs",
+    "why": "the change set is measured from the installed release, not from the target commit's own parent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": ",\n      ...await names([\"log\", \"--no-renames\", \"--diff-merges=separate\", \"--name-only\", \"--format=\", \"-z\", range])];",
+    "replace": "];",
+    "test": "node --test --test-name-pattern='added and reverted inside the update' tests/updater-attended-source.test.mjs",
+    "why": "every commit in the range counts, so a migration added and reverted inside one update is still a change"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"deploy/postgres/\", \"src/updater/v1/ddl/\"]);",
+    "replace": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"deploy/postgres/\"]);",
+    "test": "node --test --test-name-pattern='any file under the updater DDL directory' tests/updater-attended-source.test.mjs",
+    "why": "the updater's fixed DDL is applied by the release schema phase, which a non-fresh install does not run"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"deploy/postgres/\", \"src/updater/v1/ddl/\"]);",
+    "replace": "const DATABASE_PATH_PREFIXES = Object.freeze([\"db/\", \"src/updater/v1/ddl/\"]);",
+    "test": "node --test --test-name-pattern='any file under the updater DDL directory' tests/updater-attended-source.test.mjs",
+    "why": "the grants, role manifest, ledger and queue data the release schema phase reads live in deploy/postgres"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    || DATABASE_PATH_FILES.includes(lower) || lower.endsWith(\".sql\");",
+    "replace": "    || DATABASE_PATH_FILES.includes(lower);",
+    "test": "node --test --test-name-pattern='database path rule' tests/updater-attended-source.test.mjs",
+    "why": "any .sql file is a database change, matching the referee's classes.json database patterns"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  const lower = path.toLowerCase();\n  return DATABASE_PATH_PREFIXES",
+    "replace": "  const lower = path;\n  return DATABASE_PATH_PREFIXES",
+    "test": "node --test --test-name-pattern='database path rule' tests/updater-attended-source.test.mjs",
+    "why": "APFS folds case, so DB/x lands in db/ and must classify like it"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    changesDatabase: !proven || changedPaths.some(isAttendedDatabasePathV1),",
+    "replace": "    changesDatabase: changedPaths.some(isAttendedDatabasePathV1),",
+    "test": "node --test --test-name-pattern='not an ancestor of the target, or is unknown' tests/updater-attended-source.test.mjs",
+    "why": "an installed commit that is unknown or not related to the target proves nothing and fails closed"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;",
+    "replace": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code !== undefined;",
+    "test": "node --test --test-name-pattern='not an ancestor of the target, or is unknown' tests/updater-attended-source.test.mjs",
+    "why": "git's exit 1 means not an ancestor; only exit 0 proves the installed commit is in the target's history"
+  },
+  {
+    "file": "src/updater/v1/referee/cli.ts",
+    "find": "\"--ignore-submodules=none\", \"--no-relative\", revisions[0]!, revisions[1]!, \"--\");",
+    "replace": "\"--ignore-submodules=none\", \"--no-relative\", `${revisions[1]!}^`, revisions[1]!, \"--\");",
+    "test": "node --import tsx --test --test-name-pattern='classified from the installed commit' tests/updater-referee.test.ts",
+    "why": "the referee diffs from the installed release's commit, never from the candidate's own parent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    || DATABASE_PATH_FILES.includes(lower) || lower.endsWith(\".sql\");",
+    "replace": "    || lower.endsWith(\".sql\");",
+    "test": "node --import tsx --test --test-name-pattern='attended install gate counts every path' tests/updater-referee.test.ts",
+    "why": "the attended install gate is never looser than the referee's database rule (role-manifest generator included)"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;",
+    "replace": "    .catch(() => null))?.code === 0;",
+    "test": "node --test --test-name-pattern='a stop while the ancestry question is asked' tests/updater-attended-source.test.mjs",
+    "why": "a stop or timeout during the ancestry check is reported as itself, never turned into a history answer"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "[\"rev-parse\", \"--is-shallow-repository\"])).stdout.trim() !== \"false\") return false;",
+    "replace": "[\"rev-parse\", \"--is-shallow-repository\"])).stdout.trim() === \"\") return false;",
+    "test": "node --test --test-name-pattern='reproducer: a shallow side parent' tests/updater-attended-source.test.mjs",
+    "why": "a shallow mirror can drop a merge's side history while the installed commit is still an ancestor"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "\"refs/replace/\"])).stdout !== \"\") return false;",
+    "replace": "\"refs/replace/\"])).stdout === null) return false;",
+    "test": "node --test --test-name-pattern='shallow, grafted or replaced' tests/updater-attended-source.test.mjs",
+    "why": "a replace ref can rewrite a commit's parents and hide history from the range walk"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "  return !await lstat(join(mirror, \"info\", \"grafts\")).then(() => true,",
+    "replace": "  return !await lstat(join(mirror, \"info\", \"grafts\")).then(() => false,",
+    "test": "node --test --test-name-pattern='shallow, grafted or replaced' tests/updater-attended-source.test.mjs",
+    "why": "a grafts file can cut a commit's parents and hide history from the range walk"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if ((baseline === \"forward\" || baseline === \"downgrade\") && !await complete()) baseline = \"unproven\";\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='written while the classifier asks about ancestry' tests/updater-attended-source.test.mjs",
+    "why": "ancestry alone is not proof of complete history; the completeness check must run before the range walk"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (manifest.schema !== BUILD_MANIFEST) refuse(\"updater_installed_release_refused\");\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='disagrees with its own release directory' tests/updater-attended-source.test.mjs",
+    "why": "only the attended release builder writes an installed manifest; any other record is not the installed release"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (releaseId !== `${manifest.version}-${manifest.commit.slice(0, 12)}`) refuse(\"updater_installed_release_mismatch\");\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='disagrees with its own release directory' tests/updater-attended-source.test.mjs",
+    "why": "the installed manifest must name the release its own directory was built for, or the update is classified from the wrong commit"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (releaseId !== `${manifest.version}-${manifest.commit.slice(0, 12)}`)",
+    "replace": "  if (releaseId !== `${manifest.version}-${releaseId.slice(-12)}`)",
+    "test": "node --test --test-name-pattern='rewritten to claim the offered commit' tests/updater-attended-source.test.mjs",
+    "why": "a manifest claiming the offered commit under the installed directory would skip the database gate; the commit is bound, not only the version"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (releaseId !== `${manifest.version}-${manifest.commit.slice(0, 12)}`)",
+    "replace": "  if (releaseId !== `${releaseId.slice(0, -13)}-${manifest.commit.slice(0, 12)}`)",
+    "test": "node --test --test-name-pattern='disagrees with its own release directory' tests/updater-attended-source.test.mjs",
+    "why": "the installed version decides downgrade consent, so it is bound to the release directory too"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "...await names([\"log\", \"--no-renames\", \"--diff-merges=separate\", \"--name-only\", \"--format=\", \"-z\", range])];",
+    "replace": "...await names([\"log\", \"--no-renames\", \"--name-only\", \"--format=\", \"-z\", range])];",
+    "test": "node --test --test-name-pattern='added by one merge and removed by another' tests/updater-attended-source.test.mjs",
+    "why": "git log lists no paths for merge commits by default; a database input that only merges add and remove is still a change"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    if (!await mirrorHistoryCompleteV1(mirror, args => git(input, tools.git, mirror, args))) refuse(\"updater_mirror_history_refused\");\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='a graft cannot put a commit main never had' tests/updater-attended-source.test.mjs",
+    "why": "a graft, replace ref or shallow boundary can make a commit main never had look like main's ancestor at fetch admission"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "    await this.#ensureMirror();\n    await this.#assertHistoryComplete();\n",
+    "replace": "    await this.#ensureMirror();\n",
+    "test": "node --test --test-name-pattern='a graft cannot manufacture ancestry' tests/updater-watcher.test.mjs",
+    "why": "a fetch through a grafted mirror would fast-forward the trusted main ref to an unrelated commit before any ancestry check"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "  async #isAncestor(ancestor, descendant) {\n    await this.#assertHistoryComplete();\n",
+    "replace": "  async #isAncestor(ancestor, descendant) {\n",
+    "test": "node --test --test-name-pattern='a graft cannot manufacture ancestry' tests/updater-watcher.test.mjs",
+    "why": "the existing-plan ancestry check asks the same mirror and must not trust fabricated parents"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "[\"rev-parse\", \"--is-shallow-repository\"])).stdout.trim() !== \"false\") return false;",
+    "replace": "[\"rev-parse\", \"--is-shallow-repository\"])).stdout.trim() === \"\") return false;",
+    "test": "node --test --test-name-pattern='replace ref or a shallow boundary' tests/updater-watcher.test.mjs",
+    "why": "the watcher shares the classifier's completeness rule: a shallow mirror proves no admission"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "\"refs/replace/\"])).stdout !== \"\") return false;",
+    "replace": "\"refs/replace/\"])).stdout === null) return false;",
+    "test": "node --test --test-name-pattern='replace ref or a shallow boundary' tests/updater-watcher.test.mjs",
+    "why": "the watcher shares the classifier's completeness rule: a replace ref proves no admission"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "  return !await lstat(join(mirror, \"info\", \"grafts\")).then(() => true,",
+    "replace": "  return !await lstat(join(mirror, \"info\", \"grafts\")).then(() => false,",
+    "test": "node --test --test-name-pattern='a graft cannot manufacture ancestry' tests/updater-watcher.test.mjs",
+    "why": "the watcher shares the classifier's completeness rule: a grafts file fabricates ancestry"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    if (!await complete()) refuse(\"updater_mirror_history_refused\");\n    try { await git(session.input, session.tools.git, session.mirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
+    "replace": "    try { await git(session.input, session.tools.git, session.mirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
+    "test": "node --test --test-name-pattern='graft written after classification' tests/updater-attended-source.test.mjs",
+    "why": "an incomplete mirror is never asked whether the installed commit is an ancestor; its answer could waive downgrade consent"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    catch { downgrade = true; }\n    if (!await complete()) refuse(\"updater_mirror_history_refused\");\n",
+    "replace": "    catch { downgrade = true; }\n",
+    "test": "node --test --test-name-pattern='graft written after classification' tests/updater-attended-source.test.mjs",
+    "why": "a graft written while the downgrade ancestry question is asked is caught after it, so the answer is refused"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "            error => { if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code; });",
+    "replace": "            () => {});",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "a watcher refused for untrusted history holds every update, so the hold must be recorded for the owner"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "          watching.then(() => { this.#watcherHold = null; },",
+    "replace": "          watching.then(() => {},",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "the hold clears on the next successful watcher tick, so a repaired mirror does not keep a stale attention item"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "Boolean(outstanding) || watcherHold !== null",
+    "replace": "Boolean(outstanding)",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "a held update needs the owner: needsYou is what turns the card red"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        ...(watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}),\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "the held card carries its plain sentence, not silence"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        : this.#watcherHold !== null ? \"needs_attention\"\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "a held update is an attention item, not a quiet idle card"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "holdNamesState ? { nextAction: null } : {}",
+    "replace": "holdNamesState ? {} : {}",
+    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
+    "why": "the hold has no reviewed action; the derived review_recovery would send the owner to a recovery that never happened"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  else if (!await complete()) baseline = \"unproven\";\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='shallow, grafted or replaced mirror proves nothing' tests/updater-attended-source.test.mjs",
+    "why": "the classifier never asks an incomplete mirror about ancestry"
+  }
+]

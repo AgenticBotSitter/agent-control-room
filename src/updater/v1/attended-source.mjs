@@ -10,6 +10,7 @@ import { directoryCustodyV1, removeOwnedFileV1 } from "../../installer/shared/fi
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { verifyBundleManifestV1 } from "./attended-flip.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
+import { mirrorHistoryCompleteV1 } from "./mirror-history.mjs";
 
 import { signAttendedConnectorReleaseV1 } from "./install/connector-release.mjs";
 import { captureReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
@@ -168,7 +169,10 @@ async function commandResult(file, args, options = {}) {
     child.stdout.on("data", chunk => { stdout = append(stdout, chunk); });
     child.stderr.on("data", chunk => { stderr = append(stderr, chunk); });
     child.once("error", error => finish(reject, error));
-    child.once("exit", (code, signal) => {
+    // "exit" can fire before the last stdout chunk arrives. A caller that decides
+    // from the whole output (the change classifier) waits for "close" instead; the
+    // builder steps keep "exit", because a daemonised child can hold the pipe open.
+    child.once(options.waitForClose ? "close" : "exit", (code, signal) => {
       if (options.detached) killGroup(child.pid);
       const result = { stdout, stderr, pid: child.pid, code };
       if (code === 0 || options.acceptExitCodes?.includes(code)) finish(resolvePromise, result);
@@ -206,7 +210,8 @@ async function acquireLock(root) {
 async function git(input, gitPath, mirror, args, options = {}) {
   const env = trustedToolEnvironment("git");
   return run(input, gitPath, ["--git-dir", mirror, ...args], { env, timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
-    cwd: options.cwd });
+    cwd: options.cwd, acceptExitCodes: options.acceptExitCodes, maxOutputBytes: options.maxOutputBytes,
+    waitForClose: options.waitForClose });
 }
 
 function parseTree(text, limits) {
@@ -826,6 +831,8 @@ export async function fetchVerifiedSourceV1(input) {
     const fetched = (await git(input, tools.git, mirror, ["rev-parse", `${MAIN_REF}^{commit}`])).stdout.trim();
     if (!COMMIT.test(fetched)) refuse("updater_main_ref_refused");
     await git(input, tools.git, mirror, ["cat-file", "-e", `${commit}^{commit}`]);
+    // A graft, replace ref or shallow boundary could put a commit main never had on main.
+    if (!await mirrorHistoryCompleteV1(mirror, args => git(input, tools.git, mirror, args))) refuse("updater_mirror_history_refused");
     await git(input, tools.git, mirror, ["merge-base", "--is-ancestor", commit, MAIN_REF])
       .catch(() => refuse("updater_commit_not_on_main"));
     const limits = { maxTreeFiles: input.maxTreeFiles ?? MAX_TREE_FILES, maxTreeBytes: input.maxTreeBytes ?? MAX_TREE_BYTES,
@@ -988,6 +995,15 @@ async function installedReleaseForPlanV1(session) {
   if (!RELEASE_ID.test(releaseId)) refuse("updater_installed_release_refused");
   const manifest = JSON.parse(await readFileNoFollowV1(session.root, `${target}/RELEASE_MANIFEST.json`, { maxBytes: 16 * 1024 * 1024 }));
   if (!VERSION.test(manifest?.version ?? "") || !COMMIT.test(manifest?.commit ?? "")) refuse("updater_installed_release_refused");
+  // Only the attended release builder (build-attended-release.mjs) writes an
+  // installed manifest, and buildReleaseV1 names the release directory from that
+  // same manifest's version and commit: `current` -> releases/<version>-<commit
+  // prefix> is the one identity form any installed Mac has. A manifest that is not
+  // the builder's, or that claims a version or commit other than the ones its own
+  // release directory was named for, is not the installed release; trusting it
+  // could classify the update from the wrong commit and skip the database gate.
+  if (manifest.schema !== BUILD_MANIFEST) refuse("updater_installed_release_refused");
+  if (releaseId !== `${manifest.version}-${manifest.commit.slice(0, 12)}`) refuse("updater_installed_release_mismatch");
   return { releaseId, version: manifest.version, commit: manifest.commit };
 }
 
@@ -1007,8 +1023,16 @@ export async function confirmAttendedV1(input) {
   if (!downgrade && from.commit && from.commit !== session.commit) {
     // A same/newer version can still point to an older or divergent commit.
     // Missing ancestry proof is conservative: require explicit downgrade consent.
+    // A graft, replace ref or shallow boundary can answer "ancestor" for history the
+    // mirror does not have and so waive that consent. The mirror is checked right
+    // before the question and again after it, because metadata written while it is
+    // asked would otherwise go unseen: an answer from such a mirror is refused.
+    const complete = () => mirrorHistoryCompleteV1(session.mirror,
+      args => git(session.input, session.tools.git, session.mirror, args));
+    if (!await complete()) refuse("updater_mirror_history_refused");
     try { await git(session.input, session.tools.git, session.mirror, ["merge-base", "--is-ancestor", from.commit, session.commit]); }
     catch { downgrade = true; }
+    if (!await complete()) refuse("updater_mirror_history_refused");
   }
   const plan = { schema: "control-room.install-plan/v2", planId, kind: "updater", from,
     artifact: { releaseId: input.release.releaseId, commit: session.commit, sourceFileCount: session.sourceFileCount,
@@ -1029,19 +1053,80 @@ export async function confirmAttendedV1(input) {
   return Object.freeze({ planId, planDigest });
 }
 
-/** Classifies the verified commit before the owner is asked to confirm it. */
+// Paths whose change leaves the installed database behind the new release.
+// `db/` and `deploy/postgres/` are what the release schema phase reads from the
+// release (ledger, role files, grants, queue DDL); the updater's fixed DDL and the
+// schema digest pin are what it reads from the bundle; the role-manifest generator
+// and any `.sql` are the referee's own database patterns (`policy/classes.json`),
+// so the two classifiers never disagree towards "no change". Compared lower-case
+// because APFS folds case: `DB/x` lands in `db/`.
+const DATABASE_PATH_PREFIXES = Object.freeze(["db/", "deploy/postgres/", "src/updater/v1/ddl/"]);
+const DATABASE_PATH_FILES = Object.freeze(["scripts/mac-local/database-role-manifest.mjs",
+  "src/updater/v1/policy/release-schema-digest.json"]);
+const CLASSIFY_OUTPUT_BYTES = 64 * 1024 * 1024;
+const STOPPED_CODES = Object.freeze(["updater_attended_stopped", "updater_command_timeout"]);
+
+export function isAttendedDatabasePathV1(path) {
+  const lower = path.toLowerCase();
+  return DATABASE_PATH_PREFIXES.some(prefix => lower.startsWith(prefix) || lower === prefix.slice(0, -1))
+    || DATABASE_PATH_FILES.includes(lower) || lower.endsWith(".sql");
+}
+
+/**
+ * Classifies the verified commit before the owner is asked to confirm it.
+ *
+ * The change set is measured from the INSTALLED release's commit, never from the
+ * target's own parent: one update spans every merge since the last install, and a
+ * migration in any of them leaves the database behind the code. The paths are the
+ * union of the end-to-end tree diff and every commit in the range (merges against
+ * each parent, no rename pairing), so a migration added and reverted inside the
+ * update, or carried by a merge's second parent, still counts. A downgrade
+ * classifies the commits it undoes. What cannot be proven - no installed release,
+ * an installed commit the mirror lacks, history where neither commit descends
+ * from the other, or a mirror whose history is shallow, grafted or replaced - is a
+ * database change.
+ */
 export async function classifyAttendedSourceV1(input) {
   const session = releaseSessions.get(input?.release) ?? bundleSessions.get(input?.bundle)
     ?? attendedSessions.get(input?.job);
   if (!session || input?.release && session.release !== input.release || input?.bundle && session.bundle !== input.bundle) {
     refuse("updater_attended_session_refused");
   }
-  const diff = await git(session.input, session.tools.git, session.mirror,
-    ["diff-tree", "--root", "-m", "--no-commit-id", "--name-only", "-r", "-z", session.commit]);
-  const changedPaths = [...new Set(diff.stdout.split("\0").filter(Boolean)
-    .map(path => safeRelative(path, "updater_tree_path_refused")))];
+  const from = await installedReleaseForPlanV1(session), target = session.commit;
+  const names = async args => (await git(session.input, session.tools.git, session.mirror, args,
+    { waitForClose: true, maxOutputBytes: CLASSIFY_OUTPUT_BYTES })).stdout.split("\0").filter(Boolean);
+  // Exit 1 is "not an ancestor"; any other failure, such as an unknown commit,
+  // proves nothing. Only a stop or timeout propagates, so it is reported as itself.
+  const descends = async (ancestor, descendant) => (await git(session.input, session.tools.git, session.mirror,
+    ["merge-base", "--is-ancestor", ancestor, descendant], { acceptExitCodes: [1] })
+    .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;
+  // Ancestry holds through any one parent, so a shallow boundary, a graft or a
+  // replacement object on another parent can drop commits from the range walk
+  // while the installed commit is still "an ancestor". Such a mirror proves nothing.
+  const complete = () => mirrorHistoryCompleteV1(session.mirror,
+    args => git(session.input, session.tools.git, session.mirror, args));
+  let paths = [], baseline;
+  if (from.commit === undefined) {
+    baseline = "not-installed";
+    paths = await names(["ls-tree", "-r", "--name-only", "-z", target]);
+  } else if (from.commit === target) baseline = "same";
+  // Checked before the ancestry questions (an incomplete mirror is never asked)
+  // and again after them, for metadata that appears while they are asked.
+  else if (!await complete()) baseline = "unproven";
+  else if (await descends(from.commit, target)) baseline = "forward";
+  else if (await descends(target, from.commit)) baseline = "downgrade";
+  else baseline = "unproven";
+  if ((baseline === "forward" || baseline === "downgrade") && !await complete()) baseline = "unproven";
+  if (baseline === "forward" || baseline === "downgrade") {
+    const range = baseline === "forward" ? `${from.commit}..${target}` : `${target}..${from.commit}`;
+    paths = [...await names(["diff-tree", "-r", "--no-renames", "--name-only", "-z", from.commit, target]),
+      ...await names(["log", "--no-renames", "--diff-merges=separate", "--name-only", "--format=", "-z", range])];
+  }
+  const changedPaths = [...new Set(paths.map(path => safeRelative(path, "updater_tree_path_refused")))];
+  const proven = baseline === "same" || baseline === "forward" || baseline === "downgrade";
   return Object.freeze({ changedPaths: Object.freeze(changedPaths),
-    changesDatabase: changedPaths.some(path => path.startsWith("db/")) });
+    changesDatabase: !proven || changedPaths.some(isAttendedDatabasePathV1),
+    installedCommit: from.commit ?? null, baseline });
 }
 
 export async function stageVerifiedTreeV1(session, source, snapshot, target, staging, serviceGid, modeForFile) {
