@@ -75,5 +75,26 @@
     "replace": "",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
     "why": "At the correct length, pasted ampersand/equal/code text still requires the literal copy guidance when the syntax term is disabled."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "If no passkey has been registered, sign in on your phone with the owner code. Then, in Terminal, run `sudo control-room passkey add` and open its link in that same signed-in browser.",
+    "replace": "Recovery stopped.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
+    "why": "Lead Addendum 3 independently specifies phone owner-code sign-in, Terminal passkey add, and the same signed-in browser; both real guide and generated paste reader must retain that literal journey."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "Keep the Terminal message on screen.",
+    "replace": "Keep waiting.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
+    "why": "Lead Addendum 3 explicitly retains the on-screen message caution; the guide and generated paste assertions must fail when it is removed."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "The link expires in 30 minutes; there is nothing to delete.",
+    "replace": "The link is ready.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
+    "why": "Lead Addendum 3 retains expiry and no-deletion cautions; the 30-minute value is independently corroborated by the unchanged passkey CLI contract."
   }
 ]

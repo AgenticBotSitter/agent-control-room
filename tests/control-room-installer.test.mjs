@@ -2439,8 +2439,8 @@ test("the install line never says Ready when the Face ID step stopped", async t 
   // atk-fa F8: the CLI printed "Ready" whatever the passkey result, so nothing told the
   // owner there was no passkey.
   for (const [name, portOptions, expected, absent] of [
-    ["stopped", { passkeyFailure: true }, /^Not ready: Face ID is NOT set up \(the passkey step stopped: passkey_terminal_required\)\. .*show this to the lead after reopening Claude/u, /Ready:/u],
-    ["registered", {}, /^Ready: Control Room release 1\.2\.3-a{12} is current\. Self-update is Off\.\n$/u, /Not ready/u]]) {
+    ["stopped", { passkeyFailure: true }, "Not ready: Face ID is NOT set up (the passkey step stopped: passkey_terminal_required). Control Room release 1.2.3-aaaaaaaaaaaa is installed and current. Self-update is Off. Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.\n", /Ready:/u],
+    ["registered", {}, "Ready: Control Room release 1.2.3-aaaaaaaaaaaa is current. Self-update is Off.\n", /Not ready/u]]) {
     const f = await fixture(t, `cli-passkey-${name}`, portOptions);
     const output = [];
     const code = await runUpdaterCliV1(["install", "--commit", "a".repeat(40), "--bootstrap", f.bootstrap,
@@ -2450,7 +2450,7 @@ test("the install line never says Ready when the Face ID step stopped", async t 
     });
     assert.equal(code, 0, name);
     const line = output.join("").split("\n").filter(Boolean).at(-1) + "\n";
-    assert.match(line, expected, name); assert.doesNotMatch(line, absent, name);
+    assert.equal(line, expected, name); assert.doesNotMatch(line, absent, name);
   }
 });
 

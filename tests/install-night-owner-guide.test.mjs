@@ -152,7 +152,6 @@ test("post-install instructions match the existing connector and task controls",
   }
 });
 
-
 test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corrects legacy wording", () => {
   assert.match(guide, /phone does not sign in your Mac browser/u);
   assert.match(guide, /after `#code=` and before `&reg=`/u);
@@ -173,4 +172,15 @@ test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corr
   assert.match(legacy, /Prints three lines/u);
   assert.match(legacy, /Accepting that result is a separate owner decision/u);
   assert.match(legacy, /six lines, one per role.*least privilege: ok/u);
+});
+
+test("V101 stopped Face ID recovery follows phone sign-in and the same browser", () => {
+  const row = guide.split("\n").find(line => line.startsWith("| Face ID setup fails,"));
+  assert.ok(row, "the stopped Face ID journey has a recovery row");
+  assert.ok(row.includes("If no passkey has been registered, sign in on your phone with the owner code. Then, in Terminal, run `sudo control-room passkey add` and open its link in that same signed-in browser."));
+  assert.doesNotMatch(row, /do not run.*passkey add/iu);
+  assert.ok(row.includes("Keep the Terminal message on screen."));
+  assert.ok(row.includes("Do not retry or reload the stopped phone page."));
+  assert.ok(row.includes("The link expires in 30 minutes; there is nothing to delete."));
+  assert.match(guide.split("\n").find(line => line.startsWith("4. The health check")), /follow the Face ID row below/u);
 });

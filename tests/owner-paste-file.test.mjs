@@ -427,7 +427,7 @@ test('R5G one-file package carries practice messages, phone prompts, Mac sign-in
   assert.match(practice, /Practice passkey registered\. No phone was used\./u);
   assert.match(practice, /Do not type anything/u);
   assert.match(practice, /Practice passkey did not register/u);
-  for (const text of ['six words', 'three tries', 'six-character code', 'Not ready: Face ID is NOT set up', 'Terminal closes', 'could not be fully undone', 'do not run']) {
+  for (const text of ['six words', 'three tries', 'six-character code', 'Not ready: Face ID is NOT set up', 'Terminal closes', 'could not be fully undone']) {
     assert.ok(live.toLowerCase().includes(text.toLowerCase()), text);
   }
   assert.match(output, /after `#code=` and before `&reg=`/u);
@@ -481,4 +481,14 @@ test('the snapshot checksum reaches check-serve as the shell variable, never as 
   const output = await makeOwnerPasteFile(input);
   assert.ok(!output.includes(`'"$LIVE_SNAPSHOT_SHA256"'`), 'a single-quoted variable passes the literal text and check-serve refuses it');
   assert.match(output, /--checksum "\$LIVE_SNAPSHOT_SHA256"/u);
+});
+
+test('V101 generated live guidance follows stopped Face ID recovery in the signed-in browser', async () => {
+  const output = await makeOwnerPasteFile(input);
+  const live = output.split(": '11.")[1].split(": '12.")[0];
+  assert.ok(live.includes('If no passkey has been registered, sign in on your phone with the owner code. Then, in Terminal, run `sudo control-room passkey add` and open its link in that same signed-in browser.'));
+  assert.doesNotMatch(live, /do not run.*passkey add/iu);
+  assert.ok(live.includes('Keep the Terminal message on screen.'));
+  assert.ok(live.includes('Do not retry or reload the stopped phone page.'));
+  assert.ok(live.includes('The link expires in 30 minutes; there is nothing to delete.'));
 });
