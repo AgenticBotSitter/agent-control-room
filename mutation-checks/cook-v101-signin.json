@@ -285,5 +285,19 @@
     "replace": "await page.goto(link);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R1\" tests/setup-passkey-page.test.tsx",
     "why": "R1: a replay intended to reload must first leave the document; lead contract source assertion catches the old mistaken navigation assumption."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      if (!new URLSearchParams(nextFragment.slice(1)).has(\"reg\")) return;",
+    "replace": "      // MUTATION: treat ordinary anchors as setup authority.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R5 skip link preserves ready registration\" tests/setup-passkey-page.test.tsx",
+    "why": "The layout skip link must preserve the displayed code without a false stop (reviewer S6)."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      if (nextFragment === currentFragment) return;",
+    "replace": "      // MUTATION: replay the identical active fragment.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R5 skip link preserves ready registration\" tests/setup-passkey-page.test.tsx",
+    "why": "The same consumed registration fragment must not restart credentials or requests."
   }
 ]

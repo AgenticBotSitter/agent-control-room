@@ -434,3 +434,74 @@ test("V101 R1 browser fixture uses a WebAuthn hostname and a new document for re
   assert.match(source, /await page\.goto\("about:blank"\);\s*await page\.goto\(link\)/u,
     "R1: replay loads a new document rather than assuming a fragment reload");
 });
+
+// Reviewer S6/S6b/S6c: the actual layout's skip link changes the fragment.
+// Synthetic credential/options replies isolate that lifecycle; no DB proof.
+for (const stage of ["ready", "credential", "absent"]) test(`V101 R5 skip link preserves ${stage} registration`, async t => {
+  const initialHash = `#reg=${secret}`;
+  const dom = new JSDOM('<a href="#private-main">Skip to content</a><main id="private-main"><div id="root"></div></main>',
+    { url: `https://control-room.example.test/setup${stage === "absent" ? "" : initialHash}` });
+  const keys = ["window", "document", "history", "navigator", "fetch", "IS_REACT_ACT_ENVIRONMENT", "AuthenticatorAttestationResponse"];
+  const prior = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  class Attestation { clientDataJSON = buffer(32, 1); attestationObject = buffer(64, 2); getTransports() { return ["internal"]; } }
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
+    history: dom.window.history, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true,
+    AuthenticatorAttestationResponse: Attestation })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  let signal: AbortSignal | undefined, release: (() => void) | undefined, creates = 0;
+  const requests: string[] = [];
+  Object.defineProperty(dom.window.navigator, "credentials", { configurable: true, value: { create: async (input: { signal?: AbortSignal }) => {
+    creates++; signal = input.signal;
+    if (stage === "credential") await new Promise<void>(done => { release = done; });
+    return { id: b64(buffer(32, 7)), rawId: buffer(32, 7), type: "public-key", getClientExtensionResults: () => ({}), response: new Attestation() };
+  } } });
+  globalThis.fetch = (async input => {
+    requests.push(String(input));
+    return String(input).endsWith("/options")
+      ? Response.json({ publicKey: { challenge: b64(buffer(32, 3)), user: { id: b64(buffer(32, 4)) } } })
+      : Response.json({}, { status: 201 });
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  t.after(async () => {
+    await act(async () => { root.unmount(); release?.(); }); dom.window.close();
+    for (const key of keys) { const descriptor = prior.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  });
+  const settle = async () => { for (let n = 0; n < 20; n++) await act(async () => new Promise<void>(done => setImmediate(done))); };
+  await act(async () => root.render(createElement(PasskeyRegistration)));
+  const deadline = performance.now() + 5_000;
+  while (stage !== "absent" && !(stage === "credential" ? creates === 1 : dom.window.document.querySelector('[aria-label="Passkey comparison code"]'))) {
+    assert.ok(performance.now() < deadline, "initial registration reaches its observable stage");
+    await act(async () => new Promise<void>(done => setImmediate(done)));
+  }
+  const code = dom.window.document.querySelector('[aria-label="Passkey comparison code"]')?.textContent;
+  if (stage === "ready") assert.match(code!, /^[A-Z2-7]{6}$/);
+  if (stage === "credential") assert.equal(creates, 1, "pending Face ID reached before skip");
+  const beforeRequests = [...requests];
+  const changeHash = async (hash: string) => {
+    await act(async () => {
+      const changed = new Promise<void>(done => dom.window.addEventListener("hashchange", () => done(), { once: true }));
+      dom.window.location.hash = hash; await changed;
+    }); await settle();
+  };
+  await act(async () => {
+    const changed = new Promise<void>(done => dom.window.addEventListener("hashchange", () => done(), { once: true }));
+    dom.window.document.querySelector("a")!.click(); await changed;
+  }); await settle();
+  const unchanged = () => {
+    assert.equal(!!dom.window.document.querySelector('[role="alert"]'), false, "R5: skip link must not show a false stop");
+    assert.equal(dom.window.document.querySelector('[aria-label="Passkey comparison code"]')?.textContent, code, "R5: comparison code survives skip link");
+    assert.equal(signal?.aborted ?? false, false, "R5: skip link must not cancel Face ID");
+    assert.deepEqual(requests, beforeRequests, "R5: unrelated fragments never restart registration");
+    if (stage === "absent") assert.equal(!!dom.window.document.querySelector("section"), false, "R5: plain setup remains without a registration panel");
+  };
+  unchanged();
+  for (const hash of ["#other-anchor", "#code=extra", "#REG=other", ""]) { await changeHash(hash); unchanged(); }
+  for (let n = 0; n < 50; n++) { await changeHash(`#anchor-${n}`); unchanged(); }
+  if (stage !== "absent") {
+    await changeHash(initialHash); unchanged();
+    assert.equal(creates, 1, "R5: identical registration fragment never restarts Face ID");
+  }
+  if (stage === "credential") {
+    await act(async () => release!()); await settle();
+    assert.ok(dom.window.document.querySelector('[aria-label="Passkey comparison code"]'), "R5: pending registration completes after skip");
+  }
+});

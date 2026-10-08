@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createServer } from "node:https";
 import { spawnSync } from "node:child_process";
@@ -321,8 +321,10 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
     createRoot(document.getElementById('registration')).render(<PasskeyRegistration />);`,
     loader: "tsx", resolveDir: process.cwd() }, bundle: true, write: false, platform: "browser", jsx: "automatic" });
   const html = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-    <body><div id="registration"></div><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
-  const tlsRoot = await mkdtemp(join(process.cwd(), ".browser-setup-tls-"));
+    <body><a class="skip-link" href="#private-main">Skip to content</a><main id="private-main"><div id="registration"></div></main><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
+  const tlsParent = join(process.cwd(), ".test-tmp");
+  await mkdir(tlsParent, { recursive: true });
+  const tlsRoot = await mkdtemp(join(tlsParent, "browser-setup-tls-"));
   let server: ReturnType<typeof createServer> | undefined;
   const requests: Array<{ url: string; referer: string }> = [];
   let app: ReturnType<typeof createMacLocalWebProcessV1> | undefined;
@@ -374,6 +376,19 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
       try {
         expect(await context.cookies()).toEqual([]);
         const page = await context.newPage();
+        const skipContent = async (keyboard = false) => {
+          // Wait for the actual hashchange and React render, rather than racing
+          // an assertion against the old DOM or assuming a fixed delay.
+          const changed = page.evaluate(() => new Promise<void>(done => window.addEventListener("hashchange", () => {
+            requestAnimationFrame(() => requestAnimationFrame(() => done()));
+          }, { once: true })));
+          if (keyboard) {
+            await page.getByRole("link", { name: "Skip to content" }).focus();
+            await page.keyboard.press("Enter");
+          } else await page.getByRole("link", { name: "Skip to content" }).click();
+          await changed;
+          await expect(page).toHaveURL(/#private-main$/);
+        };
         const cdp = await context.newCDPSession(page);
         await cdp.send("WebAuthn.enable");
         await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal",
@@ -408,6 +423,12 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         }
         await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
         expect(new URL(page.url()).hash).toBe("");
+        // S6: the first focusable layout link must preserve the displayed code.
+        const comparison = page.getByRole("status", { name: "Passkey comparison code" });
+        const beforeSkip = await comparison.textContent();
+        await skipContent(true);
+        await expect(comparison, "R5: comparison code survives skip link").toHaveText(beforeSkip!);
+        await expect(page.getByRole("alert")).toHaveCount(0);
         expect((await context.cookies()).some(cookie => cookie.name === "control_room_local_owner")).toBe(true);
         // Same-document link replacement must be consumed by the product.
         await page.goto(`${localOrigin}/setup#reg=${nextSecret}&mode=add`);
@@ -422,6 +443,31 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         await page.goto("about:blank");
         await page.goto(`${localOrigin}/setup#code=${code}&reg=${secret}&extra=1`);
         await expect(page.getByRole("alert")).toContainText("Registration stopped");
+        // S6c: a plain setup page must not invent a stopped registration.
+        await page.goto("about:blank");
+        await page.goto(`${localOrigin}/setup`);
+        await skipContent();
+        await expect(page.getByRole("heading", { name: "Register Face ID" })).toHaveCount(0);
+        await expect(page.getByRole("alert")).toHaveCount(0);
+        // S6b: hold the credential boundary, then click the real layout link.
+        used.delete(nextSecret);
+        await page.goto("about:blank");
+        await page.addInitScript(() => {
+          const state = { calls: 0, aborted: false };
+          Object.assign(window, { r5Credential: state });
+          navigator.credentials.create = async input => {
+            state.calls++;
+            return await new Promise<never>((_, reject) => input?.signal?.addEventListener("abort", () => {
+              state.aborted = true; reject(new DOMException("aborted", "AbortError"));
+            }, { once: true }));
+          };
+        });
+        await page.goto(`${localOrigin}/setup#reg=${nextSecret}&mode=add`);
+        await expect.poll(() => page.evaluate(() => (window as any).r5Credential.calls)).toBe(1);
+        await skipContent();
+        await expect(page.getByRole("status")).toHaveText("Waiting for Face ID. Keep this page open.");
+        expect(await page.evaluate(() => (window as any).r5Credential.aborted), "R5: skip link must not cancel Face ID").toBe(false);
+        await expect(page.getByRole("alert")).toHaveCount(0);
       } finally { await context.close(); }
     }
     expect(inserted).toBe(4);

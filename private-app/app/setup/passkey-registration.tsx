@@ -77,6 +77,7 @@ export function PasskeyRegistration() {
   const retrySignIn = useRef<(() => void) | null>(null);
   const signIn = useRef<((code: string) => void) | null>(null);
   useLayoutEffect(() => {
+    let currentFragment = "";
     const start = () => {
     signIn.current = null; retrySignIn.current = null;
     if (!window.location.hash) return;
@@ -84,6 +85,7 @@ export function PasskeyRegistration() {
       history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       setState({ status: "failed" }); return;
     }
+    currentFragment = window.location.hash;
     const fragment = window.location.hash.slice(1);
     history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     const values = new URLSearchParams(fragment), registrationSecret = values.get("reg"), ownerCode = values.get("code");
@@ -181,7 +183,9 @@ export function PasskeyRegistration() {
     };
     let stop = start();
     const onHashChange = () => {
-      if (!window.location.hash) return;
+      const nextFragment = window.location.hash;
+      if (!new URLSearchParams(nextFragment.slice(1)).has("reg")) return;
+      if (nextFragment === currentFragment) return;
       stop?.();
       setState({ status: "absent" });
       stop = start();
