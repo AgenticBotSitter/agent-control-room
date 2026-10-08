@@ -1,0 +1,58 @@
+[
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (error?.code === \"attended_database_change_requires_upgrader\")",
+    "replace": "if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='database update refusal prints fixed owner guidance' tests/updater-cli-flip.test.mjs",
+    "why": "exact database refusal code must select the independently specified owner guidance and retain the lead code"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "if (!fresh && classification.changesDatabase) refuse(\"attended_database_change_requires_upgrader\");",
+    "replace": "if (false) refuse(\"attended_database_change_requires_upgrader\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='a repeat whose verified diff touches db' tests/control-room-installer.test.mjs",
+    "why": "requested database-changing update refuses before confirmation or staging; earlier recovery is allowed and reported"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "error.unfinishedUpdateRecovered = prior?.command === \"recovery\"",
+    "replace": "error.unfinishedUpdateRecovered = false && prior?.command === \"recovery\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='interrupted switch-pointers done then database refusal reports recovery' tests/control-room-installer.test.mjs",
+    "why": "completed recovery in this command must select the independent recovery message"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "const prior = entries[requestStart - 1];",
+    "replace": "const prior = entries.findLast(row => row.command === \"recovery\" && row.action === \"transaction\" && row.phase === \"done\" && entries.some(progress => progress.command === \"install\" && progress.transactionId === row.data?.installTransactionId && progress.phase === \"planned\" && [\"confirm\", \"stage\", \"switch-pointers\"].includes(progress.action)));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='interrupted switch-pointers done then database refusal reports recovery' tests/control-room-installer.test.mjs",
+    "why": "historical classification-passed recovery must not label a later refusal after scratch-only cleanup or a completed intervening install"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message = error.unfinishedUpdateRecovered === true",
+    "replace": "message = false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='database refusal renderer' tests/updater-cli-flip.test.mjs",
+    "why": "explicit recovery state must select the bounded recovery guidance"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message = error.unfinishedUpdateRecovered === true",
+    "replace": "message = Boolean(error.unfinishedUpdateRecovered)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='database refusal renderer' tests/updater-cli-flip.test.mjs",
+    "why": "truthy untrusted values must not claim an earlier update was rolled back"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "&& prior.data?.state === \"recovered\" && recoveredPastClassification;",
+    "replace": "&& prior.data?.state === \"recovered\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^a refused database update retried' tests/control-room-installer.test.mjs",
+    "why": "scratch-only recovery of a refused attempt must not claim an update rolled back; independent absence assertion rejects admission without confirm stage or switch progress"
+  },
+  {
+    "file": "src/updater/v1/install/installer.mjs",
+    "find": "catch { error.unfinishedUpdateRecovered = false; }",
+    "replace": "catch (journalError) { throw journalError; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^database refusal survives' tests/control-room-installer.test.mjs",
+    "why": "a failed diagnostic journal read must preserve the database refusal and the independent fresh guidance literal"
+  }
+]

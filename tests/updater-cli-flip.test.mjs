@@ -731,6 +731,35 @@ test("refusal codes print exactly as before the stop-line change", async () => {
 });
 
 
+test("database update refusal prints fixed owner guidance and retains the lead code", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const expected = "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)";
+  const refusal = { code: "attended_database_change_requires_upgrader" };
+  assert.equal(cliFailureMessageV1(refusal), expected, "database refusal owner guidance is complete");
+  assert.ok(expected.length <= 200, "fresh guidance fits the renderer head cap");
+  // The explanation is selected by the exact code, never port-supplied text.
+  assert.equal(cliFailureMessageV1({ ...refusal, message: "UNTRUSTED-MESSAGE", userMessage: "UNTRUSTED-OWNER-TEXT" }), expected);
+  for (const code of ["attended_database_change_requires_upgrader_extra", "ATTENDED_DATABASE_CHANGE_REQUIRES_UPGRADER", "attended_classification_refused"])
+    assert.equal(cliFailureMessageV1({ code, message: "UNTRUSTED-MESSAGE" }), code);
+  assert.equal(cliFailureMessageV1(new Error("attended_database_change_requires_upgrader")),
+    "updater_cli_failed: attended_database_change_requires_upgrader", "an uncoded error does not claim installed state");
+  const withCause = cliFailureMessageV1({ ...refusal, cause: { code: "updater_fetch_refused" } });
+  assert.equal(withCause, `${expected}; cause: updater_fetch_refused`);
+  assert.ok(withCause.length <= 400);
+  assert.doesNotMatch(withCause, /[\u0000-\u001f\u007f-\u009f]/u);
+});
+
+
+test("database refusal renderer reports only explicit unfinished recovery", async () => {
+  const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
+  const refusal = { code: "attended_database_change_requires_upgrader", userMessage: "UNTRUSTED-OWNER-TEXT" };
+  assert.equal(cliFailureMessageV1({ ...refusal, unfinishedUpdateRecovered: true }),
+    "Not installed: this version needs a database upgrade step that isn't built yet. Earlier unfinished update rolled back. Tell the lead. (attended_database_change_requires_upgrader)", "recovered refusal retains complete guidance and code");
+  for (const value of [undefined, false, null, 0, 1, "true", {}, []])
+    assert.equal(cliFailureMessageV1({ ...refusal, unfinishedUpdateRecovered: value }),
+      "Not installed: this version changes the database, which needs an upgrade step that isn't built yet. Your installed version did not change. Tell the lead. (attended_database_change_requires_upgrader)", "only a boolean recovery receipt admits the recovery assurance");
+});
+
 test("V101 direct runtime refusal prints only validated diagnostic detail", async () => {
   const { cliFailureMessageV1 } = await import("../src/updater/v1/cli.mjs");
   const { safeErrorPartsV1 } = await import("../src/updater/v1/contracts.mjs");

@@ -968,7 +968,24 @@ async function runAttendedCoreV1({ root, commit, accounts, fresh, write, ports, 
     classification = await ports.classifyAttendedSourceV1({ ...common, ...fetched, release, bundle });
     if (!classification || typeof classification.changesDatabase !== "boolean"
       || !Array.isArray(classification.changedPaths)) refuse("attended_classification_refused");
-    if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
+    try {
+      if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
+    } catch (error) {
+      // Scratch-only cleanup after a refusal is not a rolled-back update.
+      // Guidance is optional: a failed journal read must not replace the refusal.
+      try {
+        const entries = await readJournal(root);
+        const requestStart = entries.findLastIndex(row => row.command === "install"
+          && row.action === "transaction" && row.phase === "planned");
+        const prior = entries[requestStart - 1];
+        const recoveredPastClassification = entries.some(row => row.command === "install"
+          && row.transactionId === prior?.data?.installTransactionId && row.phase === "planned"
+          && ["confirm", "stage", "switch-pointers"].includes(row.action));
+        error.unfinishedUpdateRecovered = prior?.command === "recovery" && prior.action === "transaction"
+          && prior.phase === "done" && prior.data?.state === "recovered" && recoveredPastClassification;
+      } catch { error.unfinishedUpdateRecovered = false; }
+      throw error;
+    }
     const runningBundleDigest = options.runningBundleDigest === undefined
       ? await ports.runningBundleDigestV1({ root }) : options.runningBundleDigest;
     const updateUpdater = runningBundleDigest !== bundle.bundleDigest;
