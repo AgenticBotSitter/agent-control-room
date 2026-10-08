@@ -90,9 +90,9 @@ test("manifest validation refuses a writable non-sticky executable folder", asyn
   const temporaryParent = await stat(tmpdir());
   if (temporaryParent.uid === 0 && (temporaryParent.mode & 0o1000) !== 0) {
     const stickyTool = join(tmpdir(), `${basename(dir)}-node-tool`);
-    t.after(() => rm(stickyTool, { force: true }));
     // An exclusive hard link keeps this test-owned name in the existing root-owned sticky folder.
     await link(tool, stickyTool);
+    t.after(() => rm(stickyTool, { force: true }));
     const stickyManifest = await manifest(dir, [entry(script, { executable: stickyTool })], 1, "sticky-root.json");
     assert.equal((await connector.loadToolAdapters(stickyManifest)).adapters.size, 1,
       "a root-owned sticky folder protects the private executable");
