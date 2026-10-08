@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createServer } from "node:https";
@@ -311,9 +311,18 @@ test("owner sends work to every connected bot on the real connector-only local w
 // This fixture exercises the real HTTP/session wrapper and shipped registration
 // component. The synthetic passkey port proves browser navigation and fragment
 // handling, not PostgreSQL persistence, phone Face ID, or installed HTTPS.
-for (const includeOwnerCode of [true, false]) test(includeOwnerCode
+// The attempt budget belongs to the server, not a browser context. Each
+// viewport and link journey therefore needs its own real session service.
+for (const includeOwnerCode of [true, false]) for (const width of [390, 1280]) test(`${includeOwnerCode
   ? "V101: a fresh browser opens the installer fragment and reaches registration without leaking URL secrets"
-  : "V101: a fresh browser scans a reg-only QR and signs in on setup without losing registration", async ({ browser }) => {
+  : "V101: a fresh browser scans a reg-only QR and signs in on setup without losing registration"} (${width}px)`,
+  async ({ browser }) => runSetupJourney(browser, includeOwnerCode, width));
+
+test("V101: setup refuses the eleventh authentication attempt with the documented wait message", async ({ browser }) => {
+  await runSetupJourney(browser, true, 390, true);
+});
+
+async function runSetupJourney(browser: Browser, includeOwnerCode: boolean, width: number, exerciseLimiter = false) {
   const code = "A".repeat(43), secret = "R".repeat(43), nextSecret = "T".repeat(43);
   const bundle = await build({ stdin: { contents: `import React from 'react';
     import {createRoot} from 'react-dom/client';
@@ -370,59 +379,83 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
       requests.push({ url: new URL(input.url ?? "/", localOrigin).href, referer: input.headers.referer ?? "" });
       void nodeHandler.handle(input, output);
     });
-    for (const width of [390, 1280]) {
-      used.clear();
-      const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width, height: 844 } });
-      try {
-        expect(await context.cookies()).toEqual([]);
-        const page = await context.newPage();
-        const skipContent = async (keyboard = false) => {
-          // Wait for the actual hashchange and React render, rather than racing
-          // an assertion against the old DOM or assuming a fixed delay.
-          const changed = page.evaluate(() => new Promise<void>(done => window.addEventListener("hashchange", () => {
-            requestAnimationFrame(() => requestAnimationFrame(() => done()));
-          }, { once: true })));
-          if (keyboard) {
-            await page.getByRole("link", { name: "Skip to content" }).focus();
-            await page.keyboard.press("Enter");
-          } else await page.getByRole("link", { name: "Skip to content" }).click();
-          await changed;
-          await expect(page).toHaveURL(/#private-main$/);
-        };
-        const cdp = await context.newCDPSession(page);
-        await cdp.send("WebAuthn.enable");
-        await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal",
-          hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
-        if (includeOwnerCode) {
-          let first = true;
-          await page.route("**/api/v1/local-owner-session", async route => {
-            if (first) { first = false; await route.abort("connectionreset"); }
-            else await route.continue();
-          });
-        }
-        const link = includeOwnerCode ? `${localOrigin}/setup#code=${code}&reg=${secret}`
-          : `${localOrigin}/setup#reg=${secret}&mode=initial`;
-        const response = await page.goto(link);
-        expect(response!.status()).toBe(200);
-        await expect(page.getByRole("heading", { name: "Register Face ID" })).toBeVisible();
-        if (includeOwnerCode) {
-          await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
-          await expect(page.getByLabel("Owner code")).toHaveCount(0);
-          await expect(page.locator("body")).not.toContainText(code);
-          await page.getByRole("button", { name: "Try again" }).click();
-        } else {
-          await expect(page.getByLabel("Owner code")).toBeVisible();
-          expect(new URL(page.url()).hash).toBe("");
-          expect(await context.cookies()).toEqual([]);
-          await page.getByLabel("Owner code").fill("ABC234");
-          await page.getByRole("button", { name: "Sign in and continue" }).click();
-          await expect(page.getByRole("alert")).toHaveText("Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.");
-          expect(new URL(page.url()).pathname).toBe("/setup");
-          await page.getByLabel("Owner code").fill(code);
-          await page.getByRole("button", { name: "Sign in and continue" }).click();
-        }
-        await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width, height: 844 } });
+    try {
+      expect(await context.cookies()).toEqual([]);
+      const page = await context.newPage();
+      const skipContent = async (keyboard = false) => {
+        // Wait for the actual hashchange and React render, rather than racing
+        // an assertion against the old DOM or assuming a fixed delay.
+        const changed = page.evaluate(() => new Promise<void>(done => window.addEventListener("hashchange", () => {
+          requestAnimationFrame(() => requestAnimationFrame(() => done()));
+        }, { once: true })));
+        if (keyboard) {
+          await page.getByRole("link", { name: "Skip to content" }).focus();
+          await page.keyboard.press("Enter");
+        } else await page.getByRole("link", { name: "Skip to content" }).click();
+        await changed;
+        await expect(page).toHaveURL(/#private-main$/);
+      };
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("WebAuthn.enable");
+      await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal",
+        hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
+      if (includeOwnerCode) {
+        let first = true;
+        await page.route("**/api/v1/local-owner-session", async route => {
+          if (first) { first = false; await route.abort("connectionreset"); }
+          else await route.continue();
+        });
+      }
+      const link = includeOwnerCode ? `${localOrigin}/setup#code=${code}&reg=${secret}`
+        : `${localOrigin}/setup#reg=${secret}&mode=initial`;
+      const response = await page.goto(link);
+      expect(response!.status()).toBe(200);
+      await expect(page.getByRole("heading", { name: "Register Face ID" })).toBeVisible();
+      if (includeOwnerCode) {
+        await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+        await expect(page.getByLabel("Owner code")).toHaveCount(0);
+        await expect(page.locator("body")).not.toContainText(code);
+        await page.getByRole("button", { name: "Try again" }).click();
+      } else {
+        await expect(page.getByLabel("Owner code")).toBeVisible();
         expect(new URL(page.url()).hash).toBe("");
+        expect(await context.cookies()).toEqual([]);
+        await page.getByLabel("Owner code").fill("ABC234");
+        await page.getByRole("button", { name: "Sign in and continue" }).click();
+        await expect(page.getByRole("alert")).toHaveText("Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.");
+        expect(new URL(page.url()).pathname).toBe("/setup");
+        await page.getByLabel("Owner code").fill(code);
+        await page.getByRole("button", { name: "Sign in and continue" }).click();
+      }
+      await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
+      expect(new URL(page.url()).hash).toBe("");
+      if (exerciseLimiter) {
+        // Policy: ten authentication attempts in sixty seconds. The first
+        // registration used two: options and insert. Signing in has a
+        // separate failure budget. Eight replay option requests exhaust
+        // this budget; the ninth must be refused.
+        // Keep the real browser, session service and HTTP adapter in this path.
+        const replay = async () => {
+          await page.goto("about:blank");
+          const options = page.waitForResponse(response => new URL(response.url()).pathname
+            === "/api/v1/passkeys/registration/options");
+          await page.goto(`${localOrigin}/setup#reg=${secret}&mode=initial`);
+          return await options;
+        };
+        for (let attempt = 3; attempt <= 10; attempt++) {
+          expect((await replay()).status(), `attempt ${attempt} reaches the used-link refusal`).toBe(410);
+          await expect(page.getByRole("alert")).toContainText("Registration stopped");
+        }
+        const limited = await replay();
+        expect(limited.status(), "the eleventh authentication attempt is limited").toBe(429);
+        const retryAfter = limited.headers()["retry-after"];
+        expect(retryAfter).toMatch(/^[1-9][0-9]*$/);
+        expect(Number(retryAfter)).toBeLessThanOrEqual(60);
+        await expect(page.getByRole("alert")).toHaveText(`Too many tries — wait ${retryAfter} seconds`);
+        expect(inserted, "replay must not insert a second credential").toBe(1);
+        expect(new URL(page.url()).hash).toBe("");
+      } else {
         // S6: the first focusable layout link must preserve the displayed code.
         const comparison = page.getByRole("status", { name: "Passkey comparison code" });
         const beforeSkip = await comparison.textContent();
@@ -468,9 +501,9 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
         await expect(page.getByRole("status")).toHaveText("Waiting for Face ID. Keep this page open.");
         expect(await page.evaluate(() => (window as any).r5Credential.aborted), "R5: skip link must not cancel Face ID").toBe(false);
         await expect(page.getByRole("alert")).toHaveCount(0);
-      } finally { await context.close(); }
-    }
-    expect(inserted).toBe(4);
+      }
+    } finally { await context.close(); }
+    expect(inserted).toBe(exerciseLimiter ? 1 : 2);
     expect(requests.some(request => new URL(request.url).pathname === "/setup")).toBe(true);
     for (const request of requests) {
       expect(request.url).not.toContain(code); expect(request.url).not.toContain(secret);
@@ -485,4 +518,4 @@ for (const includeOwnerCode of [true, false]) test(includeOwnerCode
     try { await app?.close(); }
     finally { await rm(tlsRoot, { recursive: true, force: true }); }
   }
-});
+}

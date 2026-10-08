@@ -299,5 +299,12 @@
     "replace": "      // MUTATION: replay the identical active fragment.",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R5 skip link preserves ready registration\" tests/setup-passkey-page.test.tsx",
     "why": "The same consumed registration fragment must not restart credentials or requests."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(10);",
+    "replace": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(100);",
+    "test": "pnpm exec playwright test tests/browser/mac-local-owner-journey.spec.ts --grep=\"V101: setup refuses the eleventh authentication attempt\"",
+    "why": "The documented ten-attempt authentication ceiling is independent of the observed response. The named real-browser limiter test must fail its literal eleventh-attempt HTTP 429 assertion when the ceiling is disabled; separate sign-in failure limits stay intact."
   }
 ]
