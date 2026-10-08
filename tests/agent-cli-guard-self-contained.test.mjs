@@ -59,7 +59,11 @@ function runtimeDependency(statement) {
       && clause.namedBindings.elements.every(element => element.isTypeOnly)) return false;
     return true;
   }
-  return ts.isExportDeclaration(statement) && Boolean(statement.moduleSpecifier) && !statement.isTypeOnly;
+  if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier || statement.isTypeOnly) return false;
+  const clause = statement.exportClause;
+  if (clause && ts.isNamedExports(clause) && clause.elements.length > 0
+    && clause.elements.every(element => element.isTypeOnly)) return false;
+  return true;
 }
 
 function violatesGuardPolicy(file, source) {
@@ -112,6 +116,9 @@ test('guard ordering rejects early exports, barrels and erased helper imports', 
   assert.equal(violatesGuardPolicy(fixtureFile,
     `import type { TypeOnly } from './helpers/unrelated.mjs';\n${helperImport}\n${connectorImport}\n${guardAssertion}`),
   false, 'type-only dependency before runtime helper is safe');
+  assert.equal(violatesGuardPolicy(fixtureFile,
+    `export { type TypeOnly } from './helpers/unrelated.mjs';\n${helperImport}\n${connectorImport}\n${guardAssertion}`),
+  false, 'inline type-only export before runtime helper is safe');
   assert.equal(violatesGuardPolicy(fixtureFile,
     `${helperImport}\nexport * from './helpers/connector-barrel.mjs';\n${guardAssertion}`),
   false, 'helper before runtime export is safe');

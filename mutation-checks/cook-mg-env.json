@@ -40,5 +40,12 @@
     "replace": "  if (true) return false;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard assertion selection\" tests/agent-cli-guard-self-contained.test.mjs",
     "why": "R2: disabling AST assertion selection must fail the named equivalent literal assertion against independently specified JavaScript spellings."
+  },
+  {
+    "file": "tests/agent-cli-guard-self-contained.test.mjs",
+    "find": "  if (clause && ts.isNamedExports(clause) && clause.elements.length > 0\n    && clause.elements.every(element => element.isTypeOnly)) return false;",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard ordering rejects\" tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "R1 adjacent valid case: treating an erased inline type-only export as a runtime dependency must fail the named safe-order assertion; TSX runtime probe independently observes no module evaluation."
   }
 ]
