@@ -17,7 +17,7 @@ test('journal lock platform: macOS keeps O_EXLOCK; Linux delegates only the inhe
     called = true; assert.equal(binary, '/usr/bin/flock');
     assert.deepEqual(args, ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3']);
     assert.deepEqual(options.stdio, ['ignore', 'ignore', 'ignore', 7]);
-    assert.equal(options.shell, undefined); assert.equal(options.detached, true);
+    assert.equal(options.shell, undefined); assert.equal(options.detached, false);
     assert.equal(options.timeout, 5000); assert.equal(options.killSignal, 'SIGKILL'); assert.deepEqual(options.env, {});
     return { status: 0 };
   } });
