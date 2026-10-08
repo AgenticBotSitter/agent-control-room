@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import jsQR from "jsqr";
 import { checkGatewayHealthV1, checkHealthV1, checkWebHealthV1, DEFAULT_HEALTH_GATEWAY_PORT_V1, DEFAULT_HEALTH_WEB_PORT_V1,
   HEALTH_RESPONSE_LIMIT_BYTES_V1 } from "../src/updater/v1/install/health.mjs";
@@ -51,7 +51,13 @@ function serviceResponse(url, init) {
 const notListening = () => Object.assign(new TypeError("fetch failed"),
   { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
 
-const input = overrides => ({ root: "/private/tmp/control-room-c7", expectedRelease: RELEASE, pgDataId: "data-one",
+// Synthetic historical release fixture for the existing transport tests. It has
+// no declaration or manifest, matching the lead's empty legacy-release contract;
+// current R1 release artifacts are produced by the separate real-builder tests.
+const legacyRoot = await mkdtemp(join(tmpdir(), "acr-c7-legacy-"));
+await mkdir(join(legacyRoot, RELEASE), { recursive: true });
+after(() => rm(legacyRoot, { recursive: true, force: true }));
+const input = overrides => ({ root: legacyRoot, expectedRelease: RELEASE, pgDataId: "data-one",
   schemaDigest: SCHEMA, updaterSchemaDigest: UPDATER_SCHEMA, samples: 3, ...overrides });
 const databasePort = async () => ({ healthy: true, schemaDigest: SCHEMA, updaterSchemaDigest: UPDATER_SCHEMA });
 
