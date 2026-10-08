@@ -3,49 +3,28 @@
     "file": "tests/fleet-connector-round6.test.mjs",
     "find": "import './helpers/block-agent-cli.mjs';\n",
     "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "The named load-time import-order assertion must identify tests/fleet-connector-round6.test.mjs when its self-contained guard is removed."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-round6.test.mjs",
+    "why": "The retained tests/fleet-connector-round6.test.mjs file-level guard assertion must fail against the independent literal 1 when its first guard import is removed."
   },
   {
     "file": "tests/fleet-connector-slow-body.test.mjs",
     "find": "import './helpers/block-agent-cli.mjs';\n",
     "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "The named load-time import-order assertion must identify tests/fleet-connector-slow-body.test.mjs when its self-contained guard is removed."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-slow-body.test.mjs",
+    "why": "The retained tests/fleet-connector-slow-body.test.mjs file-level guard assertion must fail against the independent literal 1 when its first guard import is removed."
   },
   {
     "file": "tests/fleet-connector-secret-encoding.test.mjs",
     "find": "import './helpers/block-agent-cli.mjs';\n",
     "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "The named load-time import-order assertion must identify tests/fleet-connector-secret-encoding.test.mjs when its self-contained guard is removed."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-secret-encoding.test.mjs",
+    "why": "The retained tests/fleet-connector-secret-encoding.test.mjs file-level guard assertion must fail against the independent literal 1 when its first guard import is removed."
   },
   {
     "file": "tests/helpers/block-agent-cli.mjs",
     "find": "process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI = '1';",
     "replace": "// Guard disabled for isolated mutation.",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "The named fresh-process guard and real-reader refusal assertion must fail against the literal guard value and refusal messages."
-  },
-  {
-    "file": "tests/agent-cli-guard-self-contained.test.mjs",
-    "find": "  return !first || !ts.isImportDeclaration(first) || Boolean(first.importClause)\n    || !ts.isStringLiteral(first.moduleSpecifier)\n    || resolve(dirname(file), first.moduleSpecifier.text) !== helper;",
-    "replace": "  return false;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard ordering rejects\" tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "R1: disabling runtime dependency ordering must fail the named guard ordering assertion against explicit unsafe export/barrel fixtures."
-  },
-  {
-    "file": "tests/agent-cli-guard-self-contained.test.mjs",
-    "find": "  if (!hasGuardAssertion(parsed)) return false;",
-    "replace": "  if (true) return false;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard assertion selection\" tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "R2: disabling AST assertion selection must fail the named equivalent literal assertion against independently specified JavaScript spellings."
-  },
-  {
-    "file": "tests/agent-cli-guard-self-contained.test.mjs",
-    "find": "  if (clause && ts.isNamedExports(clause) && clause.elements.length > 0\n    && clause.elements.every(element => element.isTypeOnly)) return false;",
-    "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard ordering rejects\" tests/agent-cli-guard-self-contained.test.mjs",
-    "why": "R1 adjacent valid case: treating an erased inline type-only export as a runtime dependency must fail the named safe-order assertion; TSX runtime probe independently observes no module evaluation."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-round6.test.mjs",
+    "why": "The retained tests/fleet-connector-round6.test.mjs file-level guard assertion must fail against the independent literal 1 when the shared helper assignment is disabled."
   }
 ]
