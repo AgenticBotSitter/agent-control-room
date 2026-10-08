@@ -1,4 +1,3 @@
-import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { promises as fs } from 'node:fs';
@@ -8,6 +7,7 @@ import { createServer } from 'node:http';
 import { fork } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import * as c from '../scripts/fleet/connector.mjs';
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
 assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
 const id = n => n.toString(16).padStart(32, '0');

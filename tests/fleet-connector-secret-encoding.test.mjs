@@ -1,4 +1,3 @@
-import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { promises as fs } from 'node:fs';
@@ -7,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import * as c from '../scripts/fleet/connector.mjs';
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
 assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
 const claim = {claimId: `fleet-claim:${'1'.repeat(32)}`, jobId: 'job:encoding', title: 'Fixture',
