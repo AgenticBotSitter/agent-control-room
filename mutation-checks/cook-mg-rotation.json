@@ -1,0 +1,16 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
+    "replace": "  const release = async () => {};\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern \"fifty cross-process rotations stay exclusive and recover an actually killed owner\" tests/fleet-connector-install.test.mjs",
+    "why": "Fifty initially simultaneous real processes must coalesce to one rotation; literal expected count is one, with peak one and killed-owner recovery retained."
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const origin = checkServer(server);\n  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  let failure;",
+    "replace": "  const origin = checkServer(server);\n  const release = async () => {};\n  let failure;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern \"R5V-02: 50 repoints and a queued rotation serialize without losing the new credential\" tests/fleet-connector-portability.test.mjs",
+    "why": "Fifty repoints and one rotation must preserve the newest credential and peak one gateway operation; expected peak is the independent literal one."
+  }
+]
