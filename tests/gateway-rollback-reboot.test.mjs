@@ -26,6 +26,11 @@ test("old updater installs R1 without moving the gateway", {
   assert.match(result.installedUpdaterDigest, digest); assert.notEqual(result.installedUpdaterDigest, old.updaterBundleDigest);
   assert.equal(result.afterRebootUpdaterDigest, result.installedUpdaterDigest);
   assert.equal(result.nextInvocationCapabilityRefusal, "gateway_capability_refused", "next installed invocation runs the R1 reader, not a marker");
+  assert.equal(result.followingInstallExecutingUpdaterDigest, result.installedUpdaterDigest,
+    "R1's installed updater executes the following release installation");
+  assert.equal(result.followingInstallExit, 0, "R1's updater then installs a following release successfully");
+  assert.equal(result.followingInstallDeclarationPresent, true, "R1's real builder emits the declaration");
+  assert.equal(result.followingInstallSignedGatewayHealth, true);
   assert.equal(result.gatewayLocalHost, "127.0.0.1"); assert.equal(result.webLocalHost, "127.0.0.1");
   assert.equal(result.profileDigest, old.profileDigest); assert.equal(result.protectedConfigDigest, old.protectedConfigDigest);
   assert.equal(result.signedGatewayHealth, true); assert.equal(result.newRouteActions, 0);

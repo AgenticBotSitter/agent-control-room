@@ -28,10 +28,10 @@ export async function readGatewayLocalCapabilityV1(input, runtime = {}) {
   let declarationEntry;
   try { declarationEntry = await fs.lstat(path); }
   catch (error) {
-    // legacy-on-absence: OLD's builder emits none, including when installing R1.
-    // Only ENOENT defaults to IPv4; present unsafe or unreadable bytes never do.
-    if (error?.code === "ENOENT") return "127.0.0.1";
-    refuse();
+    // OLD's builder emits none. Absence is legacy only after checking custody
+    // and that the release manifest does not promise a declaration.
+    if (error?.code === "ENOENT") declarationEntry = null;
+    else refuse();
   }
   try {
     const parents = [];
@@ -56,12 +56,36 @@ export async function readGatewayLocalCapabilityV1(input, runtime = {}) {
         return bytes.subarray(0, length);
       } finally { await handle.close(); }
     }
-    const bytes = await readImmutable(path, declarationEntry, 4096);
+    async function legacyHost() {
+      for (let index = 0; index < directories.length; index++) {
+        if (!same(parents[index], await fs.lstat(directories[index]))) refuse();
+      }
+      const now = await fs.lstat(path).catch(error => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (now !== null) refuse();
+      return "127.0.0.1";
+    }
     const manifestPath = join(directories[2], "RELEASE_MANIFEST.json");
-    const manifestBytes = await readImmutable(manifestPath, await fs.lstat(manifestPath), 8 * 1024 * 1024);
+    const manifestEntry = await fs.lstat(manifestPath).catch(error => {
+      // Empty staged releases from historical installer callers have no manifest.
+      if (!declarationEntry && error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!manifestEntry) return await legacyHost();
+    const manifestBytes = await readImmutable(manifestPath, manifestEntry, 8 * 1024 * 1024);
     if (input.manifestDigest !== undefined && (!DIGEST.test(input.manifestDigest) || hash(manifestBytes) !== input.manifestDigest)) refuse();
-    const declaration = parseStrictJsonV1(bytes.toString("utf8"), { maxBytes: 4096 });
     const manifest = parseStrictJsonV1(manifestBytes.toString("utf8"), { maxBytes: 8 * 1024 * 1024 });
+    if (!declarationEntry) {
+      if (manifest.schema !== "control-room.attended-build-manifest/v1" || !COMMIT.test(manifest.commit ?? "")
+        || !VERSION.test(manifest.version ?? "") || id !== `${manifest.version}-${manifest.commit.slice(0, 12)}`
+        || !Array.isArray(manifest.files)) refuse();
+      if (manifest.files.some(value => value?.path === PATH)) refuse();
+      return await legacyHost();
+    }
+    const bytes = await readImmutable(path, declarationEntry, 4096);
+    const declaration = parseStrictJsonV1(bytes.toString("utf8"), { maxBytes: 4096 });
     if (!exactKeys(declaration, ["schema", "commit", "version", "releaseId", "gatewayLocalHost", "updaterSupportsGatewayHosts"])
       || declaration.schema !== SCHEMA || !Array.isArray(declaration.updaterSupportsGatewayHosts)
       || JSON.stringify(declaration.updaterSupportsGatewayHosts) !== '["127.0.0.1","::1"]') refuse();

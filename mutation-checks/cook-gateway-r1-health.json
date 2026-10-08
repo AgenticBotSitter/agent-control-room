@@ -50,10 +50,10 @@
   },
   {
     "file": "src/updater/v1/install/gateway-local-capability.mjs",
-    "find": "if (error?.code === \"ENOENT\") return \"127.0.0.1\";",
-    "replace": "if (false) return \"127.0.0.1\";",
+    "find": "if (!manifestEntry) return await legacyHost();",
+    "replace": "if (!manifestEntry) refuse();",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
-    "why": "Legacy-on-absence preserves OLD-built R1 and empty staged-release compatibility; no IPv6 fallback."
+    "why": "Empty historical releases retain IPv4-only compatibility after custody checks."
   },
   {
     "file": "src/updater/v1/install/health.mjs",
@@ -103,5 +103,40 @@
     "replace": "if (false) refuse();",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^mismatched release receipt refuses before request$' tests/gateway-local-capability.test.mjs",
     "why": "Pre-switch binds to the independently verified build result manifestDigest; changing only staged manifest whitespace must refuse before pointer switch."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "\"pnpm-lock.yaml\", \"gateway-local-capability.json\"].includes(path)",
+    "replace": "\"pnpm-lock.yaml\"].includes(path)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/gateway-attended-boundary.test.mjs",
+    "why": "The exact reviewed declaration name must survive the REAL builder -> root verifier -> staging boundary."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "if (manifest.files.some(value => value?.path === PATH)) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
+    "why": "A manifest-listed missing declaration is corruption, never legacy IPv4 compatibility."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "      if (manifest.schema !== \"control-room.attended-build-manifest/v1\" || !COMMIT.test(manifest.commit ?? \"\")\n        || !VERSION.test(manifest.version ?? \"\") || id !== `${manifest.version}-${manifest.commit.slice(0, 12)}`\n        || !Array.isArray(manifest.files)) refuse();",
+    "replace": "      if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
+    "why": "Legacy absence still needs independently matching manifest schema/release identity."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "if (now !== null) refuse();",
+    "replace": "if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
+    "why": "A declaration appearing during legacy absence validation must not silently select IPv4."
+  },
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "    async function legacyHost() {\n      for (let index = 0; index < directories.length; index++) {\n        if (!same(parents[index], await fs.lstat(directories[index]))) refuse();\n      }",
+    "replace": "    async function legacyHost() {\n      // mutation: omit legacy parent recheck",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^R1 signed gateway health accepts legacy target$' tests/gateway-local-capability.test.mjs",
+    "why": "Changed legacy parents cannot bypass final custody consistency."
   }
 ]

@@ -123,13 +123,66 @@ async function preSwitchRefusal(t, f, mutateStage) {
 test("R1 signed gateway health accepts legacy target", async t => {
   const f = await fixture(t), server = await listener(t, "127.0.0.1");
   const result = await checkGatewayHealthV1(input(f, server.port), f.runtime); assert.equal(result.pid, 4343);
-  // legacy-on-absence: OLD installing R1 emits no declaration; probe 127 only.
   await filesystem.rm(f.declaration);
+  const beforeMissing = server.seen.length;
+  await assert.rejects(checkGatewayHealthV1(input(f, server.port), f.runtime), /gateway_capability_refused/u,
+    "manifest-listed missing declaration must refuse before request");
+  assert.equal(server.seen.length, beforeMissing, "missing listed bytes cause zero health requests");
+  // Legacy-on-manifest-absence: OLD installing R1 lists no declaration.
+  const manifestPath = join(f.releaseRoot, "RELEASE_MANIFEST.json");
+  const manifest = JSON.parse(await filesystem.readFile(manifestPath, "utf8"));
+  const removed = manifest.files.find(value => value.path === "gateway-local-capability.json");
+  manifest.files = manifest.files.filter(value => value.path !== "gateway-local-capability.json");
+  manifest.fileCount--; manifest.byteCount -= removed.bytes;
+  await filesystem.chmod(manifestPath, 0o600);
+  await filesystem.writeFile(manifestPath, JSON.stringify(manifest));
+  await filesystem.chmod(manifestPath, 0o400);
   let legacy;
   await assert.doesNotReject(async () => { legacy = await checkGatewayHealthV1(input(f, server.port), f.runtime); },
     "legacy-on-absence must accept the independently specified IPv4 signed answer");
   assert.equal(legacy.pid, 4343);
   assert.equal(server.seen.length, 2);
+  const legacyManifestBytes = await filesystem.readFile(manifestPath);
+  for (const changes of [{ schema: "unknown" }, { commit: "c".repeat(40) }, { files: null }]) {
+    await filesystem.chmod(manifestPath, 0o600);
+    await filesystem.writeFile(manifestPath, JSON.stringify({ ...manifest, ...changes }));
+    await filesystem.chmod(manifestPath, 0o400);
+    await assert.rejects(checkGatewayHealthV1(input(f, server.port), f.runtime), /gateway_capability_refused/u,
+      "legacy absence still requires a valid matching manifest");
+    assert.equal(server.seen.length, 2);
+  }
+  await filesystem.chmod(manifestPath, 0o600);
+  await filesystem.writeFile(manifestPath, legacyManifestBytes);
+  await filesystem.chmod(manifestPath, 0o400);
+  await filesystem.rm(manifestPath);
+  assert.equal((await checkGatewayHealthV1(input(f, server.port), f.runtime)).pid, 4343,
+    "empty historical staged release remains IPv4-only");
+  await filesystem.chmod(f.releaseRoot, 0o777);
+  await assert.rejects(checkGatewayHealthV1(input(f, server.port), f.runtime), /gateway_capability_refused/u,
+    "missing declaration cannot bypass parent custody");
+  await filesystem.chmod(f.releaseRoot, 0o755);
+  const heldEntry = await filesystem.lstat(join(f.releaseRoot, "LICENSE"));
+  let absentReads = 0;
+  await assert.rejects(checkGatewayHealthV1(input(f, server.port), { ...f.runtime,
+    capabilityFileSystem: { ...filesystem, lstat: async path => {
+      // Synthetic scheduling boundary replaying a recorded real file stat.
+      if (path === f.declaration && ++absentReads > 1) return heldEntry;
+      return filesystem.lstat(path);
+    } },
+  }), /gateway_capability_refused/u, "declaration appearing during legacy validation must refuse");
+  let parentReads = 0;
+  await assert.rejects(checkGatewayHealthV1(input(f, server.port), { ...f.runtime,
+    capabilityFileSystem: { ...filesystem, lstat: async path => {
+      const entry = await filesystem.lstat(path);
+      if (path === f.releaseRoot && ++parentReads > 1) {
+        return new Proxy(entry, { get(target, key) {
+          return key === "mtimeMs" ? target.mtimeMs + 1
+            : typeof target[key] === "function" ? target[key].bind(target) : target[key];
+        } });
+      }
+      return entry;
+    } },
+  }), /gateway_capability_refused/u, "legacy parent changed during validation must refuse");
   const noRoot = await checkGatewayHealthV1({ gatewayPort: server.port, webPort: 1 }, { healthProbeKey: KEY });
   assert.equal(noRoot.pid, 4343);
   const policy = join(f.source, "src/updater/v1/policy/gateway-local-origin.json");

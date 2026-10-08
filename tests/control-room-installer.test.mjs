@@ -238,7 +238,7 @@ function fakePorts(options = {}) {
       await validateOutput(built.source);
       const version = built.version ?? options.version ?? "1.2.3";
       return { output: built.source, releaseId: `${version}-${input.commit.slice(0, 12)}`,
-        manifestDigest: built.digest, fileCount: 2, byteCount: 50 }; },
+        manifestDigest: built.manifestDigest ?? built.digest, fileCount: 2, byteCount: 50 }; },
     async buildFixedBundleV1(input) { calls.push(["build-updater-bundle", input]);
       const bundle = join(input.job, "fixed-updater", "bundle"); await mkdir(bundle, { recursive: true });
       await writeFile(join(bundle, "updater.mjs"), "export const ready=true;\n", { mode: 0o500 });
@@ -1979,7 +1979,8 @@ test("connrel installer ships a trusted connector and Connect a bot can make its
     const first = await readFile(join(output, "RELEASE_MANIFEST.json"));
     await signAttendedConnectorReleaseV1(signingInput, { expectedUid: process.geteuid() });
     assert.deepEqual(await readFile(join(output, "RELEASE_MANIFEST.json")), first);
-    return { source: output, version: manifest.version, digest: await digestControlRoomCheckoutV1(output) };
+    return { source: output, version: manifest.version, digest: await digestControlRoomCheckoutV1(output),
+      manifestDigest: `sha256:${createHash("sha256").update(first).digest("hex")}` };
   } });
   const installed = await installControlRoomV1(f.options);
   const releaseRoot = join(f.root, installed.current);
