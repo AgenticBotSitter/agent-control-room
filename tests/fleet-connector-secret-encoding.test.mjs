@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import * as c from '../scripts/fleet/connector.mjs';
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
 assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
 const claim = {claimId: `fleet-claim:${'1'.repeat(32)}`, jobId: 'job:encoding', title: 'Fixture',
@@ -212,7 +213,7 @@ else writeFileSync(process.argv[4] + '/answer.txt', Buffer.concat([Buffer.from([
 `, {mode: 0o700});
   const manifestPath = join(p.root, 'tools.json');
   await fs.writeFile(manifestPath, JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 2, adapters: [{id: 'echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 2, adapters: [{id: 'echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 2000,
       maxOutputBytes: 65536, envAllowlist: []}]}), {mode: 0o600});
   const runner = c.createLocalToolAdapterRunner(await c.loadToolAdapters(manifestPath),

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 import { RELEASE_TRUST_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
@@ -17,6 +18,7 @@ const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.v
 async function workspace(t) {
   const dir = await mkdtemp(join(tmpdir(), "fleet-tool-adapter-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
+  await createPrivateNodeTool(dir);
   return dir;
 }
 
@@ -30,7 +32,7 @@ async function executable(dir, source) {
 const entry = (script, extra = {}) => ({
   id: "whisper_local",
   capability: "tool.whisper",
-  executable: process.execPath,
+  executable: join(dirname(script), "node-tool"),
   arguments: [script, "{input:audio}", "{output:transcript}"],
   timeoutMs: 2_000,
   maxOutputBytes: 64 * 1024,
@@ -67,6 +69,35 @@ test("manifest validation refuses relative executables, shell syntax, and missin
     await rejects("loose-executable.json", entry(script, { executable: loose }), /can be changed by other users/u);
     const looseManifest = await manifest(dir, [entry(script)], 1, "loose-manifest.json"); await chmod(looseManifest, 0o622);
     await assert.rejects(connector.loadToolAdapters(looseManifest), /can be changed by other users/u);
+  }
+});
+
+test("manifest validation refuses a writable non-sticky executable folder", async t => {
+  const dir = await workspace(t);
+  const folder = join(dir, "shared-tool-folder");
+  await mkdir(folder, { mode: 0o700 });
+  const tool = await createPrivateNodeTool(folder);
+  const script = await executable(dir, "process.exit(0);\n");
+  const path = await manifest(dir, [entry(script, { executable: tool })]);
+  await chmod(folder, 0o777);
+  assert.equal((await stat(tool)).mode & 0o777, 0o700, "the executable itself is private");
+  assert.equal((await stat(folder)).mode & 0o1777, 0o777, "the folder is writable and non-sticky");
+  await assert.rejects(connector.loadToolAdapters(path),
+    /the folder containing the tool executable for whisper_local can be changed by other users/u);
+  await chmod(folder, 0o700);
+  assert.equal((await connector.loadToolAdapters(path)).adapters.size, 1, "repairing the folder permits retry");
+
+  const temporaryParent = await stat(tmpdir());
+  if (temporaryParent.uid === 0 && (temporaryParent.mode & 0o1000) !== 0) {
+    const stickyTool = join(tmpdir(), `${basename(dir)}-node-tool`);
+    // An exclusive hard link keeps this test-owned name in the existing root-owned sticky folder.
+    await link(tool, stickyTool);
+    t.after(() => rm(stickyTool, { force: true }));
+    const stickyManifest = await manifest(dir, [entry(script, { executable: stickyTool })], 1, "sticky-root.json");
+    assert.equal((await connector.loadToolAdapters(stickyManifest)).adapters.size, 1,
+      "a root-owned sticky folder protects the private executable");
+  } else {
+    t.diagnostic("sticky root-owned folder case unproven: TMPDIR is private and creating a root-owned folder requires root");
   }
 });
 
