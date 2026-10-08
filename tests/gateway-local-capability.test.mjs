@@ -155,8 +155,10 @@ test("R1 signed gateway health accepts legacy target", async t => {
   await filesystem.writeFile(manifestPath, legacyManifestBytes);
   await filesystem.chmod(manifestPath, 0o400);
   await filesystem.rm(manifestPath);
-  assert.equal((await checkGatewayHealthV1(input(f, server.port), f.runtime)).pid, 4343,
-    "empty historical staged release remains IPv4-only");
+  let emptyLegacy;
+  await assert.doesNotReject(async () => { emptyLegacy = await checkGatewayHealthV1(input(f, server.port), f.runtime); },
+    "empty historical staged release must accept the independently specified IPv4 answer");
+  assert.equal(emptyLegacy.pid, 4343);
   await filesystem.chmod(f.releaseRoot, 0o777);
   await assert.rejects(checkGatewayHealthV1(input(f, server.port), f.runtime), /gateway_capability_refused/u,
     "missing declaration cannot bypass parent custody");
