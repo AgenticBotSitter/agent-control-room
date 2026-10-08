@@ -41,7 +41,7 @@ import { BACKUP_MANIFEST_SCHEMA_V1, NIGHTLY_DUMP_TIMEOUT_MS_V1 }
   from "../../src/installer/shared/nightly-backup-constants.mjs";
 export { BACKUP_MANIFEST_SCHEMA_V1, NIGHTLY_DUMP_TIMEOUT_MS_V1 };
 
-import { reserveBackupGenerationV1, consumeBackupGenerationV1, assertBackupGenerationV1, sha256BackupFileV1 as sha256OfFileV1 } from "../../src/installer/shared/backup-files.mjs";
+import { releaseBackupGenerationV1, reserveBackupGenerationV1, consumeBackupGenerationV1, assertBackupGenerationV1, sha256BackupFileV1 as sha256OfFileV1 } from "../../src/installer/shared/backup-files.mjs";
 
 const exec = promisify(execFile);
 const flag = (args, name, fallback) => {
@@ -210,98 +210,101 @@ export async function backupDatabase({ source, out, pgBin, requiredTables = [], 
   }
   if (!pgBin) throw new Error("backup_refused_no_pg_bin");
   if (!ledgerDigest || !/^sha256:[a-f0-9]{64}$/.test(ledgerDigest)) throw new Error("backup_refused_no_ledger_digest");
-  generation ??= await reserveBackupGenerationV1(out);
-  await consumeBackupGenerationV1(out, generation);
-  const snapshot = await collectConsistentSnapshot(source, { requiredTables, evidenceTimeoutMs, connect });
-  // pg_dump's --snapshot option must be a CLI argument, not a backend option.
-  // Passing it via PGOPTIONS would be silently ignored; pass it on the
-  // command line instead. The dump subprocess connects to the same database
-  // and joins the snapshot exported from the evidence connection.
+  const ownsGeneration = generation == null;
   try {
-    const cli = targetCli(source);
-    await assertBackupGenerationV1(out, generation);
-    await exec(join(pgBin, "pg_dump"), ["--format=custom", "--snapshot", snapshot.txid,
-      "--file", join(out, "database.dump"), ...cli.args],
-      { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", ...cli.env }, timeout: dumpTimeoutMs, maxBuffer: 1 << 30 });
-  } catch (error) {
-    // R4S-11: the limit is now sized for a real dump, so tripping it means
-    // something the owner has to know about rather than a routine slow night.
-    // The refusal says WHICH limit, in the one bounded word the nightly entry
-    // prints, so the log line names the cause instead of leaving the owner to
-    // work out that "execution failed" could have been a 45-minute dump.
-    if (error && typeof error === "object" && "killed" in error && error.killed === true) {
-      throw new Error(`nightly_backup_dump_timeout:${dumpTimeoutMs}`);
+    generation ??= await reserveBackupGenerationV1(out);
+    await consumeBackupGenerationV1(out, generation);
+    const snapshot = await collectConsistentSnapshot(source, { requiredTables, evidenceTimeoutMs, connect });
+    // pg_dump's --snapshot option must be a CLI argument, not a backend option.
+    // Passing it via PGOPTIONS would be silently ignored; pass it on the
+    // command line instead. The dump subprocess connects to the same database
+    // and joins the snapshot exported from the evidence connection.
+    try {
+      const cli = targetCli(source);
+      await assertBackupGenerationV1(out, generation);
+      await exec(join(pgBin, "pg_dump"), ["--format=custom", "--snapshot", snapshot.txid,
+        "--file", join(out, "database.dump"), ...cli.args],
+        { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", ...cli.env }, timeout: dumpTimeoutMs, maxBuffer: 1 << 30 });
+    } catch (error) {
+      // R4S-11: the limit is now sized for a real dump, so tripping it means
+      // something the owner has to know about rather than a routine slow night.
+      // The refusal says WHICH limit, in the one bounded word the nightly entry
+      // prints, so the log line names the cause instead of leaving the owner to
+      // work out that "execution failed" could have been a 45-minute dump.
+      if (error && typeof error === "object" && "killed" in error && error.killed === true) {
+        throw new Error(`nightly_backup_dump_timeout:${dumpTimeoutMs}`);
+      }
+      throw error;
+    } finally {
+      // Same bound, same reason as the failure path: the snapshot transaction
+      // stays open across the dump, so COMMIT is issued after it. A writer that
+      // took a lock in between would otherwise leave this waiting indefinitely
+      // while the client stays open, which is the R4S-03 hang by another route.
+      try { await snapshot.evidenceClient.query("SET LOCAL statement_timeout = '5s'"); } catch {}
+      try { await snapshot.evidenceClient.query("COMMIT"); } catch {}
+      await endEvidenceClientV1(snapshot.evidenceClient);
     }
-    throw error;
-  } finally {
-    // Same bound, same reason as the failure path: the snapshot transaction
-    // stays open across the dump, so COMMIT is issued after it. A writer that
-    // took a lock in between would otherwise leave this waiting indefinitely
-    // while the client stays open, which is the R4S-03 hang by another route.
-    try { await snapshot.evidenceClient.query("SET LOCAL statement_timeout = '5s'"); } catch {}
-    try { await snapshot.evidenceClient.query("COMMIT"); } catch {}
-    await endEvidenceClientV1(snapshot.evidenceClient);
-  }
-  await assertBackupGenerationV1(out, generation);
-  const { evidence } = snapshot;
-  const rolesDigest = digestOf(evidence.roles);
-  const membershipsDigest = digestOf(evidence.memberships);
-  const metadata = {
-    version: 1, release, createdAt: new Date().toISOString(),
-    sourceFingerprint: digestOf(source), ledgerDigest, snapshotXid: snapshot.txid,
-    identity: computeDatabaseRestoreIdentity({
-      ledgerDigest, rolesDigest, membershipsDigest,
-      schemaDigest: evidence.schemaDigest, rowsDigest: digestOf(evidence.rows),
-      ownersDigest: digestOf(evidence.grants), ledgerRowsDigest: digestOf(evidence.ledger),
-      databaseOwnerDigest: digestOf(evidence.databaseOwner),
-    }),
-    evidence,
-  };
-  const metadataPath = join(out, "metadata.json");
-  const metadataText = `${JSON.stringify(metadata, null, 2)}\n`;
-  await writeFile(metadataPath, metadataText, { mode: 0o600, flag: "wx" });
-  // R4B-10: the OUTER MANIFEST. Until this line existed, every scheduled
-  // generation held exactly `database.dump` and `metadata.json`, and
-  // `scripts/ops/verify-database-backup.mjs` — the verification command
-  // docs/BACKUP_AND_RESTORE.md tells the owner to run — returns ENOENT for
-  // `manifest.json` before it does anything at all. A backup nobody can verify
-  // is the same as no backup, and it was the scheduled one, every night.
-  //
-  // It binds the dump and metadata DIGESTS to the bytes on disk, which is what
-  // R4B-01 also needs: a generation whose dump no longer matches its manifest is
-  // a damaged generation, and the nightly retention scanner refuses to spend it.
-  //
-  // Both digests are read back THROUGH the descriptors this module just wrote,
-  // and the sizes are checked first, so a manifest can never claim a binding for
-  // bytes that are not there. `flag: "wx"` refuses to overwrite an existing
-  // manifest: a generation folder is created fresh by the runner, and overwriting
-  // here would let a second writer rebind a folder that already holds history.
-  const dumpPath = join(out, "database.dump");
-  for (const path of [dumpPath, metadataPath]) {
-    // MEASURED on a real cluster: pg_dump is a subprocess, so a failure, a full
-    // disk or a zero-byte exit can leave `database.dump` absent entirely. The
-    // `lstat` used to run bare, and ENOENT escaped as itself — a raw syscall
-    // error rather than the one bounded refusal code this module speaks. An
-    // absent file is not a failure of the backup machinery to report on; it is
-    // exactly "the dump is not there", which is the thing being checked.
-    const entry = await lstat(path).catch(() => null);
-    if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)
-      throw new Error("backup_refused_incomplete_output");
-  }
-  const head = evidence.ledger.at(-1);
-  if (!head || !Number.isSafeInteger(head.ledger_order) || typeof head.filename !== "string"
-    || !/^sha256:[a-f0-9]{64}$/u.test(head.digest ?? "")) throw new Error("backup_refused_ledger_head");
-  const manifest = {
-    schema: BACKUP_MANIFEST_SCHEMA_V1,
-    createdAt: metadata.createdAt,
-    dumpDigest: await sha256OfFileV1(dumpPath),
-    metadataDigest: `sha256:${createHash("sha256").update(metadataText).digest("hex")}`,
-    restoreIdentityDigest: metadata.identity.identityDigest,
-    ledger: { digest: ledgerDigest, head: { order: head.ledger_order, file: head.filename, digest: head.digest } },
-    requiredTables: [...requiredTables],
-  };
-  await writeFile(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  return { planned: false, out, identityDigest: metadata.identity.identityDigest, manifest };
+    await assertBackupGenerationV1(out, generation);
+    const { evidence } = snapshot;
+    const rolesDigest = digestOf(evidence.roles);
+    const membershipsDigest = digestOf(evidence.memberships);
+    const metadata = {
+      version: 1, release, createdAt: new Date().toISOString(),
+      sourceFingerprint: digestOf(source), ledgerDigest, snapshotXid: snapshot.txid,
+      identity: computeDatabaseRestoreIdentity({
+        ledgerDigest, rolesDigest, membershipsDigest,
+        schemaDigest: evidence.schemaDigest, rowsDigest: digestOf(evidence.rows),
+        ownersDigest: digestOf(evidence.grants), ledgerRowsDigest: digestOf(evidence.ledger),
+        databaseOwnerDigest: digestOf(evidence.databaseOwner),
+      }),
+      evidence,
+    };
+    const metadataPath = join(out, "metadata.json");
+    const metadataText = `${JSON.stringify(metadata, null, 2)}\n`;
+    await writeFile(metadataPath, metadataText, { mode: 0o600, flag: "wx" });
+    // R4B-10: the OUTER MANIFEST. Until this line existed, every scheduled
+    // generation held exactly `database.dump` and `metadata.json`, and
+    // `scripts/ops/verify-database-backup.mjs` — the verification command
+    // docs/BACKUP_AND_RESTORE.md tells the owner to run — returns ENOENT for
+    // `manifest.json` before it does anything at all. A backup nobody can verify
+    // is the same as no backup, and it was the scheduled one, every night.
+    //
+    // It binds the dump and metadata DIGESTS to the bytes on disk, which is what
+    // R4B-01 also needs: a generation whose dump no longer matches its manifest is
+    // a damaged generation, and the nightly retention scanner refuses to spend it.
+    //
+    // Both digests are read back THROUGH the descriptors this module just wrote,
+    // and the sizes are checked first, so a manifest can never claim a binding for
+    // bytes that are not there. `flag: "wx"` refuses to overwrite an existing
+    // manifest: a generation folder is created fresh by the runner, and overwriting
+    // here would let a second writer rebind a folder that already holds history.
+    const dumpPath = join(out, "database.dump");
+    for (const path of [dumpPath, metadataPath]) {
+      // MEASURED on a real cluster: pg_dump is a subprocess, so a failure, a full
+      // disk or a zero-byte exit can leave `database.dump` absent entirely. The
+      // `lstat` used to run bare, and ENOENT escaped as itself — a raw syscall
+      // error rather than the one bounded refusal code this module speaks. An
+      // absent file is not a failure of the backup machinery to report on; it is
+      // exactly "the dump is not there", which is the thing being checked.
+      const entry = await lstat(path).catch(() => null);
+      if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)
+        throw new Error("backup_refused_incomplete_output");
+    }
+    const head = evidence.ledger.at(-1);
+    if (!head || !Number.isSafeInteger(head.ledger_order) || typeof head.filename !== "string"
+      || !/^sha256:[a-f0-9]{64}$/u.test(head.digest ?? "")) throw new Error("backup_refused_ledger_head");
+    const manifest = {
+      schema: BACKUP_MANIFEST_SCHEMA_V1,
+      createdAt: metadata.createdAt,
+      dumpDigest: await sha256OfFileV1(dumpPath),
+      metadataDigest: `sha256:${createHash("sha256").update(metadataText).digest("hex")}`,
+      restoreIdentityDigest: metadata.identity.identityDigest,
+      ledger: { digest: ledgerDigest, head: { order: head.ledger_order, file: head.filename, digest: head.digest } },
+      requiredTables: [...requiredTables],
+    };
+    await writeFile(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    return { planned: false, out, identityDigest: metadata.identity.identityDigest, manifest };
+  } finally { if (ownsGeneration) await releaseBackupGenerationV1(generation); }
 }
 
 const invoked = isMainModuleV1(process.argv[1], import.meta.url);

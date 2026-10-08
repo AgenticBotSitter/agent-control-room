@@ -1,0 +1,114 @@
+[
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "    return token;",
+    "replace": "    await handle.close();\n    return token;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='a recreated backup generation folder is refused|reservation release is idempotent' tests/backup-round7.test.mjs",
+    "why": "An open original directory prevents ext4 inode recycling. Named recreated-folder refusal fails on ext4; an independent real descriptor-liveness assertion also catches early close on filesystems that do not recycle inodes."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "!same(entry, held)",
+    "replace": "false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "The opened directory must match the pre-open lstat identity, independently tested by rename plus mkdir before open."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "(held.mode & 0o777) !== 0o700",
+    "replace": "false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "A chmod before the held stat must refuse non-private generation mode; expected 0700 comes from the ticket contract."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);",
+    "replace": "handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "A symlink planted after lstat must refuse on open even when it points back to the original directory."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n    if (!held.isDirectory() || !same(entry, held) || (held.mode & 0o777) !== 0o700)",
+    "replace": "    handle = await open(out, constants.O_RDONLY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n    if (!same(entry, held) || (held.mode & 0o777) !== 0o700)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "Directory-only acquisition has kernel and held-type checks. Disable both redundant defenses; a real mode-0700 file planted before lstat must fail the named refusal assertion."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "    if (handle) await handle.close();",
+    "replace": "    if (false) await handle.close();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "Every failed acquisition closes its own real handle; expected fd -1 is independently observed after a stat failure or raced path."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "    generation.release = generation.handle.close();",
+    "replace": "    generation.release = Promise.resolve();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation release is idempotent' tests/backup-round7.test.mjs",
+    "why": "Explicit release must actually close the kernel descriptor, independently observed as EBADF."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "  if (!generation.released) {",
+    "replace": "  if (true) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation release is idempotent' tests/backup-round7.test.mjs",
+    "why": "Concurrent repeated release must close the owned handle exactly once, observed through the real close method."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "generation.out !== out || generation.released || !entry.isDirectory()",
+    "replace": "generation.out !== out || !entry.isDirectory()",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation release is idempotent' tests/backup-round7.test.mjs",
+    "why": "Released capability must be invalid for assertion even when the original path remains unchanged."
+  },
+  {
+    "file": "scripts/ops/backup-database.mjs",
+    "find": "if (ownsGeneration) await releaseBackupGenerationV1(generation);",
+    "replace": "if (false) await releaseBackupGenerationV1(generation);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='200 reserve' tests/backup-round7.test.mjs",
+    "why": "The reserving owner must release on success and failure; named real descriptor EBADF assertion must fail if removed."
+  },
+  {
+    "file": "scripts/ops/backup-database.mjs",
+    "find": "if (ownsGeneration) await releaseBackupGenerationV1(generation);",
+    "replace": "if (true) await releaseBackupGenerationV1(generation);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='borrowed reservation remains live' tests/backup-round7.test.mjs",
+    "why": "Borrowers cannot release the upstream reservation before its outer manifest publication and final assertions."
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "if (ownsGeneration) await releaseBackupGenerationV1(generation);",
+    "replace": "if (false) await releaseBackupGenerationV1(generation);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='200 reserve' tests/backup-round7.test.mjs",
+    "why": "The reserving owner must release on success and failure; named real descriptor EBADF assertion must fail if removed."
+  },
+  {
+    "file": "deploy/postgres/backup-database.mjs",
+    "find": "if (ownsGeneration) await releaseBackupGenerationV1(generation);",
+    "replace": "if (true) await releaseBackupGenerationV1(generation);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='borrowed reservation remains live' tests/backup-round7.test.mjs",
+    "why": "Borrowers cannot release the upstream reservation before its outer manifest publication and final assertions."
+  },
+  {
+    "file": "src/installer/v1/nightly-backup.ts",
+    "find": "} finally { await releaseBackupGenerationV1(generation); }",
+    "replace": "} finally { /* mutation: omitted release */ }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='nightly reservation releases' tests/backup-round7.test.mjs",
+    "why": "Nightly owns its generation through success, producer failure, unbound output and retention failure, with real descriptor close observations."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "export async function consumeBackupGenerationV1(out, token) {\n  const generation = generations.get(token);\n  if (!generation || generation.out !== out || generation.released || generation.consumed)\n    throw new Error(\"backup_output_reservation_refused\");\n  generation.consumed = true;\n  await assertBackupGenerationV1(out, token);\n  if ((await readdir(out)).length !== 0) throw new Error(\"backup_output_reservation_refused\");\n}\n\nexport async function assertBackupGenerationV1(out, token) {\n  await inspectAncestors(out);\n  const generation = generations.get(token), entry = await lstat(out);\n  if (!generation || generation.out !== out || generation.released || !entry.isDirectory() || entry.isSymbolicLink()\n    || !same(entry, generation.entry) || (entry.mode & 0o777) !== 0o700)\n    throw new Error(\"backup_output_reservation_refused\");\n}\n\n",
+    "replace": "export async function consumeBackupGenerationV1(out, token) {\n  const generation = generations.get(token);\n  if (!generation || generation.out !== out || generation.consumed)\n    throw new Error(\"backup_output_reservation_refused\");\n  generation.consumed = true;\n  await assertBackupGenerationV1(out, token);\n  if ((await readdir(out)).length !== 0) throw new Error(\"backup_output_reservation_refused\");\n}\n\nexport async function assertBackupGenerationV1(out, token) {\n  await inspectAncestors(out);\n  const generation = generations.get(token), entry = await lstat(out);\n  if (!generation || generation.out !== out || !entry.isDirectory() || entry.isSymbolicLink()\n    || !same(entry, generation.entry) || (entry.mode & 0o777) !== 0o700)\n    throw new Error(\"backup_output_reservation_refused\");\n}\n\n",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation release is idempotent' tests/backup-round7.test.mjs",
+    "why": "Both consume and assert defend released capability state. Disable the redundant state defenses together; a released never-consumed token must fail the named first-consume refusal assertion."
+  },
+  {
+    "file": "scripts/mac-local/database-upgrade-vps-step.mjs",
+    "find": "} finally { await releaseBackupGenerationV1(generation); }",
+    "replace": "} finally { /* mutation: omitted release */ }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --input-type=module -e 'import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport fs from \"node:fs\";\nimport {mkdtemp,realpath,rm,mkdir} from \"node:fs/promises\";\nimport {tmpdir} from \"node:os\";\nimport {join} from \"node:path\";\nimport {syncBuiltinESMExports} from \"node:module\";\nimport {execFileSync} from \"node:child_process\";\nimport {Client} from \"pg\";\nimport {randomBytes} from \"node:crypto\";\nimport {withRealPostgres} from \"./tests/support/attack-kit/real-postgres.ts\";\nimport {runMacDatabaseUpgradeVpsStepV1} from \"./scripts/mac-local/database-upgrade-vps-step.mjs\";\nimport {databaseRoleManifestV1} from \"./scripts/mac-local/database-role-manifest.mjs\";\nimport {postgresScramVerifierV1} from \"./scripts/mac-local/database-upgrade-scram.mjs\";\ntest(\"VPS reservation owner closes descriptors after success and backup failure\",{timeout:600000},async()=>{\n const root=await mkdtemp(join(await realpath(tmpdir()),\"vps-reservation-probe-\"));\n try {\n  const result=await withRealPostgres(async pg=>{\n   const client=new Client(pg.admin());await client.connect();\n   try {await client.query(\"CREATE ROLE postgres SUPERUSER LOGIN\");await client.query(\"DROP SCHEMA control_room_queue CASCADE\");}finally{await client.end();}\n   const target=\"host=\"+pg.host+\" port=\"+pg.port+\" dbname=\"+pg.database+\" user=postgres\";\n   const commit=execFileSync(\"git\",[\"rev-parse\",\"refs/remotes/origin/main\"],{encoding:\"utf8\"}).trim();\n   const handles=[],original=fs.promises.open;\n   fs.promises.open=async(...args)=>{\n    const h=await original(...args);\n    if((await h.stat()).isDirectory()&&String(args[0]).startsWith(root))handles.push(h);\n    return h;\n   };syncBuiltinESMExports();\n   try {\n    for(const failure of [true,false]){\n     const backupRoot=join(root,failure?\"failed\":\"success\");await mkdir(backupRoot,{mode:0o700});\n     const args=[\"plan\",commit,target,backupRoot,process.env.PG_BIN,\"1\"];\n     const plan=await runMacDatabaseUpgradeVpsStepV1({args,write:()=>{}});\n     const codes=JSON.stringify(Object.fromEntries(plan.plan.createRoles\n      .filter(r=>Object.hasOwn(databaseRoleManifestV1.logins,r.role))\n      .map(r=>[r.role,postgresScramVerifierV1(randomBytes(32).toString(\"base64url\"))])));\n     args[0]=\"apply\";args[4]=failure?join(root,\"missing-bin\"):process.env.PG_BIN;args.push(plan.digest);\n     if(failure)await assert.rejects(runMacDatabaseUpgradeVpsStepV1({args,write:()=>{},readCode:async()=>codes}),/upgrade_backup_failed/);\n     else await assert.doesNotReject(runMacDatabaseUpgradeVpsStepV1({args,write:()=>{},readCode:async()=>codes}),\n       \"real VPS apply must finish before descriptor cleanup is inspected\");\n     assert.equal(handles.length,failure?1:2,\"each VPS path reaches its real reservation\");\n     for(const h of handles)await assert.rejects(h.stat(),{code:\"EBADF\"},\"VPS owner must release every reserved descriptor\");\n    }\n   }finally{fs.promises.open=original;syncBuiltinESMExports();await Promise.all(handles.map(h=>h.close()));}\n  },{port:60871,allowedPorts:[60871],pgBin:process.env.PG_BIN,boundMs:540000});\n  assert.equal(result.cleanedUp,true);assert.deepEqual(result.leftovers,[]);\n }finally{await rm(root,{recursive:true,force:true});}\n});'",
+    "why": "VPS owner must release every real directory descriptor after a real PG 17 backup failure and successful apply. Standalone named test uses actual production postgres database login, real filesystem observer and cleanup assertions."
+  }
+]

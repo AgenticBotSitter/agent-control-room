@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { register, syncBuiltinESMExports } from 'node:module';
 import nativeFs from 'node:fs';
@@ -13,7 +13,7 @@ const { createMacLocalDatabaseBackupV1, MAC_BACKUP_REQUIRED_TABLES_V1, VERIFIED_
 const { readBoundMacLocalDatabaseBackupV1 } = await import('../scripts/ops/verify-database-backup.mjs');
 const { backupDatabase } = await import('../deploy/postgres/backup-database.mjs');
 const { targetCli } = await import('../deploy/postgres/evidence.mjs');
-const { reserveBackupGenerationV1, consumeBackupGenerationV1, sha256BackupFileV1 } =
+const { reserveBackupGenerationV1, consumeBackupGenerationV1, assertBackupGenerationV1, releaseBackupGenerationV1, sha256BackupFileV1 } =
   await import('../src/installer/shared/backup-files.mjs');
 
 const d = 'sha256:'+'a'.repeat(64), digest = text=>'sha256:'+createHash('sha256').update(text).digest('hex');
@@ -142,11 +142,13 @@ test('R7B-01: reservation capability rejects reuse, forgery, replacement, conten
   const f=await fixture(t);
   await assert.rejects(consumeBackupGenerationV1(f.out,{}),/backup_output_reservation_refused/);
   const token=await reserveBackupGenerationV1(f.out);
+  t.after(()=>releaseBackupGenerationV1?.(token));
   await assert.rejects(consumeBackupGenerationV1(join(f.root,'other'),token),/backup_output_reservation_refused/);
   await consumeBackupGenerationV1(f.out,token);
   await assert.rejects(consumeBackupGenerationV1(f.out,token),/backup_output_reservation_refused/);
   for(const alteration of ['replace','contents','mode','link']) {
     const out=join(f.root,alteration), cap=await reserveBackupGenerationV1(out);
+    t.after(()=>releaseBackupGenerationV1?.(cap));
     if(alteration==='replace'){await fs.rename(out,out+'-old');await fs.mkdir(out,{mode:0o700});}
     if(alteration==='contents')await fs.writeFile(join(out,'old.dump'),'retained');
     if(alteration==='mode')await fs.chmod(out,0o755);
@@ -285,6 +287,7 @@ test('R7B-01: metadata publication refuses an injected retained leaf', {timeout:
 
 test('R7B-01: an upstream reserved generation passes through the wrapper once', {timeout:10000}, async t => {
   const f=await fixture(t), generation=await reserveBackupGenerationV1(f.out);
+  t.after(()=>releaseBackupGenerationV1?.(generation));
   await createMacLocalDatabaseBackupV1({source:source('upgrade-data'),out:f.out,pgBin:f.bin,generation});
   const before=await fs.readFile(join(f.out,'database.dump'));
   await assert.rejects(createMacLocalDatabaseBackupV1({source:source('second'),out:f.out,pgBin:f.bin,generation}),/backup_output_reservation_refused/);
@@ -297,4 +300,307 @@ test('R7B-01: wrapper refuses forged reservations before invoking its producer',
   await assert.rejects(createMacLocalDatabaseBackupV1({source:source('invalid'),out:f.out,pgBin:f.bin,generation:{},
     backup:async()=>{calls++;return {planned:true};}}),/backup_output_reservation_refused|ENOENT/);
   assert.equal(calls,0);
+});
+
+
+test('a recreated backup generation folder is refused', {timeout:30000}, async t => {
+  const f = await fixture(t);
+  for (const consumed of [false, true]) {
+    const out = join(f.root, consumed ? 'after-consume' : 'before-consume');
+    const token = await reserveBackupGenerationV1(out);
+    try {
+      if (consumed) await consumeBackupGenerationV1(out, token);
+      const original = await fs.lstat(out);
+      for (let cycle = 0; cycle < 200; cycle++) {
+        await fs.rmdir(out);
+        await fs.mkdir(out, {mode:0o700});
+        const replacement = await fs.lstat(out);
+        if (cycle === 0) console.log(JSON.stringify({consumed, originalInode:original.ino,
+          replacementInode:replacement.ino, device:original.dev}));
+        await assert.rejects(consumed ? assertBackupGenerationV1(out, token)
+          : consumeBackupGenerationV1(out, token), /backup_output_reservation_refused/,
+        'a recreated generation must never be accepted');
+        // A consumed token is one-shot; also exercise the path identity reader on every cycle.
+        await assert.rejects(assertBackupGenerationV1(out, token), /backup_output_reservation_refused/);
+      }
+    } finally { if (releaseBackupGenerationV1) await releaseBackupGenerationV1(token); }
+  }
+});
+
+
+// Observe real kernel handles; never replace filesystem answers with a stand-in.
+async function observeReservationHandles(body, ignoredDirectory) {
+  const originalOpen = nativeFs.promises.open, handles = [];
+  nativeFs.promises.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if ((await handle.stat()).isDirectory() && args[0] !== ignoredDirectory) {
+      const close = handle.close.bind(handle);
+      handle.reservationCloseCalls = 0;
+      handle.close = () => { handle.reservationCloseCalls++; return close(); };
+      handles.push(handle);
+    }
+    return handle;
+  };
+  syncBuiltinESMExports();
+  try { await body(handles); }
+  finally {
+    nativeFs.promises.open = originalOpen;
+    syncBuiltinESMExports();
+    // Also clean up after a failed mutation assertion.
+    await Promise.all(handles.map(handle => handle.close()));
+  }
+}
+const closedReservationHandles = async handles => {
+  for (const handle of handles) await assert.rejects(handle.stat(), {code:'EBADF'},
+    'every reservation descriptor must be closed');
+};
+
+test('reservation release is idempotent and invalidates both readers', {timeout:10000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'reservation owner needs an explicit release');
+  await observeReservationHandles(async handles => {
+    const token = await reserveBackupGenerationV1(f.out);
+    assert.equal(handles.length, 1, 'reservation must hold one real directory descriptor');
+    await consumeBackupGenerationV1(f.out, token);
+    await assertBackupGenerationV1(f.out, token);
+    await assert.doesNotReject(async () => handles[0].stat(), 'consume must keep a live original directory descriptor');
+    assert.equal((await handles[0].stat()).isDirectory(), true, 'consume keeps the original directory alive');
+    await Promise.all([releaseBackupGenerationV1(token), releaseBackupGenerationV1(token)]);
+    await releaseBackupGenerationV1(token);
+    await closedReservationHandles(handles);
+    assert.equal(handles[0].reservationCloseCalls, 1, 'concurrent and repeated release closes the owned handle once');
+    const fresh = join(f.root, 'released-before-consume'), unused = await reserveBackupGenerationV1(fresh);
+    try {
+      await releaseBackupGenerationV1(unused);
+      await assert.rejects(consumeBackupGenerationV1(fresh, unused), /backup_output_reservation_refused/,
+        'release must refuse even the first consume');
+    } finally { await releaseBackupGenerationV1(unused); }
+    await assert.rejects(assertBackupGenerationV1(f.out, token), /backup_output_reservation_refused/);
+    await assert.rejects(consumeBackupGenerationV1(f.out, token), /backup_output_reservation_refused/);
+    await releaseBackupGenerationV1({});
+    await releaseBackupGenerationV1(undefined);
+    await closedReservationHandles(handles);
+  });
+});
+
+test('reservation acquisition closes handles on raced identity, type, mode and stat failures', {timeout:10000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'reservation acquisition must hold and release a descriptor');
+  const originalOpen = nativeFs.promises.open, originalLstat = nativeFs.promises.lstat;
+  for (const change of ['identity', 'type', 'link', 'mode', 'stat', 'type-before-stat']) {
+    const out = join(f.root, change);
+    let held;
+    nativeFs.promises.lstat = async (path, ...args) => {
+      if (path === out && change === 'type-before-stat') {
+        await fs.rmdir(out);
+        await fs.writeFile(out, 'not a directory', {mode:0o700});
+      }
+      return originalLstat(path, ...args);
+    };
+    nativeFs.promises.open = async (path, ...args) => {
+      if (path === out && ['identity', 'type', 'link'].includes(change)) {
+        await fs.rename(out, out + '-original');
+        if (change === 'identity') await fs.mkdir(out, {mode:0o700});
+        else if (change === 'link') await fs.symlink(out + '-original', out);
+        else await fs.writeFile(out, 'not a directory');
+      }
+      held = await originalOpen(path, ...args);
+      if (path === out && change === 'mode') await fs.chmod(out, 0o755);
+      if (path === out && change === 'stat') held.stat = async () => { throw Error('injected stat failure'); };
+      return held;
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(reserveBackupGenerationV1(out), change === 'stat'
+        ? /injected stat failure/ : error => error.message === 'backup_output_reservation_refused' || ['ENOTDIR','ELOOP'].includes(error.code));
+      if (held) assert.equal(held.fd, -1, 'acquisition failure must close its real descriptor');
+    } finally {
+      nativeFs.promises.open = originalOpen;
+      nativeFs.promises.lstat = originalLstat;
+      syncBuiltinESMExports();
+      if (held) await held.close();
+    }
+  }
+});
+
+test('200 reserve and caller failure cycles leave no reservation descriptors open', {timeout:30000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'callers need explicit reservation release');
+  await observeReservationHandles(async handles => {
+    for (let cycle = 0; cycle < 200; cycle++) {
+      const out = join(f.root, 'failed-' + cycle);
+      await assert.rejects(createMacLocalDatabaseBackupV1({source:source('fail'),out,pgBin:f.bin,
+        backup:async () => { throw Error('injected producer failure'); }}), /injected producer failure/);
+      await closedReservationHandles(handles.slice(cycle));
+    }
+    assert.equal(handles.length, 200, 'each failure must actually reserve and open a directory');
+    await backup(f, 'success');
+    await readBoundMacLocalDatabaseBackupV1(f.out);
+    await closedReservationHandles(handles);
+    const {state} = await import('./helpers/r7-backup-fake-pg.mjs');
+    const connects = state.connections;
+    const priorFailure = process.env.R7_BACKUP_FAKE_FAILURE;
+    try {
+      process.env.R7_BACKUP_FAKE_FAILURE = 'connect';
+      await assert.rejects(backupDatabase({source:source('raw-failure'),out:join(f.root,'raw-failure'),
+        pgBin:f.bin,ledgerDigest:d}), /failed:/);
+    } finally {
+      if (priorFailure === undefined) delete process.env.R7_BACKUP_FAKE_FAILURE;
+      else process.env.R7_BACKUP_FAKE_FAILURE = priorFailure;
+    }
+    assert.equal(state.connections, connects + 1, 'raw failure reaches the producer connection');
+    await closedReservationHandles(handles);
+    await backupDatabase({source:source('raw-success'),out:join(f.root,'raw-success'),pgBin:f.bin,ledgerDigest:d});
+    await closedReservationHandles(handles);
+    await assert.rejects(backupDatabase({source:source('early'),out:join(f.root,'early'),ledgerDigest:d}), /backup_refused_no_pg_bin/);
+    assert.equal((await backupDatabase({})).planned, true);
+    await closedReservationHandles(handles);
+    assert.equal(handles.length, 203, 'early refusals and plan-only calls must not allocate a descriptor');
+  });
+});
+
+test('nightly reservation releases on success, backup failure, unbound output and retention failure', {timeout:30000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'nightly owns reservation release');
+  const {createNightlyBackupConfigurationV1} = await import('../src/installer/v1/nightly-backup-configuration.ts');
+  const {runNightlyBackupV1} = await import('../src/installer/v1/nightly-backup.ts');
+  const cfg = createNightlyBackupConfigurationV1(f.root), path = join(f.root,'Protected/config/backup.json');
+  await fs.mkdir(join(f.root,'Protected/config/database-passwords'), {recursive:true});
+  await fs.mkdir(join(f.root,'Protected/runtime-state/nightly-backup'), {recursive:true});
+  await fs.mkdir(cfg.outputRoot, {recursive:true});
+  await fs.writeFile(path, JSON.stringify(cfg));
+  await fs.writeFile(cfg.database.passwordFile, 'fixture\n', {mode:0o600});
+  await observeReservationHandles(async handles => {
+    let day = 1;
+    for (const failure of ['success', 'backup', 'unbound', 'retention']) {
+      const stamp = `2026-10-0${day++}T02:30:00.000Z`;
+      const overrides = {now:()=>stamp,backup:input=>backupDatabase({...input,pgBin:f.bin})};
+      if (failure === 'backup') overrides.backup = async () => { throw Error('injected backup failure'); };
+      if (failure === 'unbound') overrides.readGeneratedGeneration = async () => ({bound:false});
+      if (failure === 'retention') overrides.listBackups = async () => { throw Error('injected retention failure'); };
+      if (failure === 'success') await runNightlyBackupV1(path, overrides);
+      else await assert.rejects(runNightlyBackupV1(path, overrides), new RegExp('nightly_backup_' +
+        ({backup:'execution_failed',unbound:'unbound_generation',retention:'retention_failed'}[failure])));
+      await closedReservationHandles(handles);
+    }
+    assert.equal(handles.length, 4, 'all four exits must reach real reservation');
+  }, cfg.outputRoot);
+});
+
+// Direct children keep stdin attached. Read results on close after stdout drains;
+// the test finally kills only its children, and the outer run owns their group.
+function reservationChild(out) {
+  const module = new URL('../src/installer/shared/backup-files.mjs', import.meta.url).href;
+  const script = `import {once} from 'node:events';
+    const api=await import(${JSON.stringify(module)});let token;
+    const input=process.stdin;input.setEncoding('utf8');input.resume();
+    console.log('ready');await once(input,'data');
+    try { token=await api.reserveBackupGenerationV1(process.argv[1]);console.log('held');
+      await once(input,'data');console.log('released');
+    } catch(error) { console.log(error.message); }
+    finally { if(token) await api.releaseBackupGenerationV1(token);input.pause(); }
+  `;
+  const child = spawn(process.execPath, ['--input-type=module','-e',script,out], {stdio:['pipe','pipe','pipe']});
+  let output = '', stderr = '';
+  child.stdin.on('error', () => {});
+  child.stderr.on('data', data => { stderr += data; });
+  const waiters = [];
+  child.stdout.on('data', data => {
+    output += data;
+    for (const [pattern, resolve] of waiters) if (pattern.test(output)) resolve();
+  });
+  const closed = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code, signal) => resolve({code,signal,output,stderr}));
+  });
+  return {child, closed, held:()=>/^held/m.test(output), wait:pattern=>pattern.test(output) ? Promise.resolve()
+    : Promise.race([new Promise(resolve=>waiters.push([pattern,resolve])),
+      closed.then(result=>{if (!pattern.test(result.output)) throw Error('child closed before barrier: ' + result.stderr);})])};
+}
+
+test('50 concurrent process reservations admit one held generation and 49 actual refusals', {timeout:60000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'cross-process owner needs release');
+  const children = Array.from({length:50},()=>reservationChild(f.out));
+  try {
+    await Promise.all(children.map(c=>c.wait(/^ready/m)));
+    for (const c of children) c.child.stdin.write('go\n');
+    await Promise.all(children.map(c=>c.wait(/^held|^backup_output_exists/m)));
+    for (const c of children) if (c.held()) c.child.stdin.end('finish\n');
+    const results = await Promise.all(children.map(c=>c.closed));
+    assert.equal(results.filter(r=>/^held/m.test(r.output)).length, 1, 'one process holds the reservation');
+    assert.equal(results.filter(r=>/^backup_output_exists/m.test(r.output)).length, 49, 'all losing branches actually ran');
+    assert.ok(results.every(r=>r.code === 0 && r.stderr === ''), 'all direct children finish and close their descriptors');
+    await assert.rejects(reserveBackupGenerationV1(f.out), /backup_output_exists/);
+  } finally {
+    for (const c of children) if (c.child.exitCode === null && c.child.signalCode === null) c.child.kill('SIGKILL');
+    await Promise.all(children.map(c=>c.closed));
+  }
+});
+
+test('killed reservation owner leaves a refused partial folder and fresh retry works', {timeout:15000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'retry owner needs explicit release');
+  const c = reservationChild(f.out);
+  try {
+    await c.wait(/^ready/m);
+    c.child.stdin.write('go\n');
+    await c.wait(/^held/m);
+    c.child.kill('SIGKILL');
+    const killed = await c.closed;
+    assert.equal(killed.signal, 'SIGKILL', 'stop the actual holder before it releases');
+    await assert.rejects(reserveBackupGenerationV1(f.out), /backup_output_exists/);
+    const fresh = join(f.root, 'fresh-after-kill'), token = await reserveBackupGenerationV1(fresh);
+    try { await consumeBackupGenerationV1(fresh, token); await assertBackupGenerationV1(fresh, token); }
+    finally { await releaseBackupGenerationV1(token); }
+    await fs.rmdir(f.out);
+    const replacement = await reserveBackupGenerationV1(f.out);
+    try { await consumeBackupGenerationV1(f.out, replacement); }
+    finally { await releaseBackupGenerationV1(replacement); }
+  } finally {
+    if (c.child.exitCode === null && c.child.signalCode === null) c.child.kill('SIGKILL');
+    await c.closed;
+  }
+});
+
+
+test('borrowed reservation remains live through wrapper success and failure', {timeout:10000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'the upstream owner controls release');
+  await observeReservationHandles(async handles => {
+    const generation = await reserveBackupGenerationV1(f.out);
+    try {
+      await assert.doesNotReject(createMacLocalDatabaseBackupV1({source:source('borrowed'),out:f.out,
+        pgBin:f.bin,generation}), 'borrowers must keep the reservation live through final publication');
+      await assert.doesNotReject(assertBackupGenerationV1(f.out, generation),
+        'upstream reservation must remain valid after wrapper success');
+      await assert.doesNotReject(handles[0].stat(), 'the upstream handle must remain open after wrapper success');
+      assert.equal((await handles[0].stat()).isDirectory(), true, 'the upstream handle is still live after wrapper success');
+      await assert.rejects(createMacLocalDatabaseBackupV1({source:source('borrowed-failure'),out:f.out,
+        pgBin:f.bin,generation,backup:async()=>{throw Error('injected borrowed failure');}}), /injected borrowed failure/);
+      await assert.doesNotReject(handles[0].stat(), 'failure must return a live handle to the upstream owner');
+      assert.equal((await handles[0].stat()).isDirectory(), true, 'failure returns handle ownership to the upstream caller');
+    } finally { await releaseBackupGenerationV1(generation); }
+    await closedReservationHandles(handles);
+  });
+});
+
+
+test('reservation holds valid long and spaced paths and refuses a linked parent', {timeout:10000}, async t => {
+  const f = await fixture(t);
+  assert.equal(typeof releaseBackupGenerationV1, 'function', 'layout variants require the same owner release');
+  const parent = join(f.root, 'space and unicode-\u03bb', 'a'.repeat(120), 'b'.repeat(120), 'c'.repeat(120));
+  await fs.mkdir(parent, {recursive:true,mode:0o700});
+  const out = join(parent, 'generation');
+  await assert.rejects(fs.lstat(out), {code:'ENOENT'}, 'setup must leave the generation absent');
+  const token = await reserveBackupGenerationV1(out);
+  try {
+    assert.equal((await fs.lstat(out)).mode & 0o777, 0o700);
+    await consumeBackupGenerationV1(out, token);
+    await assertBackupGenerationV1(out, token);
+  } finally { await releaseBackupGenerationV1(token); }
+  const linked = join(f.root, 'linked-parent');
+  await fs.symlink(parent, linked);
+  await assert.rejects(reserveBackupGenerationV1(join(linked, 'other-generation')), /backup_output_path_refused/);
+  await assert.rejects(fs.lstat(join(parent, 'other-generation')), {code:'ENOENT'}, 'refusal must not create state');
 });

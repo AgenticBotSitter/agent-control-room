@@ -1,5 +1,5 @@
 import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
-import { reserveBackupGenerationV1, assertBackupGenerationV1, sha256BackupFileV1 as sha256File } from "../../src/installer/shared/backup-files.mjs";
+import { releaseBackupGenerationV1, reserveBackupGenerationV1, assertBackupGenerationV1, sha256BackupFileV1 as sha256File } from "../../src/installer/shared/backup-files.mjs";
 // Mac-local database backup wrapper. It reuses the production snapshot-bound
 // pg_dump implementation and adds an outer digest manifest used before restore.
 import { lstat, readFile, rm, writeFile } from "node:fs/promises";
@@ -25,40 +25,43 @@ export async function createMacLocalDatabaseBackupV1({ source, out, pgBin = "/op
   if ((typeof source !== "string" && (!source || typeof source !== "object")) || typeof out !== "string"
     || !isAbsolute(out) || resolve(out) !== out || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_arguments_refused");
-  generation ??= await reserveBackupGenerationV1(out);
-  await assertBackupGenerationV1(out, generation);
-  const ledger = JSON.parse(await readFile(new URL("../../deploy/postgres/migration-ledger.json", import.meta.url), "utf8"));
-  const result = await backup({ source, out, pgBin, generation, requiredTables: MAC_BACKUP_REQUIRED_TABLES_V1,
-    ledgerDigest: `sha256:${ledger.digest}`, release: "mac-local" });
-  if (result?.planned !== false || !/^sha256:[a-f0-9]{64}$/u.test(result.identityDigest ?? ""))
-    throw new Error("database_backup_incomplete");
-  await assertBackupGenerationV1(out, generation);
-  const dumpPath = join(out, "database.dump"), metadataPath = join(out, "metadata.json");
-  for (const path of [dumpPath, metadataPath]) {
-    const entry = await lstat(path);
-    if (!entry.isFile() || entry.isSymbolicLink() || entry.size < 1) throw new Error("database_backup_output_refused");
-  }
-  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
-  const head = metadata.evidence?.ledger?.at(-1);
-  if (!head || !Number.isSafeInteger(head.ledger_order) || typeof head.filename !== "string"
-    || !/^sha256:[a-f0-9]{64}$/u.test(head.digest ?? "")) throw new Error("database_backup_ledger_head_refused");
-  const createdAt = now();
-  if (typeof createdAt !== "string" || new Date(createdAt).toISOString() !== createdAt)
-    throw new Error("database_backup_timestamp_refused");
-  const manifest = Object.freeze({ schema: VERIFIED_BACKUP_MANIFEST_V1, createdAt,
-    dumpDigest: await sha256File(dumpPath), metadataDigest: await sha256File(metadataPath),
-    restoreIdentityDigest: result.identityDigest, ledger: Object.freeze({ digest: `sha256:${ledger.digest}`,
-      head: Object.freeze({ order: head.ledger_order, file: head.filename, digest: head.digest }) }),
-    requiredTables: MAC_BACKUP_REQUIRED_TABLES_V1 });
-  // The producer may have written its own manifest (R4B-10 — the scheduled
-  // nightly path always does now). It is REPLACED by this one, which is the
-  // Mac-local wrapper's authority: same digests, `mac-local` required-table
-  // list, and the ledger this checkout pins. `rm` first because the producer
-  // writes with `flag: "wx"`, which would otherwise refuse.
-  const manifestPath = join(out, "manifest.json");
-  await rm(manifestPath, { force: true });
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  return manifest;
+  const ownsGeneration = generation == null;
+  try {
+    generation ??= await reserveBackupGenerationV1(out);
+    await assertBackupGenerationV1(out, generation);
+    const ledger = JSON.parse(await readFile(new URL("../../deploy/postgres/migration-ledger.json", import.meta.url), "utf8"));
+    const result = await backup({ source, out, pgBin, generation, requiredTables: MAC_BACKUP_REQUIRED_TABLES_V1,
+      ledgerDigest: `sha256:${ledger.digest}`, release: "mac-local" });
+    if (result?.planned !== false || !/^sha256:[a-f0-9]{64}$/u.test(result.identityDigest ?? ""))
+      throw new Error("database_backup_incomplete");
+    await assertBackupGenerationV1(out, generation);
+    const dumpPath = join(out, "database.dump"), metadataPath = join(out, "metadata.json");
+    for (const path of [dumpPath, metadataPath]) {
+      const entry = await lstat(path);
+      if (!entry.isFile() || entry.isSymbolicLink() || entry.size < 1) throw new Error("database_backup_output_refused");
+    }
+    const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+    const head = metadata.evidence?.ledger?.at(-1);
+    if (!head || !Number.isSafeInteger(head.ledger_order) || typeof head.filename !== "string"
+      || !/^sha256:[a-f0-9]{64}$/u.test(head.digest ?? "")) throw new Error("database_backup_ledger_head_refused");
+    const createdAt = now();
+    if (typeof createdAt !== "string" || new Date(createdAt).toISOString() !== createdAt)
+      throw new Error("database_backup_timestamp_refused");
+    const manifest = Object.freeze({ schema: VERIFIED_BACKUP_MANIFEST_V1, createdAt,
+      dumpDigest: await sha256File(dumpPath), metadataDigest: await sha256File(metadataPath),
+      restoreIdentityDigest: result.identityDigest, ledger: Object.freeze({ digest: `sha256:${ledger.digest}`,
+        head: Object.freeze({ order: head.ledger_order, file: head.filename, digest: head.digest }) }),
+      requiredTables: MAC_BACKUP_REQUIRED_TABLES_V1 });
+    // The producer may have written its own manifest (R4B-10 — the scheduled
+    // nightly path always does now). It is REPLACED by this one, which is the
+    // Mac-local wrapper's authority: same digests, `mac-local` required-table
+    // list, and the ledger this checkout pins. `rm` first because the producer
+    // writes with `flag: "wx"`, which would otherwise refuse.
+    const manifestPath = join(out, "manifest.json");
+    await rm(manifestPath, { force: true });
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    return manifest;
+  } finally { if (ownsGeneration) await releaseBackupGenerationV1(generation); }
 }
 
 function flag(args, name) { const index = args.indexOf(name); return index === -1 ? undefined : args[index + 1]; }
