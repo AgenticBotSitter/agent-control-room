@@ -1278,6 +1278,11 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     const attempting = new Set(), waiting = new Set(), holding = new Set();
     let retries = 0;
     const lockState = (state, child) => {
+      // The same sleep callback is also used to retry retirement. A holder
+      // must finish releasing before queued acquisition retries can run.
+      if (state === "waiting" && holding.has(child)) {
+        retries++; child.send("retry"); return;
+      }
       attempting.delete(child);
       if (state === "waiting") { waiting.add(child); retries++; }
       if (state === "holding") holding.add(child);

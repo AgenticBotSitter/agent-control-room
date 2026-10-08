@@ -212,6 +212,8 @@ test("R5V-02: 50 repoints and a queued rotation serialize without losing the new
   const run = async (index, operation) => {
     const lock = { deadlineMs: 30_000,
       sleep: () => new Promise(retry => {
+        // Retirement also uses sleep; never queue a holder behind itself.
+        if (holding.has(index)) { setImmediate(retry); return; }
         attempting.delete(index); waiting.set(index, retry); retries++; resume();
       }),
       afterOwnerPublication: () => { attempting.delete(index); holding.add(index); },
