@@ -26,5 +26,19 @@
     "replace": "// Guard disabled for isolated mutation.",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-cli-guard-self-contained.test.mjs",
     "why": "The named fresh-process guard and real-reader refusal assertion must fail against the literal guard value and refusal messages."
+  },
+  {
+    "file": "tests/agent-cli-guard-self-contained.test.mjs",
+    "find": "  return !first || !ts.isImportDeclaration(first) || Boolean(first.importClause)\n    || !ts.isStringLiteral(first.moduleSpecifier)\n    || resolve(dirname(file), first.moduleSpecifier.text) !== helper;",
+    "replace": "  return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard ordering rejects\" tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "R1: disabling runtime dependency ordering must fail the named guard ordering assertion against explicit unsafe export/barrel fixtures."
+  },
+  {
+    "file": "tests/agent-cli-guard-self-contained.test.mjs",
+    "find": "  if (!hasGuardAssertion(parsed)) return false;",
+    "replace": "  if (true) return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"guard assertion selection\" tests/agent-cli-guard-self-contained.test.mjs",
+    "why": "R2: disabling AST assertion selection must fail the named equivalent literal assertion against independently specified JavaScript spellings."
   }
 ]
