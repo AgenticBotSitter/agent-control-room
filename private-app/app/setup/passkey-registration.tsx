@@ -96,23 +96,39 @@ export function PasskeyRegistration() {
     let working = false;
     const run = (code?: string) => {
       if (working || controller.signal.aborted) return;
-      working = true; setState({ status: "working" });
+      working = true; setState({ status: "working", message: code !== undefined ? "Signing in…" : undefined });
       void (async () => {
         if (code !== undefined) {
-          const sessionResponse = await fetch("/api/v1/local-owner-session", { method: "POST", credentials: "same-origin",
-            cache: "no-store", redirect: "error", signal: controller.signal, headers: { "content-type": "application/json" },
-            body: JSON.stringify({ ownerCode: code }) });
-          if (!sessionResponse.ok) {
-            const message = sessionResponse.status === 403
-              ? "Sign-in is paused after too many attempts. Wait one minute before trying again."
-              : sessionResponse.status === 401
-                ? code.length !== 43 || /[&=\s]|code/i.test(code)
-                  ? "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link."
-                  : "Sign-in was not accepted. Check your owner code and try again."
-                : "Control Room could not sign you in. Try again when the service is available.";
-            if (!controller.signal.aborted) setState({ status: "sign-in", message });
+          // A request deadline must not abort the component's retained authority:
+          // sign-in can be retried, whereas registration failures stay terminal.
+          const sessionController = new AbortController();
+          const abortSession = () => sessionController.abort();
+          controller.signal.addEventListener("abort", abortSession, { once: true });
+          const timeout = setTimeout(() => sessionController.abort(), 10_000);
+          try {
+            const sessionResponse = await fetch("/api/v1/local-owner-session", { method: "POST", credentials: "same-origin",
+              cache: "no-store", redirect: "error", signal: sessionController.signal, headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ownerCode: code }) });
+            if (!sessionResponse.ok) {
+              const message = sessionResponse.status === 403
+                ? "Sign-in is paused after too many attempts. Wait one minute before trying again."
+                : sessionResponse.status === 400 || sessionResponse.status === 401
+                  ? code.length !== 43 || /[&=\s]|code/i.test(code)
+                    ? "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link."
+                    : "Sign-in was not accepted. Check your owner code and try again."
+                  : "Control Room could not sign you in. Try again when the service is available.";
+              if (!controller.signal.aborted) setState({ status: "sign-in", message });
+              return;
+            }
+          } catch {
+            if (!controller.signal.aborted) setState({ status: "sign-in",
+              message: "Could not reach Control Room to sign in. Check your connection and try again on this page." });
             return;
+          } finally {
+            clearTimeout(timeout); controller.signal.removeEventListener("abort", abortSession);
           }
+          if (controller.signal.aborted) return;
+          setState({ status: "working" });
         }
         const optionResponse = await fetch("/api/v1/passkeys/registration/options", { method: "POST",
           credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal,
@@ -169,7 +185,7 @@ export function PasskeyRegistration() {
       <button type="submit">Sign in and continue</button>
       {state.message && <p role="alert">{state.message}</p>}
     </form>}
-    {state.status === "working" && <p role="status">Waiting for Face ID. Keep this page open.</p>}
+    {state.status === "working" && <p role="status">{state.message ?? "Waiting for Face ID. Keep this page open."}</p>}
     {state.status === "ready" && <><p>Type this code in the installer:</p>
       <p role="status" aria-label="Passkey comparison code"><strong>{state.code}</strong></p>
       <p>Type the code above into the installer. A rejected code cancels registration.</p></>}

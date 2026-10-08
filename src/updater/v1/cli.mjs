@@ -18,7 +18,6 @@ import {
   DEFAULT_CONTROL_ROOM_ROOT_V1, DEFAULT_CONTROL_ROOM_WEB_PORT_V1, installControlRoomV1, statusControlRoomV1,
   uninstallFreshControlRoomV1,
 } from "./install/installer.mjs";
-import { terminalQrTextV1 } from "./terminal/qr.mjs";
 import { readCodeV1 } from "./terminal/read-code.mjs";
 
 const WORDS_V1 = Object.freeze(("amber anchor apple arch arrow atlas badge bamboo beacon birch blue bolt brave brick brook "
@@ -463,6 +462,7 @@ try {
         throw updaterRefuseV1("updater_passkey_control_reply_refused");
       const expectedOrigin = registration.expectedOrigin ?? registration.config.expectedOrigin;
       const registrationUrl = `${expectedOrigin}/setup#reg=${registration.registrationSecret}&mode=${mode}`;
+      const { terminalQrTextV1 } = await import("./terminal/qr.mjs");
       context.stdout(terminalQrTextV1(registrationUrl));
       context.stdout(`${registrationUrl}\n`);
       context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the owner code.\n");

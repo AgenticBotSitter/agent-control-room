@@ -1885,7 +1885,23 @@ test("root entry ignores an environment-selected port module and Tailscale alway
 });
 
 test("the archived installer entry and native ports load without node_modules", async t => {
-  const base = await temporary("bare-archive"); t.after(() => cleanup(base));
+  // A checkout-local TMPDIR can resolve packages in an ancestor. Bootstrap
+  // runs before dependencies exist, so verify every ancestor before extracting.
+  let parent = await realpath(tmpdir());
+  const hasPackagesAbove = async path => {
+    for (;;) {
+      const entry = await lstat(join(path, "node_modules")).catch(error => {
+        if (error.code !== "ENOENT") throw error; return null;
+      });
+      if (entry) return true;
+      const next = dirname(path); if (next === path) return false; path = next;
+    }
+  };
+  if (await hasPackagesAbove(parent)) parent = await realpath("/tmp");
+  assert.equal(await hasPackagesAbove(parent), false, "archive parent must have no dependency-bearing ancestor");
+  const base = await realpath(await mkdtemp(join(parent, "control-room-installer-bare-archive-")));
+  t.after(() => cleanup(base));
+  assert.equal(await hasPackagesAbove(base), false, "archive must not resolve checkout packages");
   const archive = join(base, "source.tar"), source = join(base, "source"); await mkdir(source);
   const index = join(base, "archive.index"), gitEnvironment = { ...process.env, GIT_INDEX_FILE: index };
   const readTree = spawnSync("/usr/bin/git", ["read-tree", "HEAD"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
@@ -1904,12 +1920,31 @@ test("the archived installer entry and native ports load without node_modules", 
     join(base, "not-installed")], { cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8" });
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /not-installed/u);
-  const install = spawnSync(process.execPath, [join(source, "src/updater/v1/cli.mjs"), "install"], {
-    cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8",
-  });
-  assert.equal(install.status, 1, install.stderr);
-  assert.match(install.stderr, /root_required/u);
-  assert.doesNotMatch(install.stderr, /module-not-found|ERR_MODULE_NOT_FOUND/iu);
+  assert.notEqual(process.getuid?.(), 0, "archive bootstrap probe must run unprivileged");
+  const cli = join(source, "src/updater/v1/cli.mjs");
+  for (const testing of [false, true]) for (const rehearsal of [false, true]) {
+    // Mirror all four entry commands in install-night/bootstrap.sh. Root refusal
+    // must precede any installer side effect; only loading is exercised here.
+    const flags = ["install", "--commit", "a".repeat(40), "--bootstrap", base,
+      ...(rehearsal ? ["--rehearsal-config", join(base, "rehearsal.json"),
+        "--fresh-database", "yes", "--authenticator", "software",
+        "--e2e2-evidence-log", join(base, "evidence.json")] : []),
+      "--invoking-user", "fixture", "--invoking-uid", "501", "--invoking-gid", "20"];
+    const install = spawnSync(process.execPath, [cli, ...flags], {
+      cwd: "/", env: { LANG: "C", LC_ALL: "C", ...(testing ? { CONTROL_ROOM_BOOTSTRAP_TESTING: "1" } : {}) },
+      encoding: "utf8", timeout: 10_000,
+    });
+    assert.equal(install.status, 1, install.stderr);
+    assert.match(install.stderr, /root_required/u, "bootstrap entry loads without any installed packages");
+    assert.doesNotMatch(install.stderr, /ERR_MODULE_NOT_FOUND/u);
+  }
+  for (const [args, expected] of [[["--print-capabilities"], 0], [["capabilities"], 64], [["install"], 1]]) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: "/", env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8", timeout: 10_000,
+    });
+    assert.equal(result.status, expected, "archived CLI remains dependency-free: " + result.stderr);
+    assert.doesNotMatch(result.stderr, /ERR_MODULE_NOT_FOUND/u);
+  }
   // The import shape is `--eval` with the URL written INTO the program, so
   // `process.argv[1]` is absent and the shared entry guard answers `false`. The
   // older spelling, `--eval "await import(process.argv[1])" <file: URL>`, put a

@@ -528,3 +528,56 @@ test("V101: copied-code guidance and edge-space handling preserve exact server a
   const legacy = new LocalOwnerSessionServiceV1({ ...profile, ownerCodeDigest: sha256Digest({ ownerCode: "code" + "A".repeat(60) }) });
   assert.ok((await legacy.issue(request("/api/v1/local-owner-session", { origin: profile.origin }), "code" + "A".repeat(60), 1_000)).cookie);
 });
+
+// Exercise the actual 512-byte JSON reader and Node adapter, rather than a
+// synthetic 401 that cannot represent an oversized pasted body.
+for (const [label, pasted] of [
+  ["ascii", "A".repeat(500)],
+  ["link", "https://example.test/setup#code=" + "A".repeat(480)],
+  ["unicode", "é".repeat(260)],
+]) test(`V101 F1 real HTTP oversized paste ${label} explains copied text`, async () => {
+  const { createServer } = await import("node:http");
+  const { createMacLocalWebProcessV1 } = await import("../src/web/v1/mac-local-web-process");
+  const { createMacLocalNodeHandler } = await import("../src/web/v1/private-node-handler");
+  const server = createServer();
+  let app: ReturnType<typeof createMacLocalWebProcessV1> | undefined, dom: JSDOM | undefined;
+  try {
+    await new Promise<void>((done, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", done); });
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    const localOrigin = `http://127.0.0.1:${address.port}`;
+    const unavailable = async (): Promise<never> => { throw new Error("sign-in must not query a database"); };
+    app = createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:paste",
+      localOwnerSession: { ...profile, origin: localOrigin, ownerCodeDigest: sha256Digest({ ownerCode: "B".repeat(43) }) },
+      database: { client: { query: unavailable, transaction: unavailable, transactionWithPreCommitCheck: unavailable },
+        close: async () => {}, isAvailable: () => true } });
+    const handler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
+      assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
+      handler: request => app!.handle(request, () => new Response("shell")) });
+    server.on("request", (request, response) => { void handler.handle(request, response); });
+    let status = 0;
+    let completed!: () => void;
+    const fetched = new Promise<void>(done => { completed = done; });
+    dom = new JSDOM(await (await fetch(localOrigin + "/session")).text(), {
+      url: localOrigin + "/session", runScripts: "dangerously", virtualConsole: new VirtualConsole(),
+      beforeParse(window) {
+        window.AbortSignal.timeout = AbortSignal.timeout;
+        window.fetch = async (url: unknown, init?: RequestInit) => {
+          const response = await fetch(localOrigin + String(url), { ...init, headers: { ...init?.headers, origin: localOrigin } });
+          status = response.status; completed(); return response;
+        };
+      },
+    });
+    const field = dom.window.document.querySelector("input")!;
+    field.value = pasted;
+    field.form!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    await fetched; await new Promise<void>(done => setImmediate(done));
+    assert.equal(status, 400, "the original server body limit stays unchanged");
+    assert.equal(dom.window.document.querySelector("#message")!.textContent,
+      "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.",
+      "an oversized paste must show copied-code guidance, not a service outage");
+    assert.equal(dom.window.document.querySelector("button")!.disabled, false, "another paste can be submitted");
+  } finally {
+    dom?.window.close(); server.closeAllConnections();
+    await new Promise<void>(done => server.close(() => done())); await app?.close();
+  }
+});

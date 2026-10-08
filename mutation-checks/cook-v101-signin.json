@@ -138,5 +138,61 @@
     "replace": "",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"V101 passkey add prints\" tests/updater-cli-flip.test.mjs",
     "why": "Addendum 4 requires a phone-decodable QR before the text URL; independently decoded URL and explicit block assertion must fail without rendering."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "import { isMainModuleV1 } from \"../../installer/shared/is-main-module.mjs\";",
+    "replace": "import { isMainModuleV1 } from \"../../installer/shared/is-main-module.mjs\";\nimport \"./terminal/qr.mjs\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the archived installer\" tests/control-room-installer.test.mjs",
+    "why": "Bootstrap runs before dependencies are installed. Independent status exit0 and bootstrap root_required must fail if QR is eagerly loaded; no ancestor packages may mask the defect."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "r.status===400?",
+    "replace": "false?",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F1\" tests/local-owner-session.test.ts",
+    "why": "Reviewer F1 and the unchanged 512-byte body limit independently require copied-code guidance for an oversized400 paste, not a service outage."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "sessionResponse.status === 400 || sessionResponse.status === 401",
+    "replace": "sessionResponse.status === 401",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*large\" tests/setup-passkey-page.test.tsx",
+    "why": "Reviewer F1 independently requires the literal copied-code guidance after real400 body refusal on the setup page."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (!controller.signal.aborted) setState({ status: \"sign-in\",\n              message: \"Could not reach Control Room to sign in. Check your connection and try again on this page.\" });",
+    "replace": "if (!controller.signal.aborted) setState({ status: \"failed\" });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*dropped|V101 F2.*lost-success\" tests/setup-passkey-page.test.tsx",
+    "why": "Reviewer F2 independently requires transient sign-in errors to retain a retry form and the original registration secret. Real TCP loss must fail the named recovery-state assertion when the catch becomes terminal."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "const timeout = setTimeout(() => sessionController.abort(), 10_000);",
+    "replace": "const timeout = setTimeout(() => {}, 10_000);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*slow\" tests/setup-passkey-page.test.tsx",
+    "why": "The independent application deadline is ten seconds with an eleven-second observer. Disabling abort must fail the named recovery-state assertion; test-runner timeout or crash is not proof."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "controller.signal.addEventListener(\"abort\", abortSession, { once: true });",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*unmount\" tests/setup-passkey-page.test.tsx",
+    "why": "Component unmount must cancel the real held sign-in request. Independently expected signal.aborted=true must fail without the parent-to-request cancellation link."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "message: code !== undefined ? \"Signing in\u2026\" : undefined",
+    "replace": "message: undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*slow\" tests/setup-passkey-page.test.tsx",
+    "why": "Reviewer F2 distinguishes sign-in from Face ID. The slow-session status must be the independent literal Signing in, not Waiting for Face ID."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (controller.signal.aborted) return;\n          setState({ status: \"working\" });",
+    "replace": "setState({ status: \"working\" });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*unmount-success\" tests/setup-passkey-page.test.tsx",
+    "why": "A real201 reply delivered after unmount must not launch another options request. The independent count is one initial options fetch; disabling late cancellation must produce two and fail the named assertion."
   }
 ]
