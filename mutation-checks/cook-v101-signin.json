@@ -1,0 +1,79 @@
+[
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (url.pathname === \"/setup\") {",
+    "replace": "if (false && url.pathname === \"/setup\") {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "The ticket requires the first phone to receive the setup shell without a session; literal 200 must fail when the public route is disabled."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (request.method !== \"GET\" || url.search) throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "replace": "if (url.search) throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "HTTP method refusal comes from the approved GET-only contract; POST must remain literal 400."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (request.method !== \"GET\" || url.search) throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "replace": "if (request.method !== \"GET\") throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "The ticket allows no query on the setup shell; code in a query must be refused with literal 400."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "sessions.assertLocalRequest(request);\n        const response = await render();",
+    "replace": "const response = await render();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "Existing local-origin and forwarding checks must precede the new public shell; a forwarded request must be literal 403."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);\n        return response;",
+    "replace": "return response;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "Public shell must retain no-store and no-referrer; independently specified header literals must disagree when header application is removed."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "code.length!==43||/[&=\\\\s]|code/i.test(code)",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "A refused malformed copy needs the ticket-specified guidance, rather than the generic 401 message."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": ".replace(/^ | $/g,\"\")",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "Exactly one ASCII space on each edge is tolerated by the UI; the literal posted code and unchanged real digest authentication must fail without trimming."
+  },
+  {
+    "file": "src/updater/v1/terminal/qr.mjs",
+    "find": "  terminal.write(`Owner code (${input.ownerCode.length} characters):\\n${input.ownerCode}\\n`);\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='initial-mode terminal QR' tests/updater-health-terminal.test.mjs",
+    "why": "The owner code length label and own-line secret are independently specified by the ticket, not extracted from the URL under test."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.",
+    "replace": "Registration stopped.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='R2-08: repeating install' tests/installer-round2.test.mjs",
+    "why": "Stopped install must explain the approved safe phone and same-browser recovery path."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "code.length!==43||",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "Wrong length guidance must fail the literal short-code message when the length term is disabled."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "||/[&=\\\\s]|code/i.test(code)",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "At the correct length, pasted ampersand/equal/code text still requires the literal copy guidance when the syntax term is disabled."
+  }
+]

@@ -414,7 +414,7 @@ try {
     if (result.passkey && result.passkey.status !== "registered") {
       context.stdout(`Not ready: Face ID is NOT set up (the passkey step stopped: ${result.passkey.reason}). `
         + `Control Room release ${result.version} is installed and current. Self-update is Off. `
-        + "Stop here and show this to the lead after reopening Claude. Do not retry, and do not run passkey add yourself.\n");
+        + "Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.\n");
     } else context.stdout(`Ready: Control Room release ${result.version} is current. Self-update is Off.\n`);
     return 0;
   }

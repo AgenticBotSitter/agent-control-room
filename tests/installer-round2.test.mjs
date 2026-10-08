@@ -160,6 +160,10 @@ test('R2-08: repeating install for a new commit retains the persisted stopped pa
       stdinLine:async()=>'',readComparisonCode:async()=>'',stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;}
     });
   assert.equal(exit,0,stderr); assert.match(stdout,/Not ready: Face ID is NOT set up .*passkey_terminal_required/); assert.doesNotMatch(stdout,/Ready:/);
+  assert.match(stdout, /Sign in on your phone with the owner code/);
+  assert.match(stdout, /sudo control-room passkey add/);
+  assert.match(stdout, /same browser/);
+  assert.doesNotMatch(stdout, /do not run passkey add yourself/i);
   const status=JSON.parse(await fs.readFile(join(f.root,'status/passkey.json'),'utf8'));
   assert.equal(status.status,'stopped');
   

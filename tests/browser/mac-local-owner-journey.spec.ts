@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { createServer } from "node:http";
+import { build } from "esbuild";
+import { sha256Digest } from "../../src/security";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
+import { createMacLocalWebProcessV1 } from "../../src/web/v1/mac-local-web-process";
+import { createMacLocalNodeHandler } from "../../src/web/v1/private-node-handler";
 import { Client } from "pg";
 import { AuditStore, auditPartition } from "../../src/audit/audit-store";
 import type { DatabaseClient } from "../../src/persistence/database";
@@ -12,9 +18,7 @@ import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigur
 import { makeBotWorkspaceV1, removeBotWorkspaceV1, ScriptedBotV1 } from "../../scripts/dogfood/bot-journey.mjs";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
-if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
 const rehearsalRoot = process.env.CONTROL_ROOM_E2E_ROOT;
-if (!rehearsalRoot || resolve(rehearsalRoot) !== rehearsalRoot) throw new Error("CONTROL_ROOM_E2E_ROOT must be absolute");
 const botWorkspaces: string[] = [];
 test.afterAll(async () => { await Promise.all(botWorkspaces.map(removeBotWorkspaceV1)); });
 
@@ -176,6 +180,8 @@ async function submitProposalOnlyBatch(projectId: string) {
 }
 
 test("owner sends work to every connected bot on the real connector-only local website", async ({ page }) => {
+  if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
+  if (!rehearsalRoot || resolve(rehearsalRoot) !== rehearsalRoot) throw new Error("CONTROL_ROOM_E2E_ROOT must be absolute");
   const failedResponses: string[] = [];
   page.on("response", response => {
     if (response.status() >= 500) failedResponses.push(`${response.status()} ${new URL(response.url()).pathname}`);
@@ -298,4 +304,92 @@ test("owner sends work to every connected bot on the real connector-only local w
   await expect(page.getByRole("heading", { name: "Control Room" })).toBeVisible();
   await expect(page.getByLabel("Owner code")).toBeVisible();
   expect(failedResponses, "the owner journey must not hide a server error behind rendered controls").toEqual([]);
+});
+
+
+// This fixture exercises the real HTTP/session wrapper and shipped registration
+// component. The synthetic passkey port proves browser navigation and fragment
+// handling, not PostgreSQL persistence, phone Face ID, or installed HTTPS.
+test("V101: a fresh browser opens the installer fragment and reaches registration without leaking URL secrets", async ({ browser }) => {
+  const code = "A".repeat(43), secret = "R".repeat(43);
+  const bundle = await build({ stdin: { contents: `import React from 'react';
+    import {createRoot} from 'react-dom/client';
+    import {PasskeyRegistration} from './private-app/app/setup/passkey-registration';
+    createRoot(document.getElementById('registration')).render(<PasskeyRegistration />);`,
+    loader: "tsx", resolveDir: process.cwd() }, bundle: true, write: false, platform: "browser", jsx: "automatic" });
+  const html = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+    <body><div id="registration"></div><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
+  const server = createServer();
+  const requests: Array<{ url: string; referer: string }> = [];
+  let app: ReturnType<typeof createMacLocalWebProcessV1> | undefined;
+  try {
+    await new Promise<void>((resolveListen, reject) => {
+      server.once("error", reject); server.listen(0, "127.0.0.1", resolveListen);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_listener_address_invalid");
+    const localOrigin = `http://127.0.0.1:${address.port}`;
+    const unavailable = async (): Promise<never> => { throw new Error("setup fixture must not touch database"); };
+    let inserted = 0, used = false;
+    app = createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:browser-setup",
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: localOrigin,
+        tenantId: "tenant:browser-setup", provider: "local", subject: "owner:browser-setup",
+        ownerCodeDigest: sha256Digest({ ownerCode: code }), sessionSeconds: 900 },
+      database: { client: { query: unavailable, transaction: unavailable, transactionWithPreCommitCheck: unavailable },
+        close: async () => {}, isAvailable: () => true },
+      passkeyRegistration: {
+        async options(input) {
+          expect(input.registrationSecret).toBe(secret);
+          expect(input.ownerSessionDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+          if (used) throw Object.assign(new Error("synthetic used-link refusal"), { code: "updater_registration_expired" });
+          return { publicKey: { challenge: "B".repeat(43), rp: { name: "Disposable setup", id: "127.0.0.1" },
+            user: { id: "U".repeat(43), name: "owner", displayName: "Owner" },
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+            authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" } } };
+        },
+        async insert(input) { expect(input.registrationSecret).toBe(secret); expect(input.comparisonCode).toMatch(/^[A-Z2-7]{6}$/);
+          used = true; inserted += 1; return { registered: true }; },
+      } });
+    const nodeHandler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
+      assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
+      handler: request => {
+        requests.push({ url: request.url, referer: request.headers.get("referer") ?? "" });
+        return app!.handle(request, () => new Response(html, { headers: { "content-type": "text/html" } }));
+      } });
+    server.on("request", (input, output) => { void nodeHandler.handle(input, output); });
+    for (const width of [390, 1280]) {
+      used = false;
+      const context = await browser.newContext({ viewport: { width, height: 844 } });
+      try {
+        expect(await context.cookies()).toEqual([]);
+        const page = await context.newPage();
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("WebAuthn.enable");
+        await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal",
+          hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
+        const link = `${localOrigin}/setup#code=${code}&reg=${secret}`;
+        const response = await page.goto(link);
+        expect(response!.status()).toBe(200);
+        await expect(page.getByRole("heading", { name: "Register Face ID" })).toBeVisible();
+        await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
+        expect(new URL(page.url()).hash).toBe("");
+        expect((await context.cookies()).some(cookie => cookie.name === "control_room_local_owner")).toBe(true);
+        await page.goto(link);
+        await expect(page.getByRole("alert")).toContainText("Registration stopped");
+        expect(new URL(page.url()).hash).toBe("");
+        await page.goto(`${localOrigin}/setup#code=${code}&reg=${secret}&extra=1`);
+        await expect(page.getByRole("alert")).toContainText("Registration stopped");
+      } finally { await context.close(); }
+    }
+    expect(inserted).toBe(2);
+    expect(requests.some(request => new URL(request.url).pathname === "/setup")).toBe(true);
+    for (const request of requests) {
+      expect(request.url).not.toContain(code); expect(request.url).not.toContain(secret);
+      expect(request.url).not.toContain("#"); expect(request.referer).not.toContain(code); expect(request.referer).not.toContain(secret);
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolveClose => server.close(() => resolveClose()));
+    await app?.close();
+  }
 });

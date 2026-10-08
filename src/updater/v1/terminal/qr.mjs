@@ -41,6 +41,7 @@ export function renderInitialPasskeyV1(input, terminal) {
   if (!terminal || typeof terminal.write !== "function") refuse("passkey_terminal_required");
   const url = initialPasskeyUrlV1(input);
   terminal.write(terminalQrTextV1(url));
+  terminal.write(`Owner code (${input.ownerCode.length} characters):\n${input.ownerCode}\n`);
   terminal.write(`Open this address if you cannot scan the QR code:\n${url}\n`);
   return Object.freeze({ mode: "initial", url });
 }
