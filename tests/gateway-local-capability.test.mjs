@@ -128,6 +128,7 @@ test("R1 signed gateway health accepts legacy target", async t => {
   await assert.rejects(checkGatewayHealthV1(input(f, server.port), f.runtime), /gateway_capability_refused/u,
     "manifest-listed missing declaration must refuse before request");
   assert.equal(server.seen.length, beforeMissing, "missing listed bytes cause zero health requests");
+  await preSwitchRefusal(t, f);
   // Legacy-on-manifest-absence: OLD installing R1 lists no declaration.
   const manifestPath = join(f.releaseRoot, "RELEASE_MANIFEST.json");
   const manifest = JSON.parse(await filesystem.readFile(manifestPath, "utf8"));
