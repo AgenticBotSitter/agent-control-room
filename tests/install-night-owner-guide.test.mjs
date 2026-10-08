@@ -174,10 +174,10 @@ test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corr
   assert.match(legacy, /six lines, one per role.*least privilege: ok/u);
 });
 
-test("V101 stopped Face ID recovery follows phone sign-in and the same browser", () => {
+test("V101 stopped Face ID recovery uses a QR and an owner code in any browser", () => {
   const row = guide.split("\n").find(line => line.startsWith("| Face ID setup fails,"));
   assert.ok(row, "the stopped Face ID journey has a recovery row");
-  assert.ok(row.includes("If no passkey has been registered, sign in on your phone with the owner code. Then, in Terminal, run `sudo control-room passkey add` and open its link in that same signed-in browser."));
+  assert.ok(row.includes("To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks."));
   assert.doesNotMatch(row, /do not run.*passkey add/iu);
   assert.ok(row.includes("Keep the Terminal message on screen."));
   assert.ok(row.includes("Do not retry or reload the stopped phone page."));

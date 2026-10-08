@@ -729,3 +729,37 @@ test("refusal codes print exactly as before the stop-line change", async () => {
   assert.equal(cliFailureMessageV1({ userMessage: "this commit is already installed", code: "x" }), "this commit is already installed");
   assert.equal(cliFailureMessageV1(undefined), "updater_cli_failed");
 });
+
+test("V101 passkey add prints a decodable QR before its link without reading the owner code", async () => {
+  const { default: jsQR } = await import("jsqr");
+  for (const mode of ["initial", "add"]) {
+    const output = [], secret = "R".repeat(43);
+    const authority = {
+      async listPasskeys() { return mode === "initial" ? [] : [{ number: 1 }]; },
+      async beginRegistration(input) { assert.equal(input.mode, mode);
+        return { registrationSecret: secret, expectedOrigin: "https://control-room.example.test" }; },
+      async completeRegistration(input) { assert.deepEqual(input, { registrationSecret: secret, typedCode: "ABC234" });
+        return { coolingOffUntil: mode === "initial" ? null : "2026-10-09T00:00:00.000Z", coolingOffNoticesEnqueued: true }; },
+    };
+    assert.equal(await runUpdaterCliV1(["passkey", "add"], { getuid: () => 0, passkeyAuthority: authority,
+      readComparisonCode: async () => "ABC234", stdout: text => output.push(text) }), 0);
+    const qrIndex = output.findIndex(text => /[█▀▄]/u.test(text));
+    assert.ok(qrIndex >= 0, "passkey add prints a terminal QR code");
+    const link = `https://control-room.example.test/setup#reg=${secret}&mode=${mode}`;
+    assert.equal(output[qrIndex + 1], `${link}\n`, "text link follows QR");
+    assert.equal(output[qrIndex + 2], "Scan this QR code with your phone's camera. If the page asks, enter the owner code.\n");
+    assert.ok(!output.join("").includes("Owner code ("), "passkey add has no owner code to print");
+    // Independent decoder reads the actual terminal block pixels, including the
+    // quiet zone. Expected URL is the literal authority input plus specified mode.
+    const lines = output[qrIndex].slice(0, -1).split("\n"), scale = 6, width = Math.max(...lines.map(line => line.length)) * scale,
+      height = lines.length * 2 * scale, pixels = new Uint8ClampedArray(width * height * 4).fill(255);
+    lines.forEach((line, row) => [...line].forEach((cell, col) => {
+      for (let half = 0; half < 2; half += 1) if (cell === "█" || cell === (half === 0 ? "▀" : "▄"))
+        for (let y = 0; y < scale; y += 1) for (let x = 0; x < scale; x += 1) {
+          const at = (((row * 2 + half) * scale + y) * width + col * scale + x) * 4;
+          pixels[at] = pixels[at + 1] = pixels[at + 2] = 0;
+        }
+    }));
+    assert.equal(jsQR(pixels, width, height)?.data, link, "phone decoder recovers the complete fragment URL");
+  }
+});

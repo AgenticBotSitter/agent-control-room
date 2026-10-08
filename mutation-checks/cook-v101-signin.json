@@ -57,7 +57,7 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "        + \"Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.\\n\");",
+    "find": "        + \"To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\\n\");",
     "replace": "        + \"Registration stopped.\\n\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='R2-08: repeating install' tests/installer-round2.test.mjs",
     "why": "Stopped install must explain the approved safe phone and same-browser recovery path."
@@ -78,10 +78,10 @@
   },
   {
     "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
-    "find": "If no passkey has been registered, sign in on your phone with the owner code. Then, in Terminal, run `sudo control-room passkey add` and open its link in that same signed-in browser.",
+    "find": "To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.",
     "replace": "Recovery stopped.",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
-    "why": "Lead Addendum 3 independently specifies phone owner-code sign-in, Terminal passkey add, and the same signed-in browser; both real guide and generated paste reader must retain that literal journey."
+    "why": "Lead Addendum 4 independently specifies Terminal passkey add, QR scan and an owner code if asked; both real guide and generated paste reader must retain that literal journey."
   },
   {
     "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
@@ -96,5 +96,47 @@
     "replace": "The link is ready.",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
     "why": "Lead Addendum 3 retains expiry and no-deletion cautions; the 30-minute value is independently corroborated by the unchanged passkey CLI contract."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (code === undefined && optionResponse.status === 401)",
+    "replace": "if (false && code === undefined && optionResponse.status === 401)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "Addendum 4 requires the same-page owner-code field on options 401; the named field assertion must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "body: JSON.stringify({ registrationSecret })",
+    "replace": "body: JSON.stringify({ registrationSecret: code === undefined ? registrationSecret : \"B\".repeat(43) })",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "Addendum 4 requires the original registration fragment across sign-in; independent literal secret assertion must fail on the resumed request."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "code.length !== 43 || /[&=\\s]|code/i.test(code)",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "Existing sign-in guidance independently requires the 43-character and extra-text message; wrong format assertion must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (working || controller.signal.aborted) return;",
+    "replace": "if (controller.signal.aborted) return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "50 simultaneous submits on a slow connection must issue one session request, using a literal count of one."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (!sessionResponse.ok)",
+    "replace": "if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "A refused owner-session POST must leave the code field and guidance; it must not advance registration."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "context.stdout(terminalQrTextV1(registrationUrl));",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"V101 passkey add prints\" tests/updater-cli-flip.test.mjs",
+    "why": "Addendum 4 requires a phone-decodable QR before the text URL; independently decoded URL and explicit block assertion must fail without rendering."
   }
 ]

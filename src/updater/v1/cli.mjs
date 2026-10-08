@@ -18,6 +18,7 @@ import {
   DEFAULT_CONTROL_ROOM_ROOT_V1, DEFAULT_CONTROL_ROOM_WEB_PORT_V1, installControlRoomV1, statusControlRoomV1,
   uninstallFreshControlRoomV1,
 } from "./install/installer.mjs";
+import { terminalQrTextV1 } from "./terminal/qr.mjs";
 import { readCodeV1 } from "./terminal/read-code.mjs";
 
 const WORDS_V1 = Object.freeze(("amber anchor apple arch arrow atlas badge bamboo beacon birch blue bolt brave brick brook "
@@ -414,7 +415,7 @@ try {
     if (result.passkey && result.passkey.status !== "registered") {
       context.stdout(`Not ready: Face ID is NOT set up (the passkey step stopped: ${result.passkey.reason}). `
         + `Control Room release ${result.version} is installed and current. Self-update is Off. `
-        + "Sign in on your phone with the owner code. Then run sudo control-room passkey add and open its link in the same browser.\n");
+        + "To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\n");
     } else context.stdout(`Ready: Control Room release ${result.version} is current. Self-update is Off.\n`);
     return 0;
   }
@@ -461,7 +462,10 @@ try {
           || typeof registration.expectedOrigin !== "string" && typeof registration.config?.expectedOrigin !== "string")
         throw updaterRefuseV1("updater_passkey_control_reply_refused");
       const expectedOrigin = registration.expectedOrigin ?? registration.config.expectedOrigin;
-      context.stdout(`${expectedOrigin}/setup#reg=${registration.registrationSecret}&mode=${mode}\n`);
+      const registrationUrl = `${expectedOrigin}/setup#reg=${registration.registrationSecret}&mode=${mode}`;
+      context.stdout(terminalQrTextV1(registrationUrl));
+      context.stdout(`${registrationUrl}\n`);
+      context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the owner code.\n");
       // The message is the only place the owner learns this passkey is live
       // tonight, so it is printed per mode rather than as one message with a
       // caveat: the INACTIVE case is the one that must not read as success.

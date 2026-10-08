@@ -483,10 +483,10 @@ test('the snapshot checksum reaches check-serve as the shell variable, never as 
   assert.match(output, /--checksum "\$LIVE_SNAPSHOT_SHA256"/u);
 });
 
-test('V101 generated live guidance follows stopped Face ID recovery in the signed-in browser', async () => {
+test('V101 generated live guidance follows stopped Face ID recovery through the QR in any browser', async () => {
   const output = await makeOwnerPasteFile(input);
   const live = output.split(": '11.")[1].split(": '12.")[0];
-  assert.ok(live.includes('If no passkey has been registered, sign in on your phone with the owner code. Then, in Terminal, run `sudo control-room passkey add` and open its link in that same signed-in browser.'));
+  assert.ok(live.includes('To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.'));
   assert.doesNotMatch(live, /do not run.*passkey add/iu);
   assert.ok(live.includes('Keep the Terminal message on screen.'));
   assert.ok(live.includes('Do not retry or reload the stopped phone page.'));

@@ -119,3 +119,87 @@ test("R5G Mac signs in separately with the long code from the original installer
   const html = await renderLocalOwnerSignInPageV1().text();
   assert.match(html, /Owner code/); assert.match(html, /Sign in/);
 });
+
+// These responses are synthetic protocol fixtures. Real session/cookie issuance
+// is covered separately by the in-test-server browser journey.
+for (const scenario of ["fresh", "session", "forbidden", "expired", "limited", "dropped", "interrupted"])
+  test(`V101 recovery ${scenario} preserves registration authority on the setup page`, async t => {
+    const dom = new JSDOM('<div id="root"></div>', { url: `https://control-room.example.test/setup#reg=${secret}&mode=initial`,
+      pretendToBeVisual: true });
+    const prior = { window: globalThis.window, document: globalThis.document, navigator: globalThis.navigator,
+      history: globalThis.history, fetch: globalThis.fetch,
+      act: (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT };
+    Object.assign(globalThis, { window: dom.window, document: dom.window.document, history: dom.window.history });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+    Object.defineProperty(dom.window.navigator, "credentials", { configurable: true, value: { create: async () => null } });
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    let mounted = true;
+    t.after(async () => {
+      if (mounted) await act(async () => root.unmount());
+      dom.window.close();
+      Object.assign(globalThis, { window: prior.window, document: prior.document, history: prior.history, fetch: prior.fetch });
+      Object.defineProperty(globalThis, "navigator", { configurable: true, value: prior.navigator });
+      Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: prior.act });
+    });
+    const requests: Array<{ path: string; body: any; hash: string }> = [];
+    const sessionCode = "B".repeat(43);
+    let signedIn = scenario === "session", release: (() => void) | undefined, pendingSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (input, init) => {
+      const path = String(input), body = JSON.parse(String(init?.body));
+      requests.push({ path, body, hash: dom.window.location.hash });
+      if (path.endsWith("local-owner-session")) {
+        if (body.ownerCode !== sessionCode) return Response.json({ error: "authentication_required" }, { status: 401 });
+        await new Promise<void>(resolve => { release = resolve; });
+        signedIn = true; return Response.json({ authenticated: true }, { status: 201 });
+      }
+      assert.equal(body.registrationSecret, secret, "registration fragment is retained across sign-in");
+      if (scenario === "dropped") throw new TypeError("synthetic dropped connection");
+      if (scenario === "interrupted") {
+        pendingSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => pendingSignal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+      }
+      if (scenario === "forbidden" || scenario === "expired") return Response.json({}, { status: scenario === "forbidden" ? 403 : 410 });
+      if (scenario === "limited") return Response.json({}, { status: 429, headers: { "retry-after": "37" } });
+      if (!signedIn) return Response.json({ error: "authentication_required" }, { status: 401 });
+      return Response.json({ publicKey: { challenge: b64(buffer(32, 3)), user: { id: b64(buffer(32, 4)) } } });
+    }) as typeof fetch;
+    await act(async () => root.render(createElement(PasskeyRegistration)));
+    assert.equal(dom.window.location.hash, "", "fragment is removed before requests");
+    assert.ok(requests.every(request => request.hash === ""));
+    if (scenario === "interrupted") {
+      await act(async () => root.unmount()); mounted = false;
+      assert.equal(pendingSignal?.aborted, true, "unmount aborts the pending options request"); return;
+    }
+    if (scenario !== "fresh") {
+      assert.equal(dom.window.document.querySelector('input[name="ownerCode"]'), null, "only unauthenticated options asks for a code");
+      assert.match(dom.window.document.body.textContent ?? "", scenario === "limited" ? /Too many tries — wait 37 seconds/ : /Registration stopped/);
+      assert.equal(requests.length, 1); return;
+    }
+    assert.ok(dom.window.document.querySelector('input[name="ownerCode"]'), "unauthenticated setup offers an owner-code field on the same page");
+    const submit = async (code: string, burst = 1) => {
+      const field = dom.window.document.querySelector('input[name="ownerCode"]') as HTMLInputElement;
+      assert.ok(field, "owner-code field remains available after a refused attempt");
+      field.value = code;
+      await act(async () => {
+        for (let n = 0; n < burst; n += 1) field.form!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+      });
+    };
+    const guidance = "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.";
+    for (const code of ["ABC234", "&" + "C".repeat(42), "code" + "C".repeat(39), "C".repeat(21) + " " + "C".repeat(21)]) {
+      await submit(code);
+      assert.ok(dom.window.document.body.textContent?.includes(guidance), "wrong code format shows the sign-in page's extra-text guidance");
+    }
+    await submit("C".repeat(43));
+    assert.ok(dom.window.document.body.textContent?.includes("Sign-in was not accepted. Check your owner code and try again."));
+    const before = requests.length;
+    await submit(` ${sessionCode} `, 50);
+    assert.equal(requests.length, before + 1, "50 concurrent submits issue one owner-session request while the connection is slow");
+    assert.deepEqual(requests.at(-1)!.body, { ownerCode: sessionCode }, "only one outside space is trimmed");
+    await act(async () => { release!(); });
+    assert.equal(requests.length, before + 2, "successful sign-in resumes registration options once");
+    assert.equal(requests.at(-1)!.path, "/api/v1/passkeys/registration/options");
+    assert.deepEqual(requests.at(-1)!.body, { registrationSecret: secret }, "registration fragment is retained across sign-in");
+    assert.equal(dom.window.location.pathname, "/setup", "sign-in never redirects to Projects");
+    assert.equal(dom.window.location.hash, "");
+  });

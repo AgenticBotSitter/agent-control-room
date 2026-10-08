@@ -1,8 +1,8 @@
 "use client";
 
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
-type RegistrationState = Readonly<{ status: "absent" | "working" | "ready" | "failed" | "limited"; code?: string; retryAfterSeconds?: number }>;
+type RegistrationState = Readonly<{ status: "absent" | "working" | "ready" | "failed" | "limited" | "sign-in"; code?: string; retryAfterSeconds?: number; message?: string }>;
 
 class RegistrationAttemptLimitError extends Error {
   constructor(readonly retryAfterSeconds: number) { super("owner_attempt_limit"); }
@@ -74,6 +74,7 @@ async function comparisonCode(credentialId: string): Promise<string> {
 /** Fragment secrets are copied once and removed before any network request or WebAuthn prompt. */
 export function PasskeyRegistration() {
   const [state, setState] = useState<RegistrationState>({ status: "absent" });
+  const signIn = useRef<((code: string) => void) | null>(null);
   useLayoutEffect(() => {
     if (!window.location.hash) return;
     if (window.location.hash.length > 1024) {
@@ -92,49 +93,82 @@ export function PasskeyRegistration() {
       setState({ status: "failed" }); return;
     }
     const controller = new AbortController(); setState({ status: "working" });
-    void (async () => {
-      if (ownerCode) {
-        const signIn = await fetch("/api/v1/local-owner-session", { method: "POST", credentials: "same-origin",
-          cache: "no-store", redirect: "error", signal: controller.signal, headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ownerCode }) });
-        if (!signIn.ok) throw new Error("sign_in_refused");
-      }
-      const optionResponse = await fetch("/api/v1/passkeys/registration/options", { method: "POST",
-        credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal,
-        headers: { "content-type": "application/json" }, body: JSON.stringify({ registrationSecret }) });
-      requireRegistrationResponse(optionResponse, "registration_options_refused");
-      const options = await optionResponse.json();
-      let authorizationAssertion: ReturnType<typeof responseJson> | null = null;
-      if (options.authorization?.allowCredentials?.length) {
-        try {
-          const existing = await navigator.credentials.get({ publicKey: publicKeyRequest(options.authorization),
-            signal: controller.signal }) as PublicKeyCredential | null;
-          if (existing) authorizationAssertion = responseJson(existing);
-        } catch (error) {
-          if (controller.signal.aborted) throw error;
-          // Continuing without the old passkey is safe: the updater records the
-          // new credential inactive for 24 hours. Item 21 will deliver the two
-          // notice rows that are recorded for a future sender.
+    let working = false;
+    const run = (code?: string) => {
+      if (working || controller.signal.aborted) return;
+      working = true; setState({ status: "working" });
+      void (async () => {
+        if (code !== undefined) {
+          const sessionResponse = await fetch("/api/v1/local-owner-session", { method: "POST", credentials: "same-origin",
+            cache: "no-store", redirect: "error", signal: controller.signal, headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ownerCode: code }) });
+          if (!sessionResponse.ok) {
+            const message = sessionResponse.status === 403
+              ? "Sign-in is paused after too many attempts. Wait one minute before trying again."
+              : sessionResponse.status === 401
+                ? code.length !== 43 || /[&=\s]|code/i.test(code)
+                  ? "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link."
+                  : "Sign-in was not accepted. Check your owner code and try again."
+                : "Control Room could not sign you in. Try again when the service is available.";
+            if (!controller.signal.aborted) setState({ status: "sign-in", message });
+            return;
+          }
         }
-      }
-      const created = await navigator.credentials.create({ publicKey: publicKeyCreation(options.publicKey),
-        signal: controller.signal }) as PublicKeyCredential | null;
-      if (!created) throw new Error("registration_cancelled");
-      const response = responseJson(created), code = await comparisonCode(response.id);
-      const inserted = await fetch("/api/v1/passkeys/registration", { method: "POST", credentials: "same-origin",
-        cache: "no-store", redirect: "error", signal: controller.signal, headers: { "content-type": "application/json" },
-        body: JSON.stringify({ registrationSecret, comparisonCode: code, response, authorizationAssertion }) });
-      requireRegistrationResponse(inserted, "registration_insert_refused");
-      setState({ status: "ready", code });
-    })().catch(error => {
-      if (!controller.signal.aborted) setState(error instanceof RegistrationAttemptLimitError
-        ? { status: "limited", retryAfterSeconds: error.retryAfterSeconds } : { status: "failed" });
-    });
-    return () => controller.abort();
+        const optionResponse = await fetch("/api/v1/passkeys/registration/options", { method: "POST",
+          credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal,
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ registrationSecret }) });
+        if (code === undefined && optionResponse.status === 401) {
+          if (!controller.signal.aborted) setState({ status: "sign-in" });
+          return;
+        }
+        requireRegistrationResponse(optionResponse, "registration_options_refused");
+        const options = await optionResponse.json();
+        let authorizationAssertion: ReturnType<typeof responseJson> | null = null;
+        if (options.authorization?.allowCredentials?.length) {
+          try {
+            const existing = await navigator.credentials.get({ publicKey: publicKeyRequest(options.authorization),
+              signal: controller.signal }) as PublicKeyCredential | null;
+            if (existing) authorizationAssertion = responseJson(existing);
+          } catch (error) {
+            if (controller.signal.aborted) throw error;
+            // Continuing without the old passkey is safe: the updater records the
+            // new credential inactive for 24 hours. Item 21 will deliver the two
+            // notice rows that are recorded for a future sender.
+          }
+        }
+        const created = await navigator.credentials.create({ publicKey: publicKeyCreation(options.publicKey),
+          signal: controller.signal }) as PublicKeyCredential | null;
+        if (!created) throw new Error("registration_cancelled");
+        const response = responseJson(created), displayCode = await comparisonCode(response.id);
+        const inserted = await fetch("/api/v1/passkeys/registration", { method: "POST", credentials: "same-origin",
+          cache: "no-store", redirect: "error", signal: controller.signal, headers: { "content-type": "application/json" },
+          body: JSON.stringify({ registrationSecret, comparisonCode: displayCode, response, authorizationAssertion }) });
+        requireRegistrationResponse(inserted, "registration_insert_refused");
+        setState({ status: "ready", code: displayCode });
+      })().catch(error => {
+        if (!controller.signal.aborted) setState(error instanceof RegistrationAttemptLimitError
+          ? { status: "limited", retryAfterSeconds: error.retryAfterSeconds } : { status: "failed" });
+      }).finally(() => { working = false; });
+    };
+    // Keep the already-cleared fragment in this effect's closure during sign-in.
+    signIn.current = code => run(code);
+    run(ownerCode ?? undefined);
+    return () => { signIn.current = null; controller.abort(); };
   }, []);
   if (state.status === "absent") return null;
   return <section className="private-panel" aria-labelledby="passkey-registration-title">
     <h2 id="passkey-registration-title">Register Face ID</h2>
+    {state.status === "sign-in" && <form onSubmit={event => {
+      event.preventDefault();
+      const code = String(new window.FormData(event.currentTarget).get("ownerCode") ?? "").replace(/^ | $/g, "");
+      signIn.current?.(code);
+    }}>
+      <p>Enter the owner code to continue Face ID setup on this page.</p>
+      <label htmlFor="setup-owner-code">Owner code</label>
+      <input id="setup-owner-code" name="ownerCode" type="password" autoComplete="off" required />
+      <button type="submit">Sign in and continue</button>
+      {state.message && <p role="alert">{state.message}</p>}
+    </form>}
     {state.status === "working" && <p role="status">Waiting for Face ID. Keep this page open.</p>}
     {state.status === "ready" && <><p>Type this code in the installer:</p>
       <p role="status" aria-label="Passkey comparison code"><strong>{state.code}</strong></p>

@@ -310,7 +310,9 @@ test("owner sends work to every connected bot on the real connector-only local w
 // This fixture exercises the real HTTP/session wrapper and shipped registration
 // component. The synthetic passkey port proves browser navigation and fragment
 // handling, not PostgreSQL persistence, phone Face ID, or installed HTTPS.
-test("V101: a fresh browser opens the installer fragment and reaches registration without leaking URL secrets", async ({ browser }) => {
+for (const includeOwnerCode of [true, false]) test(includeOwnerCode
+  ? "V101: a fresh browser opens the installer fragment and reaches registration without leaking URL secrets"
+  : "V101: a fresh browser scans a reg-only QR and signs in on setup without losing registration", async ({ browser }) => {
   const code = "A".repeat(43), secret = "R".repeat(43);
   const bundle = await build({ stdin: { contents: `import React from 'react';
     import {createRoot} from 'react-dom/client';
@@ -368,10 +370,22 @@ test("V101: a fresh browser opens the installer fragment and reaches registratio
         await cdp.send("WebAuthn.enable");
         await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal",
           hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
-        const link = `${localOrigin}/setup#code=${code}&reg=${secret}`;
+        const link = includeOwnerCode ? `${localOrigin}/setup#code=${code}&reg=${secret}`
+          : `${localOrigin}/setup#reg=${secret}&mode=initial`;
         const response = await page.goto(link);
         expect(response!.status()).toBe(200);
         await expect(page.getByRole("heading", { name: "Register Face ID" })).toBeVisible();
+        if (!includeOwnerCode) {
+          await expect(page.getByLabel("Owner code")).toBeVisible();
+          expect(new URL(page.url()).hash).toBe("");
+          expect(await context.cookies()).toEqual([]);
+          await page.getByLabel("Owner code").fill("ABC234");
+          await page.getByRole("button", { name: "Sign in and continue" }).click();
+          await expect(page.getByRole("alert")).toHaveText("Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.");
+          expect(new URL(page.url()).pathname).toBe("/setup");
+          await page.getByLabel("Owner code").fill(code);
+          await page.getByRole("button", { name: "Sign in and continue" }).click();
+        }
         await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(/^[A-Z2-7]{6}$/);
         expect(new URL(page.url()).hash).toBe("");
         expect((await context.cookies()).some(cookie => cookie.name === "control_room_local_owner")).toBe(true);
