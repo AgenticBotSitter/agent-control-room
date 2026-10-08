@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -1060,6 +1060,47 @@ test("unlock removes only a stale empty profile lock after excluding live conten
   assert.equal(results.filter(result => result.status === "rejected").length, 19);
   for (const result of results.filter(result => result.status === "rejected"))
     assert.match(result.reason?.message ?? "", /Another unlock check|No credential lock exists/u);
+});
+
+test("unlock rejects replacement without birthtime and retries after interruption (synthetic metadata)", async t => {
+  const homeDir = await temporary(t, "connector-unlock-no-birthtime-"), name = "wedged";
+  const paths = connector.connectorInstallPaths({ homeDir, platform: "linux", env: {}, name });
+  const lockPath = `${paths.configPath}.rotate.lock`, old = new Date(Date.now() - 60_000);
+  const options = { name, homeDir, platform: "linux", env: {}, staleMs: 1 };
+  // Synthetic metadata: only birthtime is unavailable. Real open descriptors,
+  // replacement, directory reads and removal still exercise the filesystem.
+  const probe = await open(homeDir, "r");
+  const prototype = Object.getPrototypeOf(probe), originalStat = prototype.stat;
+  await probe.close();
+  t.mock.method(prototype, "stat", async function (...args) {
+    const info = await originalStat.apply(this, args);
+    info.birthtimeMs = 0;
+    info.birthtime = new Date(0);
+    return info;
+  });
+  await mkdir(lockPath, { recursive: true });
+  for (const restoreAge of [false, true]) {
+    await utimes(lockPath, old, old);
+    await assert.rejects(connector.unlockConnector({ ...options,
+      beforeRemovalCheck: async () => {
+        await rmdir(lockPath);
+        await mkdir(lockPath);
+        if (restoreAge) await utimes(lockPath, old, old);
+      },
+    }), /changed while unlock was checking/u, "replacement must survive even without birthtime");
+    assert.equal((await stat(lockPath)).isDirectory(), true);
+    assert.deepEqual(await readdir(lockPath), []);
+    assert.deepEqual((await readdir(dirname(lockPath))).filter(entry => entry.includes(".unlock-")), []);
+  }
+  await utimes(lockPath, old, old);
+  await assert.rejects(connector.unlockConnector({ ...options,
+    beforeRemovalCheck: async () => { throw new Error("probe interrupted before removal"); },
+  }), /probe interrupted before removal/u);
+  assert.equal((await stat(lockPath)).isDirectory(), true);
+  assert.deepEqual((await readdir(dirname(lockPath))).filter(entry => entry.includes(".unlock-")), []);
+  assert.deepEqual(await connector.unlockConnector(options), { unlocked: name });
+  await assert.rejects(stat(lockPath), error => error.code === "ENOENT");
+  await assert.rejects(connector.unlockConnector(options), /No credential lock exists/u);
 });
 
 test("a reused live PID does not preserve a dead owner generation", async t => {
