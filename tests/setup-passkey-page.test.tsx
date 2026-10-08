@@ -437,10 +437,14 @@ test("V101 R1 browser fixture uses a WebAuthn hostname and a new document for re
 
 // Reviewer S6/S6b/S6c: the actual layout's skip link changes the fragment.
 // Synthetic credential/options replies isolate that lifecycle; no DB proof.
-for (const stage of ["ready", "credential", "absent"]) test(`V101 R5 skip link preserves ${stage} registration`, async t => {
-  const initialHash = `#reg=${secret}`;
+for (const scenario of ["ready", "credential", "absent", "reopen-ready", "reopen-credential", "anchor-load"]) test(
+  scenario.startsWith("reopen-") ? `V101 R6 identical reopen clears URL in ${scenario.slice(7)} registration`
+    : scenario === "anchor-load" ? "V101 N9 plain anchor reload stays without registration"
+      : `V101 R5 skip link preserves ${scenario} registration`, async t => {
+  const stage = scenario === "anchor-load" ? "absent" : scenario.replace("reopen-", "");
+  const initialHash = `#code=${ownerCode}&reg=${secret}`;
   const dom = new JSDOM('<a href="#private-main">Skip to content</a><main id="private-main"><div id="root"></div></main>',
-    { url: `https://control-room.example.test/setup${stage === "absent" ? "" : initialHash}` });
+    { url: `https://control-room.example.test/setup${scenario === "anchor-load" ? "#private-main" : stage === "absent" ? "" : initialHash}` });
   const keys = ["window", "document", "history", "navigator", "fetch", "IS_REACT_ACT_ENVIRONMENT", "AuthenticatorAttestationResponse"];
   const prior = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   class Attestation { clientDataJSON = buffer(32, 1); attestationObject = buffer(64, 2); getTransports() { return ["internal"]; } }
@@ -467,6 +471,12 @@ for (const stage of ["ready", "credential", "absent"]) test(`V101 R5 skip link p
   });
   const settle = async () => { for (let n = 0; n < 20; n++) await act(async () => new Promise<void>(done => setImmediate(done))); };
   await act(async () => root.render(createElement(PasskeyRegistration)));
+  if (scenario === "anchor-load") {
+    assert.equal(dom.window.location.hash, "#private-main", "N9: ordinary anchor survives mount");
+    assert.equal(dom.window.document.querySelector("section"), null, "N9: plain anchor reload must not show Registration stopped");
+    assert.deepEqual(requests, [], "N9: ordinary anchor never starts requests");
+    return;
+  }
   const deadline = performance.now() + 5_000;
   while (stage !== "absent" && !(stage === "credential" ? creates === 1 : dom.window.document.querySelector('[aria-label="Passkey comparison code"]'))) {
     assert.ok(performance.now() < deadline, "initial registration reaches its observable stage");
@@ -498,6 +508,13 @@ for (const stage of ["ready", "credential", "absent"]) test(`V101 R5 skip link p
   for (let n = 0; n < 50; n++) { await changeHash(`#anchor-${n}`); unchanged(); }
   if (stage !== "absent") {
     await changeHash(initialHash); unchanged();
+    if (scenario.startsWith("reopen-")) {
+      assert.equal(dom.window.location.hash, "", "R6: identical reopen removes fragment secrets from URL");
+      for (let n = 0; n < 50; n++) {
+        await changeHash(initialHash); unchanged();
+        assert.equal(dom.window.location.hash, "", "R6: repeated reopen removes fragment secrets from URL");
+      }
+    }
     assert.equal(creates, 1, "R5: identical registration fragment never restarts Face ID");
   }
   if (stage === "credential") {

@@ -295,8 +295,8 @@
   },
   {
     "file": "private-app/app/setup/passkey-registration.tsx",
-    "find": "      if (nextFragment === currentFragment) return;",
-    "replace": "      // MUTATION: replay the identical active fragment.",
+    "find": "      if (nextFragment === currentFragment) {",
+    "replace": "      if (false) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R5 skip link preserves ready registration\" tests/setup-passkey-page.test.tsx",
     "why": "The same consumed registration fragment must not restart credentials or requests."
   },
@@ -306,5 +306,19 @@
     "replace": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(100);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"R7W-01: limiter itself retains exact-Origin defence before reserving\" tests/website-round7.test.ts",
     "why": "The documented ten-attempt authentication ceiling is independent of observed admission. The existing named limiter unit admits ten requests then requires owner_attempt_limit on request eleven. Disabling only that ceiling must fail the named assertion; the separate browser limiter journey proves the visible HTTP refusal and wait message. Mutation CI does not install Chromium."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      if (nextFragment === currentFragment) {\n        history.replaceState(null, \"\", `${window.location.pathname}${window.location.search}`);",
+    "replace": "      if (nextFragment === currentFragment) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R6 identical reopen clears URL in ready registration\" tests/setup-passkey-page.test.tsx",
+    "why": "R6: independently required empty browser hash must fail when identical-reopen URL clearing is disabled; code and request state stay intact."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "    if (!window.location.hash.includes(\"=\") && document.getElementById(window.location.hash.slice(1))) return;",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 N9 plain anchor reload stays without registration\" tests/setup-passkey-page.test.tsx",
+    "why": "N9: the layout anchor must survive mount without registration state or requests. Literal #private-main, absent section and zero requests are independent expectations."
   }
 ]

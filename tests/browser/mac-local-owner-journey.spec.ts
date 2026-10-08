@@ -456,6 +456,13 @@ async function runSetupJourney(browser: Browser, includeOwnerCode: boolean, widt
         expect(inserted, "replay must not insert a second credential").toBe(1);
         expect(new URL(page.url()).hash).toBe("");
       } else {
+        // Reviewer S6f: reopening the identical link keeps state but clears secrets.
+        const beforeReopen = await page.getByRole("status", { name: "Passkey comparison code" }).textContent();
+        const beforeRequests = requests.length;
+        await page.goto(link);
+        await expect.poll(() => new URL(page.url()).hash, "R6: identical reopen removes fragment secrets from URL").toBe("");
+        await expect(page.getByRole("status", { name: "Passkey comparison code" })).toHaveText(beforeReopen!);
+        expect(requests.length, "R6: identical reopen starts no new requests").toBe(beforeRequests);
         // S6: the first focusable layout link must preserve the displayed code.
         const comparison = page.getByRole("status", { name: "Passkey comparison code" });
         const beforeSkip = await comparison.textContent();
@@ -481,6 +488,11 @@ async function runSetupJourney(browser: Browser, includeOwnerCode: boolean, widt
         await page.goto(`${localOrigin}/setup`);
         await skipContent();
         await expect(page.getByRole("heading", { name: "Register Face ID" })).toHaveCount(0);
+        await expect(page.getByRole("alert")).toHaveCount(0);
+        // Reviewer S6d: a reload after using the skip link is still plain setup.
+        await page.reload();
+        await expect(page).toHaveURL(/#private-main$/);
+        await expect(page.getByRole("heading", { name: "Register Face ID" }), "N9: plain anchor reload stays without registration").toHaveCount(0);
         await expect(page.getByRole("alert")).toHaveCount(0);
         // S6b: hold the credential boundary, then click the real layout link.
         used.delete(nextSecret);

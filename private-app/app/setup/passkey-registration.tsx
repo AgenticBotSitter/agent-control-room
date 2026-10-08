@@ -85,6 +85,7 @@ export function PasskeyRegistration() {
       history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       setState({ status: "failed" }); return;
     }
+    if (!window.location.hash.includes("=") && document.getElementById(window.location.hash.slice(1))) return;
     currentFragment = window.location.hash;
     const fragment = window.location.hash.slice(1);
     history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
@@ -185,7 +186,10 @@ export function PasskeyRegistration() {
     const onHashChange = () => {
       const nextFragment = window.location.hash;
       if (!new URLSearchParams(nextFragment.slice(1)).has("reg")) return;
-      if (nextFragment === currentFragment) return;
+      if (nextFragment === currentFragment) {
+        history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        return;
+      }
       stop?.();
       setState({ status: "absent" });
       stop = start();
