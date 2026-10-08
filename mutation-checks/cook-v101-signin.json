@@ -304,7 +304,7 @@
     "file": "src/web/v1/local-owner-session.ts",
     "find": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(10);",
     "replace": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(100);",
-    "test": "pnpm exec playwright test tests/browser/mac-local-owner-journey.spec.ts --grep=\"V101: setup refuses the eleventh authentication attempt\"",
-    "why": "The documented ten-attempt authentication ceiling is independent of the observed response. The named real-browser limiter test must fail its literal eleventh-attempt HTTP 429 assertion when the ceiling is disabled; separate sign-in failure limits stay intact."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"R7W-01: limiter itself retains exact-Origin defence before reserving\" tests/website-round7.test.ts",
+    "why": "The documented ten-attempt authentication ceiling is independent of observed admission. The existing named limiter unit admits ten requests then requires owner_attempt_limit on request eleven. Disabling only that ceiling must fail the named assertion; the separate browser limiter journey proves the visible HTTP refusal and wait message. Mutation CI does not install Chromium."
   }
 ]
