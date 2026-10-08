@@ -60,7 +60,7 @@
     "find": "        + \"To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\\n\");",
     "replace": "        + \"Registration stopped.\\n\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='R2-08: repeating install' tests/installer-round2.test.mjs",
-    "why": "Stopped install must explain the approved safe phone and same-browser recovery path."
+    "why": "Stopped install must explain the approved QR scan and same-page owner-code recovery path."
   },
   {
     "file": "src/web/v1/local-owner-session.ts",
