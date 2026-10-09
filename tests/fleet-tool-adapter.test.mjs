@@ -153,17 +153,22 @@ const timer = setInterval(() => {
 });
 
 test("readiness barrier refuses partial PID and heartbeat files", async t => {
-  for (const [name, partialPid, partialHeartbeat] of [
-    ["partial PID", true, false], ["partial heartbeat", false, true], ["both partial", true, true],
+  for (const [name, partialPid, partialHeartbeat, expectedPublications] of [
+    ["partial PID", true, false, [2, 1]], ["partial heartbeat", false, true, [1, 2]], ["both partial", true, true, [2, 2]],
   ]) await t.test(name, async sub => {
-    const dir = await workspace(sub), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat"), started = join(dir, "partial-started");
+    const dir = await workspace(sub), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat"), started = join(dir, "partial-started"), completed = join(dir, "partial-completed");
     const script = await executable(dir, `import { writeFileSync } from "node:fs";
+  const publications = [0, 0];
+  const publish = (index, path, value) => { writeFileSync(path, value); publications[index] += 1; };
   process.once("SIGUSR2", () => {
-    writeFileSync(${JSON.stringify(marker)}, String(process.pid));
-    writeFileSync(${JSON.stringify(heartbeat)}, "ready");
+    // Complete only partial fields: rewriting ready content can truncate it
+    // after the reader has already observed a valid PID/heartbeat pair.
+    if (${JSON.stringify(partialPid)}) publish(0, ${JSON.stringify(marker)}, String(process.pid));
+    if (${JSON.stringify(partialHeartbeat)}) publish(1, ${JSON.stringify(heartbeat)}, "ready");
+    writeFileSync(${JSON.stringify(completed)}, JSON.stringify(publications));
   });
-  writeFileSync(${JSON.stringify(marker)}, ${JSON.stringify(partialPid)} ? "" : String(process.pid));
-  writeFileSync(${JSON.stringify(heartbeat)}, ${JSON.stringify(partialHeartbeat)} ? "" : "ready");
+  publish(0, ${JSON.stringify(marker)}, ${JSON.stringify(partialPid)} ? "" : String(process.pid));
+  publish(1, ${JSON.stringify(heartbeat)}, ${JSON.stringify(partialHeartbeat)} ? "" : "ready");
   writeFileSync(${JSON.stringify(started)}, String(process.pid)); process.stdin.resume();`);
     let handedOff = false, pid, observedPartial;
     const partialRead = new Promise(done => { observedPartial = done; });
@@ -181,6 +186,13 @@ test("readiness barrier refuses partial PID and heartbeat files", async t => {
       await new Promise(done => setImmediate(done));
       assert.equal(handedOff, false, "partial readiness files cannot release handoff before their real contents arrive");
     } finally { if (pid) process.kill(pid, "SIGUSR2"); await pending; }
+    let actualPublications;
+    await waitForToolState(async () => {
+      try { actualPublications = JSON.parse(await readFile(completed, "utf8")); return true; }
+      catch (error) { if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; return false; }
+    }, "the real child must acknowledge completed partial publication within the setup bound");
+    assert.deepEqual(actualPublications, expectedPublications,
+      "already-ready fixture content must never be republished after handoff");
     assert.equal(await readFile(marker, "utf8"), String(pid));
     assert.equal(await readFile(heartbeat, "utf8"), "ready");
   });

@@ -215,5 +215,33 @@
     "replace": "child.pid",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"cleanup refusal kills and reaps the whole prepared process group before removal\" tests/fleet-tool-adapter.test.mjs",
     "why": "Cleanup must kill the entire real process group, not only its parent."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "if (${JSON.stringify(partialPid)}) publish(0, ${JSON.stringify(marker)}, String(process.pid));",
+    "replace": "if (true) publish(0, ${JSON.stringify(marker)}, String(process.pid));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='readiness barrier refuses partial' tests/fleet-tool-adapter.test.mjs",
+    "why": "Real child publication counts must match independent case literals; unconditional partialPid completion must fail the named no-republication assertion."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "if (${JSON.stringify(partialHeartbeat)}) publish(1, ${JSON.stringify(heartbeat)}, \"ready\");",
+    "replace": "if (true) publish(1, ${JSON.stringify(heartbeat)}, \"ready\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='readiness barrier refuses partial' tests/fleet-tool-adapter.test.mjs",
+    "why": "Real child publication counts must match independent case literals; unconditional partialHeartbeat completion must fail the named no-republication assertion."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "    await waitForToolState(async () => {\n      try { actualPublications = JSON.parse(await readFile(completed, \"utf8\")); return true; }\n      catch (error) { if (error?.code !== \"ENOENT\" && !(error instanceof SyntaxError)) throw error; return false; }\n    }, \"the real child must acknowledge completed partial publication within the setup bound\");",
+    "replace": "    // mutation: omit the real completed-publication observation",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='readiness barrier refuses partial' tests/fleet-tool-adapter.test.mjs",
+    "why": "Removing the completed-publication observation must fail the independent literal publication-count assertion, with completed TAP."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "    assert.deepEqual(actualPublications, expectedPublications,\n      \"already-ready fixture content must never be republished after handoff\");",
+    "replace": "    // mutation: remove the independent publication-count oracle",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport {readFileSync,writeFileSync} from \"node:fs\";\nimport {spawnSync} from \"node:child_process\";\ntest(\"redundant fixture publication must fail its independent count oracle\",()=>{\n const path=\"tests/fleet-tool-adapter.test.mjs\",original=readFileSync(path,\"utf8\"); let result;\n try{\n  const changed=original.replace(\"if (${JSON.stringify(partialPid)}) publish(\",\"if (true) publish(\").replace(\"if (${JSON.stringify(partialHeartbeat)}) publish(\",\"if (true) publish(\");\n  assert.notEqual(changed,original,\"the real child publication intervention must load\");writeFileSync(path,changed);\n  result=spawnSync(process.execPath,[\"scripts/run-tests-with-quarantine.mjs\",\"--import\",\"tsx\",\"--test\",\"--test-concurrency=1\",\"--test-name-pattern=readiness barrier refuses partial\",\"tests/fleet-tool-adapter.test.mjs\"],{encoding:\"utf8\",timeout:30000,maxBuffer:1048576});\n }finally{writeFileSync(path,original);}\n assert.equal(result.signal,null,\"the publication intervention must finish normally\");\n assert.equal(result.status,1,\"redundant publication must fail the named independent count assertion\");\n assert.match(result.stdout,/already-ready fixture content must never be republished after handoff/u);\n assert.match(result.stdout,/^# tests 4$/mu);assert.match(result.stdout,/^# cancelled 0$/mu);assert.match(result.stdout,/^# skipped 0$/mu);assert.match(result.stdout,/^# todo 0$/mu);\n});'",
+    "why": "Disabling the independent real-child publication-count assertion must make the outer named redundant-publication refusal observer fail; no startup/timeout failure counts."
   }
 ]
