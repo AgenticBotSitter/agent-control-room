@@ -660,6 +660,11 @@ export class OwnerPushDispatcherV1 {
         [this.input.tenantId, head.action_inbox_id, spent, head.reserved_at]);
         const current = locked.rows[0];
         if (!current) return undefined; // A peer completed this exact receipt.
+        // Due selection is a snapshot shared by competing peers. A refused
+        // repair may have moved the deadline while this peer waited for the
+        // head lock; its current backoff must govern the next write attempt.
+        if (!owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))
+          return undefined;
         if (!owner && !current.completion_disposition && current.updated_at
           && new Date(current.updated_at).getTime() > Date.parse(now)-OWNER_PUSH_RESERVATION_STALE_MS_V1)
           return undefined; // An active sender advanced progress after our due read.

@@ -117,5 +117,12 @@
     "replace": "if (false)",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D08: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "A conflicting product-created ledger record cannot be silently accepted as repaired delivery."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (!owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))",
+    "replace": "if (false && !owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D16: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Existing literal30s/60s retry policy: after one peer publishes a future deadline, an old due snapshot must perform zero ledger writes. PG twin proves two production-login processes."
   }
 ]

@@ -456,18 +456,22 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
 
 function refuseLedger(f: DurableFixture, count: number | (()=>boolean)) {
   let writes=0;
+  const refuse = (sql: string) => {
+    if (/UPDATE owner_web_push_deliveries/.test(sql)) {
+      writes++;
+      if (typeof count === 'number' ? writes<=count : count())
+        throw Object.assign(new Error('completion_write_refused'),{code:'23514'});
+    }
+  };
   const db: DatabaseClient = { ...f.db,
+    query: async (sql,params) => { refuse(sql); return f.db.query(sql,params); },
     transaction: async body => f.db.transaction(tx=>body({ query: async (sql,params) => {
-      if (/UPDATE owner_web_push_deliveries/.test(sql)) {
-        writes++;
-        if (typeof count === 'number' ? writes<=count : count())
-          throw Object.assign(new Error('completion_write_refused'),{code:'23514'});
-      }
-      return tx.query(sql,params);
+      refuse(sql); return tx.query(sql,params);
     } })),
   };
   return { db, writes:()=>writes };
 }
+
 async function durableHead(f: DurableFixture) {
   return (await f.query("SELECT state,attempt_count,next_attempt_at,safe_reason_code FROM control_owner_push_attempt_heads ORDER BY action_inbox_id")).rows;
 }
@@ -797,4 +801,175 @@ durableTwin("WP-D15", "completion payload authority and retained-data downgrade"
   await f.exec(down);
   assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads")).rows[0].state,'delivered',
     'WP-D15 safe downgrade preserves terminal delivery evidence');
+});
+
+// Separate processes select the same durable receipt. The oracle is the
+// existing 30s/60s backoff contract, not a value computed by the dispatcher.
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+
+const REPAIR_RACE_WORKER = String.raw`
+import { Pool } from 'pg';
+import { bindPrivatePgPool } from './src/web/v1/private-pg-database.ts';
+import { OwnerPushDispatcherV1 } from './src/web-push/v1/dispatcher.ts';
+import { PostgresOwnerPushStoreV1 } from './src/web-push/v1/postgres-store.ts';
+const [input] = await new Promise(resolve => process.once('message', value => resolve([value])));
+const pool = bindPrivatePgPool(new Pool(input.connection));
+process.once('disconnect', () => { void pool.close().finally(() => process.exit(1)); });
+let repairWrites = 0, sends = 0;
+const wrap = tx => ({query: async (sql, params) => {
+  if (/UPDATE owner_web_push_deliveries/.test(sql)) repairWrites++;
+  return tx.query(sql, params);
+}});
+const db = {query: async (sql, params) => {
+  const result = await pool.client.query(sql, params);
+  if (/WHERE tenant_id=\$1 AND state='completing' AND next_attempt_at<=\$2/.test(sql)) {
+    const proceed = new Promise(resolve => process.once('message', resolve));
+    process.send({kind:'selected', rows:result.rows.length});
+    await proceed;
+  }
+  return result;
+},transaction: body => pool.client.transaction(tx => body(wrap(tx)))};
+try {
+  const who = await pool.client.query('SELECT session_user AS login');
+  let outcomes, refused = false;
+  try {outcomes = await new OwnerPushDispatcherV1({db, tenantId:input.tenant,
+    store:new PostgresOwnerPushStoreV1(db), clock:()=>input.at,
+    channel:{kind:'web-push', async send(){sends++;return {statusCode:201};}}
+  }).dispatch();} catch (error) {
+    if (error.message !== 'owner_push_completion_unavailable') throw error;
+    refused = true;
+  }
+  process.send({kind:'result', login:who.rows[0].login, repairWrites, sends, refused, outcomes});
+} catch {process.send({kind:'error'});process.exitCode=1;}
+finally {await pool.close();process.disconnect();}
+`;
+
+test("WP-D16: two repair processes respect a newly published backoff (PG)", {
+  skip: requiresRealPostgres() ? false : realPostgresSkipMessage(), timeout: 900_000,
+}, async () => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); admin.on("error", () => {}); await admin.connect();
+    const pool = webClient(postgres), tenant = "tenant:repair-race", at = Date.now();
+    const peers: { child: ReturnType<typeof spawn>; closed: Promise<unknown>; next: () => Promise<any> }[] = [];
+    try {
+      await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,'Repair race input')", [tenant]);
+      await admin.query(`INSERT INTO owner_web_push_subscriptions
+        (id,tenant_id,endpoint,p256dh,auth,created_at,updated_at)
+        VALUES($1,$2,'https://fcm.googleapis.com/fcm/send/repair-race','A','B',now(),now())`,
+      [`push:${"f".repeat(64)}`, tenant]);
+      await admin.query(`INSERT INTO control_action_inbox
+        (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+        VALUES('attention:repair-race',$1,'project:race','job:race','failure','open','not_requested',now(),'{}')`, [tenant]);
+      assert.equal((await pool.client.query("SELECT count(*)::int AS n FROM control_owner_push_attempt_heads")).rows[0].n, 0);
+      assert.equal((await pool.client.query("SELECT count(*)::int AS n FROM owner_web_push_deliveries")).rows[0].n, 0);
+      // Disposable server-side refusal; no product-owned head or ledger is seeded.
+      await admin.query(`CREATE FUNCTION refuse_repair_race() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW.tenant_id='tenant:repair-race' THEN
+          RAISE EXCEPTION 'disposable repair refusal' USING ERRCODE='42501';
+        END IF; RETURN NEW; END $$;
+        CREATE TRIGGER refuse_repair_race BEFORE UPDATE ON owner_web_push_deliveries
+          FOR EACH ROW EXECUTE FUNCTION refuse_repair_race()`);
+      let sends = 0;
+      await assert.rejects(() => new OwnerPushDispatcherV1({ db:pool.client, tenantId:tenant,
+        store:new PostgresOwnerPushStoreV1(pool.client), clock:()=>at,
+        channel:{kind:"web-push", async send(){sends++;return {statusCode:201};}},
+      }).dispatch(), /owner_push_completion_unavailable/);
+      assert.equal(sends, 1, "real producer creates one accepted synthetic receipt");
+      const read = async () => (await pool.client.query<any>(`SELECT state,attempt_count,
+        completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads WHERE tenant_id=$1`, [tenant])).rows[0];
+      const initial = await read();
+      assert.equal(initial.state, "completing"); assert.equal(initial.completion_retry_count, 1);
+      assert.equal(new Date(initial.next_attempt_at).getTime(), at+30_000);
+      for (let i=0;i<2;i++) {
+        const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", REPAIR_RACE_WORKER],
+          { stdio:["pipe", "pipe", "pipe", "ipc"] });
+        child.stdout!.resume(); child.stderr!.resume();
+        const closed = once(child, "close");
+        const queue:any[] = []; let pending:((message:any)=>void)|undefined;
+        child.on("message", message => { if(pending){const resolve=pending;pending=undefined;resolve(message);}else queue.push(message); });
+        const next = () => new Promise<any>((resolve,reject) => {
+          if(queue.length){resolve(queue.shift());return;}
+          const timer=setTimeout(()=>{pending=undefined;reject(new Error("repair_race_barrier_timeout"));},60_000);
+          pending=message=>{clearTimeout(timer);resolve(message);};
+        });
+        peers.push({child,closed,next});
+        child.send({ connection:privateRaceConnection(postgres.connection("web")), tenant, at:at+30_000 });
+      }
+      for(const peer of peers) assert.deepEqual(await peer.next(), {kind:"selected", rows:1},
+        "both separate processes reached the same observed due receipt");
+      peers[0].child.send({proceed:true});
+      const first = await peers[0].next();
+      assert.equal(first.kind,"result"); assert.equal(first.login,"control_room_web");
+      assert.equal(first.repairWrites,1); assert.equal(first.refused,true); assert.equal(first.sends,0);
+      const postponed = await read();
+      assert.equal(postponed.completion_retry_count,2);
+      assert.equal(new Date(postponed.next_attempt_at).getTime(),at+90_000,"literal second60s repair backoff");
+      peers[1].child.send({proceed:true});
+      const second = await peers[1].next();
+      assert.equal(second.kind,"result"); assert.equal(second.login,"control_room_web");
+      assert.equal(second.repairWrites,0,"WP-D16 stale selected repair must not bypass newly published backoff");
+      assert.equal(second.sends,0); assert.equal(second.refused,false); assert.deepEqual(second.outcomes,[]);
+      assert.deepEqual(await read(),postponed,"losing peer preserves the retry counter and deadline");
+      for(const peer of peers) {await peer.closed;assert.equal(peer.child.exitCode,0);}
+      await admin.query("DROP TRIGGER refuse_repair_race ON owner_web_push_deliveries; DROP FUNCTION refuse_repair_race()");
+      await new OwnerPushDispatcherV1({ db:pool.client,tenantId:tenant,store:new PostgresOwnerPushStoreV1(pool.client),
+        clock:()=>at+90_000,channel:{kind:"web-push",async send(){sends++;return {statusCode:201};}},
+      }).dispatch();
+      assert.equal((await read()).state,"delivered");assert.equal(sends,1,"healthy recovery only repairs; never resends acceptance");
+    } finally {
+      for(const peer of peers) {
+        peer.child.stdin?.end();
+        if(peer.child.exitCode===null && peer.child.signalCode===null) peer.child.kill("SIGKILL");
+        await peer.closed;
+      }
+      await pool.close();await admin.end();
+    }
+  }, { port:PUSH_PORT+11, allowedPorts:[PUSH_PORT+11], boundMs:900_000 });
+});
+
+function privateRaceConnection(connection: {host:string;port:number;database:string;user:string;password:string}) {
+  return {...privatePgOptions({ host:"127.0.0.1",port:connection.port,database:connection.database,
+    username:connection.user,password:connection.password,majorVersion:17 }),host:connection.host};
+}
+
+test("WP-D16: stale selected repair respects newly published backoff (synthetic)", async () => {
+  await durableFixture("synthetic",async f=>{
+    await durableInputs(f,1);
+    const fault=refuseLedger(f,()=>true);
+    let sends=0;
+    const channel:OwnerNotificationChannelV1={kind:"web-push",async send(){sends++;return{statusCode:201};}};
+    await assert.rejects(()=>durableDispatcher(f,channel,fault.db).dispatch(),/owner_push_completion_unavailable/);
+    const read=async()=> (await f.query("SELECT state,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+    assert.equal((await read()).completion_retry_count,1);
+    const peers=Array.from({length:2},()=>{
+      let release!:()=>void,selected!:()=>void;
+      const hold=new Promise<void>(resolve=>{release=resolve;});
+      const ready=new Promise<void>(resolve=>{selected=resolve;});
+      let writes=0;
+      const db:DatabaseClient={...f.db,query:async(sql,params)=>{
+        const result=await f.db.query(sql,params);
+        if(/WHERE tenant_id=\$1 AND state='completing' AND next_attempt_at<=\$2/.test(sql)) {
+          assert.equal(result.rows.length,1,"each peer observes the same due receipt");selected();await hold;
+        }
+        return result;
+      },transaction:body=>f.db.transaction(tx=>body({query:async(sql,params)=>{
+        if(/UPDATE owner_web_push_deliveries/.test(sql)){writes++;throw new Error("synthetic_ledger_refusal");}
+        return tx.query(sql,params);
+      }}))};
+      const running=durableDispatcher(f,channel,db,()=>f.at+30_000).dispatch();void running.catch(()=>{});
+      return {release,ready,running,writes:()=>writes};
+    });
+    try {
+      await Promise.all(peers.map(peer=>peer.ready));
+      peers[0].release();await assert.rejects(()=>peers[0].running,/owner_push_completion_unavailable/);
+      const postponed=await read();
+      assert.equal(postponed.completion_retry_count,2);
+      assert.equal(new Date(postponed.next_attempt_at).getTime(),f.at+90_000,"independent second60s backoff");
+      peers[1].release();await peers[1].running.catch(()=>{});
+      assert.equal(peers[1].writes(),0,"WP-D16 stale selected repair must not bypass newly published backoff");
+      assert.deepEqual(await peers[1].running,[]);
+      assert.deepEqual(await read(),postponed);assert.equal(sends,1);
+    } finally {for(const peer of peers)peer.release();await Promise.allSettled(peers.map(peer=>peer.running));}
+  });
 });
