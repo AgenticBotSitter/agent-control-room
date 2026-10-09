@@ -89,5 +89,12 @@
     "replace": "true",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
     "why": "M13: malformed children must fail closed at the documented refusal"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "readers.length > 0 && readers.every(node => typeof node[\"Relation Name\"] === \"string\"\n    && grownTables.includes(node[\"Relation Name\"])\n    && node[\"Relation Name\"] === readers[0]![\"Relation Name\"])",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON reader identity\" tests/result-file-growth-postgres.test.ts",
+    "why": "M14: disabling complete unmixed reader identity accepts the original missing-relation input"
   }
 ]

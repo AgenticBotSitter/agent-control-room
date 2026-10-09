@@ -127,6 +127,14 @@ function requireIndex(p: Plan, name: string, label: string) {
   `${label} reaches expected index ${name}:\n${p.lines.join("\n")}`);
 }
 function noGrownScan(p: Plan, label: string, broadRows?: number) {
+  // Table scans require relation identity even when it is absent from the JSON.
+  // Bitmap Index Scan identifies an index; its heap sibling identifies the table.
+  const readers = p.nodes.filter(node => node["Relation Name"] !== undefined
+    || (node["Node Type"].endsWith("Scan") && node["Node Type"] !== "Bitmap Index Scan"));
+  assert.ok(readers.length > 0 && readers.every(node => typeof node["Relation Name"] === "string"
+    && grownTables.includes(node["Relation Name"])
+    && node["Relation Name"] === readers[0]!["Relation Name"]),
+  `${label} has nonempty complete unmixed grown-table reader identities`);
   if (label === "0206 quota sum" && broadRows !== undefined) {
     quotaInputs(p, broadRows);
     return;
@@ -164,7 +172,8 @@ test("JSON growth oracle rejects selective scans and narrowly checks the broad q
     assert.throws(() => noGrownScan(broad, label, 2000), /does not scan a grown table/u, label);
   // A scan in the SECOND child must be found, even when the first child uses an index.
   const nested = make({ "Node Type": "Nested Loop", Plans: [
-    { "Node Type": "Index Scan", "Index Name": "control_result_file_sets_project" },
+    { "Node Type": "Index Scan", "Index Name": "control_result_file_sets_project",
+      "Relation Name": "control_result_file_sets" },
     { "Node Type": "Limit", Plans: [{ "Node Type": "Sort", Plans: [reader] }] }] });
   assert.throws(() => noGrownScan(nested, "owner catalog list"), /does not scan a grown table/u);
   requireIndex(nested, "control_result_file_sets_project", "catalog");
@@ -198,6 +207,41 @@ test("JSON growth oracle rejects selective scans and narrowly checks the broad q
   for (const value of [undefined, [], [{ Plan: {} }], [{ Plan: { "Node Type": "Aggregate", Plans: {} } }],
     [{ Plan: { "Node Type": "Aggregate", Plans: [null] } }]])
     assert.throws(() => readPlan(value), /required|array/u);
+});
+
+// Independent fail-closed contract: table readers must identify a grown table;
+// intermediary and bitmap-index nodes do not carry a table identity in PG JSON.
+test("JSON reader identity refuses missing, malformed and mixed growth readers", () => {
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  const reject = (root: PlanNode, reason: string) => assert.throws(
+    () => noGrownScan(make(root), "0206 selective quota sum"),
+    /nonempty complete unmixed grown-table reader identities/u, reason);
+  // Original L1-E074-01 input, with a literal expected refusal from the spec.
+  reject({ "Node Type": "Seq Scan", "Actual Rows": 1, "Actual Loops": 1 },
+    "a selective Seq Scan with missing relation identity must refuse, never silently pass");
+  reject({ "Node Type": "Result" }, "a reader-free selective plan must refuse");
+  for (const type of ["Seq Scan", "Index Scan", "Index Only Scan", "Bitmap Heap Scan"])
+    for (const identity of [undefined, null, "", " ", "control_result_file_sets ", 0, [], {}, "unrelated_table"])
+      reject({ "Node Type": type, "Relation Name": identity } as unknown as PlanNode,
+        `${type} must refuse incomplete or unrelated relation identity ${JSON.stringify(identity)}`);
+  const valid = { "Node Type": "Index Only Scan", "Relation Name": "control_result_file_sets",
+    "Index Name": "control_result_file_sets_quota" };
+  for (const invalid of [{ "Node Type": "Index Scan" },
+    { ...valid, "Relation Name": "unrelated_table" }, { ...valid, "Relation Name": null },
+    { ...valid, "Relation Name": "control_result_files" }])
+    reject({ "Node Type": "Aggregate", Plans: [valid,
+      { "Node Type": "Limit", Plans: [invalid as PlanNode] }] },
+    "a valid sibling must not hide a nested incomplete or mixed reader");
+  for (const root of [valid, { "Node Type": "Limit", Plans: [valid] },
+    { "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
+      Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }])
+    noGrownScan(make(root), "0206 selective quota sum");
+  // The broad exception cannot hide a malformed reader beside a valid one.
+  const broad = { "Node Type": "Aggregate", "Actual Rows": 1, "Actual Loops": 1,
+    Plans: [{ "Node Type": "Seq Scan", "Relation Name": "control_result_file_sets",
+      "Actual Rows": 2000, "Actual Loops": 1 }, { "Node Type": "Seq Scan" }] };
+  assert.throws(() => noGrownScan(make(broad), "0206 quota sum", 2000),
+    /nonempty complete unmixed grown-table reader identities/u, "broad exemption refuses incomplete readers too");
 });
 
 test("the catalog, the downloads and both cleanup reads stay index-backed at 10,000 files",
