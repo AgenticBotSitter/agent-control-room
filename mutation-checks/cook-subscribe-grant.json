@@ -26,5 +26,12 @@
     "replace": "  for (const [,table] of writes) void table;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
     "why": "CR-E075 upsert inventory refuses an unclassified future write must fail Missing expected exception when inventory admission is disabled."
+  },
+  {
+    "file": "db/migrations/0299_owner_web_push_subscription_update_grant.sql",
+    "find": "    EXECUTE 'GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web';",
+    "replace": "    NULL;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail the post-migration production-login subscribe assertion when the migration omits the grant on an installed earlier role."
   }
 ]

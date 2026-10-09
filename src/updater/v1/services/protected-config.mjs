@@ -54,6 +54,7 @@ const requiredDatabaseLogins = Object.freeze([
 // UNIQUE -- 165 entries on that tree -- and again for mr5o's 0290 (control_task_handoffs),
 // 166 entries. cook/10int10 moved it again for perf2's 0272/0273 (two read indexes), 168 entries, and for r5bk's 0285 (queue backup read), 169 entries; r6proj's production_table_grants.sql change moved it again.
 // cook/11int11 moved it again for r7lfix's 0298 (owner run allowance receipt read), 170 entries.
+// cook/subscribe-grant moved it again for 0299 (owner web push subscription update grant), 171 entries.
 // Every migration added above this
 // line moves this pin, and `tests/updater-ledger-pin.test.mjs` is what refuses a run
 // that forgot: a stale pin answers `nightly_backup_configuration_refused` at parse time.

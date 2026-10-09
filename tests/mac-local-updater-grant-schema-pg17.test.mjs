@@ -37,7 +37,8 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +51,15 @@ import { applyMacDatabaseUpgradeV1, planMacDatabaseUpgradeSnapshotV1 } from
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { macGrantCatalogSqlV1, macRolePlan } from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
+import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
+import { createMacLocalFirstOwnerManifestV1 } from "../scripts/mac-local/first-owner-manifest.mjs";
+import { applyMacLocalFirstOwnerV1 } from "../scripts/mac-local/first-owner-vps.mjs";
+import { CompletionGateStoreV1 } from "../src/completion-gate/v1/store.ts";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
+import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
+import { verifyPrivateDatabase } from "../src/web/v1/private-database-preflight.ts";
+import { PostgresOwnerPushStoreV1 } from "../src/web-push/v1/postgres-store.ts";
+import pg from "pg";
 import { PG_BIN, findFreePort, needsPg, requestedPort } from "./helpers/disposable-postgres-cluster.ts";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
@@ -350,4 +360,206 @@ test("as the migrator the REVOKE really would have been refused, so the filter i
     { extra: [`control_room_private_web|schema|${macUpdaterOwnedSchema}||USAGE|plain`], missing: [] }),
     /upgrade_updater_grant_refused/u);
   assert.deepEqual(statements, [], "the superuser path is refused before any statement is built");
+});
+
+// ---------------------------------------------------------------------------
+// CR-E075: a real installed database from the release BEFORE the subscription
+// update grant, upgraded through the real Mac upgrade path.
+//
+// The earlier install is rebuilt from bytes whose digests were CAPTURED from the
+// pinned base release (2e5c622a): the migration ledger without 0299 and the
+// private-web role file without its one new grant line. The two constants below
+// are those captured digests -- never read from the current ledger -- so a
+// derivation that drifted from the shipped base fails before anything installs.
+const BASE_LEDGER_DIGEST = "c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03";
+const BASE_PRIVATE_WEB_ROLES_SHA256 = "0d55c707ae143546c6a97b4939718cfd0b78fdf734336807f9aea60aca4ca548";
+const SUBSCRIPTION_GRANT = "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;\n";
+const UPGRADE_TENANT = "tenant:installed-upgrade";
+const UPGRADE_WORKSPACE = "workspace:installed-upgrade";
+const UPGRADE_SUBJECT = "installed-upgrade-owner";
+const subscription = (endpoint, n) => ({ id: "", tenantId: UPGRADE_TENANT, endpoint, p256dh: String.fromCharCode(65 + n).repeat(87),
+  auth: String.fromCharCode(97 + n).repeat(22), expiresAt: null });
+const subscriptionFields = row => ({ endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth, expiresAt: row.expiresAt });
+
+async function installedCluster(label) {
+  const root = await mkdtemp(join(tmpdir(), `acr-installed-${label}-`));
+  const cluster = { root, port: requestedPort() ?? await findFreePort(), socket: join(root, "s") };
+  await mkdir(cluster.socket, { mode: 0o700 });
+  cluster.teardown = createClusterTeardown({ dataDirectory: join(root, "pg"), runDirectory: root,
+    socketDirectory: cluster.socket, port: cluster.port, pgBin: PG_BIN, removeDirectories: false });
+  try {
+    exec("initdb", ["-D", join(root, "pg"), "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
+    await writeFile(join(root, "pg", "pg_hba.conf"), "local all postgres trust\nlocal all all trust\n"
+      + "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
+    exec("pg_ctl", ["-D", join(root, "pg"), "-l", join(root, "pg.log"), "-w", "-o",
+      `-p ${cluster.port} -k '${cluster.socket}' -c listen_addresses=127.0.0.1`, "start"]);
+    await cluster.teardown.capturePostmasterPid();
+  } catch (error) {
+    try { await cluster.teardown.stop(); } catch (stopError) {
+      throw new AggregateError([error, stopError], `cluster_start_and_teardown_failed:${error?.message ?? error}`);
+    }
+    throw error;
+  }
+  cluster.operator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=postgres`;
+  cluster.migratorPassword = `m${"k".repeat(39)}`;
+  cluster.migrator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=control_room_migrator password=${cluster.migratorPassword}`;
+  cluster.migrationEnv = { CONTROL_ROOM_MIGRATOR_PASSWORD: cluster.migratorPassword, CONTROL_ROOM_APP_PASSWORD: "a".repeat(40),
+    CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(40), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "i".repeat(40) };
+  exec("psql", ["-h", "127.0.0.1", "-p", String(cluster.port), "-U", "postgres", "-d", "postgres",
+    "-v", "dbname=control_room", "-v", "ON_ERROR_STOP=1", "-f", join(repoRoot, "deploy/postgres/provision-database.sql")]);
+  return cluster;
+}
+
+/** The base release's migration tree and ledger, checked against captured digests. */
+async function baseReleaseTree(directory) {
+  const current = await collectLedgerEntries(repoRoot);
+  const migration = current.find(entry => entry.file.includes("0299_owner_web_push_subscription_update_grant"));
+  assert.ok(migration, "the candidate ships migration 0299");
+  const entries = current.filter(entry => entry !== migration).map((entry, index) => ({ ...entry, order: index + 1 }));
+  assert.equal(ledgerDigest(entries), BASE_LEDGER_DIGEST, "the derived earlier ledger is byte-identical to the captured base ledger");
+  await cp(join(repoRoot, "db"), join(directory, "db"), { recursive: true });
+  await rm(join(directory, migration.file));
+  await mkdir(join(directory, "deploy/postgres"), { recursive: true });
+  await writeFile(join(directory, "deploy/postgres/migration-ledger.json"),
+    `${JSON.stringify({ version: 1, digest: BASE_LEDGER_DIGEST, entries }, null, 2)}\n`);
+  const roles = await readFile(join(repoRoot, "db/roles/private_web_roles.sql"), "utf8");
+  assert.ok(roles.includes(SUBSCRIPTION_GRANT), "the current role file carries the new grant");
+  const earlier = roles.replace(SUBSCRIPTION_GRANT, "");
+  assert.equal(createHash("sha256").update(earlier).digest("hex"), BASE_PRIVATE_WEB_ROLES_SHA256,
+    "the derived earlier role file is byte-identical to the captured base role file");
+  return { ledgerPath: join(directory, "deploy/postgres/migration-ledger.json"), rootDir: directory, roles, earlier };
+}
+
+const webLogin = (cluster, password) => {
+  const config = { host: "127.0.0.1", port: cluster.port, database: "control_room", username: "control_room_web", password, majorVersion: 17 };
+  const db = bindPrivatePgPool(new pg.Pool(privatePgOptions(config)));
+  return { db, config, store: new PostgresOwnerPushStoreV1(db.client) };
+};
+const subscriptionAcl = async client => ({
+  table: (await client.query(`SELECT r.rolname AS role, a.privilege_type AS privilege, a.is_grantable AS grantable
+    FROM pg_catalog.pg_class c CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+    JOIN pg_catalog.pg_roles r ON r.oid = a.grantee WHERE c.relname = 'owner_web_push_subscriptions' ORDER BY 1,2,3`)).rows,
+  columns: (await client.query(`SELECT r.rolname AS role, att.attname AS column, a.privilege_type AS privilege, a.is_grantable AS grantable
+    FROM pg_catalog.pg_attribute att JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+    CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
+    WHERE c.relname = 'owner_web_push_subscriptions' ORDER BY 1,2,3`)).rows,
+  structure: (await client.query(`SELECT a.attname AS column, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS required
+    FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+    WHERE c.relname = 'owner_web_push_subscriptions' AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`)).rows,
+  constraints: (await client.query(`SELECT con.conname AS name, pg_catalog.pg_get_constraintdef(con.oid) AS definition
+    FROM pg_catalog.pg_constraint con JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+    WHERE c.relname = 'owner_web_push_subscriptions' ORDER BY 1`)).rows,
+});
+
+test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 600_000 }, async () => {
+  const installed = await installedCluster("grant");
+  const stores = [];
+  const admin = connectTarget(installed.operator);
+  try {
+    // ---- the earlier release, installed through its own ledger and role file ----
+    const base = await baseReleaseTree(await mkdtemp(join(installed.root, "base-")));
+    await applyMigrations({ rootDir: base.rootDir, ledgerPath: base.ledgerPath, bootstrapTarget: installed.operator,
+      migrateTarget: installed.migrator, env: installed.migrationEnv });
+    await admin.connect();
+    for (const role of [...Object.keys(macRolePlan), ...new Set(Object.values(macRolePlan))])
+      await admin.query(`DROP ROLE IF EXISTS ${role}`);
+    const passwords = Object.fromEntries(Object.keys(macRolePlan).map((login, index) => [login, `pw${index}`.padEnd(40, "z")]));
+    // The earlier release's role file reaches the real provisioner through its normal read.
+    const earlierClient = new Proxy(admin, { get: (target, property) => property === "query"
+      ? (sql, ...rest) => target.query(sql === base.roles ? base.earlier : sql, ...rest)
+      : (typeof target[property] === "function" ? target[property].bind(target) : target[property]) });
+    await provisionMacLocalNarrowRolesV1(earlierClient, passwords);
+
+    // ---- unrelated data and a retained subscription, from the real producers ----
+    const at = new Date(Date.now() - 1_000).toISOString();
+    const manifest = createMacLocalFirstOwnerManifestV1({ workspaceId: UPGRADE_WORKSPACE,
+      localOwnerSession: { tenantId: UPGRADE_TENANT, provider: "local-owner", subject: UPGRADE_SUBJECT },
+      enablement: { nodeId: "node:installed-upgrade", workers: [
+        { kind: "hermes", workerId: "worker:upgrade-h" }, { kind: "claude-code", workerId: "worker:upgrade-c" },
+        { kind: "codex", workerId: "worker:upgrade-x" }] }, workIntakeProjectIds: [] }, at,
+    CompletionGateStoreV1.genesisIntegrityForKeyV1(UPGRADE_TENANT, new Uint8Array(32).fill(9)));
+    await applyMacLocalFirstOwnerV1(admin, manifest);
+    const scope = { tenantId: UPGRADE_TENANT, workspaceId: UPGRADE_WORKSPACE, ownerIdentityId: manifest.identity.id, issuer: "local-owner" };
+    const retained = subscription("https://fcm.googleapis.com/fcm/send/installed-retained", 0);
+    await new PostgresOwnerPushStoreV1(admin).subscribe(retained);
+    const unrelated = (await admin.query("SELECT (SELECT count(*) FROM tenants)::int AS tenants, (SELECT count(*) FROM owner_web_push_subscriptions)::int AS subscriptions")).rows[0];
+    assert.deepEqual(unrelated, { tenants: 1, subscriptions: 1 });
+    const retainedBefore = (await admin.query("SELECT id, created_at, updated_at FROM owner_web_push_subscriptions")).rows[0];
+
+    // ---- historical first use: the production login cannot save a subscription ----
+    const old = webLogin(installed, passwords.control_room_web); stores.push(old);
+    await assert.rejects(old.store.subscribe(subscription("https://fcm.googleapis.com/fcm/send/installed-first-use", 1)),
+      error => error.code === "42501" || error.sqlState === "42501", "the earlier install refuses the first save with 42501");
+    assert.deepEqual((await old.store.list(UPGRADE_TENANT)).map(subscriptionFields), [subscriptionFields(retained)],
+      "the refused save left the retained row alone");
+    assert.equal((await admin.query("SELECT has_column_privilege('control_room_web','owner_web_push_subscriptions','p256dh','UPDATE') AS ok")).rows[0].ok, false);
+    await assert.rejects(verifyPrivateDatabase(old.db.client, old.config, scope, Date.now(), { nativeQueue: true }),
+      "this release's startup check refuses the earlier install, so it cannot start against it unmigrated");
+    await old.db.close(); stores.length = 0;
+
+    // ---- the candidate, through the real release migration and grant convergence ----
+    let postMigration;
+    // The candidate ledger is rebuilt from the shipped bytes (the committed ledger is held to the same bytes by db:verify).
+    const candidateLedger = (await collectLedgerEntries(repoRoot));
+    const candidateLedgerPath = join(installed.root, "candidate-ledger.json");
+    await writeFile(candidateLedgerPath, `${JSON.stringify({ version: 1, digest: ledgerDigest(candidateLedger), entries: candidateLedger })}\n`);
+    const upgraded = await applyMacDatabaseUpgradeV1({ client: admin, applyPending: async () => {
+      await applyMigrations({ rootDir: repoRoot, ledgerPath: candidateLedgerPath,
+        bootstrapTarget: installed.operator, migrateTarget: installed.migrator, env: installed.migrationEnv });
+      // Migration only, before any grant convergence: the migration itself must carry the grant.
+      const probe = webLogin(installed, passwords.control_room_web);
+      try { await probe.store.subscribe(subscription("https://fcm.googleapis.com/fcm/send/installed-post-migration", 2));
+        postMigration = (await probe.store.list(UPGRADE_TENANT)).map(row => row.endpoint).sort();
+      } finally { await probe.db.close(); }
+    } });
+    assert.equal(upgraded.upgraded, true);
+    assert.deepEqual(postMigration, ["https://fcm.googleapis.com/fcm/send/installed-post-migration",
+      "https://fcm.googleapis.com/fcm/send/installed-retained"], "the migration alone lets the production login save");
+    assert.deepEqual(upgraded.after.grants, { extra: [], missing: [] });
+
+    // ---- reopened: startup check, then first save, read and duplicate renewal ----
+    const web = webLogin(installed, passwords.control_room_web); stores.push(web);
+    await verifyPrivateDatabase(web.db.client, web.config, scope, Date.now(), { nativeQueue: true });
+    const fresh = subscription("https://fcm.googleapis.com/fcm/send/installed-after", 3);
+    await web.store.subscribe(fresh);
+    const renewed = { ...fresh, p256dh: "Z".repeat(87), auth: "y".repeat(22), expiresAt: "2099-01-01T00:00:00.000Z" };
+    await web.store.subscribe(renewed);
+    await web.store.subscribe({ ...retained, p256dh: "Q".repeat(87), expiresAt: "2099-01-01T00:00:00.000Z" });
+    const listed = (await web.store.list(UPGRADE_TENANT)).map(subscriptionFields)
+      .sort((a, b) => a.endpoint.localeCompare(b.endpoint));
+    assert.deepEqual(listed.map(row => row.endpoint), ["https://fcm.googleapis.com/fcm/send/installed-after",
+      "https://fcm.googleapis.com/fcm/send/installed-post-migration", "https://fcm.googleapis.com/fcm/send/installed-retained"]);
+    assert.deepEqual(listed[0], subscriptionFields(renewed), "duplicate endpoint renews in place");
+    const retainedAfter = (await admin.query("SELECT id, created_at FROM owner_web_push_subscriptions WHERE endpoint = $1", [retained.endpoint])).rows[0];
+    assert.equal(retainedAfter.id, retainedBefore.id, "the retained row kept its identity");
+    assert.deepEqual(retainedAfter.created_at, retainedBefore.created_at);
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM tenants")).rows[0].n, 1, "unrelated data survived");
+    const narrow = new pg.Client({ host: "127.0.0.1", port: installed.port, database: "control_room", user: "control_room_web",
+      password: passwords.control_room_web });
+    await narrow.connect();
+    try {
+      await assert.rejects(narrow.query("UPDATE owner_web_push_subscriptions SET endpoint = endpoint"), { code: "42501" },
+        "the grant is column-narrow: no table-wide UPDATE");
+    } finally { await narrow.end(); }
+
+    // ---- idempotent rerun ----
+    const aclAfterFirst = await subscriptionAcl(admin);
+    const rerun = await applyMacDatabaseUpgradeV1({ client: admin, applyPending: async () => {} });
+    assert.equal(rerun.upgraded, true);
+    assert.deepEqual(rerun.before.grants, { extra: [], missing: [] }, "a rerun finds no grant drift");
+    assert.deepEqual(await subscriptionAcl(admin), aclAfterFirst);
+    await verifyPrivateDatabase(web.db.client, web.config, scope, Date.now(), { nativeQueue: true });
+
+    // ---- fresh candidate install versus the upgraded one: same ACL, schema and grants ----
+    assert.deepEqual(await subscriptionAcl(state.client), aclAfterFirst, "upgraded ACL, columns and constraints equal a fresh install");
+    const desired = await readDesiredMacGrantsV1();
+    for (const client of [admin, state.client]) {
+      const diff = diffMacGrantsV1(await readMacGrantCatalogV1(client), desired);
+      assert.deepEqual(diff, { extra: [], missing: [] });
+    }
+  } finally {
+    for (const store of stores) await store.db.close().catch(() => {});
+    try { await admin.end(); } catch {}
+    try { await installed.teardown.stop(); } finally { await rm(installed.root, { recursive: true, force: true }); }
+  }
 });

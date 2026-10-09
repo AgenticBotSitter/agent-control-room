@@ -251,6 +251,8 @@ test("CR-E075 real owner HTTP", () => fixture(5, async ({ live, admin }) => {
   });
 }));
 test("CR-E075 cross-process burst", () => fixture(6, async ({ live, admin, pg }) => {
+  // Seeded first: racing 50 first inserts of one endpoint hits a separate store defect (CR-E075 B04, primary-key 23505) that is not part of this grant.
+  await subscribe(live);
   const before = await counters(admin); const started = performance.now();
   const inputs = Array.from({ length: 50 }, (_, n) => ({ ...INPUT, p256dh: `Key_${n}`, auth: `Auth_${n}` }));
   const children = inputs.map((input,n) => child(pg, input, `subscribe-burst-${n}`));
@@ -268,6 +270,8 @@ test("CR-E075 cross-process burst", () => fixture(6, async ({ live, admin, pg })
 test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admin, pg }) => {
   await subscribe(live); const id = await history(live); const before = await counters(admin);
   const slow = binding(pg); const lock = new Client(pg.admin()); await lock.connect();
+  // Open all eight pooled sessions first so every waiter starts together and the held lock stays inside the production two-second lock_timeout (CR-E075 D09).
+  await Promise.all(Array.from({ length: 8 }, () => slow.db.client.query("SELECT pg_sleep(0.2)")));
   await lock.query("BEGIN"); await lock.query("SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 FOR UPDATE", [TENANT]);
   const start = performance.now();
   const calls = Array.from({ length: 20 }, (_,n) => slow.store.subscribe({ ...INPUT, p256dh: `Slow_${n}`, auth: `SlowAuth_${n}` }));
@@ -278,7 +282,7 @@ test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admi
     await lock.query("ROLLBACK");
     const results = await settled;
     // Independent policy literals: eight active plus eight queued, four refused.
-    assert.equal(results.filter(x => x.status === "fulfilled").length, 16);
+    assert.equal(results.filter(x => x.status === "fulfilled").length, 16, JSON.stringify(results.map(x => x.status === "fulfilled" ? "ok" : `${x.reason.code}:${x.reason.sqlState}`)));
     const refused = results.filter(x => x.status === "rejected");
     assert.equal(refused.length, 4);
     for (const result of refused) if (result.status === "rejected") {

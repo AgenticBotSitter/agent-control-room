@@ -12,9 +12,11 @@ const RUNNERS = {
   owner_web_push_deliveries: { method: "reserve", columns: ["state", "status_code", "completed_at"] },
 };
 function inventory(source) {
-  const writes = [...source.matchAll(/INSERT INTO\s+(\w+)([^`]*?ON CONFLICT[^`]*?DO UPDATE[^`]*)/g)];
-  for (const [,table] of writes) assert.ok(Object.hasOwn(RUNNERS,table), `unclassified web-push upsert:${table}`);
-  return writes.map(([,table,sql]) => ({ table, columns: [...sql.split(/DO UPDATE\s+SET/i)[1].split(/\bWHERE\b|\bRETURNING\b/i)[0]
+  const name = '(?:"[^"]+"|\\w+)';
+  const writes = [...source.matchAll(new RegExp(`INSERT\\s+INTO\\s+(${name}(?:\\s*\\.\\s*${name})?)([^\`]*?ON\\s+CONFLICT[^\`]*?DO\\s+UPDATE[^\`]*)`, "gi"))]
+    .map(([, written, sql]) => [written.replace(/"/g, "").replace(/\s+/g, "").replace(/^public\./i, "").toLowerCase(), sql]);
+  for (const [table] of writes) assert.ok(Object.hasOwn(RUNNERS,table), `unclassified web-push upsert:${table}`);
+  return writes.map(([table,sql]) => ({ table, columns: [...sql.split(/DO\s+UPDATE\s+SET/i)[1].split(/\bWHERE\b|\bRETURNING\b/i)[0]
     .matchAll(/(?:^|,)\s*(\w+)\s*=/g)].map(match=>match[1]).sort() }));
 }
 function freshColumns(table) {
@@ -31,6 +33,23 @@ test("CR-E075 upsert inventory refuses an unclassified future write", () => {
   assert.match(serving,/new PostgresOwnerPushStoreV1/);
   assert.throws(()=>inventory(source()+"\nINSERT INTO unknown_push_store(id) VALUES(1) ON CONFLICT(id) DO UPDATE SET id=2`"),
     /unclassified web-push upsert:unknown_push_store/,"unknown writes cannot silently escape the runner inventory");
+});
+test("CR-E075 upsert inventory refuses spelling variants of an unknown write", () => {
+  const upsert = head => `\n${head} VALUES(1)\n  ON CONFLICT(id) DO UPDATE SET id=2\``;
+  for (const [name, sql] of [
+    ["lowercase", upsert("insert into unknown_push_store(id)")],
+    ["mixed case", upsert("Insert Into unknown_push_store(id)")],
+    ["newline after INTO", upsert("INSERT INTO\n    unknown_push_store(id)")],
+    ["quoted", upsert('INSERT INTO "unknown_push_store"(id)')],
+    ["schema-qualified", upsert("INSERT INTO public.unknown_push_store(id)")],
+    ["quoted schema-qualified", upsert('INSERT INTO "public"."unknown_push_store"(id)')],
+    ["lowercase on conflict", "\ninsert into unknown_push_store(id) values(1) on conflict(id) do update set id=2`"],
+  ]) assert.throws(() => inventory(source() + sql), /unclassified web-push upsert:unknown_push_store/, `${name} unknown upsert must be refused`);
+  assert.throws(() => inventory(source() + upsert("INSERT INTO other_schema.unknown_push_store(id)")),
+    /unclassified web-push upsert:other_schema\.unknown_push_store/, "a different schema is never folded into public");
+  assert.deepEqual(inventory(source()).map(x => x.table).sort(), Object.keys(RUNNERS).sort(), "the real store still classifies");
+  assert.deepEqual(inventory(source() + upsert("INSERT INTO public.owner_web_push_deliveries(id)")).filter(x => x.table === "owner_web_push_deliveries").length, 2,
+    "a qualified spelling of a classified table is still counted");
 });
 test("CR-E075 subscription upsert has exactly four fresh UPDATE columns", () => {
   const expected=["auth","expires_at","p256dh","updated_at"];
