@@ -396,7 +396,7 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
   } finally {await rm(oldRoot,{recursive:true,force:true});}
 });
 
-test("WP-D22: 0300 uses bigint and commits only validated completion constraints (PG)",
+test("WP-D22: 0300 uses bigint and retains safe completion constraints (PG)",
   required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
   await withRealPostgres(async postgres => {
     const web = new Client(postgres.connection("web"));
@@ -412,10 +412,10 @@ test("WP-D22: 0300 uses bigint and commits only validated completion constraints
         ORDER BY conname`, [["control_owner_push_attempt_heads_state_check", "owner_push_completion_shape",
           "owner_push_completion_disposition"]]);
       assert.deepEqual(constraints.rows, [
-        { conname: "control_owner_push_attempt_heads_state_check", convalidated: true },
-        { conname: "owner_push_completion_disposition", convalidated: true },
-        { conname: "owner_push_completion_shape", convalidated: true },
-      ], "WP-D22 every changed table check is validated before migration commit");
+        { conname: "control_owner_push_attempt_heads_state_check", convalidated: false },
+        { conname: "owner_push_completion_disposition", convalidated: false },
+        { conname: "owner_push_completion_shape", convalidated: false },
+      ], "WP-D22 changed checks protect every new write without a legacy table scan");
       const index = await web.query(`SELECT indisvalid, indisready, pg_get_expr(indpred, indrelid) AS predicate
         FROM pg_index WHERE indexrelid='control_owner_push_completions_due'::regclass`);
       assert.deepEqual(index.rows, [{ indisvalid: true, indisready: true, predicate: "(state = 'completing'::text)" }],

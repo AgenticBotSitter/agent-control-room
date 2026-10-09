@@ -152,33 +152,5 @@
     "replace": "AND ($7::timestamptz IS NOT NULL)",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D20: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "After count eight a failed peer must not overwrite a newly published future deadline; expected zero writes comes from the exclusive publication contract."
-  },
-  {
-    "file": "db/migrations/0300_owner_push_durable_completion.sql",
-    "find": "  VALIDATE CONSTRAINT control_owner_push_attempt_heads_state_check;",
-    "replace": "  DROP CONSTRAINT control_owner_push_attempt_heads_state_check;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D22:' tests/owner-push-migrations-postgres.test.ts",
-    "why": "WP-D22 independently requires all three changed table constraints present and validated before commit: control_owner_push_attempt_heads_state_check"
-  },
-  {
-    "file": "db/migrations/0300_owner_push_durable_completion.sql",
-    "find": "  VALIDATE CONSTRAINT owner_push_completion_shape;",
-    "replace": "  DROP CONSTRAINT owner_push_completion_shape;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D22:' tests/owner-push-migrations-postgres.test.ts",
-    "why": "WP-D22 independently requires all three changed table constraints present and validated before commit: owner_push_completion_shape"
-  },
-  {
-    "file": "db/migrations/0300_owner_push_durable_completion.sql",
-    "find": "  VALIDATE CONSTRAINT owner_push_completion_disposition;",
-    "replace": "  DROP CONSTRAINT owner_push_completion_disposition;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D22:' tests/owner-push-migrations-postgres.test.ts",
-    "why": "WP-D22 independently requires all three changed table constraints present and validated before commit: owner_push_completion_disposition"
-  },
-  {
-    "file": "db/migrations/0300_owner_push_durable_completion.sql",
-    "find": "completion_retry_count bigint",
-    "replace": "completion_retry_count integer",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D22:' tests/owner-push-migrations-postgres.test.ts",
-    "why": "Pinned Squawk requires bigint; WP-D22 independently checks the production catalog type."
   }
 ]

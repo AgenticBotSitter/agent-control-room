@@ -19,14 +19,11 @@ ALTER TABLE control_owner_push_attempt_heads
   ADD CONSTRAINT owner_push_completion_disposition CHECK (
     (completion_disposition IS NULL AND completion_next_attempt_at IS NULL)
     OR (completion_disposition IS NOT NULL AND completion_next_attempt_at IS NOT NULL)) NOT VALID;
--- Add without a table scan, then validate explicitly. All three checks are
--- validated inside the same migration transaction; no unchecked old rows escape.
-ALTER TABLE control_owner_push_attempt_heads
-  VALIDATE CONSTRAINT control_owner_push_attempt_heads_state_check;
-ALTER TABLE control_owner_push_attempt_heads
-  VALIDATE CONSTRAINT owner_push_completion_shape;
-ALTER TABLE control_owner_push_attempt_heads
-  VALIDATE CONSTRAINT owner_push_completion_disposition;
+-- The replaced state check only broadens the already validated old state set.
+-- All completion columns are new: their NULL/default-zero values satisfy both
+-- completion checks on every old row. As in 0105 and 0108, leave these NOT VALID:
+-- PostgreSQL checks every later INSERT/UPDATE, without holding this transaction's
+-- ACCESS EXCLUSIVE lock for a full-table validation scan.
 
 -- The production applier wraps each migration and its ledger row in one
 -- transaction, so CONCURRENTLY cannot run here. As in 0272 and 0273, keep the
