@@ -43,7 +43,10 @@ export function ownerPushCycleFailureV1(error: unknown): Error {
  * database rather than in this process. A dispatcher that failed is not
  * retried in-process from memory -- it re-reads its due rows on the next tick,
  * and a row left 'reserved' by a killed process is recovered by
- * `recoverStaleReservations`.
+ * `recoverStaleReservations`. Safe results on completing heads are repaired
+ * without provider calls by a fresh dispatcher; no refused-write closure is
+ * carried between ticks. The accepted long write-outage/crash limit replays
+ * with the same notification tag.
  *
  * `toleratesFirstCycleFailure` is on, as it is for the supervisor: a busy
  * machine at startup must not fail the host's startup path because the push

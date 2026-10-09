@@ -352,6 +352,7 @@ type DurableFixture = {
   db: DatabaseClient;
   query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
   at: number;
+  exec: (sql: string) => Promise<void>;
 };
 async function durableInputs(f: DurableFixture, count: number, phones = 1) {
   await f.query("INSERT INTO tenants(id,display_name) VALUES($1,'Durable input')", [DURABLE_TENANT]);
@@ -375,7 +376,7 @@ async function durableFixture(mode: "synthetic" | "PG", body: (f: DurableFixture
       try {
         const who = await pool.client.query<{ login: string }>("SELECT session_user AS login");
         assert.equal(who.rows[0]?.login, "control_room_web", "real twin uses the production login");
-        await body({ db: pool.client, query: (s,p) => admin.query(s,p as never[]), at: Date.now() });
+        await body({ db: pool.client, query: (s,p) => admin.query(s,p as never[]), exec: async s=>{await admin.query(s);}, at: Date.now() });
       } finally { await pool.close(); await admin.end(); }
     }, { port: PUSH_PORT+10, allowedPorts: [PUSH_PORT+10], boundMs: 900_000 });
     return;
@@ -389,7 +390,7 @@ async function durableFixture(mode: "synthetic" | "PG", body: (f: DurableFixture
       await raw.exec(await readFile(`${root}/${file}`, "utf8"));
       await raw.exec("COMMIT");
     }
-    await body({ db: adaptPglite(raw), query: (s,p) => raw.query(s,p), at: Date.now() });
+    await body({ db: adaptPglite(raw), query: (s,p) => raw.query(s,p), exec: async s=>{await raw.exec(s);}, at: Date.now() });
   } finally { await raw.close(); }
 }
 function durableTwin(id: string, title: string, body: (f: DurableFixture) => Promise<void>) {
@@ -511,15 +512,15 @@ durableTwin("WP-D04", "pre-send refusal spends attempts on backoff", async f=>{
   await durableDispatcher(f,channel,f.db,()=>now,store).dispatch();
   let row=(await durableHead(f))[0];
   assert.equal(row.state,'pending','WP-D04 pre-send refusal stays retryable');
-  assert.equal(Date.parse(row.next_attempt_at)-now,30_000,'WP-D04 independent first30s backoff');
+  assert.equal(new Date(row.next_attempt_at).getTime()-now,30_000,'WP-D04 independent first30s backoff');
   for(let i=0;i<8;i++)await durableDispatcher(f,channel,f.db,()=>now,store).dispatch().catch(()=>{});
   assert.equal(Number((await durableHead(f))[0].attempt_count),1,'WP-D04 fast ticks do not consume attempts');
   now+=30_000;calls=0;await durableDispatcher(f,channel,f.db,()=>now,store).dispatch();
-  row=(await durableHead(f))[0];assert.equal(Date.parse(row.next_attempt_at)-now,60_000,'WP-D04 independent second60s backoff');
+  row=(await durableHead(f))[0];assert.equal(new Date(row.next_attempt_at).getTime()-now,60_000,'WP-D04 independent second60s backoff');
   now+=60_000;calls=0;await durableDispatcher(f,channel,f.db,()=>now,store).dispatch();
-  row=(await durableHead(f))[0];assert.equal(Date.parse(row.next_attempt_at)-now,300_000,'WP-D04 independent third300s backoff');
+  row=(await durableHead(f))[0];assert.equal(new Date(row.next_attempt_at).getTime()-now,300_000,'WP-D04 independent third300s backoff');
   for(let attempt=4;attempt<=8;attempt++){
-    now=Date.parse(row.next_attempt_at);calls=0;await durableDispatcher(f,channel,f.db,()=>now,store).dispatch();row=(await durableHead(f))[0];
+    now=new Date(row.next_attempt_at).getTime();calls=0;await durableDispatcher(f,channel,f.db,()=>now,store).dispatch();row=(await durableHead(f))[0];
   }
   assert.equal(row.state,'failed','WP-D04 exactly8 attempts stop');
   assert.equal(Number(row.attempt_count),8,'WP-D04 attempts never refunded');assert.equal(sends,0);
@@ -657,4 +658,34 @@ durableTwin("WP-D13", "known acceptance is not labelled terminal failure",async 
   const row=(await durableHead(f))[0];assert.equal(row.state,'delivered','WP-D13 write-only completion eventually delivered');
   assert.equal(Number(row.attempt_count),1,'WP-D13 repair does not spend a second send attempt');assert.equal(sends,1);
   assert.equal((await f.query("SELECT state FROM owner_web_push_deliveries")).rows[0].state,'delivered');
+});
+
+durableTwin("WP-D15", "completion payload authority and retained-data downgrade",async f=>{
+  await durableInputs(f,1);const fault=refuseLedger(f,1);
+  const channel:OwnerNotificationChannelV1={kind:'web-push',async send(){return{statusCode:201};}};
+  await durableDispatcher(f,channel,fault.db).dispatch().catch(()=>{});
+  assert.equal((await durableHead(f))[0].state,'completing','WP-D15 real producer creates retained completion');
+  const receipt={subscription_id:`push:${String(1).padStart(64,'a')}`,event_tag:'needs:attention:durable:000',
+    result:'delivered',status_code:201,completed_at:new Date(f.at).toISOString(),remove:false};
+  const invalid=[{...receipt,event_tag:'needs:attention:other'}, {...receipt,status_code:600},
+    {...receipt,status_code:null,remove:true,result:'failed'}, {...receipt,result:'unknown'},
+    {...receipt,completed_at:'not-a-time'}, {...receipt,subscription_id:'bad'},
+    {...receipt,endpoint:'https://evil.invalid/'}, {...receipt,remove:1}, {...receipt,status_code:503},
+    {...receipt,keys:{auth:'synthetic'}}];
+  for(const input of invalid)await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads
+    SET completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
+  [DURABLE_TENANT,'attention:durable:000',JSON.stringify([input])]),
+  undefined,`WP-D15 independently specified malformed receipt must be refused: ${JSON.stringify(input)}`);
+  await assert.rejects(()=>new PostgresOwnerPushStoreV1(f.db).reserve('tenant:wrong',receipt.subscription_id,receipt.event_tag,new Date(f.at).toISOString()),
+    undefined,'WP-D15 wrong tenant cannot create a ledger reservation');
+  assert.equal((await f.query("SELECT count(*)::int AS n FROM owner_web_push_deliveries WHERE tenant_id='tenant:wrong'")).rows[0].n,0,
+    'WP-D15 wrong tenant writes nothing');
+  const down=await readFile(fileURLToPath(new URL('../db/down/0300_owner_push_durable_completion.sql',import.meta.url)),'utf8');
+  try{await assert.rejects(()=>f.exec(down),/owner push completion retained/,'WP-D15 downgrade refuses product-created retained data');}
+  finally{await f.exec('ROLLBACK');}
+  await durableDispatcher(f,channel,f.db,()=>f.at+30_000).dispatch();
+  assert.equal((await durableHead(f))[0].state,'delivered','WP-D15 production reader sees repaired completion');
+  await f.exec(down);
+  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads")).rows[0].state,'delivered',
+    'WP-D15 safe downgrade preserves terminal delivery evidence');
 });

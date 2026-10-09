@@ -622,6 +622,7 @@ export class OwnerPushDispatcherV1 {
           WHERE d.tenant_id=s.tenant_id AND d.subscription_id=s.id AND d.dedupe_key=$2 AND d.state='delivered')`,
       [this.input.tenantId, ownerPushDedupeKeyV1(head.action_inbox_id), accepted]);
       disposition = remaining.rows.length === 0 && accepted.length > 0 ? "delivered" : "retry";
+      if (disposition === "delivered") reason = null;
     }
     await this.#record(head, receipts, disposition, when, reason);
     return await this.#complete({ ...head, completion_data: [...receipts], completion_disposition: disposition,
@@ -660,7 +661,7 @@ export class OwnerPushDispatcherV1 {
         const current = locked.rows[0];
         if (!current) return undefined; // A peer completed this exact receipt.
         if (!owner && !current.completion_disposition && current.updated_at
-          && Date.parse(String(current.updated_at)) > Date.parse(now)-OWNER_PUSH_RESERVATION_STALE_MS_V1)
+          && new Date(current.updated_at).getTime() > Date.parse(now)-OWNER_PUSH_RESERVATION_STALE_MS_V1)
           return undefined; // An active sender advanced progress after our due read.
         const receipts = current.completion_data ?? [];
         for (const receipt of receipts) {
