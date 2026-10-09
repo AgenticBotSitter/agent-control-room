@@ -115,7 +115,7 @@ process.disconnect();
       await waitForToolState(() => {
         if (preparationFailed) return true; // Cancel sibling observations after retiring the group.
         if (failure) throw failure;
-        assert.equal(child.exitCode, null, "a prepared tool must remain alive before handoff");
+        assert.ok(child.exitCode === null && child.signalCode === null, "a prepared tool must remain alive before handoff");
         return initialized;
       }, "the real tool module must initialize within the original setup bound");
     }));
