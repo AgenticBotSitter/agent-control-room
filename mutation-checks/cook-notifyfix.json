@@ -281,8 +281,8 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "Math.max(ownerPushBackoffMsV1(spent), retryAfterMs)",
-    "replace": "ownerPushBackoffMsV1(spent)",
+    "find": "Math.max(ownerPushBackoffMsV1(attempt), retryAfterMs)",
+    "replace": "ownerPushBackoffMsV1(attempt)",
     "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
     "why": "U04: provider Retry-After participates in the durable retry deadline"
   },

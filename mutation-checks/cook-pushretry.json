@@ -1,7 +1,7 @@
 [
   {
     "file": "db/roles/private_web_roles.sql",
-    "find": "GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,\n  safe_reason_code, updated_at) ON control_owner_push_attempt_heads TO control_room_private_web;",
+    "find": "GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,\n  safe_reason_code, updated_at, completion_data, completion_disposition, completion_next_attempt_at,\n  completion_reason_code, completion_retry_count) ON control_owner_push_attempt_heads TO control_room_private_web;",
     "replace": "-- MUTATED: the dispatcher's update grant is removed",
     "test": "pnpm run test:owner-push:postgres",
     "why": "the dispatcher settles every outcome through that column-scoped UPDATE, so without it no item can ever be recorded as delivered and every send fails 42501"
