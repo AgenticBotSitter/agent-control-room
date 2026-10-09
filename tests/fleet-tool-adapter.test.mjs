@@ -304,7 +304,15 @@ test("signal barrier refuses a missing acknowledgement and propagates preparatio
 
 test("signal death refuses both fixture readiness paths before handoff", { timeout: 30_000 }, async t => {
   const dir = await workspace(t), marker = join(dir, "dead.pid"), ready = join(dir, "dead.ready");
-  const script = await executable(dir, "process.stdin.resume();");
+  // Hold static initialization so a buffered initialized message cannot race
+  // the kill notification on a busy parent. Both callers must observe SIGKILL.
+  const blocked = await executable(dir, `process.on("message", () => {});
+process.once("disconnect", () => process.exit(0));
+process.stdin.resume();
+process.stdin.once("end", () => { if (!process.connected) process.exit(0); });
+setInterval(() => {}, 1000);
+await new Promise(() => {});`);
+  const script = await executable(dir, `import ${JSON.stringify("./" + basename(blocked))};`);
   const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
   const killedStart = (...args) => {
     const child = nodeSpawn(...args);
@@ -314,7 +322,7 @@ test("signal death refuses both fixture readiness paths before handoff", { timeo
   await assert.rejects(preparedToolRunner(t, registry, { startProcess: killedStart }),
     { message: "a prepared tool must remain alive before handoff" },
     "signal death must refuse prepared admission through its liveness guard");
-  await assert.rejects(readyTool(t, script, marker, ready, { startProcess: killedStart }),
+  await assert.rejects(readyTool(t, script, marker, ready, { stdin: "pipe", startProcess: killedStart }),
     { message: "the fixture must stay alive until adapter handoff" },
     "signal death must refuse fixture admission through its liveness guard");
 });
