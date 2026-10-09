@@ -270,7 +270,7 @@ test("timeout and stop kill the process group, including a spawned child", { tim
   const heartbeat = join(dir, "child.heartbeat");
   const script = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { existsSync, writeFileSync } = require("node:fs");
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(heartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
 process.on("SIGTERM", () => {});
@@ -290,7 +290,7 @@ setInterval(() => {}, 1000);`);
   const stoppedHeartbeat = join(dir, "stopped-child.heartbeat");
   const stoppedScript = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { existsSync, writeFileSync } = require("node:fs");
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(stoppedHeartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
 process.on("SIGTERM", () => {});
