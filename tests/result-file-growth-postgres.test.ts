@@ -190,6 +190,9 @@ test("JSON growth oracle rejects selective scans and narrowly checks the broad q
   for (const field of ["Rows Removed by Filter", "Rows Removed by Index Recheck"])
     assert.throws(() => quotaInputs(make({ ...broad.root, Plans: [{ ...reader, [field]: 1 }] }), 2000),
       /unrelated filter work/u);
+  assert.throws(() => readPlan([{ Plan: { "Node Type": "Result" } }, { Plan: { "Node Type": "Result" } }]),
+    /one JSON plan document is required/u);
+  assert.throws(() => readPlan([{ Plan: [] }]), /a plan node is required/u);
   for (const value of [undefined, [], [{ Plan: {} }], [{ Plan: { "Node Type": "Aggregate", Plans: {} } }],
     [{ Plan: { "Node Type": "Aggregate", Plans: [null] } }]])
     assert.throws(() => readPlan(value), /required|array/u);
