@@ -269,13 +269,14 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_idempotency: ["status", "result", "completed_at"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   control_action_inbox: ["state", "payload"],
-  // MIG-I: exactly the eight retry-bookkeeping columns 0226 grants, and NOT the
+  // MIG-I/0300: the retry and safe completion columns, and NOT the
   // link -- a phone's destination is written once and never repointed. This list
   // is the preflight's copy of that grant, and it is deliberately identical: a
   // column here that 0226 does not grant, or one missing that it does, is
   // refused by the column audit rather than tolerated.
   control_owner_push_attempt_heads: ["state", "attempt_count", "next_attempt_at", "reserved_at", "last_attempt_at",
-    "completed_at", "safe_reason_code", "updated_at"],
+    "completed_at", "safe_reason_code", "updated_at", "completion_data", "completion_disposition",
+    "completion_next_attempt_at", "completion_reason_code", "completion_retry_count"],
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],

@@ -690,6 +690,7 @@ durableTwin("WP-D15", "completion payload authority and retained-data downgrade"
     const invalid=[{...receipt,event_tag:'needs:attention:other'}, {...receipt,status_code:600},
       {...receipt,status_code:null,remove:true,result:'failed'}, {...receipt,result:'unknown'},
       {...receipt,completed_at:'not-a-time'}, {...receipt,completed_at:'2026-99-99T00:00:00.000Z'},
+      {...receipt,completed_at:'2026-02-29T00:00:00.000Z'}, {...receipt,completed_at:'2026-12-01T25:00:00.000Z'},
       {...receipt,subscription_id:'bad'}, {...receipt,endpoint:'https://evil.invalid/'},
       {...receipt,remove:1}, {...receipt,status_code:503}, {...receipt,keys:{auth:'synthetic'}}];
     for(const input of invalid)await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads

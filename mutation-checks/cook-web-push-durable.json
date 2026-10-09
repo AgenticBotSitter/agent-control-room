@@ -40,5 +40,54 @@
     "replace": "statusCode! <= 999 ? statusCode! : null",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D05: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "0174 production constraint independently limits recorded HTTP status to100..599;600 must normalize once."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "      IF jsonb_typeof(receipt)<>'object'\n        OR NOT (receipt ?& ARRAY['subscription_id','event_tag','result','status_code','completed_at','remove'])\n        OR receipt - ARRAY['subscription_id','event_tag','result','status_code','completed_at','remove'] <> '{}'::jsonb\n        OR jsonb_typeof(receipt->'subscription_id')<>'string'\n        OR (receipt->>'subscription_id') !~ '^push:[a-f0-9]{64}$'\n        OR receipt->>'event_tag' IS DISTINCT FROM 'needs:'||NEW.action_inbox_id\n        OR receipt->>'result' NOT IN ('delivered','failed')\n        OR jsonb_typeof(receipt->'result')<>'string'\n        OR jsonb_typeof(receipt->'remove')<>'boolean'\n        OR jsonb_typeof(receipt->'completed_at')<>'string'\n        OR (receipt->>'completed_at') !~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$'\n        OR (receipt->'status_code'<>'null'::jsonb AND (\n          jsonb_typeof(receipt->'status_code')<>'number'\n          OR (receipt->>'status_code') !~ '^[1-5][0-9]{2}$'))\n        OR (receipt->>'result'='delivered' AND (\n          receipt->'status_code'='null'::jsonb OR (receipt->>'status_code')::integer NOT BETWEEN 200 AND 299\n          OR (receipt->>'remove')::boolean))\n        OR (receipt->>'result'='failed' AND (receipt->>'status_code')::integer BETWEEN 200 AND 299)\n        OR ((receipt->>'remove')::boolean AND ((receipt->>'status_code')::integer IN (404,410)) IS DISTINCT FROM true)\n",
+    "replace": "      IF false\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Safe payload contract is specified by independent malformed literals at a product-created reserved head; monotonicity cannot mask it."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "        PERFORM (receipt->>'completed_at')::timestamptz;",
+    "replace": "        PERFORM 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent impossible calendar and hour values must fail once at receipt admission."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "OR NOT (NEW.completion_data @> OLD.completion_data)",
+    "replace": "OR false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A retained accepted receipt cannot be erased; the independent reader first observes product-created completion."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "    IF (SELECT count(*) FROM jsonb_array_elements(NEW.completion_data)) <>\n      (SELECT count(DISTINCT value->>'subscription_id') FROM jsonb_array_elements(NEW.completion_data))\n",
+    "replace": "    IF false\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two literal identical subscription receipts are refused, without a prior completion masking the predicate."
+  },
+  {
+    "file": "db/down/0300_owner_push_durable_completion.sql",
+    "find": "  IF EXISTS (SELECT 1 FROM control_owner_push_attempt_heads WHERE state='completing' OR completion_data IS NOT NULL)",
+    "replace": "  IF false AND EXISTS (SELECT 1 FROM control_owner_push_attempt_heads WHERE state='completing' OR completion_data IS NOT NULL)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Retained-data downgrade returns the independently specified refusal before destructive operations."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "interrupted && receipts.some(r=>r.result === \"delivered\") ? null : \"retry\"",
+    "replace": "\"failed\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Known acceptance is not terminal failed for a bookkeeping refusal."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "WHERE h.tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2\n        AND i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id AND i.state='open'",
+    "replace": "WHERE h.tenant_id=$1 AND h.state IN ('reserved','completing') AND h.reserved_at<=$2\n        AND i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id AND i.state='open'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Stale send recovery excludes completing receipts past300 seconds; completion repairs without a second send attempt."
   }
 ]

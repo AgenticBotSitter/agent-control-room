@@ -77,6 +77,13 @@ BEGIN
         OR (receipt->>'result'='failed' AND (receipt->>'status_code')::integer BETWEEN 200 AND 299)
         OR ((receipt->>'remove')::boolean AND ((receipt->>'status_code')::integer IN (404,410)) IS DISTINCT FROM true)
       THEN RAISE EXCEPTION 'owner push completion rejected' USING ERRCODE='23514'; END IF;
+      -- Format alone admits impossible calendar values, which would poison
+      -- every later repair. Parse once at admission, never in a retry loop.
+      BEGIN
+        PERFORM (receipt->>'completed_at')::timestamptz;
+      EXCEPTION WHEN data_exception THEN
+        RAISE EXCEPTION 'owner push completion rejected' USING ERRCODE='23514';
+      END;
     END LOOP;
     IF (SELECT count(*) FROM jsonb_array_elements(NEW.completion_data)) <>
       (SELECT count(DISTINCT value->>'subscription_id') FROM jsonb_array_elements(NEW.completion_data))
