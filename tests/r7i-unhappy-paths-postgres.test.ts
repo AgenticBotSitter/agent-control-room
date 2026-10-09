@@ -418,17 +418,30 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
   let reached!: () => void;
   const started = new Promise<void>(done => { reached = done; });
   let sends = 0, refused = false, finished = false;
+  let refusalReached!:()=>void, siblingsSettled!:()=>void;
+  const refusalReady = new Promise<void>(resolve=>{refusalReached=resolve;});
+  const settledReady = new Promise<void>(resolve=>{siblingsSettled=resolve;});
+  const settledHeads = new Set<string>();
+  const observe = (sql:string, result:{rows:any[]}) => {
+    if (/UPDATE control_owner_push_attempt_heads\s+SET state=\$3::text/.test(sql)) {
+      for(const row of result.rows) settledHeads.add(row.action_inbox_id);
+      // Forty inputs minus the deliberately refused head. This drains the
+      // old dispatcher too, whose rejected outer promise leaves workers alive.
+      if(settledHeads.size>=39) siblingsSettled();
+    }
+    return result;
+  };
   const refuse = (sql: string) => {
     // Same old public settle seam, also inside the new atomic repair transaction.
     // SQL, not a missing new column, distinguishes the live-cycle failure.
     if (!refused && /UPDATE control_owner_push_attempt_heads\s+SET state=\$3::text/.test(sql)) {
-      refused = true; throw new Error("database_unavailable");
+      refused = true; refusalReached(); throw new Error("database_unavailable");
     }
   };
   const db: DatabaseClient = { ...f.db,
-    query: async (sql,params) => { refuse(sql); return f.db.query(sql,params); },
+    query: async (sql,params) => { refuse(sql); return observe(sql, await f.db.query(sql,params)); },
     transaction: async body => f.db.transaction(tx=>body({query: async (sql,params)=>{
-      refuse(sql); return tx.query(sql,params);
+      refuse(sql); return observe(sql, await tx.query(sql,params));
     }})),
   };
   const tags: string[] = [];
@@ -443,9 +456,15 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
   const running = dispatcher.dispatch().then(v=>{ finished=true; return v; }, e=>{ finished=true; throw e; });
   void running.catch(()=>{});
   try {
-    await started; await nextTurn();
+    await started; await refusalReady; await nextTurn();
     assert.equal(finished,false,"WP-D01 dispatch must await every sibling before resolving or reporting failure");
-  } finally { release(); await running.catch(()=>{}); }
+  } finally {
+    release(); await running.catch(()=>{});
+    let deadline:ReturnType<typeof setTimeout>|undefined;
+    try {await Promise.race([settledReady,new Promise<never>((_,reject)=>{
+      deadline=setTimeout(()=>reject(new Error("WP-D01 sibling cleanup did not reach39 settlements")),60_000);
+    })]);} finally {clearTimeout(deadline);}
+  }
   const healthy = new OwnerPushDispatcherV1({ db:f.db, tenantId:DURABLE_TENANT,
     store:new PostgresOwnerPushStoreV1(f.db),channel,clock:()=>f.at+30_000 });
   await healthy.dispatch();

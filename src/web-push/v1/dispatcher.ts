@@ -441,7 +441,7 @@ export class OwnerPushDispatcherV1 {
   }
 
   /**
-   * Claim the due items and send each one, one at a time, each claim already
+   * Claim the due items and send with bounded worker width, each claim already
    * committed. Returns one outcome per item examined.
    *
    * `FOR UPDATE SKIP LOCKED` is what makes a second dispatcher safe: it takes
