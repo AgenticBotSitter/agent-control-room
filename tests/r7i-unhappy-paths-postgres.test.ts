@@ -21,7 +21,7 @@ import { taskDraftSchema } from "../src/web/v1/task-wire";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import type { AuthorityEnvelope } from "../src/domain/v1";
 import type { DatabaseClient } from "../src/persistence/database";
-import type { OwnerNotificationChannelV1 } from "../src/web-push/v1/types";
+import type { OwnerNotificationChannelV1, OwnerPushStoreV1 } from "../src/web-push/v1/types";
 
 // Two tests, two clusters, two disjoint port windows at BASE+40..49 and
 // BASE+50..59. An earlier placement at BASE+30 overlapped the attention
@@ -714,18 +714,19 @@ durableTwin("WP-D15", "completion payload authority and retained-data downgrade"
     for(const input of invalid)await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads
       SET state='completing',completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
     [DURABLE_TENANT,'attention:durable:000',JSON.stringify([input])]),
-    undefined,`WP-D15 independently specified malformed receipt must be refused: ${JSON.stringify(input)}`);
+    (error:unknown)=>typeof error==="object" && error!==null && "code" in error && error.code==="23514",`WP-D15 independently specified malformed receipt must be refused: ${JSON.stringify(input)}`);
     await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads
       SET state='completing',completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
     [DURABLE_TENANT,'attention:durable:000',JSON.stringify([receipt,receipt])]),
-    undefined,'WP-D15 duplicate subscription receipts must be refused');
+    (error:unknown)=>typeof error==="object" && error!==null && "code" in error && error.code==="23514",'WP-D15 duplicate subscription receipts must be refused');
   } finally {release();await running.catch(()=>{});}
   assert.equal((await durableHead(f))[0].state,'completing','WP-D15 real producer creates retained completion');
   await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads SET completion_data='[]'
     WHERE tenant_id=$1 AND action_inbox_id=$2`,[DURABLE_TENANT,'attention:durable:000']),
-  undefined,'WP-D15 accepted progress cannot be erased');
+  (error:unknown)=>typeof error==="object" && error!==null && "code" in error && error.code==="23514",'WP-D15 accepted progress cannot be erased');
+  await f.query("INSERT INTO tenants(id,display_name) VALUES('tenant:wrong','Wrong tenant input')");
   await assert.rejects(()=>new PostgresOwnerPushStoreV1(f.db).reserve('tenant:wrong',receipt.subscription_id,receipt.event_tag,new Date(f.at).toISOString()),
-    undefined,'WP-D15 wrong tenant cannot create a ledger reservation');
+    (error:unknown)=>typeof error==="object" && error!==null && "code" in error && error.code==="23503",'WP-D15 wrong tenant cannot create a ledger reservation');
   assert.equal((await f.query("SELECT count(*)::int AS n FROM owner_web_push_deliveries WHERE tenant_id='tenant:wrong'")).rows[0].n,0,
     'WP-D15 wrong tenant writes nothing');
   if(f.roleQuery) await assert.rejects(()=>f.roleQuery!("scheduler",`UPDATE control_owner_push_attempt_heads
