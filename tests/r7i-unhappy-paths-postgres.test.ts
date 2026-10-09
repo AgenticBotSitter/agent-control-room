@@ -513,6 +513,24 @@ durableTwin("WP-D03", "withdrawn never-started rows do not send", async f=>{
   }finally{release();await running.catch(()=>{});}
   await durableDispatcher(f,channel,f.db,()=>f.at+30_000).dispatch();
   assert.equal(tags.length,8,'WP-D03 only the8 prior sends may reach the provider');
+  // A subscription already in the first list can expire while an earlier
+  // subscription is being sent. A ledger reservation is not fresh authority.
+  const second=`push:${'b'.repeat(64)}`;
+  await f.query(`INSERT INTO owner_web_push_subscriptions
+    (id,tenant_id,endpoint,p256dh,auth,created_at,updated_at) VALUES($1,$2,$3,'A','B',now(),now())`,
+  [second,DURABLE_TENANT,'https://fcm.googleapis.com/fcm/send/expiry-control']);
+  await f.query(`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:subscription',$1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
+  let releasePhone!:()=>void,reachedPhone!:()=>void;
+  const phoneHold=new Promise<void>(d=>releasePhone=d),phoneReady=new Promise<void>(d=>reachedPhone=d);
+  const phoneSends:string[]=[];
+  const changing:OwnerNotificationChannelV1={kind:'web-push',async send(s){
+    phoneSends.push(s.id);if(phoneSends.length===1){reachedPhone();await phoneHold;}return{statusCode:201};}};
+  const next=durableDispatcher(f,changing,f.db,()=>f.at+60_000).dispatch();void next.catch(()=>{});
+  try {await phoneReady;await f.query("UPDATE owner_web_push_subscriptions SET expires_at=now()-interval '1 second' WHERE id=$1",[second]);}
+  finally {releasePhone();await next.catch(()=>{});}
+  assert.equal(phoneSends.length,1,'WP-D03 an expired never-started subscription is reread before provider I/O');
 });
 
 durableTwin("WP-D04", "pre-send refusal spends attempts on backoff", async f=>{
