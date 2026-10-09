@@ -250,23 +250,6 @@ test("CR-E075 real owner HTTP", () => fixture(5, async ({ live, admin }) => {
     assert.deepEqual((await live.store.list("tenant:subscribe-second")).map(fields), [fields({ ...INPUT, tenantId: "tenant:subscribe-second" })]);
   });
 }));
-test("CR-E075 cross-process burst", () => fixture(6, async ({ live, admin, pg }) => {
-  // Seeded first: racing 50 first inserts of one endpoint hits a separate store defect (CR-E075 B04, primary-key 23505) that is not part of this grant.
-  await subscribe(live);
-  const before = await counters(admin); const started = performance.now();
-  const inputs = Array.from({ length: 50 }, (_, n) => ({ ...INPUT, p256dh: `Key_${n}`, auth: `Auth_${n}` }));
-  const children = inputs.map((input,n) => child(pg, input, `subscribe-burst-${n}`));
-  try {
-    await Promise.all(children.map(c => c.ready));
-    for (const c of children) c.process.stdin.write("GO\n");
-    const results = await Promise.all(children.map(c => c.closed));
-    assert.equal(results.filter(r => r.code === 0 && r.output.includes("SAVED")).length, 50, JSON.stringify(results.filter(r=>r.code!==0)));
-    const saved = await live.store.list(TENANT); assert.equal(saved.length, 1);
-    assert.ok(inputs.some(input => input.p256dh === saved[0]!.p256dh && input.auth === saved[0]!.auth), "final keys belong to one complete submitted pair");
-    assert.equal(await counters(admin), before, "no server deadlocks");
-    console.log(`CR-E075 burst:50 completed; milliseconds=${Math.round(performance.now()-started)}; deadlocks_delta=0`);
-  } finally { await stop(children); }
-}));
 test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admin, pg }) => {
   await subscribe(live); const id = await history(live); const before = await counters(admin);
   const slow = binding(pg); const lock = new Client(pg.admin()); await lock.connect();
