@@ -502,6 +502,11 @@ durableTwin("WP-D03", "withdrawn never-started rows do not send", async f=>{
   const running=durableDispatcher(f,channel).dispatch();void running.catch(()=>{});
   try{
     await ready;
+    if(f.roleQuery) {
+      const actor=(await f.authorityQuery("SELECT session_user AS login, pg_has_role(session_user,'control_room_private_web','member') AS owner_member")).rows[0];
+      assert.equal(actor.login,'control_room_coordinator','WP-D03 withdrawal runs as its real authority producer');
+      assert.equal(actor.owner_member,false,'WP-D03 superuser membership cannot mask the authority update');
+    }
     await f.authorityQuery("UPDATE control_action_inbox SET state='resolved' WHERE tenant_id=$1 AND id>='attention:durable:008' AND id<'attention:durable:020'",[DURABLE_TENANT]);
     await f.authorityQuery("UPDATE control_action_inbox SET state='expired' WHERE tenant_id=$1 AND id>='attention:durable:020' AND id<'attention:durable:030'",[DURABLE_TENANT]);
     await f.query("DELETE FROM control_action_inbox WHERE tenant_id=$1 AND id>='attention:durable:030'",[DURABLE_TENANT]);
@@ -691,6 +696,10 @@ durableTwin("WP-D15", "completion payload authority and retained-data downgrade"
       SET state='completing',completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
     [DURABLE_TENANT,'attention:durable:000',JSON.stringify([input])]),
     undefined,`WP-D15 independently specified malformed receipt must be refused: ${JSON.stringify(input)}`);
+    await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads
+      SET state='completing',completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
+    [DURABLE_TENANT,'attention:durable:000',JSON.stringify([receipt,receipt])]),
+    undefined,'WP-D15 duplicate subscription receipts must be refused');
   } finally {release();await running.catch(()=>{});}
   assert.equal((await durableHead(f))[0].state,'completing','WP-D15 real producer creates retained completion');
   await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads SET completion_data='[]'
