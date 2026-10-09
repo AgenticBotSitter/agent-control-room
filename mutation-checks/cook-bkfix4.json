@@ -85,15 +85,15 @@
   },
   {
     "file": "src/installer/v1/nightly-backup.ts",
-    "find": "    let bound = false;\n    try { bound = (await runtime.readGeneratedGeneration(out)).bound; } catch { bound = false; }\n    if (!bound) {\n      try { await runtime.removeBackup(out); } catch {}\n      throw new Error(\"nightly_backup_unbound_generation\");\n    }",
+    "find": "    let bound = false;\n      try { bound = (await runtime.readGeneratedGeneration(out)).bound; } catch { bound = false; }\n      if (!bound) {\n        try { await runtime.removeBackup(out); } catch {}\n        throw new Error(\"nightly_backup_unbound_generation\");\n      }",
     "replace": "    await runtime.readGeneratedGeneration(out);",
     "test": "node --import tsx --test --test-name-pattern='own generation does not bind' tests/nightly-backup-round4b.test.mjs",
     "why": "R4B-01 a run whose OWN generation does not bind its bytes refuses by name and removes it"
   },
   {
     "file": "deploy/postgres/backup-database.mjs",
-    "find": "    const entry = await lstat(path).catch(() => null);\n    if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)\n      throw new Error(\"backup_refused_incomplete_output\");",
-    "replace": "    const entry = await lstat(path).catch(() => ({ isFile: () => true, isSymbolicLink: () => false, size: 1 }));\n    if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)\n      throw new Error(\"backup_refused_incomplete_output\");",
+    "find": "    const entry = await lstat(path).catch(() => null);\n      if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)\n        throw new Error(\"backup_refused_incomplete_output\");",
+    "replace": "    const entry = await lstat(path).catch(() => ({ isFile: () => true, isSymbolicLink: () => false, size: 1 }));\n      if (entry === null || !entry.isFile() || entry.isSymbolicLink() || entry.size < 1)\n        throw new Error(\"backup_refused_incomplete_output\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='R4B-10: a manifest can only' tests/nightly-backup-restore-recovery-postgres.test.ts",
     "why": "R4B-10 the manifest binds bytes that were proven to exist on disk"
   },

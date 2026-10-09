@@ -25,16 +25,28 @@ export async function reserveBackupGenerationV1(out) {
     if (error?.code === "EEXIST") throw new Error("backup_output_exists");
     throw new Error("backup_output_reservation_failed");
   }
-  const token = Object.freeze({});
-  generations.set(token, { out, entry: await lstat(out), consumed: false });
-  return token;
+  let handle;
+  try {
+    const entry = await lstat(out);
+    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const held = await handle.stat();
+    if (!held.isDirectory() || !same(entry, held) || (held.mode & 0o777) !== 0o700)
+      throw new Error("backup_output_reservation_refused");
+    const token = Object.freeze({});
+    // Keeping the unlinked directory open prevents its inode from being recycled.
+    generations.set(token, { out, entry: held, handle, consumed: false, released: false });
+    return token;
+  } catch (error) {
+    if (handle) await handle.close();
+    throw error;
+  }
 }
 
 // A reservation is an in-process capability, never a caller-supplied boolean
 // permitting reuse. Only the wrapper/nightly runner that made it can hand it on.
 export async function consumeBackupGenerationV1(out, token) {
   const generation = generations.get(token);
-  if (!generation || generation.out !== out || generation.consumed)
+  if (!generation || generation.out !== out || generation.released || generation.consumed)
     throw new Error("backup_output_reservation_refused");
   generation.consumed = true;
   await assertBackupGenerationV1(out, token);
@@ -44,9 +56,21 @@ export async function consumeBackupGenerationV1(out, token) {
 export async function assertBackupGenerationV1(out, token) {
   await inspectAncestors(out);
   const generation = generations.get(token), entry = await lstat(out);
-  if (!generation || generation.out !== out || !entry.isDirectory() || entry.isSymbolicLink()
+  if (!generation || generation.out !== out || generation.released || !entry.isDirectory() || entry.isSymbolicLink()
     || !same(entry, generation.entry) || (entry.mode & 0o777) !== 0o700)
     throw new Error("backup_output_reservation_refused");
+}
+
+// The caller that reserved owns release; borrowers keep the handle alive for
+// their caller's final assertions and manifest publication.
+export async function releaseBackupGenerationV1(token) {
+  const generation = generations.get(token);
+  if (!generation) return;
+  if (!generation.released) {
+    generation.released = true;
+    generation.release = generation.handle.close();
+  }
+  await generation.release;
 }
 
 export async function sha256BackupFileV1(path) {

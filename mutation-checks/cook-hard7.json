@@ -113,8 +113,8 @@
   },
   {
     "file": "src/installer/v1/nightly-backup.ts",
-    "find": "    } catch (error) {\n      await runtime.removeBackup(out);\n      if (error instanceof Error && error.message === \"nightly_backup_incomplete\") throw error;",
-    "replace": "    } catch (error) {\n      if (error instanceof Error && error.message === \"nightly_backup_incomplete\") throw error;",
+    "find": "    } catch (error) {\n        await runtime.removeBackup(out);\n        if (error instanceof Error && error.message === \"nightly_backup_incomplete\") throw error;",
+    "replace": "    } catch (error) {\n        if (error instanceof Error && error.message === \"nightly_backup_incomplete\") throw error;",
     "test": "node --import tsx --test --test-name-pattern='failed, empty' tests/hard7-robustness.test.mjs",
     "why": "A failed or incomplete attempt must be removed without spending retention"
   },
