@@ -61,7 +61,8 @@ const digestFor = (n: number) => `sha256:${n.toString(16).padStart(64, "0")}`;
 
 // EXPLAIN reports rounded per-loop averages for parallel scans. These observer
 // sessions pin serial execution; production SQL, costs and statistics stay unchanged.
-const serialPlanOptions = "-c statement_timeout=60000 -c max_parallel_workers_per_gather=0";
+const serialPlanWorkers: number = 0;
+const serialPlanOptions = `-c statement_timeout=60000 -c max_parallel_workers_per_gather=${serialPlanWorkers}`;
 async function connect(postgres: RealPostgres, role: AttackRole | "admin"): Promise<Client> {
   const options = role === "admin" ? { ...postgres.admin({ database: postgres.database }),
     options: serialPlanOptions } : (() => { const login = postgres.connection(role);
@@ -296,7 +297,7 @@ test("JSON L2-001 selective work budget rejects non-Seq full reads", () => {
 });
 
 test("JSON L2-002 broad quota refuses duplicate readers under the serial session contract", () => {
-  assert.match(serialPlanOptions, /(?:^|\s)-c max_parallel_workers_per_gather=0(?:\s|$)/u,
+  assert.equal(serialPlanWorkers, 0,
     "observer startup pins the independently specified serial session contract");
   const reader = { "Node Type": "Seq Scan", "Relation Name": "control_result_file_sets",
     "Actual Rows": 2000, "Actual Loops": 1 };

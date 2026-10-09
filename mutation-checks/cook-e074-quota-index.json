@@ -148,8 +148,8 @@
   },
   {
     "file": "tests/result-file-growth-postgres.test.ts",
-    "find": "-c max_parallel_workers_per_gather=0\";",
-    "replace": "-c max_parallel_workers_per_gather=2\";",
+    "find": "const serialPlanWorkers: number = 0;",
+    "replace": "const serialPlanWorkers: number = 2;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-002\" tests/result-file-growth-postgres.test.ts",
     "why": "M22: startup parallel pin must agree with the independent serial statement contract"
   }
