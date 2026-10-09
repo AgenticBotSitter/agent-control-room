@@ -702,6 +702,10 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     [entry(escaped, { timeoutMs: 1_500 })], 1, "escaped.json"));
   try {
     const escapedChild = await readyTool(t, escaped, escapedPid, escapedReady, { stdin: "pipe", control: true });
+    let controlError;
+    // Record transport errors as test data, so teardown can report a named
+    // assertion rather than a late uncaught socket error.
+    escapedChild.stdio[3].on("error", error => { controlError = error; });
     const exit = await exitedTool(escapedChild);
     assert.deepEqual(exit, [0, null], "the real escaped-pipe parent exits successfully before handoff");
     // Read fresh bytes after the parent exits: paused streams can report
@@ -750,7 +754,7 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
         drainTimers.delete(timer); timer.callback();
       }
     };
-    const pipesClosed = Promise.all([escapedChild.stdout, escapedChild.stderr].map(stream =>
+    const pipesClosed = Promise.all([escapedChild.stdout, escapedChild.stderr, escapedChild.stdio[3]].map(stream =>
       new Promise(done => stream.once("close", done))));
     const pending = connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
       assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
@@ -783,10 +787,14 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     } finally {
       // Release controls natural EOF. It never races a fixture lifetime timer.
       escapedChild.stdio[3].end();
+      // Close our unused read half before group retirement. Otherwise a
+      // holder exiting with unread control bytes can reset the duplex socket.
+      escapedChild.stdio[3].destroy();
       advanceDrain(20_000);
       timeoutMock.mock.restore(); clearMock.mock.restore();
       await pending;
       await waitForToolSignal(pipesClosed, "both real inherited pipes must close after controlled release");
+      assert.equal(controlError, undefined, "controlled holder release must not leave a transport error");
     }
 
   } finally {
