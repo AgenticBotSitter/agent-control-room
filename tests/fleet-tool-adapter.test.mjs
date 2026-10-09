@@ -50,9 +50,9 @@ test("workspaces share one private executable while keeping their files isolated
   await assert.rejects(readFile(join(second, "workspace-only")), { code: "ENOENT" });
 });
 
-async function readyTool(t, script, marker, heartbeat) {
+async function readyTool(t, script, marker, heartbeat, { stdin = "ignore" } = {}) {
   const child = nodeSpawn(join(dirname(script), "node-tool"), [script], {
-    env: {}, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+    env: {}, shell: false, detached: process.platform !== "win32", stdio: [stdin, "pipe", "pipe"],
   });
   let failure;
   child.on("error", error => { failure = error; });
@@ -413,16 +413,27 @@ test("overflow terminates once, an escaped pipe holder is bounded, and same-grou
   assert.equal(kills.filter(signal => signal === "SIGTERM").length, 1, "overflow has one termination attempt");
 
   const escapedPid = join(dir, "escaped.pid");
+  const escapedReady = join(dir, "escaped.ready");
   const escaped = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 5000)"], { detached: true, stdio: "inherit" });
-writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid)); process.exit(0);`);
-  const started = Date.now();
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(escapedReady)}, "ready");
+setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 5000);`)}], { detached: true, stdio: "inherit" });
+writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid));
+process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
+  const escapedRegistry = await connector.loadToolAdapters(await manifest(dir,
+    [entry(escaped, { timeoutMs: 1_500 })], 1, "escaped.json"));
+  let started;
   try {
-    await assert.rejects(connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
-      [entry(escaped, { timeoutMs: 1_500 })], 1, "escaped.json"))).execute(input()),
+    const escapedChild = await readyTool(t, escaped, escapedPid, escapedReady, { stdin: "pipe" });
+    await assert.rejects(connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
+      // Start measuring the drain only when a ready pipe holder is handed off.
+      started = performance.now();
+      queueMicrotask(() => escapedChild.stdin.end());
+      return escapedChild;
+    } }).execute(input()),
       error => error?.code === "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
-    assert.ok(Date.now() - started < 700, "an escaped stdout holder cannot wedge execute");
+    assert.ok(performance.now() - started < 700, "an escaped stdout holder cannot wedge execute");
   } finally {
     try {
       const pid = Number(await readFile(escapedPid, "utf8"));
