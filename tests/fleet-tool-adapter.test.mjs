@@ -692,10 +692,8 @@ test("overflow terminates once, an escaped pipe holder is bounded, and same-grou
 import { writeFileSync } from "node:fs";
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 writeFileSync(${JSON.stringify(escapedReady)}, "ready");
-process.stdin.on("data", bytes => {
-  const command = bytes.toString();
-  if (command === "probe") { process.stdout.write("held"); process.stderr.write("held"); }
-  if (command === "release") process.exit(0);
+process.stdin.on("data", () => {
+  process.stdout.write("held"); process.stderr.write("held");
 });
 process.stdin.once("end", () => process.exit(0));`)}], { detached: true, stdio: [3, "inherit", "inherit"] });
 writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid));
@@ -784,7 +782,7 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       assert.ok(performance.now() - started < 700, "an escaped stdout holder cannot wedge execute");
     } finally {
       // Release controls natural EOF. It never races a fixture lifetime timer.
-      escapedChild.stdio[3].end("release");
+      escapedChild.stdio[3].end();
       advanceDrain(20_000);
       timeoutMock.mock.restore(); clearMock.mock.restore();
       await pending;

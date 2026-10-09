@@ -127,8 +127,8 @@
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "process.stdin.on(\"data\", bytes => {\n  const command = bytes.toString();",
-    "replace": "process.exit(0);\nprocess.stdin.on(\"data\", bytes => {\n  const command = bytes.toString();",
+    "find": "process.stdin.on(\"data\", () => {\n  process.stdout.write(\"held\"); process.stderr.write(\"held\");\n});\nprocess.stdin.once(\"end\", () => process.exit(0));",
+    "replace": "process.exit(0);\nprocess.stdin.on(\"data\", () => {\n  process.stdout.write(\"held\"); process.stderr.write(\"held\");\n});\nprocess.stdin.once(\"end\", () => process.exit(0));",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='escaped pipe holder' tests/fleet-tool-adapter.test.mjs",
     "why": "Closing the controlled real holder before the probe must fail the named stdout handoff evidence, never accept paused readableEnded alone."
   },
