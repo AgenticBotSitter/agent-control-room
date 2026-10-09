@@ -329,7 +329,9 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
     CONTROL_ROOM_APP_PASSWORD:postgres.connection('app').password,
     CONTROL_ROOM_SCHEDULER_PASSWORD:postgres.connection('scheduler').password,
     CONTROL_ROOM_WORK_INTAKE_PASSWORD:postgres.connection('control_room_work_intake_agent').password};
-   const before=await applyMigrations({rootDir:oldRoot,ledgerPath:join(oldRoot,'deploy/postgres/migration-ledger.json'),
+   // The inferred JS call shape requires the legacy plan flag; execution is
+   // authorized only by bootstrapTarget and migrateTarget, so leave it unset.
+   const before=await applyMigrations({target:undefined,rootDir:oldRoot,ledgerPath:join(oldRoot,'deploy/postgres/migration-ledger.json'),
     bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
    const grantProducer=await import(pathToFileURL(join(oldRoot,'scripts/mac-local/database-upgrade-grants.mjs')).href);
    const grantActor=new Client(target);grantActor.on('error',()=>{});await grantActor.connect();
@@ -369,7 +371,7 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
     {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
     {action_inbox_id:'attention:upgrade:retry',state:'pending',attempt_count:1}]);
    assert.equal(tags.length,2,'old producer sent both synthetic provider requests');
-   const upgrade=await applyMigrations({rootDir:currentRoot,ledgerPath:join(currentRoot,'deploy/postgres/migration-ledger.json'),
+   const upgrade=await applyMigrations({target:undefined,rootDir:currentRoot,ledgerPath:join(currentRoot,'deploy/postgres/migration-ledger.json'),
     bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
    assert.deepEqual(upgrade.applied?.map((r:{file:string})=>r.file),['db/migrations/0300_owner_push_durable_completion.sql'],
     'upgrade appends only the new migration to the real earlier ledger');
