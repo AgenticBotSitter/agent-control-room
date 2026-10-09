@@ -815,7 +815,8 @@ import { OwnerPushDispatcherV1 } from './src/web-push/v1/dispatcher.ts';
 import { PostgresOwnerPushStoreV1 } from './src/web-push/v1/postgres-store.ts';
 const [input] = await new Promise(resolve => process.once('message', value => resolve([value])));
 const pool = bindPrivatePgPool(new Pool(input.connection));
-process.once('disconnect', () => { void pool.close().finally(() => process.exit(1)); });
+let finished = false;
+process.once('disconnect', () => { if (!finished) void pool.close().finally(() => process.exit(1)); });
 let repairWrites = 0, sends = 0;
 const wrap = tx => ({query: async (sql, params) => {
   if (/UPDATE owner_web_push_deliveries/.test(sql)) repairWrites++;
@@ -842,7 +843,7 @@ try {
   }
   process.send({kind:'result', login:who.rows[0].login, repairWrites, sends, refused, outcomes});
 } catch {process.send({kind:'error'});process.exitCode=1;}
-finally {await pool.close();process.disconnect();}
+finally {await pool.close();finished=true;process.disconnect();}
 `;
 
 test("WP-D16: two repair processes respect a newly published backoff (PG)", {
@@ -911,7 +912,7 @@ test("WP-D16: two repair processes respect a newly published backoff (PG)", {
       assert.equal(second.repairWrites,0,"WP-D16 stale selected repair must not bypass newly published backoff");
       assert.equal(second.sends,0); assert.equal(second.refused,false); assert.deepEqual(second.outcomes,[]);
       assert.deepEqual(await read(),postponed,"losing peer preserves the retry counter and deadline");
-      for(const peer of peers) {await peer.closed;assert.equal(peer.child.exitCode,0);}
+      for(const peer of peers) {await peer.closed;assert.equal(peer.child.exitCode,0,"completed repair worker exits cleanly");}
       await admin.query("DROP TRIGGER refuse_repair_race ON owner_web_push_deliveries; DROP FUNCTION refuse_repair_race()");
       await new OwnerPushDispatcherV1({ db:pool.client,tenantId:tenant,store:new PostgresOwnerPushStoreV1(pool.client),
         clock:()=>at+90_000,channel:{kind:"web-push",async send(){sends++;return {statusCode:201};}},
