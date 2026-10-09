@@ -100,9 +100,9 @@
   {
     "file": "src/web-push/v1/dispatcher.ts",
     "find": "WHERE tenant_id=$1 AND action_inbox_id=$2 AND attempt_count=$3 AND reserved_at=$4::timestamptz\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
-    "replace": "WHERE tenant_id=$1 AND action_inbox_id=$2\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
+    "replace": "WHERE tenant_id=$1 AND action_inbox_id=$2 AND $3::integer IS NOT NULL AND $4::timestamptz IS NOT NULL\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
-    "why": "Exact receipt admission cannot overwrite a newer claim while its provider call is observably held."
+    "why": "Exact receipt admission cannot overwrite a newer claim while its provider call is observably held. Keep all placeholder types so a bind/load failure cannot substitute for the named assertion."
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
