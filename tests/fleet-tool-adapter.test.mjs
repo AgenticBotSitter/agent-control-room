@@ -109,13 +109,10 @@ process.stdin.on("data", bytes => {
   let handedOff = false;
   const pending = exitedTool(child, () => child.stdin.write("gate")).then(exit => { handedOff = true; return exit; });
   try {
-    const deadline = performance.now() + 10_000;
-    while (true) {
-      try { await readFile(gated); break; }
-      catch (error) { if (error?.code !== "ENOENT") throw error; }
-      assert.ok(performance.now() < deadline, "the real parent must reach its exit gate");
-      await new Promise(done => setImmediate(done));
-    }
+    await waitForToolState(async () => {
+      try { await readFile(gated); return true; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; return false; }
+    }, "the real parent must reach its exit gate");
     await new Promise(done => setImmediate(done));
     assert.equal(handedOff, false, "drain handoff must wait for actual exit, not merely readiness");
   } finally {
@@ -140,13 +137,10 @@ const timer = setInterval(() => {
   const pending = readyTool(t, script, marker, heartbeat).then(child => { handedOff = true; return child; });
   pending.catch(() => {}); // Handle setup refusal immediately, including while waiting for started.
   try {
-    const deadline = performance.now() + 10_000;
-    while (true) {
-      try { await readFile(started); break; }
-      catch (error) { if (error?.code !== "ENOENT") throw error; }
-      assert.ok(performance.now() < deadline, "the real tool must reach its startup gate");
-      await new Promise(done => setImmediate(done));
-    }
+    await waitForToolState(async () => {
+      try { await readFile(started); return true; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; return false; }
+    }, "the real tool must reach its startup gate");
     await new Promise(done => setImmediate(done));
     assert.equal(handedOff, false, "handoff must wait for PID and heartbeat, not merely spawn");
   } finally {
