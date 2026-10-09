@@ -1004,13 +1004,13 @@ async function repairSnapshotRace(f: DurableFixture, expected: {
       const hold=new Promise<void>(resolve=>{release=resolve;});
       const ready=new Promise<void>(resolve=>{selected=resolve;});
       let writes=0;
-      const db:DatabaseClient={...f.db,query:async(sql,params)=>{
-        const result=await f.db.query(sql,params);
+      const db:DatabaseClient={...f.db,query:async<T=Record<string,unknown>>(sql:string,params?:unknown[])=>{
+        const result=await f.db.query<T>(sql,params);
         if(/WHERE tenant_id=\$1 AND state='completing' AND next_attempt_at<=\$2/.test(sql)) {
           assert.equal(result.rows.length,1,"each peer observes the same due receipt");selected();await hold;
         }
         return result;
-      },transaction:body=>f.db.transaction(tx=>body({query:async(sql,params)=>{
+      },transaction:body=>f.db.transaction(tx=>body({query:async<T=Record<string,unknown>>(sql:string,params?:unknown[])=>{
         if(/UPDATE owner_web_push_deliveries/.test(sql)){writes++;throw new Error("synthetic_ledger_refusal");}
         return tx.query(sql,params);
       }}))};
@@ -1060,16 +1060,16 @@ async function failedRepairPublication(f:DurableFixture, initialFailures:1|8) {
       const retryReady=new Promise<void>(resolve=>{retry=resolve;});
       const retryGate=new Promise<void>(resolve=>{releaseRetry=resolve;});
       let published=-1;
-      const db:DatabaseClient={...f.db,query:async(sql,params)=>{
+      const db:DatabaseClient={...f.db,query:async<T=Record<string,unknown>>(sql:string,params?:unknown[])=>{
         if(/SET next_attempt_at=\$5,completion_retry_count=\$6/.test(sql)) {
-          retry();await retryGate;const result=await f.db.query(sql,params);published=result.rows.length;return result;
+          retry();await retryGate;const result=await f.db.query<T>(sql,params);published=result.rows.length;return result;
         }
-        const result=await f.db.query(sql,params);
+        const result=await f.db.query<T>(sql,params);
         if(/WHERE tenant_id=\$1 AND state='completing' AND next_attempt_at<=\$2/.test(sql)) {
           assert.equal(result.rows.length,1);due();await dueGate;
         }
         return result;
-      },transaction:body=>f.db.transaction(tx=>body({query:async(sql,params)=>{
+      },transaction:body=>f.db.transaction(tx=>body({query:async<T=Record<string,unknown>>(sql:string,params?:unknown[])=>{
         if(/UPDATE owner_web_push_deliveries/.test(sql))throw new Error("synthetic_ledger_refusal");
         return tx.query(sql,params);
       }}))};

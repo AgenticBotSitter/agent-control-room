@@ -324,7 +324,7 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
   try {
    await admin.query(`CREATE DATABASE ${previous} OWNER fixture_admin`);
    const target=postgres.admin({database:previous});
-   const env={...process.env,NODE_ENV:'test',
+   const env:NodeJS.ProcessEnv={...process.env,NODE_ENV:'test',
     CONTROL_ROOM_MIGRATOR_PASSWORD:postgres.connection('migrator').password,
     CONTROL_ROOM_APP_PASSWORD:postgres.connection('app').password,
     CONTROL_ROOM_SCHEDULER_PASSWORD:postgres.connection('scheduler').password,
@@ -371,7 +371,7 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
    assert.equal(tags.length,2,'old producer sent both synthetic provider requests');
    const upgrade=await applyMigrations({rootDir:currentRoot,ledgerPath:join(currentRoot,'deploy/postgres/migration-ledger.json'),
     bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
-   assert.deepEqual(upgrade.applied.map((r:{file:string})=>r.file),['db/migrations/0300_owner_push_durable_completion.sql'],
+   assert.deepEqual(upgrade.applied?.map((r:{file:string})=>r.file),['db/migrations/0300_owner_push_durable_completion.sql'],
     'upgrade appends only the new migration to the real earlier ledger');
    assert.deepEqual(await rows(),[
     {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
@@ -382,7 +382,7 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
    const freshDigest=await readPrivateWebSchemaDigest(reader(fresh));
    assert.equal(upgradedDigest,freshDigest,'independent fresh and upgraded catalogs agree');
    console.log(JSON.stringify({baselineLedger:BASE_LEDGER,baselineSchema:BASE_SCHEMA,upgradedDigest,freshDigest,
-    applied:upgrade.applied.map((r:{file:string})=>r.file),login:'control_room_web',provider:'SYNTHETIC'}));
+    applied:upgrade.applied?.map((r:{file:string})=>r.file),login:'control_room_web',provider:'SYNTHETIC'}));
    const accepted={kind:'web-push' as const,async send(_s:unknown,p:{tag:string}){tags.push(p.tag);return{statusCode:201};}};
    await new OwnerPushDispatcherV1({db,tenantId:'tenant:upgrade',store:new PostgresOwnerPushStoreV1(db),channel:accepted,clock:()=>at+30_000}).dispatch();
    assert.deepEqual(await rows(),[
