@@ -51,7 +51,7 @@ test("workspaces share one private executable while keeping their files isolated
   await assert.rejects(readFile(join(second, "workspace-only")), { code: "ENOENT" });
 });
 
-async function readyTool(t, script, marker, heartbeat, { stdin = "ignore" } = {}) {
+async function readyTool(t, script, marker, heartbeat, { stdin = "ignore", observation = () => {} } = {}) {
   const child = nodeSpawn(join(dirname(script), "node-tool"), [script], {
     env: {}, shell: false, detached: process.platform !== "win32", stdio: [stdin, "pipe", "pipe"],
   });
@@ -69,7 +69,12 @@ async function readyTool(t, script, marker, heartbeat, { stdin = "ignore" } = {}
   while (true) {
     if (failure) throw failure;
     assert.equal(child.exitCode, null, "the fixture must stay alive until adapter handoff");
-    try { await Promise.all([readFile(marker), readFile(heartbeat)]); break; }
+    try {
+      const values = await Promise.all([readFile(marker), readFile(heartbeat)]);
+      observation(values);
+      const pid = Number(values[0].toString());
+      if (Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0) break;
+    }
     catch (error) { if (error?.code !== "ENOENT") throw error; }
     assert.ok(performance.now() < deadline, "the tool must write its PID and heartbeat within the setup bound");
     await new Promise(done => setImmediate(done));
@@ -157,6 +162,38 @@ const timer = setInterval(() => {
   }
   assert.equal(handedOff, true);
   assert.equal(await readFile(heartbeat, "utf8"), "ready");
+});
+
+test("readiness barrier refuses partial PID and heartbeat files", async t => {
+  for (const [name, partialPid, partialHeartbeat] of [
+    ["partial PID", true, false], ["partial heartbeat", false, true], ["both partial", true, true],
+  ]) await t.test(name, async sub => {
+    const dir = await workspace(sub), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat"), started = join(dir, "partial-started");
+    const script = await executable(dir, `import { writeFileSync } from "node:fs";
+  process.once("SIGUSR2", () => {
+    writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+    writeFileSync(${JSON.stringify(heartbeat)}, "ready");
+  });
+  writeFileSync(${JSON.stringify(marker)}, ${JSON.stringify(partialPid)} ? "" : String(process.pid));
+  writeFileSync(${JSON.stringify(heartbeat)}, ${JSON.stringify(partialHeartbeat)} ? "" : "ready");
+  writeFileSync(${JSON.stringify(started)}, String(process.pid)); process.stdin.resume();`);
+    let handedOff = false, pid, observedPartial;
+    const partialRead = new Promise(done => { observedPartial = done; });
+    const pending = readyTool(sub, script, marker, heartbeat, { stdin: "pipe", observation: values => {
+      if ((values[0].length === 0) === partialPid && (values[1].length === 0) === partialHeartbeat) observedPartial();
+    } }).then(child => { handedOff = true; return child; });
+    try {
+      await waitForToolState(async () => {
+        try { pid = Number(await readFile(started, "utf8")); return Number.isSafeInteger(pid) && pid > 0; }
+        catch (error) { if (error?.code !== "ENOENT") throw error; return false; }
+      }, "the real child must reach the partial-write gate");
+      await partialRead;
+      await new Promise(done => setImmediate(done));
+      assert.equal(handedOff, false, "partial readiness files cannot release handoff before their real contents arrive");
+    } finally { if (pid) process.kill(pid, "SIGUSR2"); await pending; }
+    assert.equal(await readFile(marker, "utf8"), String(pid));
+    assert.equal(await readFile(heartbeat, "utf8"), "ready");
+  });
 });
 
 test("state barrier waits for observation and process disappearance", async t => {

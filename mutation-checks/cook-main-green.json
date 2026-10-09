@@ -173,5 +173,19 @@
     "replace": "    void deadline;",
     "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport {waitForToolState} from \"./tests/support/prepared-tool-runner.mjs\";\ntest(\"missing observation refuses before the independent eleven-second observer\", async () => {\n  let release=false,timer;\n  const pending=waitForToolState(()=>release,\"missing observation at original setup bound\").then(()=>({finished:true}),error=>({finished:true,error}));\n  try {\n    const result=await Promise.race([pending,new Promise(done=>{timer=setTimeout(()=>done({finished:false}),11000);})]);\n    assert.equal(result.finished,true,\"missing observation must settle before independent 11s observation\");\n    assert.equal(result.error?.message,\"missing observation at original setup bound\");\n  } finally {clearTimeout(timer);release=true;await pending;}\n});'",
     "why": "The unchanged ten-second setup budget must refuse missing readiness, as observed by an independent eleven-second observer; disabling the budget fails the named settlement assertion."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "Number.isSafeInteger(pid) && pid > 0",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Real child holds the partial PID behind its own completion signal. Independently required handoff=false must fail by name if incomplete content is admitted; the other readiness guard remains enabled."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "values[1].length > 0",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Real child holds the partial heartbeat behind its own completion signal. Independently required handoff=false must fail by name if incomplete content is admitted; the other readiness guard remains enabled."
   }
 ]
