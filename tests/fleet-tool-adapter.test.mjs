@@ -480,6 +480,8 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     assert.deepEqual(exit, [0, null], "the real escaped-pipe parent exits successfully before handoff");
     await assert.rejects(connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
       assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
+      assert.equal(escapedChild.stdout.readableEnded, false, "the real escaped stdout pipe is still open at handoff");
+      assert.equal(escapedChild.stderr.readableEnded, false, "the real escaped stderr pipe is still open at handoff");
       // Replay only the recorded exit, with real still-open inherited pipes.
       // Other tests below exercise the product's own spawn options end to end.
       queueMicrotask(() => {
