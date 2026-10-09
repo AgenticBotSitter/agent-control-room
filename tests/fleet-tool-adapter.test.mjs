@@ -766,10 +766,12 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       new Promise(done => stream.once("close", done))));
     const pending = connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
       assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
+      // Preserve the base execute guard's origin at adapter handoff, including
+      // time the product takes to attach its listeners after the spawner returns.
+      started = performance.now();
       // Replay the recorded exit; the holder keeps the real pipes open until
       // the test explicitly releases its attached control pipe below.
       queueMicrotask(() => {
-        started = performance.now();
         registeringDrain = true;
         try { escapedChild.emit("exit", ...exit); }
         finally { registeringDrain = false; handoff(); }
