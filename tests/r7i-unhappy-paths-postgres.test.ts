@@ -408,14 +408,19 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
   let reached!: () => void;
   const started = new Promise<void>(done => { reached = done; });
   let sends = 0, refused = false, finished = false;
-  const db = withQuery(f, async (sql,params) => {
-    // Same fault at the old public settle seam. SQL, not a missing new column,
-    // distinguishes the original live-cycle failure.
+  const refuse = (sql: string) => {
+    // Same old public settle seam, also inside the new atomic repair transaction.
+    // SQL, not a missing new column, distinguishes the live-cycle failure.
     if (!refused && /UPDATE control_owner_push_attempt_heads\s+SET state=\$3::text/.test(sql)) {
       refused = true; throw new Error("database_unavailable");
     }
-    return f.db.query(sql,params);
-  });
+  };
+  const db: DatabaseClient = { ...f.db,
+    query: async (sql,params) => { refuse(sql); return f.db.query(sql,params); },
+    transaction: async body => f.db.transaction(tx=>body({query: async (sql,params)=>{
+      refuse(sql); return tx.query(sql,params);
+    }})),
+  };
   const tags: string[] = [];
   const channel: OwnerNotificationChannelV1 = { kind:"web-push", async send(_s,p) {
     tags.push(p.tag); sends++;
@@ -529,7 +534,8 @@ durableTwin("WP-D05", "poison status and refused writes have bounded repair", as
   await durableDispatcher(f,channel,fault.db,()=>f.at+30_000).dispatch().catch(()=>{});
   assert.ok(fault.writes()-before<=8,'WP-D05 at most8 due completion items per tick');
   const rows=await durableHead(f);
-  assert.equal(rows.length,20);assert.ok(rows.every(r=>Number(r.attempt_count)===1),'WP-D05 repair never spends a send attempt');
+  assert.equal(rows.length,20);assert.ok(rows.every(r=>r.state==='completing'),'WP-D05 refused ledger work is durable completing, not stranded reserved');
+  assert.ok(rows.every(r=>Number(r.attempt_count)===1),'WP-D05 repair never spends a send attempt');
   await f.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
     VALUES('attention:fresh', $1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
   const valid:OwnerNotificationChannelV1={kind:'web-push',async send(){return{statusCode:201};}};
