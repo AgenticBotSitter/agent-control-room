@@ -651,6 +651,7 @@ export class OwnerPushDispatcherV1 {
    * rolls back every ledger edit. No provider operation runs in this path. */
   async #complete(head: HeadRow, owner = false): Promise<OwnerPushDispatchOutcomeV1 | undefined> {
     const now = safeNow(this.#clock()), spent = Number(head.attempt_count);
+    let retryCount = Number(head.completion_retry_count ?? 0);
     try {
       return await this.input.db.transaction(async tx => {
         const locked = await tx.query<HeadRow>(`SELECT action_inbox_id,link,attempt_count,state,next_attempt_at,reserved_at,
@@ -660,6 +661,7 @@ export class OwnerPushDispatcherV1 {
         [this.input.tenantId, head.action_inbox_id, spent, head.reserved_at]);
         const current = locked.rows[0];
         if (!current) return undefined; // A peer completed this exact receipt.
+        retryCount = Number(current.completion_retry_count ?? 0);
         // Due selection is a snapshot shared by competing peers. A refused
         // repair may have moved the deadline while this peer waited for the
         // head lock; its current backoff must govern the next write attempt.
@@ -718,13 +720,17 @@ export class OwnerPushDispatcherV1 {
       });
     } catch (error) {
       // Retry writes, not sends; the send-attempt counter never moves here.
-      const count = Math.min((head.completion_retry_count ?? 0)+1,OWNER_PUSH_ATTEMPT_LIMIT_V1);
+      // The transaction released its lock on refusal. Compare its observed
+      // retry count and due deadline so a peer publication cannot be replaced,
+      // including when the retry count has reached its cap.
+      const count = Math.min(retryCount+1,OWNER_PUSH_ATTEMPT_LIMIT_V1);
       const retryAt = new Date(Date.parse(now)+ownerPushBackoffMsV1(count)).toISOString();
       await this.input.db.query(`UPDATE control_owner_push_attempt_heads
         SET next_attempt_at=$5,completion_retry_count=$6,updated_at=$7
         WHERE tenant_id=$1 AND action_inbox_id=$2 AND state='completing'
-          AND attempt_count=$3 AND reserved_at=$4::timestamptz RETURNING action_inbox_id`,
-      [this.input.tenantId,head.action_inbox_id,spent,head.reserved_at,retryAt,count,now]);
+          AND attempt_count=$3 AND reserved_at=$4::timestamptz
+          AND completion_retry_count=$8 AND next_attempt_at<=$7::timestamptz RETURNING action_inbox_id`,
+      [this.input.tenantId,head.action_inbox_id,spent,head.reserved_at,retryAt,count,now,retryCount]);
       throw error;
     }
   }

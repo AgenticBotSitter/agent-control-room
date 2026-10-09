@@ -701,7 +701,7 @@ durableTwin("WP-D10", "refused burst retains bounded parallel send width",async 
 
 import { startOwnerPushLoopV1 } from '../src/web-push/v1/loop';
 durableTwin("WP-D11", "public loop reconstructs completion after replacement",async f=>{
-  await durableInputs(f,1);const fault=refuseLedger(f,1);let sends=0;
+  await durableInputs(f,1);const fault=refuseLedger(f,()=>true);let sends=0;
   const channel:OwnerNotificationChannelV1={kind:'web-push',async send(){sends++;return{statusCode:201};}};
   const first=await startOwnerPushLoopV1({db:fault.db,tenantId:DURABLE_TENANT,store:new PostgresOwnerPushStoreV1(fault.db),
     channel,clock:()=>f.at,intervalMs:60_000,report:()=>{}});await first.close();
@@ -846,9 +846,7 @@ try {
 finally {await pool.close();finished=true;process.disconnect();}
 `;
 
-test("WP-D16: two repair processes respect a newly published backoff (PG)", {
-  skip: requiresRealPostgres() ? false : realPostgresSkipMessage(), timeout: 900_000,
-}, async () => {
+async function repairRacePostgres(expected: {secondOffset:number; writes:number; count:number; deadlineOffset:number; peers?:number}) {
   await withRealPostgres(async postgres => {
     const admin = new Client(postgres.admin()); admin.on("error", () => {}); await admin.connect();
     const pool = webClient(postgres), tenant = "tenant:repair-race", at = Date.now();
@@ -882,7 +880,7 @@ test("WP-D16: two repair processes respect a newly published backoff (PG)", {
       const initial = await read();
       assert.equal(initial.state, "completing"); assert.equal(initial.completion_retry_count, 1);
       assert.equal(new Date(initial.next_attempt_at).getTime(), at+30_000);
-      for (let i=0;i<2;i++) {
+      for (let i=0;i<(expected.peers ?? 2);i++) {
         const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", REPAIR_RACE_WORKER],
           { stdio:["pipe", "pipe", "pipe", "ipc"] });
         child.stdout!.resume(); child.stderr!.resume();
@@ -895,10 +893,10 @@ test("WP-D16: two repair processes respect a newly published backoff (PG)", {
           pending=message=>{clearTimeout(timer);resolve(message);};
         });
         peers.push({child,closed,next});
-        child.send({ connection:privateRaceConnection(postgres.connection("web")), tenant, at:at+30_000 });
+        child.send({ connection:privateRaceConnection(postgres.connection("web")), tenant, at:at+(i===0?30_000:expected.secondOffset) });
       }
       for(const peer of peers) assert.deepEqual(await peer.next(), {kind:"selected", rows:1},
-        "both separate processes reached the same observed due receipt");
+        "all separate processes reached the same observed due receipt");
       peers[0].child.send({proceed:true});
       const first = await peers[0].next();
       assert.equal(first.kind,"result"); assert.equal(first.login,"control_room_web");
@@ -906,16 +904,21 @@ test("WP-D16: two repair processes respect a newly published backoff (PG)", {
       const postponed = await read();
       assert.equal(postponed.completion_retry_count,2);
       assert.equal(new Date(postponed.next_attempt_at).getTime(),at+90_000,"literal second60s repair backoff");
-      peers[1].child.send({proceed:true});
-      const second = await peers[1].next();
-      assert.equal(second.kind,"result"); assert.equal(second.login,"control_room_web");
-      assert.equal(second.repairWrites,0,"WP-D16 stale selected repair must not bypass newly published backoff");
-      assert.equal(second.sends,0); assert.equal(second.refused,false); assert.deepEqual(second.outcomes,[]);
-      assert.deepEqual(await read(),postponed,"losing peer preserves the retry counter and deadline");
+      for (const peer of peers.slice(1)) peer.child.send({proceed:true});
+      for (const peer of peers.slice(1)) {
+        const second = await peer.next();
+        assert.equal(second.kind,"result"); assert.equal(second.login,"control_room_web");
+        assert.equal(second.repairWrites,expected.writes,"WP-D16 stale selected repair must respect its current deadline");
+        assert.equal(second.sends,0); assert.equal(second.refused,expected.writes!==0);
+        if(expected.writes===0) assert.deepEqual(second.outcomes,[]);
+      }
+      const after=await read();
+      assert.equal(after.completion_retry_count,expected.count,"WP-D17 locked production retry count advances correctly");
+      assert.equal(new Date(after.next_attempt_at).getTime(),at+expected.deadlineOffset,"independent production retry deadline");
       for(const peer of peers) {await peer.closed;assert.equal(peer.child.exitCode,0,"completed repair worker exits cleanly");}
       await admin.query("DROP TRIGGER refuse_repair_race ON owner_web_push_deliveries; DROP FUNCTION refuse_repair_race()");
       await new OwnerPushDispatcherV1({ db:pool.client,tenantId:tenant,store:new PostgresOwnerPushStoreV1(pool.client),
-        clock:()=>at+90_000,channel:{kind:"web-push",async send(){sends++;return {statusCode:201};}},
+        clock:()=>at+expected.deadlineOffset,channel:{kind:"web-push",async send(){sends++;return {statusCode:201};}},
       }).dispatch();
       assert.equal((await read()).state,"delivered");assert.equal(sends,1,"healthy recovery only repairs; never resends acceptance");
     } finally {
@@ -927,15 +930,24 @@ test("WP-D16: two repair processes respect a newly published backoff (PG)", {
       await pool.close();await admin.end();
     }
   }, { port:PUSH_PORT+11, allowedPorts:[PUSH_PORT+11], boundMs:900_000 });
-});
+}
+
+for (const [id,expected] of [
+  ["WP-D16",{secondOffset:30_000,writes:0,count:2,deadlineOffset:90_000}],
+  ["WP-D17",{secondOffset:90_000,writes:1,count:3,deadlineOffset:390_000}],
+  ["WP-D21",{secondOffset:30_000,writes:0,count:2,deadlineOffset:90_000,peers:20}],
+] as const) test(`${id}: two repair processes respect the current backoff (PG)`, {
+  skip: requiresRealPostgres() ? false : realPostgresSkipMessage(), timeout:900_000,
+}, () => repairRacePostgres(expected));
 
 function privateRaceConnection(connection: {host:string;port:number;database:string;user:string;password:string}) {
   return {...privatePgOptions({ host:"127.0.0.1",port:connection.port,database:connection.database,
     username:connection.user,password:connection.password,majorVersion:17 }),host:connection.host};
 }
 
-test("WP-D16: stale selected repair respects newly published backoff (synthetic)", async () => {
-  await durableFixture("synthetic",async f=>{
+async function repairSnapshotRace(f: DurableFixture, expected: {
+  secondOffset:number; writes:number; count:number; deadlineOffset:number;
+}) {
     await durableInputs(f,1);
     const fault=refuseLedger(f,()=>true);
     let sends=0;
@@ -943,7 +955,7 @@ test("WP-D16: stale selected repair respects newly published backoff (synthetic)
     await assert.rejects(()=>durableDispatcher(f,channel,fault.db).dispatch(),/owner_push_completion_unavailable/);
     const read=async()=> (await f.query("SELECT state,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
     assert.equal((await read()).completion_retry_count,1);
-    const peers=Array.from({length:2},()=>{
+    const peers=Array.from({length:2},(_,index)=>{
       let release!:()=>void,selected!:()=>void;
       const hold=new Promise<void>(resolve=>{release=resolve;});
       const ready=new Promise<void>(resolve=>{selected=resolve;});
@@ -958,7 +970,7 @@ test("WP-D16: stale selected repair respects newly published backoff (synthetic)
         if(/UPDATE owner_web_push_deliveries/.test(sql)){writes++;throw new Error("synthetic_ledger_refusal");}
         return tx.query(sql,params);
       }}))};
-      const running=durableDispatcher(f,channel,db,()=>f.at+30_000).dispatch();void running.catch(()=>{});
+      const running=durableDispatcher(f,channel,db,()=>f.at+(index===0?30_000:expected.secondOffset)).dispatch();void running.catch(()=>{});
       return {release,ready,running,writes:()=>writes};
     });
     try {
@@ -968,9 +980,93 @@ test("WP-D16: stale selected repair respects newly published backoff (synthetic)
       assert.equal(postponed.completion_retry_count,2);
       assert.equal(new Date(postponed.next_attempt_at).getTime(),f.at+90_000,"independent second60s backoff");
       peers[1].release();await peers[1].running.catch(()=>{});
-      assert.equal(peers[1].writes(),0,"WP-D16 stale selected repair must not bypass newly published backoff");
-      assert.deepEqual(await peers[1].running,[]);
-      assert.deepEqual(await read(),postponed);assert.equal(sends,1);
+      assert.equal(peers[1].writes(),expected.writes,"WP-D16 stale selected repair must respect the current deadline");
+      if(expected.writes===0) await peers[1].running;
+      else await assert.rejects(()=>peers[1].running,/owner_push_completion_unavailable/);
+      const after=await read();
+      assert.equal(after.completion_retry_count,expected.count,"WP-D17 retry count advances from the locked current row");
+      assert.equal(new Date(after.next_attempt_at).getTime(),f.at+expected.deadlineOffset,
+        "WP-D17 current retry count selects independent literal backoff");
+      assert.equal(sends,1);
     } finally {for(const peer of peers)peer.release();await Promise.allSettled(peers.map(peer=>peer.running));}
+}
+
+test("WP-D16: stale selected repair respects newly published backoff (synthetic)", async () => {
+  await durableFixture("synthetic",f=>repairSnapshotRace(f,{secondOffset:30_000,writes:0,count:2,deadlineOffset:90_000}));
+});
+test("WP-D17: a stale snapshot at the new deadline advances current retry count (synthetic)", async () => {
+  await durableFixture("synthetic",f=>repairSnapshotRace(f,{secondOffset:90_000,writes:1,count:3,deadlineOffset:390_000}));
+});
+
+async function failedRepairPublication(f:DurableFixture, initialFailures:1|8) {
+    await durableInputs(f,1);
+    const fault=refuseLedger(f,()=>true);
+    const channel:OwnerNotificationChannelV1={kind:"web-push",async send(){return{statusCode:201};}};
+    let now=f.at;
+    for(let failure=0;failure<initialFailures;failure++) {
+      await assert.rejects(()=>durableDispatcher(f,channel,fault.db,()=>now).dispatch(),/owner_push_completion_unavailable/);
+      now=new Date((await f.query("SELECT next_attempt_at FROM control_owner_push_attempt_heads")).rows[0].next_attempt_at).getTime();
+    }
+    const delay=initialFailures===1?60_000:14_400_000;
+    let releaseDue!:()=>void;
+    const dueGate=new Promise<void>(resolve=>{releaseDue=resolve;});
+    const peers=Array.from({length:2},(_,index)=>{
+      let due!:()=>void,retry!:()=>void,releaseRetry!:()=>void;
+      const dueReady=new Promise<void>(resolve=>{due=resolve;});
+      const retryReady=new Promise<void>(resolve=>{retry=resolve;});
+      const retryGate=new Promise<void>(resolve=>{releaseRetry=resolve;});
+      let published=-1;
+      const db:DatabaseClient={...f.db,query:async(sql,params)=>{
+        if(/SET next_attempt_at=\$5,completion_retry_count=\$6/.test(sql)) {
+          retry();await retryGate;const result=await f.db.query(sql,params);published=result.rows.length;return result;
+        }
+        const result=await f.db.query(sql,params);
+        if(/WHERE tenant_id=\$1 AND state='completing' AND next_attempt_at<=\$2/.test(sql)) {
+          assert.equal(result.rows.length,1);due();await dueGate;
+        }
+        return result;
+      },transaction:body=>f.db.transaction(tx=>body({query:async(sql,params)=>{
+        if(/UPDATE owner_web_push_deliveries/.test(sql))throw new Error("synthetic_ledger_refusal");
+        return tx.query(sql,params);
+      }}))};
+      const running=durableDispatcher(f,channel,db,()=>now+(initialFailures===1 && index===1?delay:0)).dispatch();void running.catch(()=>{});
+      return {dueReady,retryReady,releaseRetry,running,published:()=>published};
+    });
+    try {
+      await Promise.all(peers.map(peer=>peer.dueReady));releaseDue();
+      await Promise.all(peers.map(peer=>peer.retryReady));
+      peers[0].releaseRetry();await assert.rejects(()=>peers[0].running,/owner_push_completion_unavailable/);
+      assert.equal(peers[0].published(),1,"first failure publishes the current retry");
+      peers[1].releaseRetry();await assert.rejects(()=>peers[1].running,/owner_push_completion_unavailable/);
+      assert.equal(peers[1].published(),0,`WP-D${initialFailures===1?18:20} stale failed repair cannot overwrite its peer's backoff`);
+      const row=(await f.query("SELECT completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+      assert.equal(row.completion_retry_count,initialFailures===1?2:8);assert.equal(new Date(row.next_attempt_at).getTime(),now+delay);
+    } finally {releaseDue();for(const peer of peers)peer.releaseRetry();await Promise.allSettled(peers.map(peer=>peer.running));}
+}
+
+test("WP-D18: concurrent failed repairs publish one conditional backoff (synthetic)", async () => {
+  await durableFixture("synthetic",f=>failedRepairPublication(f,1));
+});
+test("WP-D20: clamped repairs cannot overwrite a peer's future deadline (synthetic)", async () => {
+  await durableFixture("synthetic",f=>failedRepairPublication(f,8));
+});
+
+test("WP-D19: repeated repair refusal clamps counter and preserves release backoff (synthetic)", async () => {
+  await durableFixture("synthetic",async f=>{
+    await durableInputs(f,1);const fault=refuseLedger(f,()=>true);let sends=0,now=f.at;
+    const channel:OwnerNotificationChannelV1={kind:"web-push",async send(){sends++;return{statusCode:201};}};
+    // Independently captured14bb release schedule, preserved by the brief.
+    const delays=[30_000,60_000,300_000,600_000,1_800_000,3_600_000,7_200_000,14_400_000,14_400_000];
+    for(let index=0;index<delays.length;index++) {
+      await assert.rejects(()=>durableDispatcher(f,channel,fault.db,()=>now).dispatch(),/owner_push_completion_unavailable/);
+      const row=(await f.query("SELECT state,attempt_count,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+      assert.equal(row.state,"completing");assert.equal(Number(row.attempt_count),1);
+      assert.equal(row.completion_retry_count,Math.min(index+1,8),"repair counter clamps at independently specified8");
+      assert.equal(new Date(row.next_attempt_at).getTime()-now,delays[index],"WP-D19 each refused repair publishes release backoff even beyond count8");
+      now=new Date(row.next_attempt_at).getTime();
+    }
+    assert.equal(sends,1,"repair refusal never resends acceptance");
+    await durableDispatcher(f,channel,f.db,()=>now).dispatch();
+    assert.equal((await durableHead(f))[0].state,"delivered");assert.equal(sends,1);
   });
 });

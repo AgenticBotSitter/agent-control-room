@@ -124,5 +124,33 @@
     "replace": "if (false && !owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D16: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "Existing literal30s/60s retry policy: after one peer publishes a future deadline, an old due snapshot must perform zero ledger writes. PG twin proves two production-login processes."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "retryCount = Number(current.completion_retry_count ?? 0);",
+    "replace": "retryCount = Number(head.completion_retry_count ?? 0);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D17: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "At the exact peer-published deadline the independent third300s backoff uses locked current count2, not selected count1."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "AND completion_retry_count=$8",
+    "replace": "AND ($8::integer IS NOT NULL)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D18: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two failed repairs held at publication: exactly one current UPDATE may return a row; the stale publication must affect zero."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "Math.min(retryCount+1,OWNER_PUSH_ATTEMPT_LIMIT_V1)",
+    "replace": "(retryCount+1)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D19: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent released schedule and literal count8: refusal number9 must still publish the bounded four-hour deadline, not leave due work spinning."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "AND next_attempt_at<=$7::timestamptz",
+    "replace": "AND ($7::timestamptz IS NOT NULL)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D20:' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "After count eight a failed peer must not overwrite a newly published future deadline; expected zero writes comes from the exclusive publication contract."
   }
 ]
