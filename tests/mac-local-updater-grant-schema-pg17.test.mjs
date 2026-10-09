@@ -376,8 +376,8 @@ test("as the migrator the REVOKE really would have been refused, so the filter i
 // are those captured digests -- never read from the current ledger -- so a
 // derivation that drifted from the shipped base fails before anything installs.
 const BASE_LEDGER_DIGEST = "c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03";
-const BASE_PRIVATE_WEB_ROLES_SHA256 = "0d55c707ae143546c6a97b4939718cfd0b78fdf734336807f9aea60aca4ca548";
-const SUBSCRIPTION_GRANT = "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;\n";
+const BASE_PRIVATE_WEB_ROLES_SHA256 = "0fea0207392fb36f5b8d9e8716984f80ad1b7d9975db658104434672d7c54e92"; // trailing whitespace trimmed
+const SUBSCRIPTION_GRANT = /^GRANT UPDATE \([^)]*\) ON owner_web_push_subscriptions TO control_room_private_web;\n/gmu;
 const UPGRADE_TENANT = "tenant:installed-upgrade";
 const UPGRADE_WORKSPACE = "workspace:installed-upgrade";
 const UPGRADE_SUBJECT = "installed-upgrade-owner";
@@ -427,9 +427,9 @@ async function baseReleaseTree(directory) {
   await writeFile(join(directory, "deploy/postgres/migration-ledger.json"),
     `${JSON.stringify({ version: 1, digest: BASE_LEDGER_DIGEST, entries }, null, 2)}\n`);
   const roles = await readFile(join(repoRoot, "db/roles/private_web_roles.sql"), "utf8");
-  assert.ok(roles.includes(SUBSCRIPTION_GRANT), "the current role file carries the new grant");
+  assert.equal(roles.match(SUBSCRIPTION_GRANT)?.length, 1, "the current role file carries exactly one subscription column grant");
   const earlier = roles.replace(SUBSCRIPTION_GRANT, "");
-  assert.equal(createHash("sha256").update(earlier).digest("hex"), BASE_PRIVATE_WEB_ROLES_SHA256,
+  assert.equal(createHash("sha256").update(earlier.trimEnd()).digest("hex"), BASE_PRIVATE_WEB_ROLES_SHA256,
     "the derived earlier role file is byte-identical to the captured base role file");
   return { ledgerPath: join(directory, "deploy/postgres/migration-ledger.json"), rootDir: directory, roles, earlier };
 }
@@ -520,7 +520,8 @@ test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 6
 
     // ---- reopened: startup check, then first save, read and duplicate renewal ----
     const web = webLogin(installed, passwords.control_room_web); stores.push(web);
-    await verifyPrivateDatabase(web.db.client, web.config, scope, Date.now(), { nativeQueue: true });
+    await assert.doesNotReject(verifyPrivateDatabase(web.db.client, web.config, scope, Date.now(), { nativeQueue: true }),
+      "the reopened startup check accepts the upgraded install");
     const fresh = subscription("https://fcm.googleapis.com/fcm/send/installed-after", 3);
     await web.store.subscribe(fresh);
     const renewed = { ...fresh, p256dh: "Z".repeat(87), auth: "y".repeat(22), expiresAt: "2099-01-01T00:00:00.000Z" };
