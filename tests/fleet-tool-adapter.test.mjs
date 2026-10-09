@@ -314,7 +314,9 @@ writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => 
   let child, descendant, removalEntered = false;
   removeToolWorkspace(context, async () => { removalEntered = true; throw recorded; });
   const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script, { timeoutMs: 10_000 })]));
-  const runner = await preparedToolRunner(context, registry, { onHandoff: value => { child = value; } });
+  // Isolate helper cleanup: the product exit handler would otherwise kill the
+  // same group and mask a parent-only helper mutation. Other units use its real kill.
+  const runner = await preparedToolRunner(context, registry, { killProcess() {}, onHandoff: value => { child = value; } });
   const pending = runner.execute(input()).then(value => ({ value }), error => ({ error }));
   try {
     await waitForToolState(async () => {
