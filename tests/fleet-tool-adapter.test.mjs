@@ -708,6 +708,10 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     assert.equal(held[0], true, "the real escaped stdout pipe produces bytes after parent exit at handoff");
     assert.equal(held[1], true, "the real escaped stderr pipe produces bytes after parent exit at handoff");
     let drainStarted;
+    // Record the real drain endpoint. Filesystem cleanup follows closed pipes
+    // and has its own cleanup assertions; its latency is outside the pipe grace.
+    const drainClosed = Promise.all([escapedChild.stdout, escapedChild.stderr].map(stream =>
+      new Promise(done => stream.once("close", () => done(performance.now())))));
     await assert.rejects(connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
       assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
       // Replay only the recorded exit, with real still-open inherited pipes.
@@ -719,8 +723,10 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       return escapedChild;
     } }).execute(input()),
       error => error?.code === "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
-    assert.ok(performance.now() - drainStarted < 700,
-      "an escaped stdout holder cannot wedge execute beyond the declared drain bound after handoff");
+    const drainClosedTimes = await waitForToolSignal(drainClosed,
+      "the real stdout and stderr pipes must close within the setup bound");
+    assert.ok(Math.max(...drainClosedTimes) - drainStarted < 700,
+      "escaped stdout and stderr must finish draining within the declared bound after handoff");
   } finally {
     try {
       const pid = Number(await readFile(escapedPid, "utf8"));
