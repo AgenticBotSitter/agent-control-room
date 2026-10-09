@@ -342,6 +342,8 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
 // Durable-completion observers have a SQL simulation twin and a real PG17
 // production-login twin. Provider responses are SYNTHETIC; no phone/provider
 // boundary is claimed. Setup creates only authority inputs, never bookkeeping.
+// Product state is read through db (the production login in PG twins); query
+// remains the privileged input/setup actor.
 import { PGlite } from "@electric-sql/pglite";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -365,9 +367,9 @@ async function durableInputs(f: DurableFixture, count: number, phones = 1) {
     (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
     VALUES($1,$2,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,
   [`attention:durable:${String(i).padStart(3,"0")}`, DURABLE_TENANT]);
-  assert.equal((await f.query("SELECT * FROM control_owner_push_attempt_heads")).rows.length, 0,
+  assert.equal((await f.db.query<any>("SELECT * FROM control_owner_push_attempt_heads")).rows.length, 0,
     "setup leaves heads absent; only the product creates them");
-  assert.equal((await f.query("SELECT * FROM owner_web_push_deliveries")).rows.length, 0,
+  assert.equal((await f.db.query<any>("SELECT * FROM owner_web_push_deliveries")).rows.length, 0,
     "setup leaves ledger absent; only the product creates it");
 }
 async function durableFixture(mode: "synthetic" | "PG", body: (f: DurableFixture) => Promise<void>) {
@@ -472,7 +474,7 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
   const healthy = new OwnerPushDispatcherV1({ db:f.db, tenantId:DURABLE_TENANT,
     store:new PostgresOwnerPushStoreV1(f.db),channel,clock:()=>f.at+30_000 });
   await healthy.dispatch();
-  const rows = (await f.query("SELECT state FROM control_owner_push_attempt_heads")).rows;
+  const rows = (await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads")).rows;
   assert.equal(rows.filter(r=>r.state==='delivered').length,40,"WP-D01 healthy next dispatcher drains all40 without stale delay");
   assert.equal(new Set(tags).size,40,"WP-D01 each of40 literal inputs is sent");
 });
@@ -496,7 +498,7 @@ function refuseLedger(f: DurableFixture, count: number | (()=>boolean)) {
 }
 
 async function durableHead(f: DurableFixture) {
-  return (await f.query("SELECT state,attempt_count,next_attempt_at,safe_reason_code FROM control_owner_push_attempt_heads ORDER BY action_inbox_id")).rows;
+  return (await f.db.query<any>("SELECT state,attempt_count,next_attempt_at,safe_reason_code FROM control_owner_push_attempt_heads ORDER BY action_inbox_id")).rows;
 }
 function durableDispatcher(f: DurableFixture, channel: OwnerNotificationChannelV1,
   db=f.db, clock=()=>f.at, store: OwnerPushStoreV1 = new PostgresOwnerPushStoreV1(db)) {
@@ -600,9 +602,9 @@ durableTwin("WP-D05", "poison status and refused writes have bounded repair", as
     VALUES('attention:fresh', $1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
   const valid:OwnerNotificationChannelV1={kind:'web-push',async send(){return{statusCode:201};}};
   await durableDispatcher(f,valid,f.db,()=>f.at+60_000).dispatch();
-  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:fresh'")).rows[0].state,'delivered',
+  assert.equal((await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:fresh'")).rows[0].state,'delivered',
     'WP-D05 a later valid item is independent of20 poison writes');
-  assert.ok((await f.query("SELECT status_code FROM owner_web_push_deliveries")).rows.every(r=>r.status_code===null || r.status_code>=100 && r.status_code<=599),
+  assert.ok((await f.db.query<any>("SELECT status_code FROM owner_web_push_deliveries")).rows.every(r=>r.status_code===null || r.status_code>=100 && r.status_code<=599),
     'WP-D05 status600 is normalized before the SQL100..599 constraint');
 });
 
@@ -642,7 +644,7 @@ durableTwin("WP-D06", "exact ownership prevents a stale pre-send owner", async f
     await peerStarted;releaseOld();
     await assert.rejects(oldFlight,/owner_push_completion_unavailable/,
       'WP-D06 a zero-row stale receipt write is a refusal, never a successful empty outcome');
-    const current=(await f.query("SELECT state,attempt_count FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:ownership'")).rows[0];
+    const current=(await f.db.query<any>("SELECT state,attempt_count FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:ownership'")).rows[0];
     assert.equal(current.state,'reserved','WP-D06 older accepted result cannot seal the newer active claim');
     assert.equal(Number(current.attempt_count),2,'WP-D06 exact attempt remains owned by the peer');
   } finally {releaseOld();releasePeer();await Promise.allSettled([oldFlight,peerFlight??Promise.resolve()]);}
@@ -656,7 +658,7 @@ durableTwin("WP-D07", "failure bookkeeping remains retryable", async f=>{
   for(const offset of [30_000,90_000,120_000])await durableDispatcher(f,channel,fault.db,()=>f.at+offset).dispatch().catch(()=>{});
   const row=(await durableHead(f))[0];assert.equal(row.state,'delivered','WP-D07 refused503 ledger repairs then retries');
   assert.equal(Number(row.attempt_count),2,'WP-D07 exactly two send attempts');assert.equal(sends,2);
-  assert.equal((await f.query("SELECT state FROM control_action_inbox")).rows[0].state,'open');
+  assert.equal((await f.db.query<any>("SELECT state FROM control_action_inbox")).rows[0].state,'open');
 });
 
 durableTwin("WP-D08", "partial acceptance survives dispatcher replacement", async f=>{
@@ -671,13 +673,13 @@ durableTwin("WP-D08", "partial acceptance survives dispatcher replacement", asyn
   await durableDispatcher(f,channel,f.db,()=>f.at+30_000).dispatch();
   assert.equal((await durableHead(f))[0].state,'delivered','WP-D08 a fresh dispatcher completes remaining subscription');
   assert.equal(sends.length,2,'WP-D08 both subscriptions finish');assert.equal(new Set(sends).size,2,'WP-D08 first acceptance is sent once');
-  assert.ok((await f.query("SELECT state FROM owner_web_push_deliveries")).rows.every(r=>r.state==='delivered'));
+  assert.ok((await f.db.query<any>("SELECT state FROM owner_web_push_deliveries")).rows.every(r=>r.state==='delivered'));
   await f.query(`INSERT INTO control_action_inbox
     (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
     VALUES('attention:integrity',$1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
   const fault=refuseLedger(f,1);
   await durableDispatcher(f,channel,fault.db,()=>f.at+60_000).dispatch().catch(()=>{});
-  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:integrity'")).rows[0].state,'completing');
+  assert.equal((await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:integrity'")).rows[0].state,'completing');
   // Adversarial production-login edit of a product-created reservation. Setup
   // did not create a ledger row or invent a completed delivery.
   await f.db.query(`UPDATE owner_web_push_deliveries SET state='failed',status_code=503,completed_at=$4
@@ -685,7 +687,7 @@ durableTwin("WP-D08", "partial acceptance survives dispatcher replacement", asyn
   [DURABLE_TENANT,`push:${String(1).padStart(64,'a')}`,'needs:attention:integrity',new Date(f.at+60_000).toISOString()]);
   const acceptedCalls=sends.length;
   await durableDispatcher(f,channel,f.db,()=>f.at+90_000).dispatch().catch(()=>{});
-  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:integrity'")).rows[0].state,'completing',
+  assert.equal((await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:integrity'")).rows[0].state,'completing',
     'WP-D08 conflicting ledger evidence cannot publish a delivered head');
   assert.equal(sends.length,acceptedCalls,'WP-D08 conflicting completion is database-only and never resends');
 });
@@ -752,15 +754,15 @@ durableTwin("WP-D13", "known acceptance is not labelled terminal failure",async 
   for(const offset of [300_001,360_001,390_001])await durableDispatcher(f,channel,fault.db,()=>f.at+offset).dispatch().catch(()=>{});
   const row=(await durableHead(f))[0];assert.equal(row.state,'delivered','WP-D13 write-only completion eventually delivered');
   assert.equal(Number(row.attempt_count),1,'WP-D13 repair does not spend a second send attempt');assert.equal(sends,1);
-  assert.equal((await f.query("SELECT state FROM owner_web_push_deliveries")).rows[0].state,'delivered');
+  assert.equal((await f.db.query<any>("SELECT state FROM owner_web_push_deliveries")).rows[0].state,'delivered');
   // The admission branch differs from a refused ledger repair: acceptance is
   // already known when the first two safe-receipt writes are refused.
   await f.query(`INSERT INTO control_action_inbox
     (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
     VALUES('attention:accepted-admission',$1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
-  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:accepted-admission'")).rows.length,0,
+  assert.equal((await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:accepted-admission'")).rows.length,0,
     'WP-D13 admission setup leaves the new head absent');
-  assert.equal((await f.query("SELECT state FROM owner_web_push_deliveries WHERE dedupe_key='needs:attention:accepted-admission'")).rows.length,0,
+  assert.equal((await f.db.query<any>("SELECT state FROM owner_web_push_deliveries WHERE dedupe_key='needs:attention:accepted-admission'")).rows.length,0,
     'WP-D13 admission setup leaves the new ledger absent');
   let admissions=0;
   const admission=withQuery(f,async(sql,params)=>{
@@ -770,7 +772,7 @@ durableTwin("WP-D13", "known acceptance is not labelled terminal failure",async 
   });
   await durableDispatcher(f,channel,admission,()=>f.at+420_000).dispatch();
   assert.ok(admissions>=3,'WP-D13 both receipt-admission refusals were exercised before recovery');
-  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:accepted-admission'")).rows[0].state,'delivered',
+  assert.equal((await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:accepted-admission'")).rows[0].state,'delivered',
     'WP-D13 known acceptance stays delivered after two receipt-admission refusals');
   assert.equal(sends,2,'WP-D13 each of the two independent items was sent once');
 });
@@ -810,7 +812,7 @@ durableTwin("WP-D15", "completion payload authority and retained-data downgrade"
   await f.query("INSERT INTO tenants(id,display_name) VALUES('tenant:wrong','Wrong tenant input')");
   await assert.rejects(()=>new PostgresOwnerPushStoreV1(f.db).reserve('tenant:wrong',receipt.subscription_id,receipt.event_tag,new Date(f.at).toISOString()),
     (error:unknown)=>databaseSqlStateV1(error)==="23503",'WP-D15 wrong tenant cannot create a ledger reservation');
-  assert.equal((await f.query("SELECT count(*)::int AS n FROM owner_web_push_deliveries WHERE tenant_id='tenant:wrong'")).rows[0].n,0,
+  assert.equal((await f.db.query<any>("SELECT count(*)::int AS n FROM owner_web_push_deliveries WHERE tenant_id='tenant:wrong'")).rows[0].n,0,
     'WP-D15 wrong tenant writes nothing');
   if(f.roleQuery) await assert.rejects(()=>f.roleQuery!("scheduler",`UPDATE control_owner_push_attempt_heads
     SET completion_retry_count=1 WHERE tenant_id=$1`,[DURABLE_TENANT]),
@@ -822,7 +824,7 @@ durableTwin("WP-D15", "completion payload authority and retained-data downgrade"
   await durableDispatcher(f,channel,f.db,()=>f.at+30_000).dispatch();
   assert.equal((await durableHead(f))[0].state,'delivered','WP-D15 production reader sees repaired completion');
   await f.exec(down);
-  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads")).rows[0].state,'delivered',
+  assert.equal((await f.db.query<any>("SELECT state FROM control_owner_push_attempt_heads")).rows[0].state,'delivered',
     'WP-D15 safe downgrade preserves terminal delivery evidence');
 });
 
@@ -997,7 +999,7 @@ async function repairSnapshotRace(f: DurableFixture, expected: {
     let sends=0;
     const channel:OwnerNotificationChannelV1={kind:"web-push",async send(){sends++;return{statusCode:201};}};
     await assert.rejects(()=>durableDispatcher(f,channel,fault.db).dispatch(),/owner_push_completion_unavailable/);
-    const read=async()=> (await f.query("SELECT state,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+    const read=async()=> (await f.db.query<any>("SELECT state,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
     assert.equal((await read()).completion_retry_count,1);
     const peers=Array.from({length:2},(_,index)=>{
       let release!:()=>void,selected!:()=>void;
@@ -1049,7 +1051,7 @@ async function failedRepairPublication(f:DurableFixture, initialFailures:1|8) {
     let now=f.at;
     for(let failure=0;failure<initialFailures;failure++) {
       await assert.rejects(()=>durableDispatcher(f,channel,fault.db,()=>now).dispatch(),/owner_push_completion_unavailable/);
-      now=new Date((await f.query("SELECT next_attempt_at FROM control_owner_push_attempt_heads")).rows[0].next_attempt_at).getTime();
+      now=new Date((await f.db.query<any>("SELECT next_attempt_at FROM control_owner_push_attempt_heads")).rows[0].next_attempt_at).getTime();
     }
     const delay=initialFailures===1?60_000:14_400_000;
     let releaseDue!:()=>void;
@@ -1083,7 +1085,7 @@ async function failedRepairPublication(f:DurableFixture, initialFailures:1|8) {
       assert.equal(peers[0].published(),1,"first failure publishes the current retry");
       peers[1].releaseRetry();await assert.rejects(()=>peers[1].running,/owner_push_completion_unavailable/);
       assert.equal(peers[1].published(),0,`WP-D${initialFailures===1?18:20} stale failed repair cannot overwrite its peer's backoff`);
-      const row=(await f.query("SELECT completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+      const row=(await f.db.query<any>("SELECT completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
       assert.equal(row.completion_retry_count,initialFailures===1?2:8);assert.equal(new Date(row.next_attempt_at).getTime(),now+delay);
     } finally {releaseDue();for(const peer of peers)peer.releaseRetry();await Promise.allSettled(peers.map(peer=>peer.running));}
 }
@@ -1103,7 +1105,7 @@ test("WP-D19: repeated repair refusal clamps counter and preserves release backo
     const delays=[30_000,60_000,300_000,600_000,1_800_000,3_600_000,7_200_000,14_400_000,14_400_000];
     for(let index=0;index<delays.length;index++) {
       await assert.rejects(()=>durableDispatcher(f,channel,fault.db,()=>now).dispatch(),/owner_push_completion_unavailable/);
-      const row=(await f.query("SELECT state,attempt_count,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+      const row=(await f.db.query<any>("SELECT state,attempt_count,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
       assert.equal(row.state,"completing");assert.equal(Number(row.attempt_count),1);
       assert.equal(row.completion_retry_count,Math.min(index+1,8),"repair counter clamps at independently specified8");
       assert.equal(new Date(row.next_attempt_at).getTime()-now,delays[index],"WP-D19 each refused repair publishes release backoff even beyond count8");
