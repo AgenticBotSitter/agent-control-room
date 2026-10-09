@@ -15,12 +15,98 @@ import { RELEASE_TRUST_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
 const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
   digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
 
+let privateToolDirectory, privateTool;
+test.after(async () => {
+  if (privateToolDirectory) await rm(privateToolDirectory, { recursive: true, force: true });
+});
+
+async function workspaceNodeTool(dir) {
+  privateTool ??= (async () => {
+    privateToolDirectory = await mkdtemp(join(tmpdir(), "fleet-tool-runtime-"));
+    return createPrivateNodeTool(privateToolDirectory);
+  })();
+  const path = join(dir, "node-tool");
+  // Workspaces have private names and directories, but share one immutable copy.
+  // Never link the installed executable: its owner/mode may be unsafe for tools.
+  await link(await privateTool, path);
+  return path;
+}
+
 async function workspace(t) {
   const dir = await mkdtemp(join(tmpdir(), "fleet-tool-adapter-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  await createPrivateNodeTool(dir);
+  await workspaceNodeTool(dir);
   return dir;
 }
+
+test("workspaces share one private executable while keeping their files isolated", async t => {
+  const first = await workspace(t), second = await workspace(t);
+  const a = await stat(join(first, "node-tool")), b = await stat(join(second, "node-tool"));
+  assert.deepEqual([a.dev, a.ino], [b.dev, b.ino], "workspaces reuse the private executable copy");
+  assert.equal(a.mode & 0o777, 0o700, "the shared executable stays private");
+  const installed = await stat(process.execPath);
+  assert.notDeepEqual([a.dev, a.ino], [installed.dev, installed.ino], "the installed executable is not linked");
+  await writeFile(join(first, "workspace-only"), "first");
+  await assert.rejects(readFile(join(second, "workspace-only")), { code: "ENOENT" });
+});
+
+async function readyTool(t, script, marker, heartbeat) {
+  const child = nodeSpawn(join(dirname(script), "node-tool"), [script], {
+    env: {}, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+  });
+  let failure;
+  child.on("error", error => { failure = error; });
+  const closed = new Promise(done => child.once("close", done));
+  t.after(async () => {
+    try { if (child.pid) process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL"); }
+    catch (error) { if (error?.code !== "ESRCH") throw error; }
+    await closed;
+  });
+  // The adapter's clock measures killing a live group, not two Node startups.
+  // Setup observes the real child files; it never creates readiness itself.
+  const deadline = performance.now() + 10_000;
+  while (true) {
+    if (failure) throw failure;
+    assert.equal(child.exitCode, null, "the fixture must stay alive until adapter handoff");
+    try { await Promise.all([readFile(marker), readFile(heartbeat)]); break; }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    assert.ok(performance.now() < deadline, "the tool must write its PID and heartbeat within the setup bound");
+    await new Promise(done => setTimeout(done, 10));
+  }
+  return child;
+}
+
+test("readiness barrier waits for the real tool PID and heartbeat before handoff", async t => {
+  const dir = await workspace(t), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat");
+  const started = join(dir, "started"), release = join(dir, "release");
+  const script = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(started)}, "started");
+const timer = setInterval(() => {
+  if (!existsSync(${JSON.stringify(release)})) return;
+  writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+  writeFileSync(${JSON.stringify(heartbeat)}, "ready");
+  clearInterval(timer); setInterval(() => {}, 1000);
+}, 10);`);
+  let handedOff = false;
+  const pending = readyTool(t, script, marker, heartbeat).then(child => { handedOff = true; return child; });
+  try {
+    const deadline = performance.now() + 10_000;
+    while (true) {
+      try { await readFile(started); break; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; }
+      assert.ok(performance.now() < deadline, "the real tool must reach its startup gate");
+      await new Promise(done => setTimeout(done, 10));
+    }
+    await new Promise(done => setImmediate(done));
+    assert.equal(handedOff, false, "handoff must wait for PID and heartbeat, not merely spawn");
+  } finally {
+    // Release the live fixture even when the readiness assertion fails.
+    await writeFile(release, "release");
+    await pending;
+  }
+  assert.equal(handedOff, true);
+  assert.equal(await readFile(heartbeat, "utf8"), "ready");
+});
 
 async function executable(dir, source) {
   const path = join(dir, `tool-${Math.random().toString(16).slice(2)}.mjs`);
@@ -76,7 +162,7 @@ test("manifest validation refuses a writable non-sticky executable folder", asyn
   const dir = await workspace(t);
   const folder = join(dir, "shared-tool-folder");
   await mkdir(folder, { mode: 0o700 });
-  const tool = await createPrivateNodeTool(folder);
+  const tool = await workspaceNodeTool(folder);
   const script = await executable(dir, "process.exit(0);\n");
   const path = await manifest(dir, [entry(script, { executable: tool })]);
   await chmod(folder, 0o777);
@@ -137,11 +223,13 @@ import { writeFileSync } from "node:fs";
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(heartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
-writeFileSync(${JSON.stringify(marker)}, String(child.pid));
 process.on("SIGTERM", () => {});
+writeFileSync(${JSON.stringify(marker)}, String(child.pid));
 setInterval(() => {}, 1000);`);
   const timed = await connector.loadToolAdapters(await manifest(dir, [entry(script, { timeoutMs: 150 })], 1, "timed.json"));
-  await assert.rejects(connector.createLocalToolAdapterRunner(timed).execute(input()), error => error?.code === "tool_adapter_timeout");
+  const timedChild = await readyTool(t, script, marker, heartbeat);
+  await assert.rejects(connector.createLocalToolAdapterRunner(timed, { spawner: () => timedChild }).execute(input()),
+    error => error?.code === "tool_adapter_timeout");
   const childPid = Number(await readFile(marker, "utf8"));
   t.after(() => { try { process.kill(childPid, "SIGKILL"); } catch {} });
   const afterTimeout = await readFile(heartbeat, "utf8");
@@ -155,14 +243,20 @@ import { writeFileSync } from "node:fs";
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(stoppedHeartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
-writeFileSync(${JSON.stringify(stoppedMarker)}, String(child.pid));
 process.on("SIGTERM", () => {});
+writeFileSync(${JSON.stringify(stoppedMarker)}, String(child.pid));
 setInterval(() => {}, 1000);`);
   const stoppable = await connector.loadToolAdapters(await manifest(dir, [entry(stoppedScript, { timeoutMs: 10_000 })], 1, "stop.json"));
   const controller = new AbortController();
-  const pending = connector.createLocalToolAdapterRunner(stoppable).execute(input(), controller.signal);
-  while (true) { try { await Promise.all([readFile(stoppedMarker), readFile(stoppedHeartbeat)]); break; }
-    catch { await new Promise(done => setTimeout(done, 10)); } }
+  const stoppedChild = await readyTool(t, stoppedScript, stoppedMarker, stoppedHeartbeat);
+  let handedOff;
+  const handoff = new Promise(done => { handedOff = done; });
+  const pending = connector.createLocalToolAdapterRunner(stoppable, { spawner: () => {
+    // This runs after the adapter installs its listeners in the same turn.
+    queueMicrotask(handedOff);
+    return stoppedChild;
+  } }).execute(input(), controller.signal);
+  await Promise.race([handoff, pending.then(() => assert.fail("the live tool must reach adapter handoff"))]);
   controller.abort();
   await assert.rejects(pending, error => error?.code === "tool_adapter_aborted");
   const stoppedPid = Number(await readFile(stoppedMarker, "utf8"));
