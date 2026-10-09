@@ -726,6 +726,26 @@ durableTwin("WP-D13", "known acceptance is not labelled terminal failure",async 
   const row=(await durableHead(f))[0];assert.equal(row.state,'delivered','WP-D13 write-only completion eventually delivered');
   assert.equal(Number(row.attempt_count),1,'WP-D13 repair does not spend a second send attempt');assert.equal(sends,1);
   assert.equal((await f.query("SELECT state FROM owner_web_push_deliveries")).rows[0].state,'delivered');
+  // The admission branch differs from a refused ledger repair: acceptance is
+  // already known when the first two safe-receipt writes are refused.
+  await f.query(`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:accepted-admission',$1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
+  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:accepted-admission'")).rows.length,0,
+    'WP-D13 admission setup leaves the new head absent');
+  assert.equal((await f.query("SELECT state FROM owner_web_push_deliveries WHERE dedupe_key='needs:attention:accepted-admission'")).rows.length,0,
+    'WP-D13 admission setup leaves the new ledger absent');
+  let admissions=0;
+  const admission=withQuery(f,async(sql,params)=>{
+    if (/UPDATE control_owner_push_attempt_heads\s+SET state='completing'/.test(sql) && ++admissions<=2)
+      throw new Error('database_unavailable');
+    return f.db.query(sql,params);
+  });
+  await durableDispatcher(f,channel,admission,()=>f.at+420_000).dispatch();
+  assert.ok(admissions>=3,'WP-D13 both receipt-admission refusals were exercised before recovery');
+  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:accepted-admission'")).rows[0].state,'delivered',
+    'WP-D13 known acceptance stays delivered after two receipt-admission refusals');
+  assert.equal(sends,2,'WP-D13 each of the two independent items was sent once');
 });
 
 durableTwin("WP-D15", "completion payload authority and retained-data downgrade",async f=>{
