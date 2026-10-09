@@ -135,7 +135,11 @@ before(async () => {
   exec("psql", ["-h", "127.0.0.1", "-p", String(state.port), "-U", "postgres", "-d", "postgres",
     "-v", "dbname=control_room", "-v", "ON_ERROR_STOP=1", "-f", join(repoRoot, "deploy/postgres/provision-database.sql")]);
   state.migratorPassword = `m${"k".repeat(39)}`;
-  await applyMigrations({ rootDir: repoRoot, ledgerPath: join(repoRoot, "deploy/postgres/migration-ledger.json"),
+  // Rebuilt from the shipped bytes; the committed ledger is held to the same bytes by db:verify.
+  const shipped = await collectLedgerEntries(repoRoot);
+  state.ledgerPath = join(state.root, "shipped-ledger.json");
+  await writeFile(state.ledgerPath, `${JSON.stringify({ version: 1, digest: ledgerDigest(shipped), entries: shipped })}\n`);
+  await applyMigrations({ rootDir: repoRoot, ledgerPath: state.ledgerPath,
     bootstrapTarget: operator(), migrateTarget: migratorTarget(),
     env: { CONTROL_ROOM_MIGRATOR_PASSWORD: state.migratorPassword, CONTROL_ROOM_APP_PASSWORD: "a".repeat(40),
       CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(40), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "i".repeat(40) } });
@@ -499,17 +503,14 @@ test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 6
 
     // ---- the candidate, through the real release migration and grant convergence ----
     let postMigration;
-    // The candidate ledger is rebuilt from the shipped bytes (the committed ledger is held to the same bytes by db:verify).
-    const candidateLedger = (await collectLedgerEntries(repoRoot));
-    const candidateLedgerPath = join(installed.root, "candidate-ledger.json");
-    await writeFile(candidateLedgerPath, `${JSON.stringify({ version: 1, digest: ledgerDigest(candidateLedger), entries: candidateLedger })}\n`);
     const upgraded = await applyMacDatabaseUpgradeV1({ client: admin, applyPending: async () => {
-      await applyMigrations({ rootDir: repoRoot, ledgerPath: candidateLedgerPath,
+      await applyMigrations({ rootDir: repoRoot, ledgerPath: state.ledgerPath,
         bootstrapTarget: installed.operator, migrateTarget: installed.migrator, env: installed.migrationEnv });
       // Migration only, before any grant convergence: the migration itself must carry the grant.
       const probe = webLogin(installed, passwords.control_room_web);
       try { await probe.store.subscribe(subscription("https://fcm.googleapis.com/fcm/send/installed-post-migration", 2));
         postMigration = (await probe.store.list(UPGRADE_TENANT)).map(row => row.endpoint).sort();
+      } catch (error) { postMigration = `refused:${error.sqlState ?? error.code ?? error.message}`;
       } finally { await probe.db.close(); }
     } });
     assert.equal(upgraded.upgraded, true);
