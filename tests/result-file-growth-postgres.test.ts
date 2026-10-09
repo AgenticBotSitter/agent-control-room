@@ -130,7 +130,9 @@ function noGrownScan(p: Plan, label: string, broadRows?: number) {
   // Table scans require relation identity even when it is absent from the JSON.
   // Bitmap Index Scan identifies an index; its heap sibling identifies the table.
   const readers = p.nodes.filter(node => node["Relation Name"] !== undefined
-    || (node["Node Type"].endsWith("Scan") && node["Node Type"] !== "Bitmap Index Scan"));
+    || (node["Node Type"].endsWith("Scan") && !["Bitmap Index Scan", "Subquery Scan", "CTE Scan",
+      "WorkTable Scan", "Function Scan", "Table Function Scan", "Values Scan", "Named Tuplestore Scan"]
+      .includes(node["Node Type"])));
   assert.ok(readers.length > 0 && readers.every(node => typeof node["Relation Name"] === "string"
     && grownTables.includes(node["Relation Name"])
     && node["Relation Name"] === readers[0]!["Relation Name"]),
@@ -232,7 +234,8 @@ test("JSON reader identity refuses missing, malformed and mixed growth readers",
     reject({ "Node Type": "Aggregate", Plans: [valid,
       { "Node Type": "Limit", Plans: [invalid as PlanNode] }] },
     "a valid sibling must not hide a nested incomplete or mixed reader");
-  for (const root of [valid, { "Node Type": "Limit", Plans: [valid] },
+  for (const root of [valid, { "Node Type": "Subquery Scan", Plans: [valid] },
+    { "Node Type": "Limit", Plans: [valid] },
     { "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
       Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }])
     noGrownScan(make(root), "0206 selective quota sum");
@@ -278,6 +281,14 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
             AND retention_state=ANY($5::text[]) ORDER BY created_at DESC,set_id COLLATE "C" LIMIT $4`,
         [TENANT, project, null, 21, ["provisional", "retained", "trash"]]);
         requireIndex(catalog, "control_result_file_sets_project", "owner catalog list");
+        const wrapped = await plan(web, `SELECT set_id FROM (
+          SELECT set_id FROM control_result_file_sets WHERE tenant_id=$1 AND project_id=$2
+          ORDER BY created_at DESC,set_id COLLATE "C" LIMIT 21 OFFSET 0
+        ) page WHERE set_id<>$3`, [TENANT, project, "result-set:missing"]);
+        assert.equal(wrapped.root["Node Type"], "Subquery Scan", "PG produces a real no-relation intermediary");
+        assert.equal(wrapped.root["Relation Name"], undefined, "the intermediary does not name a base table");
+        noGrownScan(wrapped, "wrapped catalog intermediary");
+
         results.push({ label: "owner catalog list", plan: catalog,
           rows: (await web.query(`SELECT count(*)::int AS n FROM (SELECT set_id FROM control_result_file_sets
             WHERE tenant_id=$1 AND project_id=$2 AND ($3::text IS NULL OR job_id=$3)
