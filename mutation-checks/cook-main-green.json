@@ -124,5 +124,19 @@
     "replace": "    timer = undefined;",
     "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport { readFileSync } from \"node:fs\";\nimport { spawn } from \"node:child_process\";\nimport vm from \"node:vm\";\nconst raw = readFileSync(\"tests/fleet-tool-adapter.test.mjs\", \"utf8\");\nconst start = raw.indexOf(\"async function exitedTool(\"), end = raw.indexOf('\"'\"'\\n\\ntest(\"exit barrier waits'\"'\"', start);\nassert.ok(start >= 0 && end > start);\nconst exitedTool = vm.runInNewContext(\"(\" + raw.slice(start, end).trim() + \")\", { setTimeout, clearTimeout });\ntest(\"missing parent exit refuses within the original setup deadline\", { timeout: 20_000 }, async () => {\n  const child = spawn(process.execPath, [\"-e\", '\"'\"'process.stdout.write(\"ready\"); process.stdin.resume();'\"'\"'],\n    { stdio: [\"pipe\", \"pipe\", \"pipe\"] });\n  const closed = new Promise(done => child.once(\"close\", done));\n  let timer, pending;\n  child.stderr.resume();\n  try {\n    await new Promise((resolveReady, reject) => { child.stdout.once(\"data\", resolveReady); child.once(\"error\", reject); });\n    child.stdout.resume();\n    pending = exitedTool(child, () => {}).then(value => ({ finished: true, value }), error => ({ finished: true, error }));\n    const result = await Promise.race([pending, new Promise(done => { timer = setTimeout(() => done({ finished: false }), 11_000); })]);\n    assert.equal(result.finished, true, \"missing exit must settle before the independent 11s observer bound\");\n    assert.ok(result.error, \"a parent still alive at the original 10s setup deadline must be refused\");\n  } finally {\n    clearTimeout(timer); child.stdin.end();\n    if (child.exitCode === null && child.signalCode === null) child.kill(\"SIGKILL\");\n    await closed; await pending;\n  }\n});\n'",
     "why": "The existing ten-second fixture setup budget also bounds waiting for real parent exit. With the parent held alive by stdin, independent eleven-second observation must see a completed refusal. Removing the timer fails the named settlement assertion and the real child is reaped in finally."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "setTimeout(() => process.exit(0), 30_000);",
+    "replace": "setTimeout(() => process.exit(0), 0);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"escaped pipe holder\" tests/fleet-tool-adapter.test.mjs",
+    "why": "An escaped holder that closes early must fail the named stdout handoff assertion requiring real bytes after parent exit, independently of the product rejection."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "process.stdout.write(\"held\"); process.stderr.write(\"held\");",
+    "replace": "process.stdout.write(\"held\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"escaped pipe holder\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Removing real stderr handoff bytes must fail the named stderr handoff assertion; stdout alone cannot prove both inherited pipes remain held."
   }
 ]

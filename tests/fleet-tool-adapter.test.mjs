@@ -270,7 +270,7 @@ test("timeout and stop kill the process group, including a spawned child", { tim
   const heartbeat = join(dir, "child.heartbeat");
   const script = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { existsSync, writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(heartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
 process.on("SIGTERM", () => {});
@@ -290,7 +290,7 @@ setInterval(() => {}, 1000);`);
   const stoppedHeartbeat = join(dir, "stopped-child.heartbeat");
   const stoppedScript = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { existsSync, writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(stoppedHeartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
 process.on("SIGTERM", () => {});
@@ -464,11 +464,16 @@ test("overflow terminates once, an escaped pipe holder is bounded, and same-grou
 
   const escapedPid = join(dir, "escaped.pid");
   const escapedReady = join(dir, "escaped.ready");
+  const escapedProbe = join(dir, "escaped.probe");
   const escaped = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { existsSync, writeFileSync } = require("node:fs");
 writeFileSync(${JSON.stringify(escapedReady)}, "ready");
-setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 5000);`)}], { detached: true, stdio: "inherit" });
+setInterval(() => {
+  if (!existsSync(${JSON.stringify(escapedProbe)})) return;
+  process.stdout.write("held"); process.stderr.write("held");
+}, 100);
+setTimeout(() => process.exit(0), 30_000);`)}], { detached: true, stdio: "inherit" });
 writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid));
 process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
   const escapedRegistry = await connector.loadToolAdapters(await manifest(dir,
@@ -478,10 +483,30 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     const escapedChild = await readyTool(t, escaped, escapedPid, escapedReady, { stdin: "pipe" });
     const exit = await exitedTool(escapedChild);
     assert.deepEqual(exit, [0, null], "the real escaped-pipe parent exits successfully before handoff");
+    // Read fresh bytes after the parent exits: paused streams can report
+    // readableEnded=false even after EOF, so that property alone proves nothing.
+    async function heldPipe(stream) {
+      let timer, data, end;
+      try {
+        return await new Promise(resolve => {
+          data = () => resolve(true);
+          end = () => resolve(false);
+          stream.once("data", data); stream.once("end", end);
+          timer = setTimeout(() => resolve(false), 10_000);
+          stream.resume();
+        });
+      } finally {
+        clearTimeout(timer);
+        stream.off("data", data); stream.off("end", end);
+        stream.pause();
+      }
+    }
+    await writeFile(escapedProbe, "probe");
+    const held = await Promise.all([heldPipe(escapedChild.stdout), heldPipe(escapedChild.stderr)]);
+    assert.equal(held[0], true, "the real escaped stdout pipe produces bytes after parent exit at handoff");
+    assert.equal(held[1], true, "the real escaped stderr pipe produces bytes after parent exit at handoff");
     await assert.rejects(connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
       assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
-      assert.equal(escapedChild.stdout.readableEnded, false, "the real escaped stdout pipe is still open at handoff");
-      assert.equal(escapedChild.stderr.readableEnded, false, "the real escaped stderr pipe is still open at handoff");
       // Replay only the recorded exit, with real still-open inherited pipes.
       // Other tests below exercise the product's own spawn options end to end.
       queueMicrotask(() => {
