@@ -5,11 +5,65 @@ import { dirname, join } from "node:path";
 import { createLocalToolAdapterRunner } from "../../scripts/fleet/connector.mjs";
 
 // Setup bounds diagnose a missing observation; they never release a gate.
-export async function waitForToolState(observe, message) {
-  const deadline = performance.now() + 10_000;
-  while (!await observe()) {
-    assert.ok(performance.now() < deadline, message);
-    await new Promise(done => setImmediate(done));
+export async function waitForToolSignal(signal, message, { timeoutMs = 10_000 } = {}) {
+  let timer;
+  try {
+    return await Promise.race([signal, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new assert.AssertionError({ message })), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+export async function waitForToolState(observe, message, options = {}) {
+  let finished = false;
+  try {
+    await waitForToolSignal((async () => {
+      while (!finished && !await observe()) {
+        await new Promise(done => setImmediate(done));
+      }
+    })(), message, options);
+  } finally { finished = true; }
+}
+
+// One hook owns process retirement and workspace removal. A removal error must
+// never prevent killing/reaping another child, or leave a writer racing rm.
+const resources = new WeakMap();
+function toolResources(t) {
+  let state = resources.get(t);
+  if (!state) {
+    state = { children: [], removals: [] };
+    resources.set(t, state);
+    t.after(() => cleanupToolResources(t));
+  }
+  return state;
+}
+export function removeToolWorkspace(t, remove) {
+  toolResources(t).removals.push(remove);
+}
+export function trackToolProcess(t, child) {
+  const closed = new Promise(done => child.once("close", done));
+  toolResources(t).children.push({ child, closed });
+  return closed;
+}
+async function cleanupToolProcesses(state) {
+  const children = state.children.splice(0);
+  const results = await Promise.allSettled(children.map(async ({ child, closed }) => {
+    try {
+      if (child.pid) process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+    } catch (error) { if (error?.code !== "ESRCH") throw error; }
+    finally { await closed; }
+  }));
+  const failure = results.find(result => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
+export async function cleanupToolResources(t) {
+  const state = resources.get(t);
+  if (!state) return;
+  try { await cleanupToolProcesses(state); }
+  finally {
+    const results = await Promise.allSettled(state.removals.splice(0).map(remove => remove()));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure) throw failure.reason;
   }
 }
 
@@ -48,27 +102,28 @@ process.off("disconnect", toolParentGone);
 process.disconnect();
 ` + await readFile(script, "utf8"), { mode: 0o700 });
   const children = [];
-  t.after(async () => {
-    await Promise.all(children.map(async ({ child, closed }) => {
-      try { process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL"); }
-      catch (error) { if (error?.code !== "ESRCH") throw error; }
-      await closed;
+  let preparationFailed = false;
+  try {
+    await Promise.all(Array.from({ length: count }, async () => {
+      const child = startProcess(adapter.executable, [wrapper], { env: {}, shell: false,
+        detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe", "ipc"] });
+      let initialized = false, failure;
+      child.on("error", error => { failure = error; });
+      child.on("message", message => { if (message === "initialized") initialized = true; });
+      const closed = trackToolProcess(t, child);
+      const record = { child, closed }; children.push(record);
+      await waitForToolState(() => {
+        if (preparationFailed) return true; // Cancel sibling observations after retiring the group.
+        if (failure) throw failure;
+        assert.equal(child.exitCode, null, "a prepared tool must remain alive before handoff");
+        return initialized;
+      }, "the real tool module must initialize within the original setup bound");
     }));
-  });
-  await Promise.all(Array.from({ length: count }, async () => {
-    const child = startProcess(adapter.executable, [wrapper], { env: {}, shell: false,
-      detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe", "ipc"] });
-    let initialized = false, failure;
-    child.on("error", error => { failure = error; });
-    child.on("message", message => { if (message === "initialized") initialized = true; });
-    const closed = new Promise(done => child.once("close", done));
-    const record = { child, closed }; children.push(record);
-    await waitForToolState(() => {
-      if (failure) throw failure;
-      assert.equal(child.exitCode, null, "a prepared tool must remain alive before handoff");
-      return initialized;
-    }, "the real tool module must initialize within the original setup bound");
-  }));
+  } catch (error) {
+    preparationFailed = true;
+    await cleanupToolProcesses(toolResources(t));
+    throw error;
+  }
   const ready = [...children];
   return createLocalToolAdapterRunner(registry, { ...options, spawner: (_executable, argv, launchOptions) => {
     const record = ready.shift();

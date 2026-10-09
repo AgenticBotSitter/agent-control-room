@@ -99,8 +99,8 @@
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "  while (true) {\n    if (failure) throw failure;",
-    "replace": "  while (false) {\n    if (failure) throw failure;",
+    "find": "  await waitForToolState(async () => {\n    if (failure) throw failure;",
+    "replace": "  await waitForToolState(async () => {\n    return true; // disabling observed readiness\n    if (failure) throw failure;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern \"readiness barrier waits for the real tool PID and heartbeat before handoff\" tests/fleet-tool-adapter.test.mjs",
     "why": "The real fixture holds both PID and heartbeat behind an observed startup gate. Independent expected handoff is false before gate release. Removing the bounded readiness wait fails the named handoff assertion even under load."
   },
@@ -141,8 +141,8 @@
   },
   {
     "file": "tests/support/prepared-tool-runner.mjs",
-    "find": "  while (!await observe()) {",
-    "replace": "  while (false && !await observe()) {",
+    "find": "      while (!finished && !await observe()) {",
+    "replace": "      while (false) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='state barrier waits for observation and process disappearance' tests/fleet-tool-adapter.test.mjs",
     "why": "Independent expected release=false while observation is false and the owned process lives. Removing observed-state waiting fails the named state barrier assertion; process readiness and disappearance share this barrier."
   },
@@ -169,23 +169,51 @@
   },
   {
     "file": "tests/support/prepared-tool-runner.mjs",
-    "find": "    assert.ok(performance.now() < deadline, message);",
-    "replace": "    void deadline;",
-    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport {waitForToolState} from \"./tests/support/prepared-tool-runner.mjs\";\ntest(\"missing observation refuses before the independent eleven-second observer\", async () => {\n  let release=false,timer;\n  const pending=waitForToolState(()=>release,\"missing observation at original setup bound\").then(()=>({finished:true}),error=>({finished:true,error}));\n  try {\n    const result=await Promise.race([pending,new Promise(done=>{timer=setTimeout(()=>done({finished:false}),11000);})]);\n    assert.equal(result.finished,true,\"missing observation must settle before independent 11s observation\");\n    assert.equal(result.error?.message,\"missing observation at original setup bound\");\n  } finally {clearTimeout(timer);release=true;await pending;}\n});'",
-    "why": "The unchanged ten-second setup budget must refuse missing readiness, as observed by an independent eleven-second observer; disabling the budget fails the named settlement assertion."
+    "find": "      timer = setTimeout(() => reject(new assert.AssertionError({ message })), timeoutMs);",
+    "replace": "      timer = setTimeout(() => {}, timeoutMs);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"state barrier bounds an unresolved asynchronous observation\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Named unresolved-observation refusal must bound awaiting the callback itself."
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "if (Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0) break;",
-    "replace": "if (true && values[1].length > 0) break;",
+    "find": "return Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0;",
+    "replace": "return true;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
     "why": "Real child holds the partial PID behind its own completion signal. Independently required handoff=false must fail by name if incomplete content is admitted; the other readiness guard remains enabled."
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "if (Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0) break;",
-    "replace": "if (Number.isSafeInteger(pid) && pid > 0 && true) break;",
+    "find": "return Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0;",
+    "replace": "return true;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
     "why": "Real child holds the partial heartbeat behind its own completion signal. Independently required handoff=false must fail by name if incomplete content is admitted; the other readiness guard remains enabled."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "  try { await cleanupToolProcesses(state); }",
+    "replace": "  try { /* disabling process cleanup before removal */ }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"cleanup refusal kills and reaps the whole prepared process group before removal\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Recorded workspace removal refusal cannot bypass whole-group killing and reaping."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "    await cleanupToolProcesses(toolResources(t));",
+    "replace": "    // disabling immediate preparation-failure cleanup",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"preparation failure reaps every started child before rejecting\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Preparation failure must retire already-started children before it rejects."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "    assert.ok(performance.now() - drainStarted < 700,",
+    "replace": "    assert.ok(true,",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport { readFileSync, writeFileSync } from \"node:fs\";\nimport { spawnSync } from \"node:child_process\";\ntest(\"slow drain is rejected by the independent post-handoff deadline\", () => {\n  const path = \"scripts/fleet/connector.mjs\", original = readFileSync(path, \"utf8\");\n  assert.equal(original.split(\"TOOL_KILL_GRACE_MS = 250;\").length, 2);\n  let result;\n  try {\n    writeFileSync(path, original.replace(\"TOOL_KILL_GRACE_MS = 250;\", \"TOOL_KILL_GRACE_MS = 800;\"));\n    result = spawnSync(process.execPath, [\"scripts/run-tests-with-quarantine.mjs\", \"--import\", \"tsx\", \"--test\", \"--test-concurrency=1\", \"--test-name-pattern=escaped pipe holder\", \"tests/fleet-tool-adapter.test.mjs\"], { encoding: \"utf8\", timeout: 30000, maxBuffer: 1048576 });\n  } finally { writeFileSync(path, original); }\n  assert.equal(result.signal, null, \"the drain probe must finish normally\");\n  assert.equal(result.status, 1, \"an 800ms drain must fail the named 700ms post-handoff assertion\");\n  assert.match(result.stdout, /an escaped stdout holder cannot wedge execute beyond the declared drain bound after handoff/u);\n  for (const [name, count] of Object.entries({ tests: 1, pass: 0, fail: 1, cancelled: 0, skipped: 0, todo: 0 })) {\n    assert.ok(result.stdout.includes(\"# \" + name + \" \" + count + \"\\n\"), \"the drain probe must have complete TAP \" + name);\n  }\n});'",
+    "why": "A slow real drain must fail a named deadline assertion; disabling the oracle cannot accept it."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "process.platform === \"win32\" ? child.pid : -child.pid",
+    "replace": "child.pid",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"cleanup refusal kills and reaps the whole prepared process group before removal\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Cleanup must kill the entire real process group, not only its parent."
   }
 ]
