@@ -395,3 +395,31 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
  },{port:PORT+8,allowedPorts:PORTS,boundMs:600000});
   } finally {await rm(oldRoot,{recursive:true,force:true});}
 });
+
+test("WP-D22: 0300 uses bigint and commits only validated completion constraints (PG)",
+  required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
+  await withRealPostgres(async postgres => {
+    const web = new Client(postgres.connection("web"));
+    web.on("error", () => {}); await web.connect();
+    try {
+      assert.equal((await web.query("SELECT session_user AS login")).rows[0].login, "control_room_web");
+      const column = await web.query(`SELECT format_type(atttypid, atttypmod) AS type
+        FROM pg_attribute WHERE attrelid='control_owner_push_attempt_heads'::regclass
+        AND attname='completion_retry_count' AND NOT attisdropped`);
+      assert.equal(column.rows[0]?.type, "bigint", "WP-D22 retry counter uses the lint-required bigint type");
+      const constraints = await web.query(`SELECT conname, convalidated FROM pg_constraint
+        WHERE conrelid='control_owner_push_attempt_heads'::regclass AND conname=ANY($1::text[])
+        ORDER BY conname`, [["control_owner_push_attempt_heads_state_check", "owner_push_completion_shape",
+          "owner_push_completion_disposition"]]);
+      assert.deepEqual(constraints.rows, [
+        { conname: "control_owner_push_attempt_heads_state_check", convalidated: true },
+        { conname: "owner_push_completion_disposition", convalidated: true },
+        { conname: "owner_push_completion_shape", convalidated: true },
+      ], "WP-D22 every changed table check is validated before migration commit");
+      const index = await web.query(`SELECT indisvalid, indisready, pg_get_expr(indpred, indrelid) AS predicate
+        FROM pg_index WHERE indexrelid='control_owner_push_completions_due'::regclass`);
+      assert.deepEqual(index.rows, [{ indisvalid: true, indisready: true, predicate: "(state = 'completing'::text)" }],
+        "WP-D22 transactional completion index is ready and filters only completing rows");
+    } finally { await web.end(); }
+  }, { port: PORT + 9, allowedPorts: PORTS, boundMs: 180_000 });
+});

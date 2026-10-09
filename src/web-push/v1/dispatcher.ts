@@ -285,7 +285,7 @@ type HeadRow = {
   completion_disposition?: "delivered" | "retry" | "deferred" | "failed" | null;
   completion_next_attempt_at?: string | Date | null;
   completion_reason_code?: string | null;
-  completion_retry_count?: number;
+  completion_retry_count?: number | string;
   next_attempt_at: string | Date;
   reserved_at: string | Date | null;
   updated_at?: string | Date;

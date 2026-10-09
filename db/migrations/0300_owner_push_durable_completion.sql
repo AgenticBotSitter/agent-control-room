@@ -5,20 +5,34 @@ SET LOCAL statement_timeout = '5s';
 ALTER TABLE control_owner_push_attempt_heads
   DROP CONSTRAINT control_owner_push_attempt_heads_state_check,
   ADD CONSTRAINT control_owner_push_attempt_heads_state_check
-    CHECK (state IN ('pending','reserved','completing','delivered','failed')),
+    CHECK (state IN ('pending','reserved','completing','delivered','failed')) NOT VALID,
   ADD COLUMN completion_data jsonb,
   ADD COLUMN completion_disposition text CHECK (completion_disposition IN ('delivered','retry','deferred','failed')),
   ADD COLUMN completion_next_attempt_at timestamptz,
   ADD COLUMN completion_reason_code text CHECK (completion_reason_code IS NULL OR completion_reason_code ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$'),
-  ADD COLUMN completion_retry_count integer NOT NULL DEFAULT 0 CHECK (completion_retry_count BETWEEN 0 AND 8),
+  ADD COLUMN completion_retry_count bigint NOT NULL DEFAULT 0 CHECK (completion_retry_count BETWEEN 0 AND 8),
   ADD CONSTRAINT owner_push_completion_shape CHECK (
     (state='completing' AND completion_data IS NOT NULL AND jsonb_typeof(completion_data)='array'
       AND reserved_at IS NOT NULL AND attempt_count>0)
     OR (state<>'completing' AND completion_data IS NULL AND completion_disposition IS NULL
-      AND completion_next_attempt_at IS NULL AND completion_reason_code IS NULL AND completion_retry_count=0)),
+      AND completion_next_attempt_at IS NULL AND completion_reason_code IS NULL AND completion_retry_count=0)) NOT VALID,
   ADD CONSTRAINT owner_push_completion_disposition CHECK (
     (completion_disposition IS NULL AND completion_next_attempt_at IS NULL)
-    OR (completion_disposition IS NOT NULL AND completion_next_attempt_at IS NOT NULL));
+    OR (completion_disposition IS NOT NULL AND completion_next_attempt_at IS NOT NULL)) NOT VALID;
+-- Add without a table scan, then validate explicitly. All three checks are
+-- validated inside the same migration transaction; no unchecked old rows escape.
+ALTER TABLE control_owner_push_attempt_heads
+  VALIDATE CONSTRAINT control_owner_push_attempt_heads_state_check;
+ALTER TABLE control_owner_push_attempt_heads
+  VALIDATE CONSTRAINT owner_push_completion_shape;
+ALTER TABLE control_owner_push_attempt_heads
+  VALIDATE CONSTRAINT owner_push_completion_disposition;
+
+-- The production applier wraps each migration and its ledger row in one
+-- transaction, so CONCURRENTLY cannot run here. As in 0272 and 0273, keep the
+-- transactional build bounded by the lock and statement timeouts above: a busy
+-- or oversized installation fails atomically and can retry during maintenance.
+-- squawk-ignore require-concurrent-index-creation
 CREATE INDEX control_owner_push_completions_due
   ON control_owner_push_attempt_heads(next_attempt_at, action_inbox_id) WHERE state='completing';
 

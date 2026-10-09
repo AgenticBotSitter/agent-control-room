@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "d1bf0ca447022868a7244e64640cc49fc89cae8f9922e86c5281ba600857978c",
+  "digest": "fd1aa83b1944dc0587a5ab7604a7d494b642384e9bfb73cb966fb6098814474c",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -1001,7 +1001,7 @@
     {
       "file": "db/migrations/0300_owner_push_durable_completion.sql",
       "order": 167,
-      "sha256": "1bb065af2df235d1bcfbb4930d9fb27dc230343911d8e371170258707f2b84f4",
+      "sha256": "6c3913a9a5dc91ff6ea1ba128bc2ff2f730c046085f902336ecabfb89a49601b",
       "kind": "migrate"
     },
     {

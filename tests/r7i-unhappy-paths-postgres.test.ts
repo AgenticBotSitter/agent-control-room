@@ -915,7 +915,7 @@ async function repairRacePostgres(expected: {secondOffset:number; writes:number;
       const read = async () => (await pool.client.query<any>(`SELECT state,attempt_count,
         completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads WHERE tenant_id=$1`, [tenant])).rows[0];
       const initial = await read();
-      assert.equal(initial.state, "completing"); assert.equal(initial.completion_retry_count, expected.initialFailures ?? 1);
+      assert.equal(initial.state, "completing"); assert.equal(Number(initial.completion_retry_count), expected.initialFailures ?? 1);
       assert.equal(new Date(initial.next_attempt_at).getTime(), at+dueOffset);
       for (let i=0;i<(expected.peers ?? 2);i++) {
         const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", REPAIR_RACE_WORKER],
@@ -945,7 +945,7 @@ async function repairRacePostgres(expected: {secondOffset:number; writes:number;
       assert.equal(first.kind,"result"); assert.equal(first.login,"control_room_web");
       assert.equal(first.repairWrites,1); assert.equal(first.refused,true); assert.equal(first.sends,0);
       const postponed = await read();
-      assert.equal(postponed.completion_retry_count,expected.initialFailures===8?8:2);
+      assert.equal(Number(postponed.completion_retry_count),expected.initialFailures===8?8:2);
       assert.equal(new Date(postponed.next_attempt_at).getTime(),at+(expected.initialFailures===8?42_390_000:90_000),"literal published repair deadline");
       for (const peer of peers.slice(1)) peer.child.send({proceed:true});
       for (const peer of peers.slice(1)) {
@@ -957,7 +957,7 @@ async function repairRacePostgres(expected: {secondOffset:number; writes:number;
         if(expected.writes===0) assert.deepEqual(second.outcomes,[]);
       }
       const after=await read();
-      assert.equal(after.completion_retry_count,expected.count,"WP-D17 locked production retry count advances correctly");
+      assert.equal(Number(after.completion_retry_count),expected.count,"WP-D17 locked production retry count advances correctly");
       assert.equal(new Date(after.next_attempt_at).getTime(),at+expected.deadlineOffset,"independent production retry deadline");
       for(const peer of peers) {await peer.closed;assert.equal(peer.child.exitCode,0,"completed repair worker exits cleanly");}
       await admin.query("DROP TRIGGER refuse_repair_race ON owner_web_push_deliveries; DROP FUNCTION refuse_repair_race()");
@@ -1000,7 +1000,7 @@ async function repairSnapshotRace(f: DurableFixture, expected: {
     const channel:OwnerNotificationChannelV1={kind:"web-push",async send(){sends++;return{statusCode:201};}};
     await assert.rejects(()=>durableDispatcher(f,channel,fault.db).dispatch(),/owner_push_completion_unavailable/);
     const read=async()=> (await f.db.query<any>("SELECT state,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
-    assert.equal((await read()).completion_retry_count,1);
+    assert.equal(Number((await read()).completion_retry_count),1);
     const peers=Array.from({length:2},(_,index)=>{
       let release!:()=>void,selected!:()=>void;
       const hold=new Promise<void>(resolve=>{release=resolve;});
@@ -1023,14 +1023,14 @@ async function repairSnapshotRace(f: DurableFixture, expected: {
       await Promise.all(peers.map(peer=>peer.ready));
       peers[0].release();await assert.rejects(()=>peers[0].running,/owner_push_completion_unavailable/);
       const postponed=await read();
-      assert.equal(postponed.completion_retry_count,2);
+      assert.equal(Number(postponed.completion_retry_count),2);
       assert.equal(new Date(postponed.next_attempt_at).getTime(),f.at+90_000,"independent second60s backoff");
       peers[1].release();await peers[1].running.catch(()=>{});
       assert.equal(peers[1].writes(),expected.writes,"WP-D16 stale selected repair must respect the current deadline");
       if(expected.writes===0) await peers[1].running;
       else await assert.rejects(()=>peers[1].running,/owner_push_completion_unavailable/);
       const after=await read();
-      assert.equal(after.completion_retry_count,expected.count,"WP-D17 retry count advances from the locked current row");
+      assert.equal(Number(after.completion_retry_count),expected.count,"WP-D17 retry count advances from the locked current row");
       assert.equal(new Date(after.next_attempt_at).getTime(),f.at+expected.deadlineOffset,
         "WP-D17 current retry count selects independent literal backoff");
       assert.equal(sends,1);
@@ -1086,7 +1086,7 @@ async function failedRepairPublication(f:DurableFixture, initialFailures:1|8) {
       peers[1].releaseRetry();await assert.rejects(()=>peers[1].running,/owner_push_completion_unavailable/);
       assert.equal(peers[1].published(),0,`WP-D${initialFailures===1?18:20} stale failed repair cannot overwrite its peer's backoff`);
       const row=(await f.db.query<any>("SELECT completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
-      assert.equal(row.completion_retry_count,initialFailures===1?2:8);assert.equal(new Date(row.next_attempt_at).getTime(),now+delay);
+      assert.equal(Number(row.completion_retry_count),initialFailures===1?2:8);assert.equal(new Date(row.next_attempt_at).getTime(),now+delay);
     } finally {releaseDue();for(const peer of peers)peer.releaseRetry();await Promise.allSettled(peers.map(peer=>peer.running));}
 }
 
@@ -1107,7 +1107,7 @@ test("WP-D19: repeated repair refusal clamps counter and preserves release backo
       await assert.rejects(()=>durableDispatcher(f,channel,fault.db,()=>now).dispatch(),/owner_push_completion_unavailable/);
       const row=(await f.db.query<any>("SELECT state,attempt_count,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
       assert.equal(row.state,"completing");assert.equal(Number(row.attempt_count),1);
-      assert.equal(row.completion_retry_count,Math.min(index+1,8),"repair counter clamps at independently specified8");
+      assert.equal(Number(row.completion_retry_count),Math.min(index+1,8),"repair counter clamps at independently specified8");
       assert.equal(new Date(row.next_attempt_at).getTime()-now,delays[index],"WP-D19 each refused repair publishes release backoff even beyond count8");
       now=new Date(row.next_attempt_at).getTime();
     }
