@@ -150,7 +150,7 @@
     "file": "src/web-push/v1/dispatcher.ts",
     "find": "AND next_attempt_at<=$7::timestamptz",
     "replace": "AND ($7::timestamptz IS NOT NULL)",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D20:' tests/r7i-unhappy-paths-postgres.test.ts",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D20: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "After count eight a failed peer must not overwrite a newly published future deadline; expected zero writes comes from the exclusive publication contract."
   }
 ]

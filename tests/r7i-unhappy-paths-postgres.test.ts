@@ -836,12 +836,17 @@ const [input] = await new Promise(resolve => process.once('message', value => re
 const pool = bindPrivatePgPool(new Pool(input.connection));
 let finished = false;
 process.once('disconnect', () => { if (!finished) void pool.close().finally(() => process.exit(1)); });
-let repairWrites = 0, sends = 0;
+let repairWrites = 0, publicationWrites = 0, sends = 0;
 const wrap = tx => ({query: async (sql, params) => {
   if (/UPDATE owner_web_push_deliveries/.test(sql)) repairWrites++;
   return tx.query(sql, params);
 }});
 const db = {query: async (sql, params) => {
+  if (input.publication && /SET next_attempt_at=\$5,completion_retry_count=\$6/.test(sql)) {
+    const proceed = new Promise(resolve => process.once('message', resolve));
+    process.send({kind:'publication'}); await proceed;
+    const result = await pool.client.query(sql, params); publicationWrites += result.rows.length; return result;
+  }
   const result = await pool.client.query(sql, params);
   if (/WHERE tenant_id=\$1 AND state='completing' AND next_attempt_at<=\$2/.test(sql)) {
     const proceed = new Promise(resolve => process.once('message', resolve));
@@ -860,12 +865,12 @@ try {
     if (error.message !== 'owner_push_completion_unavailable') throw error;
     refused = true;
   }
-  process.send({kind:'result', login:who.rows[0].login, repairWrites, sends, refused, outcomes});
+  process.send({kind:'result', login:who.rows[0].login, repairWrites, publicationWrites, sends, refused, outcomes});
 } catch {process.send({kind:'error'});process.exitCode=1;}
 finally {await pool.close();finished=true;process.disconnect();}
 `;
 
-async function repairRacePostgres(expected: {secondOffset:number; writes:number; count:number; deadlineOffset:number; peers?:number}) {
+async function repairRacePostgres(expected: {secondOffset:number; writes:number; count:number; deadlineOffset:number; peers?:number; publication?:boolean; initialFailures?:1|8}) {
   await withRealPostgres(async postgres => {
     const admin = new Client(postgres.admin()); admin.on("error", () => {}); await admin.connect();
     const pool = webClient(postgres), tenant = "tenant:repair-race", at = Date.now();
@@ -889,16 +894,23 @@ async function repairRacePostgres(expected: {secondOffset:number; writes:number;
         CREATE TRIGGER refuse_repair_race BEFORE UPDATE ON owner_web_push_deliveries
           FOR EACH ROW EXECUTE FUNCTION refuse_repair_race()`);
       let sends = 0;
-      await assert.rejects(() => new OwnerPushDispatcherV1({ db:pool.client, tenantId:tenant,
-        store:new PostgresOwnerPushStoreV1(pool.client), clock:()=>at,
-        channel:{kind:"web-push", async send(){sends++;return {statusCode:201};}},
-      }).dispatch(), /owner_push_completion_unavailable/);
+      let producerNow=at;
+      // Literal delays captured from the earlier release, not the dispatcher helper.
+      const releaseDelays=[30_000,60_000,300_000,600_000,1_800_000,3_600_000,7_200_000,14_400_000];
+      for(let failure=0;failure<(expected.initialFailures ?? 1);failure++) {
+        await assert.rejects(() => new OwnerPushDispatcherV1({ db:pool.client, tenantId:tenant,
+          store:new PostgresOwnerPushStoreV1(pool.client), clock:()=>producerNow,
+          channel:{kind:"web-push", async send(){sends++;return {statusCode:201};}},
+        }).dispatch(), /owner_push_completion_unavailable/);
+        producerNow += releaseDelays[failure]!;
+      }
+      const dueOffset=expected.initialFailures===8?27_990_000:30_000;
       assert.equal(sends, 1, "real producer creates one accepted synthetic receipt");
       const read = async () => (await pool.client.query<any>(`SELECT state,attempt_count,
         completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads WHERE tenant_id=$1`, [tenant])).rows[0];
       const initial = await read();
-      assert.equal(initial.state, "completing"); assert.equal(initial.completion_retry_count, 1);
-      assert.equal(new Date(initial.next_attempt_at).getTime(), at+30_000);
+      assert.equal(initial.state, "completing"); assert.equal(initial.completion_retry_count, expected.initialFailures ?? 1);
+      assert.equal(new Date(initial.next_attempt_at).getTime(), at+dueOffset);
       for (let i=0;i<(expected.peers ?? 2);i++) {
         const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", REPAIR_RACE_WORKER],
           { stdio:["pipe", "pipe", "pipe", "ipc"] });
@@ -912,23 +924,30 @@ async function repairRacePostgres(expected: {secondOffset:number; writes:number;
           pending=message=>{clearTimeout(timer);resolve(message);};
         });
         peers.push({child,closed,next});
-        child.send({ connection:privateRaceConnection(postgres.connection("web")), tenant, at:at+(i===0?30_000:expected.secondOffset) });
+        child.send({ connection:privateRaceConnection(postgres.connection("web")), tenant, publication:expected.publication,
+          at:at+(i===0?dueOffset:expected.secondOffset) });
       }
       for(const peer of peers) assert.deepEqual(await peer.next(), {kind:"selected", rows:1},
         "all separate processes reached the same observed due receipt");
+      if(expected.publication) {
+        for(const peer of peers) peer.child.send({proceed:true});
+        for(const peer of peers) assert.deepEqual(await peer.next(),{kind:"publication"},
+          "both failed transactions released their locks before either publication");
+      }
       peers[0].child.send({proceed:true});
       const first = await peers[0].next();
       assert.equal(first.kind,"result"); assert.equal(first.login,"control_room_web");
       assert.equal(first.repairWrites,1); assert.equal(first.refused,true); assert.equal(first.sends,0);
       const postponed = await read();
-      assert.equal(postponed.completion_retry_count,2);
-      assert.equal(new Date(postponed.next_attempt_at).getTime(),at+90_000,"literal second60s repair backoff");
+      assert.equal(postponed.completion_retry_count,expected.initialFailures===8?8:2);
+      assert.equal(new Date(postponed.next_attempt_at).getTime(),at+(expected.initialFailures===8?42_390_000:90_000),"literal published repair deadline");
       for (const peer of peers.slice(1)) peer.child.send({proceed:true});
       for (const peer of peers.slice(1)) {
         const second = await peer.next();
         assert.equal(second.kind,"result"); assert.equal(second.login,"control_room_web");
         assert.equal(second.repairWrites,expected.writes,"WP-D16 stale selected repair must respect its current deadline");
         assert.equal(second.sends,0); assert.equal(second.refused,expected.writes!==0);
+        if(expected.publication) assert.equal(second.publicationWrites,0,"failed production repair cannot replace its peer publication");
         if(expected.writes===0) assert.deepEqual(second.outcomes,[]);
       }
       const after=await read();
@@ -955,6 +974,8 @@ for (const [id,expected] of [
   ["WP-D16",{secondOffset:30_000,writes:0,count:2,deadlineOffset:90_000}],
   ["WP-D17",{secondOffset:90_000,writes:1,count:3,deadlineOffset:390_000}],
   ["WP-D21",{secondOffset:30_000,writes:0,count:2,deadlineOffset:90_000,peers:20}],
+  ["WP-D18",{secondOffset:90_000,writes:1,count:2,deadlineOffset:90_000,publication:true}],
+  ["WP-D20",{secondOffset:27_990_000,writes:1,count:8,deadlineOffset:42_390_000,publication:true,initialFailures:8}],
 ] as const) test(`${id}: two repair processes respect the current backoff (PG)`, {
   skip: requiresRealPostgres() ? false : realPostgresSkipMessage(), timeout:900_000,
 }, () => repairRacePostgres(expected));
