@@ -1,0 +1,93 @@
+[
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "node[\"Node Type\"] === \"Seq Scan\"",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M1: disabling Seq Scan collection loses the captured catalog refusal"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "node[\"Index Name\"] === name",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M2: disabling index identity loses the wrong-index rejection"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "label === \"0206 quota sum\" && broadRows !== undefined",
+    "replace": "broadRows !== undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M3: broad exception must not accept catalog or unknown labels"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "node[\"Actual Rows\"] === rows && node[\"Actual Loops\"] === 1",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M4: disabling qualifying-row count accepts an off-by-one reader"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "[\"Sort\", \"Incremental Sort\"].includes(node[\"Node Type\"])",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M5: disabling sort detection loses the captured sort"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "p.root[\"Node Type\"] === \"Aggregate\" && p.root[\"Actual Rows\"] === 1\n    && p.root[\"Actual Loops\"] === 1",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M6: aggregate output must be exactly one row once"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "readers.length > 0 && readers.every(node => node[\"Relation Name\"] === \"control_result_file_sets\")",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M7: empty or foreign readers must not qualify for broad exemption"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "(node[\"Rows Removed by Filter\"] ?? 0) === 0\n    && (node[\"Rows Removed by Index Recheck\"] ?? 0) === 0",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M8: unrelated filtering must not qualify for broad exemption"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "p.nodes.some(node => node[\"Relation Name\"] === relation)",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M9: named index without its table reader must be refused"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "Array.isArray(value) && value.length === 1",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M10: empty JSON documents must fail closed at the documented refusal"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "value && typeof value === \"object\" && !Array.isArray(value)",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M11: missing child nodes must fail closed at the documented refusal"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "typeof node[\"Node Type\"] === \"string\" && node[\"Node Type\"].length > 0",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M12: missing node type must be refused"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "node.Plans === undefined || Array.isArray(node.Plans)",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON growth oracle\" tests/result-file-growth-postgres.test.ts",
+    "why": "M13: malformed children must fail closed at the documented refusal"
+  }
+]
