@@ -353,6 +353,8 @@ type DurableFixture = {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
   at: number;
   exec: (sql: string) => Promise<void>;
+  authorityQuery: DurableFixture["query"];
+  roleQuery?: (role: string, sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 };
 async function durableInputs(f: DurableFixture, count: number, phones = 1) {
   await f.query("INSERT INTO tenants(id,display_name) VALUES($1,'Durable input')", [DURABLE_TENANT]);
@@ -376,7 +378,14 @@ async function durableFixture(mode: "synthetic" | "PG", body: (f: DurableFixture
       try {
         const who = await pool.client.query<{ login: string }>("SELECT session_user AS login");
         assert.equal(who.rows[0]?.login, "control_room_web", "real twin uses the production login");
-        await body({ db: pool.client, query: (s,p) => admin.query(s,p as never[]), exec: async s=>{await admin.query(s);}, at: Date.now() });
+        const roleQuery = async (role: string, sql: string, params?: unknown[]) => {
+          const actor = new Client(postgres.connection(role));actor.on("error",()=>{});
+          try {await actor.connect();return await actor.query(sql,params as never[]);}
+          finally {await actor.end();}
+        };
+        await body({ db: pool.client, query: (s,p) => admin.query(s,p as never[]),
+          authorityQuery: (s,p)=>roleQuery("coordinator",s,p),roleQuery,
+          exec: async s=>{await admin.query(s);}, at: Date.now() });
       } finally { await pool.close(); await admin.end(); }
     }, { port: PUSH_PORT+10, allowedPorts: [PUSH_PORT+10], boundMs: 900_000 });
     return;
@@ -390,7 +399,7 @@ async function durableFixture(mode: "synthetic" | "PG", body: (f: DurableFixture
       await raw.exec(await readFile(`${root}/${file}`, "utf8"));
       await raw.exec("COMMIT");
     }
-    await body({ db: adaptPglite(raw), query: (s,p) => raw.query(s,p), exec: async s=>{await raw.exec(s);}, at: Date.now() });
+    await body({ db: adaptPglite(raw), query: (s,p) => raw.query(s,p), authorityQuery: (s,p)=>raw.query(s,p), exec: async s=>{await raw.exec(s);}, at: Date.now() });
   } finally { await raw.close(); }
 }
 function durableTwin(id: string, title: string, body: (f: DurableFixture) => Promise<void>) {
@@ -493,8 +502,8 @@ durableTwin("WP-D03", "withdrawn never-started rows do not send", async f=>{
   const running=durableDispatcher(f,channel).dispatch();void running.catch(()=>{});
   try{
     await ready;
-    await f.query("UPDATE control_action_inbox SET state='resolved' WHERE tenant_id=$1 AND id>='attention:durable:008' AND id<'attention:durable:020'",[DURABLE_TENANT]);
-    await f.query("UPDATE control_action_inbox SET state='expired' WHERE tenant_id=$1 AND id>='attention:durable:020' AND id<'attention:durable:030'",[DURABLE_TENANT]);
+    await f.authorityQuery("UPDATE control_action_inbox SET state='resolved' WHERE tenant_id=$1 AND id>='attention:durable:008' AND id<'attention:durable:020'",[DURABLE_TENANT]);
+    await f.authorityQuery("UPDATE control_action_inbox SET state='expired' WHERE tenant_id=$1 AND id>='attention:durable:020' AND id<'attention:durable:030'",[DURABLE_TENANT]);
     await f.query("DELETE FROM control_action_inbox WHERE tenant_id=$1 AND id>='attention:durable:030'",[DURABLE_TENANT]);
   }finally{release();await running.catch(()=>{});}
   await durableDispatcher(f,channel,f.db,()=>f.at+30_000).dispatch();
@@ -662,24 +671,39 @@ durableTwin("WP-D13", "known acceptance is not labelled terminal failure",async 
 
 durableTwin("WP-D15", "completion payload authority and retained-data downgrade",async f=>{
   await durableInputs(f,1);const fault=refuseLedger(f,1);
-  const channel:OwnerNotificationChannelV1={kind:'web-push',async send(){return{statusCode:201};}};
-  await durableDispatcher(f,channel,fault.db).dispatch().catch(()=>{});
-  assert.equal((await durableHead(f))[0].state,'completing','WP-D15 real producer creates retained completion');
+  let release!:()=>void,reached!:()=>void;
+  const hold=new Promise<void>(d=>release=d),ready=new Promise<void>(d=>reached=d);
+  const channel:OwnerNotificationChannelV1={kind:'web-push',async send(){reached();await hold;return{statusCode:201};}};
+  const running=durableDispatcher(f,channel,fault.db).dispatch();void running.catch(()=>{});
   const receipt={subscription_id:`push:${String(1).padStart(64,'a')}`,event_tag:'needs:attention:durable:000',
     result:'delivered',status_code:201,completed_at:new Date(f.at).toISOString(),remove:false};
-  const invalid=[{...receipt,event_tag:'needs:attention:other'}, {...receipt,status_code:600},
-    {...receipt,status_code:null,remove:true,result:'failed'}, {...receipt,result:'unknown'},
-    {...receipt,completed_at:'not-a-time'}, {...receipt,subscription_id:'bad'},
-    {...receipt,endpoint:'https://evil.invalid/'}, {...receipt,remove:1}, {...receipt,status_code:503},
-    {...receipt,keys:{auth:'synthetic'}}];
-  for(const input of invalid)await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads
-    SET completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
-  [DURABLE_TENANT,'attention:durable:000',JSON.stringify([input])]),
-  undefined,`WP-D15 independently specified malformed receipt must be refused: ${JSON.stringify(input)}`);
+  try {
+    await ready;
+    assert.equal((await durableHead(f))[0].state,'reserved','WP-D15 producer creates the reservation before receipt validation');
+    // Validate against a real reserved row, so monotonic receipt and state-shape
+    // checks cannot mask a missing payload validator. Each failed write is atomic.
+    const invalid=[{...receipt,event_tag:'needs:attention:other'}, {...receipt,status_code:600},
+      {...receipt,status_code:null,remove:true,result:'failed'}, {...receipt,result:'unknown'},
+      {...receipt,completed_at:'not-a-time'}, {...receipt,completed_at:'2026-99-99T00:00:00.000Z'},
+      {...receipt,subscription_id:'bad'}, {...receipt,endpoint:'https://evil.invalid/'},
+      {...receipt,remove:1}, {...receipt,status_code:503}, {...receipt,keys:{auth:'synthetic'}}];
+    for(const input of invalid)await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads
+      SET state='completing',completion_data=$3::jsonb WHERE tenant_id=$1 AND action_inbox_id=$2`,
+    [DURABLE_TENANT,'attention:durable:000',JSON.stringify([input])]),
+    undefined,`WP-D15 independently specified malformed receipt must be refused: ${JSON.stringify(input)}`);
+  } finally {release();await running.catch(()=>{});}
+  assert.equal((await durableHead(f))[0].state,'completing','WP-D15 real producer creates retained completion');
+  await assert.rejects(()=>f.db.query(`UPDATE control_owner_push_attempt_heads SET completion_data='[]'
+    WHERE tenant_id=$1 AND action_inbox_id=$2`,[DURABLE_TENANT,'attention:durable:000']),
+  undefined,'WP-D15 accepted progress cannot be erased');
   await assert.rejects(()=>new PostgresOwnerPushStoreV1(f.db).reserve('tenant:wrong',receipt.subscription_id,receipt.event_tag,new Date(f.at).toISOString()),
     undefined,'WP-D15 wrong tenant cannot create a ledger reservation');
   assert.equal((await f.query("SELECT count(*)::int AS n FROM owner_web_push_deliveries WHERE tenant_id='tenant:wrong'")).rows[0].n,0,
     'WP-D15 wrong tenant writes nothing');
+  if(f.roleQuery) await assert.rejects(()=>f.roleQuery!("scheduler",`UPDATE control_owner_push_attempt_heads
+    SET completion_retry_count=1 WHERE tenant_id=$1`,[DURABLE_TENANT]),
+  (error:unknown)=>typeof error==="object" && error!==null && "code" in error && error.code==="42501",
+  'WP-D15 production scheduler cannot write owner completion');
   const down=await readFile(fileURLToPath(new URL('../db/down/0300_owner_push_durable_completion.sql',import.meta.url)),'utf8');
   try{await assert.rejects(()=>f.exec(down),/owner push completion retained/,'WP-D15 downgrade refuses product-created retained data');}
   finally{await f.exec('ROLLBACK');}
