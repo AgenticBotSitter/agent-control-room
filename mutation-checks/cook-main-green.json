@@ -138,5 +138,40 @@
     "replace": "process.stdout.write(\"held\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"escaped pipe holder\" tests/fleet-tool-adapter.test.mjs",
     "why": "Removing real stderr handoff bytes must fail the named stderr handoff assertion; stdout alone cannot prove both inherited pipes remain held."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "  while (!await observe()) {",
+    "replace": "  while (false && !await observe()) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='state barrier waits for observation and process disappearance' tests/fleet-tool-adapter.test.mjs",
+    "why": "Independent expected release=false while observation is false and the owned process lives. Removing observed-state waiting fails the named state barrier assertion; process readiness and disappearance share this barrier."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "      return initialized;",
+    "replace": "      return true;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='module readiness barrier waits for real initialization before admission' tests/fleet-tool-adapter.test.mjs",
+    "why": "The real static import is held behind IPC after writing its own started marker. Independent expected admission=false until the import completes; ignoring initialized fails the named admission assertion."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "    if (!hold) child.release();",
+    "replace": "    if (true) child.release();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='prepared tools initialize before admission and wait for explicit work release' tests/fleet-tool-adapter.test.mjs",
+    "why": "The real initialized child acknowledges a probe only while the work gate is held. Automatic release must fail the named acknowledgment assertion or independent absent-output assertion."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "groupedChild.emit(\"close\", ...groupedClose);",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='escaped pipe holder' tests/fleet-tool-adapter.test.mjs",
+    "why": "The same-group fixture records real parent exit and pipe close before admission. Omitting recorded close must fail the named assertion that the observed same-group completion succeeds, without a load error or timeout."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "find": "    assert.ok(performance.now() < deadline, message);",
+    "replace": "    void deadline;",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\";\nimport test from \"node:test\";\nimport {waitForToolState} from \"./tests/support/prepared-tool-runner.mjs\";\ntest(\"missing observation refuses before the independent eleven-second observer\", async () => {\n  let release=false,timer;\n  const pending=waitForToolState(()=>release,\"missing observation at original setup bound\").then(()=>({finished:true}),error=>({finished:true,error}));\n  try {\n    const result=await Promise.race([pending,new Promise(done=>{timer=setTimeout(()=>done({finished:false}),11000);})]);\n    assert.equal(result.finished,true,\"missing observation must settle before independent 11s observation\");\n    assert.equal(result.error?.message,\"missing observation at original setup bound\");\n  } finally {clearTimeout(timer);release=true;await pending;}\n});'",
+    "why": "The unchanged ten-second setup budget must refuse missing readiness, as observed by an independent eleven-second observer; disabling the budget fails the named settlement assertion."
   }
 ]
