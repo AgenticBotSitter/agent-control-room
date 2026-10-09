@@ -201,9 +201,14 @@ test("real PostgreSQL: 0226 down revokes exactly the 0226 grants and no more",
           a.attname, 'UPDATE') ORDER BY a.attname`)).rows
       .map(row => row.column_name);
     try {
+      assert.deepEqual(await columns(), ["attempt_count", "completed_at", "completion_data", "completion_disposition",
+        "completion_next_attempt_at", "completion_reason_code", "completion_retry_count", "last_attempt_at",
+        "next_attempt_at", "reserved_at", "safe_reason_code", "state", "updated_at"],
+        "the installed release grants retry and completion bookkeeping only");
+      await run(admin, "0300_owner_push_durable_completion.sql");
       assert.deepEqual(await columns(), ["attempt_count", "completed_at", "last_attempt_at",
         "next_attempt_at", "reserved_at", "safe_reason_code", "state", "updated_at"],
-        "0226 granted exactly the retry bookkeeping, and not the link or the item id");
+        "0300 down removes its completion columns and preserves every 0226 grant");
       await run(admin, "0226_owner_push_attempt_grants.sql");
       // Every UPDATE column revoked...
       assert.deepEqual(await columns(), [], "the column-scoped UPDATE is gone");
@@ -238,6 +243,9 @@ test("real PostgreSQL: 0225 down removes the guard and 0224 down removes the tab
     const hasFunction = async (name: string) => (await admin.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM pg_proc WHERE proname=$1", [name])).rows[0]!.n;
     try {
+      // Roll back newer completion metadata first. Retained completion refusal
+      // is exercised by WP-D15 through the actual producer and web login.
+      await run(admin, "0300_owner_push_durable_completion.sql");
       // 0225 down drops ONLY the trigger and its function.
       assert.equal(await hasFunction("guard_owner_push_attempt_head_write"), 1, "0225 created the guard");
       await run(admin, "0225_owner_push_attempt_guards.sql");
