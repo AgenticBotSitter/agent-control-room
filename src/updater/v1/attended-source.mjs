@@ -385,7 +385,7 @@ async function stageBuilderTools(tools, destination, ownership, names) {
 }
 
 function allowedOutputPath(path) {
-  return ["LICENSE", "NOTICE", "THIRD_PARTY.md", "package.json", "pnpm-lock.yaml"].includes(path)
+  return ["LICENSE", "NOTICE", "THIRD_PARTY.md", "package.json", "pnpm-lock.yaml", "gateway-local-capability.json"].includes(path)
     || ["dist-vps/", "db/", "deploy/", "scripts/", "src/installer/", "third_party/"].some(prefix => path.startsWith(prefix));
 }
 
