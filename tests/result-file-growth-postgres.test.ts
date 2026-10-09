@@ -476,7 +476,7 @@ test("broad and selective quota readers at 10k and 100k agree with literal fixtu
             fixture.bytes, "retry after a halfway cancellation returns the same promises");
           const dropped = burst.pop()!;
           const errors: { code?: string }[] = [];
-          dropped.on("error", error => errors.push(error));
+          dropped.on("error", error => errors.push(error as { code?: string }));
           const ended = new Promise<void>(resolve => dropped.once("end", resolve));
           assert.equal((await admin.query("SELECT pg_terminate_backend($1) AS terminated",
             [backends[49]!.rows[0].pid])).rows[0].terminated, true);
