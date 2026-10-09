@@ -127,8 +127,8 @@
   },
   {
     "file": "tests/result-file-growth-postgres.test.ts",
-    "find": "\"WorkTable Scan\", \"Function Scan\", \"Table Function Scan\",",
-    "replace": "\"WorkTable Scan\", \"Excluded Function Scan\", \"Table Function Scan\",",
+    "find": "\"WorkTable Scan\", \"Function Scan\", \"Table Function Scan\", \"Values Scan\", \"Named Tuplestore Scan\"]\n      .includes(node[\"Node Type\"])",
+    "replace": "\"WorkTable Scan\", \"Excluded Function Scan\", \"Table Function Scan\", \"Values Scan\", \"Named Tuplestore Scan\"]\n      .includes(node[\"Node Type\"])",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-003\" tests/result-file-growth-postgres.test.ts",
     "why": "M19: function intermediaries are judged by their child reader"
   },
