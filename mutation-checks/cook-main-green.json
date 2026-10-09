@@ -176,15 +176,15 @@
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "Number.isSafeInteger(pid) && pid > 0",
-    "replace": "true",
+    "find": "if (Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0) break;",
+    "replace": "if (true && values[1].length > 0) break;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
     "why": "Real child holds the partial PID behind its own completion signal. Independently required handoff=false must fail by name if incomplete content is admitted; the other readiness guard remains enabled."
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "values[1].length > 0",
-    "replace": "true",
+    "find": "if (Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0) break;",
+    "replace": "if (Number.isSafeInteger(pid) && pid > 0 && true) break;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
     "why": "Real child holds the partial heartbeat behind its own completion signal. Independently required handoff=false must fail by name if incomplete content is admitted; the other readiness guard remains enabled."
   }
