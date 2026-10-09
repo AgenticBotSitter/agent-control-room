@@ -89,5 +89,12 @@
     "replace": "WHERE h.tenant_id=$1 AND h.state IN ('reserved','completing') AND h.reserved_at<=$2\n        AND i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id AND i.state='open'",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "Stale send recovery excludes completing receipts past300 seconds; completion repairs without a second send attempt."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (!current) continue;",
+    "replace": "if (!current) current = subscription;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D03: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "An independently expired second subscription must not be sent from the original list after the first provider call finishes."
   }
 ]

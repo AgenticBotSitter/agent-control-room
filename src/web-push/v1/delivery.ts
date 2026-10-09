@@ -73,12 +73,19 @@ export async function deliverOwnerPushV1(input: Readonly<{ tenantId: string; kin
     if (input.maySend && !await input.maySend()) break;
     const outcome = await input.store.reserve(input.tenantId, subscription.id, input.dedupeKey, input.now);
     if (outcome === "already_delivered") { deduplicated++; continue; }
-    // Re-read authority after reservation too: a blocked reservation can outlive
-    // its claim. The reservation itself never authorizes a provider request.
-    if (input.maySend && !await input.maySend()) break;
+    // A slow earlier send or reservation can outlive either authority. Reload
+    // the subscription too, so withdrawn endpoints and obsolete keys from the
+    // first list cannot authorize a never-started provider request.
+    let target = subscription;
+    if (input.maySend) {
+      let current = (await input.store.list(input.tenantId)).find(row => row.id === subscription.id);
+      if (!current) continue;
+      if (!await input.maySend()) break;
+      target = current;
+    }
     let statusCode: number | undefined, failure: unknown;
     try {
-      const response = await input.channel.send(subscription, payload);
+      const response = await input.channel.send(target, payload);
       statusCode = response.statusCode;
     } catch (error) {
       failure = error;

@@ -586,7 +586,7 @@ durableTwin("WP-D06", "exact ownership prevents a stale pre-send owner", async f
   const hold=new Promise<void>(d=>release=d),ready=new Promise<void>(d=>reached=d);
   const store:OwnerPushStoreV1={subscribe:i=>actual.subscribe(i),unsubscribe:(t,e)=>actual.unsubscribe(t,e),
     list:t=>actual.list(t),delivered:(...a)=>actual.delivered(...a),failed:(...a)=>actual.failed(...a),
-    async reserve(...a){reached();await hold;return actual.reserve(...a);}};
+    async reserve(...a){const outcome=await actual.reserve(...a);reached();await hold;return outcome;}};
   let sends=0;
   const channel:OwnerNotificationChannelV1={kind:'web-push',async send(){sends++;return{statusCode:201};}};
   const running=durableDispatcher(f,channel,f.db,()=>f.at,store).dispatch();void running.catch(()=>{});
