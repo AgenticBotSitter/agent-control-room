@@ -121,7 +121,7 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //     real PostgreSQL 17 from that tree, gives the value below (was 78e43fc8...).
 // 10.0300 adds durable owner-push completion. Measured as the production web
 // login after the full ledger and0234 down;0300 down recovers the prior release.
-const PRE_0234_DIGEST = "549ccfafc354b4da526cf8ddff9969c10339afa130e79bb6f593bd5d7ba2112f";
+const PRE_0234_DIGEST = "2725341d4abf53506ecb8a6649be897f7b4c87ce4fcb885dfd9711d101db7445";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
