@@ -174,10 +174,12 @@ test("JSON growth oracle rejects selective scans and narrowly checks the broad q
     /expected table reader/u);
   assert.ok(sorted(nested), "nested sort is detected");
   assert.ok(sorted(make({ "Node Type": "Incremental Sort", Plans: [reader] })), "incremental sort is detected");
-  for (const type of ["Index Scan", "Index Only Scan", "Bitmap Index Scan"])
+  for (const type of ["Index Scan", "Index Only Scan"])
     requireIndex(make({ "Node Type": type, "Index Name": "control_result_file_sets_quota",
-      "Relation Name": "control_result_file_sets" }),
-      "control_result_file_sets_quota", "selective quota");
+      "Relation Name": "control_result_file_sets" }), "control_result_file_sets_quota", "selective quota");
+  requireIndex(make({ "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
+    Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }),
+    "control_result_file_sets_quota", "bitmap selective quota");
   for (const count of [0, 1999, 2001])
     assert.throws(() => noGrownScan(make({ ...broad.root, Plans: [{ ...reader, "Actual Rows": count }] }),
       "0206 quota sum", 2000), /qualifying row count/u);
@@ -291,6 +293,11 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
             AND s.retention_state IN ('provisional','retained') AND s.set_id<>$2`,
         [TENANT, `result-set:${hex32("excluded")}`])).rows[0]!.n;
         assert.equal(Number(occupied), 40_960_000, "10k file promises sum to the literal byte total");
+        assert.equal(Number((await web.query(`SELECT coalesce(sum(s.total_bytes),0) AS n
+          FROM control_result_file_sets s WHERE s.tenant_id=$1
+            AND s.retention_state IN ('provisional','retained') AND s.set_id<>$2`,
+        [TENANT, `result-set:${"0".repeat(32)}`])).rows[0].n), 40_939_520,
+        "excluding the existing first 10k set subtracts its literal 20480-byte promise");
         results.push({ label: "0206 quota sum", plan: quota, rows: Number(occupied),
           expectNoScan: true });
 
