@@ -18,7 +18,8 @@
 // error rather than as a plan.
 //
 // WHAT IT ASSERTS, and what it deliberately does not. It asserts that no read
-// SEQUENTIALLY SCANS a grown table for a selective read. The broad quota SUM
+// SEQUENTIALLY SCANS a grown table or visits more than 1,000 rows per
+// reader for a selective read, regardless of the access path. The broad quota SUM
 // may consume all active sets only with independently checked rows and bytes.
 // It also asserts that the cleanup reads use the
 // indexes 0256 added and need no sort, and that every read returns exactly the
@@ -58,11 +59,14 @@ const issuedAt = () => new Date(Date.now() - 60_000).toISOString();
 const hoursFrom = (now: number, hours: number) => new Date(now + hours * 3_600_000).toISOString();
 const digestFor = (n: number) => `sha256:${n.toString(16).padStart(64, "0")}`;
 
+// EXPLAIN reports rounded per-loop averages for parallel scans. These observer
+// sessions pin serial execution; production SQL, costs and statistics stay unchanged.
+const serialPlanOptions = "-c statement_timeout=60000 -c max_parallel_workers_per_gather=0";
 async function connect(postgres: RealPostgres, role: AttackRole | "admin"): Promise<Client> {
   const options = role === "admin" ? { ...postgres.admin({ database: postgres.database }),
-    options: "-c statement_timeout=60000" } : (() => { const login = postgres.connection(role);
+    options: serialPlanOptions } : (() => { const login = postgres.connection(role);
     return { host: login.host, port: postgres.port, database: postgres.database, user: login.user,
-      password: login.password, options: "-c statement_timeout=60000" }; })();
+      password: login.password, options: serialPlanOptions }; })();
   const client = new Client(options);
   await client.connect();
   return client;
@@ -103,8 +107,11 @@ function readPlan(value: unknown): Plan {
     return node;
   }
   const root = visit(document?.Plan);
+  const milliseconds = document["Execution Time"];
+  assert.ok(typeof milliseconds === "number" && Number.isFinite(milliseconds) && milliseconds >= 0,
+    "finite nonnegative execution time is required");
   return { root, nodes, lines: [JSON.stringify(value)],
-    milliseconds: Number(document["Execution Time"]),
+    milliseconds,
     buffers: Number((root as unknown as Record<string, unknown>)["Shared Hit Blocks"] ?? 0)
       + Number((root as unknown as Record<string, unknown>)["Shared Read Blocks"] ?? 0) };
 }
@@ -143,6 +150,17 @@ function noGrownScan(p: Plan, label: string, broadRows?: number) {
   }
   assert.ok(!scans(p).some(table => grownTables.includes(table ?? "")),
     `${label} does not scan a grown table:\n${p.lines.join("\n")}`);
+  for (const node of readers) {
+    const counters = [node["Actual Rows"], node["Actual Loops"],
+      node["Rows Removed by Filter"] === undefined ? 0 : node["Rows Removed by Filter"],
+      node["Rows Removed by Index Recheck"] === undefined ? 0 : node["Rows Removed by Index Recheck"]];
+    assert.ok(counters.every(value => typeof value === "number" && Number.isFinite(value) && value >= 0)
+      && node["Actual Loops"]! > 0, `${label} has valid selective work counters`);
+    // Independent ceiling: a page returns 100 files and completeness returns 5.
+    // Ten pages of work is a generous bound, yet refuses a full 10k-row visit.
+    const visited = (counters[0]! + counters[2]! + counters[3]!) * counters[1]!;
+    assert.ok(visited <= 1000, `${label} has bounded selective reader work:\n${p.lines.join("\n")}`);
+  }
 }
 function quotaInputs(p: Plan, rows: number) {
   assert.ok(p.root["Node Type"] === "Aggregate" && p.root["Actual Rows"] === 1
@@ -150,6 +168,7 @@ function quotaInputs(p: Plan, rows: number) {
   const readers = p.nodes.filter(node => node["Relation Name"] !== undefined);
   assert.ok(readers.length > 0 && readers.every(node => node["Relation Name"] === "control_result_file_sets"),
     "quota has nonempty unmixed set readers");
+  assert.equal(readers.length, 1, "quota has exactly one set reader under the serial session contract");
   assert.ok(readers.every(node => node["Actual Rows"] === rows && node["Actual Loops"] === 1),
     "quota qualifying row count matches the independent fixture");
   assert.ok(readers.every(node => (node["Rows Removed by Filter"] ?? 0) === 0
@@ -175,7 +194,7 @@ test("JSON growth oracle rejects selective scans and narrowly checks the broad q
   // A scan in the SECOND child must be found, even when the first child uses an index.
   const nested = make({ "Node Type": "Nested Loop", Plans: [
     { "Node Type": "Index Scan", "Index Name": "control_result_file_sets_project",
-      "Relation Name": "control_result_file_sets" },
+      "Relation Name": "control_result_file_sets", "Actual Rows": 1, "Actual Loops": 1 },
     { "Node Type": "Limit", Plans: [{ "Node Type": "Sort", Plans: [reader] }] }] });
   assert.throws(() => noGrownScan(nested, "owner catalog list"), /does not scan a grown table/u);
   requireIndex(nested, "control_result_file_sets_project", "catalog");
@@ -206,6 +225,9 @@ test("JSON growth oracle rejects selective scans and narrowly checks the broad q
   assert.throws(() => readPlan([{ Plan: { "Node Type": "Result" } }, { Plan: { "Node Type": "Result" } }]),
     /one JSON plan document is required/u);
   assert.throws(() => readPlan([{ Plan: [] }]), /a plan node is required/u);
+  for (const type of [undefined, null, "", 0])
+    assert.throws(() => readPlan([{ Plan: { "Node Type": type }, "Execution Time": 0 }]),
+      /a plan node type is required/u);
   for (const value of [undefined, [], [{ Plan: {} }], [{ Plan: { "Node Type": "Aggregate", Plans: {} } }],
     [{ Plan: { "Node Type": "Aggregate", Plans: [null] } }]])
     assert.throws(() => readPlan(value), /required|array/u);
@@ -227,7 +249,7 @@ test("JSON reader identity refuses missing, malformed and mixed growth readers",
       reject({ "Node Type": type, "Relation Name": identity } as unknown as PlanNode,
         `${type} must refuse incomplete or unrelated relation identity ${JSON.stringify(identity)}`);
   const valid = { "Node Type": "Index Only Scan", "Relation Name": "control_result_file_sets",
-    "Index Name": "control_result_file_sets_quota" };
+    "Index Name": "control_result_file_sets_quota", "Actual Rows": 1, "Actual Loops": 1 };
   for (const invalid of [{ "Node Type": "Index Scan" },
     { ...valid, "Relation Name": "unrelated_table" }, { ...valid, "Relation Name": null },
     { ...valid, "Relation Name": "control_result_files" }])
@@ -237,7 +259,7 @@ test("JSON reader identity refuses missing, malformed and mixed growth readers",
   for (const root of [valid, { "Node Type": "Subquery Scan", Plans: [valid] },
     { "Node Type": "Limit", Plans: [valid] },
     { "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
-      Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }])
+      "Actual Rows": 1, "Actual Loops": 1, Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }])
     noGrownScan(make(root), "0206 selective quota sum");
   // The broad exception cannot hide a malformed reader beside a valid one.
   const broad = { "Node Type": "Aggregate", "Actual Rows": 1, "Actual Loops": 1,
@@ -245,6 +267,71 @@ test("JSON reader identity refuses missing, malformed and mixed growth readers",
       "Actual Rows": 2000, "Actual Loops": 1 }, { "Node Type": "Seq Scan" }] };
   assert.throws(() => noGrownScan(make(broad), "0206 quota sum", 2000),
     /nonempty complete unmixed grown-table reader identities/u, "broad exemption refuses incomplete readers too");
+});
+
+test("JSON L2-001 selective work budget rejects non-Seq full reads", () => {
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  for (const type of ["Bitmap Heap Scan", "Index Scan", "Index Only Scan", "Tid Range Scan"]) {
+    const reader = { "Node Type": type, "Relation Name": "control_result_files",
+      "Actual Rows": 100, "Actual Loops": 1, "Rows Removed by Filter": 9900 };
+    assert.throws(() => noGrownScan(make(reader), "owner files for one page"),
+      /bounded selective reader work/u, `${type} must refuse a 10k-row visit`);
+    noGrownScan(make({ ...reader, "Rows Removed by Filter": 0 }), "owner files for one page");
+    noGrownScan(make({ ...reader, "Actual Rows": 1000, "Rows Removed by Filter": 0 }), "literal budget edge");
+    for (const change of [{ "Actual Rows": 1001, "Rows Removed by Filter": 0 },
+      { "Actual Rows": 1, "Rows Removed by Filter": 0, "Rows Removed by Index Recheck": 1000 },
+      { "Actual Rows": 501, "Actual Loops": 2, "Rows Removed by Filter": 0 }])
+      assert.throws(() => noGrownScan(make({ ...reader, ...change }), "budget overflow"),
+        /bounded selective reader work/u);
+    for (const field of ["Actual Rows", "Actual Loops", "Rows Removed by Filter", "Rows Removed by Index Recheck"])
+      for (const value of [null, "1", -1, NaN, Infinity])
+        assert.throws(() => noGrownScan(make({ ...reader, "Rows Removed by Filter": 0,
+          [field]: value } as unknown as PlanNode), "invalid work counter"), /valid selective work counters/u);
+    for (const field of ["Actual Rows", "Actual Loops"])
+      assert.throws(() => noGrownScan(make({ ...reader, "Rows Removed by Filter": 0,
+        [field]: undefined }), "missing work counter"), /valid selective work counters/u);
+    assert.throws(() => noGrownScan(make({ ...reader, "Actual Loops": 0 }), "unexecuted reader"),
+      /valid selective work counters/u);
+  }
+});
+
+test("JSON L2-002 broad quota refuses duplicate readers under the serial session contract", () => {
+  assert.match(serialPlanOptions, /(?:^|\s)-c max_parallel_workers_per_gather=0(?:\s|$)/u,
+    "observer startup pins the independently specified serial session contract");
+  const reader = { "Node Type": "Seq Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 2000, "Actual Loops": 1 };
+  const make = (readers: PlanNode[]) => readPlan([{ Plan: { "Node Type": "Aggregate",
+    "Actual Rows": 1, "Actual Loops": 1, Plans: readers }, "Execution Time": 0 }]);
+  assert.throws(() => quotaInputs(make([reader, reader]), 2000), /exactly one set reader/u,
+    "duplicated siblings must not read the complete fixture twice");
+  quotaInputs(make([reader]), 2000);
+  assert.throws(() => quotaInputs(make([{ ...reader, "Actual Rows": 667, "Actual Loops": 3 }]), 2000),
+    /qualifying row count/u, "parallel averages are outside the pinned serial statement contract");
+});
+
+test("JSON L2-003 reader exclusions and relation-bearing nodes have positive controls", () => {
+  const valid = { "Node Type": "Index Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 1, "Actual Loops": 1 };
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  for (const type of ["Subquery Scan", "CTE Scan", "WorkTable Scan", "Function Scan", "Table Function Scan",
+    "Values Scan", "Named Tuplestore Scan"])
+    noGrownScan(make({ "Node Type": type, Plans: [valid] }), "valid intermediary");
+  noGrownScan(make({ "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 1, "Actual Loops": 1,
+    Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }),
+  "valid bitmap intermediary");
+  noGrownScan(make({ ...valid, "Node Type": "Custom Reader" }), "relation identifies a non-Scan reader");
+  assert.throws(() => noGrownScan(make({ "Node Type": "Custom Reader", "Relation Name": "unrelated_table",
+    Plans: [valid] }), "foreign relation-bearing parent"),
+  /nonempty complete unmixed grown-table reader identities/u);
+});
+
+test("JSON L2-004 execution time refuses absent malformed and nonfinite values", () => {
+  for (const value of [undefined, null, "0", "", NaN, Infinity, -Infinity, -1])
+    assert.throws(() => readPlan([{ Plan: { "Node Type": "Result" }, "Execution Time": value }]),
+      /finite nonnegative execution time/u, `must refuse ${String(value)}`);
+  for (const value of [0, 0.414, 100])
+    assert.equal(readPlan([{ Plan: { "Node Type": "Result" }, "Execution Time": value }]).milliseconds, value);
 });
 
 test("the catalog, the downloads and both cleanup reads stay index-backed at 10,000 files",
@@ -462,6 +549,8 @@ test("broad and selective quota readers at 10k and 100k agree with literal fixtu
           for (const [role, client] of [["web", web], ["results", results]] as const) {
             assert.equal((await client.query("SELECT session_user")).rows[0].session_user,
               `control_room_${role}`, "quota uses the actual production login");
+            assert.equal((await client.query("SHOW max_parallel_workers_per_gather")).rows[0].max_parallel_workers_per_gather,
+              "0", "quota observer sessions explicitly use the serial plan contract");
             const p = await plan(client, quotaSQL, [TENANT, absentSet]);
             if (fixture.selective) {
               requireIndex(p, "control_result_file_sets_quota", "0206 selective quota sum");

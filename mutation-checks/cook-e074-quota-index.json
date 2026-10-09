@@ -96,5 +96,61 @@
     "replace": "true",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON reader identity\" tests/result-file-growth-postgres.test.ts",
     "why": "M14: disabling complete unmixed reader identity accepts the original missing-relation input"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "visited <= 1000",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-001\" tests/result-file-growth-postgres.test.ts",
+    "why": "M15: disabling per-reader work ceiling accepts a non-Seq full read"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "counters.every(value => typeof value === \"number\" && Number.isFinite(value) && value >= 0)\n      && node[\"Actual Loops\"]! > 0",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-001\" tests/result-file-growth-postgres.test.ts",
+    "why": "M16: malformed, missing and unexecuted work counters refuse"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "readers.length, 1, \"quota has exactly one set reader under the serial session contract\"",
+    "replace": "1, 1, \"quota has exactly one set reader under the serial session contract\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-002\" tests/result-file-growth-postgres.test.ts",
+    "why": "M17: duplicated sibling quota readers must refuse"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "\"Bitmap Index Scan\", \"Subquery Scan\", \"CTE Scan\",",
+    "replace": "\"Bitmap Index Scan\", \"Subquery Scan\", \"Excluded CTE Scan\",",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-003\" tests/result-file-growth-postgres.test.ts",
+    "why": "M18: CTE intermediaries are judged by their child reader"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "\"WorkTable Scan\", \"Function Scan\", \"Table Function Scan\",",
+    "replace": "\"WorkTable Scan\", \"Excluded Function Scan\", \"Table Function Scan\",",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-003\" tests/result-file-growth-postgres.test.ts",
+    "why": "M19: function intermediaries are judged by their child reader"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "node[\"Relation Name\"] !== undefined\n    ||",
+    "replace": "false\n    ||",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-003\" tests/result-file-growth-postgres.test.ts",
+    "why": "M20: relation-bearing non-Scan nodes are readers"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "typeof milliseconds === \"number\" && Number.isFinite(milliseconds) && milliseconds >= 0",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-004\" tests/result-file-growth-postgres.test.ts",
+    "why": "M21: absent or invalid execution time must refuse"
+  },
+  {
+    "file": "tests/result-file-growth-postgres.test.ts",
+    "find": "-c max_parallel_workers_per_gather=0\";",
+    "replace": "-c max_parallel_workers_per_gather=2\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^JSON L2-002\" tests/result-file-growth-postgres.test.ts",
+    "why": "M22: startup parallel pin must agree with the independent serial statement contract"
   }
 ]
