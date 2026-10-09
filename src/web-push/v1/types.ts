@@ -60,3 +60,13 @@ export type OwnerWebPushConfigV1 = Readonly<{
   publicKey: string;
   privateKey: string;
 }>;
+
+/** Safe bookkeeping only; never a provider response body or subscription key. */
+export type OwnerPushCompletionResultV1 = Readonly<{
+  subscription_id: string;
+  event_tag: string;
+  result: "delivered" | "failed";
+  status_code: number | null;
+  completed_at: string;
+  remove: boolean;
+}>;

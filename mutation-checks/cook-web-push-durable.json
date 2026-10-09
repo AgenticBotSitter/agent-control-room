@@ -1,0 +1,44 @@
+[
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "catch (error) { errors.push(error); }\n      }",
+    "replace": "catch (error) { throw error; }\n      }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D01: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent live-cycle contract: sibling work must finish before a failure is reported."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D10: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent overlap oracle requires at least two simultaneous provider calls after pre-send refusals."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "LIMIT ${SEND_CONCURRENCY_V1}",
+    "replace": "LIMIT 64",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D05: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Contract bounds durable repair to eight items per cycle, independently of the number of poisoned receipts."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "maySend: () => this.#live(head),",
+    "replace": "maySend: async () => true,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "An older owner blocked in reservation must not send after the exact attempt has moved."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "for (const receipt of receipts) {",
+    "replace": "for (const receipt of []) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent reader must see the delivery ledger repaired along with the terminal head."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "statusCode! <= 599 ? statusCode! : null",
+    "replace": "statusCode! <= 999 ? statusCode! : null",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D05: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "0174 production constraint independently limits recorded HTTP status to100..599;600 must normalize once."
+  }
+]

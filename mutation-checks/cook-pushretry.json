@@ -43,20 +43,20 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "    if (!sendFailure) {\n      // No subscription left by the time this item was sent to.",
-    "replace": "    if (false) {\n      // No subscription left by the time this item was sent to.",
+    "find": "    if (!interrupted && !sendFailure) return this.#finish(head, receipts, \"deferred\", backoffUntil, \"owner_push_no_subscription\");",
+    "replace": "    if (false && !sendFailure) return this.#finish(head, receipts, \"deferred\", backoffUntil, \"owner_push_no_subscription\");",
     "test": "pnpm run test:owner-push:postgres",
     "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone. This is the RESIDUAL path only -- the pre-claim gate handles the common case before anything is claimed, so this branch is reached only when a subscription vanished mid-batch, which the new 'subscription that vanishes mid-batch' test drives explicitly. The earlier version of this entry was recorded as NOT independently detectable because no test installed zero subscriptions at all; that is now the 50-item no-subscription stress test, so this branch is reachable and this entry bites."
   },
   {
-    "file": "db/migrations/0225_owner_push_attempt_guards.sql",
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
     "find": "    OR (OLD.state='delivered' AND NEW.state<>'delivered')",
     "replace": "    OR (OLD.state='delivered' AND false)",
     "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 tests/owner-push-dispatch-postgres.test.ts",
     "why": "a delivered head must be terminal: without this a caller can rewind it to pending and re-alert the owner for a stall they already answered"
   },
   {
-    "file": "db/migrations/0225_owner_push_attempt_guards.sql",
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
     "find": "    OR NEW.attempt_count<OLD.attempt_count",
     "replace": "    OR false AND NEW.attempt_count<OLD.attempt_count",
     "test": "CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 tests/owner-push-dispatch-postgres.test.ts",
@@ -99,15 +99,15 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "    if (sendFailure.removed) return this.#settle(id, \"failed\", spent, now, \"owner_push_subscription_gone\");",
-    "replace": "    if (false) return this.#settle(id, \"failed\", spent, now, \"owner_push_subscription_gone\");",
+    "find": "    if (!interrupted && sendFailure?.removed) return this.#finish(head, receipts, \"failed\", now, \"owner_push_subscription_gone\");",
+    "replace": "    if (false && sendFailure?.removed) return this.#finish(head, receipts, \"failed\", now, \"owner_push_subscription_gone\");",
     "test": "pnpm run test:owner-push:postgres",
     "why": "a 404/410 means the browser subscription is gone and has already been removed, so the item must stop for good rather than spend the bounded attempts reaching nothing"
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "    if ((await this.input.store.list(this.input.tenantId)).length === 0) return await this.#deferUntilSubscribed(at);",
-    "replace": "    if (false && (await this.input.store.list(this.input.tenantId)).length === 0) return await this.#deferUntilSubscribed(at);",
+    "find": "    if ((await this.input.store.list(this.input.tenantId)).length === 0) {",
+    "replace": "    if (false && (await this.input.store.list(this.input.tenantId)).length === 0) {",
     "test": "pnpm run test:owner-push:postgres",
     "why": "THE FIX for the review's blocking bug. Without the pre-claim gate, a tenant with no subscribed browser claims each item, spends an attempt, and 0225's guard then refuses the release's decrement -- so the increments stick, the whole budget burns in about four minutes at the production 30s interval, and the item sits at 'pending' with attempt_count=8, permanently unclaimable and never delivered even after the owner subscribes. The gate means an item with nobody to send it to is never claimed, so it spends no attempt and heals the moment a subscription exists."
   },
@@ -134,8 +134,8 @@
   },
   {
     "file": "src/web-push/v1/delivery.ts",
-    "find": "      if (response.statusCode >= 200 && response.statusCode < 300) {\n        await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);\n        delivered++;",
-    "replace": "      if (true) {\n        await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);\n        delivered++;",
+    "find": "    const accepted = Number.isInteger(statusCode) && statusCode! >= 200 && statusCode! < 300;",
+    "replace": "    const accepted = true;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
     "why": "the status must be checked BEFORE store.delivered(), which is a terminal, non-retryable write to the 0174 ledger. Recording it for a response outside 2xx would settle the item as delivered and the phone would never ring for that stall. Unreachable through the real web-push library, which REJECTS on non-2xx -- which is exactly why the invariant has to be enforced by this code rather than by an external library's undocumented contract"
   },

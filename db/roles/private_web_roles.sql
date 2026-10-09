@@ -97,7 +97,8 @@ GRANT EXECUTE ON FUNCTION owner_push_endpoint_allowed(text) TO control_room_priv
 -- to a sendable state (0225's guard).
 GRANT SELECT, INSERT ON control_owner_push_attempt_heads TO control_room_private_web;
 GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,
-  safe_reason_code, updated_at) ON control_owner_push_attempt_heads TO control_room_private_web;
+  safe_reason_code, updated_at, completion_data, completion_disposition, completion_next_attempt_at,
+  completion_reason_code, completion_retry_count) ON control_owner_push_attempt_heads TO control_room_private_web;
 -- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
 -- web role reads them both for the owner-facing Settings tab and to enforce
 -- eligibility/concurrency during assignment, and writes them only through the
