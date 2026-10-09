@@ -422,9 +422,11 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
   const refusalReady = new Promise<void>(resolve=>{refusalReached=resolve;});
   const settledReady = new Promise<void>(resolve=>{siblingsSettled=resolve;});
   const settledHeads = new Set<string>();
-  const observe = (sql:string, result:{rows:any[]}) => {
+  const observe = (sql:string, params:unknown[]|undefined, result:{rows:any[]}) => {
     if (/UPDATE control_owner_push_attempt_heads\s+SET state=\$3::text/.test(sql)) {
-      for(const row of result.rows) settledHeads.add(row.action_inbox_id);
+      // The released UPDATE has no RETURNING clause. Observe completion of
+      // its real call using the bound item, then verify persisted states below.
+      if(typeof params?.[1] === "string") settledHeads.add(params[1]);
       // Forty inputs minus the deliberately refused head. This drains the
       // old dispatcher too, whose rejected outer promise leaves workers alive.
       if(settledHeads.size>=39) siblingsSettled();
@@ -439,9 +441,9 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
     }
   };
   const db: DatabaseClient = { ...f.db,
-    query: async (sql,params) => { refuse(sql); return observe(sql, await f.db.query(sql,params)); },
+    query: async (sql,params) => { refuse(sql); return observe(sql, params, await f.db.query(sql,params)); },
     transaction: async body => f.db.transaction(tx=>body({query: async (sql,params)=>{
-      refuse(sql); return observe(sql, await tx.query(sql,params));
+      refuse(sql); return observe(sql, params, await tx.query(sql,params));
     }})),
   };
   const tags: string[] = [];
@@ -464,6 +466,8 @@ durableTwin("WP-D01", "siblings settle and durable unstarted release", async f =
     try {await Promise.race([settledReady,new Promise<never>((_,reject)=>{
       deadline=setTimeout(()=>reject(new Error("WP-D01 sibling cleanup did not reach39 settlements")),60_000);
     })]);} finally {clearTimeout(deadline);}
+    assert.equal(Number((await f.db.query("SELECT count(*)::int AS n FROM control_owner_push_attempt_heads WHERE state='delivered'")).rows[0]!.n),39,
+      "WP-D01 actual producer persisted39 sibling settlements before cleanup");
   }
   const healthy = new OwnerPushDispatcherV1({ db:f.db, tenantId:DURABLE_TENANT,
     store:new PostgresOwnerPushStoreV1(f.db),channel,clock:()=>f.at+30_000 });
