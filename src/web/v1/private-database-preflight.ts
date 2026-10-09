@@ -87,7 +87,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
-export const privateWebSchemaDigest = "ef71e299dfac1dd36ca7a3cb569b6e0b23a307bb3f075048f5f408186c816390";
+export const privateWebSchemaDigest = "0e55788a8988dfbe4a57ecbd7276f09ba88e53bb33df7cc9096039feabe0b9e8";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -272,7 +272,7 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   // MIG-I/0300: the retry and safe completion columns, and NOT the
   // link -- a phone's destination is written once and never repointed. This list
   // is the preflight's copy of that grant, and it is deliberately identical: a
-  // column here that 0226 does not grant, or one missing that it does, is
+  // column here missing from0226/0300 grants, or an unlisted grant, is
   // refused by the column audit rather than tolerated.
   control_owner_push_attempt_heads: ["state", "attempt_count", "next_attempt_at", "reserved_at", "last_attempt_at",
     "completed_at", "safe_reason_code", "updated_at", "completion_data", "completion_disposition",
