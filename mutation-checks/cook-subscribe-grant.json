@@ -1,0 +1,30 @@
+[
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;",
+    "replace": "-- Mutation: remove subscription renewal authority.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 first-use$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 first-use must fail the production-login subscribe success assertion with42501 when fresh authority is missing."
+  },
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;",
+    "replace": "GRANT UPDATE ON owner_web_push_subscriptions TO control_room_private_web;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 narrow authority$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 narrow authority must fail forbidden id UPDATE when a broad table grant allows it."
+  },
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "  owner_web_push_subscriptions: [\"p256dh\", \"auth\", \"expires_at\", \"updated_at\"],\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 first-use$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 first-use must fail real verifyPrivateDatabase after successful subscribe/read when the startup declaration omits the four granted columns."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  for (const [,table] of writes) assert.ok(Object.hasOwn(RUNNERS,table), `unclassified web-push upsert:${table}`);",
+    "replace": "  for (const [,table] of writes) void table;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory refuses an unclassified future write must fail Missing expected exception when inventory admission is disabled."
+  }
+]
