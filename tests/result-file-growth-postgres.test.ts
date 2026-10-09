@@ -381,9 +381,9 @@ test("broad and selective quota readers at 10k and 100k agree with literal fixtu
   { timeout: 600_000 }, async t => {
     if (!PG) { t.skip(realPostgresSkipMessage()); return; }
     for (const fixture of [
-      { files: 100_000, selective: false, inputs: 20_000, bytes: 409_600_000, excludingFirst: 409_579_520 },
-      { files: 10_000, selective: true, inputs: 1, bytes: 20_480, excludingFirst: 0 },
-      { files: 100_000, selective: true, inputs: 1, bytes: 20_480, excludingFirst: 0 },
+      { files: 100_000, sets: 20_000, selective: false, inputs: 20_000, bytes: 409_600_000, excludingFirst: 409_579_520 },
+      { files: 10_000, sets: 2_000, selective: true, inputs: 1, bytes: 20_480, excludingFirst: 0 },
+      { files: 100_000, sets: 20_000, selective: true, inputs: 1, bytes: 20_480, excludingFirst: 0 },
     ]) {
       await withRealPostgres(async postgres => {
         const admin = await connect(postgres, "admin");
@@ -395,6 +395,14 @@ test("broad and selective quota readers at 10k and 100k agree with literal fixtu
             0, "migrations create the empty catalog; fixture setup has not populated it yet");
           await seedTenant(admin);
           await seedCatalog(admin, fixture.files, fixture.selective);
+          assert.deepEqual((await admin.query(`SELECT
+            (SELECT count(*)::int FROM control_result_files) AS files,
+            (SELECT count(*)::int FROM control_result_file_sets) AS sets,
+            (SELECT count(*)::int FROM control_result_file_sets
+              WHERE retention_state IN ('provisional','retained')) AS active,
+            (SELECT count(*)::int FROM control_result_file_sets WHERE state='declared') AS declared`)).rows[0],
+          { files: fixture.files, sets: fixture.sets, active: fixture.inputs, declared: fixture.selective ? 1 : 0 },
+          "fresh fixture really contains the independent file/set counts and declared promises");
           await admin.query("ANALYZE");
           for (const [role, client] of [["web", web], ["results", results]] as const) {
             assert.equal((await client.query("SELECT session_user")).rows[0].session_user,
