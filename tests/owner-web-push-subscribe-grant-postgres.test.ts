@@ -23,6 +23,9 @@ import { sha256Digest } from "../src/security";
 import { CompletionGateStoreV1 } from "../src/completion-gate/v1/store";
 import { createMacLocalFirstOwnerManifestV1 } from "../scripts/mac-local/first-owner-manifest.mjs";
 import { applyMacLocalFirstOwnerV1 } from "../scripts/mac-local/first-owner-vps.mjs";
+import { bootstrapMacLocalOwnerV1 } from "../src/web/v1/mac-local-owner-bootstrap";
+import type { MacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
+import type { DatabaseClient } from "../src/persistence/database";
 import type { OwnerPushSubscriptionRecordV1 } from "../src/web-push/v1/types";
 
 // Synthetic push-service inputs; no real provider-delivery claim. Expectations
@@ -48,6 +51,19 @@ async function owner(admin: Client, tenantId = TENANT, workspaceId = WORKSPACE) 
   CompletionGateStoreV1.genesisIntegrityForKeyV1(tenantId, new Uint8Array(32).fill(7)));
   await applyMacLocalFirstOwnerV1(admin, manifest);
   return manifest.identity.id as string;
+}
+async function secondOwner(admin: Client) {
+  const query = admin.query.bind(admin) as unknown as DatabaseClient["query"];
+  const database: DatabaseClient = { query, transaction: async work => {
+    await admin.query("BEGIN");
+    try { const value = await work({ query }); await admin.query("COMMIT"); return value; }
+    catch (error) { await admin.query("ROLLBACK"); throw error; }
+  }, transactionWithPreCommitCheck: async (work, check) => database.transaction(async tx => {
+    const result = await work(tx); await check(); return result;
+  }) };
+  const config = { workspaceId: "workspace:subscribe-second", workIntakeProjectIds: [],
+    localOwnerSession: { tenantId: "tenant:subscribe-second", provider: "local-owner", subject: SUBJECT } } as unknown as MacLocalProtectedConfigurationV1;
+  assert.equal(await bootstrapMacLocalOwnerV1(database, config), "created");
 }
 function binding(pg: RealPostgres, max?: number) {
   const c = pg.connection("web");
@@ -140,7 +156,7 @@ const {options,input}=JSON.parse((await iterator.next()).value); const db=new Cl
 try { await db.connect(); console.log('READY'); if((await iterator.next()).value!=='GO') throw Error('missing barrier');
  await new PostgresOwnerPushStoreV1(db).subscribe(input); console.log('SAVED');
 } finally {lines.close(); await db.end();}`;
-function child(pg: RealPostgres, input: OwnerPushSubscriptionRecordV1, name: string) {
+function child(pg: RealPostgres, input: OwnerPushSubscriptionRecordV1, name: string, productionTimeouts = false) {
   const process = spawn(globalThis.process.execPath, ["--import", "tsx", "--input-type=module", "-e", CHILD], { stdio: ["pipe", "pipe", "pipe"] });
   let output = "", errors = "";
   process.stdout.on("data", chunk => { output += String(chunk); }); process.stderr.on("data", chunk => { errors += String(chunk); });
@@ -150,7 +166,11 @@ function child(pg: RealPostgres, input: OwnerPushSubscriptionRecordV1, name: str
     process.once("close", code => { if (!output.includes("READY")) reject(new Error(`child_not_ready:${code}:${errors}`)); });
   });
   const closed = new Promise<{ code: number | null; output: string; errors: string }>(resolve => process.once("close", code => resolve({ code, output, errors })));
-  process.stdin.write(JSON.stringify({ options: pg.connection("web", { applicationName: name }), input }) + "\n");
+  const connection = pg.connection("web", { applicationName: name });
+  const options = productionTimeouts ? { ...privatePgOptions({ host: "127.0.0.1", port: connection.port,
+    database: connection.database, username: connection.user, password: connection.password, majorVersion: 17 }),
+    host: connection.host, application_name: name } : connection;
+  process.stdin.write(JSON.stringify({ options, input }) + "\n");
   return { process, ready, closed };
 }
 async function stop(children: { process: ChildProcessWithoutNullStreams; closed: Promise<unknown> }[]) {
@@ -217,7 +237,7 @@ test("CR-E075 narrow authority", () => fixture(4, async ({ live, pg }) => {
   } finally { await web.end(); await other.end(); }
 }));
 test("CR-E075 real owner HTTP", () => fixture(5, async ({ live, admin }) => {
-  await owner(admin, "tenant:subscribe-second", "workspace:subscribe-second");
+  await secondOwner(admin);
   await http(live, async (call, cookie) => {
     assert.equal((await call("/api/v1/owner-web-push", payload())).status, 401);
     assert.equal((await call("/api/v1/owner-web-push", payload(), cookie, "https://hostile.example.invalid")).status, 403);
@@ -256,8 +276,16 @@ test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admi
     await waitFor(admin, waits, ["control-room-private-web"], 8);
     assert.equal(slow.pool.totalCount, 8, "production pool limit independently specified as eight");
     await lock.query("ROLLBACK");
-    assert.equal((await settled).filter(x=>x.status==="fulfilled").length, 20);
-    console.log(`CR-E075 slow:20 completed; pool_limit=8; milliseconds=${Math.round(performance.now()-start)}`);
+    const results = await settled;
+    // Independent policy literals: eight active plus eight queued, four refused.
+    assert.equal(results.filter(x => x.status === "fulfilled").length, 16);
+    const refused = results.filter(x => x.status === "rejected");
+    assert.equal(refused.length, 4);
+    for (const result of refused) if (result.status === "rejected") {
+      assert.equal(result.reason.code, "database_unavailable");
+      assert.equal(result.reason.sqlState, undefined, "admission refusal is not a SQL failure");
+    }
+    console.log(`CR-E075 slow:20 settled;16 completed;4 admission refusals; pool_limit=8; milliseconds=${Math.round(performance.now()-start)}`);
   } finally { await lock.query("ROLLBACK"); await settled; await slow.db.close(); await lock.end(); }
   const dropped = child(pg, { ...INPUT, p256dh: "Drop", auth: "DropAuth" }, "subscribe-drop");
   try {
@@ -275,11 +303,19 @@ test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admi
 }));
 test("CR-E075 stop halfway", () => fixture(8, async ({ live, admin, pg }) => {
   await subscribe(live); const id = await history(live); const lock = new Client(pg.admin()); await lock.connect();
-  const caller = child(pg, { ...INPUT, p256dh: "Next", auth: "NextAuth" }, "subscribe-stop");
+  const caller = child(pg, { ...INPUT, p256dh: "Next", auth: "NextAuth" }, "subscribe-stop", true);
   try {
     await caller.ready; await lock.query("BEGIN"); await lock.query("SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 FOR UPDATE", [TENANT]);
     caller.process.stdin.write("GO\n"); await waitFor(admin, waits, ["subscribe-stop"], 1);
-    caller.process.kill("SIGTERM"); await caller.closed; await lock.query("ROLLBACK");
+    caller.process.kill("SIGTERM"); await caller.closed;
+    // EOF alone cannot cancel an in-flight server statement. Keep the lock until
+    // production lock_timeout aborts it and the owned backend observably exits.
+    const deadline = performance.now() + 10_000;
+    while ((await admin.query("SELECT count(*)::int n FROM pg_stat_activity WHERE application_name=$1", ["subscribe-stop"])).rows[0].n) {
+      assert.ok(performance.now() < deadline, "interrupted production backend exits before lock release");
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    await lock.query("ROLLBACK");
     assert.deepEqual((await live.store.list(TENANT)).map(fields), [fields(INPUT)], "killed pending write leaves the old complete row");
     const next = { ...INPUT, p256dh: "Next", auth: "NextAuth" }; await subscribe(live,next); await subscribe(live,next);
     assert.deepEqual((await live.store.list(TENANT)).map(fields), [fields(next)]); assert.equal((await row(admin)).id,id);
