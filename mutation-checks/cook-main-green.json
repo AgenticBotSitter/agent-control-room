@@ -110,5 +110,12 @@
     "replace": "  const { copyFile } = await import(\"node:fs/promises\");\n  await copyFile(await privateTool, path);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern \"workspaces share one private executable while keeping their files isolated\" tests/fleet-tool-adapter.test.mjs",
     "why": "Two private workspaces must reference one immutable private executable copy, while sharing no other files. The independent identity of the first workspace is compared with the second; per-workspace copying fails the named reuse assertion."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "    return await exited;",
+    "replace": "    return [child.exitCode, child.signalCode];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern \"exit barrier waits for the real parent exit before drain handoff\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Independent expected handoff=false while the real parent waits at an observed stdin gate. Removing the exit barrier fails the named drain handoff assertion; no sleep or deadline increase."
   }
 ]

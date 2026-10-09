@@ -76,6 +76,56 @@ async function readyTool(t, script, marker, heartbeat, { stdin = "ignore" } = {}
   return child;
 }
 
+// Capture a real exit before testing the pipe-drain seam. A busy parent may
+// take longer to exit than the adapter's timeout even after its child is ready.
+// The caller replays this recorded tuple after the adapter installs listeners;
+// stdout/stderr remain the real pipes held open by the escaped descendant.
+async function exitedTool(child, release = () => child.stdin.end()) {
+  let timer, observed;
+  const exited = new Promise((resolveExit, rejectExit) => {
+    observed = (code, signal) => resolveExit([code, signal]);
+    child.once("exit", observed);
+    timer = setTimeout(() => rejectExit(new Error("The fixture must exit within the original 10s setup bound.")), 10_000);
+  });
+  try {
+    release();
+    return await exited;
+  } finally {
+    clearTimeout(timer);
+    child.off("exit", observed);
+  }
+}
+
+test("exit barrier waits for the real parent exit before drain handoff", async t => {
+  const dir = await workspace(t), marker = join(dir, "pid"), ready = join(dir, "ready");
+  const gated = join(dir, "gated");
+  const script = await executable(dir, `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+writeFileSync(${JSON.stringify(ready)}, "ready");
+process.stdin.on("data", bytes => {
+  if (bytes.toString() === "exit") process.exit(0);
+  writeFileSync(${JSON.stringify(gated)}, "gated");
+});`);
+  const child = await readyTool(t, script, marker, ready, { stdin: "pipe" });
+  let handedOff = false;
+  const pending = exitedTool(child, () => child.stdin.write("gate")).then(exit => { handedOff = true; return exit; });
+  try {
+    const deadline = performance.now() + 10_000;
+    while (true) {
+      try { await readFile(gated); break; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; }
+      assert.ok(performance.now() < deadline, "the real parent must reach its exit gate");
+      await new Promise(done => setImmediate(done));
+    }
+    await new Promise(done => setImmediate(done));
+    assert.equal(handedOff, false, "drain handoff must wait for actual exit, not merely readiness");
+  } finally {
+    child.stdin.end("exit");
+    await pending;
+  }
+  assert.deepEqual(await pending, [0, null], "exit arguments come from the real parent");
+});
+
 test("readiness barrier waits for the real tool PID and heartbeat before handoff", async t => {
   const dir = await workspace(t), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat");
   const started = join(dir, "started"), release = join(dir, "release");
@@ -426,10 +476,16 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
   let started;
   try {
     const escapedChild = await readyTool(t, escaped, escapedPid, escapedReady, { stdin: "pipe" });
+    const exit = await exitedTool(escapedChild);
+    assert.deepEqual(exit, [0, null], "the real escaped-pipe parent exits successfully before handoff");
     await assert.rejects(connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
-      // Start measuring the drain only when a ready pipe holder is handed off.
-      started = performance.now();
-      queueMicrotask(() => escapedChild.stdin.end());
+      assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
+      // Replay only the recorded exit, with real still-open inherited pipes.
+      // Other tests below exercise the product's own spawn options end to end.
+      queueMicrotask(() => {
+        started = performance.now();
+        escapedChild.emit("exit", ...exit);
+      });
       return escapedChild;
     } }).execute(input()),
       error => error?.code === "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
