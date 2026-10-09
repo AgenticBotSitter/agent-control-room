@@ -599,6 +599,26 @@ durableTwin("WP-D06", "exact ownership prevents a stale pre-send owner", async f
   assert.equal(sends,1,'WP-D06 old owner rechecks after the blocked reserve');
   const row=(await durableHead(f))[0];assert.equal(row.state,'delivered');assert.equal(Number(row.attempt_count),2,
     'WP-D06 older CAS cannot overwrite the newer attempt');
+  await f.query(`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:ownership',$1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
+  let releaseOld!:()=>void,releasePeer!:()=>void,oldReady!:()=>void,peerReady!:()=>void,calls=0;
+  const oldHold=new Promise<void>(d=>releaseOld=d),peerHold=new Promise<void>(d=>releasePeer=d);
+  const oldStarted=new Promise<void>(d=>oldReady=d),peerStarted=new Promise<void>(d=>peerReady=d);
+  const stalled:OwnerNotificationChannelV1={kind:'web-push',async send(){
+    if(++calls===1){oldReady();await oldHold;}else{peerReady();await peerHold;}return{statusCode:201};}};
+  const oldFlight=durableDispatcher(f,stalled,f.db,()=>f.at+600_000).dispatch();void oldFlight.catch(()=>{});
+  let peerFlight:Promise<unknown>|undefined;
+  try {
+    await oldStarted;
+    peerFlight=durableDispatcher(f,stalled,f.db,()=>f.at+900_000).dispatch();void peerFlight.catch(()=>{});
+    await peerStarted;releaseOld();
+    await assert.rejects(oldFlight,/owner_push_completion_unavailable/,
+      'WP-D06 a zero-row stale receipt write is a refusal, never a successful empty outcome');
+    const current=(await f.query("SELECT state,attempt_count FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:ownership'")).rows[0];
+    assert.equal(current.state,'reserved','WP-D06 older accepted result cannot seal the newer active claim');
+    assert.equal(Number(current.attempt_count),2,'WP-D06 exact attempt remains owned by the peer');
+  } finally {releaseOld();releasePeer();await Promise.allSettled([oldFlight,peerFlight??Promise.resolve()]);}
 });
 
 durableTwin("WP-D07", "failure bookkeeping remains retryable", async f=>{
@@ -625,6 +645,22 @@ durableTwin("WP-D08", "partial acceptance survives dispatcher replacement", asyn
   assert.equal((await durableHead(f))[0].state,'delivered','WP-D08 a fresh dispatcher completes remaining subscription');
   assert.equal(sends.length,2,'WP-D08 both subscriptions finish');assert.equal(new Set(sends).size,2,'WP-D08 first acceptance is sent once');
   assert.ok((await f.query("SELECT state FROM owner_web_push_deliveries")).rows.every(r=>r.state==='delivered'));
+  await f.query(`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:integrity',$1,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[DURABLE_TENANT]);
+  const fault=refuseLedger(f,1);
+  await durableDispatcher(f,channel,fault.db,()=>f.at+60_000).dispatch().catch(()=>{});
+  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:integrity'")).rows[0].state,'completing');
+  // Adversarial production-login edit of a product-created reservation. Setup
+  // did not create a ledger row or invent a completed delivery.
+  await f.db.query(`UPDATE owner_web_push_deliveries SET state='failed',status_code=503,completed_at=$4
+    WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'`,
+  [DURABLE_TENANT,`push:${String(1).padStart(64,'a')}`,'needs:attention:integrity',new Date(f.at+60_000).toISOString()]);
+  const acceptedCalls=sends.length;
+  await durableDispatcher(f,channel,f.db,()=>f.at+90_000).dispatch().catch(()=>{});
+  assert.equal((await f.query("SELECT state FROM control_owner_push_attempt_heads WHERE action_inbox_id='attention:integrity'")).rows[0].state,'completing',
+    'WP-D08 conflicting ledger evidence cannot publish a delivered head');
+  assert.equal(sends.length,acceptedCalls,'WP-D08 conflicting completion is database-only and never resends');
 });
 
 for(const id of ['WP-D09','WP-D14'])durableTwin(id,'accepted outage replay keeps the same tag',async f=>{

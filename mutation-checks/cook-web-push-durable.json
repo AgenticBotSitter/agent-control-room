@@ -96,5 +96,26 @@
     "replace": "if (!current) current = subscription;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D03: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "An independently expired second subscription must not be sent from the original list after the first provider call finishes."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "WHERE tenant_id=$1 AND action_inbox_id=$2 AND attempt_count=$3 AND reserved_at=$4::timestamptz\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
+    "replace": "WHERE tenant_id=$1 AND action_inbox_id=$2\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Exact receipt admission cannot overwrite a newer claim while its provider call is observably held."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (result.rows.length !== 1) throw new Error(\"owner_push_claim_changed\");",
+    "replace": "if (false) throw new Error(\"owner_push_claim_changed\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The old owner must report the independent zero-row receipt refusal; an empty success is false success."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (live.rows.length && proof.rows[0]?.state !== receipt.result)",
+    "replace": "if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D08: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A conflicting product-created ledger record cannot be silently accepted as repaired delivery."
   }
 ]
