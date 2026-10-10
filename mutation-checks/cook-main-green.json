@@ -3,36 +3,36 @@
     "file": "tests/fleet-connector-round6.test.mjs",
     "find": "import './helpers/block-agent-cli.mjs';\n",
     "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-round6.test.mjs",
-    "why": "The retained tests/fleet-connector-round6.test.mjs file-level guard assertion must fail against the independent literal 1 when its first guard import is removed."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"agent CLI guard is established before connector tests run\" tests/fleet-connector-round6.test.mjs",
+    "why": "The named agent CLI guard test must fail against the independent literal 1 on completed TAP when its safety import or assignment is removed; no module-startup assertion is used."
   },
   {
     "file": "tests/fleet-connector-slow-body.test.mjs",
     "find": "import './helpers/block-agent-cli.mjs';\n",
     "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-slow-body.test.mjs",
-    "why": "The retained tests/fleet-connector-slow-body.test.mjs file-level guard assertion must fail against the independent literal 1 when its first guard import is removed."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"agent CLI guard is established before connector tests run\" tests/fleet-connector-slow-body.test.mjs",
+    "why": "The named agent CLI guard test must fail against the independent literal 1 on completed TAP when its safety import or assignment is removed; no module-startup assertion is used."
   },
   {
     "file": "tests/fleet-connector-secret-encoding.test.mjs",
     "find": "import './helpers/block-agent-cli.mjs';\n",
     "replace": "",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-secret-encoding.test.mjs",
-    "why": "The retained tests/fleet-connector-secret-encoding.test.mjs file-level guard assertion must fail against the independent literal 1 when its first guard import is removed."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"agent CLI guard is established before connector tests run\" tests/fleet-connector-secret-encoding.test.mjs",
+    "why": "The named agent CLI guard test must fail against the independent literal 1 on completed TAP when its safety import or assignment is removed; no module-startup assertion is used."
   },
   {
     "file": "tests/helpers/block-agent-cli.mjs",
     "find": "process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI = '1';",
     "replace": "// Guard disabled for isolated mutation.",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-round6.test.mjs",
-    "why": "The retained tests/fleet-connector-round6.test.mjs file-level guard assertion must fail against the independent literal 1 when the shared helper assignment is disabled."
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"agent CLI guard is established before connector tests run\" tests/fleet-connector-round6.test.mjs",
+    "why": "The named agent CLI guard test must fail against the independent literal 1 on completed TAP when its safety import or assignment is removed; no module-startup assertion is used."
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));\n  let spawned = 0;",
-    "replace": "const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script, { executable: process.execPath })]));\n  let spawned = 0;",
+    "find": "    registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));",
+    "replace": "    registry = await connector.loadToolAdapters(await manifest(dir, [entry(script, { executable: process.execPath })]));",
     "test": "node --input-type=module -e 'import {mkdtempSync,copyFileSync,chmodSync,rmSync} from \"node:fs\"; import {tmpdir} from \"node:os\"; import {join} from \"node:path\"; import {spawnSync} from \"node:child_process\"; const dir=mkdtempSync(join(tmpdir(),\"tool-loose-node-\")); try {const node=join(dir,\"node\"); copyFileSync(process.execPath,node); chmodSync(dir,0o775); chmodSync(node,0o775); const r=spawnSync(node,[\"scripts/run-tests-with-quarantine.mjs\",\"--test\",\"--test-name-pattern\",\"task data cannot select argv\",\"tests/fleet-tool-adapter.test.mjs\"],{stdio:\"inherit\",timeout:60000}); process.exitCode=r.status ?? 1;} finally {rmSync(dir,{recursive:true,force:true});}'",
-    "why": "a test-owned executable works even when the test interpreter is group-writable; reverting one adapter must fail task data cannot select argv with the manifest refusal"
+    "why": "The named task-data test must assert that the private executable loads under a group-writable interpreter; substituting that unsafe interpreter must fail assert.doesNotReject, not fixture setup."
   },
   {
     "file": "scripts/fleet/connector.mjs",
@@ -260,10 +260,10 @@
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "      assert.ok(performance.now() - started + declaredDrainMs < 700, \"an escaped stdout holder cannot wedge execute\");",
+    "find": "      assert.ok(performance.now() - started < 700, \"an escaped stdout holder cannot wedge execute\");",
     "replace": "      // mutation: disable the exact base execute oracle",
-    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\";\nimport {readFileSync,writeFileSync} from \"node:fs\"; import {spawnSync} from \"node:child_process\";\ntest(\"post-drain execute delay must fail the exact base700ms guard\",()=>{const path=\"scripts/fleet/connector.mjs\",original=readFileSync(path,\"utf8\");let result;\ntry{const find=\"\\n      killProcess(child, \\\"SIGKILL\\\"); child.stdout?.destroy(); child.stderr?.destroy();\";assert.equal(original.split(find).length,2,\"the control intervention must load exactly once\");writeFileSync(path,original.replace(find,\"\\n      killProcess(child, \\\"SIGKILL\\\"); child.stdout?.destroy(); child.stderr?.destroy();\\n      if (result.outputIncomplete) await new Promise(done => setTimeout(done, 550));\"));\nresult=spawnSync(process.execPath,[\"scripts/run-tests-with-quarantine.mjs\",\"--import\",\"tsx\",\"--test\",\"--test-concurrency=1\",\"--test-name-pattern=escaped pipe holder\",\"tests/fleet-tool-adapter.test.mjs\"],{encoding:\"utf8\",timeout:40000,maxBuffer:1048576});}\nfinally{writeFileSync(path,original);}\nassert.equal(result.signal,null,\"the control must finish normally\");assert.equal(result.status,1,\"post-drain execute delay must fail the exact base700ms guard\");assert.ok(result.stdout.includes(\"an escaped stdout holder cannot wedge execute\"),\"the control must fail the named independent assertion\");\nfor(const [name,count] of Object.entries({tests:1,pass:0,fail:1,cancelled:0,skipped:0,todo:0}))assert.ok(result.stdout.includes(\"# \"+name+\" \"+count+\"\\n\"),\"complete TAP \"+name);\n});'",
-    "why": "The base 700 ms budget includes the independently declared 250 ms grace. A real 550 ms post-drain wedge must fail the named execute assertion; disabling it must fail the outer control."
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\";\nimport {readFileSync,writeFileSync} from \"node:fs\"; import {spawnSync} from \"node:child_process\";\ntest(\"post-drain execute delay must fail the exact base700ms guard\",()=>{const path=\"scripts/fleet/connector.mjs\",original=readFileSync(path,\"utf8\");let result;\ntry{const find=\"\\n      killProcess(child, \\\"SIGKILL\\\"); child.stdout?.destroy(); child.stderr?.destroy();\";assert.equal(original.split(find).length,2,\"the control intervention must load exactly once\");writeFileSync(path,original.replace(find,\"\\n      killProcess(child, \\\"SIGKILL\\\"); child.stdout?.destroy(); child.stderr?.destroy();\\n      if (result.outputIncomplete) await new Promise(done => setTimeout(done, 800));\"));\nresult=spawnSync(process.execPath,[\"scripts/run-tests-with-quarantine.mjs\",\"--import\",\"tsx\",\"--test\",\"--test-concurrency=1\",\"--test-name-pattern=escaped pipe holder\",\"tests/fleet-tool-adapter.test.mjs\"],{encoding:\"utf8\",timeout:40000,maxBuffer:1048576});}\nfinally{writeFileSync(path,original);}\nassert.equal(result.signal,null,\"the control must finish normally\");assert.equal(result.status,1,\"post-drain execute delay must fail the exact base700ms guard\");assert.ok(result.stdout.includes(\"an escaped stdout holder cannot wedge execute\"),\"the control must fail the named independent assertion\");\nfor(const [name,count] of Object.entries({tests:1,pass:0,fail:1,cancelled:0,skipped:0,todo:0}))assert.ok(result.stdout.includes(\"# \"+name+\" \"+count+\"\\n\"),\"complete TAP \"+name);\n});'",
+    "why": "The accepted round-6 700 ms wall budget excludes virtual grace (CR-E078). A real 800 ms post-drain wedge must fail the named execute assertion; disabling it must fail the outer control."
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
@@ -323,10 +323,10 @@
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",
-    "find": "      assert.ok(performance.now() - started + declaredDrainMs < 700, \"an escaped stdout holder cannot wedge execute\");",
+    "find": "      assert.ok(performance.now() - started < 700, \"an escaped stdout holder cannot wedge execute\");",
     "replace": "      // mutation: disable the exact base execute oracle",
     "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\";\nimport {readFileSync,writeFileSync} from \"node:fs\"; import {spawnSync} from \"node:child_process\";\ntest(\"post-handoff listener delay must fail the exact base700ms guard\",()=>{const path=\"scripts/fleet/connector.mjs\",original=readFileSync(path,\"utf8\");let result;\ntry{const find=\"      const child = spawner(adapter.executable, argv, { cwd: work, env, shell: false, detached: process.platform !== \\\"win32\\\", stdio: [\\\"ignore\\\", \\\"pipe\\\", \\\"pipe\\\"], windowsHide: true });\";assert.equal(original.split(find).length,2,\"the control intervention must load exactly once\");writeFileSync(path,original.replace(find,\"      const child = spawner(adapter.executable, argv, { cwd: work, env, shell: false, detached: process.platform !== \\\"win32\\\", stdio: [\\\"ignore\\\", \\\"pipe\\\", \\\"pipe\\\"], windowsHide: true });\\n      const controlStallEnds = performance.now() + 1000; while (performance.now() < controlStallEnds) {}\"));\nresult=spawnSync(process.execPath,[\"scripts/run-tests-with-quarantine.mjs\",\"--import\",\"tsx\",\"--test\",\"--test-concurrency=1\",\"--test-name-pattern=escaped pipe holder\",\"tests/fleet-tool-adapter.test.mjs\"],{encoding:\"utf8\",timeout:40000,maxBuffer:1048576});}\nfinally{writeFileSync(path,original);}\nassert.equal(result.signal,null,\"the control must finish normally\");assert.equal(result.status,1,\"post-handoff listener delay must fail the exact base700ms guard\");assert.ok(result.stdout.includes(\"an escaped stdout holder cannot wedge execute\"),\"the control must fail the named independent assertion\");\nfor(const [name,count] of Object.entries({tests:1,pass:0,fail:1,cancelled:0,skipped:0,todo:0}))assert.ok(result.stdout.includes(\"# \"+name+\" \"+count+\"\\n\"),\"complete TAP \"+name);\n});'",
-    "why": "The 700 ms execute budget starts at spawner handoff and includes the virtual 250 ms grace. A real 1000 ms listener-registration stall must fail the named assertion."
+    "why": "The accepted round-6 700 ms wall budget starts at spawner handoff and excludes virtual grace (CR-E078). A real 1000 ms listener-registration stall must fail the named assertion."
   },
   {
     "file": "tests/fleet-tool-adapter.test.mjs",

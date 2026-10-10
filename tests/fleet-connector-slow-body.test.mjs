@@ -4,7 +4,10 @@ import test from 'node:test';
 import { createServer } from 'node:http';
 import * as c from '../scripts/fleet/connector.mjs';
 
-assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
+test('agent CLI guard is established before connector tests run', () => {
+  assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1',
+    'connector tests must establish the independent safety value 1');
+});
 test('R6F-08 twenty native fetch body readers settle by the whole-operation deadline', {timeout: 39000}, async t => {
   const timers = new Set();
   const server = createServer((request, response) => {

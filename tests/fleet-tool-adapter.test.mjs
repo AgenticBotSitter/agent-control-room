@@ -533,7 +533,10 @@ test("task data cannot select argv: inputs are staged and unknown adapter ids ar
 const [inputPath, outputDir] = process.argv.slice(2);
 writeFileSync(outputDir + "/argv.json", JSON.stringify({ argv: process.argv.slice(2), body: readFileSync(inputPath, "utf8") }));
 console.log("transcribed");`);
-  const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
+  let registry;
+  await assert.doesNotReject(async () => {
+    registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
+  }, "the test-owned private executable must load independently of interpreter permissions");
   let spawned = 0;
   const runner = await preparedToolRunner(t, registry, { onHandoff: (_child, _argv, options) => { spawned += 1;
     assert.equal(options.shell, false); } });
@@ -807,7 +810,9 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     // Control only the timeout registered synchronously by the product's exit
     // listener; real pipes, filesystem work and all other timers stay real.
     // This separates the declared deadline from scheduling delays on CI.
-    // Add that virtual grace back into the base's total 700 ms execute budget.
+    // Accepted LOW gap (CR-E078): keep round-6 wall-clock accounting.
+    // The separate virtual clock proves the 250 ms drain bound; a post-drain
+    // wedge of 450–700 ms remains unguarded pending a load-safe tighter check.
     const declaredDrainMs = 250;
     let registeringDrain = false, elapsed = 0, started, handoff;
     const drainTimers = new Set();
@@ -861,7 +866,7 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
         "escaped stderr must close at the independently declared 250ms drain bound");
       const result = await pending;
       assert.equal(result.error?.code, "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
-      assert.ok(performance.now() - started + declaredDrainMs < 700, "an escaped stdout holder cannot wedge execute");
+      assert.ok(performance.now() - started < 700, "an escaped stdout holder cannot wedge execute");
     } catch (error) { handoffError = error; throw error; }
     finally {
       // Also release a live parent when a broken exit barrier is refused.

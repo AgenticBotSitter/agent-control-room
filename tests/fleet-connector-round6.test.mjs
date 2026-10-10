@@ -10,7 +10,10 @@ import { tmpdir } from 'node:os';
 import * as c from '../scripts/fleet/connector.mjs';
 import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
-assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
+test('agent CLI guard is established before connector tests run', () => {
+  assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1',
+    'connector tests must establish the independent safety value 1');
+});
 const id = n => n.toString(16).padStart(32, '0');
 const claim = { claimId: `fleet-claim:${id(1)}`, jobId: 'job:qa-one', title: 'QA task', instructions: 'Write a short note.', leaseState: 'active', taskState: 'leased', leaseExpiresAt: '2099-01-01T00:00:00Z' };
 const ok = result => Response.json({ok: true, result});
