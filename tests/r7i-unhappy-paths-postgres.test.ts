@@ -1167,8 +1167,8 @@ test('WP-D23: completion and subscription cascade have zero deadlocks (PG)', {..
   const pool=bindPrivatePgPool(new Pool(connection));let child:any,closed:Promise<any>|undefined;
   let release!:()=>void,ready!:()=>void;const hold=new Promise<void>(r=>release=r),held=new Promise<void>(r=>ready=r);
   let mainPid=0,observedCode:string|undefined,sends=0;
-  const db={query:pool.client.query,transaction:(body:any)=>pool.client.transaction(tx=>body({query:async(sql:string,p?:any[])=>{
-   try {const result=await tx.query(sql,p);
+  const db:DatabaseClient={...pool.client,transaction:body=>pool.client.transaction(tx=>body({query:async<T=Record<string,unknown>>(sql:string,p?:unknown[])=>{
+   try {const result=await tx.query<T>(sql,p);
     if(/UPDATE owner_web_push_deliveries/.test(sql)){mainPid=Number((await tx.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);ready();await hold;}
     return result;
    }catch(e:any){if(e.code==='40P01')observedCode=e.code;throw e;}
@@ -1215,8 +1215,8 @@ test("WP-D23: removed parents precede all delivery writes (synthetic)", async ()
     await durableInputs(f, 1, 2);
     const writes: {sql:string; id:unknown}[] = [];
     const db: DatabaseClient = {...f.db, transaction: body => f.db.transaction(tx => body({
-      query: async (sql, params) => {
-        const result = await tx.query(sql,params);
+      query: async<T=Record<string,unknown>>(sql:string, params?:unknown[]) => {
+        const result = await tx.query<T>(sql,params);
         if (/DELETE FROM owner_web_push_subscriptions|UPDATE owner_web_push_deliveries/.test(sql))
           writes.push({sql,id:params?.[1]});
         return result;
@@ -1237,8 +1237,8 @@ durableTwin("WP-D24", "expiry pruning rechecks refreshed authority", async f => 
   await durableInputs(f,1,2);
   await f.query("UPDATE owner_web_push_subscriptions SET expires_at=now()-interval '1 minute'");
   let refreshed=false;
-  const db: DatabaseClient = {...f.db,query:async (sql,params) => {
-    const result = await f.db.query(sql,params);
+  const db: DatabaseClient = {...f.db,query:async<T=Record<string,unknown>>(sql:string,params?:unknown[]) => {
+    const result = await f.db.query<T>(sql,params);
     if (!refreshed && /SELECT id FROM owner_web_push_subscriptions/.test(sql) && /expires_at<=now\(\)/.test(sql)) {
       refreshed=true;
       // Fixture input changes only subscription authority, never bookkeeping.
@@ -1295,7 +1295,7 @@ try{
 finally{await pool.close();finished=true;process.disconnect();}
 `;
 
-function raceActor(worker:string,input:unknown) {
+function raceActor(worker:string,input:Record<string,unknown>) {
   const child=spawn(process.execPath,["--import","tsx","--input-type=module","--eval",worker],
     {stdio:["pipe","pipe","pipe","ipc"]});
   child.stdout!.resume();child.stderr!.resume();
