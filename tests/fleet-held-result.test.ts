@@ -1324,7 +1324,8 @@ test("synchronized recovery callers merge the current disk minimum, including 50
     }
     assert.equal((await ports.testRead(directory, claimId)).deadlineAt, base + 10_000);
     let expectedDeadline = base + 10_000;
-    for (const count of [2, 20, 50]) {
+    // Keep the original 50-writer burst first, before any smaller burst can pre-save its minimum.
+    for (const count of [50, 20, 2]) {
       const inputs = Array.from({ length: count }, (_, i) =>
         ({ ...record, heldAt: base + i + 1, deadlineAt: base + 1000 + i * 1000 }));
       const writers = inputs.map(input => ports.testWrite(directory, claimId, input));
