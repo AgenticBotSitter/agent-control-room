@@ -781,6 +781,9 @@ durableTwin("WP-D08", "partial acceptance survives dispatcher replacement", asyn
   assert.equal(sends.length,acceptedCalls,'WP-D08 conflicting completion is database-only and never resends');
 });
 
+// Accepted limit (CR-E079): an accepted receipt that cannot be written after 4 refused
+// admissions is dropped and the same tag is replayed about 5 minutes later; the cause is
+// admission refusal, so it is routed to CR-E079 and not widened here.
 for(const id of ['WP-D09','WP-D14'])durableTwin(id,'accepted outage replay keeps the same tag',async f=>{
   await durableInputs(f,1);let outage=false;
   const db:DatabaseClient={...f.db,query:async(sql,p)=>{
