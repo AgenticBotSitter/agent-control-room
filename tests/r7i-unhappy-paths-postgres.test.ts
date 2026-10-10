@@ -20,7 +20,7 @@ import { sha256Digest, computeAuthorityDigest, InMemoryRollbackCheckpointStoreV1
 import { taskDraftSchema } from "../src/web/v1/task-wire";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import type { AuthorityEnvelope } from "../src/domain/v1";
-import type { DatabaseClient } from "../src/persistence/database";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import type { OwnerNotificationChannelV1 } from "../src/web-push/v1/types";
 
 // Two tests, two clusters, two disjoint port windows at BASE+40..49 and
@@ -36,9 +36,14 @@ const required = requiresRealPostgres();
 const needsPg = () => (required ? undefined : { skip: realPostgresSkipMessage() });
 
 const TENANT = "tenant:r7i-unhappy", WORKSPACE = "workspace:r7i", PROJECT = "project:r7i";
-/** Over the pool's admitted width (8) and inside its admitted+queued width, so the
- * dispatchers contend with each other AND all reach the claim. */
-const DISPATCHERS = 12;
+/** Healthy contention must fit the operation budget, not just the caller count.
+ * src/web/v1/private-pg-options.ts caps the transport at max=8;
+ * src/web/v1/bounded-database.ts admits 8 operations and queues at most 8.
+ * Each dispatcher can expand into 8 send workers (dispatcher.ts), each doing
+ * one database operation at a time for this single-subscription fixture.
+ * Two concurrent dispatchers therefore need at most 2 * 8 = 16 operations,
+ * including their send fan-out. Twelve callers can exceed that budget. */
+const DISPATCHERS = 2;
 const SCOPE = { tenantId: TENANT, workspaceId: WORKSPACE };
 const ADAPTER = `adapter:manual:${sha256Digest(SCOPE).slice(7, 39)}`;
 const PROVIDER = "https://control.invalid/r7i-unhappy";
@@ -248,24 +253,64 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
       const channel: OwnerNotificationChannelV1 = { kind: "web-push",
         async send(_s, payload) { sent.push(payload.tag); return { statusCode: 201 }; } };
       try {
-        // 40 dispatchers at once over 40 items: the burst the bounded retry and
-        // the one-head-per-item primary key exist for, at 4x the item count.
-        // This races the CLAIM, so it has to stay inside what the private-web
-        // pool admits at once (`connections: 8` plus one pool-width queue).
-        // Running more dispatchers than that measures the POOL, not the
-        // dispatcher: a burst past the width has every caller refused before it
-        // reaches the claim, which looks identical to "nothing was delivered"
-        // while saying nothing about racing. Twelve is over the pool width -- so
-        // dispatchers really do contend -- and inside the admitted+queued width,
-        // so all of them get a connection and reach the claim.
-        //
-        // An earlier draft used 40 and intermittently reported TAGS=0 with
-        // OUTCOMES=0: all 40 callers were refused at checkout. That was the
-        // pool's own bound, and reading it as a lost notification would have
-        // been wrong.
-        const dispatchers = Array.from({ length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: pool.client as DatabaseClient,
-          tenantId: TENANT, store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel }));
-        const outcomes = await Promise.all(dispatchers.map(each => each.dispatch().catch(() => [] as never[])));
+        // Only the real producer creates heads; setup provides open decisions.
+        const producer = new OwnerPushDispatcherV1({ db: pool.client as DatabaseClient,
+          tenantId: TENANT, store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel });
+        const before = await pool.client.query("SELECT action_inbox_id FROM control_owner_push_attempt_heads WHERE tenant_id=$1", [TENANT]);
+        assert.equal(before.rows.length, 0, "setup must not create push attempt heads");
+        assert.equal(await producer.adoptOpenAttention(40), 40, "the real producer must adopt every fixture decision");
+
+        // Hold each real claim SELECT's result inside its still-open transaction
+        // until both dispatchers have selected. The first holds twenty row locks;
+        // the second must skip them and select the other twenty. This observes
+        // the claim window, rather than inferring overlap from Promise.all.
+        // Two send fan-outs still fit 8 active + 8 queued; overload is CR-E079.
+        const activeClaims = new Set<number>();
+        const claimedBy = new Map<number, number>();
+        let peakClaims = 0;
+        let releaseClaims!: () => void;
+        const claimsTogether = new Promise<void>(resolve => { releaseClaims = resolve; });
+        let claimTimer: ReturnType<typeof setTimeout> | undefined;
+        const dispatchers = Array.from({ length: DISPATCHERS }, (_, index) => {
+          const db: DatabaseClient = {
+            ...pool.client,
+            transaction: <T>(callback: (tx: DatabaseSession) => Promise<T>) => pool.client.transaction(tx => callback({
+              async query<R = Record<string, unknown>>(statement: string, params?: unknown[]) {
+                const result = await tx.query<R>(statement, params);
+                if (statement.includes("SELECT h.action_inbox_id,h.link,h.attempt_count")) {
+                  claimedBy.set(index, result.rows.length);
+                  activeClaims.add(index);
+                  peakClaims = Math.max(peakClaims, activeClaims.size);
+                  // A missing contender releases locks within the production
+                  // 5-second idle-transaction bound, then fails the named overlap
+                  // assertion. Expiry is cleanup, never evidence of overlap.
+                  claimTimer ??= setTimeout(releaseClaims, 2_500);
+                  if (activeClaims.size === DISPATCHERS) releaseClaims();
+                  try { await claimsTogether; } finally { activeClaims.delete(index); }
+                }
+                return result;
+              },
+            })),
+          };
+          return new OwnerPushDispatcherV1({ db, tenantId: TENANT,
+            store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel });
+        });
+        let dispatchResults: PromiseSettledResult<Awaited<ReturnType<OwnerPushDispatcherV1["dispatch"]>>>[];
+        try {
+          dispatchResults = await Promise.allSettled(dispatchers.map(each => each.dispatch(20)));
+        } finally { clearTimeout(claimTimer); releaseClaims(); }
+        assert.equal(peakClaims, 2, "two dispatchers must overlap inside the real claim window");
+        assert.deepEqual([...claimedBy.entries()].sort(([left], [right]) => left - right), [[0, 20], [1, 20]],
+          "each dispatcher must select its own twenty decisions while the other claim holds locks");
+        for (const [index, result] of dispatchResults.entries()) {
+          assert.equal(result.status, "fulfilled", `dispatcher ${index} must resolve without a swallowed error: ${result.status === "rejected" ? String(result.reason) : ""}`);
+          if (result.status === "fulfilled") {
+            assert.equal(result.value.length, 20, `dispatcher ${index} must report all twenty claimed outcomes`);
+            assert.ok(result.value.every(outcome => outcome.result === "delivered"),
+              `dispatcher ${index} must deliver every claimed decision`);
+          }
+        }
+        const outcomes = dispatchResults.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
         const heads = (await admin.query<{ action_inbox_id: string; state: string; attempt_count: number | string }>(
           "SELECT action_inbox_id,state,attempt_count FROM control_owner_push_attempt_heads WHERE tenant_id=$1",
           [TENANT])).rows;
@@ -276,19 +321,8 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         assert.equal(heads.length, 40, `expected one head per decision, got ${heads.length}`);
         assert.equal(new Set(heads.map(row => row.action_inbox_id)).size, 40, "no duplicate heads");
 
-        // `reserved` is a PRE-EXISTING flake, established on the base commit: the
-        // same 40x40 burst written against fb7c7cc30 with ONLY the three kinds that
-        // dispatcher adopted left a head `reserved` in 4 of 8 runs, same test
-        // name and same error. A reservation is committed BEFORE the send, so a
-        // dispatcher whose pool could not check out a connection for the settle
-        // leaves the row mid-flight; `recoverStaleReservations` is the documented
-        // path back and it needs RESERVATION_STALE_MS. It is not caused by the
-        // wider kind list, and this branch does not change the claim/settle
-        // ordering, so the test does not assert on it.
-        //
-        // What IS asserted is what the one-head-per-item primary key guarantees
-        // and what this change could have broken by widening the kind list: no
-        // duplicate heads, and no head that spent more than one attempt.
+        // Each decision has one head and spends at most one attempt in this
+        // concurrent pass. The send/settle checks below account for its result.
         for (const row of heads) assert.ok(row.state === "delivered" || row.state === "reserved",
           `${row.action_inbox_id} is ${row.state}; only a settled or in-flight reservation is acceptable`);
         for (const row of heads) assert.equal(Number(row.attempt_count), 1,
@@ -297,27 +331,15 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         // same item. Reported with the counts because the failure mode matters:
         // fewer tags than heads means a send lost its connection before it
         // recorded, more would mean a second push for one item.
-        t.diagnostic(`burst dispatchers=${DISPATCHERS} heads=${heads.length} sent=${sent.length} outcomes=${outcomes.flat().length}`);
-        // One push per item that was actually SENT in this pass. A head left
-        // `pending` was simply not reached by 24 dispatchers racing 40 items, and
-        // the next tick delivers it -- that is the bounded-retry design, not a
-        // lost notification. What must never happen is a DUPLICATE.
+        t.diagnostic(`burst claimOverlap=${peakClaims} perDispatcher=${JSON.stringify(outcomes.map(each => each.length))} dispatchers=${DISPATCHERS} heads=${heads.length} sent=${sent.length} outcomes=${outcomes.flat().length}`);
+        // A duplicate tag means the same decision was pushed twice.
         assert.equal(new Set(sent).size, sent.length,
           "a decision was pushed twice: " + JSON.stringify(sent.filter((tag, i) => sent.indexOf(tag) !== i)));
         const settled = heads.filter(row => row.state === "delivered");
         assert.equal(sent.length, settled.length,
           `every settled head must have exactly one push: ${settled.length} settled, ${sent.length} sent`);
-        // Whatever was claimed in this pass was settled correctly. A `pending`
-        // head is NOT a failure: one pass claims at most CLAIM_LIMIT (64) rows per
-        // dispatcher, but each dispatcher here only sees whatever the SKIP LOCKED
-        // claim handed it, so 12 racing dispatchers can leave items for the next
-        // tick under load. An earlier draft asserted all 40 delivered in one pass
-        // and failed 36/40 when the machine was busy -- that was asserting the
-        // scheduler's luck, not the claim's correctness.
-        //
-        // So the invariant is per-pass: every delivered head has exactly one push
-        // and exactly one attempt, and no item was pushed twice. The next pass
-        // drains the rest, which is asserted below.
+        // Every delivered decision reports an outcome in this pass. Later
+        // ticks below must drain all forty, with no duplicate across passes.
         assert.ok(settled.length > 0, "the burst must deliver something");
         assert.ok(outcomes.flat().length >= settled.length,
           `every delivered decision must report an outcome: ${settled.length} settled, ${outcomes.flat().length} outcomes`);
@@ -327,8 +349,7 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         // rather than a lost notification.
         for (let tick = 0; tick < 6; tick += 1) {
           await new OwnerPushDispatcherV1({ db: pool.client as DatabaseClient, tenantId: TENANT,
-            store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel }).dispatch()
-            .catch(() => []);
+            store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel }).dispatch();
         }
         const drained = (await admin.query<{ action_inbox_id: string; state: string }>(
           "SELECT action_inbox_id,state FROM control_owner_push_attempt_heads WHERE tenant_id=$1", [TENANT])).rows;

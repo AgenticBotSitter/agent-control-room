@@ -197,14 +197,49 @@ test("R5V-02: 50 repoints and a queued rotation serialize without losing the new
       return reply(me());
     } finally { active--; }
   };
-  // All 51 contenders share THIS process. Off macOS each lock attempt runs
-  // flock(1) synchronously (src/installer/shared/private-process-lock.mjs), so
-  // 51 pollers at the 25 ms default starve the holder of its own event loop;
-  // separate processes, as in production, do not. Polling at 100 ms keeps the
-  // same contention and deadline.
-  const lock = { deadlineMs: 30_000, ...(process.platform === "darwin" ? {} : { waitMs: 100 }) };
-  await Promise.all([...Array.from({ length: 50 }, () => c.setServer({ server: "https://new.example", configPath,
-    fetcher, lock })), c.rotate({ configPath, fetcher, lock })]);
+  // All 51 calls contend initially. Queue their retries on observed completion
+  // so synchronous Linux flock probes cannot starve this shared event loop.
+  // The real lock and the existing 30s deadline still govern every operation.
+  const attempting = new Set(Array.from({ length: 51 }, (_, index) => index));
+  const waiting = new Map(), holding = new Set();
+  let retries = 0;
+  const resume = () => {
+    if (attempting.size === 0 && holding.size === 0 && waiting.size > 0) {
+      const [index, retry] = waiting.entries().next().value;
+      waiting.delete(index); attempting.add(index); retry();
+    }
+  };
+  const run = async (index, operation) => {
+    let acquisitionDeadline, retryTimer;
+    const lock = { deadlineMs: 30_000,
+      clock: () => {
+        const now = Date.now();
+        acquisitionDeadline ??= now + 30_000;
+        return now;
+      },
+      sleep: () => new Promise(retry => {
+        // Retirement also uses sleep; never queue a holder behind itself.
+        if (holding.has(index)) { setImmediate(retry); return; }
+        const resumeRetry = () => {
+          clearTimeout(retryTimer);
+          waiting.delete(index); attempting.add(index); retry();
+        };
+        retryTimer = setTimeout(resumeRetry, Math.max(0, acquisitionDeadline - Date.now()));
+        attempting.delete(index); waiting.set(index, resumeRetry); retries++; resume();
+      }),
+      afterOwnerPublication: () => { attempting.delete(index); holding.add(index); },
+    };
+    try { return await operation(lock); }
+    finally {
+      clearTimeout(retryTimer);
+      attempting.delete(index); holding.delete(index); waiting.delete(index); resume();
+    }
+  };
+  const results = await Promise.allSettled([...Array.from({ length: 50 }, (_, index) => run(index,
+    lock => c.setServer({ server: "https://new.example", configPath, fetcher, lock }))),
+    run(50, lock => c.rotate({ configPath, fetcher, lock }))]);
+  assert.deepEqual(results.filter(result => result.status === "rejected"), [], "all 51 queued operations must succeed");
+  t.diagnostic(`51 callers completed with ${retries} progress-driven retries`);
   const current = await c.loadConfig(configPath);
   assert.equal(peak, 1);
   assert.equal(current.server, "https://new.example");
