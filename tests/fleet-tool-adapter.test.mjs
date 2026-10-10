@@ -237,17 +237,22 @@ writeFileSync(${JSON.stringify(initialized)}, "initialized"); process.stdin.resu
   }
 });
 
-test("module readiness barrier waits for real initialization before admission", async t => {
-  const dir = await workspace(t), started = join(dir, "module-started");
-  const initializationRelease = join(dir, "module-release");
-  const module = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
+async function initializationModule(dir, started, initializationRelease) {
+  return executable(dir, `import { existsSync, writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(started)}, "started");
 await new Promise(done => {
   const timer = setInterval(() => {
+    if (!process.connected) process.exit(0);
     if (!existsSync(${JSON.stringify(initializationRelease)})) return;
     clearInterval(timer); done();
   }, 10);
 });`);
+}
+
+test("module readiness barrier waits for real initialization before admission", async t => {
+  const dir = await workspace(t), started = join(dir, "module-started");
+  const initializationRelease = join(dir, "module-release");
+  const module = await initializationModule(dir, started, initializationRelease);
   const script = await executable(dir, `import ${JSON.stringify("./" + basename(module))};
 console.log("module initialized");`);
   const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
@@ -274,6 +279,38 @@ console.log("module initialized");`);
   }
   const result = await (await pending).execute(input());
   assert.equal(result.summary, "module initialized");
+});
+
+test("disconnected static initialization retires before admission", { timeout: 30_000 }, async t => {
+  const dir = await workspace(t), started = join(dir, "module-started"), release = join(dir, "module-release");
+  const module = await initializationModule(dir, started, release);
+  let child, exited, pipesClosed;
+  try {
+    child = nodeSpawn(join(dir, "node-tool"), [module], {
+      env: {}, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    exited = new Promise(done => child.once("exit", (code, signal) => done([code, signal])));
+    pipesClosed = Promise.all([child.stdout, child.stderr].map(stream =>
+      new Promise(done => stream.once("close", done))));
+    await waitForToolState(async () => {
+      try { await readFile(started); return true; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; return false; }
+    }, "the module must publish its real gate before disconnect");
+    child.disconnect();
+    const exit = await waitForToolSignal(exited,
+      "a disconnected initializer must retire without waiting for release", { timeoutMs: 1_000 });
+    assert.deepEqual(exit, [0, null], "a disconnected initializer exits cleanly before any admission");
+  } finally {
+    if (child?.pid) {
+      try { process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL"); }
+      catch (error) { if (error?.code !== "ESRCH") throw error; }
+    }
+    // Manual IPC disconnection can suppress ChildProcess close on Node 22.
+    // Observe the real exit, then separately bound both real pipe closures.
+    if (exited) await waitForToolSignal(exited, "owned initializer exit must be reaped");
+    child?.stdout.destroy(); child?.stderr.destroy();
+    if (pipesClosed) await waitForToolSignal(pipesClosed, "owned initializer pipes must close");
+  }
 });
 
 test("prepared tools initialize before admission and wait for explicit work release", async t => {
