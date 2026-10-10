@@ -1240,11 +1240,16 @@ test("WP-D23: removed parents precede all delivery writes (synthetic)", async ()
 });
 
 durableTwin("WP-D24", "expiry pruning rechecks refreshed authority", async f => {
-  await durableInputs(f,1,2);
+  await durableInputs(f,1,3);
   await f.query("UPDATE owner_web_push_subscriptions SET expires_at=now()-interval '1 minute'");
   let refreshed=false;
   const db: DatabaseClient = {...f.db,query:async<T=Record<string,unknown>>(sql:string,params?:unknown[]) => {
+    const pruning=/DELETE FROM owner_web_push_subscriptions/.test(sql);
+    const count=async()=>Number((await f.db.query<{n:number}>(
+      "SELECT count(*)::int AS n FROM owner_web_push_subscriptions WHERE tenant_id=$1",[DURABLE_TENANT])).rows[0].n);
+    const before=pruning?await count():0;
     const result = await f.db.query<T>(sql,params);
+    if(pruning)assert.ok(before-await count()<=1,"WP-D24 expiry delete holds at most one parent chain");
     if (!refreshed && /SELECT id FROM owner_web_push_subscriptions/.test(sql) && /expires_at<=now\(\)/.test(sql)) {
       refreshed=true;
       // Fixture input changes only subscription authority, never bookkeeping.

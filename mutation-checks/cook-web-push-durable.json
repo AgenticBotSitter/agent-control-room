@@ -180,5 +180,12 @@
     "replace": ".map(receipt => receipt.subscription_id))]) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "Two literal parent ids must be locked ascending even when the real-reader record replay is reversed; removing sorting must fail the independent order assertion."
+  },
+  {
+    "file": "src/web-push/v1/postgres-store.ts",
+    "find": "WHERE tenant_id=$1 AND id=$2 AND expires_at IS NOT NULL AND expires_at<=now()",
+    "replace": "WHERE tenant_id=$1 AND ($2::text IS NOT NULL) AND expires_at IS NOT NULL AND expires_at<=now()",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D24: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The parent-id predicate must limit each autocommit delete to one cascade chain; independent maximum deletion delta1 with three real reader records, not SQL text matching."
   }
 ]
