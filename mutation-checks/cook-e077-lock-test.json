@@ -35,4 +35,3 @@
     "why": "M5 bounded wait must reject a live-owner competing write instead of returning success without work"
   }
 ]
-
