@@ -257,5 +257,61 @@
     "replace": "if (live.rows.length && proof.rows[0]?.state !== receipt.result)",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D25: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "A ledger row cascaded away by a same-endpoint resubscribe must not be read as tampering; the old condition strands the completing head and the failed alert is never resent."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 2;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Narrowing the send pool to two workers still overlaps two sends, so only the observed-state barrier that waits for every send worker to be in flight together catches it; WP-D02 fails on its sends-overlap assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 2;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The real-PostgreSQL twin of the narrowed send pool: the barrier never reaches the full worker width and the test fails on its sends-overlap assertion instead of passing on a timing window."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 1;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A serial send pool never has two sends in flight; the real-PostgreSQL twin fails on its sends-overlap assertion."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "Math.max(ownerPushBackoffMsV1(attempt), retryAfterMs)",
+    "replace": "Math.max(0, retryAfterMs)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D04: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A pre-send refusal must back off by the attempt schedule; dropping the schedule makes the head due again at once and WP-D04 fails on its first-30s backoff assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "receipts.some(r=>r.result === \"delivered\") ? null : \"retry\",",
+    "replace": "receipts.some(r=>r.result === \"delivered\") ? null : \"failed\",",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D07: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "An interrupted failure bookkeeping step must leave the head retryable; making it terminal fails WP-D07 on its refused-503 repair-then-retry assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey)",
+    "replace": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey+\":\"+input.now.replace(/\\D/g,\"\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D09: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A replayed accepted send must carry the same notification tag; a tag that varies with the send time fails the WP-D09 same-tag replay assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey)",
+    "replace": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey+\":\"+input.now.replace(/\\D/g,\"\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D14: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The same tag guard for the WP-D14 twin of the accepted-outage replay: a tag that varies with the send time fails the WP-D14 same-tag replay assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/loop.ts",
+    "find": "await dispatcher.dispatch();",
+    "replace": "[];void dispatcher;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D11: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The public loop must run the dispatcher cycle, which reconstructs a completion left by a replaced process; skipping the dispatch fails the WP-D11 durable-completion assertion. Historical reproduction unavailable."
   }
 ]

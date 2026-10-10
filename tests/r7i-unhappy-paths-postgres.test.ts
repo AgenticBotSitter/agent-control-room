@@ -583,12 +583,28 @@ function durableDispatcher(f: DurableFixture, channel: OwnerNotificationChannelV
   return new OwnerPushDispatcherV1({db,tenantId:DURABLE_TENANT,store,channel,clock});
 }
 
+/** How long WP-D02 holds its first sends waiting for the dispatcher's full send
+ * width to be in flight together. The wait ends the moment SEND_WORKERS sends are
+ * observed, so a healthy run never waits; the bound only limits how long a
+ * narrowed or serialised dispatcher can stall the test before it fails by name. */
+const OVERLAP_BARRIER_MS = 10_000;
+
 durableTwin("WP-D02", "overlapping full-width claimants stay in budget and never duplicate", async f=>{
   await durableInputs(f,40);
-  let active=0,max=0;
+  // Observed-state overlap barrier: every send is held at the provider until
+  // SEND_WORKERS sends are in flight at once (or the bound expires), so overlap
+  // does not depend on which event-loop turn a database reply lands in. Of the 40
+  // rows at least one claimant always wins 20, so a dispatcher with its full
+  // SEND_WORKERS width reaches the barrier on every run; a serialised or narrowed
+  // one cannot, and fails the named assertion below instead of passing by chance.
+  let inFlight=0,peakInFlight=0,openBarrier!:()=>void;
+  const barrier=new Promise<void>(done=>openBarrier=done);
+  const barrierTimer=setTimeout(openBarrier,OVERLAP_BARRIER_MS);
   const tags:string[]=[];
   const channel: OwnerNotificationChannelV1={kind:'web-push',async send(_s,p){
-    tags.push(p.tag);max=Math.max(max,++active);await nextTurn();active--;return {statusCode:201};
+    tags.push(p.tag);inFlight++;peakInFlight=Math.max(peakInFlight,inFlight);
+    if(peakInFlight>=SEND_WORKERS)openBarrier();
+    await barrier;await nextTurn();inFlight--;return {statusCode:201};
   }};
   // FULL_WIDTH_CLAIMANTS claimants, each able to claim every row and run a full
   // set of send workers, start together on one shared database client. A claim
@@ -597,16 +613,18 @@ durableTwin("WP-D02", "overlapping full-width claimants stay in budget and never
   // budget by arithmetic, not by timing. A wider same-pool race measures the
   // pool's refusal instead (CR-E079); the 20-pool race with observed losers is
   // the separate-process WP-D02 body below.
-  const meter=meterOperations(f.db);
-  const results=await Promise.allSettled(Array.from({length:FULL_WIDTH_CLAIMANTS},()=>durableDispatcher(f,channel,meter.db).dispatch()));
-  assert.equal(refusedCount(results),0,'WP-D02 no claimant is refused inside the operation budget');
-  assert.ok(meter.peak()<=OPERATION_BUDGET,`WP-D02 peak ${meter.peak()} outstanding operations exceeds the admission budget ${OPERATION_BUDGET}`);
-  assert.ok(meter.peak()>=FULL_WIDTH_CLAIMANTS,`WP-D02 peak ${meter.peak()} never had all ${FULL_WIDTH_CLAIMANTS} claimants outstanding together`);
-  assert.ok(results.reduce((all,r)=>all+(r.status==='fulfilled'?r.value.length:0),0)<=40,'WP-D02 overlapping claimants never claim more than the 40 rows');
+  try{
+    const meter=meterOperations(f.db);
+    const results=await Promise.allSettled(Array.from({length:FULL_WIDTH_CLAIMANTS},()=>durableDispatcher(f,channel,meter.db).dispatch()));
+    assert.equal(refusedCount(results),0,'WP-D02 no claimant is refused inside the operation budget');
+    assert.ok(meter.peak()<=OPERATION_BUDGET,`WP-D02 peak ${meter.peak()} outstanding operations exceeds the admission budget ${OPERATION_BUDGET}`);
+    assert.ok(meter.peak()>=FULL_WIDTH_CLAIMANTS,`WP-D02 peak ${meter.peak()} never had all ${FULL_WIDTH_CLAIMANTS} claimants outstanding together`);
+    assert.ok(results.reduce((all,r)=>all+(r.status==='fulfilled'?r.value.length:0),0)<=40,'WP-D02 overlapping claimants never claim more than the 40 rows');
+    assert.ok(peakInFlight>=SEND_WORKERS,`WP-D02 sends overlap: only ${peakInFlight} of the ${SEND_WORKERS} send workers were in flight together`);
+  }finally{clearTimeout(barrierTimer);openBarrier();}
   for(let tick=0;tick<3;tick++)await durableDispatcher(f,channel,f.db,()=>f.at+30_000*(tick+1)).dispatch();
   assert.equal(tags.length,40,'WP-D02 exactly40 provider calls');
   assert.equal(new Set(tags).size,40,'WP-D02 no duplicate event');
-  assert.ok(max>=2,'WP-D02 sends overlap');
 });
 
 durableTwin("WP-D03", "withdrawn never-started rows do not send", async f=>{
@@ -824,7 +842,7 @@ durableTwin("WP-D11", "public loop reconstructs completion after replacement",as
     channel,clock:()=>f.at,intervalMs:60_000,report:()=>{}});await first.close();
   const second=await startOwnerPushLoopV1({db:f.db,tenantId:DURABLE_TENANT,store:new PostgresOwnerPushStoreV1(f.db),
     channel,clock:()=>f.at+30_000,intervalMs:60_000,report:()=>{}});await second.close();
-  assert.equal((await durableHead(f))[0].state,'delivered','WP-D11 loop replacement reads durable completion');
+  assert.equal((await durableHead(f))[0]?.state,'delivered','WP-D11 loop replacement reads durable completion');
   assert.equal(sends,1,'WP-D11 write-only recovery never calls provider');
 });
 
@@ -1257,7 +1275,8 @@ durableTwin("WP-D25", "same-endpoint resubscribe cannot strand a completing head
   await f.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,now(),now())`,[row.id,row.tenant_id,row.endpoint,row.p256dh,row.auth]);
   let now=new Date(head.next_attempt_at).getTime();
-  await durableDispatcher(f,channel,f.db,()=>now).dispatch();
+  await assert.doesNotReject(()=>durableDispatcher(f,channel,f.db,()=>now).dispatch(),
+    "WP-D25 the repair dispatch must not refuse a replaced subscription");
   head=(await f.db.query<any>("SELECT state,attempt_count,completion_data,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
   assert.equal(head.state,"pending","WP-D25 the repair releases the head instead of refusing a replaced subscription");
   assert.equal(head.completion_data,null);assert.equal(Number(head.completion_retry_count),0);
