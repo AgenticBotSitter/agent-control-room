@@ -212,8 +212,10 @@ test("subscription reads prune expired endpoints before returning send targets",
   const statements: string[] = [];
   const db = { async query(sql: string) { statements.push(sql); return { rows: [] }; } };
   await new PostgresOwnerPushStoreV1(db as never).list("tenant:test");
-  assert.match(statements[0]!, /DELETE FROM owner_web_push_subscriptions/);
+  // Synthetic query recorder: real expiry/cascade behavior is covered by WP-D24.
+  assert.match(statements[0]!, /SELECT id FROM owner_web_push_subscriptions/);
   assert.match(statements[0]!, /expires_at<=now\(\)/);
+  assert.match(statements[0]!, /ORDER BY id/);
 });
 
 test("VAPID contacts accept HTTPS origins and real mail addresses and refuse placeholders in both web readers", async () => {

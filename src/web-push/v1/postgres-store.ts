@@ -19,7 +19,12 @@ export class PostgresOwnerPushStoreV1 implements OwnerPushStoreV1 {
   async list(tenantId: string) {
     // Browsers may include an expiry even if they never return a 404/410. Do
     // not retain that unusable endpoint until the next delivery attempt.
-    await this.db.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND expires_at IS NOT NULL AND expires_at<=now()`, [tenantId]);
+    const expired = await this.db.query<{ id: string }>(`SELECT id FROM owner_web_push_subscriptions
+      WHERE tenant_id=$1 AND expires_at IS NOT NULL AND expires_at<=now() ORDER BY id`, [tenantId]);
+    // One autocommit deletion at a time holds only one parent/cascade chain.
+    // Recheck expiry because subscribe may have refreshed it after this read.
+    for (const row of expired.rows) await this.db.query(`DELETE FROM owner_web_push_subscriptions
+      WHERE tenant_id=$1 AND id=$2 AND expires_at IS NOT NULL AND expires_at<=now()`, [tenantId, row.id]);
     const rows = await this.db.query<{ id: string; tenant_id: string; endpoint: string; p256dh: string; auth: string; expires_at: string | Date | null }>(
       `SELECT id,tenant_id,endpoint,p256dh,auth,expires_at FROM owner_web_push_subscriptions WHERE tenant_id=$1 ORDER BY id`, [tenantId]);
     return rows.rows.map(row => Object.freeze({ id: row.id, tenantId: row.tenant_id, endpoint: row.endpoint,

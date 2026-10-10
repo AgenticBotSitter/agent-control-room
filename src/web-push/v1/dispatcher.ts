@@ -671,6 +671,14 @@ export class OwnerPushDispatcherV1 {
           && new Date(current.updated_at).getTime() > Date.parse(now)-OWNER_PUSH_RESERVATION_STALE_MS_V1)
           return undefined; // An active sender advanced progress after our due read.
         const receipts = current.completion_data ?? [];
+        // Parent deletion locks the subscription before its 0174 delivery
+        // cascade. Acquire every removed parent in the same id order before
+        // touching deliveries; a peer unsubscribe can then wait without a cycle.
+        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)
+          .map(receipt => receipt.subscription_id))].sort()) {
+          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
+            [this.input.tenantId, subscriptionId]);
+        }
         for (const receipt of receipts) {
           const result = await tx.query(`UPDATE owner_web_push_deliveries
             SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer
@@ -686,8 +694,6 @@ export class OwnerPushDispatcherV1 {
             if (live.rows.length && proof.rows[0]?.state !== receipt.result)
               throw new Error("owner_push_completion_record_changed");
           }
-          if (receipt.remove) await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
-            [this.input.tenantId,receipt.subscription_id]);
         }
         let disposition = current.completion_disposition;
         // An unsealed progress receipt is recovered only after the stale window.

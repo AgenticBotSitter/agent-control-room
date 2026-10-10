@@ -152,5 +152,26 @@
     "replace": "AND ($7::timestamptz IS NOT NULL)",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D20: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "After count eight a failed peer must not overwrite a newly published future deadline; expected zero writes comes from the exclusive publication contract."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        // Parent deletion locks the subscription before its 0174 delivery\n        // cascade. Acquire every removed parent in the same id order before\n        // touching deliveries; a peer unsubscribe can then wait without a cycle.\n        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)\n          .map(receipt => receipt.subscription_id))].sort()) {\n          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId, subscriptionId]);\n        }\n        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n          if (result.rows.length !== 1) {\n            const proof = await tx.query<{ state: string }>(`SELECT state FROM owner_web_push_deliveries\n              WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3`,\n            [this.input.tenantId,receipt.subscription_id,receipt.event_tag]);\n            const live = await tx.query(`SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId,receipt.subscription_id]);\n            if (live.rows.length && proof.rows[0]?.state !== receipt.result)\n              throw new Error(\"owner_push_completion_record_changed\");\n          }\n        }\n",
+    "replace": "        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n          if (result.rows.length !== 1) {\n            const proof = await tx.query<{ state: string }>(`SELECT state FROM owner_web_push_deliveries\n              WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3`,\n            [this.input.tenantId,receipt.subscription_id,receipt.event_tag]);\n            const live = await tx.query(`SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId,receipt.subscription_id]);\n            if (live.rows.length && proof.rows[0]?.state !== receipt.result)\n              throw new Error(\"owner_push_completion_record_changed\");\n          }\n          if (receipt.remove) await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId,receipt.subscription_id]);\n        }\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "0174 parent-to-delivery FK cascade requires all removed parents before delivery writes; independent literal order assertion."
+  },
+  {
+    "file": "src/web-push/v1/postgres-store.ts",
+    "find": "WHERE tenant_id=$1 AND id=$2 AND expires_at IS NOT NULL AND expires_at<=now()",
+    "replace": "WHERE tenant_id=$1 AND id=$2",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D24: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Live expiry recheck must retain a subscription whose authority refresh occurred after expired selection."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Lead disposition permits final D02 behavior plus named serial-worker disabling mutation; historical reproduction unavailable."
   }
 ]
