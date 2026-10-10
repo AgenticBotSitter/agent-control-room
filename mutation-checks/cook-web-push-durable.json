@@ -204,8 +204,8 @@
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
-    "find": "Array.from({ length: Math.min(DISPATCHERS, callers - started) }, start)",
-    "replace": "Array.from({ length: callers - started }, start)",
+    "find": "for (let started = 0; started < callers; started += DISPATCHERS)\n    settled.push(...await Promise.allSettled(Array.from({ length: Math.min(DISPATCHERS, callers - started) }, start)));",
+    "replace": "settled.push(...await Promise.allSettled(Array.from({ length: callers }, start)));",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "The seed99 contention waves must never start more callers than the pool admits: removing the wave width fails the measured peak and no-refusal assertions."
   },
