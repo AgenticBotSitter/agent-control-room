@@ -40,7 +40,7 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
@@ -378,6 +378,8 @@ test("as the migrator the REVOKE really would have been refused, so the filter i
 const BASE_LEDGER_DIGEST = "c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03";
 const BASE_PRIVATE_WEB_ROLES_SHA256 = "0fea0207392fb36f5b8d9e8716984f80ad1b7d9975db658104434672d7c54e92"; // trailing whitespace trimmed
 const SUBSCRIPTION_GRANT = /^GRANT UPDATE \([^)]*\) ON owner_web_push_subscriptions TO control_room_private_web;\n/gmu;
+const scratchRoot = join(repoRoot, ".test-tmp");
+const isInside = (parent, child) => { const path = relative(parent, child); return path !== "" && !path.startsWith("..") && !isAbsolute(path); };
 const UPGRADE_TENANT = "tenant:installed-upgrade";
 const UPGRADE_WORKSPACE = "workspace:installed-upgrade";
 const UPGRADE_SUBJECT = "installed-upgrade-owner";
@@ -386,9 +388,14 @@ const subscription = (endpoint, n) => ({ id: "", tenantId: UPGRADE_TENANT, endpo
 const subscriptionFields = row => ({ endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth, expiresAt: row.expiresAt });
 
 async function installedCluster(label) {
-  const root = await mkdtemp(join(tmpdir(), `acr-installed-${label}-`));
-  const cluster = { root, port: requestedPort() ?? await findFreePort(), socket: join(root, "s") };
-  await mkdir(cluster.socket, { mode: 0o700 });
+  // Data and run files live in the job scratch tree so job cleanup can find them; only the
+  // unix-socket directory is short, because a socket path is capped near 104 bytes.
+  await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+  const root = await mkdtemp(join(scratchRoot, `acr-installed-${label}-`));
+  const socketRoot = await mkdtemp(join(tmpdir(), "acr-isock-"));
+  const cluster = { root, socketRoot, port: requestedPort() ?? await findFreePort(), socket: socketRoot };
+  const removeScratch = () => Promise.all([rm(root, { recursive: true, force: true }), rm(socketRoot, { recursive: true, force: true })]);
+  cluster.removeScratch = removeScratch;
   cluster.teardown = createClusterTeardown({ dataDirectory: join(root, "pg"), runDirectory: root,
     socketDirectory: cluster.socket, port: cluster.port, pgBin: PG_BIN, removeDirectories: false });
   try {
@@ -401,7 +408,7 @@ async function installedCluster(label) {
   } catch (error) {
     try { await cluster.teardown.stop(); } catch (stopError) {
       throw new AggregateError([error, stopError], `cluster_start_and_teardown_failed:${error?.message ?? error}`);
-    }
+    } finally { await removeScratch(); }
     throw error;
   }
   cluster.operator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=postgres`;
@@ -460,6 +467,7 @@ test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 6
   const stores = [];
   const admin = connectTarget(installed.operator);
   try {
+    assert.ok(isInside(scratchRoot, installed.root), `the installed-upgrade cluster lives inside the job scratch tree, not ${installed.root}`);
     // ---- the earlier release, installed through its own ledger and role file ----
     const base = await baseReleaseTree(await mkdtemp(join(installed.root, "base-")));
     await applyMigrations({ rootDir: base.rootDir, ledgerPath: base.ledgerPath, bootstrapTarget: installed.operator,
@@ -474,7 +482,7 @@ test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 6
       : (typeof target[property] === "function" ? target[property].bind(target) : target[property]) });
     await provisionMacLocalNarrowRolesV1(earlierClient, passwords);
 
-    // ---- unrelated data and a retained subscription, from the real producers ----
+    // ---- unrelated data, from the real producer; the subscription tables start empty ----
     const at = new Date(Date.now() - 1_000).toISOString();
     const manifest = createMacLocalFirstOwnerManifestV1({ workspaceId: UPGRADE_WORKSPACE,
       localOwnerSession: { tenantId: UPGRADE_TENANT, provider: "local-owner", subject: UPGRADE_SUBJECT },
@@ -485,21 +493,26 @@ test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 6
     await applyMacLocalFirstOwnerV1(admin, manifest);
     const scope = { tenantId: UPGRADE_TENANT, workspaceId: UPGRADE_WORKSPACE, ownerIdentityId: manifest.identity.id, issuer: "local-owner" };
     const retained = subscription("https://fcm.googleapis.com/fcm/send/installed-retained", 0);
-    await new PostgresOwnerPushStoreV1(admin).subscribe(retained);
-    const unrelated = (await admin.query("SELECT (SELECT count(*) FROM tenants)::int AS tenants, (SELECT count(*) FROM owner_web_push_subscriptions)::int AS subscriptions")).rows[0];
-    assert.deepEqual(unrelated, { tenants: 1, subscriptions: 1 });
-    const retainedBefore = (await admin.query("SELECT id, created_at, updated_at FROM owner_web_push_subscriptions")).rows[0];
+    const counts = async () => (await admin.query(`SELECT (SELECT count(*) FROM tenants)::int AS tenants,
+      (SELECT count(*) FROM owner_web_push_subscriptions)::int AS subscriptions,
+      (SELECT count(*) FROM owner_web_push_deliveries)::int AS deliveries`)).rows[0];
+    assert.deepEqual(await counts(), { tenants: 1, subscriptions: 0, deliveries: 0 }, "the installed subscription tables start empty");
 
     // ---- historical first use: the production login cannot save a subscription ----
     const old = webLogin(installed, passwords.control_room_web); stores.push(old);
     await assert.rejects(old.store.subscribe(subscription("https://fcm.googleapis.com/fcm/send/installed-first-use", 1)),
       error => error.code === "42501" || error.sqlState === "42501", "the earlier install refuses the first save with 42501");
-    assert.deepEqual((await old.store.list(UPGRADE_TENANT)).map(subscriptionFields), [subscriptionFields(retained)],
-      "the refused save left the retained row alone");
+    assert.deepEqual((await old.store.list(UPGRADE_TENANT)), [], "the refused first save stored nothing");
+    assert.deepEqual(await counts(), { tenants: 1, subscriptions: 0, deliveries: 0 }, "the refused first save left the tables empty");
     assert.equal((await admin.query("SELECT has_column_privilege('control_room_web','owner_web_push_subscriptions','p256dh','UPDATE') AS ok")).rows[0].ok, false);
     await assert.rejects(verifyPrivateDatabase(old.db.client, old.config, scope, Date.now(), { nativeQueue: true }),
       "this release's startup check refuses the earlier install, so it cannot start against it unmigrated");
     await old.db.close(); stores.length = 0;
+
+    // ---- a retained subscription, from the real producer (administrator login), before the upgrade ----
+    await new PostgresOwnerPushStoreV1(admin).subscribe(retained);
+    assert.deepEqual(await counts(), { tenants: 1, subscriptions: 1, deliveries: 0 }, "one retained subscription before the upgrade");
+    const retainedBefore = (await admin.query("SELECT id, created_at, updated_at FROM owner_web_push_subscriptions")).rows[0];
 
     // ---- the candidate, through the real release migration and grant convergence ----
     let postMigration;
@@ -562,6 +575,6 @@ test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 6
   } finally {
     for (const store of stores) await store.db.close().catch(() => {});
     try { await admin.end(); } catch {}
-    try { await installed.teardown.stop(); } finally { await rm(installed.root, { recursive: true, force: true }); }
+    try { await installed.teardown.stop(); } finally { await installed.removeScratch(); }
   }
 });

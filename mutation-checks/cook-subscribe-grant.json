@@ -33,5 +33,47 @@
     "replace": "GRANT UPDATE (p256dh, auth, expires_at) ON owner_web_push_subscriptions TO control_room_private_web;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
     "why": "CR-E075 installed upgrade must fail when grant convergence on an installed earlier role lacks the fourth renewal column the production login needs."
+  },
+  {
+    "file": "db/migrations/0299_owner_web_push_subscription_update_grant.sql",
+    "find": "    EXECUTE 'GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web';",
+    "replace": "    NULL;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail the 'the migration alone lets the production login save' assertion (refused:42501) when migration 0299 carries no grant, before grant convergence can repair it."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "const stripSqlComments = source => source.replace(/\\/\\*[\\s\\S]*?\\*\\//g, \" \").replace(/--[^\\n]*/g, \" \");",
+    "replace": "const stripSqlComments = source => source;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory spelling variants must fail 'block comment before INTO must not hide an unknown upsert' (Missing expected exception) when SQL comments are not treated as separators."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "const identifier = part => part.startsWith('\"') ? part.slice(1, -1).replace(/\"\"/g, '\"') : part.toLowerCase();",
+    "replace": "const identifier = part => part.replace(/\"/g, \"\").toLowerCase();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory spelling variants must fail 'a quoted upper-case name is a different relation' (Missing expected exception) when quoted identifiers are folded like unquoted ones."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  assert.equal(updates, writes.length, `unparsed web-push upsert: ${updates} DO UPDATE clauses, ${writes.length} recognised writes`);",
+    "replace": "  void updates;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory spelling variants must fail 'an upsert whose table cannot be read must fail closed' (Missing expected exception) when the unparsed-upsert count guard is disabled."
+  },
+  {
+    "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "find": "  const root = await mkdtemp(join(scratchRoot, `acr-installed-${label}-`));",
+    "replace": "  const root = await mkdtemp(join(tmpdir(), `acr-installed-${label}-`));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail 'the installed-upgrade cluster lives inside the job scratch tree' when the cluster data directory is created outside the job tree."
+  },
+  {
+    "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "find": "    const old = webLogin(installed, passwords.control_room_web); stores.push(old);",
+    "replace": "    await new PostgresOwnerPushStoreV1(admin).subscribe(retained);\n    const old = webLogin(installed, passwords.control_room_web); stores.push(old);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail 'the refused first save stored nothing' when a subscription already exists before the historical first save."
   }
 ]

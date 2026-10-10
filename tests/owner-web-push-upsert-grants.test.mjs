@@ -11,12 +11,24 @@ const RUNNERS = {
   owner_web_push_subscriptions: { method: "subscribe", columns: ["p256dh", "auth", "expires_at", "updated_at"] },
   owner_web_push_deliveries: { method: "reserve", columns: ["state", "status_code", "completed_at"] },
 };
+// Valid SQL separators (comments) become one space, so a comment between tokens
+// cannot hide an upsert from the scan.
+const stripSqlComments = source => source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+// Quoted identifiers keep their exact bytes (case and spaces); unquoted ones fold to lower case.
+const identifier = part => part.startsWith('"') ? part.slice(1, -1).replace(/""/g, '"') : part.toLowerCase();
 function inventory(source) {
-  const name = '(?:"[^"]+"|\\w+)';
-  const writes = [...source.matchAll(new RegExp(`INSERT\\s+INTO\\s+(${name}(?:\\s*\\.\\s*${name})?)([^\`]*?ON\\s+CONFLICT[^\`]*?DO\\s+UPDATE[^\`]*)`, "gi"))]
-    .map(([, written, sql]) => [written.replace(/"/g, "").replace(/\s+/g, "").replace(/^public\./i, "").toLowerCase(), sql]);
+  const sql = stripSqlComments(source);
+  const name = '(?:"(?:[^"]|"")+"|[A-Za-z_][\\w$]*)';
+  const writes = [...sql.matchAll(new RegExp(`INSERT\\s+INTO\\s+(${name})(?:\\s*\\.\\s*(${name}))?([^\`]*?ON\\s+CONFLICT[^\`]*?DO\\s+UPDATE[^\`]*)`, "gi"))]
+    .map(([, first, second, rest]) => {
+      const parts = second === undefined ? [identifier(first)] : [identifier(first), identifier(second)];
+      return [parts.length === 2 && parts[0] === "public" ? parts[1] : parts.join("."), rest];
+    });
   for (const [table] of writes) assert.ok(Object.hasOwn(RUNNERS,table), `unclassified web-push upsert:${table}`);
-  return writes.map(([table,sql]) => ({ table, columns: [...sql.split(/DO\s+UPDATE\s+SET/i)[1].split(/\bWHERE\b|\bRETURNING\b/i)[0]
+  // Fail closed: every DO UPDATE in the file must have been read as a classified write above.
+  const updates = (sql.match(/\bDO\s+UPDATE\b/gi) ?? []).length;
+  assert.equal(updates, writes.length, `unparsed web-push upsert: ${updates} DO UPDATE clauses, ${writes.length} recognised writes`);
+  return writes.map(([table,rest]) => ({ table, columns: [...rest.split(/DO\s+UPDATE\s+SET/i)[1].split(/\bWHERE\b|\bRETURNING\b/i)[0]
     .matchAll(/(?:^|,)\s*(\w+)\s*=/g)].map(match=>match[1]).sort() }));
 }
 function freshColumns(table) {
@@ -45,6 +57,22 @@ test("CR-E075 upsert inventory refuses spelling variants of an unknown write", (
     ["quoted schema-qualified", upsert('INSERT INTO "public"."unknown_push_store"(id)')],
     ["lowercase on conflict", "\ninsert into unknown_push_store(id) values(1) on conflict(id) do update set id=2`"],
   ]) assert.throws(() => inventory(source() + sql), /unclassified web-push upsert:unknown_push_store/, `${name} unknown upsert must be refused`);
+  for (const [name, sql] of [
+    ["block comment before INTO", upsert("INSERT /* c */ INTO unknown_push_store(id)")],
+    ["block comment after INTO", upsert("INSERT INTO /* c */ unknown_push_store(id)")],
+    ["line comment separator", upsert("INSERT -- c\nINTO unknown_push_store(id)")],
+    ["comment between schema and table", upsert("INSERT INTO public /* c */ . unknown_push_store(id)")],
+  ]) assert.throws(() => inventory(source() + sql), /unclassified web-push upsert:unknown_push_store/, `${name} must not hide an unknown upsert`);
+  assert.throws(() => inventory(source() + upsert('INSERT INTO "OWNER_WEB_PUSH_SUBSCRIPTIONS"(id)')),
+    /unclassified web-push upsert:OWNER_WEB_PUSH_SUBSCRIPTIONS/, "a quoted upper-case name is a different relation from the classified one");
+  assert.throws(() => inventory(source() + upsert('INSERT INTO "owner_web_push_subscriptions "(id)')),
+    /unclassified web-push upsert:owner_web_push_subscriptions $/, "a quoted name with a trailing space is a different relation");
+  assert.throws(() => inventory(source() + upsert("INSERT INTO ${table}(id)")), /unparsed web-push upsert/,
+    "an upsert whose table cannot be read must fail closed, never pass as classified");
+  assert.deepEqual(inventory(source() + "\n/* ON CONFLICT(id) DO UPDATE SET id=2 */ -- DO UPDATE\n").map(x => x.table).sort(), Object.keys(RUNNERS).sort(),
+    "comment text is not an upsert");
+  assert.equal(inventory(source() + upsert("INSERT INTO OWNER_WEB_PUSH_DELIVERIES(id)")).filter(x => x.table === "owner_web_push_deliveries").length, 2,
+    "an unquoted upper-case spelling folds to the classified relation");
   assert.throws(() => inventory(source() + upsert("INSERT INTO other_schema.unknown_push_store(id)")),
     /unclassified web-push upsert:other_schema\.unknown_push_store/, "a different schema is never folded into public");
   assert.deepEqual(inventory(source()).map(x => x.table).sort(), Object.keys(RUNNERS).sort(), "the real store still classifies");
