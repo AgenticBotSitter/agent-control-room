@@ -2,9 +2,9 @@
   {
     "file": "tests/attack-kit-real-postgres.test.ts",
     "find": "test(\"withRealPostgres cleans up after a thrown error\"",
-    "replace": "test(\"mutation omitted original cleanup feature\"",
+    "replace": "test.skip(\"withRealPostgres cleans up after a thrown error\"",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
-    "why": "Base-captured literal name inventory must refuse losing the original cleanup body; fails the named conservation assertion."
+    "why": "Disable the actual cleanup feature body with test.skip, retaining its literal title. The independent active-body inventory must fail the named conservation assertion; no cluster or startup failure is used."
   },
   {
     "file": "package.json",
