@@ -330,7 +330,15 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         const before = await server();
         const dispatchers = Array.from({ length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: meter.db,
           tenantId: TENANT, store: new PostgresOwnerPushStoreV1(meter.db), channel }));
-        const settledDispatches = await Promise.allSettled(dispatchers.map(each => each.dispatch(CLAIM_WIDTH)));
+        // Each round races all DISPATCHERS at once. A dispatch adopts and claims at
+        // most CLAIM_WIDTH rows, so a round advances a few decisions and the rounds
+        // repeat until every decision is delivered or the cap is hit.
+        const settledDispatches: PromiseSettledResult<readonly unknown[]>[] = [];
+        for (let round = 0; round < 40; round += 1) {
+          settledDispatches.push(...await Promise.allSettled(dispatchers.map(each => each.dispatch(CLAIM_WIDTH))));
+          const delivered = await admin.query("SELECT count(*)::int AS n FROM control_owner_push_attempt_heads WHERE tenant_id=$1 AND state='delivered'", [TENANT]);
+          if (delivered.rows[0].n === 40) break;
+        }
         const outcomes = settledDispatches.flatMap(each => each.status === "fulfilled" ? [each.value] : []);
         const after = await server();
         assert.equal(refusedCount(settledDispatches), 0,
@@ -347,10 +355,9 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         const heads = (await admin.query<{ action_inbox_id: string; state: string; attempt_count: number | string }>(
           "SELECT action_inbox_id,state,attempt_count FROM control_owner_push_attempt_heads WHERE tenant_id=$1",
           [TENANT])).rows;
-        // Every DECIDED item has exactly one head. A head is created for every
-        // open decision on the first adopt, so all 40 exist; the racing part is
-        // which dispatcher claims and sends which one, and that is what the rest
-        // of this asserts.
+        // Every decision has exactly one head. A dispatch adopts at most its claim
+        // width of open decisions (adoptOpenAttention(limit)), so the racing rounds
+        // are what create all 40.
         assert.equal(heads.length, 40, `expected one head per decision, got ${heads.length}`);
         assert.equal(new Set(heads.map(row => row.action_inbox_id)).size, 40, "no duplicate heads");
 
@@ -400,6 +407,7 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         }
         const drained = (await admin.query<{ action_inbox_id: string; state: string }>(
           "SELECT action_inbox_id,state FROM control_owner_push_attempt_heads WHERE tenant_id=$1", [TENANT])).rows;
+        assert.equal(drained.length, 40, "one head per decision once every decision is adopted");
         assert.equal(drained.filter(row => row.state === "delivered").length, 40,
           `later ticks must drain every decision: ${JSON.stringify(drained.filter(row => row.state !== "delivered"))}`);
         assert.equal(new Set(sent).size, 40, "exactly one push per decision across every pass");
