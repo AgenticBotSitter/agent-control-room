@@ -92,7 +92,8 @@ test("R4U-13 sign-in explains the pause and offline failure, recovers and holds 
     Object.assign(dom.window, { fetch: async () => new Response(null, { status: 401 }) });
     form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
     await new Promise(resolve => setTimeout(resolve, 0));
-    assert.match(dom.window.document.getElementById("message")!.textContent!, /Check your owner code/);
+    assert.equal(dom.window.document.getElementById("message")!.textContent!,
+      "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.");
     assert.equal(dom.window.document.querySelector("button")!.disabled, false);
     Object.assign(dom.window, { fetch: async () => new Response(null, { status: 503 }) });
     form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
@@ -370,7 +371,8 @@ test("R4U-13 a dropped connection times out and releases the sign-in button for 
     Object.assign(dom.window, { fetch: async () => new Response(null, { status: 401 }) });
     form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
     await new Promise(resolve => setTimeout(resolve, 0));
-    assert.match(dom.window.document.getElementById("message")!.textContent!, /Check your owner code/);
+    assert.equal(dom.window.document.getElementById("message")!.textContent!,
+      "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.");
   } finally { dom.window.close(); }
 });
 

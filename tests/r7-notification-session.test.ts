@@ -73,7 +73,8 @@ test("R7I-06: successful code returns to the tapped item; a failed code stays on
       fetch: async () => ({ ok, status: ok ? 200 : 401 }), location: { assign(path: string) { assigned.push(path); } } });
     await listener({ preventDefault() {}, currentTarget: { querySelector: () => ({ disabled: false }) } });
     assert.deepEqual(assigned, ok ? ["/needs-me"] : []);
-    if (!ok) assert.match(message.textContent, /not accepted/);
+    if (!ok) assert.equal(message.textContent,
+      "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.");
   }
   assert.throws(() => renderLocalOwnerSignInPageV1("//evil.invalid"));
 });

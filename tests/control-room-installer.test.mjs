@@ -2052,45 +2052,86 @@ test("root entry ignores an environment-selected port module and Tailscale alway
 });
 
 test("the archived installer entry and native ports load without node_modules", async t => {
-  const base = await temporary("bare-archive"); t.after(() => cleanup(base));
-  const archive = join(base, "source.tar"), source = join(base, "source"); await mkdir(source);
-  const index = join(base, "archive.index"), gitEnvironment = { ...process.env, GIT_INDEX_FILE: index };
-  const readTree = spawnSync("/usr/bin/git", ["read-tree", "HEAD"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
-  assert.equal(readTree.status, 0, readTree.stderr);
-  const addTree = spawnSync("/usr/bin/git", ["add", "-A"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
-  assert.equal(addTree.status, 0, addTree.stderr);
-  const snapshot = spawnSync("/usr/bin/git", ["write-tree"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
-  assert.equal(snapshot.status, 0, snapshot.stderr);
-  const packed = spawnSync("/usr/bin/git", ["archive", "--format=tar", `--output=${archive}`,
-    snapshot.stdout.trim() || "HEAD"], { cwd: repository, encoding: "utf8" });
-  assert.equal(packed.status, 0, packed.stderr);
-  const extracted = spawnSync("/usr/bin/tar", ["-xf", archive, "-C", source], { encoding: "utf8" });
-  assert.equal(extracted.status, 0, extracted.stderr);
-  await assert.rejects(lstat(join(source, "node_modules")), { code: "ENOENT" });
-  const status = spawnSync(process.execPath, [join(source, "src/updater/v1/cli.mjs"), "status", "--root",
-    join(base, "not-installed")], { cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8" });
-  assert.equal(status.status, 0, status.stderr);
-  assert.match(status.stdout, /not-installed/u);
-  const install = spawnSync(process.execPath, [join(source, "src/updater/v1/cli.mjs"), "install"], {
-    cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8",
-  });
-  assert.equal(install.status, 1, install.stderr);
-  assert.match(install.stderr, /root_required/u);
-  assert.doesNotMatch(install.stderr, /module-not-found|ERR_MODULE_NOT_FOUND/iu);
-  // The import shape is `--eval` with the URL written INTO the program, so
-  // `process.argv[1]` is absent and the shared entry guard answers `false`. The
-  // older spelling, `--eval "await import(process.argv[1])" <file: URL>`, put a
-  // `file:` URL in `argv[1]`; that is a refusal now, because `realpathSync` on a
-  // URL string is ENOENT and `node <a file: URL>` fails with `Cannot find module
-  // '<cwd>/file:/…'` — so a real entry is never spelled that way. The
-  // `a file: URL in argv[1] refuses` case in `invoked-directly.test.mjs` is where
-  // that spelling is now covered.
-  const portsUrl = pathToFileURL(join(source, "src/updater/v1/cli/control-room-native-ports.mjs")).href;
-  const imported = spawnSync(process.execPath, ["--input-type=module", "--eval",
-    `await import(${JSON.stringify(portsUrl)});`],
-  { cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8" });
-  assert.equal(imported.status, 0, imported.stderr);
-  assert.doesNotMatch(imported.stderr, /direct_entry_guard_refused/u);
+  // A checkout-local TMPDIR can resolve packages in an ancestor. Bootstrap
+  // runs before dependencies exist, so verify every ancestor before extracting.
+  let parent = await realpath(tmpdir());
+  const hasPackagesAbove = async path => {
+    for (;;) {
+      const entry = await lstat(join(path, "node_modules")).catch(error => {
+        if (error.code !== "ENOENT") throw error; return null;
+      });
+      if (entry) return true;
+      const next = dirname(path); if (next === path) return false; path = next;
+    }
+  };
+  if (await hasPackagesAbove(parent)) parent = await realpath("/tmp");
+  assert.equal(await hasPackagesAbove(parent), false, "archive parent must have no dependency-bearing ancestor");
+  const base = await realpath(await mkdtemp(join(parent, "control-room-installer-bare-archive-")));
+  t.diagnostic(`archived CLI scratch: ${base}`);
+  try {
+    assert.equal(await hasPackagesAbove(base), false, "archive must not resolve checkout packages");
+    const archive = join(base, "source.tar"), source = join(base, "source"); await mkdir(source);
+    const index = join(base, "archive.index"), gitEnvironment = { ...process.env, GIT_INDEX_FILE: index };
+    const readTree = spawnSync("/usr/bin/git", ["read-tree", "HEAD"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
+    assert.equal(readTree.status, 0, readTree.stderr);
+    const addTree = spawnSync("/usr/bin/git", ["add", "-A"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
+    assert.equal(addTree.status, 0, addTree.stderr);
+    const snapshot = spawnSync("/usr/bin/git", ["write-tree"], { cwd: repository, env: gitEnvironment, encoding: "utf8" });
+    assert.equal(snapshot.status, 0, snapshot.stderr);
+    const packed = spawnSync("/usr/bin/git", ["archive", "--format=tar", `--output=${archive}`,
+      snapshot.stdout.trim() || "HEAD"], { cwd: repository, encoding: "utf8" });
+    assert.equal(packed.status, 0, packed.stderr);
+    const extracted = spawnSync("/usr/bin/tar", ["-xf", archive, "-C", source], { encoding: "utf8" });
+    assert.equal(extracted.status, 0, extracted.stderr);
+    await assert.rejects(lstat(join(source, "node_modules")), { code: "ENOENT" });
+    const status = spawnSync(process.execPath, [join(source, "src/updater/v1/cli.mjs"), "status", "--root",
+      join(base, "not-installed")], { cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8" });
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /not-installed/u);
+    assert.notEqual(process.getuid?.(), 0, "archive bootstrap probe must run unprivileged");
+    const cli = join(source, "src/updater/v1/cli.mjs");
+    for (const testing of [false, true]) for (const rehearsal of [false, true]) {
+      // Mirror all four entry commands in install-night/bootstrap.sh. Root refusal
+      // must precede any installer side effect; only loading is exercised here.
+      const flags = ["install", "--commit", "a".repeat(40), "--bootstrap", base,
+        ...(rehearsal ? ["--rehearsal-config", join(base, "rehearsal.json"),
+          "--fresh-database", "yes", "--authenticator", "software",
+          "--e2e2-evidence-log", join(base, "evidence.json")] : []),
+        "--invoking-user", "fixture", "--invoking-uid", "501", "--invoking-gid", "20"];
+      const install = spawnSync(process.execPath, [cli, ...flags], {
+        cwd: "/", env: { LANG: "C", LC_ALL: "C", ...(testing ? { CONTROL_ROOM_BOOTSTRAP_TESTING: "1" } : {}) },
+        encoding: "utf8", timeout: 10_000,
+      });
+      assert.equal(install.status, 1, install.stderr);
+      assert.match(install.stderr, /root_required/u, "bootstrap entry loads without any installed packages");
+      assert.doesNotMatch(install.stderr, /ERR_MODULE_NOT_FOUND/u);
+    }
+    for (const [args, expected] of [[["--print-capabilities"], 0], [["capabilities"], 64], [["install"], 1]]) {
+      const result = spawnSync(process.execPath, [cli, ...args], {
+        cwd: "/", env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8", timeout: 10_000,
+      });
+      assert.equal(result.status, expected, "archived CLI remains dependency-free: " + result.stderr);
+      assert.doesNotMatch(result.stderr, /ERR_MODULE_NOT_FOUND/u);
+    }
+    // The import shape is `--eval` with the URL written INTO the program, so
+    // `process.argv[1]` is absent and the shared entry guard answers `false`. The
+    // older spelling, `--eval "await import(process.argv[1])" <file: URL>`, put a
+    // `file:` URL in `argv[1]`; that is a refusal now, because `realpathSync` on a
+    // URL string is ENOENT and `node <a file: URL>` fails with `Cannot find module
+    // '<cwd>/file:/…'` — so a real entry is never spelled that way. The
+    // `a file: URL in argv[1] refuses` case in `invoked-directly.test.mjs` is where
+    // that spelling is now covered.
+    const portsUrl = pathToFileURL(join(source, "src/updater/v1/cli/control-room-native-ports.mjs")).href;
+    const imported = spawnSync(process.execPath, ["--input-type=module", "--eval",
+      `await import(${JSON.stringify(portsUrl)});`],
+    { cwd: source, env: { LANG: "C", LC_ALL: "C" }, encoding: "utf8" });
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.doesNotMatch(imported.stderr, /direct_entry_guard_refused/u);
+  } finally {
+    await cleanup(base);
+    await assert.rejects(lstat(base), { code: "ENOENT" }, "archived CLI scratch is removed even after failure");
+    t.diagnostic(`archived CLI scratch removed: ${base}`);
+  }
 });
 
 test("svc2 generate-keys supplies persisted release trust and retry refuses tampered custody", async t => {
@@ -2607,8 +2648,8 @@ test("the install line never says Ready when the Face ID step stopped", async t 
   // atk-fa F8: the CLI printed "Ready" whatever the passkey result, so nothing told the
   // owner there was no passkey.
   for (const [name, portOptions, expected, absent] of [
-    ["stopped", { passkeyFailure: true }, /^Not ready: Face ID is NOT set up \(the passkey step stopped: passkey_terminal_required\)\. .*show this to the lead after reopening Claude/u, /Ready:/u],
-    ["registered", {}, /^Ready: Control Room release 1\.2\.3-a{12} is current\. Self-update is Off\.\n$/u, /Not ready/u]]) {
+    ["stopped", { passkeyFailure: true }, "Not ready: Face ID is NOT set up (the passkey step stopped: passkey_terminal_required). Control Room release 1.2.3-aaaaaaaaaaaa is installed and current. Self-update is Off. To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\n", /Ready:/u],
+    ["registered", {}, "Ready: Control Room release 1.2.3-aaaaaaaaaaaa is current. Self-update is Off.\n", /Not ready/u]]) {
     const f = await fixture(t, `cli-passkey-${name}`, portOptions);
     const output = [];
     const code = await runUpdaterCliV1(["install", "--commit", "a".repeat(40), "--bootstrap", f.bootstrap,
@@ -2618,7 +2659,7 @@ test("the install line never says Ready when the Face ID step stopped", async t 
     });
     assert.equal(code, 0, name);
     const line = output.join("").split("\n").filter(Boolean).at(-1) + "\n";
-    assert.match(line, expected, name); assert.doesNotMatch(line, absent, name);
+    assert.equal(line, expected, name); assert.doesNotMatch(line, absent, name);
   }
 });
 

@@ -152,7 +152,6 @@ test("post-install instructions match the existing connector and task controls",
   }
 });
 
-
 test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corrects legacy wording", () => {
   assert.match(guide, /phone does not sign in your Mac browser/u);
   assert.match(guide, /after `#code=` and before `&reg=`/u);
@@ -173,4 +172,15 @@ test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corr
   assert.match(legacy, /Prints three lines/u);
   assert.match(legacy, /Accepting that result is a separate owner decision/u);
   assert.match(legacy, /six lines, one per role.*least privilege: ok/u);
+});
+
+test("V101 stopped Face ID recovery uses a QR and an owner code in any browser", () => {
+  const row = guide.split("\n").find(line => line.startsWith("| Face ID setup fails,"));
+  assert.ok(row, "the stopped Face ID journey has a recovery row");
+  assert.ok(row.includes("To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks."));
+  assert.doesNotMatch(row, /do not run.*passkey add/iu);
+  assert.ok(row.includes("Keep the Terminal message on screen."));
+  assert.ok(row.includes("Do not retry or reload the stopped phone page."));
+  assert.ok(row.includes("Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.<br>There is nothing to delete."));
+  assert.match(guide.split("\n").find(line => line.startsWith("4. The health check")), /follow the Face ID row below/u);
 });

@@ -204,8 +204,8 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "const typedCode = await readCodeV1(terminal);",
-    "replace": "const typedCode = await context.readComparisonCode();",
+    "find": "const typedCode = await readCodeV1(terminal, { timeoutMs: completionTimeoutMs });",
+    "replace": "const typedCode = await terminal.readLine();",
     "test": "node --import tsx --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
     "why": "the CLI trims and uppercases the human-entered comparison code before the single-use request"
   },

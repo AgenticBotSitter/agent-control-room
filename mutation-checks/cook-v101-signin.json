@@ -1,0 +1,324 @@
+[
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (url.pathname === \"/setup\") {",
+    "replace": "if (false && url.pathname === \"/setup\") {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "The ticket requires the first phone to receive the setup shell without a session; literal 200 must fail when the public route is disabled."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (request.method !== \"GET\" || url.search) throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "replace": "if (url.search) throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "HTTP method refusal comes from the approved GET-only contract; POST must remain literal 400."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (request.method !== \"GET\" || url.search) throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "replace": "if (request.method !== \"GET\") throw new WebAccessError(\"invalid_request\");\n        sessions.assertLocalRequest(request);\n        const response = await render();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "The ticket allows no query on the setup shell; code in a query must be refused with literal 400."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "sessions.assertLocalRequest(request);\n        const response = await render();",
+    "replace": "const response = await render();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "Existing local-origin and forwarding checks must precede the new public shell; a forwarded request must be literal 403."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);\n        return response;",
+    "replace": "return response;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/mac-local-web-process.test.ts",
+    "why": "Public shell must retain no-store and no-referrer; independently specified header literals must disagree when header application is removed."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "code.length!==43||/[&=\\\\s]|code/i.test(code)",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "A refused malformed copy needs the ticket-specified guidance, rather than the generic 401 message."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "const code=String(new FormData(form).get(\"ownerCode\")||\"\").replace(/^ | $/g,\"\");",
+    "replace": "const code=String(new FormData(form).get(\"ownerCode\")||\"\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "Exactly one ASCII space on each edge is tolerated by the UI; the literal posted code and unchanged real digest authentication must fail without trimming."
+  },
+  {
+    "file": "src/updater/v1/terminal/qr.mjs",
+    "find": "  terminal.write(`Owner code (${input.ownerCode.length} characters):\\n${input.ownerCode}\\n`);\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='initial-mode terminal QR' tests/updater-health-terminal.test.mjs",
+    "why": "The owner code length label and own-line secret are independently specified by the ticket, not extracted from the URL under test."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "        + \"To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\\n\");",
+    "replace": "        + \"Registration stopped.\\n\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='R2-08: repeating install' tests/installer-round2.test.mjs",
+    "why": "Stopped install must explain the approved QR scan and same-page owner-code recovery path."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "code.length!==43||",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "Wrong length guidance must fail the literal short-code message when the length term is disabled."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "||/[&=\\\\s]|code/i.test(code)",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=V101 tests/local-owner-session.test.ts",
+    "why": "At the correct length, pasted ampersand/equal/code text still requires the literal copy guidance when the syntax term is disabled."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.",
+    "replace": "Recovery stopped.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
+    "why": "Lead Addendum 4 independently specifies Terminal passkey add, QR scan and an owner code if asked; both real guide and generated paste reader must retain that literal journey."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "Keep the Terminal message on screen.",
+    "replace": "Keep waiting.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
+    "why": "Lead Addendum 3 explicitly retains the on-screen message caution; the guide and generated paste assertions must fail when it is removed."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.",
+    "replace": "The link is ready.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
+    "why": "R2: unchanged code prompt expires after 300000ms; guide and generated reader must state the five-minute effective completion limit."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (code === undefined && optionResponse.status === 401)",
+    "replace": "if (false && code === undefined && optionResponse.status === 401)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "Addendum 4 requires the same-page owner-code field on options 401; the named field assertion must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "body: JSON.stringify({ registrationSecret })",
+    "replace": "body: JSON.stringify({ registrationSecret: code === undefined ? registrationSecret : \"B\".repeat(43) })",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "Addendum 4 requires the original registration fragment across sign-in; independent literal secret assertion must fail on the resumed request."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "code.length !== 43 || /[&=\\s]|code/i.test(code)",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "Existing sign-in guidance independently requires the 43-character and extra-text message; wrong format assertion must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (working || controller.signal.aborted) return;",
+    "replace": "if (controller.signal.aborted) return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "50 simultaneous submits on a slow connection must issue one session request, using a literal count of one."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (!sessionResponse.ok)",
+    "replace": "if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "A refused owner-session POST must leave the code field and guidance; it must not advance registration."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "context.stdout(terminalQrTextV1(registrationUrl));",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"V101 passkey add prints\" tests/updater-cli-flip.test.mjs",
+    "why": "Addendum 4 requires a phone-decodable QR before the text URL; independently decoded URL and explicit block assertion must fail without rendering."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "import { isMainModuleV1 } from \"../../installer/shared/is-main-module.mjs\";",
+    "replace": "import { isMainModuleV1 } from \"../../installer/shared/is-main-module.mjs\";\nimport \"./terminal/qr.mjs\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the archived installer\" tests/control-room-installer.test.mjs",
+    "why": "Bootstrap runs before dependencies are installed. Independent status exit0 and bootstrap root_required must fail if QR is eagerly loaded; no ancestor packages may mask the defect."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "r.status===400?",
+    "replace": "false?",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F1\" tests/local-owner-session.test.ts",
+    "why": "Reviewer F1 and the unchanged 512-byte body limit independently require copied-code guidance for an oversized400 paste, not a service outage."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "sessionResponse.status === 400 || sessionResponse.status === 401",
+    "replace": "sessionResponse.status === 401",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*large\" tests/setup-passkey-page.test.tsx",
+    "why": "Reviewer F1 independently requires the literal copied-code guidance after real400 body refusal on the setup page."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (!controller.signal.aborted) setState({ status: \"sign-in\",\n              message: \"Could not reach Control Room to sign in. Check your connection and try again on this page.\",\n              retry: ownerCode !== null && code === ownerCode });",
+    "replace": "if (!controller.signal.aborted) setState({ status: \"failed\" });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*dropped|V101 F2.*lost-success\" tests/setup-passkey-page.test.tsx",
+    "why": "Reviewer F2 independently requires transient sign-in errors to retain a retry form and the original registration secret. Real TCP loss must fail the named recovery-state assertion when the catch becomes terminal."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "const timeout = setTimeout(() => sessionController.abort(), 10_000);",
+    "replace": "const timeout = setTimeout(() => {}, 10_000);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*slow\" tests/setup-passkey-page.test.tsx",
+    "why": "The independent application deadline is ten seconds with an eleven-second observer. Disabling abort must fail the named recovery-state assertion; test-runner timeout or crash is not proof."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "controller.signal.addEventListener(\"abort\", abortSession, { once: true });",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*unmount\" tests/setup-passkey-page.test.tsx",
+    "why": "Component unmount must cancel the real held sign-in request. Independently expected signal.aborted=true must fail without the parent-to-request cancellation link."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "message: code !== undefined ? \"Signing in\u2026\" : undefined",
+    "replace": "message: undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*slow\" tests/setup-passkey-page.test.tsx",
+    "why": "Reviewer F2 distinguishes sign-in from Face ID. The slow-session status must be the independent literal Signing in, not Waiting for Face ID."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (controller.signal.aborted) return;\n          setState({ status: \"working\" });",
+    "replace": "setState({ status: \"working\" });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*unmount-success\" tests/setup-passkey-page.test.tsx",
+    "why": "A real201 reply delivered after unmount must not launch another options request. The independent count is one initial options fetch; disabling late cancellation must produce two and fail the named assertion."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "      context.stdout(`Finish within ${completionWindow}: scan, use Face ID, then type the 6-character code here.\\n`);",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 passkey add prints\" tests/updater-cli-flip.test.mjs",
+    "why": "R2: independent lead instruction and unchanged five-minute timer require a standalone deadline; named deadline assertion must fail when printing is removed."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "retry: ownerCode !== null && code === ownerCode });",
+    "replace": "retry: false });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*qr-dropped\" tests/setup-passkey-page.test.tsx",
+    "why": "R3: real dropped TCP request with QR fragment must expose Try again and no code field; expected literal button and input absence come from the lead brief."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "retry: ownerCode !== null && code === ownerCode && sessionResponse.status >= 500",
+    "replace": "retry: false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 F2.*qr-503\" tests/setup-passkey-page.test.tsx",
+    "why": "R3: service failure must retain the already supplied QR code for retry; independent input-absence assertion must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "window.addEventListener(\"hashchange\", onHashChange);",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R4.*ready\" tests/setup-passkey-page.test.tsx",
+    "why": "R4: independent next secret must reach the options reader and replace the old comparison result; disabling hashchange must fail the named same-tab assertion."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      stop?.();\n      setState({ status: \"absent\" });",
+    "replace": "      setState({ status: \"absent\" });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R4.*pending\" tests/setup-passkey-page.test.tsx",
+    "why": "R4: replacing a pending request must abort its signal; literal true and zero late inserts are independent expected outcomes."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "        if (controller.signal.aborted) return;\n        let authorizationAssertion:",
+    "replace": "        let authorizationAssertion:",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R4.*pending\" tests/setup-passkey-page.test.tsx",
+    "why": "R4: cancelled options reply must not start WebAuthn or insert old authority; independent zero late inserts must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "Enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.",
+    "replace": "Enter the owner code.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
+    "why": "N1: independently specified Terminal source and lead fallback must appear in the rendered form."
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "Math.max(0, Math.min(300_000, registrationRemainingMs))",
+    "replace": "300_000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"V101 R2\" tests/updater-cli-flip.test.mjs",
+    "why": "R2: independent 120-second and 30-second expiry inputs must shorten the actual prompt timer; turning off the earliest-deadline cap must fail the named timeout assertion."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "        if (!controller.signal.aborted) setState({ status: \"ready\", code: displayCode });",
+    "replace": "        setState({ status: \"ready\", code: displayCode });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R4.*insert\" tests/setup-passkey-page.test.tsx",
+    "why": "R4: stale completed insert reply must not restore an old comparison code after replacement; independent old-code absence assertion must fail."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "        const response = responseJson(created), displayCode = await comparisonCode(response.id);\n        if (controller.signal.aborted) return;",
+    "replace": "        const response = responseJson(created), displayCode = await comparisonCode(response.id);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R4.*credential\" tests/setup-passkey-page.test.tsx",
+    "why": "R4: a WebAuthn result completing after replacement must not submit old authority; independent zero inserts assertion must fail."
+  },
+  {
+    "file": "tests/browser/mac-local-owner-journey.spec.ts",
+    "find": "const localOrigin = `https://localhost:${address.port}`;",
+    "replace": "const localOrigin = `https://127.0.0.1:${address.port}`;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R1\" tests/setup-passkey-page.test.tsx",
+    "why": "R1: independent hostname contract is localhost; invalid-domain fixture mutation must fail the named fixture assertion. This source contract is supplemental; real Chromium execution remains mandatory."
+  },
+  {
+    "file": "tests/browser/mac-local-owner-journey.spec.ts",
+    "find": "rp: { name: \"Disposable setup\", id: \"localhost\" }",
+    "replace": "rp: { name: \"Disposable setup\", id: \"127.0.0.1\" }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R1\" tests/setup-passkey-page.test.tsx",
+    "why": "R1: browser RP id must use the independently specified hostname; source assertion catches fixture drift but does not substitute for Chromium."
+  },
+  {
+    "file": "tests/browser/mac-local-owner-journey.spec.ts",
+    "find": "await page.goto(\"about:blank\");\n        await page.goto(link);",
+    "replace": "await page.goto(link);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"V101 R1\" tests/setup-passkey-page.test.tsx",
+    "why": "R1: a replay intended to reload must first leave the document; lead contract source assertion catches the old mistaken navigation assumption."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      if (!new URLSearchParams(nextFragment.slice(1)).has(\"reg\")) return;",
+    "replace": "      // MUTATION: treat ordinary anchors as setup authority.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R5 skip link preserves ready registration\" tests/setup-passkey-page.test.tsx",
+    "why": "The layout skip link must preserve the displayed code without a false stop (reviewer S6)."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      if (nextFragment === currentFragment) {",
+    "replace": "      if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R5 skip link preserves ready registration\" tests/setup-passkey-page.test.tsx",
+    "why": "The same consumed registration fragment must not restart credentials or requests."
+  },
+  {
+    "file": "src/web/v1/local-owner-session.ts",
+    "find": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(10);",
+    "replace": "private readonly authenticationAttempts = new OwnerAttemptWindowV1(100);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"R7W-01: limiter itself retains exact-Origin defence before reserving\" tests/website-round7.test.ts",
+    "why": "The documented ten-attempt authentication ceiling is independent of observed admission. The existing named limiter unit admits ten requests then requires owner_attempt_limit on request eleven. Disabling only that ceiling must fail the named assertion; the separate browser limiter journey proves the visible HTTP refusal and wait message. Mutation CI does not install Chromium."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "      if (nextFragment === currentFragment) {\n        history.replaceState(null, \"\", `${window.location.pathname}${window.location.search}`);",
+    "replace": "      if (nextFragment === currentFragment) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 R6 identical reopen clears URL in ready registration\" tests/setup-passkey-page.test.tsx",
+    "why": "R6: independently required empty browser hash must fail when identical-reopen URL clearing is disabled; code and request state stay intact."
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "    if (!window.location.hash.includes(\"=\") && document.getElementById(window.location.hash.slice(1))) return;",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 N9 plain anchor reload stays without registration\" tests/setup-passkey-page.test.tsx",
+    "why": "N9: the layout anchor must survive mount without registration state or requests. Literal #private-main, absent section and zero requests are independent expectations."
+  }
+]

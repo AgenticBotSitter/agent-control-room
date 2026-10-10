@@ -427,7 +427,7 @@ test('R5G one-file package carries practice messages, phone prompts, Mac sign-in
   assert.match(practice, /Practice passkey registered\. No phone was used\./u);
   assert.match(practice, /Do not type anything/u);
   assert.match(practice, /Practice passkey did not register/u);
-  for (const text of ['six words', 'three tries', 'six-character code', 'Not ready: Face ID is NOT set up', 'Terminal closes', 'could not be fully undone', 'do not run']) {
+  for (const text of ['six words', 'three tries', 'six-character code', 'Not ready: Face ID is NOT set up', 'Terminal closes', 'could not be fully undone']) {
     assert.ok(live.toLowerCase().includes(text.toLowerCase()), text);
   }
   assert.match(output, /after `#code=` and before `&reg=`/u);
@@ -481,4 +481,14 @@ test('the snapshot checksum reaches check-serve as the shell variable, never as 
   const output = await makeOwnerPasteFile(input);
   assert.ok(!output.includes(`'"$LIVE_SNAPSHOT_SHA256"'`), 'a single-quoted variable passes the literal text and check-serve refuses it');
   assert.match(output, /--checksum "\$LIVE_SNAPSHOT_SHA256"/u);
+});
+
+test('V101 generated live guidance follows stopped Face ID recovery through the QR in any browser', async () => {
+  const output = await makeOwnerPasteFile(input);
+  const live = output.split(": '11.")[1].split(": '12.")[0];
+  assert.ok(live.includes('To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.'));
+  assert.doesNotMatch(live, /do not run.*passkey add/iu);
+  assert.ok(live.includes('Keep the Terminal message on screen.'));
+  assert.ok(live.includes('Do not retry or reload the stopped phone page.'));
+  assert.ok(live.includes('Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.<br>There is nothing to delete.'));
 });

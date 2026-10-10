@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { sha256Digest } from "../src/security";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1,
   readLocalOwnerCodeV1, renderLocalOwnerSignInPageV1 } from "../src/web/v1/local-owner-session";
@@ -472,5 +472,112 @@ test("R4C-10: a store that cannot answer does not sign the owner out", async () 
     await assert.doesNotReject(Promise.resolve(seeded.verifyLive(request("/api/v1/local-workers", { cookie }), 1_002)),
       `a live session must survive ${label}`);
     assert.equal(seeded.verify(request("/api/v1/local-workers", { cookie }), 1_002).subject, profile.subject, label);
+  }
+});
+
+
+test("V101: copied-code guidance and edge-space handling preserve exact server authentication", async () => {
+  const code = "A".repeat(43);
+  const guidance = "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.";
+  const legacyCode = "code" + "L".repeat(60);
+  for (const [input, expectedBody, expectedMessage, configuredCode] of [
+    ["short", "short", guidance], [code + "&reg=" + "R".repeat(43), code + "&reg=" + "R".repeat(43), guidance],
+    ["code=" + code, "code=" + code, guidance], ["A".repeat(20) + " " + "A".repeat(22), "A".repeat(20) + " " + "A".repeat(22), guidance],
+    [" " + code + " ", code, ""], ["  " + code, " " + code, guidance],
+    ["B".repeat(43), "B".repeat(43), "Sign-in was not accepted. Check your owner code and try again."],
+    ["A".repeat(44), "A".repeat(44), guidance],
+    ["A".repeat(42) + "&", "A".repeat(42) + "&", guidance],
+    ["A".repeat(42) + "=", "A".repeat(42) + "=", guidance],
+    ["code" + "A".repeat(39), "code" + "A".repeat(39), guidance],
+    ["\u00a0" + code, "\u00a0" + code, guidance],
+    [code + "  ", code + " ", guidance],
+    ["\t" + code, "\t" + code, guidance],
+    [legacyCode, legacyCode, "", legacyCode],
+  ]) {
+    const service = new LocalOwnerSessionServiceV1({ ...profile, ownerCodeDigest: sha256Digest({ ownerCode: configuredCode ?? code }) });
+    let sent = "", issued = false;
+    const errors: string[] = [], virtualConsole = new VirtualConsole();
+    virtualConsole.on("jsdomError", error => {
+      if (error.message !== "Not implemented: navigation (except hash changes)") errors.push(error.message);
+    });
+    const dom = new JSDOM(await renderLocalOwnerSignInPageV1().text(), { virtualConsole, url: profile.origin + "/session", runScripts: "dangerously",
+      beforeParse(window) {
+        window.AbortSignal.timeout = AbortSignal.timeout;
+        window.fetch = (async (_url: unknown, init: RequestInit) => {
+          sent = JSON.parse(String(init.body)).ownerCode;
+          try { await service.issue(request("/api/v1/local-owner-session", { origin: profile.origin }), sent, 1_000);
+            issued = true; return { ok: true, status: 201 }; }
+          catch { return { ok: false, status: 401 }; }
+        }) as typeof window.fetch;
+      } });
+    try {
+      const inputElement = dom.window.document.querySelector("input")!;
+      inputElement.value = input!;
+      dom.window.document.querySelector("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(sent, expectedBody, "remove at most one ASCII space from each edge, never interior text");
+      assert.equal(issued, expectedMessage === "", "only the exact configured code may issue a session");
+      if (!issued) assert.equal(dom.window.document.getElementById("message")!.textContent, expectedMessage,
+        "malformed copies need nonsensitive guidance");
+      assert.equal(dom.window.document.querySelector("button")!.disabled, false);
+      assert.deepEqual(errors, []);
+    } finally { dom.window.close(); }
+  }
+  // Compatibility: historical configured codes and valid codes containing 'code'
+  // are authenticated by the server, never rejected by a UI format heuristic.
+  const legacy = new LocalOwnerSessionServiceV1({ ...profile, ownerCodeDigest: sha256Digest({ ownerCode: "code" + "A".repeat(60) }) });
+  assert.ok((await legacy.issue(request("/api/v1/local-owner-session", { origin: profile.origin }), "code" + "A".repeat(60), 1_000)).cookie);
+});
+
+// Exercise the actual 512-byte JSON reader and Node adapter, rather than a
+// synthetic 401 that cannot represent an oversized pasted body.
+for (const [label, pasted] of [
+  ["ascii", "A".repeat(500)],
+  ["link", "https://example.test/setup#code=" + "A".repeat(480)],
+  ["unicode", "é".repeat(260)],
+]) test(`V101 F1 real HTTP oversized paste ${label} explains copied text`, async () => {
+  const { createServer } = await import("node:http");
+  const { createMacLocalWebProcessV1 } = await import("../src/web/v1/mac-local-web-process");
+  const { createMacLocalNodeHandler } = await import("../src/web/v1/private-node-handler");
+  const server = createServer();
+  let app: ReturnType<typeof createMacLocalWebProcessV1> | undefined, dom: JSDOM | undefined;
+  try {
+    await new Promise<void>((done, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", done); });
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    const localOrigin = `http://127.0.0.1:${address.port}`;
+    const unavailable = async (): Promise<never> => { throw new Error("sign-in must not query a database"); };
+    app = createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:paste",
+      localOwnerSession: { ...profile, origin: localOrigin, ownerCodeDigest: sha256Digest({ ownerCode: "B".repeat(43) }) },
+      database: { client: { query: unavailable, transaction: unavailable, transactionWithPreCommitCheck: unavailable },
+        close: async () => {}, isAvailable: () => true } });
+    const handler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
+      assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
+      handler: request => app!.handle(request, () => new Response("shell")) });
+    server.on("request", (request, response) => { void handler.handle(request, response); });
+    let status = 0;
+    let completed!: () => void;
+    const fetched = new Promise<void>(done => { completed = done; });
+    dom = new JSDOM(await (await fetch(localOrigin + "/session")).text(), {
+      url: localOrigin + "/session", runScripts: "dangerously", virtualConsole: new VirtualConsole(),
+      beforeParse(window) {
+        window.AbortSignal.timeout = AbortSignal.timeout;
+        window.fetch = async (url: unknown, init?: RequestInit) => {
+          const response = await fetch(localOrigin + String(url), { ...init, headers: { ...init?.headers, origin: localOrigin } });
+          status = response.status; completed(); return response;
+        };
+      },
+    });
+    const field = dom.window.document.querySelector("input")!;
+    field.value = pasted;
+    field.form!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    await fetched; await new Promise<void>(done => setImmediate(done));
+    assert.equal(status, 400, "the original server body limit stays unchanged");
+    assert.equal(dom.window.document.querySelector("#message")!.textContent,
+      "Owner codes are 43 characters. You may have copied extra text. Copy only the owner code, without the link.",
+      "an oversized paste must show copied-code guidance, not a service outage");
+    assert.equal(dom.window.document.querySelector("button")!.disabled, false, "another paste can be submitted");
+  } finally {
+    dom?.window.close(); server.closeAllConnections();
+    await new Promise<void>(done => server.close(() => done())); await app?.close();
   }
 });
