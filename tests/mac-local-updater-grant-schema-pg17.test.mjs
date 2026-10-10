@@ -37,7 +37,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -387,38 +387,43 @@ const subscription = (endpoint, n) => ({ id: "", tenantId: UPGRADE_TENANT, endpo
   auth: String.fromCharCode(97 + n).repeat(22), expiresAt: null });
 const subscriptionFields = row => ({ endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth, expiresAt: row.expiresAt });
 
-async function installedCluster(label) {
+async function installedCluster(label, { provision = ["-f", join(repoRoot, "deploy/postgres/provision-database.sql")], onScratch } = {}) {
   // Data and run files live in the job scratch tree so job cleanup can find them; only the
   // unix-socket directory is short, because a socket path is capped near 104 bytes.
+  // Everything after the first directory exists runs under one guard: a failure at any step
+  // before the cluster is returned stops the postmaster and removes both directories.
   await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(scratchRoot, `acr-installed-${label}-`));
-  const socketRoot = await mkdtemp(join(tmpdir(), "acr-isock-"));
-  const cluster = { root, socketRoot, port: requestedPort() ?? await findFreePort(), socket: socketRoot };
-  const removeScratch = () => Promise.all([rm(root, { recursive: true, force: true }), rm(socketRoot, { recursive: true, force: true })]);
-  cluster.removeScratch = removeScratch;
-  cluster.teardown = createClusterTeardown({ dataDirectory: join(root, "pg"), runDirectory: root,
-    socketDirectory: cluster.socket, port: cluster.port, pgBin: PG_BIN, removeDirectories: false });
+  let socketRoot;
+  let teardown;
+  const removeScratch = () => Promise.all([rm(root, { recursive: true, force: true }),
+    socketRoot === undefined ? undefined : rm(socketRoot, { recursive: true, force: true })]);
   try {
+    socketRoot = await mkdtemp(join(tmpdir(), "acr-isock-"));
+    const cluster = { root, socketRoot, port: requestedPort() ?? await findFreePort(), socket: socketRoot, removeScratch };
+    onScratch?.({ root, socketRoot, port: cluster.port });
+    cluster.teardown = teardown = createClusterTeardown({ dataDirectory: join(root, "pg"), runDirectory: root,
+      socketDirectory: cluster.socket, port: cluster.port, pgBin: PG_BIN, removeDirectories: false });
     exec("initdb", ["-D", join(root, "pg"), "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
     await writeFile(join(root, "pg", "pg_hba.conf"), "local all postgres trust\nlocal all all trust\n"
       + "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
     exec("pg_ctl", ["-D", join(root, "pg"), "-l", join(root, "pg.log"), "-w", "-o",
       `-p ${cluster.port} -k '${cluster.socket}' -c listen_addresses=127.0.0.1`, "start"]);
     await cluster.teardown.capturePostmasterPid();
+    cluster.operator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=postgres`;
+    cluster.migratorPassword = `m${"k".repeat(39)}`;
+    cluster.migrator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=control_room_migrator password=${cluster.migratorPassword}`;
+    cluster.migrationEnv = { CONTROL_ROOM_MIGRATOR_PASSWORD: cluster.migratorPassword, CONTROL_ROOM_APP_PASSWORD: "a".repeat(40),
+      CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(40), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "i".repeat(40) };
+    exec("psql", ["-h", "127.0.0.1", "-p", String(cluster.port), "-U", "postgres", "-d", "postgres",
+      "-v", "dbname=control_room", "-v", "ON_ERROR_STOP=1", ...provision]);
+    return cluster;
   } catch (error) {
-    try { await cluster.teardown.stop(); } catch (stopError) {
+    try { await teardown?.stop(); } catch (stopError) {
       throw new AggregateError([error, stopError], `cluster_start_and_teardown_failed:${error?.message ?? error}`);
     } finally { await removeScratch(); }
     throw error;
   }
-  cluster.operator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=postgres`;
-  cluster.migratorPassword = `m${"k".repeat(39)}`;
-  cluster.migrator = `host=${cluster.socket} port=${cluster.port} dbname=control_room user=control_room_migrator password=${cluster.migratorPassword}`;
-  cluster.migrationEnv = { CONTROL_ROOM_MIGRATOR_PASSWORD: cluster.migratorPassword, CONTROL_ROOM_APP_PASSWORD: "a".repeat(40),
-    CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(40), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "i".repeat(40) };
-  exec("psql", ["-h", "127.0.0.1", "-p", String(cluster.port), "-U", "postgres", "-d", "postgres",
-    "-v", "dbname=control_room", "-v", "ON_ERROR_STOP=1", "-f", join(repoRoot, "deploy/postgres/provision-database.sql")]);
-  return cluster;
 }
 
 /** The base release's migration tree and ledger, checked against captured digests. */
@@ -463,6 +468,16 @@ const subscriptionAcl = async client => ({
 });
 
 test("CR-E075 installed subscription grant upgrade", { skip: needsPg, timeout: 600_000 }, async () => {
+  // A setup that fails after the postmaster started leaves no server, data directory or socket directory.
+  const faulted = {};
+  await assert.rejects(installedCluster("fault", { provision: ["-c", "SELECT 1/0"], onScratch: paths => Object.assign(faulted, paths) }),
+    /division by zero/, "the injected provisioning fault surfaces as the setup failure");
+  assert.ok(faulted.root && faulted.socketRoot && faulted.port, "the faulted setup reported its scratch before it failed");
+  assert.ok(isInside(scratchRoot, faulted.root), "the faulted setup's data directory was inside the job scratch tree");
+  await assert.rejects(access(faulted.root), { code: "ENOENT" }, "a failed installed-cluster setup removes its data and run directory");
+  await assert.rejects(access(faulted.socketRoot), { code: "ENOENT" }, "a failed installed-cluster setup removes its socket directory");
+  assert.throws(() => exec("pg_isready", ["-h", "127.0.0.1", "-p", String(faulted.port)]), error => error.status === 2,
+    "a failed installed-cluster setup leaves no postmaster answering on its port");
   const installed = await installedCluster("grant");
   const stores = [];
   const admin = connectTarget(installed.operator);

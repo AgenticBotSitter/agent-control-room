@@ -11,6 +11,7 @@ import { createInterface } from "node:readline";
 import test from "node:test";
 import { Client, Pool } from "pg";
 import { withRealPostgres, requiresRealPostgres, type RealPostgres } from "./support/attack-kit/index";
+import { createWebPushChannelV1 } from "../src/web-push/v1/channel";
 import { PostgresOwnerPushStoreV1 } from "../src/web-push/v1/postgres-store";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
@@ -119,6 +120,12 @@ async function history(live: ReturnType<typeof binding>) {
   await live.store.delivered(TENANT, saved.id, "test:history", AT);
   return saved.id;
 }
+// ECDH#getPrivateKey() drops leading zero bytes (about 1 key in 256); VAPID needs the fixed 32-byte scalar.
+function vapidKeys(key = (() => { const generated = createECDH("prime256v1"); generated.generateKeys(); return generated; })()) {
+  const scalar = key.getPrivateKey();
+  const privateKey = Buffer.concat([Buffer.alloc(32 - scalar.byteLength), scalar]);
+  return { publicKey: key.getPublicKey(undefined, "uncompressed").toString("base64url"), privateKey: privateKey.toString("base64url") };
+}
 async function http(live: ReturnType<typeof binding>, run: (call: (path: string, body: unknown, cookie?: string, origin?: string, method?: string) => Promise<Response>, cookie: string) => Promise<void>, tenantId = TENANT, workspaceId = WORKSPACE) {
   const server = createServer();
   server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -126,11 +133,11 @@ async function http(live: ReturnType<typeof binding>, run: (call: (path: string,
   const origin = `http://127.0.0.1:${address.port}`;
   const profile = { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId, provider: "local-owner", subject: SUBJECT,
     ownerCodeDigest: sha256Digest({ ownerCode: CODE }), sessionSeconds: 900 };
-  const key = createECDH("prime256v1"); key.generateKeys();
+  const vapid = vapidKeys();
   try {
   const app = createMacLocalWebProcessV1({ origin, workspaceId, localOwnerSession: profile,
     localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(live.db.client, profile), database: live.db,
-    ownerWebPush: { subject: "https://fixture.ts.net", publicKey: key.getPublicKey().toString("base64url"), privateKey: key.getPrivateKey().toString("base64url") } });
+    ownerWebPush: { subject: "https://fixture.ts.net", publicKey: vapid.publicKey, privateKey: vapid.privateKey } });
   const render = async () => new Response("unused");
   const transport = createMacLocalNodeHandler({ origin, application: app, handler: request => app.handle(request, render),
     assets: { count: 0, digest: "empty", respond: () => undefined } });
@@ -148,7 +155,7 @@ const payload = (input = INPUT) => ({ endpoint: input.endpoint, expirationTime: 
   keys: { p256dh: input.p256dh, auth: input.auth } });
 
 // Children receive credentials over stdin, remain attached and emit readiness
-// only after authenticating. All50 READY lines precede the shared go signal.
+// only after authenticating. All 50 READY lines precede the shared go signal.
 const CHILD = `import {Client} from 'pg'; import {createInterface} from 'node:readline';
 import {PostgresOwnerPushStoreV1} from './src/web-push/v1/postgres-store.ts';
 const lines=createInterface({input:process.stdin}); const iterator=lines[Symbol.asyncIterator]();
@@ -322,3 +329,12 @@ test("CR-E075 invalid and expiry", () => fixture(9, async ({ live }) => {
   });
   await subscribe(live,{ ...INPUT, expiresAt: "2000-01-01T00:00:00.000Z" }); assert.deepEqual(await live.store.list(TENANT),[]);
 }));
+test("CR-E075 VAPID test key keeps a leading zero byte", () => {
+  const key = createECDH("prime256v1"); key.setPrivateKey(Buffer.from(`00${"11".repeat(31)}`, "hex"));
+  assert.equal(key.getPrivateKey().byteLength, 31, "node drops the leading zero byte: the mechanism behind the 1-in-256 flake");
+  const keys = vapidKeys(key);
+  assert.equal(Buffer.from(keys.privateKey, "base64url").byteLength, 32, "the test key is the fixed 32-byte VAPID scalar");
+  assert.equal(Buffer.from(keys.privateKey, "base64url")[0], 0);
+  assert.doesNotThrow(() => createWebPushChannelV1({ subject: "https://fixture.ts.net", ...keys } as never),
+    "a valid VAPID key with a leading zero byte must construct the production channel");
+});
