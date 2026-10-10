@@ -173,5 +173,12 @@
     "replace": "const SEND_CONCURRENCY_V1 = 1;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "Lead disposition permits final D02 behavior plus named serial-worker disabling mutation; historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": ".map(receipt => receipt.subscription_id))].sort()) {",
+    "replace": ".map(receipt => receipt.subscription_id))]) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two literal parent ids must be locked ascending even when the real-reader record replay is reversed; removing sorting must fail the independent order assertion."
   }
 ]

@@ -1222,7 +1222,13 @@ test("WP-D23: removed parents precede all delivery writes (synthetic)", async ()
         return result;
       },
     }))};
-    await durableDispatcher(f,{kind:"web-push",async send(){return {statusCode:410};}},db).dispatch();
+    const actual=new PostgresOwnerPushStoreV1(db);
+    // Synthetic ordering variation replays the actual reader's records in
+    // reverse; the store interface does not promise subscription order.
+    const reverseStore:OwnerPushStoreV1={subscribe:i=>actual.subscribe(i),unsubscribe:(t,e)=>actual.unsubscribe(t,e),
+      list:async t=>(await actual.list(t)).reverse(),reserve:(...args)=>actual.reserve(...args),
+      delivered:(...args)=>actual.delivered(...args),failed:(...args)=>actual.failed(...args)};
+    await durableDispatcher(f,{kind:"web-push",async send(){return {statusCode:410};}},db,()=>f.at,reverseStore).dispatch();
     assert.equal(writes.length,4,"WP-D23 two parent deletes and two ledger attempts");
     assert.ok(writes.slice(0,2).every(write => /DELETE FROM owner_web_push_subscriptions/.test(write.sql)),
       "B-LOCK-ORDER: every removed parent precedes every delivery write");
