@@ -1283,7 +1283,7 @@ test("missing or invalid held anchors are persisted before delivery and survive 
   }
 });
 
-test("synchronized recovery callers merge the current disk minimum, including 50 callers", { timeout: 30_000 }, async () => {
+test("synchronized recovery callers merge the current disk minimum, including 50 callers", { timeout: 30_000 }, async (t) => {
   const ports = await recoveryPorts();
   const base = Date.now(), directory = await mkdtemp(join(tmpdir(), "fleet-held-recovery-"));
   const claimId = `fleet-claim:${"4".repeat(32)}`;
@@ -1328,7 +1328,7 @@ test("synchronized recovery callers merge the current disk minimum, including 50
     for (const count of [50, 20, 2]) {
       const inputs = Array.from({ length: count }, (_, i) =>
         ({ ...record, heldAt: base + i + 1, deadlineAt: base + 1000 + i * 1000 }));
-      const preBurstMinimum = expectedDeadline, burstStarted = performance.now();
+      const preBurstMinimum = expectedDeadline;
       const writers = inputs.map(input => ports.testWrite(directory, claimId, input));
       pending.push(...writers);
       const settled = await Promise.allSettled(writers);
@@ -1341,6 +1341,14 @@ test("synchronized recovery callers merge the current disk minimum, including 50
         }
       });
       assert.ok(successful.length > 0, "the burst makes progress");
+      // Healthy 50-writer bursts refused at most 25 under CPU load and 17 under
+      // IO load. Allow three more than that measured worst case, while still
+      // detecting the excessive refusals caused by a 100 ms hold per writer.
+      // Count initial outcomes, before retries can hide lost burst progress.
+      const maxRefused = count === 50 ? 28 : Math.floor(count / 2);
+      t.diagnostic(`initial ${count}-writer burst: ${successful.length} saved, ${refused.length} refused; limit ${maxRefused}`);
+      assert.ok(refused.length <= maxRefused,
+        `healthy burst bounds initial refusals: ${refused.length} of ${count} exceeds ${maxRefused}`);
       const completedInputs = successful.map(i => inputs[i]!);
       expectedDeadline = Math.min(expectedDeadline, ...successful.map(i => inputs[i]!.deadlineAt));
       const merged = await ports.testRead(directory, claimId);
@@ -1352,12 +1360,6 @@ test("synchronized recovery callers merge the current disk minimum, including 50
         await retry; // Exactly one sequential retry, after every contender settled.
         completedInputs.push(inputs[i]!);
       }
-      // connector.mjs declares a 2000 ms lock wait. Healthy measured bursts,
-      // including retries under CPU/IO load, finish below this two-attempt budget.
-      // A 100 ms hold per writer cannot finish 50 writes inside that budget.
-      const lockWaitMs = 2_000, elapsedMs = performance.now() - burstStarted;
-      assert.ok(elapsedMs <= lockWaitMs * 2,
-        `every writer completes within the declared wait plus one retry: ${elapsedMs}ms exceeds ${lockWaitMs * 2}ms`);
       expectedDeadline = Math.min(preBurstMinimum, ...completedInputs.map(input => input.deadlineAt));
       const saved = await ports.testRead(directory, claimId);
       assert.equal(saved.deadlineAt, expectedDeadline, "the disk minimum equals the minimum over completed inputs");
