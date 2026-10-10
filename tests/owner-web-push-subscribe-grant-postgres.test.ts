@@ -126,14 +126,14 @@ function vapidKeys(key = (() => { const generated = createECDH("prime256v1"); ge
   const privateKey = Buffer.concat([Buffer.alloc(32 - scalar.byteLength), scalar]);
   return { publicKey: key.getPublicKey(undefined, "uncompressed").toString("base64url"), privateKey: privateKey.toString("base64url") };
 }
-async function http(live: ReturnType<typeof binding>, run: (call: (path: string, body: unknown, cookie?: string, origin?: string, method?: string) => Promise<Response>, cookie: string) => Promise<void>, tenantId = TENANT, workspaceId = WORKSPACE) {
+async function http(live: ReturnType<typeof binding>, run: (call: (path: string, body: unknown, cookie?: string, origin?: string, method?: string) => Promise<Response>, cookie: string) => Promise<void>, tenantId = TENANT, workspaceId = WORKSPACE, ecdh?: ReturnType<typeof createECDH>) {
   const server = createServer();
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const address = server.address(); assert.ok(address && typeof address !== "string");
   const origin = `http://127.0.0.1:${address.port}`;
   const profile = { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId, provider: "local-owner", subject: SUBJECT,
     ownerCodeDigest: sha256Digest({ ownerCode: CODE }), sessionSeconds: 900 };
-  const vapid = vapidKeys();
+  const vapid = vapidKeys(ecdh);
   try {
   const app = createMacLocalWebProcessV1({ origin, workspaceId, localOwnerSession: profile,
     localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(live.db.client, profile), database: live.db,
@@ -329,7 +329,7 @@ test("CR-E075 invalid and expiry", () => fixture(9, async ({ live }) => {
   });
   await subscribe(live,{ ...INPUT, expiresAt: "2000-01-01T00:00:00.000Z" }); assert.deepEqual(await live.store.list(TENANT),[]);
 }));
-test("CR-E075 VAPID test key keeps a leading zero byte", () => {
+test("CR-E075 VAPID test key keeps a leading zero byte", () => fixture(10, async ({ live }) => {
   const key = createECDH("prime256v1"); key.setPrivateKey(Buffer.from(`00${"11".repeat(31)}`, "hex"));
   assert.equal(key.getPrivateKey().byteLength, 31, "node drops the leading zero byte: the mechanism behind the 1-in-256 flake");
   const keys = vapidKeys(key);
@@ -337,4 +337,11 @@ test("CR-E075 VAPID test key keeps a leading zero byte", () => {
   assert.equal(Buffer.from(keys.privateKey, "base64url")[0], 0);
   assert.doesNotThrow(() => createWebPushChannelV1({ subject: "https://fixture.ts.net", ...keys } as never),
     "a valid VAPID key with a leading zero byte must construct the production channel");
-});
+  await http(live, async (call, cookie) => assert.equal((await call("/api/v1/owner-web-push", payload(), cookie)).status, 204,
+    "the real owner HTTP save works behind a 31-byte-scalar key"), TENANT, WORKSPACE, key);
+  for (let run = 0; run < 300; run += 1) {
+    const fresh = vapidKeys();
+    assert.equal(Buffer.from(fresh.privateKey, "base64url").byteLength, 32, `generated test key ${run} is 32 bytes`);
+    createWebPushChannelV1({ subject: "https://fixture.ts.net", ...fresh } as never);
+  }
+}));
