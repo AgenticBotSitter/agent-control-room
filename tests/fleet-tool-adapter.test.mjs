@@ -157,20 +157,23 @@ test("readiness barrier refuses partial PID and heartbeat files", async t => {
     ["partial PID", true, false, [2, 1]], ["partial heartbeat", false, true, [1, 2]], ["both partial", true, true, [2, 2]],
   ]) await t.test(name, async sub => {
     const dir = await workspace(sub), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat"), started = join(dir, "partial-started"), completed = join(dir, "partial-completed");
-    const script = await executable(dir, `import { writeFileSync } from "node:fs";
+    const completionRelease = join(dir, "partial-release");
+    const script = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
   const publications = [0, 0];
   const publish = (index, path, value) => { writeFileSync(path, value); publications[index] += 1; };
-  process.once("SIGUSR2", () => {
+  const timer = setInterval(() => {
+    if (!existsSync(${JSON.stringify(completionRelease)})) return;
+    clearInterval(timer);
     // Complete only partial fields: rewriting ready content can truncate it
     // after the reader has already observed a valid PID/heartbeat pair.
     if (${JSON.stringify(partialPid)}) publish(0, ${JSON.stringify(marker)}, String(process.pid));
     if (${JSON.stringify(partialHeartbeat)}) publish(1, ${JSON.stringify(heartbeat)}, "ready");
     writeFileSync(${JSON.stringify(completed)}, JSON.stringify(publications));
-  });
+  }, 10);
   publish(0, ${JSON.stringify(marker)}, ${JSON.stringify(partialPid)} ? "" : String(process.pid));
   publish(1, ${JSON.stringify(heartbeat)}, ${JSON.stringify(partialHeartbeat)} ? "" : "ready");
   writeFileSync(${JSON.stringify(started)}, String(process.pid)); process.stdin.resume();`);
-    let handedOff = false, pid, observedPartial;
+    let handedOff = false, pid, observedPartial, readinessError;
     const partialRead = new Promise(done => { observedPartial = done; });
     const pending = readyTool(sub, script, marker, heartbeat, { stdin: "pipe", observation: values => {
       if ((values[0].length === 0) === partialPid && (values[1].length === 0) === partialHeartbeat) observedPartial();
@@ -185,7 +188,17 @@ test("readiness barrier refuses partial PID and heartbeat files", async t => {
         "the real child must expose its partial readiness before the setup bound");
       await new Promise(done => setImmediate(done));
       assert.equal(handedOff, false, "partial readiness files cannot release handoff before their real contents arrive");
-    } finally { if (pid) process.kill(pid, "SIGUSR2"); await pending; }
+    } catch (error) { readinessError = error; throw error; }
+    finally {
+      // A persistent release survives delayed scheduling; no signal is needed.
+      await writeFile(completionRelease, "release");
+      await pending.catch(error => {
+        if (!readinessError) throw new assert.AssertionError({
+          message: "the partial-write gate was observed but completion stimulus did not publish readiness",
+          cause: error,
+        });
+      });
+    }
     let actualPublications;
     await waitForToolState(async () => {
       try { actualPublications = JSON.parse(await readFile(completed, "utf8")); return true; }
@@ -226,14 +239,20 @@ writeFileSync(${JSON.stringify(initialized)}, "initialized"); process.stdin.resu
 
 test("module readiness barrier waits for real initialization before admission", async t => {
   const dir = await workspace(t), started = join(dir, "module-started");
-  const module = await executable(dir, `import { writeFileSync } from "node:fs";
+  const initializationRelease = join(dir, "module-release");
+  const module = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(started)}, "started");
-await new Promise(done => process.once("message", done));`);
+await new Promise(done => {
+  const timer = setInterval(() => {
+    if (!existsSync(${JSON.stringify(initializationRelease)})) return;
+    clearInterval(timer); done();
+  }, 10);
+});`);
   const script = await executable(dir, `import ${JSON.stringify("./" + basename(module))};
 console.log("module initialized");`);
   const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
-  let child, admitted = false;
-  const pending = preparedToolRunner(t, registry, { startProcess: (...args) => { child = nodeSpawn(...args); return child; } })
+  let admitted = false, initializationError;
+  const pending = preparedToolRunner(t, registry)
     .then(runner => { admitted = true; return runner; });
   pending.catch(() => {});
   try {
@@ -243,7 +262,16 @@ console.log("module initialized");`);
     }, "the real fixture module must reach its initialization gate");
     await new Promise(done => setImmediate(done));
     assert.equal(admitted, false, "admission must wait for real module initialization, not process spawn");
-  } finally { child.send("initialize"); await pending; }
+  } catch (error) { initializationError = error; throw error; }
+  finally {
+    await writeFile(initializationRelease, "release");
+    await pending.catch(error => {
+      if (!initializationError) throw new assert.AssertionError({
+        message: "the initialization gate was observed but initialization stimulus was not acknowledged",
+        cause: error,
+      });
+    });
+  }
   const result = await (await pending).execute(input());
   assert.equal(result.summary, "module initialized");
 });
@@ -739,10 +767,10 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     const held = await heldReply;
     assert.equal(held[0], true, "the real escaped stdout pipe produces bytes after parent exit at handoff");
     assert.equal(held[1], true, "the real escaped stderr pipe produces bytes after parent exit at handoff");
-    // The product declares a 250 ms grace, not a 700 ms wall-clock service
-    // promise. Control only the timeout registered synchronously by its exit
+    // Control only the timeout registered synchronously by the product's exit
     // listener; real pipes, filesystem work and all other timers stay real.
     // This separates the declared deadline from scheduling delays on CI.
+    // Add that virtual grace back into the base's total 700 ms execute budget.
     const declaredDrainMs = 250;
     let registeringDrain = false, elapsed = 0, started, handoff;
     const drainTimers = new Set();
@@ -778,8 +806,11 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       });
       return escapedChild;
     } }).execute(input()).then(value => ({ value }), error => ({ error }));
+    let handoffError;
     try {
-      await waitForToolSignal(handedOff, "the recorded parent exit must reach the drain listener");
+      await waitForToolSignal(Promise.race([handedOff, pending.then(result => {
+        throw result.error ?? new Error("execute settled before drain handoff");
+      })]), "the recorded parent exit must reach the drain listener");
       assert.equal(drainTimers.size, 1, "the real exit listener must declare one drain deadline");
       advanceDrain(declaredDrainMs - 1);
       await new Promise(done => setImmediate(done));
@@ -793,8 +824,12 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
         "escaped stderr must close at the independently declared 250ms drain bound");
       const result = await pending;
       assert.equal(result.error?.code, "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
-      assert.ok(performance.now() - started < 700, "an escaped stdout holder cannot wedge execute");
-    } finally {
+      assert.ok(performance.now() - started + declaredDrainMs < 700, "an escaped stdout holder cannot wedge execute");
+    } catch (error) { handoffError = error; throw error; }
+    finally {
+      // Also release a live parent when a broken exit barrier is refused.
+      // Preserve the first assertion if later pipe cleanup fails too.
+      escapedChild.stdin.end();
       // Release controls natural EOF. It never races a fixture lifetime timer.
       escapedChild.stdio[3].end();
       // Close our unused read half before group retirement. Otherwise a
@@ -803,8 +838,10 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       advanceDrain(20_000);
       timeoutMock.mock.restore(); clearMock.mock.restore();
       await pending;
-      await waitForToolSignal(pipesClosed, "both real inherited pipes must close after controlled release");
-      assert.equal(controlError, undefined, "controlled holder release must not leave a transport error");
+      try {
+        await waitForToolSignal(pipesClosed, "both real inherited pipes must close after controlled release");
+        assert.equal(controlError, undefined, "controlled holder release must not leave a transport error");
+      } catch (error) { if (!handoffError) throw error; }
     }
 
   } finally {
