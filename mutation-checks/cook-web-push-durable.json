@@ -197,10 +197,10 @@
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
-    "find": "Array.from({length:DISPATCHERS},()=>durableDispatcher(f,channel,meter.db).dispatch())",
-    "replace": "Array.from({length:2},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "find": "peak = Math.max(peak, ++live);",
+    "replace": "peak = Math.min(peak, ++live);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
-    "why": "A fixture that stops contending is not a contention proof: too few claimants fails the all-claimants-outstanding peak assertion."
+    "why": "The operation meter must really count outstanding operations: a meter stuck at zero fails the peak-floor assertion, so a passing budget check is never vacuous."
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
