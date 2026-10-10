@@ -53,6 +53,18 @@ const TENANT = "tenant:r7i-unhappy", WORKSPACE = "workspace:r7i", PROJECT = "pro
  * actors, which each own their own pool. */
 const OPERATION_BUDGET = privateDatabaseLimits.connections * 2;
 const DISPATCHERS = privateDatabaseLimits.connections;
+/** Worst-case concurrency of one dispatch: its 8 send workers
+ * (`src/web-push/v1/dispatcher.ts` SEND_CONCURRENCY_V1), each holding at most
+ * one operation. Two racing claims split rows under SKIP LOCKED, so ANY claimant
+ * can end up with a full set of workers; a same-pool fixture is therefore only
+ * in budget by arithmetic when claimants x claim width <= OPERATION_BUDGET. */
+const SEND_WORKERS = 8;
+/** `DISPATCHERS` racing claimants each claim at most this many rows, so even a
+ * split in which every claimant wins rows keeps `DISPATCHERS * CLAIM_WIDTH`
+ * operations outstanding, which is the whole budget and no more. */
+const CLAIM_WIDTH = OPERATION_BUDGET / DISPATCHERS;
+/** Claimants that may each claim the default 64 rows (full 8-worker width). */
+const FULL_WIDTH_CLAIMANTS = OPERATION_BUDGET / SEND_WORKERS;
 const SCOPE = { tenantId: TENANT, workspaceId: WORKSPACE };
 const ADAPTER = `adapter:manual:${sha256Digest(SCOPE).slice(7, 39)}`;
 const PROVIDER = "https://control.invalid/r7i-unhappy";
@@ -100,6 +112,8 @@ async function inBudgetWaves<T>(callers: number, start: () => Promise<T>) {
   return settled;
 }
 const refusedCount = (settled: PromiseSettledResult<unknown>[]) => settled.filter(each => each.status === "rejected").length;
+const widestClaim = (settled: PromiseSettledResult<readonly unknown[]>[]) =>
+  Math.max(0, ...settled.map(each => each.status === "fulfilled" ? each.value.length : 0));
 
 // PG17 has no pg_stat_database serialization-failure column, so actual server
 // SQLSTATE 40001 and 40P01 error records are counted from the server log too.
@@ -316,11 +330,13 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         const before = await server();
         const dispatchers = Array.from({ length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: meter.db,
           tenantId: TENANT, store: new PostgresOwnerPushStoreV1(meter.db), channel }));
-        const settledDispatches = await Promise.allSettled(dispatchers.map(each => each.dispatch()));
+        const settledDispatches = await Promise.allSettled(dispatchers.map(each => each.dispatch(CLAIM_WIDTH)));
         const outcomes = settledDispatches.flatMap(each => each.status === "fulfilled" ? [each.value] : []);
         const after = await server();
         assert.equal(refusedCount(settledDispatches), 0,
           `no dispatcher may be refused inside the operation budget: ${JSON.stringify(settledDispatches.filter(each => each.status === "rejected").map(each => String((each as PromiseRejectedResult).reason)))}`);
+        assert.ok(widestClaim(settledDispatches) <= CLAIM_WIDTH,
+          `a burst dispatcher claimed ${widestClaim(settledDispatches)} rows; the budget arithmetic allows ${CLAIM_WIDTH}`);
         assert.ok(meter.peak() <= OPERATION_BUDGET,
           `burst peak ${meter.peak()} outstanding database operations exceeds the admission budget ${OPERATION_BUDGET}`);
         assert.ok(meter.peak() >= DISPATCHERS,
@@ -566,16 +582,19 @@ durableTwin("WP-D02", "overlapping claimants observe a losing branch", async f=>
   const channel: OwnerNotificationChannelV1={kind:'web-push',async send(_s,p){
     tags.push(p.tag);max=Math.max(max,++active);await nextTurn();active--;return {statusCode:201};
   }};
-  // DISPATCHERS claimants start together on one shared database client, which is
-  // the whole operation-admission budget (OPERATION_BUDGET) once each claimant's
-  // claim and the winner's send workers are counted. The same-pool fixture
-  // proves the claim race inside the budget; 20 separate pools race below.
+  // FULL_WIDTH_CLAIMANTS claimants, each able to claim every row and run a full
+  // set of send workers, start together on one shared database client. A claim
+  // split under SKIP LOCKED can hand each of them 8 workers, which is exactly the
+  // operation-admission budget (OPERATION_BUDGET) and no more, so this is in
+  // budget by arithmetic, not by timing. A wider same-pool race measures the
+  // pool's refusal instead (CR-E079); the 20-pool race with observed losers is
+  // the separate-process WP-D02 body below.
   const meter=meterOperations(f.db);
-  const results=await Promise.allSettled(Array.from({length:DISPATCHERS},()=>durableDispatcher(f,channel,meter.db).dispatch()));
+  const results=await Promise.allSettled(Array.from({length:FULL_WIDTH_CLAIMANTS},()=>durableDispatcher(f,channel,meter.db).dispatch()));
   assert.equal(refusedCount(results),0,'WP-D02 no claimant is refused inside the operation budget');
   assert.ok(meter.peak()<=OPERATION_BUDGET,`WP-D02 peak ${meter.peak()} outstanding operations exceeds the admission budget ${OPERATION_BUDGET}`);
-  assert.ok(meter.peak()>=DISPATCHERS,`WP-D02 peak ${meter.peak()} never had all ${DISPATCHERS} claimants outstanding together`);
-  assert.ok(results.some(r=>r.status==='fulfilled' && r.value.length===0),'WP-D02 a losing claimant actually runs');
+  assert.ok(meter.peak()>=FULL_WIDTH_CLAIMANTS,`WP-D02 peak ${meter.peak()} never had all ${FULL_WIDTH_CLAIMANTS} claimants outstanding together`);
+  assert.ok(results.reduce((all,r)=>all+(r.status==='fulfilled'?r.value.length:0),0)<=40,'WP-D02 overlapping claimants never claim more than the 40 rows');
   for(let tick=0;tick<3;tick++)await durableDispatcher(f,channel,f.db,()=>f.at+30_000*(tick+1)).dispatch();
   assert.equal(tags.length,40,'WP-D02 exactly40 provider calls');
   assert.equal(new Set(tags).size,40,'WP-D02 no duplicate event');
@@ -816,8 +835,9 @@ durableTwin("WP-D12", "seed99 healthy contention has no ownerless tail",async f=
   // operation budget (OPERATION_BUDGET). Separate pools race in WP-D21.
   const meter=meterOperations(f.db);
   for(const callers of [20,50]){
-    const waves=await inBudgetWaves(callers,()=>durableDispatcher(f,channel,meter.db).dispatch());
+    const waves=await inBudgetWaves(callers,()=>durableDispatcher(f,channel,meter.db).dispatch(CLAIM_WIDTH));
     assert.equal(waves.length,callers,`WP-D12 all ${callers} dispatch calls settled`);
+    assert.ok(widestClaim(waves)<=CLAIM_WIDTH,`WP-D12 a dispatcher claimed ${widestClaim(waves)} rows; the budget arithmetic allows ${CLAIM_WIDTH}`);
     assert.equal(refusedCount(waves),0,`WP-D12 no dispatcher of ${callers} is refused inside the operation budget`);
   }
   assert.ok(meter.peak()<=OPERATION_BUDGET,`WP-D12 peak ${meter.peak()} outstanding operations exceeds the admission budget ${OPERATION_BUDGET}`);

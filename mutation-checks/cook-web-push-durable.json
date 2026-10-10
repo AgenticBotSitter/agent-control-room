@@ -190,10 +190,10 @@
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
-    "find": "Array.from({length:DISPATCHERS},()=>durableDispatcher(f,channel,meter.db).dispatch())",
-    "replace": "Array.from({length:DISPATCHERS*4},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "find": "Array.from({length:FULL_WIDTH_CLAIMANTS},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "replace": "Array.from({length:FULL_WIDTH_CLAIMANTS*16},()=>durableDispatcher(f,channel,meter.db).dispatch())",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
-    "why": "Overlapping claimants must stay inside the private-web operation-admission budget: more claimants than the pool admits fails the measured peak and no-refusal assertions."
+    "why": "Overlapping full-width claimants must stay inside the private-web operation-admission budget: far more claimants than the pool admits fails the measured peak and no-refusal assertions."
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
@@ -211,10 +211,10 @@
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
-    "find": "const OPERATION_BUDGET = privateDatabaseLimits.connections * 2;",
-    "replace": "const OPERATION_BUDGET = privateDatabaseLimits.connections * 1;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
-    "why": "The declared budget is eight running plus eight queued operations; halving it must fail the measured-peak assertion against the independent peak."
+    "find": "dispatchers.map(each => each.dispatch(CLAIM_WIDTH)));",
+    "replace": "dispatchers.map(each => each.dispatch()));",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Racing dispatchers are in budget by arithmetic only while each claims at most CLAIM_WIDTH rows: letting each claim the default 64 fails the widest-claim assertion, because 40 rows over 8 dispatchers always leave one claimant more than the width."
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
@@ -229,5 +229,12 @@
     "replace": "(log.match(/ERROR:\\s+40001X:/g) ?? []).length",
     "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "The server-log serialization observer must see a deliberate 40001; blinding it fails the control assertion so a zero delta is never vacuous."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "durableDispatcher(f,channel,meter.db).dispatch(CLAIM_WIDTH));",
+    "replace": "durableDispatcher(f,channel,meter.db).dispatch());",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The seed99 waves are in budget by arithmetic only while each dispatcher claims at most CLAIM_WIDTH rows: the default 64 fails the widest-claim assertion, because the first wave of 8 callers always claims a wider set than the width."
   }
 ]
