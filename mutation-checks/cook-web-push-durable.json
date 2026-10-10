@@ -225,6 +225,13 @@
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "settledDispatches.push(...await Promise.allSettled(dispatchers.map(each => each.dispatch(CLAIM_WIDTH))));",
+    "replace": "for (const each of dispatchers) settledDispatches.push(...await Promise.allSettled([each.dispatch(CLAIM_WIDTH)]));",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Run the burst's dispatchers one at a time. A serial burst proves nothing about racing claims: the measured peak of outstanding database operations stays at 2, below the 8 dispatchers, and the burst peak assertion must fail by name (\"never had all 8 dispatchers' operations outstanding together\")."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
     "find": "(log.match(/ERROR:\\s+40001:/g) ?? []).length",
     "replace": "(log.match(/ERROR:\\s+40001X:/g) ?? []).length",
     "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
