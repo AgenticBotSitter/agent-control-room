@@ -1309,8 +1309,7 @@ test("synchronized recovery callers merge the current disk minimum, including 50
     pending.push(...callers);
     // Observe immediately, then check every outcome after the disk barrier.
     const outcomes = Promise.allSettled(callers);
-    const barrierDeadline = Date.now() + 10_000;
-    while (Date.now() < barrierDeadline) {
+    for (let i = 0; i < 200; i++) {
       if ((await ports.testRead(directory, claimId)).deadlineAt === base + 10_000) break;
       await new Promise(done => setTimeout(done, 5));
     }
