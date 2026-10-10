@@ -290,6 +290,8 @@ test("CR-E075 upsert inventory reads comments and strings by their lexical rules
     ["escape-string markers", withSql("INSERT INTO unknown_push_store(id,note) VALUES(1,E'\\'/*') ON CONFLICT(id) DO UPDATE SET note=E'\\'*/'")],
     ["backslash-quote inside an E string does not end it", withSql(`SELECT E'\\'--'; ${unknown}`)],
     ["doubled quote inside a string does not end it", withSql(`SELECT 'it''s --'; ${unknown}`)],
+    ["doubled quotes inside an EXECUTE string do not end it early",
+      withSql("SELECT 'INSERT INTO unknown_push_store(id,note) VALUES(1,''x'') ON CONFLICT(id) DO UPDATE SET note=''y'''")],
     ["comment marker inside a quoted identifier", withSql(`SELECT 1 AS "a--b"; ${unknown}`)],
     ["comment closed only by its matching nested end", withSql(`/* a /* b */ c */ ${unknown}`)],
     ["upsert inside a dollar-quoted DO block", withSql(`DO $$ BEGIN ${unknown}; END $$`)],

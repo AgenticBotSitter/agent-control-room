@@ -116,14 +116,14 @@
     "find": "        const end = readString(at, true);",
     "replace": "        const end = readString(at, false);",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
-    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'backslash-quote inside an E string does not end it' (Missing expected exception) when E strings honour no backslash escape."
+    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'escape-string markers must not hide an unknown upsert' (the refusal text no longer matches) when E strings honour no backslash escape."
   },
   {
     "file": "tests/owner-web-push-upsert-grants.test.mjs",
     "find": "        if (sql[at + 1] === \"'\") at += 1;",
     "replace": "        if (false) at += 1;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
-    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'doubled quote inside a string does not end it' (Missing expected exception) when a doubled quote ends the string."
+    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'doubled quotes inside an EXECUTE string do not end it early' (Missing expected exception) when a doubled quote ends the string."
   },
   {
     "file": "tests/owner-web-push-upsert-grants.test.mjs",
