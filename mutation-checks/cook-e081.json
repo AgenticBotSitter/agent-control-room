@@ -1,0 +1,65 @@
+[
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "test(\"withRealPostgres cleans up after a thrown error\"",
+    "replace": "test(\"mutation omitted original cleanup feature\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Base-captured literal name inventory must refuse losing the original cleanup body; fails the named conservation assertion."
+  },
+  {
+    "file": "package.json",
+    "find": " tests/attack-kit-shutdown-real-postgres.test.ts",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 routes all eight partitions through the package lane and example\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "The approved eight-file contract must refuse omitting the shutdown shard from the real lane; independent routing assertion fails."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "lane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "replace": "// mutation: omit this shard closing checks",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Independent allocation requires closing checks in every shard; omitting the shutdown lane closing checks fails its named assertion."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "  assert.equal(completed, 2, \"a required-but-skipped cluster test must fail the run\");",
+    "replace": "// mutation: disable completion assertion",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\"; import vm from \"node:vm\"; import {readFileSync} from \"node:fs\";\ntest(\"CR-E081 completion observer refuses bounded-usage-read-postgres.test.ts skipped required bodies\",()=>{\nconst source=readFileSync(\"tests/bounded-usage-read-postgres.test.ts\",\"utf8\"); const begin=source.lastIndexOf('\"'\"'\\ntest(\"'\"'\"'); assert.ok(begin>=0,\"real closing guard is loaded\");\nlet guard; vm.runInNewContext(source.slice(begin), {test:(_name,fn)=>{guard=fn;},assert,PG:true,completed:0});\nassert.equal(typeof guard,\"function\",\"the actual shard registered its completion guard\");\nassert.throws(guard,{code:\"ERR_ASSERTION\"},\"independent incomplete-run observation must be refused\");\n});'",
+    "why": "Synthetic node:test registration observes the actual closing guard with an independently specified incomplete state; disabling it fails the named outer assertion without starting a cluster. Real filtered-body refusal is separately required."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "assert.equal(completed, 0, \"a lane without PostgreSQL completes no cluster bodies\");",
+    "replace": "",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\"; import vm from \"node:vm\"; import {readFileSync} from \"node:fs\";\ntest(\"CR-E081 completion observer refuses bounded-usage-read-postgres.test.ts completed bodies without PostgreSQL\",()=>{\nconst source=readFileSync(\"tests/bounded-usage-read-postgres.test.ts\",\"utf8\"); const begin=source.lastIndexOf('\"'\"'\\ntest(\"'\"'\"'); assert.ok(begin>=0,\"real closing guard is loaded\");\nlet guard; vm.runInNewContext(source.slice(begin), {test:(_name,fn)=>{guard=fn;},assert,PG:false,completed:1});\nassert.equal(typeof guard,\"function\",\"the actual shard registered its completion guard\");\nassert.throws(guard,{code:\"ERR_ASSERTION\"},\"independent incomplete-run observation must be refused\");\n});'",
+    "why": "Synthetic node:test registration observes the actual closing guard with an independently specified incomplete state; disabling it fails the named outer assertion without starting a cluster. Real filtered-body refusal is separately required."
+  },
+  {
+    "file": "tests/bounded-usage-pricing-postgres.test.ts",
+    "find": "  assert.equal(completed, 2, \"a required-but-skipped cluster test must fail the run\");",
+    "replace": "// mutation: disable completion assertion",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\"; import vm from \"node:vm\"; import {readFileSync} from \"node:fs\";\ntest(\"CR-E081 completion observer refuses bounded-usage-pricing-postgres.test.ts skipped required bodies\",()=>{\nconst source=readFileSync(\"tests/bounded-usage-pricing-postgres.test.ts\",\"utf8\"); const begin=source.lastIndexOf('\"'\"'\\ntest(\"'\"'\"'); assert.ok(begin>=0,\"real closing guard is loaded\");\nlet guard; vm.runInNewContext(source.slice(begin), {test:(_name,fn)=>{guard=fn;},assert,PG:true,completed:0});\nassert.equal(typeof guard,\"function\",\"the actual shard registered its completion guard\");\nassert.throws(guard,{code:\"ERR_ASSERTION\"},\"independent incomplete-run observation must be refused\");\n});'",
+    "why": "Synthetic node:test registration observes the actual closing guard with an independently specified incomplete state; disabling it fails the named outer assertion without starting a cluster. Real filtered-body refusal is separately required."
+  },
+  {
+    "file": "tests/bounded-usage-pricing-postgres.test.ts",
+    "find": "assert.equal(completed, 0, \"a lane without PostgreSQL completes no cluster bodies\");",
+    "replace": "",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\"; import vm from \"node:vm\"; import {readFileSync} from \"node:fs\";\ntest(\"CR-E081 completion observer refuses bounded-usage-pricing-postgres.test.ts completed bodies without PostgreSQL\",()=>{\nconst source=readFileSync(\"tests/bounded-usage-pricing-postgres.test.ts\",\"utf8\"); const begin=source.lastIndexOf('\"'\"'\\ntest(\"'\"'\"'); assert.ok(begin>=0,\"real closing guard is loaded\");\nlet guard; vm.runInNewContext(source.slice(begin), {test:(_name,fn)=>{guard=fn;},assert,PG:false,completed:1});\nassert.equal(typeof guard,\"function\",\"the actual shard registered its completion guard\");\nassert.throws(guard,{code:\"ERR_ASSERTION\"},\"independent incomplete-run observation must be refused\");\n});'",
+    "why": "Synthetic node:test registration observes the actual closing guard with an independently specified incomplete state; disabling it fails the named outer assertion without starting a cluster. Real filtered-body refusal is separately required."
+  },
+  {
+    "file": "tests/bounded-usage-attempts-postgres.test.ts",
+    "find": "  assert.equal(completed, 1, \"a required-but-skipped cluster test must fail the run\");",
+    "replace": "// mutation: disable completion assertion",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\"; import vm from \"node:vm\"; import {readFileSync} from \"node:fs\";\ntest(\"CR-E081 completion observer refuses bounded-usage-attempts-postgres.test.ts skipped required bodies\",()=>{\nconst source=readFileSync(\"tests/bounded-usage-attempts-postgres.test.ts\",\"utf8\"); const begin=source.lastIndexOf('\"'\"'\\ntest(\"'\"'\"'); assert.ok(begin>=0,\"real closing guard is loaded\");\nlet guard; vm.runInNewContext(source.slice(begin), {test:(_name,fn)=>{guard=fn;},assert,PG:true,completed:0});\nassert.equal(typeof guard,\"function\",\"the actual shard registered its completion guard\");\nassert.throws(guard,{code:\"ERR_ASSERTION\"},\"independent incomplete-run observation must be refused\");\n});'",
+    "why": "Synthetic node:test registration observes the actual closing guard with an independently specified incomplete state; disabling it fails the named outer assertion without starting a cluster. Real filtered-body refusal is separately required."
+  },
+  {
+    "file": "tests/bounded-usage-attempts-postgres.test.ts",
+    "find": "assert.equal(completed, 0, \"a lane without PostgreSQL completes no cluster bodies\");",
+    "replace": "",
+    "test": "node --input-type=module --eval 'import assert from \"node:assert/strict\"; import test from \"node:test\"; import vm from \"node:vm\"; import {readFileSync} from \"node:fs\";\ntest(\"CR-E081 completion observer refuses bounded-usage-attempts-postgres.test.ts completed bodies without PostgreSQL\",()=>{\nconst source=readFileSync(\"tests/bounded-usage-attempts-postgres.test.ts\",\"utf8\"); const begin=source.lastIndexOf('\"'\"'\\ntest(\"'\"'\"'); assert.ok(begin>=0,\"real closing guard is loaded\");\nlet guard; vm.runInNewContext(source.slice(begin), {test:(_name,fn)=>{guard=fn;},assert,PG:false,completed:1});\nassert.equal(typeof guard,\"function\",\"the actual shard registered its completion guard\");\nassert.throws(guard,{code:\"ERR_ASSERTION\"},\"independent incomplete-run observation must be refused\");\n});'",
+    "why": "Synthetic node:test registration observes the actual closing guard with an independently specified incomplete state; disabling it fails the named outer assertion without starting a cluster. Real filtered-body refusal is separately required."
+  }
+]

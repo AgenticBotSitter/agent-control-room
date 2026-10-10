@@ -15,6 +15,10 @@
 // gives each file its own process and nothing here could see another file's
 // state anyway.
 //
+// CR-E081 further partitions lifecycle/shutdown/role refusal and catalog
+// cases, retaining every original body and each file's own closing checks.
+// Whole-file budgets remain 240000ms; no cluster is pooled or reused.
+//
 // The real-PostgreSQL half needs PG 17 binaries; `requiresRealPostgres()` is
 // asked first and the test fails if a lane HAS PostgreSQL and still skipped,
 // so a lane that lost its PG install cannot pass by skipping.
