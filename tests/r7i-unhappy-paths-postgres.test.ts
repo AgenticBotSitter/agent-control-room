@@ -13,6 +13,7 @@ import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
+import { privateDatabaseLimits } from "../src/web/v1/bounded-database";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { OwnerPushDispatcherV1 } from "../src/web-push/v1";
 import { PostgresOwnerPushStoreV1 } from "../src/web-push/v1/postgres-store";
@@ -36,9 +37,22 @@ const required = requiresRealPostgres();
 const needsPg = () => (required ? undefined : { skip: realPostgresSkipMessage() });
 
 const TENANT = "tenant:r7i-unhappy", WORKSPACE = "workspace:r7i", PROJECT = "project:r7i";
-/** Over the pool's admitted width (8) and inside its admitted+queued width, so the
- * dispatchers contend with each other AND all reach the claim. */
-const DISPATCHERS = 12;
+/** The declared database-OPERATION admission budget of the private web pool.
+ * `src/web/v1/bounded-database.ts:4` runs `privateDatabaseLimits.connections` (8)
+ * operations at once and `admit()` (bounded-database.ts:75, `waiting.length >=
+ * limits.connections`) queues at most 8 more for `checkoutMs` (5000); the 17th
+ * outstanding operation is refused with `database_unavailable`.
+ * `src/web/v1/private-pg-options.ts:20` gives the pg Pool the same `max: 8`.
+ * The unit is a database OPERATION, not a dispatcher object: one dispatcher
+ * keeps a claim and up to its 8 send workers' writes in flight together, so a
+ * shared-pool contention fixture never starts more than `DISPATCHERS` callers at
+ * once and every fixture asserts the PEAK outstanding operations it produced. A
+ * burst past the budget measures the pool's refusal, not the dispatcher; that
+ * overload behaviour is a separate defect (CR-E079) and is not asserted here.
+ * Contention past this width belongs to the separate-process WP-D02/WP-D06/WP-D21
+ * actors, which each own their own pool. */
+const OPERATION_BUDGET = privateDatabaseLimits.connections * 2;
+const DISPATCHERS = privateDatabaseLimits.connections;
 const SCOPE = { tenantId: TENANT, workspaceId: WORKSPACE };
 const ADAPTER = `adapter:manual:${sha256Digest(SCOPE).slice(7, 39)}`;
 const PROVIDER = "https://control.invalid/r7i-unhappy";
@@ -60,6 +74,46 @@ function webClient(postgres: { connection(role: string): { user: string; passwor
   return bindPrivatePgPool(new Pool({ ...privatePgOptions({ host: "127.0.0.1", port: postgres.port,
     database: postgres.database, username: login.user, password: login.password, majorVersion: 17 as const }),
     host: login.host }));
+}
+
+// Counts every call that enters the database client and has not yet settled.
+// bounded-database.ts admits exactly one operation per `query`/`transaction`
+// call, so the peak of this count is the load the pool's admission saw.
+function meterOperations(db: DatabaseClient) {
+  let live = 0, peak = 0;
+  const enter = <T>(call: () => Promise<T>) => { peak = Math.max(peak, ++live); return call().finally(() => { live--; }); };
+  const metered: DatabaseClient = {
+    query: (sql, params) => enter(() => db.query(sql, params)),
+    transaction: body => enter(() => db.transaction(body)),
+    transactionWithPreCommitCheck: (body, check) => enter(() => db.transactionWithPreCommitCheck(body, check)),
+  };
+  return { db: metered, peak: () => peak };
+}
+
+// Runs `callers` independent dispatches in sequential waves of at most
+// DISPATCHERS concurrent callers, so the burst never starts more than the pool
+// admits, and returns every settlement so a refusal is counted, never swallowed.
+async function inBudgetWaves<T>(callers: number, start: () => Promise<T>) {
+  const settled: PromiseSettledResult<T>[] = [];
+  for (let started = 0; started < callers; started += DISPATCHERS)
+    settled.push(...await Promise.allSettled(Array.from({ length: Math.min(DISPATCHERS, callers - started) }, start)));
+  return settled;
+}
+const refusedCount = (settled: PromiseSettledResult<unknown>[]) => settled.filter(each => each.status === "rejected").length;
+
+// PG17 has no pg_stat_database serialization-failure column, so actual server
+// SQLSTATE 40001 and 40P01 error records are counted from the server log too.
+async function serverObserver(postgres: { runDirectory: string }, admin: Client, db: DatabaseClient) {
+  await admin.query("ALTER SYSTEM SET log_error_verbosity='verbose'");
+  await admin.query("SELECT pg_reload_conf()");
+  return async () => {
+    await db.query("SELECT pg_stat_force_next_flush()");
+    await admin.query("SELECT pg_stat_clear_snapshot()");
+    const row = (await admin.query("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()")).rows[0];
+    const log = await readFile(`${postgres.runDirectory}/server.log`, "utf8");
+    return { deadlocks: Number(row.deadlocks), deadlockErrors: (log.match(/ERROR:\s+40P01:/g) ?? []).length,
+      serialization: (log.match(/ERROR:\s+40001:/g) ?? []).length };
+  };
 }
 
 async function seedScope(admin: Client) {
@@ -177,9 +231,10 @@ test("real PostgreSQL: the attention read survives a malformed gate payload and 
       // the job SETTLED, it can only leave it a candidate.
       assert.ok(page.items.find(item => item.task.jobId === "job:unhappy-approval")!.reasons.length > 0);
 
-      // Second concurrent caller: 12 parallel reads -- the private-web pool is
-      // `connections: 8` with one pool-width burst queueable, so 12 is exactly the
-      // most the pool will hold at once. This is the contended path: the read
+      // Second concurrent caller: 12 parallel reads. Each read is one database
+      // operation and the private-web pool admits 8 running plus 8 queued
+      // (`privateDatabaseLimits.connections`, bounded-database.ts:4 and :75), so
+      // 12 is inside that budget of 16. This is the contended path: the read
       // takes a session FOR SHARE on the completion-gate integrity row when a
       // review config is present.
       //
@@ -248,24 +303,31 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
       const channel: OwnerNotificationChannelV1 = { kind: "web-push",
         async send(_s, payload) { sent.push(payload.tag); return { statusCode: 201 }; } };
       try {
-        // 40 dispatchers at once over 40 items: the burst the bounded retry and
-        // the one-head-per-item primary key exist for, at 4x the item count.
-        // This races the CLAIM, so it has to stay inside what the private-web
-        // pool admits at once (`connections: 8` plus one pool-width queue).
-        // Running more dispatchers than that measures the POOL, not the
-        // dispatcher: a burst past the width has every caller refused before it
-        // reaches the claim, which looks identical to "nothing was delivered"
-        // while saying nothing about racing. Twelve is over the pool width -- so
-        // dispatchers really do contend -- and inside the admitted+queued width,
-        // so all of them get a connection and reach the claim.
-        //
-        // An earlier draft used 40 and intermittently reported TAGS=0 with
-        // OUTCOMES=0: all 40 callers were refused at checkout. That was the
-        // pool's own bound, and reading it as a lost notification would have
-        // been wrong.
-        const dispatchers = Array.from({ length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: pool.client as DatabaseClient,
-          tenantId: TENANT, store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel }));
-        const outcomes = await Promise.all(dispatchers.map(each => each.dispatch().catch(() => [] as never[])));
+        // DISPATCHERS (8) dispatchers start together over 40 decisions and one
+        // shared pool: the burst the bounded retry and the one-head-per-item
+        // primary key exist for, started at the pool's admitted width. The
+        // operation budget (see OPERATION_BUDGET: 8 running + 8 queued, the 17th
+        // refused) bounds what a burst can ask of the pool. A burst past it has
+        // callers refused before they reach the claim, which says nothing about
+        // racing, so the budget is MEASURED below rather than assumed: the peak
+        // outstanding operations must fit and no dispatcher may be refused.
+        const server = await serverObserver(postgres, admin, pool.client as DatabaseClient);
+        const meter = meterOperations(pool.client as DatabaseClient);
+        const before = await server();
+        const dispatchers = Array.from({ length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: meter.db,
+          tenantId: TENANT, store: new PostgresOwnerPushStoreV1(meter.db), channel }));
+        const settledDispatches = await Promise.allSettled(dispatchers.map(each => each.dispatch()));
+        const outcomes = settledDispatches.flatMap(each => each.status === "fulfilled" ? [each.value] : []);
+        const after = await server();
+        assert.equal(refusedCount(settledDispatches), 0,
+          `no dispatcher may be refused inside the operation budget: ${JSON.stringify(settledDispatches.filter(each => each.status === "rejected").map(each => String((each as PromiseRejectedResult).reason)))}`);
+        assert.ok(meter.peak() <= OPERATION_BUDGET,
+          `burst peak ${meter.peak()} outstanding database operations exceeds the admission budget ${OPERATION_BUDGET}`);
+        assert.ok(meter.peak() >= DISPATCHERS,
+          `burst peak ${meter.peak()} never had all ${DISPATCHERS} dispatchers' operations outstanding together, so it did not contend`);
+        assert.equal(after.deadlocks - before.deadlocks, 0, "burst server deadlock delta must be zero");
+        assert.equal(after.deadlockErrors - before.deadlockErrors, 0, "burst server 40P01 error delta must be zero");
+        assert.equal(after.serialization - before.serialization, 0, "burst server SQLSTATE 40001 delta must be zero");
         const heads = (await admin.query<{ action_inbox_id: string; state: string; attempt_count: number | string }>(
           "SELECT action_inbox_id,state,attempt_count FROM control_owner_push_attempt_heads WHERE tenant_id=$1",
           [TENANT])).rows;
@@ -276,30 +338,21 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         assert.equal(heads.length, 40, `expected one head per decision, got ${heads.length}`);
         assert.equal(new Set(heads.map(row => row.action_inbox_id)).size, 40, "no duplicate heads");
 
-        // `reserved` is a PRE-EXISTING flake, established on the base commit: the
-        // same 40x40 burst written against fb7c7cc30 with ONLY the three kinds that
-        // dispatcher adopted left a head `reserved` in 4 of 8 runs, same test
-        // name and same error. A reservation is committed BEFORE the send, so a
-        // dispatcher whose pool could not check out a connection for the settle
-        // leaves the row mid-flight; `recoverStaleReservations` is the documented
-        // path back and it needs RESERVATION_STALE_MS. It is not caused by the
-        // wider kind list, and this branch does not change the claim/settle
-        // ordering, so the test does not assert on it.
-        //
-        // What IS asserted is what the one-head-per-item primary key guarantees
-        // and what this change could have broken by widening the kind list: no
-        // duplicate heads, and no head that spent more than one attempt.
-        for (const row of heads) assert.ok(row.state === "delivered" || row.state === "reserved",
-          `${row.action_inbox_id} is ${row.state}; only a settled or in-flight reservation is acceptable`);
+        // A reservation is committed BEFORE the send, so a head left `reserved`
+        // would be a claim whose dispatcher never completed it. Inside the
+        // budget no dispatcher is refused, so every head is either settled or
+        // still waiting for a later tick; `reserved` is not acceptable here.
+        for (const row of heads) assert.ok(row.state === "delivered" || row.state === "pending",
+          `${row.action_inbox_id} is ${row.state}; only a settled or still-pending head is acceptable inside the budget`);
         for (const row of heads) assert.equal(Number(row.attempt_count), 1,
           `${row.action_inbox_id} spent ${row.attempt_count} attempts; a race must not spend more than one`);
         // Deduped by TAG, so a duplicate tag is a duplicate notification for the
         // same item. Reported with the counts because the failure mode matters:
         // fewer tags than heads means a send lost its connection before it
         // recorded, more would mean a second push for one item.
-        t.diagnostic(`burst dispatchers=${DISPATCHERS} heads=${heads.length} sent=${sent.length} outcomes=${outcomes.flat().length}`);
+        t.diagnostic(`burst dispatchers=${DISPATCHERS} heads=${heads.length} sent=${sent.length} outcomes=${outcomes.flat().length} peakOperations=${meter.peak()}/${OPERATION_BUDGET} deadlocks=${after.deadlocks - before.deadlocks} sqlstate40001=${after.serialization - before.serialization}`);
         // One push per item that was actually SENT in this pass. A head left
-        // `pending` was simply not reached by 24 dispatchers racing 40 items, and
+        // `pending` was simply not reached by the racing dispatchers, and
         // the next tick delivers it -- that is the bounded-retry design, not a
         // lost notification. What must never happen is a DUPLICATE.
         assert.equal(new Set(sent).size, sent.length,
@@ -310,7 +363,7 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         // Whatever was claimed in this pass was settled correctly. A `pending`
         // head is NOT a failure: one pass claims at most CLAIM_LIMIT (64) rows per
         // dispatcher, but each dispatcher here only sees whatever the SKIP LOCKED
-        // claim handed it, so 12 racing dispatchers can leave items for the next
+        // claim handed it, so the racing dispatchers can leave items for the next
         // tick under load. An earlier draft asserted all 40 delivered in one pass
         // and failed 36/40 when the machine was busy -- that was asserting the
         // scheduler's luck, not the claim's correctness.
@@ -327,8 +380,7 @@ test("real PostgreSQL: a burst of concurrent dispatchers rings once per decision
         // rather than a lost notification.
         for (let tick = 0; tick < 6; tick += 1) {
           await new OwnerPushDispatcherV1({ db: pool.client as DatabaseClient, tenantId: TENANT,
-            store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel }).dispatch()
-            .catch(() => []);
+            store: new PostgresOwnerPushStoreV1(pool.client as DatabaseClient), channel }).dispatch();
         }
         const drained = (await admin.query<{ action_inbox_id: string; state: string }>(
           "SELECT action_inbox_id,state FROM control_owner_push_attempt_heads WHERE tenant_id=$1", [TENANT])).rows;
@@ -386,18 +438,7 @@ async function durableFixture(mode: "synthetic" | "PG", body: (f: DurableFixture
           try {await actor.connect();return await actor.query(sql,params as never[]);}
           finally {await actor.end();}
         };
-        // PG17 has no pg_stat_database serialization-failure column. Count
-        // actual server SQLSTATE40001 error records instead of standby conflicts.
-        await admin.query("ALTER SYSTEM SET log_error_verbosity='verbose'");
-        await admin.query("SELECT pg_reload_conf()");
-        const serverCounters = async () => {
-          await pool.client.query("SELECT pg_stat_force_next_flush()");
-          await admin.query("SELECT pg_stat_clear_snapshot()");
-          const row=(await admin.query("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()")).rows[0];
-          const log=await readFile(`${postgres.runDirectory}/server.log`,"utf8");
-          return {deadlocks:Number(row.deadlocks),deadlockErrors:(log.match(/ERROR:\s+40P01:/g)??[]).length,
-            serialization:(log.match(/ERROR:\s+40001:/g)??[]).length};
-        };
+        const serverCounters = await serverObserver(postgres, admin, pool.client);
         await body({ db: pool.client, query: (s,p) => admin.query(s,p as never[]), serverCounters,
           authorityQuery: (s,p)=>roleQuery("coordinator",s,p),roleQuery,
           exec: async s=>{await admin.query(s);}, at: Date.now() });
@@ -525,7 +566,15 @@ durableTwin("WP-D02", "overlapping claimants observe a losing branch", async f=>
   const channel: OwnerNotificationChannelV1={kind:'web-push',async send(_s,p){
     tags.push(p.tag);max=Math.max(max,++active);await nextTurn();active--;return {statusCode:201};
   }};
-  const results=await Promise.allSettled(Array.from({length:20},()=>durableDispatcher(f,channel).dispatch()));
+  // DISPATCHERS claimants start together on one shared database client, which is
+  // the whole operation-admission budget (OPERATION_BUDGET) once each claimant's
+  // claim and the winner's send workers are counted. The same-pool fixture
+  // proves the claim race inside the budget; 20 separate pools race below.
+  const meter=meterOperations(f.db);
+  const results=await Promise.allSettled(Array.from({length:DISPATCHERS},()=>durableDispatcher(f,channel,meter.db).dispatch()));
+  assert.equal(refusedCount(results),0,'WP-D02 no claimant is refused inside the operation budget');
+  assert.ok(meter.peak()<=OPERATION_BUDGET,`WP-D02 peak ${meter.peak()} outstanding operations exceeds the admission budget ${OPERATION_BUDGET}`);
+  assert.ok(meter.peak()>=DISPATCHERS,`WP-D02 peak ${meter.peak()} never had all ${DISPATCHERS} claimants outstanding together`);
   assert.ok(results.some(r=>r.status==='fulfilled' && r.value.length===0),'WP-D02 a losing claimant actually runs');
   for(let tick=0;tick<3;tick++)await durableDispatcher(f,channel,f.db,()=>f.at+30_000*(tick+1)).dispatch();
   assert.equal(tags.length,40,'WP-D02 exactly40 provider calls');
@@ -762,7 +811,17 @@ durableTwin("WP-D12", "seed99 healthy contention has no ownerless tail",async f=
   let seed=99;const tags:string[]=[];
   const channel:OwnerNotificationChannelV1={kind:'web-push',async send(_s,p){
     seed=(seed*1664525+1013904223)>>>0;if(seed%2)await nextTurn();tags.push(p.tag);return{statusCode:201};}};
-  for(const callers of [20,50])await Promise.allSettled(Array.from({length:callers},()=>durableDispatcher(f,channel).dispatch()));
+  // 20 then 50 dispatch calls, each in sequential waves of at most DISPATCHERS
+  // concurrent callers over one shared client, so every wave stays inside the
+  // operation budget (OPERATION_BUDGET). Separate pools race in WP-D21.
+  const meter=meterOperations(f.db);
+  for(const callers of [20,50]){
+    const waves=await inBudgetWaves(callers,()=>durableDispatcher(f,channel,meter.db).dispatch());
+    assert.equal(waves.length,callers,`WP-D12 all ${callers} dispatch calls settled`);
+    assert.equal(refusedCount(waves),0,`WP-D12 no dispatcher of ${callers} is refused inside the operation budget`);
+  }
+  assert.ok(meter.peak()<=OPERATION_BUDGET,`WP-D12 peak ${meter.peak()} outstanding operations exceeds the admission budget ${OPERATION_BUDGET}`);
+  assert.ok(meter.peak()>=DISPATCHERS,`WP-D12 peak ${meter.peak()} never had a full wave of ${DISPATCHERS} outstanding together`);
   for(let i=1;i<=8;i++)await durableDispatcher(f,channel,f.db,()=>f.at+i*30_000).dispatch().catch(()=>{});
   if (f.serverCounters) {
     const after=await f.serverCounters();

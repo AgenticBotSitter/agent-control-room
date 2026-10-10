@@ -187,5 +187,47 @@
     "replace": "WHERE tenant_id=$1 AND ($2::text IS NOT NULL) AND expires_at IS NOT NULL AND expires_at<=now()",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D24: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "The parent-id predicate must limit each autocommit delete to one cascade chain; independent maximum deletion delta1 with three real reader records, not SQL text matching."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "Array.from({length:DISPATCHERS},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "replace": "Array.from({length:DISPATCHERS*4},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Overlapping claimants must stay inside the private-web operation-admission budget: more claimants than the pool admits fails the measured peak and no-refusal assertions."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "Array.from({length:DISPATCHERS},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "replace": "Array.from({length:2},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A fixture that stops contending is not a contention proof: too few claimants fails the all-claimants-outstanding peak assertion."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "Array.from({ length: Math.min(DISPATCHERS, callers - started) }, start)",
+    "replace": "Array.from({ length: callers - started }, start)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The seed99 contention waves must never start more callers than the pool admits: removing the wave width fails the measured peak and no-refusal assertions."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "const OPERATION_BUDGET = privateDatabaseLimits.connections * 2;",
+    "replace": "const OPERATION_BUDGET = privateDatabaseLimits.connections * 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The declared budget is eight running plus eight queued operations; halving it must fail the measured-peak assertion against the independent peak."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: meter.db,",
+    "replace": "length: DISPATCHERS * 3 }, () => new OwnerPushDispatcherV1({ db: meter.db,",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The real PostgreSQL burst must stay inside the operation-admission budget: three times the dispatchers fails the no-refusal and measured-peak assertions."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "(log.match(/ERROR:\\s+40001:/g) ?? []).length",
+    "replace": "(log.match(/ERROR:\\s+40001X:/g) ?? []).length",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The server-log serialization observer must see a deliberate 40001; blinding it fails the control assertion so a zero delta is never vacuous."
   }
 ]
