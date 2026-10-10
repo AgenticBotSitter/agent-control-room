@@ -533,10 +533,10 @@ test("task data cannot select argv: inputs are staged and unknown adapter ids ar
 const [inputPath, outputDir] = process.argv.slice(2);
 writeFileSync(outputDir + "/argv.json", JSON.stringify({ argv: process.argv.slice(2), body: readFileSync(inputPath, "utf8") }));
 console.log("transcribed");`);
-  let registry;
+  // Keep admission and execution inside a named assertion, including an unsafe
+  // interpreter substitution: a fixture refusal must never count as a catch.
   await assert.doesNotReject(async () => {
-    registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
-  }, "the test-owned private executable must load independently of interpreter permissions");
+  const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
   let spawned = 0;
   const runner = await preparedToolRunner(t, registry, { onHandoff: (_child, _argv, options) => { spawned += 1;
     assert.equal(options.shell, false); } });
@@ -554,6 +554,7 @@ console.log("transcribed");`);
   assert.match(observed.argv[0], /control-room-tool-.*\/inputs\/audio\/[A-Za-z0-9._-]+$/u);
   assert.match(observed.argv[1], /control-room-tool-.*\/outputs\/transcript$/u);
   assert.equal(observed.argv.join(" ").includes("/bin/sh"), false);
+  }, "the test-owned private executable must load independently of interpreter permissions");
 });
 
 test("timeout and stop kill the process group, including a spawned child", { timeout: 20_000 }, async t => {
