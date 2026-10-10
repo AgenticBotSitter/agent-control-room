@@ -25,7 +25,7 @@
     "find": "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;",
     "replace": "GRANT UPDATE (p256dh, auth, expires_at) ON owner_web_push_subscriptions TO control_room_private_web;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
-    "why": "CR-E075 installed upgrade must fail when grant convergence on an installed earlier role lacks the fourth renewal column the production login needs."
+    "why": "CR-E075 installed upgrade must fail 'the reopened startup check accepts the upgraded install' (private_database_preflight_failed) when grant convergence on an installed earlier role lacks the fourth renewal column the production login needs."
   },
   {
     "file": "db/migrations/0299_owner_web_push_subscription_update_grant.sql",
@@ -165,7 +165,7 @@
     "find": "  const root = await mkdtemp(join(scratchRoot, `acr-installed-${label}-`));",
     "replace": "  const root = await mkdtemp(join(tmpdir(), `acr-installed-${label}-`));",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
-    "why": "CR-E075 installed upgrade must fail 'the installed-upgrade cluster lives inside the job scratch tree' when the cluster data directory is created outside the job tree."
+    "why": "CR-E075 installed upgrade must fail \"the faulted setup's data directory was inside the job scratch tree\" when the installed-cluster data directory is created outside the job tree."
   },
   {
     "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
