@@ -1191,8 +1191,8 @@ test('WP-D23: completion and subscription cascade have zero deadlocks (PG)', {..
     const deadline=Date.now()+15000;
     let started:any,blockers:number[]=[];
     while(Date.now()<deadline){started=messages.find(m=>m.kind==='started');if(started){blockers=(await admin.query('SELECT pg_blocking_pids($1) AS blockers',[started.pid])).rows[0].blockers;if(blockers.includes(mainPid))break;}await new Promise(r=>setImmediate(r));}
-    assert.equal(started?.login,'control_room_web');assert.ok(blockers.includes(mainPid),'peer reaches the real FK cascade wait before completion proceeds');
-    console.log(JSON.stringify({barrier:'unsubscribe is blocked by completion delivery lock',mainPid,peerPid:started.pid,blockers}));
+    assert.equal(started?.login,'control_room_web');assert.ok(blockers.includes(mainPid),'subscription deletion waits on the observed completion transaction');
+    console.log(JSON.stringify({barrier:'subscription deletion is blocked by completion transaction',mainPid,peerPid:started.pid,blockers}));
     release();await done;child.stdin.end();await closed;assert.equal(child.exitCode,0);
     const peer=messages.find(m=>m.kind==='result'||m.kind==='refusal');assert.ok(peer);
     let after=before;const statsDeadline=Date.now()+5000;
