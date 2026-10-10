@@ -671,15 +671,18 @@ export class OwnerPushDispatcherV1 {
           && new Date(current.updated_at).getTime() > Date.parse(now)-OWNER_PUSH_RESERVATION_STALE_MS_V1)
           return undefined; // An active sender advanced progress after our due read.
         const receipts = current.completion_data ?? [];
-        // Parent deletion locks the subscription before its 0174 delivery
-        // cascade. Acquire every removed parent in the same id order before
-        // touching deliveries; a peer unsubscribe can then wait without a cycle.
-        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)
-          .map(receipt => receipt.subscription_id))].sort()) {
-          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
-            [this.input.tenantId, subscriptionId]);
-        }
-        for (const receipt of receipts) {
+        // ONE global lock order: every subscription's resources (its parent row,
+        // the 0174 delivery rows a parent delete cascades over, and this item's
+        // own delivery row) are taken in ascending subscription id. A removed
+        // parent is deleted immediately before its own delivery write, so a peer
+        // completion or unsubscribe holding a lower id can only make this wait,
+        // never close a cycle with a higher one.
+        const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1
+          : a.subscription_id > b.subscription_id ? 1 : 0);
+        for (const receipt of ordered) {
+          if (receipt.remove)
+            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
+              [this.input.tenantId, receipt.subscription_id]);
           const result = await tx.query(`UPDATE owner_web_push_deliveries
             SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer
             WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'
@@ -691,7 +694,11 @@ export class OwnerPushDispatcherV1 {
             [this.input.tenantId,receipt.subscription_id,receipt.event_tag]);
             const live = await tx.query(`SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
               [this.input.tenantId,receipt.subscription_id]);
-            if (live.rows.length && proof.rows[0]?.state !== receipt.result)
+            // A missing ledger row means the subscription was replaced after the
+            // receipt (delete then re-save of one endpoint gives the same id, and
+            // the cascade took the row), so there is nothing left to complete. An
+            // existing row in a conflicting state is still refused.
+            if (live.rows.length && proof.rows.length && proof.rows[0]!.state !== receipt.result)
               throw new Error("owner_push_completion_record_changed");
           }
         }

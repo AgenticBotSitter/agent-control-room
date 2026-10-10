@@ -15,7 +15,7 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { privateDatabaseLimits } from "../src/web/v1/bounded-database";
 import { WebTaskService } from "../src/web/v1/task-service";
-import { OwnerPushDispatcherV1 } from "../src/web-push/v1";
+import { OwnerPushDispatcherV1, ownerPushDedupeKeyV1 } from "../src/web-push/v1";
 import { PostgresOwnerPushStoreV1 } from "../src/web-push/v1/postgres-store";
 import { sha256Digest, computeAuthorityDigest, InMemoryRollbackCheckpointStoreV1 } from "../src/security";
 import { taskDraftSchema } from "../src/web/v1/task-wire";
@@ -583,7 +583,7 @@ function durableDispatcher(f: DurableFixture, channel: OwnerNotificationChannelV
   return new OwnerPushDispatcherV1({db,tenantId:DURABLE_TENANT,store,channel,clock});
 }
 
-durableTwin("WP-D02", "overlapping claimants observe a losing branch", async f=>{
+durableTwin("WP-D02", "overlapping full-width claimants stay in budget and never duplicate", async f=>{
   await durableInputs(f,40);
   let active=0,max=0;
   const tags:string[]=[];
@@ -1234,6 +1234,39 @@ test("WP-D19: repeated repair refusal clamps counter and preserves release backo
   });
 });
 
+// B-002: a completion refused once leaves a durable receipt; the owner then turns
+// alerts off and on from the same browser. The server DELETE cascades the 0174
+// ledger row away and the re-save gives the same id (push:sha256(endpoint)). The
+// repair must read that missing row as "subscription replaced since the receipt",
+// not as tampering (WP-D08 keeps the refusal for a row that EXISTS with a
+// conflicting state), and the failed alert must reach the re-saved browser once.
+durableTwin("WP-D25", "same-endpoint resubscribe cannot strand a completing head and resends the failed alert once", async f => {
+  await durableInputs(f,1);
+  const fault=refuseLedger(f,1);let sends=0;
+  const channel:OwnerNotificationChannelV1={kind:"web-push",async send(){sends++;return{statusCode:sends===1?500:201};}};
+  await assert.rejects(()=>durableDispatcher(f,channel,fault.db).dispatch(),/owner_push_completion_unavailable/);
+  let head=(await f.db.query<any>("SELECT state,attempt_count,completion_data,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+  assert.equal(head.state,"completing","the refused completion keeps its durable receipt");
+  assert.equal(Number(head.completion_retry_count),1);assert.equal(sends,1);
+  const [row]=(await f.query("SELECT id,tenant_id,endpoint,p256dh,auth FROM owner_web_push_subscriptions")).rows;
+  await f.query("DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2",[row.tenant_id,row.id]);
+  assert.equal((await f.db.query("SELECT 1 FROM owner_web_push_deliveries")).rows.length,0,"the delete cascades the ledger row away");
+  await f.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,now(),now())`,[row.id,row.tenant_id,row.endpoint,row.p256dh,row.auth]);
+  let now=new Date(head.next_attempt_at).getTime();
+  await durableDispatcher(f,channel,f.db,()=>now).dispatch();
+  head=(await f.db.query<any>("SELECT state,attempt_count,completion_data,completion_retry_count,next_attempt_at FROM control_owner_push_attempt_heads")).rows[0];
+  assert.equal(head.state,"pending","WP-D25 the repair releases the head instead of refusing a replaced subscription");
+  assert.equal(head.completion_data,null);assert.equal(Number(head.completion_retry_count),0);
+  assert.equal(sends,1,"repair never sends");
+  now=new Date(head.next_attempt_at).getTime();
+  await durableDispatcher(f,channel,f.db,()=>now).dispatch();
+  assert.equal(sends,2,"the failed alert is resent exactly once, to the re-saved browser");
+  assert.equal((await durableHead(f))[0].state,"delivered");
+  await durableDispatcher(f,channel,f.db,()=>now+3_600_000).dispatch();
+  assert.equal(sends,2,"a delivered alert is never sent again");
+});
+
 const CASCADE_DELETE_WORKER =String.raw`
 import {Pool} from 'pg';import {bindPrivatePgPool} from './src/web/v1/private-pg-database.ts';
 import {PostgresOwnerPushStoreV1} from './src/web-push/v1/postgres-store.ts';
@@ -1296,16 +1329,29 @@ test('WP-D23: completion and subscription cascade have zero deadlocks (PG)', {..
 });
 
 // PGlite executes the real SQL but does not model PostgreSQL lock contention.
-// This independent ordering oracle complements the real server-counter twin.
-test("WP-D23: removed parents precede all delivery writes (synthetic)", async () => {
+// This independent ordering oracle complements the real server-counter twins:
+// whatever order the reader returns subscriptions in, every completion write
+// follows ONE ascending subscription id order, a removed parent's delete
+// immediately before its own ledger write, so two completions can never hold
+// each other's next resource. The expected sequences are literal.
+const orderedCompletionWrites=[
+  {name:"both subscriptions gone",statusBySuffix:{"0":410,"1":410},
+    state:"failed",expected:[["DELETE",1],["UPDATE",1],["DELETE",2],["UPDATE",2]]},
+  {name:"lower kept and higher gone",statusBySuffix:{"0":201,"1":410},
+    state:"delivered",expected:[["UPDATE",1],["DELETE",2],["UPDATE",2]]},
+  {name:"lower gone and higher kept",statusBySuffix:{"0":410,"1":201},
+    state:"delivered",expected:[["DELETE",1],["UPDATE",1],["UPDATE",2]]},
+] as const;
+for(const scenario of orderedCompletionWrites)
+test(`WP-D23: completion writes follow one ascending subscription order, ${scenario.name} (synthetic)`, async () => {
   await durableFixture("synthetic", async f => {
     await durableInputs(f, 1, 2);
-    const writes: {sql:string; id:unknown}[] = [];
+    const writes: {kind:string; id:unknown}[] = [];
     const db: DatabaseClient = {...f.db, transaction: body => f.db.transaction(tx => body({
       query: async<T=Record<string,unknown>>(sql:string, params?:unknown[]) => {
         const result = await tx.query<T>(sql,params);
-        if (/DELETE FROM owner_web_push_subscriptions|UPDATE owner_web_push_deliveries/.test(sql))
-          writes.push({sql,id:params?.[1]});
+        const kind=/DELETE FROM owner_web_push_subscriptions/.test(sql)?"DELETE":/UPDATE owner_web_push_deliveries/.test(sql)?"UPDATE":null;
+        if (kind) writes.push({kind,id:params?.[1]});
         return result;
       },
     }))};
@@ -1315,15 +1361,143 @@ test("WP-D23: removed parents precede all delivery writes (synthetic)", async ()
     const reverseStore:OwnerPushStoreV1={subscribe:i=>actual.subscribe(i),unsubscribe:(t,e)=>actual.unsubscribe(t,e),
       list:async t=>(await actual.list(t)).reverse(),reserve:(...args)=>actual.reserve(...args),
       delivered:(...args)=>actual.delivered(...args),failed:(...args)=>actual.failed(...args)};
-    await durableDispatcher(f,{kind:"web-push",async send(){return {statusCode:410};}},db,()=>f.at,reverseStore).dispatch();
-    assert.equal(writes.length,4,"WP-D23 two parent deletes and two ledger attempts");
-    assert.ok(writes.slice(0,2).every(write => /DELETE FROM owner_web_push_subscriptions/.test(write.sql)),
-      "B-LOCK-ORDER: every removed parent precedes every delivery write");
-    assert.deepEqual(writes.slice(0,2).map(write=>write.id),
-      [`push:${"1".padStart(64,"a")}`,`push:${"2".padStart(64,"a")}`],"WP-D23 literal ascending parent lock order");
-    assert.equal((await f.db.query("SELECT id FROM owner_web_push_subscriptions")).rows.length,0);
-    assert.equal((await durableHead(f))[0].state,"failed");
+    const channel:OwnerNotificationChannelV1={kind:"web-push",async send(subscription){
+      const suffix=subscription.endpoint.slice(-1) as "0"|"1";return {statusCode:scenario.statusBySuffix[suffix]};}};
+    await durableDispatcher(f,channel,db,()=>f.at,reverseStore).dispatch();
+    assert.deepEqual(writes,scenario.expected.map(([kind,n])=>({kind,id:`push:${String(n).padStart(64,"a")}`})),
+      "B-LOCK-ORDER: literal ascending subscription lock order, parent delete before its own ledger write");
+    assert.equal((await durableHead(f))[0].state,scenario.state);
   });
+});
+
+// Two completions whose receipts remove different subscriptions are the class
+// WP-D23's completion-versus-unsubscribe pair leaves open. Item A is accepted by
+// subscription X and gone from subscription Y; item B is gone from X and
+// accepted by Y. Each is a separate process with its own pool as the production
+// login. The worker holds each completion transaction at two barriers that are
+// opened only after the parent observes the server state it names: both heads
+// locked inside a transaction, then each transaction either holding its first
+// write or visibly blocked behind the peer's first write.
+const CROSSWISE_WORKER=String.raw`
+import {Pool} from 'pg';import {bindPrivatePgPool} from './src/web/v1/private-pg-database.ts';
+import {OwnerPushDispatcherV1} from './src/web-push/v1/index.ts';
+import {PostgresOwnerPushStoreV1} from './src/web-push/v1/postgres-store.ts';
+const input=await new Promise(resolve=>process.once('message',resolve));
+const pool=bindPrivatePgPool(new Pool(input.connection));
+let finished=false;
+process.once('disconnect',()=>{if(!finished)void pool.close().finally(()=>process.exit(1));});
+const opened=new Set(),waiting=new Map();
+process.on('message',message=>{if(message.open){opened.add(message.open);waiting.get(message.open)?.();}});
+const gate=name=>new Promise(resolve=>{if(opened.has(name))resolve();else waiting.set(name,resolve);});
+const writePattern=/DELETE FROM owner_web_push_subscriptions|UPDATE owner_web_push_deliveries/;
+const sent=[];let refusal;
+const db={query:(sql,params)=>pool.client.query(sql,params),
+ transaction:body=>pool.client.transaction(async tx=>{
+  let completion=false,writes=0,pid=0;
+  return body({query:async(sql,params)=>{
+   if(completion&&writePattern.test(sql)){
+    writes++;
+    if(writes===1)process.send({kind:'first-write',pid});
+    if(writes===2){process.send({kind:'second-write',pid});await gate('second');}
+   }
+   const result=await tx.query(sql,params);
+   if(/FROM control_owner_push_attempt_heads WHERE tenant_id=\$1 AND action_inbox_id=\$2\s+AND state='completing'[\s\S]*FOR UPDATE/.test(sql)&&result.rows.length===1){
+    completion=true;pid=Number((await tx.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+    process.send({kind:'head-locked',pid});await gate('start');
+   }
+   return result;
+  }});
+ })};
+try{
+ const who=await pool.client.query('SELECT session_user AS login');
+ const channel={kind:'web-push',async send(subscription,payload){
+  const statusCode=input.status[payload.tag][subscription.endpoint];sent.push({endpoint:subscription.endpoint,tag:payload.tag,statusCode});return{statusCode};}};
+ try{await new OwnerPushDispatcherV1({db,tenantId:input.tenant,store:new PostgresOwnerPushStoreV1(pool.client),channel,clock:()=>input.at}).dispatch();}
+ catch(error){refusal=error.message;}
+ process.send({kind:'result',login:who.rows[0].login,sent,refusal});
+}catch(error){process.send({kind:'error',message:String(error?.message??error)});process.exitCode=1;}
+finally{await pool.close();finished=true;process.disconnect();}
+`;
+test("WP-D23: crosswise completions share one lock order and never deadlock (PG)",{...needsPg(),timeout:240000},async()=>{
+  await withRealPostgres(async postgres=>{
+    const admin=new Client(postgres.admin());admin.on("error",()=>{});await admin.connect();
+    const pool=webClient(postgres);
+    const actors:ReturnType<typeof raceActor>[]=[];
+    const seen:Record<string,any[]>={};
+    try{
+      const at=Date.now();
+      const f:DurableFixture={db:pool.client,query:(sql,params)=>admin.query(sql,params as never[]),
+        authorityQuery:(sql,params)=>admin.query(sql,params as never[]),exec:async sql=>{await admin.query(sql);},at};
+      await durableInputs(f,1,2);
+      const [itemA,itemB]=["attention:durable:000","attention:durable:001"];
+      const [tagA,tagB]=[ownerPushDedupeKeyV1(itemA),ownerPushDedupeKeyV1(itemB)];
+      const [X,Y]=["https://fcm.googleapis.com/fcm/send/durable-0","https://fcm.googleapis.com/fcm/send/durable-1"];
+      const status={[tagA]:{[X]:201,[Y]:410},[tagB]:{[X]:410,[Y]:201}};
+      // Item B does not exist yet, so the first process can only claim A.
+      const producer=durableDispatcher(f,{kind:"web-push",async send(){throw new Error("adoption must not send");}});
+      assert.equal(await producer.adoptOpenAttention(),1,"real producer adopts only item A");
+      const start=(name:string)=>{
+        const actor=raceActor(CROSSWISE_WORKER,{connection:privateRaceConnection(postgres.connection("web")),
+          tenant:DURABLE_TENANT,at,status});actors.push(actor);seen[name]=[];
+        actor.child.on("message",(m:any)=>seen[name]!.push(m));return actor;
+      };
+      const waitFor=async(label:string,probe:()=>Promise<boolean>)=>{
+        const deadline=Date.now()+30_000;
+        while(Date.now()<deadline){if(await probe())return;await new Promise(r=>setTimeout(r,20));}
+        assert.fail(`barrier never observed: ${label}`);
+      };
+      const message=(name:string,kind:string)=>seen[name]!.find(m=>m.kind===kind);
+      const sessionState=async(pid:number)=>(await admin.query("SELECT state,xact_start IS NOT NULL AS in_tx FROM pg_stat_activity WHERE pid=$1",[pid])).rows[0];
+      const blockers=async(pid:number)=>(await admin.query("SELECT pg_blocking_pids($1) AS blockers",[pid])).rows[0].blockers as number[];
+      const before=Number((await admin.query("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()")).rows[0].deadlocks);
+      const a=start("A");
+      await waitFor("A holds its head lock inside its completion transaction",async()=>{
+        const m=message("A","head-locked");return !!m&&(await sessionState(m.pid))?.state==="idle in transaction";});
+      assert.equal((await durableHead(f))[0].state,"completing","A's receipts are durable before its completion starts");
+      await admin.query(`INSERT INTO control_action_inbox
+        (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+        VALUES($1,$2,'project:durable','job:durable','failure','open','not_requested',now(),'{}')`,[itemB,DURABLE_TENANT]);
+      assert.equal(await producer.adoptOpenAttention(),1,"real producer adopts item B after A is mid-completion");
+      const b=start("B");
+      await waitFor("B holds its head lock inside its completion transaction",async()=>{
+        const m=message("B","head-locked");return !!m&&(await sessionState(m.pid))?.state==="idle in transaction";});
+      const heads=(await durableHead(f));
+      assert.deepEqual(heads.map(row=>row.state),["completing","completing"],"both heads are completing with ledger rows reserved and receipts durable");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM owner_web_push_deliveries WHERE state='reserved'")).rows[0].n,4,"all four (subscription,item) ledger rows exist before either completion writes");
+      const pids={A:message("A","head-locked").pid as number,B:message("B","head-locked").pid as number};
+      assert.notEqual(pids.A,pids.B);
+      for(const actor of [a,b])actor.child.send({open:"start"});
+      for(const name of ["A","B"] as const)
+        await waitFor(`${name} holds its first write or is blocked behind the peer's`,async()=>{
+          if(message(name,"second-write"))return true;
+          return !!message(name,"first-write")&&(await blockers(pids[name])).length>0;
+        });
+      const parked={A:!!message("A","second-write"),B:!!message("B","second-write")};
+      const waits={A:await blockers(pids.A),B:await blockers(pids.B)};
+      console.log(JSON.stringify({barrier:"both completions hold first write or wait on the peer",parked,waits,pids}));
+      for(const actor of [a,b])actor.child.send({open:"second"});
+      const finished=(name:string)=>seen[name]!.find(m=>m.kind==="result"||m.kind==="error");
+      await waitFor("both dispatchers finish",async()=>!!finished("A")&&!!finished("B"));
+      for(const actor of actors)await actor.closed;
+      let after=before;const statsDeadline=Date.now()+5000;
+      while(Date.now()<statsDeadline){await admin.query("SELECT pg_stat_clear_snapshot()");
+        after=Number((await admin.query("SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()")).rows[0].deadlocks);
+        if(after>before)break;await new Promise(r=>setTimeout(r,50));}
+      const finalMessages=[finished("A"),finished("B")];
+      console.log(JSON.stringify({crosswise:"A accepted by X and gone from Y; B gone from X and accepted by Y",
+        refusals:finalMessages.map(m=>m.refusal??m.message??null),serverDeadlocksDelta:after-before}));
+      assert.equal(after-before,0,"B-LOCK-ORDER: crosswise completions must not deadlock");
+      assert.deepEqual(finalMessages.map(m=>m.kind),["result","result"]);
+      assert.deepEqual(finalMessages.map(m=>m.refusal),[undefined,undefined],"neither dispatcher refuses its completion");
+      assert.deepEqual(finalMessages.map(m=>m.login),["control_room_web","control_room_web"]);
+      assert.equal(finalMessages.flatMap(m=>m.sent).length,4,"four provider calls: one per item and subscription, no resend");
+      const rows=(await admin.query("SELECT action_inbox_id,state,completion_data,completion_retry_count FROM control_owner_push_attempt_heads ORDER BY action_inbox_id")).rows;
+      assert.deepEqual(rows.map(row=>[row.action_inbox_id,row.state,row.completion_data,Number(row.completion_retry_count)]),
+        [[itemA,"delivered",null,0],[itemB,"delivered",null,0]],"both completions committed on the first try");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM owner_web_push_subscriptions")).rows[0].n,0,"both gone subscriptions were removed");
+      for(const actor of actors)assert.equal(actor.child.exitCode,0,"completion actor exits cleanly");
+    }finally{await closeRaceActors(actors);await pool.close();await admin.end();}
+  },{port:PUSH_PORT+14,allowedPorts:[PUSH_PORT+14],boundMs:240_000});
 });
 
 durableTwin("WP-D24", "expiry pruning rechecks refreshed authority", async f => {

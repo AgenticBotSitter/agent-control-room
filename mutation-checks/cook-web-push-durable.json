@@ -29,7 +29,7 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "for (const receipt of receipts) {",
+    "find": "for (const receipt of ordered) {",
     "replace": "for (const receipt of []) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "Independent reader must see the delivery ledger repaired along with the terminal head."
@@ -113,7 +113,7 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "if (live.rows.length && proof.rows[0]?.state !== receipt.result)",
+    "find": "if (live.rows.length && proof.rows.length && proof.rows[0]!.state !== receipt.result)",
     "replace": "if (false)",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D08: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "A conflicting product-created ledger record cannot be silently accepted as repaired delivery."
@@ -155,10 +155,10 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "        // Parent deletion locks the subscription before its 0174 delivery\n        // cascade. Acquire every removed parent in the same id order before\n        // touching deliveries; a peer unsubscribe can then wait without a cycle.\n        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)\n          .map(receipt => receipt.subscription_id))].sort()) {\n          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId, subscriptionId]);\n        }\n        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n          if (result.rows.length !== 1) {\n            const proof = await tx.query<{ state: string }>(`SELECT state FROM owner_web_push_deliveries\n              WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3`,\n            [this.input.tenantId,receipt.subscription_id,receipt.event_tag]);\n            const live = await tx.query(`SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId,receipt.subscription_id]);\n            if (live.rows.length && proof.rows[0]?.state !== receipt.result)\n              throw new Error(\"owner_push_completion_record_changed\");\n          }\n        }\n",
-    "replace": "        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n          if (result.rows.length !== 1) {\n            const proof = await tx.query<{ state: string }>(`SELECT state FROM owner_web_push_deliveries\n              WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3`,\n            [this.input.tenantId,receipt.subscription_id,receipt.event_tag]);\n            const live = await tx.query(`SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId,receipt.subscription_id]);\n            if (live.rows.length && proof.rows[0]?.state !== receipt.result)\n              throw new Error(\"owner_push_completion_record_changed\");\n          }\n          if (receipt.remove) await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId,receipt.subscription_id]);\n        }\n",
+    "find": "        // ONE global lock order: every subscription's resources (its parent row,\n        // the 0174 delivery rows a parent delete cascades over, and this item's\n        // own delivery row) are taken in ascending subscription id. A removed\n        // parent is deleted immediately before its own delivery write, so a peer\n        // completion or unsubscribe holding a lower id can only make this wait,\n        // never close a cycle with a higher one.\n        const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1\n          : a.subscription_id > b.subscription_id ? 1 : 0);\n        for (const receipt of ordered) {\n          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "replace": "        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)\n          .map(receipt => receipt.subscription_id))].sort()) {\n          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId, subscriptionId]);\n        }\n        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
-    "why": "0174 parent-to-delivery FK cascade requires all removed parents before delivery writes; independent literal order assertion."
+    "why": "The previous delete-all-removed-parents-first structure takes a higher subscription's cascade before a lower subscription's kept row; the independent literal ascending write sequence of the mixed scenarios fails."
   },
   {
     "file": "src/web-push/v1/postgres-store.ts",
@@ -176,10 +176,10 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": ".map(receipt => receipt.subscription_id))].sort()) {",
-    "replace": ".map(receipt => receipt.subscription_id))]) {",
+    "find": "const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1\n          : a.subscription_id > b.subscription_id ? 1 : 0);",
+    "replace": "const ordered = [...receipts];",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
-    "why": "Two literal parent ids must be locked ascending even when the real-reader record replay is reversed; removing sorting must fail the independent order assertion."
+    "why": "Receipts replayed in reverse reader order must still be written in ascending subscription id; removing the sort fails the independent literal write sequence."
   },
   {
     "file": "src/web-push/v1/postgres-store.ts",
@@ -236,5 +236,26 @@
     "replace": "durableDispatcher(f,channel,meter.db).dispatch());",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "The seed99 waves are in budget by arithmetic only while each dispatcher claims at most CLAIM_WIDTH rows: the default 64 fails the widest-claim assertion, because the first wave of 8 callers always claims a wider set than the width."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        // ONE global lock order: every subscription's resources (its parent row,\n        // the 0174 delivery rows a parent delete cascades over, and this item's\n        // own delivery row) are taken in ascending subscription id. A removed\n        // parent is deleted immediately before its own delivery write, so a peer\n        // completion or unsubscribe holding a lower id can only make this wait,\n        // never close a cycle with a higher one.\n        const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1\n          : a.subscription_id > b.subscription_id ? 1 : 0);\n        for (const receipt of ordered) {\n          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "replace": "        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)\n          .map(receipt => receipt.subscription_id))].sort()) {\n          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId, subscriptionId]);\n        }\n        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: crosswise completions share one lock order and never deadlock [(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two real-PostgreSQL processes with opposite accepted/gone subscriptions deadlock when removed parents are deleted before every kept ledger row; the observed server deadlock counter and refusal assertions fail."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "replace": "          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A removed parent must be deleted before its own ledger write, or two completions that each updated their own row can cascade into each other's; the both-gone literal write sequence fails."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (live.rows.length && proof.rows.length && proof.rows[0]!.state !== receipt.result)",
+    "replace": "if (live.rows.length && proof.rows[0]?.state !== receipt.result)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D25: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A ledger row cascaded away by a same-endpoint resubscribe must not be read as tampering; the old condition strands the completing head and the failed alert is never resent."
   }
 ]
