@@ -24,6 +24,7 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenan
 import * as connector from "../scripts/fleet/connector.mjs";
 import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
 const FAKE_MODULE = resolve("tests/support/fleet-fake-harness-adapter.mjs");
 const REAL_MODULE = resolve("src/fleet/v1/harness-adapters.ts");
@@ -569,7 +570,7 @@ test("tool worker end to end: a structured adapter id runs the local manifest an
 writeFileSync(process.argv[3] + "/transcript.txt", "Transcript: " + readFileSync(process.argv[2], "utf8"));
 console.log("Whisper finished.");`, { mode: 0o700 });
   await writeFile(join(f.dir, "tool-adapters.json"), JSON.stringify({ schema: "control-room.local-tool-adapters/v1",
-    maxConcurrent: 1, adapters: [{ id: "whisper_local", capability: "tool.whisper", executable: process.execPath,
+    maxConcurrent: 1, adapters: [{ id: "whisper_local", capability: "tool.whisper", executable: await createPrivateNodeTool(f.dir),
       arguments: [script, "{input:audio}", "{output:transcript}"], timeoutMs: 2_000, maxOutputBytes: 65_536,
       envAllowlist: [] }] }), { mode: 0o600 });
   const worker = await joinWorker(f, "Whisper Mac", "tool", "tool.whisper");
