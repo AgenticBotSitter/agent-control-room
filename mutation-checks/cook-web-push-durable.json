@@ -211,8 +211,8 @@
   },
   {
     "file": "tests/r7i-unhappy-paths-postgres.test.ts",
-    "find": "dispatchers.map(each => each.dispatch(CLAIM_WIDTH)));",
-    "replace": "dispatchers.map(each => each.dispatch()));",
+    "find": "each => each.dispatch(CLAIM_WIDTH)",
+    "replace": "each => each.dispatch()",
     "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "Racing dispatchers are in budget by arithmetic only while each claims at most CLAIM_WIDTH rows: letting each claim the default 64 fails the widest-claim assertion, because 40 rows over 8 dispatchers always leave one claimant more than the width."
   },
