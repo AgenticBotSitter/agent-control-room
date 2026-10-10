@@ -355,5 +355,26 @@
     "replace": "      if (Number.isSafeInteger(pid) && pid > 0 && true) break;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"readiness barrier refuses partial\" tests/fleet-tool-adapter.test.mjs",
     "why": "Disable only heartbeat-content validation. The real partial-heartbeat fixture writes a valid PID but empty heartbeat, and the independent false-handoff assertion must fail."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "          dispatchResults = await Promise.allSettled(dispatchers.map(each => each.dispatch(20)));",
+    "replace": "          dispatchResults = []; for (const each of dispatchers) dispatchResults.push(...await Promise.allSettled([each.dispatch(20)]));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^real PostgreSQL: a burst of concurrent dispatchers rings once per decision$\" tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Serialise the two dispatchers. The first claim expires its cleanup barrier before the second starts; the independently required overlap of two live claim windows must fail by the named overlap assertion, with completed test and cluster cleanup."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "          dispatchResults = await Promise.allSettled(dispatchers.map(each => each.dispatch(20)));",
+    "replace": "          dispatchResults = await Promise.allSettled(dispatchers.map((each, index) => each.dispatch(20).then(outcomes => { if (index === 1) throw new Error(\"injected dispatcher failure\"); return outcomes; })));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^real PostgreSQL: a burst of concurrent dispatchers rings once per decision$\" tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Reject one dispatcher after both real claims and sends. The named dispatcher 1 must resolve without a swallowed error assertion must fail, proving a successful peer cannot hide rejection."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "          dispatchResults = await Promise.allSettled(dispatchers.map(each => each.dispatch(20)));",
+    "replace": "          dispatchResults = await Promise.allSettled(dispatchers.map((each, index) => each.dispatch(20).then(outcomes => index === 1 ? outcomes.slice(1) : outcomes)));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^real PostgreSQL: a burst of concurrent dispatchers rings once per decision$\" tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Drop one reported outcome after both real dispatches. The named dispatcher 1 must report all twenty claimed outcomes assertion must fail against the independently specified twenty-decision batch."
   }
 ]
