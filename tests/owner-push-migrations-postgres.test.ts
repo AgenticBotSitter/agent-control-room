@@ -201,9 +201,14 @@ test("real PostgreSQL: 0226 down revokes exactly the 0226 grants and no more",
           a.attname, 'UPDATE') ORDER BY a.attname`)).rows
       .map(row => row.column_name);
     try {
+      assert.deepEqual(await columns(), ["attempt_count", "completed_at", "completion_data", "completion_disposition",
+        "completion_next_attempt_at", "completion_reason_code", "completion_retry_count", "last_attempt_at",
+        "next_attempt_at", "reserved_at", "safe_reason_code", "state", "updated_at"],
+        "the installed release grants retry and completion bookkeeping only");
+      await run(admin, "0300_owner_push_durable_completion.sql");
       assert.deepEqual(await columns(), ["attempt_count", "completed_at", "last_attempt_at",
         "next_attempt_at", "reserved_at", "safe_reason_code", "state", "updated_at"],
-        "0226 granted exactly the retry bookkeeping, and not the link or the item id");
+        "0300 down removes its completion columns and preserves every 0226 grant");
       await run(admin, "0226_owner_push_attempt_grants.sql");
       // Every UPDATE column revoked...
       assert.deepEqual(await columns(), [], "the column-scoped UPDATE is gone");
@@ -238,6 +243,9 @@ test("real PostgreSQL: 0225 down removes the guard and 0224 down removes the tab
     const hasFunction = async (name: string) => (await admin.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM pg_proc WHERE proname=$1", [name])).rows[0]!.n;
     try {
+      // Roll back newer completion metadata first. Retained completion refusal
+      // is exercised by WP-D15 through the actual producer and web login.
+      await run(admin, "0300_owner_push_durable_completion.sql");
       // 0225 down drops ONLY the trigger and its function.
       assert.equal(await hasFunction("guard_owner_push_attempt_head_write"), 1, "0225 created the guard");
       await run(admin, "0225_owner_push_attempt_guards.sql");
@@ -272,4 +280,146 @@ test("real PostgreSQL: 0225 down removes the guard and 0224 down removes the tab
       assert.equal(item.rows[0]!.n, 1, "the attention item is 0019's, and survives");
     } finally { await admin.end(); }
   }, { port: PORT + 1, allowedPorts: PORTS, database: "control_room", boundMs: 180_000 });
+});
+
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+import { Pool } from "pg";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
+import { privatePgOptions } from "../src/web/v1/private-pg-options";
+import { readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
+import { OwnerPushDispatcherV1 } from "../src/web-push/v1/dispatcher";
+import { PostgresOwnerPushStoreV1 } from "../src/web-push/v1/postgres-store";
+import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+
+// Independently captured release artifacts, pinned before the completion migration.
+const BASE_LEDGER='c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03';
+const BASE_SCHEMA='ef71e299dfac1dd36ca7a3cb569b6e0b23a307bb3f075048f5f408186c816390';
+const PUSH_RELEASE_BASE='14bb5fde02ab096441d6ef113e77773b2988e813';
+
+test("WP-D15: released producer data survives provisioned upgrade and fresh schema agrees (PG)", {
+  skip: required ? false : realPostgresSkipMessage(), timeout:900_000,
+}, async () => {
+  const currentRoot=REPOSITORY_ROOT;
+  const scratch=join(currentRoot,".test-tmp");await mkdir(scratch,{recursive:true});
+  const oldRoot=await mkdtemp(join(scratch,"owner-push-release-"));
+  try {
+    execFileSync("git",["-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false","clone",
+      "--no-hardlinks","--no-checkout","--quiet",currentRoot,oldRoot],{timeout:60_000,stdio:"pipe"});
+    execFileSync("git",["-C",oldRoot,"-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false",
+      "checkout","--detach","--quiet",PUSH_RELEASE_BASE],{timeout:60_000,stdio:"pipe"});
+    // The old source uses this checkout's dependency tree, deliberately, with
+    // identical captured lockfile bytes. This is an old-producer proof, not an
+    // archive-install proof or a claim that the old clone installed packages.
+    assert.equal(await readFile(join(oldRoot,"pnpm-lock.yaml"),"utf8"),
+      await readFile(join(currentRoot,"pnpm-lock.yaml"),"utf8"),"old producer runtime dependency inputs match");
+ const oldLedger=JSON.parse(await readFile(join(oldRoot,'deploy/postgres/migration-ledger.json'),'utf8'));
+ assert.equal(oldLedger.digest,BASE_LEDGER,'independently captured14bb release ledger');
+ await withRealPostgres(async postgres=>{
+  const previous='push_previous_release';
+  const admin=new Client(postgres.admin());admin.on('error',()=>{});await admin.connect();
+  let oldPool:ReturnType<typeof bindPrivatePgPool>|undefined;
+  let fresh:Client|undefined;
+  try {
+   await admin.query(`CREATE DATABASE ${previous} OWNER fixture_admin`);
+   const target=postgres.admin({database:previous});
+   const env:NodeJS.ProcessEnv={...process.env,NODE_ENV:'test',
+    CONTROL_ROOM_MIGRATOR_PASSWORD:postgres.connection('migrator').password,
+    CONTROL_ROOM_APP_PASSWORD:postgres.connection('app').password,
+    CONTROL_ROOM_SCHEDULER_PASSWORD:postgres.connection('scheduler').password,
+    CONTROL_ROOM_WORK_INTAKE_PASSWORD:postgres.connection('control_room_work_intake_agent').password};
+   // The inferred JS call shape requires the legacy plan flag; execution is
+   // authorized only by bootstrapTarget and migrateTarget, so leave it unset.
+   const before=await applyMigrations({target:undefined,rootDir:oldRoot,ledgerPath:join(oldRoot,'deploy/postgres/migration-ledger.json'),
+    bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
+   const grantProducer=await import(pathToFileURL(join(oldRoot,'scripts/mac-local/database-upgrade-grants.mjs')).href);
+   const grantActor=new Client(target);grantActor.on('error',()=>{});await grantActor.connect();
+   try {
+    const desired=await grantProducer.readDesiredMacGrantsV1();
+    const privateWeb=new Set([...desired].filter((item:string)=>item.startsWith('control_room_private_web|')));
+    const actual=new Set([...await grantProducer.readMacGrantCatalogV1(grantActor)].filter((item:string)=>item.startsWith('control_room_private_web|')));
+    const diff=grantProducer.diffMacGrantsV1(actual,privateWeb);
+    await grantProducer.applyMacGrantDiffV1(grantActor,diff);
+    console.log('earlier-private-web-provision',JSON.stringify({missing:diff.missing.length,extra:diff.extra.length,source:'released narrow-role grant producer'}));
+   } finally {await grantActor.end();}
+   const login=postgres.connection('web',{database:previous});
+   oldPool=bindPrivatePgPool(new Pool({...privatePgOptions({host:'127.0.0.1',port:postgres.port,database:previous,username:login.user,password:login.password,majorVersion:17}),host:login.host}));
+   const db=oldPool.client;
+   assert.equal((await db.query('SELECT session_user AS login')).rows[0].login,'control_room_web');
+   assert.equal(await readPrivateWebSchemaDigest(db),BASE_SCHEMA,'earlier producer built the independently captured release schema through the production reader');
+   const seed=new Client(postgres.admin({database:previous}));seed.on('error',()=>{});await seed.connect();
+   try {
+    await seed.query("INSERT INTO tenants(id,display_name) VALUES('tenant:upgrade','Upgrade input')");
+    await seed.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,created_at,updated_at)
+     VALUES($1,'tenant:upgrade','https://fcm.googleapis.com/fcm/send/upgrade-input','A','B',now(),now())`,[`push:${'a'.repeat(64)}`]);
+    for(const id of ['accepted','retry'])await seed.query(`INSERT INTO control_action_inbox
+     (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+     VALUES($1,'tenant:upgrade','project:upgrade','job:upgrade','failure','open','not_requested',now(),'{}')`,['attention:upgrade:'+id]);
+   } finally {await seed.end();}
+   assert.equal((await db.query('SELECT count(*)::int AS n FROM control_owner_push_attempt_heads')).rows[0].n,0);
+   assert.equal((await db.query('SELECT count(*)::int AS n FROM owner_web_push_deliveries')).rows[0].n,0);
+   const oldDispatcher=await import(pathToFileURL(join(oldRoot,'src/web-push/v1/dispatcher.ts')).href);
+   const oldStore=await import(pathToFileURL(join(oldRoot,'src/web-push/v1/postgres-store.ts')).href);
+   const at=Date.now(),tags:string[]=[];
+   const channel={kind:'web-push' as const,async send(_s:unknown,p:{tag:string}){
+    tags.push(p.tag);return{statusCode:p.tag.endsWith(':retry')?503:201};}};
+   await new oldDispatcher.OwnerPushDispatcherV1({db,tenantId:'tenant:upgrade',
+    store:new oldStore.PostgresOwnerPushStoreV1(db),channel,clock:()=>at}).dispatch();
+   const rows=async()=> (await db.query(`SELECT action_inbox_id,state,attempt_count FROM control_owner_push_attempt_heads ORDER BY action_inbox_id`)).rows;
+   assert.deepEqual(await rows(),[
+    {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
+    {action_inbox_id:'attention:upgrade:retry',state:'pending',attempt_count:1}]);
+   assert.equal(tags.length,2,'old producer sent both synthetic provider requests');
+   const upgrade=await applyMigrations({target:undefined,rootDir:currentRoot,ledgerPath:join(currentRoot,'deploy/postgres/migration-ledger.json'),
+    bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
+   assert.deepEqual(upgrade.applied?.map((r:{file:string})=>r.file),['db/migrations/0300_owner_push_durable_completion.sql'],
+    'upgrade appends only the new migration to the real earlier ledger');
+   assert.deepEqual(await rows(),[
+    {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
+    {action_inbox_id:'attention:upgrade:retry',state:'pending',attempt_count:1}],'upgrade preserves old product-created data');
+   fresh=new Client(postgres.connection('web'));fresh.on('error',()=>{});await fresh.connect();
+   const reader=(client:Client)=>({query:async(s:string,p?:unknown[])=>({rows:(await client.query(s,p)).rows})});
+   const upgradedDigest=await readPrivateWebSchemaDigest(db);
+   const freshDigest=await readPrivateWebSchemaDigest(reader(fresh));
+   assert.equal(upgradedDigest,freshDigest,'independent fresh and upgraded catalogs agree');
+   console.log(JSON.stringify({baselineLedger:BASE_LEDGER,baselineSchema:BASE_SCHEMA,upgradedDigest,freshDigest,
+    applied:upgrade.applied?.map((r:{file:string})=>r.file),login:'control_room_web',provider:'SYNTHETIC'}));
+   const accepted={kind:'web-push' as const,async send(_s:unknown,p:{tag:string}){tags.push(p.tag);return{statusCode:201};}};
+   await new OwnerPushDispatcherV1({db,tenantId:'tenant:upgrade',store:new PostgresOwnerPushStoreV1(db),channel:accepted,clock:()=>at+30_000}).dispatch();
+   assert.deepEqual(await rows(),[
+    {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
+    {action_inbox_id:'attention:upgrade:retry',state:'delivered',attempt_count:2}]);
+   assert.deepEqual(tags,['needs:attention:upgrade:accepted','needs:attention:upgrade:retry','needs:attention:upgrade:retry']);
+  } finally {await oldPool?.close();await fresh?.end();await admin.end();}
+ },{port:PORT+8,allowedPorts:PORTS,boundMs:600000});
+  } finally {await rm(oldRoot,{recursive:true,force:true});}
+});
+
+test("WP-D22: 0300 uses bigint and retains safe completion constraints (PG)",
+  required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
+  await withRealPostgres(async postgres => {
+    const web = new Client(postgres.connection("web"));
+    web.on("error", () => {}); await web.connect();
+    try {
+      assert.equal((await web.query("SELECT session_user AS login")).rows[0].login, "control_room_web");
+      const column = await web.query(`SELECT format_type(atttypid, atttypmod) AS type
+        FROM pg_attribute WHERE attrelid='control_owner_push_attempt_heads'::regclass
+        AND attname='completion_retry_count' AND NOT attisdropped`);
+      assert.equal(column.rows[0]?.type, "bigint", "WP-D22 retry counter uses the lint-required bigint type");
+      const constraints = await web.query(`SELECT conname, convalidated FROM pg_constraint
+        WHERE conrelid='control_owner_push_attempt_heads'::regclass AND conname=ANY($1::text[])
+        ORDER BY conname`, [["control_owner_push_attempt_heads_state_check", "owner_push_completion_shape",
+          "owner_push_completion_disposition"]]);
+      assert.deepEqual(constraints.rows, [
+        { conname: "control_owner_push_attempt_heads_state_check", convalidated: false },
+        { conname: "owner_push_completion_disposition", convalidated: false },
+        { conname: "owner_push_completion_shape", convalidated: false },
+      ], "WP-D22 changed checks protect every new write without a legacy table scan");
+      const index = await web.query(`SELECT indisvalid, indisready, pg_get_expr(indpred, indrelid) AS predicate
+        FROM pg_index WHERE indexrelid='control_owner_push_completions_due'::regclass`);
+      assert.deepEqual(index.rows, [{ indisvalid: true, indisready: true, predicate: "(state = 'completing'::text)" }],
+        "WP-D22 transactional completion index is ready and filters only completing rows");
+    } finally { await web.end(); }
+  }, { port: PORT + 9, allowedPorts: PORTS, boundMs: 180_000 });
 });

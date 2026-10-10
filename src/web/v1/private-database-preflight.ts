@@ -87,7 +87,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
-export const privateWebSchemaDigest = "ef71e299dfac1dd36ca7a3cb569b6e0b23a307bb3f075048f5f408186c816390";
+export const privateWebSchemaDigest = "9215bd0d162a39eaab6a0a84d6c1d6f7774b299578435ad654cfe37788bea701";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -269,13 +269,14 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_idempotency: ["status", "result", "completed_at"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   control_action_inbox: ["state", "payload"],
-  // MIG-I: exactly the eight retry-bookkeeping columns 0226 grants, and NOT the
+  // MIG-I/0300: the retry and safe completion columns, and NOT the
   // link -- a phone's destination is written once and never repointed. This list
   // is the preflight's copy of that grant, and it is deliberately identical: a
-  // column here that 0226 does not grant, or one missing that it does, is
+  // column here missing from0226/0300 grants, or an unlisted grant, is
   // refused by the column audit rather than tolerated.
   control_owner_push_attempt_heads: ["state", "attempt_count", "next_attempt_at", "reserved_at", "last_attempt_at",
-    "completed_at", "safe_reason_code", "updated_at"],
+    "completed_at", "safe_reason_code", "updated_at", "completion_data", "completion_disposition",
+    "completion_next_attempt_at", "completion_reason_code", "completion_retry_count"],
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],

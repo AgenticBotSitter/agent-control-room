@@ -1,0 +1,324 @@
+[
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "catch (error) { errors.push(error); }\n      }",
+    "replace": "catch (error) { throw error; }\n      }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D01: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent live-cycle contract: sibling work must finish before a failure is reported."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D10: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent overlap oracle requires at least two simultaneous provider calls after pre-send refusals."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "LIMIT ${SEND_CONCURRENCY_V1}",
+    "replace": "LIMIT 64",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D05: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Contract bounds durable repair to eight items per cycle, independently of the number of poisoned receipts."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "maySend: () => this.#live(head),",
+    "replace": "maySend: async () => true,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "An older owner blocked in reservation must not send after the exact attempt has moved."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "for (const receipt of ordered) {",
+    "replace": "for (const receipt of []) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent reader must see the delivery ledger repaired along with the terminal head."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "statusCode! <= 599 ? statusCode! : null",
+    "replace": "statusCode! <= 999 ? statusCode! : null",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D05: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "0174 production constraint independently limits recorded HTTP status to100..599;600 must normalize once."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "      IF jsonb_typeof(receipt)<>'object'\n        OR NOT (receipt ?& ARRAY['subscription_id','event_tag','result','status_code','completed_at','remove'])\n        OR receipt - ARRAY['subscription_id','event_tag','result','status_code','completed_at','remove'] <> '{}'::jsonb\n        OR jsonb_typeof(receipt->'subscription_id')<>'string'\n        OR (receipt->>'subscription_id') !~ '^push:[a-f0-9]{64}$'\n        OR receipt->>'event_tag' IS DISTINCT FROM 'needs:'||NEW.action_inbox_id\n        OR receipt->>'result' NOT IN ('delivered','failed')\n        OR jsonb_typeof(receipt->'result')<>'string'\n        OR jsonb_typeof(receipt->'remove')<>'boolean'\n        OR jsonb_typeof(receipt->'completed_at')<>'string'\n        OR (receipt->>'completed_at') !~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$'\n        OR (receipt->'status_code'<>'null'::jsonb AND (\n          jsonb_typeof(receipt->'status_code')<>'number'\n          OR (receipt->>'status_code') !~ '^[1-5][0-9]{2}$'))\n        OR (receipt->>'result'='delivered' AND (\n          receipt->'status_code'='null'::jsonb OR (receipt->>'status_code')::integer NOT BETWEEN 200 AND 299\n          OR (receipt->>'remove')::boolean))\n        OR (receipt->>'result'='failed' AND (receipt->>'status_code')::integer BETWEEN 200 AND 299)\n        OR ((receipt->>'remove')::boolean AND ((receipt->>'status_code')::integer IN (404,410)) IS DISTINCT FROM true)\n",
+    "replace": "      IF false\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Safe payload contract is specified by independent malformed literals at a product-created reserved head; monotonicity cannot mask it."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "        PERFORM (receipt->>'completed_at')::timestamptz;",
+    "replace": "        PERFORM 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent impossible calendar and hour values must fail once at receipt admission."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "OR NOT (NEW.completion_data @> OLD.completion_data)",
+    "replace": "OR false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A retained accepted receipt cannot be erased; the independent reader first observes product-created completion."
+  },
+  {
+    "file": "db/migrations/0300_owner_push_durable_completion.sql",
+    "find": "    IF (SELECT count(*) FROM jsonb_array_elements(NEW.completion_data)) <>\n      (SELECT count(DISTINCT value->>'subscription_id') FROM jsonb_array_elements(NEW.completion_data))\n",
+    "replace": "    IF false\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two literal identical subscription receipts are refused, without a prior completion masking the predicate."
+  },
+  {
+    "file": "db/down/0300_owner_push_durable_completion.sql",
+    "find": "  IF EXISTS (SELECT 1 FROM control_owner_push_attempt_heads WHERE state='completing' OR completion_data IS NOT NULL)",
+    "replace": "  IF false AND EXISTS (SELECT 1 FROM control_owner_push_attempt_heads WHERE state='completing' OR completion_data IS NOT NULL)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Retained-data downgrade returns the independently specified refusal before destructive operations."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "interrupted && receipts.some(r=>r.result === \"delivered\") ? null : \"retry\"",
+    "replace": "\"failed\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Known acceptance is not terminal failed for a bookkeeping refusal."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "WHERE h.tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2\n        AND i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id AND i.state='open'",
+    "replace": "WHERE h.tenant_id=$1 AND h.state IN ('reserved','completing') AND h.reserved_at<=$2\n        AND i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id AND i.state='open'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D13: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Stale send recovery excludes completing receipts past300 seconds; completion repairs without a second send attempt."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "if (!current) continue;",
+    "replace": "if (!current) current = subscription;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D03: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "An independently expired second subscription must not be sent from the original list after the first provider call finishes."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "WHERE tenant_id=$1 AND action_inbox_id=$2 AND attempt_count=$3 AND reserved_at=$4::timestamptz\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
+    "replace": "WHERE tenant_id=$1 AND action_inbox_id=$2 AND $3::integer IS NOT NULL AND $4::timestamptz IS NOT NULL\n            AND state IN ('reserved','completing') RETURNING action_inbox_id",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Exact receipt admission cannot overwrite a newer claim while its provider call is observably held. Keep all placeholder types so a bind/load failure cannot substitute for the named assertion."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (result.rows.length !== 1) throw new Error(\"owner_push_claim_changed\");",
+    "replace": "if (false) throw new Error(\"owner_push_claim_changed\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D06: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The old owner must report the independent zero-row receipt refusal; an empty success is false success."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (live.rows.length && proof.rows.length && proof.rows[0]!.state !== receipt.result)",
+    "replace": "if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D08: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A conflicting product-created ledger record cannot be silently accepted as repaired delivery."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (!owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))",
+    "replace": "if (false && !owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D16: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Existing literal30s/60s retry policy: after one peer publishes a future deadline, an old due snapshot must perform zero ledger writes. PG twin proves two production-login processes."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "retryCount = Number(current.completion_retry_count ?? 0);",
+    "replace": "retryCount = Number(head.completion_retry_count ?? 0);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D17: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "At the exact peer-published deadline the independent third300s backoff uses locked current count2, not selected count1."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "AND completion_retry_count=$8",
+    "replace": "AND ($8::integer IS NOT NULL)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D18: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two failed repairs held at publication: exactly one current UPDATE may return a row; the stale publication must affect zero."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "Math.min(retryCount+1,OWNER_PUSH_ATTEMPT_LIMIT_V1)",
+    "replace": "(retryCount+1)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D19: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Independent released schedule and literal count8: refusal number9 must still publish the bounded four-hour deadline, not leave due work spinning."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "AND next_attempt_at<=$7::timestamptz",
+    "replace": "AND ($7::timestamptz IS NOT NULL)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D20: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "After count eight a failed peer must not overwrite a newly published future deadline; expected zero writes comes from the exclusive publication contract."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        // ONE global lock order: every subscription's resources (its parent row,\n        // the 0174 delivery rows a parent delete cascades over, and this item's\n        // own delivery row) are taken in ascending subscription id. A removed\n        // parent is deleted immediately before its own delivery write, so a peer\n        // completion or unsubscribe holding a lower id can only make this wait,\n        // never close a cycle with a higher one.\n        const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1\n          : a.subscription_id > b.subscription_id ? 1 : 0);\n        for (const receipt of ordered) {\n          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "replace": "        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)\n          .map(receipt => receipt.subscription_id))].sort()) {\n          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId, subscriptionId]);\n        }\n        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The previous delete-all-removed-parents-first structure takes a higher subscription's cascade before a lower subscription's kept row; the independent literal ascending write sequence of the mixed scenarios fails."
+  },
+  {
+    "file": "src/web-push/v1/postgres-store.ts",
+    "find": "WHERE tenant_id=$1 AND id=$2 AND expires_at IS NOT NULL AND expires_at<=now()",
+    "replace": "WHERE tenant_id=$1 AND id=$2",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D24: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Live expiry recheck must retain a subscription whose authority refresh occurred after expired selection."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Lead disposition permits final D02 behavior plus named serial-worker disabling mutation; historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1\n          : a.subscription_id > b.subscription_id ? 1 : 0);",
+    "replace": "const ordered = [...receipts];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Receipts replayed in reverse reader order must still be written in ascending subscription id; removing the sort fails the independent literal write sequence."
+  },
+  {
+    "file": "src/web-push/v1/postgres-store.ts",
+    "find": "WHERE tenant_id=$1 AND id=$2 AND expires_at IS NOT NULL AND expires_at<=now()",
+    "replace": "WHERE tenant_id=$1 AND ($2::text IS NOT NULL) AND expires_at IS NOT NULL AND expires_at<=now()",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D24: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The parent-id predicate must limit each autocommit delete to one cascade chain; independent maximum deletion delta1 with three real reader records, not SQL text matching."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "Array.from({length:FULL_WIDTH_CLAIMANTS},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "replace": "Array.from({length:FULL_WIDTH_CLAIMANTS*16},()=>durableDispatcher(f,channel,meter.db).dispatch())",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Overlapping full-width claimants must stay inside the private-web operation-admission budget: far more claimants than the pool admits fails the measured peak and no-refusal assertions."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "peak = Math.max(peak, ++live);",
+    "replace": "peak = Math.min(peak, ++live);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The operation meter must really count outstanding operations: a meter stuck at zero fails the peak-floor assertion, so a passing budget check is never vacuous."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "for (let started = 0; started < callers; started += DISPATCHERS)\n    settled.push(...await Promise.allSettled(Array.from({ length: Math.min(DISPATCHERS, callers - started) }, start)));",
+    "replace": "settled.push(...await Promise.allSettled(Array.from({ length: callers }, start)));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The seed99 contention waves must never start more callers than the pool admits: removing the wave width fails the measured peak and no-refusal assertions."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "each => each.dispatch(CLAIM_WIDTH)",
+    "replace": "each => each.dispatch()",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Racing dispatchers are in budget by arithmetic only while each claims at most CLAIM_WIDTH rows: letting each claim the default 64 fails the widest-claim assertion, because 40 rows over 8 dispatchers always leave one claimant more than the width."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "length: DISPATCHERS }, () => new OwnerPushDispatcherV1({ db: meter.db,",
+    "replace": "length: DISPATCHERS * 3 }, () => new OwnerPushDispatcherV1({ db: meter.db,",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The real PostgreSQL burst must stay inside the operation-admission budget: three times the dispatchers fails the no-refusal and measured-peak assertions."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "settledDispatches.push(...await Promise.allSettled(dispatchers.map(each => each.dispatch(CLAIM_WIDTH))));",
+    "replace": "for (const each of dispatchers) settledDispatches.push(...await Promise.allSettled([each.dispatch(CLAIM_WIDTH)]));",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='a burst of concurrent dispatchers rings once per decision' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Run the burst's dispatchers one at a time. A serial burst proves nothing about racing claims: the measured peak of outstanding database operations stays at 2, below the 8 dispatchers, and the burst peak assertion must fail by name (\"never had all 8 dispatchers' operations outstanding together\")."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "(log.match(/ERROR:\\s+40001:/g) ?? []).length",
+    "replace": "(log.match(/ERROR:\\s+40001X:/g) ?? []).length",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The server-log serialization observer must see a deliberate 40001; blinding it fails the control assertion so a zero delta is never vacuous."
+  },
+  {
+    "file": "tests/r7i-unhappy-paths-postgres.test.ts",
+    "find": "durableDispatcher(f,channel,meter.db).dispatch(CLAIM_WIDTH));",
+    "replace": "durableDispatcher(f,channel,meter.db).dispatch());",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D12: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The seed99 waves are in budget by arithmetic only while each dispatcher claims at most CLAIM_WIDTH rows: the default 64 fails the widest-claim assertion, because the first wave of 8 callers always claims a wider set than the width."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        // ONE global lock order: every subscription's resources (its parent row,\n        // the 0174 delivery rows a parent delete cascades over, and this item's\n        // own delivery row) are taken in ascending subscription id. A removed\n        // parent is deleted immediately before its own delivery write, so a peer\n        // completion or unsubscribe holding a lower id can only make this wait,\n        // never close a cycle with a higher one.\n        const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1\n          : a.subscription_id > b.subscription_id ? 1 : 0);\n        for (const receipt of ordered) {\n          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "replace": "        for (const subscriptionId of [...new Set(receipts.filter(receipt => receipt.remove)\n          .map(receipt => receipt.subscription_id))].sort()) {\n          await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n            [this.input.tenantId, subscriptionId]);\n        }\n        for (const receipt of receipts) {\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: crosswise completions share one lock order and never deadlock [(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Two real-PostgreSQL processes with opposite accepted/gone subscriptions deadlock when removed parents are deleted before every kept ledger row; the observed server deadlock counter and refusal assertions fail."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n",
+    "replace": "          const result = await tx.query(`UPDATE owner_web_push_deliveries\n            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer\n            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'\n            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,\n            receipt.result,receipt.completed_at,receipt.status_code]);\n          if (receipt.remove)\n            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,\n              [this.input.tenantId, receipt.subscription_id]);\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D23: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A removed parent must be deleted before its own ledger write, or two completions that each updated their own row can cascade into each other's; the both-gone literal write sequence fails."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "if (live.rows.length && proof.rows.length && proof.rows[0]!.state !== receipt.result)",
+    "replace": "if (live.rows.length && proof.rows[0]?.state !== receipt.result)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D25: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A ledger row cascaded away by a same-endpoint resubscribe must not be read as tampering; the old condition strands the completing head and the failed alert is never resent."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 2;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "Narrowing the send pool to two workers still overlaps two sends, so only the observed-state barrier that waits for every send worker to be in flight together catches it; WP-D02 fails on its sends-overlap assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 2;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The real-PostgreSQL twin of the narrowed send pool: the barrier never reaches the full worker width and the test fails on its sends-overlap assertion instead of passing on a timing window."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "const SEND_CONCURRENCY_V1 = 8;",
+    "replace": "const SEND_CONCURRENCY_V1 = 1;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D02: .*[(]PG[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A serial send pool never has two sends in flight; the real-PostgreSQL twin fails on its sends-overlap assertion."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "Math.max(ownerPushBackoffMsV1(attempt), retryAfterMs)",
+    "replace": "Math.max(0, retryAfterMs)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D04: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A pre-send refusal must back off by the attempt schedule; dropping the schedule makes the head due again at once and WP-D04 fails on its first-30s backoff assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "receipts.some(r=>r.result === \"delivered\") ? null : \"retry\",",
+    "replace": "receipts.some(r=>r.result === \"delivered\") ? null : \"failed\",",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D07: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "An interrupted failure bookkeeping step must leave the head retryable; making it terminal fails WP-D07 on its refused-503 repair-then-retry assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey)",
+    "replace": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey+\":\"+input.now.replace(/\\D/g,\"\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D09: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "A replayed accepted send must carry the same notification tag; a tag that varies with the send time fails the WP-D09 same-tag replay assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey)",
+    "replace": "ownerPushPayloadV1(input.kind, input.link, input.dedupeKey+\":\"+input.now.replace(/\\D/g,\"\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D14: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The same tag guard for the WP-D14 twin of the accepted-outage replay: a tag that varies with the send time fails the WP-D14 same-tag replay assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "src/web-push/v1/loop.ts",
+    "find": "await dispatcher.dispatch();",
+    "replace": "[];void dispatcher;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D11: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
+    "why": "The public loop must run the dispatcher cycle, which reconstructs a completion left by a replaced process; skipping the dispatch fails the WP-D11 durable-completion assertion. Historical reproduction unavailable."
+  }
+]

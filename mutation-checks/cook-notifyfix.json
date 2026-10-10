@@ -274,15 +274,15 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "(!sendFailure || sendFailure.removed) && deliveredCount > 0",
-    "replace": "!sendFailure && deliveredCount > 0",
+    "find": "    if (!interrupted && sendFailure?.removed) return this.#finish(head, receipts, \"failed\", now, \"owner_push_subscription_gone\");",
+    "replace": "    if (false && sendFailure?.removed) return this.#finish(head, receipts, \"failed\", now, \"owner_push_subscription_gone\");",
     "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
     "why": "U01: a successful target plus a removed target is delivered"
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "Math.max(ownerPushBackoffMsV1(spent), retryAfterMs)",
-    "replace": "ownerPushBackoffMsV1(spent)",
+    "find": "Math.max(ownerPushBackoffMsV1(attempt), retryAfterMs)",
+    "replace": "ownerPushBackoffMsV1(attempt)",
     "test": "node --import tsx --test tests/owner-notify-dispatch.test.ts",
     "why": "U04: provider Retry-After participates in the durable retry deadline"
   },
