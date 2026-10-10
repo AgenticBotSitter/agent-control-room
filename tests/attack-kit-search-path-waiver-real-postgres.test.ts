@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test, { describe } from "node:test";
-import { withRealPostgres } from "./support/attack-kit/index.ts";
+import { withRealPostgres, type RealPostgres } from "./support/attack-kit/index.ts";
 import { REPOSITORY_ROOT } from "./support/attack-kit/real-postgres.ts";
 import { createLane, PORTS } from "./support/attack-kit/suite-lane.ts";
 
@@ -29,6 +29,12 @@ async function runNode(args: readonly string[]): Promise<{ code: number; stdout:
 }
 
 describe("attack kit: search_path gate (real PostgreSQL)", () => {
+  /** Run the CI gate as CI runs it, against `pg`'s own cluster. */
+  const runGate = (pg: RealPostgres, allowlistPath: string, extra: readonly string[] = []) =>
+    runNode([join(REPOSITORY_ROOT, "scripts/check-migration-search-path.mjs"),
+      "--host", pg.socketDirectory, "--port", String(pg.port),
+      "--user", "fixture_admin", "--database", "control_room",
+      "--allowlist", allowlistPath, ...extra]);
 
   // ---- ATTACK SCENARIO, against a REAL cluster: a waived routine whose
   // effective search_path a later migration changes. This is the exact shape
