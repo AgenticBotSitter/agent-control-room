@@ -1328,6 +1328,7 @@ test("synchronized recovery callers merge the current disk minimum, including 50
     for (const count of [50, 20, 2]) {
       const inputs = Array.from({ length: count }, (_, i) =>
         ({ ...record, heldAt: base + i + 1, deadlineAt: base + 1000 + i * 1000 }));
+      const preBurstMinimum = expectedDeadline, burstStarted = performance.now();
       const writers = inputs.map(input => ports.testWrite(directory, claimId, input));
       pending.push(...writers);
       const settled = await Promise.allSettled(writers);
@@ -1340,6 +1341,7 @@ test("synchronized recovery callers merge the current disk minimum, including 50
         }
       });
       assert.ok(successful.length > 0, "the burst makes progress");
+      const completedInputs = successful.map(i => inputs[i]!);
       expectedDeadline = Math.min(expectedDeadline, ...successful.map(i => inputs[i]!.deadlineAt));
       const merged = await ports.testRead(directory, claimId);
       assert.equal(merged.deadlineAt, expectedDeadline, "successful inputs merge with the independent pre-burst minimum");
@@ -1348,10 +1350,17 @@ test("synchronized recovery callers merge the current disk minimum, including 50
         const retry = ports.testWrite(directory, claimId, inputs[i]);
         pending.push(retry);
         await retry; // Exactly one sequential retry, after every contender settled.
+        completedInputs.push(inputs[i]!);
       }
-      assert.equal(successful.length + refused.length, count, "every input completed or was retried once");
-      expectedDeadline = base + 1000;
+      // connector.mjs declares a 2000 ms lock wait. Healthy measured bursts,
+      // including retries under CPU/IO load, finish below this two-attempt budget.
+      // A 100 ms hold per writer cannot finish 50 writes inside that budget.
+      const lockWaitMs = 2_000, elapsedMs = performance.now() - burstStarted;
+      assert.ok(elapsedMs <= lockWaitMs * 2,
+        `every writer completes within the declared wait plus one retry: ${elapsedMs}ms exceeds ${lockWaitMs * 2}ms`);
+      expectedDeadline = Math.min(preBurstMinimum, ...completedInputs.map(input => input.deadlineAt));
       const saved = await ports.testRead(directory, claimId);
+      assert.equal(saved.deadlineAt, expectedDeadline, "the disk minimum equals the minimum over completed inputs");
       assert.equal(saved.deadlineAt, base + 1000, "all inputs preserve the literal earliest deadline");
       assert.equal(saved.heldAt, base);
       assert.deepEqual(await readdir(directory), [`held-result-${"4".repeat(32)}.json`], "no lock, cleaner or temporary files remain");

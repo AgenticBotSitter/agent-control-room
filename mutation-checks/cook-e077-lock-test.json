@@ -33,5 +33,12 @@
     "replace": "if (Date.now() - started >= 2_000) return;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"claim locks release on failure, recover dead owners, and bound incomplete-owner waits\" tests/fleet-held-result.test.ts",
     "why": "M5 bounded wait must reject a live-owner competing write instead of returning success without work"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      await handle.sync();\n      return await work();",
+    "replace": "      await handle.sync();\n      await new Promise(done => setTimeout(done, 100));\n      return await work();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M6 a 100 ms lock hold exceeds the independent 4000 ms burst budget: declared 2000 ms wait plus one retry; healthy CPU/IO measurements stay below the budget"
   }
 ]
