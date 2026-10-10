@@ -1285,6 +1285,7 @@ test("missing or invalid held anchors are persisted before delivery and survive 
 
 test("synchronized recovery callers merge the current disk minimum, including 50 callers", { timeout: 30_000 }, async (t) => {
   const ports = await recoveryPorts();
+  const { createHook } = await import("node:async_hooks");
   const base = Date.now(), directory = await mkdtemp(join(tmpdir(), "fleet-held-recovery-"));
   const claimId = `fleet-claim:${"4".repeat(32)}`;
   const record = { summary: "A completed held answer.", idempotencyKey: `handoff-${"4".repeat(32)}-result`, heldAt: base, deadlineAt: null };
@@ -1329,9 +1330,33 @@ test("synchronized recovery callers merge the current disk minimum, including 50
       const inputs = Array.from({ length: count }, (_, i) =>
         ({ ...record, heldAt: base + i + 1, deadlineAt: base + 1000 + i * 1000 }));
       const preBurstMinimum = expectedDeadline;
-      const writers = inputs.map(input => ports.testWrite(directory, claimId, input));
-      pending.push(...writers);
-      const settled = await Promise.allSettled(writers);
+      // Advance the lock's policy clock only after real filesystem requests
+      // settle. Host scheduling and fsync speed must not consume its wait;
+      // an actual timer inside the held lock still consumes policy time.
+      const ioPending = new Set<number>();
+      const ioHook = createHook({
+        init(id, type) {
+          if (type === "FSREQPROMISE" || type === "FSREQCALLBACK" || type === "FILEHANDLECLOSEREQ") ioPending.add(id);
+        },
+        destroy(id) { ioPending.delete(id); },
+      });
+      ioHook.enable();
+      t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: base });
+      let settled: PromiseSettledResult<unknown>[];
+      try {
+        const writers = inputs.map(input => ports.testWrite(directory, claimId, input));
+        pending.push(...writers);
+        let finished = false;
+        const outcomes = Promise.allSettled(writers).then(value => { finished = true; return value; });
+        while (!finished) {
+          await new Promise<void>(done => setImmediate(done));
+          if (ioPending.size === 0) t.mock.timers.tick(10);
+        }
+        settled = await outcomes;
+      } finally {
+        t.mock.timers.reset();
+        ioHook.disable();
+      }
       const refused: number[] = [], successful: number[] = [];
       settled.forEach((outcome, i) => {
         if (outcome.status === "fulfilled") successful.push(i);
@@ -1341,11 +1366,9 @@ test("synchronized recovery callers merge the current disk minimum, including 50
         }
       });
       assert.ok(successful.length > 0, "the burst makes progress");
-      // Healthy 50-writer bursts refused at most 25 under CPU load and 17 under
-      // IO load. Allow three more than that measured worst case, while still
-      // detecting the excessive refusals caused by a 100 ms hold per writer.
-      // Count initial outcomes, before retries can hide lost burst progress.
-      const maxRefused = count === 50 ? 28 : Math.floor(count / 2);
+      // The reviewer-specified half-writer ceiling checks initial progress,
+      // before sequential retries can hide an excessive lock-hold delay.
+      const maxRefused = Math.floor(count / 2);
       t.diagnostic(`initial ${count}-writer burst: ${successful.length} saved, ${refused.length} refused; limit ${maxRefused}`);
       assert.ok(refused.length <= maxRefused,
         `healthy burst bounds initial refusals: ${refused.length} of ${count} exceeds ${maxRefused}`);

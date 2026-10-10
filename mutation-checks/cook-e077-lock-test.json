@@ -39,6 +39,20 @@
     "find": "      await handle.sync();\n      return await work();",
     "replace": "      await handle.sync();\n      await new Promise(done => setTimeout(done, 100));\n      return await work();",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
-    "why": "M6 a 100 ms lock hold exceeds the initial-refusal count ceiling of 28/50; independent healthy CPU/IO measurements peaked at 25/50 and 17/50, with three refusals of load headroom"
+    "why": "M6 a 100 ms hold exceeds the reviewer-specified half-writer initial-refusal ceiling under an IO-quiescent policy clock; healthy clock-controlled bursts have zero refusals"
+  },
+  {
+    "file": "tests/fleet-held-result.test.ts",
+    "find": "if (ioPending.size === 0) t.mock.timers.tick(10);",
+    "replace": "t.mock.timers.tick(10);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M7 clock must wait for observed real filesystem quiescence; disabling that guard fails the named independent half-writer progress assertion"
+  },
+  {
+    "file": "tests/fleet-held-result.test.ts",
+    "find": "ioPending.add(id);",
+    "replace": "void id;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M8 filesystem request observation must actually track outstanding work; disabling it fails the named independent half-writer progress assertion"
   }
 ]
