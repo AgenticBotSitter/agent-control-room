@@ -1076,7 +1076,8 @@ process.stdout.write("literal stdout"); process.stderr.write("literal stderr");`
   }), /a prepared tool must stay alive before launch/u, "signal death refuses preparation");
   // A dropped acknowledgement must refuse, then a fresh preparation can retry.
   await assert.rejects(prepareRunner(t, registry, {
-    wait: (signal, message) => waitForToolSignal(signal, message, { timeoutMs: 500 }),
+    wait: (signal, message) => message === "the real tool must acknowledge released within the setup bound"
+      ? waitForToolSignal(signal, message, { timeoutMs: 500 }) : waitForToolSignal(signal, message),
     startProcess: (...args) => { const child = nodeSpawn(...args), send = child.send.bind(child);
       child.send = (message, ...rest) => message === "release" ? true : send(message, ...rest); return child; },
   }), /acknowledge released/u, "missing release acknowledgement must refuse before admission");
