@@ -1283,43 +1283,125 @@ test("missing or invalid held anchors are persisted before delivery and survive 
   }
 });
 
-test("synchronized recovery callers merge the current disk minimum, including 50 callers", { timeout: 30_000 }, async () => {
+test("synchronized recovery callers merge the current disk minimum, including 50 callers", { timeout: 30_000 }, async (t) => {
   const ports = await recoveryPorts();
-  const base = Date.now(), state = await recoveryRecord({ heldAt: base, deadlineAt: null });
-  let release: () => void = () => {};
+  const { createHook } = await import("node:async_hooks");
+  const base = Date.now(), directory = await mkdtemp(join(tmpdir(), "fleet-held-recovery-"));
+  const claimId = `fleet-claim:${"4".repeat(32)}`;
+  const record = { summary: "A completed held answer.", idempotencyKey: `handoff-${"4".repeat(32)}-result`, heldAt: base, deadlineAt: null };
+  const busy = "The held-answer record is locked by another session or an incomplete lock. Retry after checking that session.";
+  const pending: Promise<unknown>[] = [];
+  let release: () => void = () => {}, failure: unknown;
   const firstSaved = new Promise<void>(done => { release = done; });
-  const held = await ports.testRead(state.directory, state.claimId);
-  const run = async (later: boolean) => {
-    let clock = base;
-    return ports.testDeliver({ ...state.record, directory: state.directory, claim: { claimId: state.claimId }, held,
-      now: () => clock, sleep: async (target: number) => { clock = target; },
-      client: { result: async () => { throw outage(); }, claims: async () => {
-        if (later) await firstSaved;
-        return [{ claimId: state.claimId, leaseState: "active", leaseExpiresAt: new Date(base + (later ? 30_000 : 10_000)).toISOString() }];
-      } }, reportDelivery: async () => { throw outage(); } });
-  };
-  const callers = [run(false), run(true)];
-  // Observe both at once: a caller can reject while the loop below is still
-  // polling, and an unobserved rejection fails the file as unhandledRejection.
-  for (const caller of callers) caller.catch(() => {});
   try {
-    // Both callers have the same stale snapshot; release the later gateway
-    // reading only after the earlier minimum is on disk.
+    assert.deepEqual(await readdir(directory), [], "first use has no journal, lock or temporary file");
+    await ports.testWrite(directory, claimId, record);
+    const held = await ports.testRead(directory, claimId);
+    const run = async (later: boolean) => {
+      let clock = base;
+      return ports.testDeliver({ ...record, directory, claim: { claimId }, held,
+        now: () => clock, sleep: async (target: number) => { clock = target; },
+        client: { result: async () => { throw outage(); }, claims: async () => {
+          if (later) await firstSaved;
+          return [{ claimId, leaseState: "active", leaseExpiresAt: new Date(base + (later ? 30_000 : 10_000)).toISOString() }];
+        } }, reportDelivery: async () => { throw outage(); } });
+    };
+    const callers = [run(false), run(true)];
+    pending.push(...callers);
+    // Observe immediately, then check every outcome after the disk barrier.
+    const outcomes = Promise.allSettled(callers);
     for (let i = 0; i < 200; i++) {
-      if (JSON.parse(await readFile(state.file, "utf8")).deadlineAt === base + 10_000) break;
+      if ((await ports.testRead(directory, claimId)).deadlineAt === base + 10_000) break;
       await new Promise(done => setTimeout(done, 5));
     }
-    assert.equal(JSON.parse(await readFile(state.file, "utf8")).deadlineAt, base + 10_000);
+    assert.equal((await ports.testRead(directory, claimId)).deadlineAt, base + 10_000);
     release();
-    await Promise.allSettled(callers);
-    assert.equal(JSON.parse(await readFile(state.file, "utf8")).deadlineAt, base + 10_000);
-    await Promise.all(Array.from({ length: 50 }, (_, i) => ports.testWrite(state.directory, state.claimId,
-      { ...state.record, heldAt: base + i, deadlineAt: base + 1000 + i * 1000 })));
-    const saved = JSON.parse(await readFile(state.file, "utf8"));
-    assert.equal(saved.deadlineAt, base + 1000);
-    assert.equal(saved.heldAt, base);
-    assert.equal((await readdir(state.directory)).filter(name => name.endsWith(".lock")).length, 0);
-  } finally { release(); await Promise.allSettled(callers); await rm(state.directory, { recursive: true, force: true }); }
+    for (const outcome of await outcomes) {
+      assert.equal(outcome.status, "rejected", "both delivery attempts stop at the controlled outage");
+      if (outcome.status === "rejected") {
+        assert.equal(outcome.reason.code, "unavailable", "only the controlled outage is expected");
+        assert.equal(outcome.reason.message, "controlled outage");
+      }
+    }
+    assert.equal((await ports.testRead(directory, claimId)).deadlineAt, base + 10_000);
+    let expectedDeadline = base + 10_000;
+    // Keep the original 50-writer burst first, before any smaller burst can pre-save its minimum.
+    for (const count of [50, 20, 2]) {
+      const inputs = Array.from({ length: count }, (_, i) =>
+        ({ ...record, heldAt: base + i + 1, deadlineAt: base + 1000 + i * 1000 }));
+      const preBurstMinimum = expectedDeadline;
+      // Advance the lock's policy clock only after real filesystem requests
+      // settle. Host scheduling and fsync speed must not consume its wait;
+      // an actual timer inside the held lock still consumes policy time.
+      const ioPending = new Set<number>();
+      const ioHook = createHook({
+        init(id, type) {
+          if (type === "FSREQPROMISE" || type === "FSREQCALLBACK" || type === "FILEHANDLECLOSEREQ") ioPending.add(id);
+        },
+        destroy(id) { ioPending.delete(id); },
+      });
+      ioHook.enable();
+      t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: base });
+      let settled: PromiseSettledResult<unknown>[];
+      try {
+        const writers = inputs.map(input => ports.testWrite(directory, claimId, input));
+        pending.push(...writers);
+        let finished = false;
+        const outcomes = Promise.allSettled(writers).then(value => { finished = true; return value; });
+        while (!finished) {
+          await new Promise<void>(done => setImmediate(done));
+          if (ioPending.size === 0) t.mock.timers.tick(10);
+        }
+        settled = await outcomes;
+      } finally {
+        t.mock.timers.reset();
+        ioHook.disable();
+      }
+      const refused: number[] = [], successful: number[] = [];
+      settled.forEach((outcome, i) => {
+        if (outcome.status === "fulfilled") successful.push(i);
+        else {
+          assert.equal(outcome.reason.message, busy, "only the documented busy refusal may be retried");
+          refused.push(i);
+        }
+      });
+      assert.ok(successful.length > 0, "the burst makes progress");
+      // The reviewer-specified half-writer ceiling checks initial progress,
+      // before sequential retries can hide an excessive lock-hold delay.
+      const maxRefused = Math.floor(count / 2);
+      t.diagnostic(`initial ${count}-writer burst: ${successful.length} saved, ${refused.length} refused; limit ${maxRefused}`);
+      assert.ok(refused.length <= maxRefused,
+        `healthy burst bounds initial refusals: ${refused.length} of ${count} exceeds ${maxRefused}`);
+      const completedInputs = successful.map(i => inputs[i]!);
+      expectedDeadline = Math.min(expectedDeadline, ...successful.map(i => inputs[i]!.deadlineAt));
+      const merged = await ports.testRead(directory, claimId);
+      assert.equal(merged.deadlineAt, expectedDeadline, "successful inputs merge with the independent pre-burst minimum");
+      assert.equal(merged.heldAt, base, "the first held anchor survives stale writers");
+      for (const i of refused) {
+        const retry = ports.testWrite(directory, claimId, inputs[i]);
+        pending.push(retry);
+        await retry; // Exactly one sequential retry, after every contender settled.
+        completedInputs.push(inputs[i]!);
+      }
+      expectedDeadline = Math.min(preBurstMinimum, ...completedInputs.map(input => input.deadlineAt));
+      const saved = await ports.testRead(directory, claimId);
+      assert.equal(saved.deadlineAt, expectedDeadline, "the disk minimum equals the minimum over completed inputs");
+      assert.equal(saved.deadlineAt, base + 1000, "all inputs preserve the literal earliest deadline");
+      assert.equal(saved.heldAt, base);
+      assert.deepEqual(await readdir(directory), [`held-result-${"4".repeat(32)}.json`], "no lock, cleaner or temporary files remain");
+    }
+  } catch (error) { failure = error; throw error; }
+  finally {
+    release();
+    await Promise.allSettled(pending);
+    try {
+      await rm(directory, { recursive: true, force: true });
+      await assert.rejects(stat(directory), { code: "ENOENT" });
+    } catch (cleanupError) {
+      if (failure === undefined) throw cleanupError;
+      console.error("Recovery cleanup also failed:", cleanupError);
+    }
+  }
 });
 
 test("an outstanding deadline retries after temporary ENOSPC and real filesystem refusal", { timeout: 30_000 }, async () => {
@@ -1392,20 +1474,74 @@ test("durability refusal stops sends and hands back plainly; anchor failure neve
 });
 
 test("claim locks release on failure, recover dead owners, and bound incomplete-owner waits", { timeout: 30_000 }, async () => {
+  const { spawn } = await import("node:child_process");
   const ports = await recoveryPorts();
-  const state = await recoveryRecord({ heldAt: Date.now(), deadlineAt: null });
-  const lock = `${state.file}.lock`;
+  const directory = await mkdtemp(join(tmpdir(), "fleet-held-recovery-")), claimId = `fleet-claim:${"4".repeat(32)}`;
+  const file = join(directory, `held-result-${"4".repeat(32)}.json`), lock = `${file}.lock`;
+  const record = { summary: "A completed held answer.", idempotencyKey: `handoff-${"4".repeat(32)}-result`, heldAt: Date.now(), deadlineAt: null };
+  const busy = "The held-answer record is locked by another session or an incomplete lock. Retry after checking that session.";
+  let child: ReturnType<typeof spawn> | undefined, closed: Promise<void> | undefined, failure: unknown;
   try {
-    await assert.rejects(ports.testLock(state.directory, state.claimId, async () => { throw new Error("stop halfway"); }), /stop halfway/u);
+    assert.deepEqual(await readdir(directory), [], "the product creates its first journal and lock");
+    await ports.testWrite(directory, claimId, record);
+    const before = await readFile(file, "utf8");
+    const source = `import { register } from 'node:module';
+      import { pathToFileURL } from 'node:url'; import { resolve } from 'node:path';
+      const released = new Promise(done => process.stdin.once('end', done)); process.stdin.resume();
+      register(pathToFileURL(resolve('tests/support/fleet-held-recovery-loader.mjs')));
+      const ports = await import(pathToFileURL(resolve('scripts/fleet/connector.mjs')) + '?held-recovery-test');
+      await ports.testLock(process.argv[1], process.argv[2], async () => {
+        process.stdout.write('locked'); await released;
+      });`;
+    child = spawn(process.execPath, ["--input-type=module", "--eval", source, directory, claimId],
+      { stdio: ["pipe", "pipe", "pipe"] });
+    closed = new Promise<void>(done => child!.once("close", () => done()));
+    let stderr = "";
+    child.stderr?.on("data", chunk => { stderr += chunk; });
+    await new Promise<void>((done, reject) => {
+      let output = "";
+      child!.stdout?.on("data", chunk => { output += chunk; if (output.includes("locked")) done(); });
+      child!.once("error", reject);
+      child!.once("close", () => reject(new Error(`lock helper exited before acquisition: ${stderr}`)));
+    });
+    const owner = await readFile(lock, "utf8");
+    assert.equal(JSON.parse(owner).pid, child.pid, "the attached process owns the real lock");
+    await assert.rejects(ports.testWrite(directory, claimId, { ...record, deadlineAt: record.heldAt + 1000 }),
+      { message: busy }, "a live owner refuses the competing write");
+    assert.equal(await readFile(file, "utf8"), before, "refusal preserves the held answer byte for byte");
+    assert.equal(await readFile(lock, "utf8"), owner, "refusal preserves the live owner lock");
+    child.stdin?.end();
+    await closed;
+    assert.equal(child.exitCode, 0, stderr);
+    assert.equal(child.signalCode, null);
+    assert.throws(() => process.kill(child!.pid!, 0), { code: "ESRCH" });
+    await ports.testWrite(directory, claimId, { ...record, deadlineAt: record.heldAt + 1000 });
+    assert.equal((await ports.testRead(directory, claimId)).deadlineAt, record.heldAt + 1000, "retry succeeds after the owner releases");
+    await assert.rejects(stat(lock), { code: "ENOENT" });
+    await assert.rejects(ports.testLock(directory, claimId, async () => { throw new Error("stop halfway"); }), /stop halfway/u);
     await assert.rejects(stat(lock), { code: "ENOENT" });
     await writeFile(lock, JSON.stringify({ pid: 2_000_000_000, token: "e".repeat(32) }));
-    await ports.testWrite(state.directory, state.claimId, state.record);
+    await ports.testWrite(directory, claimId, record);
     await assert.rejects(stat(lock), { code: "ENOENT" });
     await writeFile(lock, "partial");
     const start = Date.now();
-    await assert.rejects(ports.testWrite(state.directory, state.claimId, state.record), /locked by another session/u);
+    await assert.rejects(ports.testWrite(directory, claimId, record), { message: busy });
     assert.ok(Date.now() - start < 5000);
-  } finally { await rm(state.directory, { recursive: true, force: true }); }
+  } catch (error) { failure = error; throw error; }
+  finally {
+    if (child) {
+      child.stdin?.end();
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await closed;
+    }
+    try {
+      await rm(directory, { recursive: true, force: true });
+      await assert.rejects(stat(directory), { code: "ENOENT" });
+    } catch (cleanupError) {
+      if (failure === undefined) throw cleanupError;
+      console.error("Lock cleanup also failed:", cleanupError);
+    }
+  }
 });
 
 test("two public recovery sweeps cannot overwrite the synchronized shorter deadline", { timeout: 30_000 }, async () => {
