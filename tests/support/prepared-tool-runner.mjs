@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -11,6 +11,30 @@ const timerScope = new AsyncLocalStorage();
 export const inToolTimerScope = () => timerScope.getStore() === true;
 export const withToolTimerScope = run => timerScope.run(true, run);
 
+// Imported timers and timers/promises create Timeout resources directly. Their
+// callbacks must advance the same declared clock as the virtual global timers.
+// Parallel timers share an origin; recurring timers advance on every firing.
+export function observeToolTimerDelays(now, advanceTo) {
+  const timers = new Map();
+  const hook = createHook({
+    init(id, type, _trigger, resource) {
+      if (type === "Timeout" && inToolTimerScope()) {
+        timers.set(id, { at: now() + resource._idleTimeout, repeat: resource._repeat });
+      }
+    },
+    before(id) {
+      const timer = timers.get(id);
+      if (timer) {
+        advanceTo(timer.at);
+        if (timer.repeat) timer.at += timer.repeat;
+        else timers.delete(id);
+      }
+    },
+    destroy(id) { timers.delete(id); },
+  }).enable();
+  return () => { hook.disable(); timers.clear(); };
+}
+
 export async function preserveToolFailure(body, cleanup) {
   let value, primaryError;
   try { value = await body(); } catch (error) { primaryError = error; }
@@ -19,31 +43,36 @@ export async function preserveToolFailure(body, cleanup) {
   return value;
 }
 
-// A dead, unreaped owned leader can produce EPERM on Darwin. Reap it first;
-// only observed disappearance is success. An unknown/live refusal stays red.
+// Darwin can return EPERM before Node has processed SIGCHLD, so exitCode alone
+// cannot identify a dead child. Only our recorded close and eventual ESRCH can
+// establish retirement. A live or unknown child never becomes success on EPERM.
 export async function retireToolProcess({ child, closed }, {
   kill = process.kill.bind(process), wait = signal => signal,
 } = {}) {
   const group = process.platform === "win32" ? child.pid : -child.pid;
+  let permissionError;
   try { if (group) kill(group, "SIGKILL"); }
   catch (error) {
-    if (error?.code === "EPERM" && (typeof child.exitCode === "number" || typeof child.signalCode === "string")) {
-      await wait(closed, "a dead owned leader must be reaped within the cleanup bound");
-      try { kill(group, 0); } catch (gone) { if (gone?.code === "ESRCH") return; throw gone; }
-    }
-    if (error?.code !== "ESRCH") throw error;
+    if (error?.code === "EPERM" && typeof child.once === "function" && closed) permissionError = error;
+    else if (error?.code !== "ESRCH") throw error;
   }
-  await wait(closed, "an owned child must close within the cleanup bound");
+  try { await wait(closed, "an owned child must close within the cleanup bound"); }
+  catch (error) { throw permissionError ?? error; }
   let observing = true;
   try {
     if (group) await wait((async () => {
       while (observing) {
         try { kill(group, 0); }
-        catch (error) { if (error?.code === "ESRCH") return; throw error; }
+        catch (error) {
+          if (error?.code === "ESRCH") return;
+          if (error?.code !== "EPERM") throw error;
+          permissionError ??= error;
+        }
         await new Promise(done => setImmediate(done));
       }
     })(), "an owned process group must disappear after close");
-  } finally { observing = false; }
+  } catch (error) { throw permissionError ?? error; }
+  finally { observing = false; }
 }
 
 // Only fixture initialization and deliberate preparation happen before
