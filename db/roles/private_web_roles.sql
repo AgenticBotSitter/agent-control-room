@@ -77,6 +77,7 @@ GRANT SELECT ON control_durable_result_write_reservations TO control_room_privat
 -- Owner Web Push: browser subscriptions and delivery reservations only. This
 -- does not grant task, approval, scheduler, or configuration authority.
 GRANT SELECT, INSERT, DELETE ON owner_web_push_subscriptions TO control_room_private_web;
+GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;
 GRANT SELECT, INSERT ON owner_web_push_deliveries TO control_room_private_web;
 GRANT UPDATE (state, status_code, completed_at) ON owner_web_push_deliveries TO control_room_private_web;
 -- EXECUTE on 0227's two functions, because a CHECK constraint runs as the
