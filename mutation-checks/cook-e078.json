@@ -502,5 +502,26 @@
     "replace": "  catch (error) { throw error; }",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^E078: zombie' tests/fleet-tool-adapter.test.mjs",
     "why": "A still-live owned child does not close by the independently selected50ms bound. Refusal must retain the original EPERM by identity rather than replacing it with the setup assertion."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^E078: zombie\" tests/fleet-tool-adapter.test.mjs",
+    "find": "typeof child.once === \"function\" && closed",
+    "replace": "true && closed",
+    "why": "Only an owned real child can consume recorded close. Bypassing identity must fail the independent unknownWaited=false assertion; the original EPERM identity alone cannot expose a swallowed observer assertion."
+  },
+  {
+    "file": "tests/support/prepared-tool-runner.mjs",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^E078: zombie\" tests/fleet-tool-adapter.test.mjs",
+    "find": "typeof child.once === \"function\" && closed",
+    "replace": "typeof child.once === \"function\"",
+    "why": "Missing close must refuse before wait. Bypassing the recorded-close prerequisite fails the independently observed unknownWaited=false assertion."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "      child.once(\"close\", () => liveCalls.delete(index));",
+    "replace": "      // mutation: retain completed callers as live",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"stress: 50\" tests/fleet-tool-adapter.test.mjs",
+    "why": "Live observation retires real closed callers; cumulative retention falsely exceeds the independent cap-four oracle and fails it by name."
   }
 ]

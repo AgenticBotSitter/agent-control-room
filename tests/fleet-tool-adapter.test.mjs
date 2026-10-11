@@ -1136,9 +1136,15 @@ writeFileSync(${JSON.stringify(marker)}, String(process.pid)); writeFileSync(${J
   await assert.rejects(retireToolProcess({ child, closed }, { kill: () => { throw eperm; },
     wait: signal => waitForToolSignal(signal, "live child never closes at the independently selected bound", { timeoutMs: 50 }) }),
     error => error === eperm, "live EPERM must remain a refusal");
+  let unknownWaited = false;
   await assert.rejects(retireToolProcess({ child: { pid: child.pid }, closed }, {
-    kill: () => { throw eperm; }, wait: () => assert.fail("unknown EPERM must refuse without assuming death"),
+    kill: () => { throw eperm; }, wait: () => { unknownWaited = true; assert.fail("unknown EPERM must refuse without assuming death"); },
   }), error => error === eperm, "unknown EPERM must remain a refusal");
+  assert.equal(unknownWaited, false, "unknown EPERM cannot consume an unowned close observation");
+  await assert.rejects(retireToolProcess({ child }, {
+    kill: () => { throw eperm; }, wait: () => { unknownWaited = true; assert.fail("missing close is not recorded death"); },
+  }), error => error === eperm, "EPERM without recorded close must remain a refusal");
+  assert.equal(unknownWaited, false, "EPERM without recorded close cannot assume owned death");
   const exited = new Promise(done => child.once("exit", done));
   child.stdin.end(); await exited;
   let reaped = false, deadDisappearanceChecked = false;
