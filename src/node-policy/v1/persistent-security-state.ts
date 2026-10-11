@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -342,7 +342,10 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.ceilingProvisioningKey(ceiling.body.issuerKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
+      if (Buffer.from(ceiling.signature, "base64url").toString("base64url") !== ceiling.signature) throw new Error("noncanonical signature");
       if (!verifyArtifactSignature(ceiling, pin.spki)) throw new Error("invalid signature");
+      const { signature: _signature, ...metadata } = ceiling;
+      assertNoSecretMaterial(metadata, "node ceiling");
     } catch {
       throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     }
@@ -357,7 +360,29 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.serverTrustRootKey(trust.body.ownerRootKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
+      for (const key of trust.body.keys) {
+        const der = Buffer.from(key.spki, "base64url");
+        const publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
+        if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("wrong public key algorithm");
+        if (publicKey.export({ format: "der", type: "spki" }).toString("base64url") !== key.spki) throw new Error("noncanonical public key");
+      }
+      if (Buffer.from(trust.signature, "base64url").toString("base64url") !== trust.signature) throw new Error("noncanonical signature");
       if (!verifyArtifactSignature(trust, pin.spki)) throw new Error("invalid signature");
+      const authorization = trust.shrinkAuthorization;
+      if (authorization) {
+        const shrinkPin = this.ownerPins.trustShrinkKey(authorization.keyId);
+        if (!shrinkPin) throw new Error("unknown shrink pin");
+        if (Buffer.from(authorization.signature, "base64url").toString("base64url") !== authorization.signature) throw new Error("noncanonical shrink signature");
+        if (!verifyTrustBundleShrinkAuthorization(authorization, shrinkPin.spki)) throw new Error("invalid shrink signature");
+      }
+      // Only authenticated public cryptographic values are omitted. Strict
+      // schemas have already refused extra fields; all metadata stays screened.
+      const { signature: _signature, body, shrinkAuthorization, ...envelope } = trust;
+      const { signature: _shrinkSignature, ...shrinkMetadata } = shrinkAuthorization ?? {};
+      assertNoSecretMaterial({ ...envelope,
+        body: { ...body, keys: body.keys.map(({ spki: _spki, ...key }) => key) },
+        ...(shrinkAuthorization ? { shrinkAuthorization: shrinkMetadata } : {}),
+      }, "server trust bundle");
     } catch {
       throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     }
@@ -406,17 +431,9 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
 
     const priorActive = new Set(current.body.keys.filter((key) => key.state === "active").map((key) => key.keyId));
     const hasActiveOverlap = candidate.body.keys.some((key) => key.state === "active" && priorActive.has(key.keyId));
-    if (!hasActiveOverlap) {
-      const authorization = candidate.shrinkAuthorization;
-      if (!authorization) throw new ProtectedStoreError("invalid_bundle");
-      const pin = this.ownerPins.trustShrinkKey(authorization.keyId);
-      if (!pin || authorization.bundleBodyDigest !== candidate.body.bodyDigest) throw new ProtectedStoreError("invalid_bundle");
-      try {
-        if (!verifyTrustBundleShrinkAuthorization(authorization, pin.spki)) throw new Error("invalid signature");
-      } catch {
-        throw new ProtectedStoreError("invalid_bundle");
-      }
-    }
+    // Optional authorizations are authenticated by verifyTrustBundle before
+    // preparation, even when active keys overlap or this is first provision.
+    if (!hasActiveOverlap && !candidate.shrinkAuthorization) throw new ProtectedStoreError("invalid_bundle");
   }
 
   private validateTrustHistory(bundle: OwnerSignedTrustBundleV1): void {
@@ -432,7 +449,6 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   }
 
   private writeCeiling(ceiling: SignedNodeAuthorityCeilingV1): void {
-    try { assertNoSecretMaterial(ceiling, "node ceiling"); } catch { throw new ProtectedStoreError("invalid_bundle"); }
     this.transaction(this.artifacts, () => {
       this.artifacts.prepare(
         `INSERT INTO node_ceiling_current(tenant_id,node_id,version,body_digest,artifact_json,adopted_at)
@@ -443,7 +459,6 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   }
 
   private writeTrustBundle(bundle: OwnerSignedTrustBundleV1): void {
-    try { assertNoSecretMaterial(bundle, "server trust bundle"); } catch { throw new ProtectedStoreError("invalid_bundle"); }
     this.transaction(this.artifacts, () => {
       this.artifacts.prepare(
         `INSERT INTO server_trust_current(tenant_id,node_class,epoch,body_digest,bundle_json,adopted_at)
