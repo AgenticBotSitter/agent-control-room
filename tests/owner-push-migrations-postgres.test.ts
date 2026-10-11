@@ -307,8 +307,18 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
   try {
     execFileSync("git",["-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false","clone",
       "--no-hardlinks","--no-checkout","--quiet",currentRoot,oldRoot],{timeout:60_000,stdio:"pipe"});
-    execFileSync("git",["-C",oldRoot,"-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false",
-      "checkout","--detach","--quiet",PUSH_RELEASE_BASE],{timeout:60_000,stdio:"pipe"});
+    const gitOld=(...args:string[])=>execFileSync("git",["-C",oldRoot,"-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false",...args],
+      {timeout:60_000,stdio:"pipe",encoding:"utf8"});
+    // A shallow checkout (GitHub Actions) holds only the head commit; fetch the
+    // exact released commit by SHA from the real origin when it is missing.
+    let haveRelease=true;
+    try { gitOld("cat-file","-e",`${PUSH_RELEASE_BASE}^{commit}`); } catch { haveRelease=false; }
+    if(!haveRelease){
+      const originUrl=execFileSync("git",["-C",currentRoot,"remote","get-url","origin"],{timeout:60_000,stdio:"pipe",encoding:"utf8"}).trim();
+      try { gitOld("fetch","--quiet","--depth","1",originUrl,PUSH_RELEASE_BASE); }
+      catch(error){ throw new Error(`WP-D15 cannot obtain released commit ${PUSH_RELEASE_BASE} (checkout is shallow and fetch by SHA from origin failed): ${(error as Error).message}`); }
+    }
+    gitOld("checkout","--detach","--quiet",PUSH_RELEASE_BASE);
     // The old source uses this checkout's dependency tree, deliberately, with
     // identical captured lockfile bytes. This is an old-producer proof, not an
     // archive-install proof or a claim that the old clone installed packages.
