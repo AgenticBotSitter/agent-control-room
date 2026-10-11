@@ -320,5 +320,12 @@
     "replace": "[];void dispatcher;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D11: .*[(]synthetic[)]$' tests/r7i-unhappy-paths-postgres.test.ts",
     "why": "The public loop must run the dispatcher cycle, which reconstructs a completion left by a replaced process; skipping the dispatch fails the WP-D11 durable-completion assertion. Historical reproduction unavailable."
+  },
+  {
+    "file": "tests/owner-push-migrations-postgres.test.ts",
+    "find": "    try { gitOld(\"fetch\",\"--quiet\",\"--depth\",\"1\",source,PUSH_RELEASE_BASE); }",
+    "replace": "    try { void source; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: released producer data survives provisioned upgrade and fresh schema agrees [(]PG[)]$' tests/owner-push-migrations-postgres.test.ts",
+    "why": "Independent released-commit contract: a shallow checkout holds only the head, so the historical release must be fetched by SHA before checkout."
   }
 ]
