@@ -121,6 +121,9 @@ function alias(value: string) {
 async function worker() {
   const directory = process.env.E084_DIRECTORY!;
   const mode = process.env.E084_WORKER!;
+  // Arm release before publishing any readiness file. The parent may send
+  // immediately; a resumed pipe with no data listener would lose that message.
+  const released = new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
   process.stdin.resume();
   process.stdin.on("end", () => process.exit(0));
   if (mode === "held") {
@@ -128,7 +131,7 @@ async function worker() {
     try {
       db.exec("BEGIN IMMEDIATE");
       await writeFile(join(directory, "held"), "locked");
-      await new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+      await released;
       db.exec("ROLLBACK");
     } finally { db.close(); }
   } else {
@@ -142,7 +145,7 @@ async function worker() {
     try {
       if (mode === "contend" || mode === "update") {
         await writeFile(join(directory, `ready-${process.env.E084_INDEX}`), "ready");
-        await new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+        await released;
       }
       if (mode === "update") {
         const first = bundle();
@@ -239,17 +242,20 @@ if (process.env.E084_WORKER) {
   }, 4, 10764));
   test("generated-key property", async () => {
     let completed = 0;
-    for (const counter of [...Array.from({ length: 1024 }, (_, index) => 1000 + index), 76640]) {
-      const artifact = bundle(counter);
-      assertIndependentSignature(artifact);
-      const der = Buffer.from(artifact.body.keys[0].spki, "base64url"), publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
-      assert.equal(publicKey.asymmetricKeyType, "ed25519");
-      assert.deepEqual(publicKey.export({ format: "der", type: "spki" }), der);
-      await fixture(async repo => roundTrip(repo, artifact));
-      completed++;
+    try {
+      for (const counter of [...Array.from({ length: 1024 }, (_, index) => 1000 + index), 76640]) {
+        const artifact = bundle(counter);
+        assertIndependentSignature(artifact);
+        const der = Buffer.from(artifact.body.keys[0].spki, "base64url"), publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
+        assert.equal(publicKey.asymmetricKeyType, "ed25519");
+        assert.deepEqual(publicKey.export({ format: "der", type: "spki" }), der);
+        await fixture(async repo => roundTrip(repo, artifact));
+        completed++;
+      }
+    } finally {
+      console.log(`completed key round trips=${completed}; seed=synthetic-public-collision:1000..2023,76640`);
     }
     assert.equal(completed, 1025, "completed deterministic key round trips");
-    console.log(`completed key round trips=${completed}; seed=synthetic-public-collision:1000..2023,76640`);
     for (const count of [0, 1, 64, 65]) await fixture(async (repo, directory) => {
       const keys = Array.from({ length: count }, (_, index) => ({ keyId: `server-key:${String(index).padStart(3, "0")}`, algorithm: "ed25519" as const, state: "active" as const, spki: spki(pair(index + 2000).publicKey) }));
       const artifact = bundle(76641, 4, { keys });
