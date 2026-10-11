@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
 import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -123,9 +123,13 @@ async function worker() {
   const mode = process.env.E084_WORKER!;
   // Arm release before publishing any readiness file. The parent may send
   // immediately; a resumed pipe with no data listener would lose that message.
-  const released = new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
-  process.stdin.resume();
-  process.stdin.on("end", () => process.exit(0));
+  // Fault workers keep fd 0 untouched so the synchronous wait below receives
+  // kernel EOF if their parent exits. A blocked event loop cannot run on("end").
+  const released = mode === "fault" ? Promise.resolve() : new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+  if (mode !== "fault") {
+    process.stdin.resume();
+    process.stdin.on("end", () => process.exit(0));
+  }
   if (mode === "held") {
     const db = new DatabaseSync(paths(directory).highWaterDatabasePath);
     try {
@@ -138,8 +142,9 @@ async function worker() {
     const repo = open(directory, 4, point => {
       if (point === process.env.E084_FAULT) {
         writeFileSync(join(directory, "fault"), point);
-        // Wait at an observable point until the parent kills this direct child.
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+        // Remain at this point until SIGKILL, or exit on parent-pipe EOF.
+        readFileSync(0);
+        process.exit(0);
       }
     });
     try {
