@@ -1,0 +1,177 @@
+[
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;",
+    "replace": "-- Mutation: remove subscription renewal authority.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 first-use$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 first-use must fail the production-login subscribe success assertion with42501 when fresh authority is missing."
+  },
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;",
+    "replace": "GRANT UPDATE ON owner_web_push_subscriptions TO control_room_private_web;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 narrow authority$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 narrow authority must fail forbidden id UPDATE when a broad table grant allows it."
+  },
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "  owner_web_push_subscriptions: [\"p256dh\", \"auth\", \"expires_at\", \"updated_at\"],\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 first-use$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 first-use must fail real verifyPrivateDatabase after successful subscribe/read when the startup declaration omits the four granted columns."
+  },
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web;",
+    "replace": "GRANT UPDATE (p256dh, auth, expires_at) ON owner_web_push_subscriptions TO control_room_private_web;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail 'the reopened startup check accepts the upgraded install' (private_database_preflight_failed) when grant convergence on an installed earlier role lacks the fourth renewal column the production login needs."
+  },
+  {
+    "file": "db/migrations/0299_owner_web_push_subscription_update_grant.sql",
+    "find": "    EXECUTE 'GRANT UPDATE (p256dh, auth, expires_at, updated_at) ON owner_web_push_subscriptions TO control_room_private_web';",
+    "replace": "    NULL;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail the 'the migration alone lets the production login save' assertion (refused:42501) when migration 0299 carries no grant, before grant convergence can repair it."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  for (const { table } of writes) assert.ok(Object.hasOwn(RUNNERS, table), `unclassified web-push upsert:${table}`);",
+    "replace": "  for (const { table } of writes) void table;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory refuses an unclassified future write must fail 'unknown writes cannot silently escape the runner inventory' (Missing expected exception) when inventory admission is disabled."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  assert.equal(total.doUpdate, writes.length, `${REFUSAL}: ${total.doUpdate} DO UPDATE clauses, ${writes.length} recognised writes`);",
+    "replace": "  void total.doUpdate;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'a substituted verb ahead of an upsert must fail closed by name' (Missing expected exception) when the DO UPDATE count guard is disabled."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  assert.equal(total.onConflict, total.onConflictRead, `${REFUSAL}: ${total.onConflict} ON CONFLICT clauses, ${total.onConflictRead} belong to a read INSERT`);",
+    "replace": "  void total.onConflict;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'an ON CONFLICT with no INSERT before it must fail closed by name' (Missing expected exception) when the ON CONFLICT ownership guard is disabled."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "    if (is(token, \"MERGE\")) refuse(\"MERGE statements cannot be classified\");",
+    "replace": "    if (is(token, \"MERGE\")) void token;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'a MERGE statement must fail closed by name' (Missing expected exception) when MERGE is no longer refused."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "    if (!is(tokens[start + 1], \"INTO\")) refuse(`INSERT is not followed by INTO near ${near}`);",
+    "replace": "    if (false) refuse(`INSERT is not followed by INTO near ${near}`);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'INSERT without INTO must fail closed by name' (the refusal text no longer matches) when INSERT without INTO is no longer refused."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  if (diagnostics.length > 0) refuse(`the TypeScript source does not parse (${ts.flattenDiagnosticMessageText(diagnostics[0].messageText, \" \")})`);",
+    "replace": "  if (false) refuse(`the TypeScript source does not parse`);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'TypeScript that does not parse must fail closed by name' (Missing expected exception) when TypeScript syntax errors are no longer refused."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "          && mentionsWrite(ts.isTemplateExpression(side) ? side.getText(file) : side.text)) refuse(\"SQL built by string concatenation cannot be classified\");",
+    "replace": "          && false) refuse(\"SQL built by string concatenation cannot be classified\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'SQL built by string concatenation must fail closed by name' (the refusal text no longer matches) when concatenated SQL is no longer refused."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "    if ((token.t !== \"str\" && token.t !== \"dollar\") || !mentionsWrite(token.body)) continue;",
+    "replace": "    if (true) continue;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'upsert inside a dollar-quoted DO block must not hide an unknown upsert' (Missing expected exception) when quoted SQL bodies are not read."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "const identifier = token => token.t === \"qid\" ? token.v : token.v.toLowerCase();",
+    "replace": "const identifier = token => token.v.toLowerCase();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory refuses spelling variants of an unknown write must fail 'a quoted upper-case name is a different relation from the classified one' (Missing expected exception) when quoted identifiers are folded like unquoted ones."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "    else if (c === \"-\" && sql[i + 1] === \"-\") {",
+    "replace": "    else if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory refuses spelling variants of an unknown write must fail 'line comment separator must not hide an unknown upsert' (the refusal text no longer matches) when -- is not read as a comment."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "        if (sql[at] === \"/\" && sql[at + 1] === \"*\") { depth += 1; at += 2; }",
+    "replace": "        if (false) { depth += 1; at += 2; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'an unterminated nested block comment must fail closed by name' (the refusal text no longer matches) when block comments do not nest."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "        const end = readString(at, true);",
+    "replace": "        const end = readString(at, false);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'escape-string markers must not hide an unknown upsert' (the refusal text no longer matches) when E strings honour no backslash escape."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "        if (sql[at + 1] === \"'\") at += 1;",
+    "replace": "        if (false) at += 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'doubled quotes inside an EXECUTE string do not end it early' (Missing expected exception) when a doubled quote ends the string."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "      if (at >= length) refuse(`unterminated quoted identifier near ${preview(sql.slice(i))}`);",
+    "replace": "      if (false) refuse(`unterminated quoted identifier near ${preview(sql.slice(i))}`);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'an unterminated quoted identifier must fail closed by name' (the refusal text no longer matches) when an unterminated quoted identifier is read as complete."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "  if (depth > MAX_SQL_DEPTH) refuse(`SQL strings nest deeper than ${MAX_SQL_DEPTH} levels`);",
+    "replace": "  if (false) refuse(`SQL strings nest deeper than ${MAX_SQL_DEPTH} levels`);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory fails closed on SQL it cannot classify must fail 'SQL strings nested past the bound fail closed' (the refusal text no longer matches) when the nesting bound is not enforced."
+  },
+  {
+    "file": "tests/owner-web-push-upsert-grants.test.mjs",
+    "find": "const mentionsWrite = text => /\\b(?:INSERT|MERGE|CONFLICT|UPDATE)\\b/i.test(text);",
+    "replace": "const mentionsWrite = text => true;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs",
+    "why": "CR-E075 upsert inventory reads comments and strings by their lexical rules must fail 'ordinary TypeScript with -- and /* in code and strings adds no write and no false refusal' when every TypeScript string is tokenised as SQL."
+  },
+  {
+    "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "find": "    } finally { await removeScratch(); }\n",
+    "replace": "    } finally { void removeScratch; }\n",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail 'a failed installed-cluster setup removes its data and run directory' when the failure path leaves the scratch directories behind."
+  },
+  {
+    "file": "tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "find": "  const privateKey = Buffer.concat([Buffer.alloc(32 - scalar.byteLength), scalar]);",
+    "replace": "  const privateKey = scalar;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 VAPID test key keeps a leading zero byte$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "why": "CR-E075 VAPID test key must fail 'the test key is the fixed 32-byte VAPID scalar' when the test key drops its leading zero byte as Node's getPrivateKey does."
+  },
+  {
+    "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "find": "  const root = await mkdtemp(join(scratchRoot, `acr-installed-${label}-`));",
+    "replace": "  const root = await mkdtemp(join(tmpdir(), `acr-installed-${label}-`));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail \"the faulted setup's data directory was inside the job scratch tree\" when the installed-cluster data directory is created outside the job tree."
+  },
+  {
+    "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "find": "    const old = webLogin(installed, passwords.control_room_web); stores.push(old);",
+    "replace": "    await new PostgresOwnerPushStoreV1(admin).subscribe(retained);\n    const old = webLogin(installed, passwords.control_room_web); stores.push(old);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 installed subscription grant upgrade$\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "CR-E075 installed upgrade must fail 'the refused first save stored nothing' when a subscription already exists before the historical first save."
+  }
+]
