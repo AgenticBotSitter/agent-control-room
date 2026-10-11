@@ -382,8 +382,8 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
    assert.equal(tags.length,2,'old producer sent both synthetic provider requests');
    const upgrade=await applyMigrations({target:undefined,rootDir:currentRoot,ledgerPath:join(currentRoot,'deploy/postgres/migration-ledger.json'),
     bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
-   assert.deepEqual(upgrade.applied?.map((r:{file:string})=>r.file),['db/migrations/0300_owner_push_durable_completion.sql'],
-    'upgrade appends only the new migration to the real earlier ledger');
+   assert.deepEqual(upgrade.applied?.map((r:{file:string})=>r.file),['db/migrations/0299_owner_web_push_subscription_update_grant.sql','db/migrations/0300_owner_push_durable_completion.sql'],
+    'upgrade appends exactly the migrations added since the real earlier ledger, in order');
    assert.deepEqual(await rows(),[
     {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
     {action_inbox_id:'attention:upgrade:retry',state:'pending',attempt_count:1}],'upgrade preserves old product-created data');
