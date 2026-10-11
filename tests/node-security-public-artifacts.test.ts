@@ -353,7 +353,7 @@ if (process.env.E084_WORKER) {
     for (const kind of ["bundle", "ceiling"] as const) for (const replace of [false, true]) await fixture(async (repo, directory) => {
       if (replace) { if (kind === "bundle") await roundTrip(repo, bundle()); else await repo.provisionInitialCeiling(ceiling()); }
       const good = kind === "bundle" ? bundle(76641, 4, { epoch: replace ? 2 : 1 }) : ceiling(4, { version: replace ? 2 : 1 });
-      const bad = kind === "bundle" ? bundle(76641, 4, { epoch: replace ? 2 : 1, keys: [{ ...bundle().body.keys[0], keyId: "sk-0123456789abcdefghijklmnop" }] }) : ceiling(4, { version: replace ? 2 : 1, projectIds: ["sk-0123456789abcdefghijklmnop"] });
+      const bad = kind === "bundle" ? bundle(76641, 4, { epoch: replace ? 2 : 1, keys: replace ? [bundle().body.keys[0], { ...bundle().body.keys[0], keyId: "z:sk-0123456789abcdefghijklmnop", spki: spki(pair(5).publicKey) }] : [{ ...bundle().body.keys[0], keyId: "sk-0123456789abcdefghijklmnop" }] }) : ceiling(4, { version: replace ? 2 : 1, projectIds: ["sk-0123456789abcdefghijklmnop"] });
       const adopt = (artifact: typeof good) => kind === "bundle" ? replace ? repo.applyOwnerSignedBundle(artifact as OwnerSignedTrustBundleV1) : repo.provisionInitialTrustBundle(artifact as OwnerSignedTrustBundleV1) : replace ? repo.adoptCeiling(artifact as SignedNodeAuthorityCeilingV1) : repo.provisionInitialCeiling(artifact as SignedNodeAuthorityCeilingV1);
       for (let retry = 0; retry < 2; retry++) await refusesUnchanged(repo, directory, () => adopt(bad));
       await adopt(good);
