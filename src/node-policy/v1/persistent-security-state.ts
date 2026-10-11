@@ -269,8 +269,14 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   }
 
   async applyOwnerSignedBundle(bundle: OwnerSignedTrustBundleV1): Promise<void> {
-    const candidate = this.verifyTrustBundle(bundle, "candidate");
     const currentRow = this.trustRow();
+    let authenticated: OwnerSignedTrustBundleV1 | undefined;
+    // Only this update path can retain earlier identity bytes. The callback
+    // authenticates the pinned owner, binding, signed body, row and full history
+    // before any exception is used; normal high-water checks still gate writes.
+    const authenticatedCurrent = () => currentRow
+      ? (authenticated ??= this.verifyTrustRow(currentRow)) : undefined;
+    const candidate = this.verifyTrustBundle(bundle, "candidate", authenticatedCurrent);
     const water = this.trustHighWater();
     if (!water && !currentRow) throw new ProtectedStoreError("missing");
     if (!water) throw new ProtectedStoreError("rollback_detected");
@@ -279,12 +285,12 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
       if (water.sequence !== candidate.body.epoch || water.body_digest !== candidate.body.bodyDigest) throw new ProtectedStoreError("recovery_required");
       if (!currentRow) throw new ProtectedStoreError("recovery_required");
       if (currentRow && currentRow.epoch === water.sequence && currentRow.body_digest === water.body_digest) {
-        this.verifyTrustRow(currentRow);
+        authenticatedCurrent();
         this.commitTrustHighWater(water.sequence, water.body_digest);
         return;
       }
       if (currentRow && currentRow.epoch >= water.sequence) throw new ProtectedStoreError("rollback_detected");
-      if (currentRow) this.validateTrustTransition(this.verifyTrustRow(currentRow), candidate);
+      if (currentRow) this.validateTrustTransition(authenticatedCurrent()!, candidate);
       this.writeTrustBundle(candidate);
       this.faultInjector("trust_after_artifact");
       this.commitTrustHighWater(water.sequence, water.body_digest);
@@ -293,7 +299,7 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     }
     if (!currentRow) throw new ProtectedStoreError("rollback_detected");
 
-    const current = this.verifyTrustRow(currentRow);
+    const current = authenticatedCurrent()!;
     if (water.sequence !== current.body.epoch || water.body_digest !== current.body.bodyDigest) throw new ProtectedStoreError("rollback_detected");
     if (candidate.body.epoch < current.body.epoch) throw new ProtectedStoreError("rollback_detected");
     if (candidate.body.epoch === current.body.epoch) {
@@ -354,7 +360,11 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     return ceiling;
   }
 
-  private verifyTrustBundle(bundle: OwnerSignedTrustBundleV1, source: "candidate" | "stored"): OwnerSignedTrustBundleV1 {
+  private verifyTrustBundle(
+    bundle: OwnerSignedTrustBundleV1,
+    source: "candidate" | "stored",
+    retainedBundle: () => OwnerSignedTrustBundleV1 | undefined = () => undefined,
+  ): OwnerSignedTrustBundleV1 {
     const parsed = ownerSignedTrustBundleSchema.safeParse(bundle);
     if (!parsed.success) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     const trust = parsed.data;
@@ -362,14 +372,17 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.serverTrustRootKey(trust.body.ownerRootKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
-      // Admission is stricter than the historical writer. Stored bytes retain
+      // New key admission is stricter than the historical writer. Stored bytes retain
       // their spelling and remain protected by owner signature/digest/history.
       if (source === "candidate") {
         for (const key of trust.body.keys) {
           const der = Buffer.from(key.spki, "base64url");
           const publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
           if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("wrong public key algorithm");
-          if (publicKey.export({ format: "der", type: "spki" }).toString("base64url") !== key.spki) throw new Error("noncanonical public key");
+          if (publicKey.export({ format: "der", type: "spki" }).toString("base64url") !== key.spki
+            && !retainedBundle()?.body.keys.some(prior => prior.keyId === key.keyId && prior.spki === key.spki)) {
+            throw new Error("noncanonical public key");
+          }
         }
       }
       if (source === "candidate") {
@@ -385,7 +398,8 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
         if (Buffer.from(authorization.signature, "base64url").toString("base64url") !== authorization.signature) throw new Error("noncanonical shrink signature");
         if (!verifyTrustBundleShrinkAuthorization(authorization, shrinkPin.spki)) throw new Error("invalid shrink signature");
       }
-      // Candidate SPKI bytes are canonical Ed25519 public DER. About 32 bytes
+      // New SPKI bytes are canonical Ed25519 public DER; authenticated retained
+      // encodings preserve their exact historical identity. About 32 bytes
       // of chosen data shaped as a valid key cannot be distinguished from a real
       // key; the pinned owner signature is the authority for including that key.
       // Stored optional shrink signatures are historical transition evidence,

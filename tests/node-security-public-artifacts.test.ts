@@ -100,7 +100,7 @@ function assertIndependentSignature(artifact: OwnerSignedTrustBundleV1 | SignedN
   assert.equal(verify(null, Buffer.from(canonical(artifact.body)), pair(counter).publicKey, Buffer.from(artifact.signature, "base64url")), true);
 }
 async function roundTrip(repo: SqliteNodeSecurityStateRepository, artifact: OwnerSignedTrustBundleV1) {
-  assert.equal(await repo.provisionInitialTrustBundle(artifact), "provisioned");
+  assert.equal(await repo.provisionInitialTrustBundle(artifact).catch(() => assert.fail("authenticated public bundle must provision")), "provisioned");
   assert.deepEqual(await repo.loadTrustBundle(), artifact);
   assert.equal(await repo.currentEpoch(), artifact.body.epoch);
   assert.equal(repo.currentServerTrustRevision(), `${artifact.body.epoch}:${artifact.body.bodyDigest}`);
@@ -222,8 +222,8 @@ async function legacyState(
     writer!.close(); writer = undefined;
     const before = snapshot(directory);
     reader = new SqliteNodeSecurityStateRepository(paths(directory), binding, readPins, { now: () => at });
-    assert.deepEqual(await reader.loadTrustBundle(), trust, "base-written trust state stays readable");
-    assert.deepEqual(await reader.loadCeiling(), authority, "base-written ceiling state stays readable");
+    assert.deepEqual(await reader.loadTrustBundle().catch(() => assert.fail("authenticated base-written trust must stay readable")), trust, "base-written trust state stays readable");
+    assert.deepEqual(await reader.loadCeiling().catch(() => assert.fail("authenticated base-written ceiling must stay readable")), authority, "base-written ceiling state stays readable");
     assert.equal(reader.currentServerTrustRevision(), `${trust.body.epoch}:${trust.body.bodyDigest}`);
     assert.equal(reader.currentPolicyRevision(), `${authority.body.version}:${authority.body.bodyDigest}:${trust.body.epoch}:${trust.body.bodyDigest}`);
     assert.deepEqual(await reader.resolveServerKey(trust.body.keys[0].keyId), new Uint8Array(Buffer.from(trust.body.keys[0].spki, "base64url")));
@@ -246,6 +246,85 @@ async function legacyState(
   }
 }
 
+
+// Complete SQLite images captured after provision/read/close by the real
+// cf91e3140bc11c772aaac5cde5c3588bdac6da06 producer (module SHA256
+// 7143128a8cdc507de866d0655ea693fb6fdba6d44243597db7b5434aec81c154).
+// Public synthetic seeds: synthetic-public-collision:4,76641; binding and
+// clock are the literals above. No private bytes are recorded in these images.
+const retainedLegacyImages = {
+  artifactDatabasePath: { sha256: "6a07a0694810ec38160afcd472506bb777efc82838745ba4c621c0e63d5bc952", gzip: "H4sIAAAAAAAAE+3bUU/jRh4AcMOysHQXpS/Vqrcv7lQIaOOt7diO7RPbhhAgBQIJCQtdUWtsT4g3iSdrT0iyq31AVavTSvfaj3H3UfpwH6BPlfoRTrqXkxMDWZqwbHdPtLr/T0KKZ/4eD8x/JCYz3itueYzwVRo0MeNT3Ifc5CT3Fc9zHDfJcdwd7sItjuOmhq4n4p+rTHIP//6fucS/uZk7GW7uX4l/3v3H3Ks7mbtHd++94U4AAAAA/HF9v3F75v7y8sSrTxm2GyQkwQkJLBa0Q2bVSc+qeSGjQW9c+XS2lMuUc3w5s7KV48dF8Ysf8DFGfOwzy3P5cu6gzBd2ynyhsrWVPA/wqUssp4HDcFxE1PD4+8NW3buqznK9YxKy10P47EYuu7nYIP4xqy0OhS0tpyU+U1jlw7YdsmC4Kikl00vLC2ENy6pmLoyL0pf6T1nf2lnhFz578q0oGFioHn22sDTUL4YZGdmjQU2+wC8uYId5J2QhuRAQ5gXE7X86oXXiLiwNtVX1gpBZISG+RVrUqfH5Qjm3nitdbvly3CNxqJEGvlYbl8IeLV9udKjJ3VJ+O1M65Ddzh4vnSZC8GO3kYFiH7qgU8sVKbnTw8BDFNyztzEzfd5YnOM93STd81vAYsXCb0f61NS43LXlczZ2d6d/VoDSuZua7w1sz91V14ofKbyeb0w4C4rNRZVPjJ1kc8X4n2JVj/ttksanbu8asGgq7PKuGqq6YVcNR15lVdtt3G8R6GlJ/3G+KXdpixLUwGxfxprQ9z771qen7T9RrJUs8aJcSJS69/d3hxHCSDB5FvIbnH5/FjCqbfC1JRkW8dZKMrz4hQehRf1yOxNV/iizBAfOq2GH/uzzx3IskmbwqSUYNmiWNKr11trafixbx937l7v160/9IAAAAAAAAAMD78cNHE7Pzn8yePnj11+XB8spsBdTur44Hn+K1oO44qZRONJJyFVFW0rJNVCyrhiEajkJEmWCcdtJEU920KiuuokqaYxi6ggkxnKpqvEDRAhKZL1Do1EgTIxM51GcBbQgBpc2H0QMF3GY1GnisJ8Trsi9OJJREg47lXWSi4T6iJIru6pdf9BclUbxMRqaURF4YtombYchEsihrgmgIolKWZFMUTdF4KIriNyiOCjZJr98Y7fgkEOqkZzISMpRErYA+JQ7LuyEyn5xdxY87SiLSJU6b0SCuP7u8CKAtEmDmUT+OOL++CHEC4hKfebhRItUo6CiJql6DhL2QkWaJUhYX+oR1aFBfJSHz/H4jcUUTd0teWEcmatAOinrFSODjRq5aJU50N/KpH/15mri72h48f4841I/6pIn98iz145Xw+V1isj9yq/2VPzLRe8oH9DKJQu/Yx6wdkEzjOBr2WhOZKOfKqioZaKgameg52W2vrxzu48ya93grt/d0a09Pl4teXad7xc2unOo6u52C0l3bbT0L06ymZ7fXsjm9tUu0TU+q47JStYL17Up+Y7+2+7hULD/WndUMejkuJz6I1v+JX7jELzc9QwEAAAAAAAAAAPBO/jI1/8ns6G+9+vv/c3luLn/TnQQAAAAAAACAP4nvlYnZeWH29MHfmq8dMGiRIKQ+bggObbba7OyYgawqWLMdjO2UrMiaq2BNlFRVttOO5oi6Y2PddYmUrmqKodpuynVkSVc1otu6Kuo4/aZjBoM3A4T+mwHC4EWG65wxyEavJCATXe51tM0evbfxFkcN+ocLov38sacN6qQXbem/iD70I+JOD4XgoQ1zcrFh3qp7yETbWdpZKR6ubsr7nUwvlwlzJ117u1XXxNazonzQbW4UCqK8s75hl4sr5Z1dyc+lAi1rNdbcqJHozShkosFrUejl0ej9/3cdqLfc/68qxY7GctSqWF976tp++4A6dF2t7HbWhJN9vXMg7BuFdjsoP+3utFuNg1TPcrfwyjcpYaVy8ExqlEhaqG5Vdr7eNLad1aLy/Hlpf+WN+/8/c4mfb3oCAQAAAAAAAAAA4Hfip+aF2au+jurv/ye+5BJf3nRXAQAAAAAAAACAP6zTRxN354XPT2+dPvh49sqF9qWzDe9wduHsYALWJOykFduVDFm2pTQRJUyqKcPWqqqe0iTNUFWdYJxSsWI4qqO6DtYlUauqWpXo9uDcw2D//ycu8dNN/ykBAAAAAAAAAABwTeLteeHzt/keYrD+/5FL/HjTXQcAAAAAAAAAAP7feNPzwumDq9fx7+cUwH8BmVQVJACAAAA=" },
+  highWaterDatabasePath: { sha256: "64996e7ec65c494f87e0ced91777048e4a1cce6f63253ec033d3b7d1e0bd14e7", gzip: "H4sIAAAAAAAAE+3ZTWsTQRgH8Eka+6KWCB4KenA8lCSSldnNvhaq1hq0GKPWiFbRZXZn2iyk2e3uxCqeige9+Gm8+l08+R0EL9I2prExvh4K5f+DQGaeZ3eH2YeFmXlwvxEpSdfjdJMrWiNnSD5PrlFKCMkTQk6QA7vtwlA71//9Sp5cfv91tviFFE69I7Mfix9OvZt9/ZtrAAAAAACOvTfJxNScpuXenlU86EiV9jLlt6ONtr/NlUwPtwvLq/WlVp22lq436vRwlJZP0j4lu7yr/EjQVv1xizbvtmjzYaNRHSR0YyH9sMOzbFyGTOKwTVearfrN+uogTpdv1Zdvl/eCV1jlID2IxStfRBsyUz/esX9FR3Y3VLs8lFZZdHS61LxBs16QqXQ4VNWrTmWxlLW5YdkLpXFZbmXvKTcbd6/T0qWnz5nmcW392aXS0LiSNs/kT0e0H1lp0nIpSWXCUylK1VIYb25GSklRqgzdpZcIrqTwuRo3XfdWV+4sra7R2/W18mD2qwfTXOlnVq4WJuceaDkSdYV8mW11IiV93lPxXts//E59/XDPiTcqNzWn699rJpRRJ+puDGWM9uR/qJvR+F9XzvjwC5lmUdwdVzj9MErnz0onEoO6Wc5Pzj3Sx9XN6Dv19dG+CULI9O53Z3Z3EV/cJsXto/4CAgAAAAAAABw7O5O56fmLMzvnLyzuL/QXkjQO5O5Sf/9ff9vCDcNazZW2rAmTGaZjBNLihuV5zAtNyQzJuRM60raEYxmmMC3dDj3PNbmUXrhueYOdCIMZtsY8jZkt3VhgbIF5lxljT07urf8/k+Lno54SAAAAAAAAAPgv5wrzF2d+vs+wf/6/RYpbRz1IAAAAAAAAgGNk53Ruel4bOflPZJrFXd7Rwngz6anv5/+GZXI7CDkPaoZp2MLkNtMtywic0A6ZGwbcFULqzrptelYgaiI0dNeypRu4FnO584fn/59I8dNRTwwAAAAAAAAA/CNamNdmfrXP8A1CvUDtAFAAAA==" },
+};
+const retainedLegacyTrust = {"body": {"schema": "control-room.server-trust-bundle/v1", "tenantId": "tenant:probe", "nodeClass": "personal-compute", "epoch": 1, "issuedAt": "2026-09-04T12:00:09.000Z", "ownerRootKeyId": "owner-key:test", "keys": [{"keyId": "server-key:test", "algorithm": "ed25519", "spki": "MCowBQYDK2VwAyEAsEvxbMpk60pqQ2XxmHNN02OGHbTQBTOP1nE3r6C_lFd", "state": "active"}], "bodyDigest": "sha256:254a6bcaab32426d4a601552b7c6c08cba8dde17f6495bd3dc21856e8b8508a7"}, "signatureAlgorithm": "Ed25519", "signature": "f4Qw6tEo_U_Ji5FVuXocoG5UPwF-vV8wX-V9NuurTjxOuplX3y_dLaBZ3-BUXq1lRe7-fLUOJK9McDQ4zzRVBA"} as OwnerSignedTrustBundleV1;
+const retainedLegacyCeiling = {"body": {"schema": "control-room.node-authority-ceiling/v1", "tenantId": "tenant:probe", "nodeId": "node:probe", "version": 1, "issuedAt": "2026-09-04T12:00:09.000Z", "issuerKeyId": "owner-key:test", "projectIds": ["project:probe"], "executorIds": ["executor:probe"], "operationIds": ["operation:probe"], "credentialRefs": [], "filesystemRoots": [], "networkDestinations": [], "maxRisk": "low", "externalEffects": "none", "maxDurationSeconds": 60, "maxConcurrentEffects": 0, "bodyDigest": "sha256:8cc338e6e3d402472be5a259909c4e02eaa7c7e65d7524d4516c9984aee9cf59"}, "signatureAlgorithm": "Ed25519", "signature": "zePuGBYVaAFiWLESjLS87TQik8oSQKx23xcPwN4xFPpqs7th8CMFCE8pPe6Ki1kaT4f_rGMUIHVhPWRQTW8cDA"} as SignedNodeAuthorityCeilingV1;
+const retainedLegacyPin = {"keyId": "owner-key:test", "algorithm": "ed25519", "spki": "MCowBQYDK2VwAyEA_TUPLSO0AA9obwi02G8WmbGWxFhI37qp3cEyrxWdSas", "fingerprint": "sha256:ce02be68954ae0f252ef850b0456f296264e2edbac94c194bd1614fdc8653aa6"};
+async function retainedLegacyFixture(run: (repo: SqliteNodeSecurityStateRepository, directory: string) => Promise<void>) {
+  await mkdir(scratchRoot, { recursive: true });
+  const directory = await mkdtemp(join(scratchRoot, "e084-retained-"));
+  let repo: SqliteNodeSecurityStateRepository | undefined;
+  try {
+    assert.deepEqual(pin(), retainedLegacyPin, "independently captured public owner pin");
+    assertIndependentSignature(retainedLegacyTrust);
+    assertIndependentSignature(retainedLegacyCeiling);
+    assert.equal(bundle(76641, 4, { keys: retainedLegacyTrust.body.keys }).body.bodyDigest,
+      "sha256:254a6bcaab32426d4a601552b7c6c08cba8dde17f6495bd3dc21856e8b8508a7", "captured signed body digest, independent encoder");
+    for (const [name, path] of Object.entries(paths(directory))) {
+      await assert.rejects(stat(path), { code: "ENOENT" });
+      const image = retainedLegacyImages[name as keyof typeof retainedLegacyImages];
+      const bytes = gunzipSync(Buffer.from(image.gzip, "base64"));
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), image.sha256, "old product file capture hash");
+      await writeFile(path, bytes);
+    }
+    const before = snapshot(directory);
+    repo = open(directory);
+    await retainedReadback(repo, directory, retainedLegacyTrust);
+    assert.deepEqual(snapshot(directory), before, "historical read preserves all captured identity bytes");
+    await run(repo, directory);
+  } finally {
+    repo?.close();
+    await rm(directory, { recursive: true, force: true });
+    assert.equal(existsSync(directory), false, "retained historical fixture cleanup reached");
+  }
+}
+async function retainedReadback(repo: SqliteNodeSecurityStateRepository, directory: string, trust: OwnerSignedTrustBundleV1) {
+  assertIndependentSignature(trust);
+  assert.deepEqual(await repo.loadTrustBundle(), trust);
+  assert.deepEqual(await repo.loadCeiling(), retainedLegacyCeiling);
+  assert.equal(await repo.currentEpoch(), trust.body.epoch);
+  assert.equal(repo.currentServerTrustRevision(), `${trust.body.epoch}:${trust.body.bodyDigest}`);
+  assert.equal(repo.currentPolicyRevision(), `1:${retainedLegacyCeiling.body.bodyDigest}:${trust.body.epoch}:${trust.body.bodyDigest}`);
+  for (const key of trust.body.keys) assert.deepEqual(await repo.resolveServerKey(key.keyId), key.state === "active" ?
+    new Uint8Array(Buffer.from(key.spki, "base64url")) : undefined);
+  const [_, current, history, ceilingWater, water] = snapshot(directory) as Record<string, unknown>[][];
+  assert.equal(current.length, 1);
+  assert.equal(history.length, trust.body.keys.length);
+  for (const key of trust.body.keys) {
+    const row = history.find(row => row.key_id === key.keyId)!;
+    assert.ok(row, "each independently specified identity retained in history");
+    assert.equal(row.spki, key.spki);
+    assert.equal(row.spki_digest, `sha256:${createHash("sha256").update(Buffer.from(key.spki, "base64url")).digest("hex")}`);
+    assert.equal(row.state, key.state);
+    assert.equal(row.first_seen_epoch, key.keyId === "server-key:test" ? 1 : 2);
+    assert.equal(row.last_seen_epoch, trust.body.epoch);
+  }
+  assert.equal(ceilingWater[0].phase, "committed");
+  assert.deepEqual(water.map(row => [row.epoch, row.body_digest, row.phase]), [[trust.body.epoch, trust.body.bodyDigest, "committed"]]);
+}
+function retainedNext(epoch: number, state: "active" | "retired" | "revoked" = "active", extra = false) {
+  const keys = [{ ...retainedLegacyTrust.body.keys[0], state }];
+  if (extra || state !== "active") keys.push({ keyId: "server-key:two", algorithm: "ed25519", state: "active", spki: spki(pair(5).publicKey) });
+  const next = bundle(76641, 4, { epoch, keys });
+  return state === "active" ? next : shrink(next);
+}
+async function retainedApply(repo: SqliteNodeSecurityStateRepository, directory: string, next: OwnerSignedTrustBundleV1) {
+  await assert.doesNotReject(repo.applyOwnerSignedBundle(next), "authenticated retained identity must advance without invalid_bundle");
+  await retainedReadback(repo, directory, next);
+  const before = snapshot(directory);
+  await repo.applyOwnerSignedBundle(next);
+  assert.deepEqual(snapshot(directory), before, "COMPLETE replay changes no table");
+}
+
 // Workers are direct children with piped stdin; a parent exit closes the pipe.
 // No worker detaches. The parent collects output on close and retires every child.
 async function worker() {
@@ -255,8 +334,8 @@ async function worker() {
   // immediately; a resumed pipe with no data listener would lose that message.
   // Fault workers keep fd 0 untouched so the synchronous wait below receives
   // kernel EOF if their parent exits. A blocked event loop cannot run on("end").
-  const released = mode === "fault" ? Promise.resolve() : new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
-  if (mode !== "fault") {
+  const released = (mode === "fault" || mode === "legacy-fault") ? Promise.resolve() : new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+  if (mode !== "fault" && mode !== "legacy-fault") {
     process.stdin.resume();
     process.stdin.on("end", () => process.exit(0));
   }
@@ -269,7 +348,9 @@ async function worker() {
       db.exec("ROLLBACK");
     } finally { db.close(); }
   } else {
+    let prepared = false;
     const repo = open(directory, 4, point => {
+      if (point === "trust_after_prepare") prepared = true;
       if (point === process.env.E084_FAULT) {
         writeFileSync(join(directory, "fault"), point);
         // Remain at this point until SIGKILL, or exit on parent-pipe EOF.
@@ -278,11 +359,18 @@ async function worker() {
       }
     });
     try {
-      if (mode === "contend" || mode === "update") {
+      if (mode === "contend" || mode === "update" || mode === "legacy-update") {
         await writeFile(join(directory, `ready-${process.env.E084_INDEX}`), "ready");
         await released;
       }
-      if (mode === "update") {
+      if (mode === "legacy-update" || mode === "legacy-fault") {
+        const candidate = JSON.parse(readFileSync(join(directory, process.env.E084_CANDIDATE!), "utf8"));
+        await repo.applyOwnerSignedBundle(candidate);
+        const current = await repo.loadTrustBundle();
+        assert.deepEqual(current, candidate, "worker COMPLETE real readback");
+        assert.equal(repo.currentServerTrustRevision(), `${candidate.body.epoch}:${candidate.body.bodyDigest}`);
+        console.log(JSON.stringify({ result: "applied", prepared, epoch: current.body.epoch }));
+      } else if (mode === "update") {
         const first = bundle();
         const keys = Number(process.env.E084_INDEX!.slice(2)) % 2 === 0 ? first.body.keys :
           [{ ...first.body.keys[0], keyId: "server-key:extra", spki: spki(pair(5).publicKey) }, first.body.keys[0]];
@@ -292,7 +380,7 @@ async function worker() {
         const result = process.env.E084_KIND === "ceiling" ? await repo.provisionInitialCeiling(ceiling()) : await repo.provisionInitialTrustBundle(bundle());
         console.log(JSON.stringify({ result }));
       }
-    } catch (error) { console.log(JSON.stringify({ error: (error as { code?: string }).code ?? "unknown" })); }
+    } catch (error) { console.log(JSON.stringify({ error: (error as { code?: string }).code ?? "unknown", prepared })); }
     finally { repo.close(); }
   }
   process.stdin.pause();
@@ -302,6 +390,7 @@ function child(directory: string, mode: string, extra: Record<string, string> = 
   const processChild = spawn(process.execPath, ["--import", "tsx", fileURLToPath(import.meta.url)], {
     env: { ...process.env, E084_DIRECTORY: directory, E084_WORKER: mode, ...extra }, stdio: ["pipe", "pipe", "pipe"],
   });
+  console.log(`owned direct worker pid=${processChild.pid}; mode=${mode}; group inherited`);
   let stdout = "", stderr = "";
   processChild.stdout.on("data", data => { stdout += data; });
   processChild.stderr.on("data", data => { stderr += data; });
@@ -323,9 +412,168 @@ async function observed(path: string, timeout = 120_000) {
   }
 }
 
+async function retainedStress(repo: SqliteNodeSecurityStateRepository, directory: string) {
+  for (const [count, epoch] of [[2, 3], [20, 4]]) {
+    const next = retainedNext(epoch), file = `legacy-${epoch}.json`;
+    await writeFile(join(directory, file), JSON.stringify(next));
+    const children = Array.from({ length: count }, (_, index) => child(directory, "legacy-update", { E084_INDEX: `l-${epoch}-${index}`, E084_CANDIDATE: file }));
+    try {
+      await Promise.all(children.map((_, index) => observed(join(directory, `ready-l-${epoch}-${index}`))));
+      for (const contender of children) contender.processChild.stdin.write("go");
+      const results = await Promise.all(children.map(contender => contender.closed));
+      const outcomes = results.map(result => { assert.equal(result.code, 0, result.stderr); return JSON.parse(result.stdout.trim()); });
+      console.log(`${count}-process legacy raw outcomes=${JSON.stringify(outcomes)}`);
+      assert.equal(outcomes.length, count, "all actual legacy contenders completed");
+      assert.equal(outcomes.filter(outcome => outcome.prepared).length, 1, "exactly one legacy contender prepared the next epoch");
+      assert.equal(outcomes.filter(outcome => !outcome.prepared).length, count - 1, "observed losing/replay branches");
+      for (const outcome of outcomes) assert.ok(outcome.result === "applied" || ["corrupt", "rollback_detected", "recovery_required", "invalid_bundle"].includes(outcome.error), `bounded explicit legacy outcome ${JSON.stringify(outcome)}`);
+      assert.ok(outcomes.some(outcome => outcome.result === "applied"), "legacy winning update completed real readback");
+      await retainedReadback(repo, directory, next);
+      const before = snapshot(directory); await repo.applyOwnerSignedBundle(next);
+      assert.deepEqual(snapshot(directory), before, "post-burst COMPLETE replay");
+      console.log(`${count}-process legacy barrier outcomes=${JSON.stringify(outcomes)}; COMPLETE history readback`);
+    } finally { await retire(children.map(contender => contender.processChild)); }
+  }
+  const slow = child(directory, "held");
+  try {
+    await observed(join(directory, "held"));
+    const before = snapshot(directory), start = Date.now();
+    await assert.rejects(repo.applyOwnerSignedBundle(retainedNext(5)), { code: "corrupt" });
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed >= 4500 && elapsed < 30_000, `unchanged 5000ms legacy busy timeout: ${elapsed}ms`);
+    assert.deepEqual(snapshot(directory), before, "legacy lock timeout does not prepare or write");
+    slow.processChild.stdin.write("release"); assert.equal((await slow.closed).code, 0);
+    await retainedApply(repo, directory, retainedNext(5));
+    console.log(`legacy held-transaction timeout=${elapsed}ms; released/retried`);
+  } finally { await retire([slow.processChild]); }
+  await rm(join(directory, "held"));
+  const dropped = child(directory, "held");
+  try {
+    await observed(join(directory, "held"));
+    dropped.processChild.kill("SIGKILL"); assert.equal((await dropped.closed).signal, "SIGKILL");
+    await retainedApply(repo, directory, retainedNext(6));
+    console.log("legacy dropped transaction rolled back; valid retry readback COMPLETE");
+  } finally { await retire([dropped.processChild]); }
+  let epoch = 7;
+  for (const phase of ["prepare", "artifact", "commit"]) {
+    const next = retainedNext(epoch++), file = `legacy-fault-${phase}.json`;
+    await writeFile(join(directory, file), JSON.stringify(next));
+    const crash = child(directory, "legacy-fault", { E084_CANDIDATE: file, E084_FAULT: `trust_after_${phase}` });
+    try {
+      await observed(join(directory, "fault"));
+      crash.processChild.kill("SIGKILL"); assert.equal((await crash.closed).signal, "SIGKILL");
+      const recovery = open(directory);
+      try { await retainedApply(recovery, directory, next); }
+      finally { recovery.close(); }
+      await rm(join(directory, "fault"));
+      console.log(`legacy trust_after_${phase} killed; authenticated retained recovery COMPLETE`);
+    } finally { await retire([crash.processChild]); }
+  }
+}
+
 if (process.env.E084_WORKER) {
   await worker();
 } else {
+  test("historical retained alias advances active", { timeout: 240_000 }, async () => retainedLegacyFixture(async (repo, directory) => {
+    const next = retainedNext(2);
+    await retainedApply(repo, directory, next);
+    const retry = retainedNext(3);
+    const artifact = new DatabaseSync(paths(directory).artifactDatabasePath);
+    const water = new DatabaseSync(paths(directory).highWaterDatabasePath);
+    try {
+      const original = snapshot(directory) as Record<string, unknown>[][];
+      const restore = () => {
+        for (const [db, tables, rows] of [[artifact, ["node_ceiling_current", "server_trust_current", "server_trust_key_history"], original.slice(0, 3)],
+          [water, ["ceiling_high_water", "trust_high_water"], original.slice(3)]] as const) {
+          db.exec("BEGIN IMMEDIATE");
+          try {
+            for (let index = 0; index < tables.length; index++) {
+              db.exec(`DELETE FROM ${tables[index]}`);
+              for (const row of rows[index]) {
+                const columns = Object.keys(row);
+                db.prepare(`INSERT INTO ${tables[index]} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...columns.map(column => row[column]) as (string | number)[]);
+              }
+            }
+            db.exec("COMMIT");
+          } catch (error) { db.exec("ROLLBACK"); throw error; }
+        }
+      };
+      // Adversarial corruption and restoration of product-written rows only;
+      // these writes do not manufacture the initial historical fixture.
+      const controls: [string, () => void, string][] = [
+        ["altered prior signature", () => artifact.prepare("UPDATE server_trust_current SET bundle_json=?").run(JSON.stringify({ ...next, signature: "A".repeat(86) })), "invalid_bundle"],
+        ["altered prior signed body digest", () => artifact.prepare("UPDATE server_trust_current SET bundle_json=?").run(JSON.stringify({ ...next, body: { ...next.body, bodyDigest: "sha256:" + "0".repeat(64) } })), "invalid_bundle"],
+        ["altered prior row digest", () => artifact.prepare("UPDATE server_trust_current SET body_digest=?").run("sha256:" + "0".repeat(64)), "invalid_bundle"],
+        ["swapped history bytes", () => artifact.prepare("UPDATE server_trust_key_history SET spki=?").run(spki(pair(5).publicKey)), "invalid_bundle"],
+        ["incomplete key history", () => artifact.exec("DELETE FROM server_trust_key_history"), "invalid_bundle"],
+        ["altered history epoch", () => artifact.exec("UPDATE server_trust_key_history SET last_seen_epoch=999"), "invalid_bundle"],
+        ["missing high-water", () => water.exec("DELETE FROM trust_high_water"), "rollback_detected"],
+        ["incomplete unrelated prepare", () => water.prepare("UPDATE trust_high_water SET epoch=3,phase='prepared',body_digest=?").run("sha256:" + "0".repeat(64)), "recovery_required"],
+      ];
+      for (const [name, edit, code] of controls) {
+        try {
+          edit(); const before = snapshot(directory);
+          await assert.rejects(repo.applyOwnerSignedBundle(retry), { code }, name);
+          assert.deepEqual(snapshot(directory), before, `${name}: every table unchanged on refusal`);
+          console.log(`legacy authority refusal=${name}; no half-write`);
+        } finally { restore(); }
+        await retainedReadback(repo, directory, next);
+      }
+    } finally { artifact.close(); water.close(); }
+    await retainedStress(repo, directory);
+  }));
+
+  test("historical retained alias retires", async () => retainedLegacyFixture(async (repo, directory) => {
+    await retainedApply(repo, directory, retainedNext(2, "retired"));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(retainedNext(3, "active", true)));
+    const canonicalized = retainedNext(3, "retired");
+    const changed = shrink(bundle(76641, 4, { epoch: 3, keys: [{ ...canonicalized.body.keys[0], spki: spki(pair(76641).publicKey) }, canonicalized.body.keys[1]] }));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(changed));
+    await retainedApply(repo, directory, retainedNext(3, "revoked"));
+  }));
+
+  test("historical retained alias revokes", async () => retainedLegacyFixture(async (repo, directory) => {
+    await retainedApply(repo, directory, retainedNext(2, "revoked"));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(retainedNext(3, "retired")));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(retainedNext(3, "active", true)));
+    const next = retainedNext(3, "revoked");
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle({ ...next, signature: alias(next.signature) }));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(shrink(next, 5)));
+    await retainedApply(repo, directory, next);
+  }));
+
+  test("historical retained alias mixed with a new canonical key remains valid with authority refusals", async () => retainedLegacyFixture(async (repo, directory) => {
+    await retainedApply(repo, directory, retainedNext(2, "active", true));
+    const next = retainedNext(3, "active", true);
+    for (const changes of [{ tenantId: "tenant:foreign" }, { nodeClass: "foreign-compute" }, { ownerRootKeyId: "owner-key:unknown" }]) {
+      await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 4, { ...next.body, ...changes })));
+    }
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 5, next.body)));
+    const wrongPins = open(directory, 5);
+    try { await refusesUnchanged(wrongPins, directory, () => wrongPins.applyOwnerSignedBundle(next)); }
+    finally { wrongPins.close(); }
+    const retained = next.body.keys[0], canonicalKey = next.body.keys[1];
+    const garbage = Buffer.alloc(44).toString("base64url");
+    const newKeys = [
+      { ...canonicalKey, keyId: "server-key:unknown", spki: alias(spki(pair(6).publicKey)) },
+      { ...canonicalKey, keyId: "server-key:unknown", spki: retained.spki },
+      { ...canonicalKey, keyId: "server-key:unknown", spki: garbage },
+      { ...canonicalKey, keyId: "server-key:unknown", spki: spki(generateKeyPairSync("x25519").publicKey) },
+    ];
+    for (const key of newKeys) await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 3, keys: [...next.body.keys, key] })));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 3,
+      keys: [{ ...retained, spki: alias(spki(pair(6).publicKey)) }, canonicalKey] })));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 3,
+      keys: [{ ...retained, spki: spki(pair(76641).publicKey) }, canonicalKey] })));
+    await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle({ ...next, signature: alias(next.signature) }));
+    await fixture(async (empty, emptyDirectory) => {
+      await refusesUnchanged(empty, emptyDirectory, () => empty.applyOwnerSignedBundle(retainedNext(2)));
+      await refusesUnchanged(empty, emptyDirectory, () => empty.provisionInitialTrustBundle(retainedLegacyTrust));
+      await roundTrip(empty, bundle());
+    });
+    await retainedApply(repo, directory, next);
+  }));
+
   test("public SPKI provision/read", async () => fixture(async repo => {
     const artifact = bundle(76640);
     assert.equal(artifact.body.keys[0].spki, collisionSpki);
@@ -347,7 +595,7 @@ if (process.env.E084_WORKER) {
     assert.equal(artifact.signature, collisionCeilingSignature);
     assert.deepEqual(containsSecretMaterial(artifact), ["$.signature"]);
     assertIndependentSignature(artifact, 18118);
-    assert.equal(await repo.provisionInitialCeiling(artifact), "provisioned");
+    assert.equal(await repo.provisionInitialCeiling(artifact).catch(() => assert.fail("authenticated public ceiling must provision")), "provisioned");
     assert.deepEqual(await repo.loadCeiling(), artifact);
     await roundTrip(repo, bundle(76641, 18118));
     assert.equal(repo.currentPolicyRevision(), `1:${artifact.body.bodyDigest}:${repo.currentServerTrustRevision()}`);
@@ -401,7 +649,7 @@ if (process.env.E084_WORKER) {
     const before = snapshot(directory);
     const rotated = open(directory, 4, undefined, 5);
     try {
-      assert.deepEqual(await rotated.loadTrustBundle(), trust, "previously accepted trust survives changed shrink pin");
+      assert.deepEqual(await rotated.loadTrustBundle().catch(() => assert.fail("authenticated stored trust must survive shrink-pin rotation")), trust, "previously accepted trust survives changed shrink pin");
       assert.equal(rotated.currentServerTrustRevision(), `1:${trust.body.bodyDigest}`);
       assert.equal(rotated.currentPolicyRevision(), `1:${ceiling().body.bodyDigest}:1:${trust.body.bodyDigest}`);
       const next = shrink(bundle(76641, 4, { epoch: 2 }));
