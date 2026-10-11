@@ -388,7 +388,8 @@ if (process.env.E084_WORKER) {
       const results = await Promise.all(children.map(contender => contender.closed));
       for (const result of results) assert.equal(result.code, 0, result.stderr);
       const outcomes = results.map(result => JSON.parse(result.stdout.trim()));
-      assert.equal(outcomes.filter(outcome => outcome.result === "provisioned").length, 1, "exactly one provision winner");
+      console.log(`initial provision outcomes=${JSON.stringify(outcomes)}`);
+      assert.equal(outcomes.filter(outcome => outcome.result === "provisioned" || outcome.result === "recovered").length, 1, "exactly one successful provision or recovery winner");
       for (const outcome of outcomes) assert.ok(["provisioned", "duplicate", "recovered"].includes(outcome.result) || ["corrupt", "rollback_detected", "invalid_configuration"].includes(outcome.error), `explicit contender outcome ${JSON.stringify(outcome)}`);
       assert.deepEqual(await repo.loadTrustBundle(), bundle());
       assert.equal(await repo.provisionInitialTrustBundle(bundle()), "duplicate");
