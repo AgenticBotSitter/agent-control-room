@@ -103,5 +103,257 @@
     "replace": "  // assert.equal(completed, 1, \"a required-but-skipped cluster test must fail the run\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "Commenting the completion assertion retains its text but removes execution; the repository closing-check assertion must fail."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "describe(\"attack kit: real PostgreSQL\", () => {",
+    "replace": "describe(\"attack kit: real PostgreSQL\", () => {\n  return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-describe-return: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "describe(\"attack kit: real PostgreSQL\", () => {",
+    "replace": "describe(\"attack kit: real PostgreSQL\", function* () {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-describe-generator: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "describe(\"attack kit: real PostgreSQL\", () => {",
+    "replace": "describe(\"attack kit: real PostgreSQL\", () => {\n  const test = (..._args: unknown[]) => {};",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-test-shadow: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "const { needsPgOrFail, countedRealPostgresRun, temporary } = lane;",
+    "replace": "const { needsPgOrFail: originalNeedsPg, countedRealPostgresRun, temporary } = lane;\nconst needsPgOrFail = () => ({ skip: \"disabled\" });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-skip-binding: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "  if (!PG) return;",
+    "replace": "  return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-guard-return: independent frozen 9c8ab635 executable source contract and original literal allocations require completion guard; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "  if (!PG) return;",
+    "replace": "  if (!PG) return;\n  const assert = { equal: (..._args: unknown[]) => {} };",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-guard-shadow: independent frozen 9c8ab635 executable source contract and original literal allocations require completion guard; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "lane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "replace": "lane.closeLane = () => {};\nlane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-close-rebound: independent frozen 9c8ab635 executable source contract and original literal allocations require closing integrity; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "test(\"withRealPostgres cleans up after a thrown error\"",
+    "replace": "test.only(\"withRealPostgres cleans up after a thrown error\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-test-only: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "describe(\"attack kit: real PostgreSQL\", () => {",
+    "replace": "describe.skip(\"attack kit: real PostgreSQL\", () => {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-describe-skip: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "import test, { describe } from \"node:test\";",
+    "replace": "import { skip as test, describe } from \"node:test\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-aliased-test: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "    countedRealPostgresRun();",
+    "replace": "    return;\n    countedRealPostgresRun();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-empty-body: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "  completed += 1;",
+    "replace": "  // completed += 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-counter-comment: independent frozen 9c8ab635 executable source contract and original literal allocations require completed bodies; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/support/bounded-usage-fixture.ts",
+    "find": "// Unchanged bounded-usage fixture producers, literals and real-client wrappers.",
+    "replace": "import { test as register } from 'node:test';\nregister('fixture import registration', () => {});\n// Unchanged bounded-usage fixture producers, literals and real-client wrappers.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "adj-fixture-alias: independent frozen 9c8ab635 executable source contract and original literal allocations require importing fixtures registers no tests; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "package.json",
+    "find": "--test-timeout=240000 tests/attack-kit.test.ts",
+    "replace": "--test-timeout=240001 tests/attack-kit.test.ts",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 routes all eight partitions through the package lane and example\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-budget: independent frozen 9c8ab635 executable source contract and original literal allocations require the file timeout remains 240000ms; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "package.json",
+    "find": "--test-concurrency=1 --test-timeout=240000 tests/attack-kit.test.ts",
+    "replace": "--test-concurrency=2 --test-timeout=240000 tests/attack-kit.test.ts",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 routes all eight partitions through the package lane and example\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-concurrency: independent frozen 9c8ab635 executable source contract and original literal allocations require cluster files remain serial; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "const lane = await createLane();",
+    "replace": "const lane = await otherLane();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-lane: independent frozen 9c8ab635 executable source contract and original literal allocations require own lane; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "lane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "replace": "lane.closeLane([\"attack-kit-pg-\"]);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-prefix: independent frozen 9c8ab635 executable source contract and original literal allocations require closing prefix attack-kit-pid-fault-; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-attempts-postgres.test.ts",
+    "find": "// PG_BIN supplies the real PostgreSQL binaries in the CI lane.",
+    "replace": "// PostgreSQL is required.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-pg-marker: independent frozen 9c8ab635 executable source contract and original literal allocations require affected-test PG routing; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "lane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "replace": "lane.closeLane(\"attack-kit-pg-\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-prefix-array: independent frozen 9c8ab635 executable source contract and original literal allocations require literal closing prefixes; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "lane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "replace": "lane.closeLane([\"attack-kit-pg-\", 42]);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-prefix-string: independent frozen 9c8ab635 executable source contract and original literal allocations require literal closing prefixes; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "test(\"the bounded-usage real-PostgreSQL proof ran when PostgreSQL is available\"",
+    "replace": "test.skip(\"the bounded-usage real-PostgreSQL proof ran when PostgreSQL is available\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-registration-missing: independent frozen 9c8ab635 executable source contract and original literal allocations require own completion check; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "let completed = 0;",
+    "replace": "let completed = 0;\ntest(\"extra completion check\", () => { assert.equal(1, 1); });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-registration-extra: independent frozen 9c8ab635 executable source contract and original literal allocations require own completion check; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "assert.equal(completed, 2, \"a required-but-skipped cluster test must fail the run\");",
+    "replace": "assert.equal(completed, 99, \"a required-but-skipped cluster test must fail the run\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-count-literal: independent frozen 9c8ab635 executable source contract and original literal allocations require completion guard; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "assert.equal(completed, 2, \"a required-but-skipped cluster test must fail the run\");",
+    "replace": "assert.equal(completed, 2, \"wrong refusal\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-message-literal: independent frozen 9c8ab635 executable source contract and original literal allocations require completion guard; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "boundMs: 240_000",
+    "replace": "boundMs: 240_001",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-bound-count: independent frozen 9c8ab635 executable source contract and original literal allocations require unchanged body bounds; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "  completed += 1;",
+    "replace": "  // completion increment removed",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "guard-increment-count: independent frozen 9c8ab635 executable source contract and original literal allocations require completed bodies; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-real-postgres.test.ts",
+    "find": "import test, { describe } from \"node:test\";",
+    "replace": "import { test as importedTest, describe } from \"node:test\";\nconst test = (..._args: unknown[]) => {};",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "new-shadow-import: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/bounded-usage-read-postgres.test.ts",
+    "find": "  completed += 1;",
+    "replace": "  globalThis[\"completed\"] += 1; // completed += 1;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "new-computed-counter: independent frozen 9c8ab635 executable source contract and original literal allocations require completed bodies; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-shutdown-real-postgres.test.ts",
+    "find": "lane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "replace": "const discardedClose = lane.closeLane;\nlane.closeLane = () => {};\nlane.closeLane([\"attack-kit-pg-\", \"attack-kit-pid-fault-\"]);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "new-discarded-close: independent frozen 9c8ab635 executable source contract and original literal allocations require closing integrity; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/support/attack-kit/suite-lane.ts",
+    "find": "assert.equal(realPostgresRan, realPostgresRequired,",
+    "replace": "assert.equal(realPostgresRan, realPostgresRan,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "new-helper-closure: independent frozen 9c8ab635 executable source contract and original literal allocations require actual lane closure bindings and assertions; loaded disabled source must fail the named completed oracle body, not startup."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "replace": "if (allocation) return true;\n  return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "disable-allocation: turn off this independent syntax seal only. The literal false supported-grammar property must fail unreachable source grammar seed 0; complete real oracle body, no startup or PG execution."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "replace": "if (!allocation && path === \"tests/bounded-usage-read-postgres.test.ts\") return true;\n  return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "disable-completion: turn off this independent syntax seal only. The literal false supported-grammar property must fail closing seal refuses unreachable completion assertion; complete real oracle body, no startup or PG execution."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "replace": "if (path === \"tests/support/bounded-usage-fixture.ts\") return true;\n  return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "disable-fixture: turn off this independent syntax seal only. The literal false supported-grammar property must fail fixture seal refuses aliased registration import; complete real oracle body, no startup or PG execution."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "replace": "if (path === \"tests/support/attack-kit/suite-lane.ts\") return true;\n  return digest(nodes) === seals[path][allocation ? \"allocation\" : \"complete\"];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "disable-helper: turn off this independent syntax seal only. The literal false supported-grammar property must fail helper seal refuses self-comparing completion; complete real oracle body, no startup or PG execution."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "if (tree.parseDiagnostics.length) return false;",
+    "replace": "// mutation: permit parser recovery",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "disable-parse: independent malformed/commented source decision must fail malformed source grammar refuses parser recovery in the completed named oracle body."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "return completed.length;",
+    "replace": "return wanted.length;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "disable-counter: independent malformed/commented source decision must fail completed-body recognition excludes commented increments in the completed named oracle body."
   }
 ]
