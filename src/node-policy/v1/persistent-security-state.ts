@@ -342,7 +342,9 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.ceilingProvisioningKey(ceiling.body.issuerKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
-      if (Buffer.from(ceiling.signature, "base64url").toString("base64url") !== ceiling.signature) throw new Error("noncanonical signature");
+      if (source === "candidate") {
+        if (Buffer.from(ceiling.signature, "base64url").toString("base64url") !== ceiling.signature) throw new Error("noncanonical signature");
+      }
       if (!verifyArtifactSignature(ceiling, pin.spki)) throw new Error("invalid signature");
       const { signature: _signature, ...metadata } = ceiling;
       assertNoSecretMaterial(metadata, "node ceiling");
@@ -360,23 +362,35 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.serverTrustRootKey(trust.body.ownerRootKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
-      for (const key of trust.body.keys) {
-        const der = Buffer.from(key.spki, "base64url");
-        const publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
-        if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("wrong public key algorithm");
-        if (publicKey.export({ format: "der", type: "spki" }).toString("base64url") !== key.spki) throw new Error("noncanonical public key");
+      // Admission is stricter than the historical writer. Stored bytes retain
+      // their spelling and remain protected by owner signature/digest/history.
+      if (source === "candidate") {
+        for (const key of trust.body.keys) {
+          const der = Buffer.from(key.spki, "base64url");
+          const publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
+          if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("wrong public key algorithm");
+          if (publicKey.export({ format: "der", type: "spki" }).toString("base64url") !== key.spki) throw new Error("noncanonical public key");
+        }
       }
-      if (Buffer.from(trust.signature, "base64url").toString("base64url") !== trust.signature) throw new Error("noncanonical signature");
+      if (source === "candidate") {
+        if (Buffer.from(trust.signature, "base64url").toString("base64url") !== trust.signature) throw new Error("noncanonical signature");
+      }
       if (!verifyArtifactSignature(trust, pin.spki)) throw new Error("invalid signature");
       const authorization = trust.shrinkAuthorization;
-      if (authorization) {
+      // Shrink pins authorize a new transition; rotating them must not revoke
+      // already accepted state or invalidate artifacts the base writer accepted.
+      if (authorization && source === "candidate") {
         const shrinkPin = this.ownerPins.trustShrinkKey(authorization.keyId);
         if (!shrinkPin) throw new Error("unknown shrink pin");
         if (Buffer.from(authorization.signature, "base64url").toString("base64url") !== authorization.signature) throw new Error("noncanonical shrink signature");
         if (!verifyTrustBundleShrinkAuthorization(authorization, shrinkPin.spki)) throw new Error("invalid shrink signature");
       }
-      // Only authenticated public cryptographic values are omitted. Strict
-      // schemas have already refused extra fields; all metadata stays screened.
+      // Candidate SPKI bytes are canonical Ed25519 public DER. About 32 bytes
+      // of chosen data shaped as a valid key cannot be distinguished from a real
+      // key; the pinned owner signature is the authority for including that key.
+      // Stored optional shrink signatures are historical transition evidence,
+      // not authority under current shrink pins. Strict schemas refuse extras;
+      // every remaining metadata value stays screened.
       const { signature: _signature, body, shrinkAuthorization, ...envelope } = trust;
       const { signature: _shrinkSignature, ...shrinkMetadata } = shrinkAuthorization ?? {};
       assertNoSecretMaterial({ ...envelope,

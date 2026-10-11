@@ -3,8 +3,9 @@ import test from "node:test";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
 import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, relative } from "node:path";
+import { gunzipSync } from "node:zlib";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { SqliteNodeSecurityStateRepository, type SecurityStateFaultPoint } from "../src/node-policy/v1/persistent-security-state";
@@ -114,6 +115,135 @@ async function refusesUnchanged(repo: SqliteNodeSecurityStateRepository, directo
 function alias(value: string) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   return value.slice(0, -1) + alphabet[alphabet.indexOf(value.at(-1)!) + 1];
+}
+
+
+// Frozen production writer from cf91e3140bc11c772aaac5cde5c3588bdac6da06.
+// Keep earlier-state creation independent of the candidate's stricter admission.
+// This gzip fixture contains the complete earlier module, not synthetic rows.
+// Its unchanged imports resolve to the same production dependencies used then.
+const legacyWriterGzip = [
+  "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",
+].join("");
+const legacyWriterSha256 = "7143128a8cdc507de866d0655ea693fb6fdba6d44243597db7b5434aec81c154";
+async function legacyState(
+  trust: OwnerSignedTrustBundleV1,
+  authority: SignedNodeAuthorityCeilingV1,
+  readPins: PinnedOwnerTrust = pins(),
+) {
+  await mkdir(scratchRoot, { recursive: true });
+  const directory = await mkdtemp(join(scratchRoot, "e084-legacy-"));
+  let writer: SqliteNodeSecurityStateRepository | undefined;
+  let reader: SqliteNodeSecurityStateRepository | undefined;
+  try {
+    for (const path of Object.values(paths(directory))) await assert.rejects(stat(path), { code: "ENOENT" });
+    const source = gunzipSync(Buffer.from(legacyWriterGzip, "base64")).toString("utf8");
+    assert.equal(createHash("sha256").update(source).digest("hex"), legacyWriterSha256, "independently captured base writer bytes");
+    const originalModule = fileURLToPath(new URL("../src/node-policy/v1/persistent-security-state.ts", import.meta.url));
+    const relocated = source.replace(/from "(\.[^"]+)"/g, (_match, specifier: string) => {
+      const local = relative(directory, join(dirname(originalModule), specifier)).split("\\").join("/");
+      return `from "${local.startsWith(".") ? local : `./${local}`}"`;
+    });
+    const writerPath = join(directory, "legacy-writer.ts");
+    await writeFile(writerPath, relocated);
+    const LegacyRepository = (await import(pathToFileURL(writerPath).href)).SqliteNodeSecurityStateRepository;
+    writer = new LegacyRepository(paths(directory), binding, pins(), { now: () => at });
+    await assert.rejects(writer!.loadTrustBundle(), { code: "missing" });
+    assert.equal(await writer!.provisionInitialTrustBundle(trust), "provisioned", "base product writes historical trust state");
+    assert.equal(await writer!.provisionInitialCeiling(authority), "provisioned", "base product writes historical ceiling state");
+    assert.deepEqual(await writer!.loadTrustBundle(), trust, "base read-back preserves historical bytes");
+    writer!.close(); writer = undefined;
+    const before = snapshot(directory);
+    reader = new SqliteNodeSecurityStateRepository(paths(directory), binding, readPins, { now: () => at });
+    assert.deepEqual(await reader.loadTrustBundle(), trust, "base-written trust state stays readable");
+    assert.deepEqual(await reader.loadCeiling(), authority, "base-written ceiling state stays readable");
+    assert.equal(reader.currentServerTrustRevision(), `${trust.body.epoch}:${trust.body.bodyDigest}`);
+    assert.equal(reader.currentPolicyRevision(), `${authority.body.version}:${authority.body.bodyDigest}:${trust.body.epoch}:${trust.body.bodyDigest}`);
+    assert.deepEqual(await reader.resolveServerKey(trust.body.keys[0].keyId), new Uint8Array(Buffer.from(trust.body.keys[0].spki, "base64url")));
+    assert.deepEqual(snapshot(directory), before, "compatibility read never rewrites historical state");
+    const db = new DatabaseSync(paths(directory).artifactDatabasePath);
+    try {
+      const badTrust = { ...trust, signature: "A".repeat(86) };
+      db.prepare("UPDATE server_trust_current SET bundle_json=?").run(JSON.stringify(badTrust));
+      await assert.rejects(reader.loadTrustBundle(), { code: "corrupt" }, "stored owner-signature tamper remains refused");
+      assert.throws(() => reader!.currentServerTrustRevision(), { code: "corrupt" });
+      db.prepare("UPDATE server_trust_current SET bundle_json=?").run(JSON.stringify(trust));
+      db.prepare("UPDATE node_ceiling_current SET artifact_json=?").run(JSON.stringify({ ...authority, signature: "A".repeat(86) }));
+      await assert.rejects(reader.loadCeiling(), { code: "corrupt" }, "stored ceiling-signature tamper remains refused");
+      assert.throws(() => reader!.currentPolicyRevision(), { code: "corrupt" });
+    } finally { db.close(); }
+  } finally {
+    writer?.close(); reader?.close();
+    await rm(directory, { recursive: true, force: true });
+    assert.equal(existsSync(directory), false, "historical fixture cleanup reached");
+  }
 }
 
 // Workers are direct children with piped stdin; a parent exit closes the pipe.
@@ -245,6 +375,61 @@ if (process.env.E084_WORKER) {
     await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 4, keys: [keys[1]] })));
     await refusesUnchanged(repo, directory, () => repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 4, keys: [{ ...keys[0], keyId: "server-key:renamed", state: "revoked" }, keys[1]] })));
   }, 4, 10764));
+
+  test("base-written public aliases stay readable", async () => {
+    const first = bundle();
+    const aliasKey = bundle(76641, 4, { keys: [{ ...first.body.keys[0], spki: alias(first.body.keys[0].spki) }] });
+    assert.deepEqual(Buffer.from(aliasKey.body.keys[0].spki, "base64url"), Buffer.from(first.body.keys[0].spki, "base64url"));
+    for (const [trust, authority] of [
+      [aliasKey, ceiling()],
+      [{ ...first, signature: alias(first.signature) }, ceiling()],
+      [first, { ...ceiling(), signature: alias(ceiling().signature) }],
+    ] as const) await legacyState(trust, authority);
+  });
+  test("base-written optional shrink stays readable", async () => {
+    const valid = shrink(bundle());
+    for (const trust of [
+      shrink(bundle(), 5),
+      shrink(bundle(), 4, "owner-key:unknown"),
+      { ...valid, shrinkAuthorization: { ...valid.shrinkAuthorization, signature: alias(valid.shrinkAuthorization.signature) } },
+    ]) await legacyState(trust, ceiling());
+  });
+  test("stored trust survives shrink-pin rotation", async () => fixture(async (repo, directory) => {
+    const trust = shrink(bundle());
+    await roundTrip(repo, trust);
+    await repo.provisionInitialCeiling(ceiling());
+    const before = snapshot(directory);
+    const rotated = open(directory, 4, undefined, 5);
+    try {
+      assert.deepEqual(await rotated.loadTrustBundle(), trust, "previously accepted trust survives changed shrink pin");
+      assert.equal(rotated.currentServerTrustRevision(), `1:${trust.body.bodyDigest}`);
+      assert.equal(rotated.currentPolicyRevision(), `1:${ceiling().body.bodyDigest}:1:${trust.body.bodyDigest}`);
+      const next = shrink(bundle(76641, 4, { epoch: 2 }));
+      await refusesUnchanged(rotated, directory, () => rotated.applyOwnerSignedBundle(next));
+      await rotated.applyOwnerSignedBundle(shrink(bundle(76641, 4, { epoch: 2 }), 5));
+      assert.equal((await rotated.loadTrustBundle()).body.epoch, 2);
+    } finally { rotated.close(); }
+    assert.equal(before[1].length, 1, "original complete trust state exists before rotation");
+  }));
+  test("shrink metadata secret refusal", async () => {
+    const token = "sk-0123456789abcdefghijklmnop"; // Labelled synthetic metadata.
+    const tokenPin = { ...pin(), keyId: token };
+    const owner = pin();
+    const configured = new PinnedOwnerTrust({ ceilingProvisioningKey: owner, serverTrustRootKey: owner, trustShrinkKeys: [tokenPin] });
+    for (const replace of [false, true]) await fixture(async (unused, directory) => {
+      const repo = new SqliteNodeSecurityStateRepository(paths(directory), binding, configured, { now: () => at });
+      try {
+        if (replace) await roundTrip(repo, bundle());
+        const candidate = shrink(bundle(76641, 4, { epoch: replace ? 2 : 1 }), 4, token);
+        assert.equal(ownerSignedTrustBundleSchema.safeParse(candidate).success, true);
+        assertIndependentSignature(candidate);
+        assert.equal(verify(null, Buffer.from(canonical({ schema: "control-room.trust-bundle-shrink-authorization/v1", keyId: token, bundleBodyDigest: candidate.body.bodyDigest })), root.publicKey, Buffer.from(candidate.shrinkAuthorization.signature, "base64url")), true, "secret-shaped shrink keyId has valid pinned authorization");
+        assert.ok(containsSecretMaterial(candidate).includes("$.shrinkAuthorization.keyId"));
+        await refusesUnchanged(repo, directory, () => replace ? repo.applyOwnerSignedBundle(candidate) : repo.provisionInitialTrustBundle(candidate));
+      } finally { repo.close(); }
+    });
+  });
+
   test("generated-key property", async () => {
     let completed = 0;
     try {
@@ -348,9 +533,9 @@ if (process.env.E084_WORKER) {
       if (replace) await repo.applyOwnerSignedBundle(valid); else await roundTrip(repo, valid);
       const db = new DatabaseSync(paths(directory).artifactDatabasePath);
       try {
-        const invalid = shrink(next, 5);
+        const invalid = { ...next, signature: "A".repeat(86) };
         db.prepare("UPDATE server_trust_current SET bundle_json=?").run(JSON.stringify(invalid));
-        await assert.rejects(repo.loadTrustBundle(), { code: "corrupt" });
+        await assert.rejects(repo.loadTrustBundle(), { code: "corrupt" }, "stored owner signature remains authenticated");
       } finally { db.close(); }
     });
   });

@@ -117,5 +117,40 @@
     "replace": "  async adoptCeiling(artifact: SignedNodeAuthorityCeilingV1): Promise<SecurityArtifactAdoption> {\n    const candidate = artifact;\n    const currentRow = this.ceilingRow();\n    const water = this.ceilingHighWater();\n    if (!water && !currentRow) throw new ProtectedStoreError(\"missing\");\n    if (!water) throw new ProtectedStoreError(\"rollback_detected\");\n\n    if (water.phase === \"prepared\") {\n      if (water.sequence !== candidate.body.version || water.body_digest !== candidate.body.bodyDigest) throw new ProtectedStoreError(\"recovery_required\");\n      if (!currentRow) throw new ProtectedStoreError(\"recovery_required\");\n      if (currentRow && currentRow.version === water.sequence && currentRow.body_digest === water.body_digest) {\n        this.verifyCeilingRow(currentRow);\n        this.commitCeilingHighWater(water.sequence, water.body_digest);\n        return \"recovered\";\n      }\n      if (currentRow && currentRow.version >= water.sequence) throw new ProtectedStoreError(\"rollback_detected\");\n      this.writeCeiling(this.verifyCeiling(candidate, \"candidate\"));\n      this.faultInjector(\"ceiling_after_artifact\");\n      this.commitCeilingHighWater(water.sequence, water.body_digest);\n      this.faultInjector(\"ceiling_after_commit\");\n      return \"recovered\";\n    }\n    if (!currentRow) throw new ProtectedStoreError(\"rollback_detected\");\n\n    const current = this.verifyCeilingRow(currentRow);\n    if (water.sequence !== current.body.version || water.body_digest !== current.body.bodyDigest) throw new ProtectedStoreError(\"rollback_detected\");\n    if (candidate.body.version < current.body.version) throw new ProtectedStoreError(\"rollback_detected\");\n    if (candidate.body.version === current.body.version) {\n      if (candidate.body.bodyDigest !== current.body.bodyDigest) throw new ProtectedStoreError(\"rollback_detected\");\n      return \"duplicate\";\n    }\n\n    this.updateCeilingHighWater(candidate.body.version, candidate.body.bodyDigest, current.body.version);\n    this.faultInjector(\"ceiling_after_prepare\");\n    this.writeCeiling(this.verifyCeiling(candidate, \"candidate\"));\n    this.faultInjector(\"ceiling_after_artifact\");\n    this.commitCeilingHighWater(candidate.body.version, candidate.body.bodyDigest);\n    this.faultInjector(\"ceiling_after_commit\");\n    return \"adopted\";\n  }\n\n  /** Synchronous freshness fence; never repairs a partially committed update. */",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"^no-prepare-on-refusal/retry$\" tests/node-security-public-artifacts.test.ts",
     "why": "M04-adoptCeiling: move preflight to the artifact writer after high-water preparation; literal state must remain unchanged"
+  },
+  {
+    "file": "src/node-policy/v1/persistent-security-state.ts",
+    "find": "...(shrinkAuthorization ? { shrinkAuthorization: shrinkMetadata } : {}),",
+    "replace": "// Mutation: omit shrink metadata from screening.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"^shrink metadata secret refusal$\" tests/node-security-public-artifacts.test.ts",
+    "why": "L2-001: independently signed token-shaped configured shrink keyId must refuse before any state write"
+  },
+  {
+    "file": "src/node-policy/v1/persistent-security-state.ts",
+    "find": "if (source === \"candidate\") {\n        for (const key of trust.body.keys) {",
+    "replace": "if (true) {\n        for (const key of trust.body.keys) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"^base-written public aliases stay readable$\" tests/node-security-public-artifacts.test.ts",
+    "why": "E6-SPKI: restoring admission-only canonical SPKI checks on reads must fail real base-produced alias read"
+  },
+  {
+    "file": "src/node-policy/v1/persistent-security-state.ts",
+    "find": "if (source === \"candidate\") {\n        if (Buffer.from(trust.signature, \"base64url\").toString(\"base64url\") !== trust.signature) throw new Error(\"noncanonical signature\");",
+    "replace": "if (true) {\n        if (Buffer.from(trust.signature, \"base64url\").toString(\"base64url\") !== trust.signature) throw new Error(\"noncanonical signature\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"^base-written public aliases stay readable$\" tests/node-security-public-artifacts.test.ts",
+    "why": "E6-trust-signature: restoring admission-only canonical signature checks on reads must fail real base-produced alias read"
+  },
+  {
+    "file": "src/node-policy/v1/persistent-security-state.ts",
+    "find": "if (source === \"candidate\") {\n        if (Buffer.from(ceiling.signature, \"base64url\").toString(\"base64url\") !== ceiling.signature) throw new Error(\"noncanonical signature\");",
+    "replace": "if (true) {\n        if (Buffer.from(ceiling.signature, \"base64url\").toString(\"base64url\") !== ceiling.signature) throw new Error(\"noncanonical signature\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"^base-written public aliases stay readable$\" tests/node-security-public-artifacts.test.ts",
+    "why": "E6-ceiling-signature: restoring admission-only canonical signature checks on reads must fail real base-produced alias read"
+  },
+  {
+    "file": "src/node-policy/v1/persistent-security-state.ts",
+    "find": "if (authorization && source === \"candidate\") {",
+    "replace": "if (authorization) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern=\"^(base-written optional shrink stays readable|stored trust survives shrink-pin rotation)$\" tests/node-security-public-artifacts.test.ts",
+    "why": "L2-002: historical shrink authority cannot depend on current shrink pins; real base state and rotation both remain readable"
   }
 ]
