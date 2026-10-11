@@ -140,12 +140,20 @@ async function worker() {
       }
     });
     try {
-      if (mode === "contend") {
+      if (mode === "contend" || mode === "update") {
         await writeFile(join(directory, `ready-${process.env.E084_INDEX}`), "ready");
         await new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
       }
-      const result = process.env.E084_KIND === "ceiling" ? await repo.provisionInitialCeiling(ceiling()) : await repo.provisionInitialTrustBundle(bundle());
-      console.log(JSON.stringify({ result }));
+      if (mode === "update") {
+        const first = bundle();
+        const keys = Number(process.env.E084_INDEX!.slice(2)) % 2 === 0 ? first.body.keys :
+          [{ ...first.body.keys[0], keyId: "server-key:extra", spki: spki(pair(5).publicKey) }, first.body.keys[0]];
+        await repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 2, keys }));
+        console.log(JSON.stringify({ result: "applied" }));
+      } else {
+        const result = process.env.E084_KIND === "ceiling" ? await repo.provisionInitialCeiling(ceiling()) : await repo.provisionInitialTrustBundle(bundle());
+        console.log(JSON.stringify({ result }));
+      }
     } catch (error) { console.log(JSON.stringify({ error: (error as { code?: string }).code ?? "unknown" })); }
     finally { repo.close(); }
   }
@@ -381,18 +389,40 @@ if (process.env.E084_WORKER) {
       const counts: Record<string, number> = {}; for (const outcome of outcomes) { const name = outcome.result ?? outcome.error; counts[name] = (counts[name] ?? 0) + 1; }
       console.log(`40-process barrier outcomes=${JSON.stringify(counts)}; SQLite storage refusals include busy/PK, not separately exposed by product`);
     } finally { await retire(children.map(contender => contender.processChild)); }
+    const updates = Array.from({ length: 40 }, (_, index) => child(directory, "update", { E084_INDEX: `u-${index}` }));
+    try {
+      await Promise.all(updates.map((_, index) => observed(join(directory, `ready-u-${index}`))));
+      for (const contender of updates) contender.processChild.stdin.write("go");
+      const results = await Promise.all(updates.map(contender => contender.closed));
+      const counts: Record<string, number> = {};
+      for (const result of results) {
+        assert.equal(result.code, 0, result.stderr);
+        const outcome = JSON.parse(result.stdout.trim());
+        assert.ok(outcome.result === "applied" || ["corrupt", "rollback_detected", "recovery_required", "invalid_bundle"].includes(outcome.error), `explicit update outcome ${JSON.stringify(outcome)}`);
+        const name = outcome.result ?? outcome.error; counts[name] = (counts[name] ?? 0) + 1;
+      }
+      assert.ok(counts.applied > 0, "an update contender reached the winning branch");
+      const current = await repo.loadTrustBundle();
+      assert.equal(current.body.epoch, 2);
+      const first = bundle();
+      const alternatives = [bundle(76641, 4, { epoch: 2 }), bundle(76641, 4, { epoch: 2, keys: [{ ...first.body.keys[0], keyId: "server-key:extra", spki: spki(pair(5).publicKey) }, first.body.keys[0]] })];
+      assert.ok(alternatives.some(artifact => canonical(artifact) === canonical(current)), "COMPLETE artifact is exactly one independent contender");
+      assert.equal(repo.currentServerTrustRevision(), `2:${current.body.bodyDigest}`);
+      console.log(`40-process overlapping/contradictory update outcomes=${JSON.stringify(counts)}; COMPLETE history verified by real reader`);
+    } finally { await retire(updates.map(contender => contender.processChild)); }
+    const retryArtifact = bundle(76641, 4, { epoch: 3, keys: (await repo.loadTrustBundle()).body.keys });
     const held = child(directory, "held");
     try {
       await observed(join(directory, "held"));
       const before = snapshot(directory), started = Date.now();
-      await assert.rejects(repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 2 })), { code: "corrupt" });
+      await assert.rejects(repo.applyOwnerSignedBundle(retryArtifact), { code: "corrupt" });
       const elapsed = Date.now() - started;
       assert.ok(elapsed >= 4500 && elapsed < 30_000, `measured 5000ms busy timeout: ${elapsed}ms`);
       assert.deepEqual(snapshot(directory), before);
       held.processChild.stdin.write("release");
       assert.equal((await held.closed).code, 0);
-      await repo.applyOwnerSignedBundle(bundle(76641, 4, { epoch: 2 }));
-      assert.equal(await repo.currentEpoch(), 2);
+      await repo.applyOwnerSignedBundle(retryArtifact);
+      assert.equal(await repo.currentEpoch(), 3);
       console.log(`held write timeout=${elapsed}ms; released connection; valid retry recovered`);
     } finally { await retire([held.processChild]); }
   }));
