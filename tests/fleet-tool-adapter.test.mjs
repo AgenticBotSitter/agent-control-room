@@ -1175,7 +1175,12 @@ writeFileSync(${JSON.stringify(marker)}, String(process.pid)); writeFileSync(${J
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   assert.deepEqual([zombie.exitCode, zombie.signalCode], [null, null],
     "the real death probe runs before Node has observed the exit tuple");
-  await assert.doesNotReject(() => retireToolProcess({ child: zombie, closed: zombieClosed }, { wait: waitForToolSignal }),
+  await assert.doesNotReject(() => retireToolProcess({ child: zombie, closed: zombieClosed }, {
+    // Observe the initial signal's result without issuing a second fatal signal
+    // that could manufacture the very death this probe is meant to establish.
+    kill: (pid, signal) => process.kill(pid, signal === "SIGKILL" ? 0 : signal),
+    wait: waitForToolSignal,
+  }),
     "pending owned death must be reaped before EPERM refusal");
   assert.equal(zombie.signalCode, "SIGKILL", "the portable OS probe observes actual signal death");
   assert.throws(() => process.kill(-zombie.pid, 0), /ESRCH/u, "real zombie group must disappear after reaping");

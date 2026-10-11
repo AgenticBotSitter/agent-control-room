@@ -494,7 +494,7 @@
     "find": "  process.kill(-zombie.pid, \"SIGKILL\");",
     "replace": "  zombie.stdin.end();",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^E078: zombie' tests/fleet-tool-adapter.test.mjs",
-    "why": "The portable Node probe must observe real SIGKILL death, not a fabricated exit tuple. Removing the signal fails the named portable OS signal-death assertion."
+    "why": "The portable Node probe must observe its original real SIGKILL death. Retirement only probes signal-zero in this control, so replacing the initial signal with stdin EOF must fail the named portable OS signal-death assertion without manufacturing a second SIGKILL."
   },
   {
     "file": "tests/support/prepared-tool-runner.mjs",
