@@ -146,6 +146,52 @@ const completedBodies = (tree, wanted) => {
   return completed.length;
 };
 
+// Diagnostics consume literal syntax only. Complete seals remain the authority.
+const syntaxNodes = (tree, predicate) => {
+  const found = [];
+  const visit = node => {
+    if (predicate(node)) found.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return found;
+};
+const temporaryPrefixes = tree => syntaxNodes(tree, node => isCall(node, "temporary")
+  && ts.isStringLiteral(node.arguments[0])).map(node => node.arguments[0].text);
+const bodyBounds = tree => syntaxNodes(tree, node => ts.isPropertyAssignment(node)
+  && node.name.getText() === "boundMs" && ts.isNumericLiteral(node.initializer)
+  && Number(node.initializer.text) === 240_000).length;
+// Bind the witness to the parsed executable block, never its quote/trivia spelling.
+const unreachableSuite = (source, insertion = " return;") => {
+  const suite = parse(source).statements.find(statement => ts.isExpressionStatement(statement)
+    && isCall(statement.expression, "describe"));
+  const block = suite.expression.arguments[1].body;
+  const at = block.getStart() + 1;
+  const mutant = source.slice(0, at) + insertion + source.slice(at);
+  assert.notEqual(mutant, source, "suite witness changes source bytes");
+  assert.ok(ts.isReturnStatement(parse(mutant).statements.find(statement => ts.isExpressionStatement(statement)
+    && isCall(statement.expression, "describe")).expression.arguments[1].body.statements[0]),
+  "suite witness inserts reachable return");
+  return mutant;
+};
+const changed = (source, find, replacement) => {
+  const mutant = source.replace(find, replacement);
+  assert.notEqual(mutant, source, `literal witness changes source: ${find}`);
+  return mutant;
+};
+
+const replaceNode = (source, node, replacement) => changed(source, source,
+  source.slice(0, node.getStart()) + replacement + source.slice(node.end));
+const completionWitness = (source, replacement) => replaceNode(source,
+  syntaxNodes(parse(source), node => ts.isExpressionStatement(node) && ts.isBinaryExpression(node.expression)
+    && node.expression.left.getText() === "completed")[0], replacement);
+const guardWitness = source => replaceNode(source,
+  syntaxNodes(parse(source), node => ts.isIfStatement(node) && ts.isPrefixUnaryExpression(node.expression)
+    && node.expression.operand.getText() === "PG")[0], "return;");
+const helperWitness = source => replaceNode(source,
+  syntaxNodes(parse(source), node => isCall(node, "assert.equal")
+    && node.arguments[1]?.getText() === "realPostgresRequired")[0].arguments[1], "realPostgresRan");
+
 test("CR-E081 conserves every original feature name exactly once in its partition", () => {
   const expected = Object.values(partitions).flat().sort();
   const actual = Object.entries(partitions).flatMap(([path, wanted]) => {
@@ -182,7 +228,7 @@ test("CR-E081 retains file budgets and each partition's closing checks", () => {
       assert.equal(closes.length, 1, `closing integrity checks: ${path}`);
       const prefixes = closes[0].expression.arguments[0];
       assert.ok(prefixes && ts.isArrayLiteralExpression(prefixes) && prefixes.elements.every(ts.isStringLiteral), `literal closing prefixes: ${path}`);
-      for (const prefix of new Set(["attack-kit-pg-", ...[...source.matchAll(/temporary\("([^"\n]+)"/gu)].map(match => match[1])]))
+      for (const prefix of new Set(["attack-kit-pg-", ...temporaryPrefixes(tree)]))
         assert.ok(prefixes.elements.some(element => element.text === prefix), `closing prefix ${prefix}: ${path}`);
     } else {
       assert.equal(completedBodies(tree, wanted), wanted.length, `completed bodies: ${path}`);
@@ -194,7 +240,7 @@ test("CR-E081 retains file budgets and each partition's closing checks", () => {
         return args.length === 3 && args[0].getText() === "completed" && ts.isNumericLiteral(args[1]) && args[1].text === String(wanted.length)
           && ts.isStringLiteral(args[2]) && args[2].text === "a required-but-skipped cluster test must fail the run";
       }), `completion guard: ${path}`);
-      assert.equal([...source.matchAll(/boundMs: 240_000/gu)].length, wanted.length, `unchanged body bounds: ${path}`);
+      assert.equal(bodyBounds(tree), wanted.length, `unchanged body bounds: ${path}`);
     }
     assert.ok(preserved(source, path), `${path.includes("attack-kit-") ? "closing integrity checks" : "completion guard"}: ${path}`);
     assert.ok(source.includes("PG_BIN"), `affected-test PG routing: ${path}`);
@@ -210,23 +256,68 @@ test("CR-E081 retains file budgets and each partition's closing checks", () => {
     const prefix = `${" ".repeat(seed)}// inert seed ${seed}: test.skip()\n"test('inert prefix')";\n`;
     const positive = prefix + (seed % 2 ? feature.replace('from "node:test"', "from 'node:test'") : feature);
     assert.equal(preserved(positive, featurePath, true), true, `supported source grammar seed ${seed}`);
-    const negative = positive.replace('describe("attack kit: real PostgreSQL", () => {',
-      'describe("attack kit: real PostgreSQL", () => { return;');
+    const negative = unreachableSuite(positive);
     assert.equal(preserved(negative, featurePath, true), false, `unreachable source grammar seed ${seed}`);
   }
   const usagePath = "tests/bounded-usage-read-postgres.test.ts";
   assert.equal(preserved(feature + "\n}", featurePath, true), false, "malformed source grammar refuses parser recovery");
-  assert.equal(completedBodies(parse(read(usagePath).replace("  completed += 1;", "  // completed += 1;")), partitions[usagePath]), 1,
+  assert.equal(completedBodies(parse(completionWitness(read(usagePath), "// completed += 1;")), partitions[usagePath]), 1,
     "completed-body recognition excludes commented increments");
-  assert.equal(completedBodies(parse(read(usagePath).replace("  completed += 1;", "  return; completed += 1;")), partitions[usagePath]), 1,
+  assert.equal(completedBodies(parse(completionWitness(read(usagePath), "return; completed += 1;")), partitions[usagePath]), 1,
     "completed-body recognition requires adjacent awaited producer");
 
-  assert.equal(preserved(read(usagePath).replace("  if (!PG) return;", "  return;"), usagePath), false,
+  assert.equal(preserved(guardWitness(read(usagePath)), usagePath), false,
     "closing seal refuses unreachable completion assertion");
   assert.equal(preserved("import { test as register } from 'node:test';\n" + fixture,
     "tests/support/bounded-usage-fixture.ts"), false, "fixture seal refuses aliased registration import");
   const helperPath = "tests/support/attack-kit/suite-lane.ts";
-  assert.equal(preserved(read(helperPath).replace("assert.equal(realPostgresRan, realPostgresRequired,",
-    "assert.equal(realPostgresRan, realPostgresRan,"), helperPath), false, "helper seal refuses self-comparing completion");
+  assert.equal(preserved(helperWitness(read(helperPath)), helperPath), false, "helper seal refuses self-comparing completion");
 
+});
+
+test("CR-E081 supported trivia keeps diagnostics and executable witnesses exact", () => {
+  const path = "tests/attack-kit-real-postgres.test.ts";
+  const source = read(path);
+  const suite = parse(source).statements.find(statement => ts.isExpressionStatement(statement)
+    && isCall(statement.expression, "describe"));
+  const header = source.slice(suite.getStart(), suite.expression.arguments[1].body.getStart() + 1);
+  const variant = replacement => changed(source, header, "/* supported variant */ " + replacement);
+  assert.throws(() => changed(source, "absent witness anchor", "return;"),
+    /literal witness changes source/u, "literal witness refuses unchanged bytes");
+  assert.throws(() => unreachableSuite(source, ""), /suite witness changes source bytes/u,
+    "suite witness refuses unchanged bytes");
+  assert.throws(() => unreachableSuite(source, ";"), /suite witness inserts reachable return/u,
+    "suite witness refuses non-return insertion");
+  assert.deepEqual(temporaryPrefixes(parse('temporary("literal-"); temporary(alias); other("other-"); // temporary("comment-")')),
+    ["literal-"], "prefix diagnostics require literal syntax");
+  assert.equal(bodyBounds(parse('const boundMs = 240000; const options = { otherMs: 240000, boundMs: "240000", boundMs: 239999 };')), 0,
+    "bounds diagnostics refuse strings and other values");
+  const variants = [
+    variant("describe('attack kit: real PostgreSQL', () => {"),
+    variant('describe("attack kit: real PostgreSQL", /* inert */ () => {'),
+    variant('describe("attack kit: real PostgreSQL", ()  =>  {'),
+    changed(source, source, '// temporary("phantom-comment-")\n' + source),
+    variant("describe( /* alias text: register */ 'attack kit: real PostgreSQL', () /* trivia */ => {"),
+    variant('describe(\n"attack kit: real PostgreSQL",\n() => /* block */ {'),
+    variant('describe("attack kit: real PostgreSQL", ( /* alias text: test */ )=>{')
+  ];
+  for (const [index, positive] of variants.entries()) {
+    assert.equal(preserved(positive, path, true), true, `supported trivia allocation ${index}`);
+    assert.equal(preserved(positive, path), true, `supported trivia complete seal ${index}`);
+    assert.deepEqual(temporaryPrefixes(parse(positive)), ["attack-kit-foreign-"],
+      `literal prefixes ignore comment text ${index}`);
+    assert.equal(preserved(unreachableSuite(positive), path, true), false, `supported trivia negative ${index}`);
+  }
+  const usagePath = "tests/bounded-usage-read-postgres.test.ts";
+  const usage = read(usagePath);
+  for (const [index, spelling] of ["boundMs:  240_000", "boundMs: /* bound */ 240_000", "boundMs:\n240_000"].entries()) {
+    const bound = syntaxNodes(parse(usage), node => ts.isPropertyAssignment(node) && node.name.getText() === "boundMs")[0];
+    const positive = replaceNode(usage, bound, spelling);
+    assert.equal(preserved(positive, usagePath), true, `supported bound spacing ${index}`);
+    assert.equal(bodyBounds(parse(positive)), 2, `literal bounds ignore trivia ${index}`);
+    const changedBound = syntaxNodes(parse(positive), node => ts.isPropertyAssignment(node) && node.name.getText() === "boundMs")[0];
+    const negative = replaceNode(positive, changedBound, "boundMs: 239_999");
+    assert.equal(bodyBounds(parse(negative)), 1, `literal bounds reject changed value ${index}`);
+    assert.equal(preserved(negative, usagePath), false, `bound seal refuses changed value ${index}`);
+  }
 });

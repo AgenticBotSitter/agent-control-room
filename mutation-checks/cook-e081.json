@@ -176,15 +176,15 @@
   },
   {
     "file": "tests/attack-kit-real-postgres.test.ts",
-    "find": "    countedRealPostgresRun();",
-    "replace": "    return;\n    countedRealPostgresRun();",
+    "find": " error\", needsPgOrFail(), async () => {\n    countedRealPostgresRun();",
+    "replace": " error\", needsPgOrFail(), async () => {\n    return;\n    countedRealPostgresRun();",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "adj-empty-body: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
   },
   {
     "file": "tests/bounded-usage-read-postgres.test.ts",
-    "find": "  completed += 1;",
-    "replace": "  // completed += 1;",
+    "find": " }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000 });\n  completed += 1;",
+    "replace": " }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000 });\n  // completed += 1;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "adj-counter-comment: independent frozen 9c8ab635 executable source contract and original literal allocations require completed bodies; loaded disabled source must fail the named completed oracle body, not startup."
   },
@@ -274,15 +274,15 @@
   },
   {
     "file": "tests/bounded-usage-read-postgres.test.ts",
-    "find": "boundMs: 240_000",
-    "replace": "boundMs: 240_001",
+    "find": "  }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000",
+    "replace": "  }, { port: PORT, allowedPorts: PORTS, boundMs: 240_001",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "guard-bound-count: independent frozen 9c8ab635 executable source contract and original literal allocations require unchanged body bounds; loaded disabled source must fail the named completed oracle body, not startup."
   },
   {
     "file": "tests/bounded-usage-read-postgres.test.ts",
-    "find": "  completed += 1;",
-    "replace": "  // completion increment removed",
+    "find": " }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000 });\n  completed += 1;",
+    "replace": " }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000 });\n  // completion increment removed",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "guard-increment-count: independent frozen 9c8ab635 executable source contract and original literal allocations require completed bodies; loaded disabled source must fail the named completed oracle body, not startup."
   },
@@ -295,8 +295,8 @@
   },
   {
     "file": "tests/bounded-usage-read-postgres.test.ts",
-    "find": "  completed += 1;",
-    "replace": "  globalThis[\"completed\"] += 1; // completed += 1;",
+    "find": " }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000 });\n  completed += 1;",
+    "replace": " }, { port: PORT, allowedPorts: PORTS, boundMs: 240_000 });\n  globalThis[\"completed\"] += 1; // completed += 1;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "new-computed-counter: independent frozen 9c8ab635 executable source contract and original literal allocations require completed bodies; loaded disabled source must fail the named completed oracle body, not startup."
   },
@@ -355,5 +355,68 @@
     "replace": "return wanted.length;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 retains file budgets and each partition's closing checks\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "disable-counter: independent malformed/commented source decision must fail completed-body recognition excludes commented increments in the completed named oracle body."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "&& ts.isStringLiteral(node.arguments[0])",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable one supported-syntax diagnostic/witness refusal; independent literal expectation fails prefix diagnostics require literal syntax. Native source only; no PG/import/startup catch."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "&& ts.isNumericLiteral(node.initializer)",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable one supported-syntax diagnostic/witness refusal; independent literal expectation fails bounds diagnostics refuse strings and other values. Native source only; no PG/import/startup catch."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "&& Number(node.initializer.text) === 240_000",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable one supported-syntax diagnostic/witness refusal; independent literal expectation fails bounds diagnostics refuse strings and other values. Native source only; no PG/import/startup catch."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "assert.notEqual(mutant, source, \"suite witness changes source bytes\");",
+    "replace": "// mutation: disable suite distinct-byte refusal",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable one supported-syntax diagnostic/witness refusal; independent literal expectation fails suite witness refuses unchanged bytes. Native source only; no PG/import/startup catch."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "assert.ok(ts.isReturnStatement(parse(mutant).statements.find(statement => ts.isExpressionStatement(statement)\n    && isCall(statement.expression, \"describe\")).expression.arguments[1].body.statements[0]),\n  \"suite witness inserts reachable return\");",
+    "replace": "// mutation: disable reachable-return refusal",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable one supported-syntax diagnostic/witness refusal; independent literal expectation fails suite witness refuses non-return insertion. Native source only; no PG/import/startup catch."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "assert.notEqual(mutant, source, `literal witness changes source: ${find}`);",
+    "replace": "// mutation: disable literal distinct-byte refusal",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable one supported-syntax diagnostic/witness refusal; independent literal expectation fails literal witness refuses unchanged bytes. Native source only; no PG/import/startup catch."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "isCall(node, \"temporary\")",
+    "replace": "ts.isCallExpression(node)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable syntax identity restriction; independent literal expectation fails prefix diagnostics require literal syntax. Native source data only."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "signment(node)\n  && node.name.getText() === \"boundMs\"",
+    "replace": "signment(node)\n  && true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable syntax identity restriction; independent literal expectation fails bounds diagnostics refuse strings and other values. Native source data only."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "Nodes(tree, node => ts.isPropertyAssignment(node)",
+    "replace": "Nodes(tree, node => Boolean(node.name && node.initializer)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Disable syntax identity restriction; independent literal expectation fails bounds diagnostics refuse strings and other values. Native source data only."
   }
 ]
