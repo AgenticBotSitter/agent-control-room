@@ -418,5 +418,12 @@
     "replace": "Nodes(tree, node => Boolean(node.name && node.initializer)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 supported trivia keeps diagnostics and executable witnesses exact\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "Disable syntax identity restriction; independent literal expectation fails bounds diagnostics refuse strings and other values. Native source data only."
+  },
+  {
+    "file": "tests/attack-kit-lane-partitions.test.mjs",
+    "find": "source.replace(find, () => replacement)",
+    "replace": "source.replace(find, replacement)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 source witnesses preserve literal dollar metasyntax\" tests/attack-kit-lane-partitions.test.mjs",
+    "why": "Restore replacement-string expansion. The independent hand-written byte oracle must fail literal node bytes JavaScript line match; completed assertion failure only, not parser or startup errors."
   }
 ]

@@ -175,7 +175,7 @@ const unreachableSuite = (source, insertion = " return;") => {
   return mutant;
 };
 const changed = (source, find, replacement) => {
-  const mutant = source.replace(find, replacement);
+  const mutant = source.replace(find, () => replacement);
   assert.notEqual(mutant, source, `literal witness changes source: ${find}`);
   return mutant;
 };
@@ -312,12 +312,55 @@ test("CR-E081 supported trivia keeps diagnostics and executable witnesses exact"
   const usage = read(usagePath);
   for (const [index, spelling] of ["boundMs:  240_000", "boundMs: /* bound */ 240_000", "boundMs:\n240_000"].entries()) {
     const bound = syntaxNodes(parse(usage), node => ts.isPropertyAssignment(node) && node.name.getText() === "boundMs")[0];
-    const positive = replaceNode(usage, bound, spelling);
+    const positive = replaceNode(usage, bound, "/* supported bound variant */ " + spelling);
     assert.equal(preserved(positive, usagePath), true, `supported bound spacing ${index}`);
     assert.equal(bodyBounds(parse(positive)), 2, `literal bounds ignore trivia ${index}`);
     const changedBound = syntaxNodes(parse(positive), node => ts.isPropertyAssignment(node) && node.name.getText() === "boundMs")[0];
     const negative = replaceNode(positive, changedBound, "boundMs: 239_999");
     assert.equal(bodyBounds(parse(negative)), 1, `literal bounds reject changed value ${index}`);
     assert.equal(preserved(negative, usagePath), false, `bound seal refuses changed value ${index}`);
+  }
+});
+
+
+test("CR-E081 source witnesses preserve literal dollar metasyntax", () => {
+  // Independent byte oracles: hand-written source pairs, frozen before repair.
+  // Both spellings are in the supported JS/TS language; no manifest supplies expectations.
+  const spellings = [
+    ["JavaScript", "const total = 1;\n", "const total = 2;\n"],
+    ["TypeScript", "const total: number = 1;\n", "const total: number = 2;\n"]
+  ];
+  const prefixes = [
+    ["line match", "// literal $&\n"],
+    ["line before", "// literal $`\n"],
+    ["line after", "// literal $'\n"],
+    ["line dollar", "// literal $$\n"],
+    ["block match", "/* literal $& */\n"],
+    ["block before", "/* literal $` */\n"],
+    ["block after", "/* literal $' */\n"],
+    ["block dollar", "/* literal $$ */\n"],
+    ["inert match", '"literal $&";\n'],
+    ["inert before", '"literal $`";\n'],
+    ["inert after", '"literal $\'";\n'],
+    ["inert dollar", '"literal $$";\n']
+  ];
+  const path = "tests/attack-kit-real-postgres.test.ts";
+  const captured = read(path); // sealed independently by the unchanged captured program hashes
+  for (const [language, before, after] of spellings) {
+    for (const [label, prefix] of prefixes) {
+      const source = prefix + before;
+      const expected = prefix + after;
+      const numeric = syntaxNodes(parse(source), ts.isNumericLiteral)[0];
+      assert.equal(replaceNode(source, numeric, "2"), expected,
+        `literal node bytes ${language} ${label}`);
+      assert.equal(changed(source, source, expected), expected,
+        `literal whole-source bytes ${language} ${label}`);
+      assert.equal(changed(before, "1", prefix + "2"), "const total" + (language === "TypeScript" ? ": number" : "") + " = " + prefix + "2;\n",
+        `literal partial replacement bytes ${language} ${label}`);
+      const supported = prefix + captured;
+      assert.equal(preserved(supported, path), true, `literal supported source ${language} ${label}`);
+      assert.equal(preserved(unreachableSuite(supported), path), false,
+        `literal unsafe source ${language} ${label}`);
+    }
   }
 });
