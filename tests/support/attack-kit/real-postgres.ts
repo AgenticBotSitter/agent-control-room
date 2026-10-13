@@ -506,7 +506,14 @@ export async function portIsOccupied(port: number, dataDirectory?: string, socke
       resolveOccupied(occupied);
     };
     socket.setTimeout(2_000);
-    socket.once("connect", () => done(true));
+    socket.once("connect", () => {
+      // Linux can choose the destination as this probe's ephemeral source
+      // port and connect the socket to itself, even with no listener. The
+      // remote endpoint is fixed above; only that identical local endpoint
+      // is a false positive. A foreign listener still makes this return true.
+      const selfConnected = socket.localPort === port && socket.localAddress === "127.0.0.1";
+      done(!selfConnected);
+    });
     socket.once("timeout", () => done(false));
     socket.once("error", () => done(false));
   });

@@ -147,10 +147,42 @@ test('held: release key static special files, size, mode, owner and trust-floor 
   await Promise.all(Array.from({length:50},(_,i)=>raise({trustPath:f.key.trustPath,installedVersion:'1.0.'+i},{expectedUid:uid})));
   assert.equal(JSON.parse(await fs.readFile(f.key.trustPath)).versionFloor,'1.0.49');
 });
-test('A1-07: ENOSPC writing trust lock cleans up and permits retry',async t=>{
-  const f=await releaseFixture(t),lock=f.key.trustPath+'.lock';
-  await patch('open',old=>async(p,...args)=>{const h=await old(p,...args);if(p===lock){h.writeFile=async()=>{throw Object.assign(new Error('fixture full'),{code:'ENOSPC'});};}return h;},async()=>{await assert.rejects(raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'},{expectedUid:uid,attempts:0}),e=>e.code==='ENOSPC');});
-  await assert.rejects(fs.stat(lock),{code:'ENOENT'});assert.equal((await raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'},{expectedUid:uid,attempts:2})).versionFloor,'2.0.0');
+test('A1-07: ENOSPC initializing permanent trust lock retains its name and permits retry', async t => {
+  const f = await releaseFixture(t), lock = f.key.trustPath + '.lock';
+  const before = await fs.readFile(f.key.trustPath), partial = '{"versionFloor":"99.0.0"';
+  await assert.rejects(fs.lstat(lock), {code:'ENOENT'}, 'first-use lock name is absent before product acquisition');
+  let original, injected = 0, failedHandle;
+  // Acquisition initializes through truncate/sync, not FileHandle.writeFile.
+  t.after(async () => { await failedHandle?.close(); });
+  await patch('open', old => async (p, ...args) => {
+    const handle = await old(p, ...args);
+    if (p === lock) {
+      failedHandle = handle;
+      original = await handle.stat();
+      handle.truncate = async length => {
+        assert.equal(length, 0); injected += 1;
+        await handle.writeFile(partial);
+        throw Object.assign(new Error('fixture full'), {code:'ENOSPC'});
+      };
+    }
+    return handle;
+  }, () => assert.rejects(raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'},
+    {expectedUid:uid,attempts:0}), {code:'ENOSPC'}, 'write failure refuses before trust changes'));
+  assert.equal(injected, 1, 'fault reaches the active initialization write');
+  let retained;
+  await assert.doesNotReject(async () => { retained = await fs.lstat(lock); }, 'failed initialization retains the permanent name');
+  assert.deepEqual([retained.dev, retained.ino], [original.dev, original.ino], 'failed initialization retains the permanent inode');
+  assert.equal(await fs.readFile(lock, 'utf8'), partial, 'fault left partial lock bytes');
+  assert.deepEqual(await fs.readFile(f.key.trustPath), before, 'partial lock content never advances trust');
+  let raised;
+  await assert.doesNotReject(async () => { raised = await raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'},
+    {expectedUid:uid,attempts:2}); }, 'retry after partial initialization succeeds');
+  assert.equal(failedHandle.fd, -1, 'failed initialization closes its descriptor so retry can acquire');
+  assert.equal(raised.versionFloor, '2.0.0', 'retry uses the requested floor, never the partial lock content');
+  assert.equal(JSON.parse(await fs.readFile(f.key.trustPath)).versionFloor, '2.0.0', 'real trust reader sees the retry');
+  assert.equal(await fs.readFile(lock, 'utf8'), '', 'retry clears partial initialization');
+  const retried = await fs.lstat(lock);
+  assert.deepEqual([retried.dev, retried.ino], [original.dev, original.ino], 'retry retains the permanent inode');
 });
 test('held: connector retry after interruption and 50-caller lock contention',async t=>{
   const f=await releaseFixture(t);await assert.rejects(signRelease(f.input,{expectedUid:uid,fault:p=>{if(p==='advertisement_written')throw new Error('fixture interruption');}}));
@@ -241,15 +273,32 @@ test('custody: bounded descriptor reads reject leaf and parent changes', async t
 
 test('trust lock: failed initialization never removes a replacement lock', async t => {
   const f = await releaseFixture(t), lock = f.key.trustPath + '.lock';
+  const before = await fs.readFile(f.key.trustPath); let injected = 0, replacement, failedHandle;
+  t.after(async () => { await failedHandle?.close(); });
   await patch('open', old => async (p, ...args) => {
     const handle = await old(p, ...args);
-    if (p === lock) handle.writeFile = async () => {
-      await fs.rename(lock, lock + '.owned'); await write(lock, 'replacement');
-      throw Object.assign(new Error('fixture full'), { code: 'ENOSPC' });
-    };
+    if (p === lock) {
+      failedHandle = handle;
+      handle.truncate = async length => {
+        assert.equal(length, 0); injected += 1;
+        await fs.rename(lock, lock + '.owned'); await write(lock, 'replacement');
+        replacement = await fs.lstat(lock);
+        throw Object.assign(new Error('fixture full'), {code:'ENOSPC'});
+      };
+    }
     return handle;
-  }, () => assert.rejects(raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'}, {expectedUid:uid,attempts:0}), {code:'ENOSPC'}));
-  assert.equal(await fs.readFile(lock, 'utf8'), 'replacement');
+  }, () => assert.rejects(raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'},
+    {expectedUid:uid,attempts:0}), {code:'ENOSPC'}, 'replacement fault refuses before trust changes'));
+  assert.equal(injected, 1, 'replacement fault reaches the active initialization write');
+  assert.equal(await fs.readFile(lock, 'utf8').catch(error => error.code), 'replacement', 'failed initialization never removes replacement bytes');
+  const retained = await fs.lstat(lock);
+  assert.deepEqual([retained.dev, retained.ino], [replacement.dev, replacement.ino], 'failed initialization retains the replacement inode');
+  assert.deepEqual(await fs.readFile(f.key.trustPath), before, 'failed replacement initialization never advances trust');
+  assert.equal(failedHandle.fd, -1, 'failed replacement initialization closes its original descriptor');
+  assert.equal((await raise({trustPath:f.key.trustPath,installedVersion:'2.0.0'}, {expectedUid:uid,attempts:2})).versionFloor, '2.0.0');
+  let retried;
+  await assert.doesNotReject(async () => { retried = await fs.lstat(lock); }, 'retry retains the replacement name');
+  assert.deepEqual([retried.dev, retried.ino], [replacement.dev, replacement.ino], 'retry retains the replacement inode');
 });
 
 test('journal: interrupted append releases transaction lock and retry validates', async t => {

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { IntakeCoordinatorV1, workBatchProposalDigestV1, PostgresIntakePlannerFailureStoreV1,
@@ -1664,6 +1665,33 @@ test("twenty concurrent failure records produce one counter with twenty, and twe
   }, { port: PORT + 7, allowedPorts: ALLOWED, boundMs: 240_000 });
 });
 
+test("raw pool shutdown acknowledges every client end before fixture stop", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    for (const width of [0, 1, 20, 25]) {
+      const drained = drainingPool({ ...postgres.connection("coordinator"), max: 25 });
+      let connected = 0, acknowledged = 0;
+      drained.pool.on("connect", client => {
+        connected += 1;
+        client.once("end", () => { acknowledged += 1; });
+      });
+      try {
+        // Retain every checkout until the whole wave arrives, so pool reuse
+        // cannot turn a 25-client assertion into a one-client test.
+        const clients = await Promise.all(Array.from({ length: width }, () => drained.pool.connect()));
+        try {
+          assert.equal(connected, width, "every requested real client connected");
+          const replies = await Promise.all(clients.map(client => client.query("SELECT current_user AS login")));
+          for (const reply of replies) assert.equal(reply.rows[0].login, "control_room_coordinator");
+        } finally { for (const client of clients) client.release(); }
+      } finally { await drained.end(); }
+      // Expected count is the requested literal width, not pg-pool's totalCount
+      // or the drain helper's promise set, both of which can already be empty.
+      assert.equal(acknowledged, width, `all ${width} client ends acknowledged before fixture stop`);
+    }
+  }, { port: PORT + 9, allowedPorts: ALLOWED, boundMs: 420_000 });
+});
+
 test("ONE owner grant is ONE run under 20 and 50 concurrent presses, and the description lives on afterwards (R4-M1, R5-B1, R5-M1, R5-M2)", async t => {
   // WHAT WAS MEASURED, round by round, on the real coordinator over the real stores:
   //
@@ -1700,7 +1728,8 @@ test("ONE owner grant is ONE run under 20 and 50 concurrent presses, and the des
     // cluster allows sixty, and a pool is what the product composes. Every
     // statement is its own round trip, so presses interleave between statements,
     // which is where the race lives.
-    const pool = new Pool({ ...postgres.connection("coordinator"), max: 25 });
+    const drained = drainingPool({ ...postgres.connection("coordinator"), max: 25 });
+    const { pool } = drained;
     const ownerLogin = new Client(postgres.connection("web"));
     try {
       await ownerLogin.connect();
@@ -1822,7 +1851,7 @@ test("ONE owner grant is ONE run under 20 and 50 concurrent presses, and the des
         assert.deepEqual([...new Set(outcomes)], ["needs_you"], `every press is needs_you, ${label}`);
         assert.equal(await items(description), 1, label);
       }
-    } finally { await ownerLogin.end().catch(() => {}); await pool.end(); await admin.end(); }
+    } finally { await ownerLogin.end().catch(() => {}); await drained.end(); await admin.end(); }
   }, { port: PORT + 9, allowedPorts: ALLOWED, boundMs: 420_000 });
 });
 

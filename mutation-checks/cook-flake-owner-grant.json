@@ -1,0 +1,9 @@
+[
+  {
+    "file": "tests/support/draining-pool.ts",
+    "find": "      await Promise.all([...endings]);",
+    "replace": "      // Client-end barrier disabled for the guard mutation.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"raw pool shutdown acknowledges every client end before fixture stop\" tests/orchestrator-split-suggestions-postgres.test.ts",
+    "why": "Removing the drain must fail the named shutdown test: the independently requested literal client width must equal real client end acknowledgements before fixture stop, not the pool tracked-client count."
+  }
+]

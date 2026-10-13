@@ -160,6 +160,8 @@ test('R2-08: repeating install for a new commit retains the persisted stopped pa
       stdinLine:async()=>'',readComparisonCode:async()=>'',stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;}
     });
   assert.equal(exit,0,stderr); assert.match(stdout,/Not ready: Face ID is NOT set up .*passkey_terminal_required/); assert.doesNotMatch(stdout,/Ready:/);
+  assert.ok(stdout.includes("To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone. Finish within the time shown by that command."));
+  assert.doesNotMatch(stdout, /do not run passkey add yourself/i);
   const status=JSON.parse(await fs.readFile(join(f.root,'status/passkey.json'),'utf8'));
   assert.equal(status.status,'stopped');
   
