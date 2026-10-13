@@ -199,3 +199,60 @@ test("every release program composed by bundle.mjs loads from an isolated attend
     assert.equal(refused.stdout, "");
     assert.equal(refused.stderr, "fleet gateway failed: fleet_gateway_configuration_refused\n");
   });
+
+test("R1 fixed updater current runs the new refusal reader on the next CLI invocation", { timeout: 120_000 }, async t => {
+  const fs = await import("node:fs/promises");
+  const { buildFixedUpdaterBundleV1 } = await import("../scripts/updater/build-fixed-updater-bundle.mjs");
+  const { fixture } = await import("./helpers/installer-round2-fixture.mjs");
+  const { installControlRoomV1 } = await import("../src/updater/v1/install/installer.mjs");
+  const scratch = join(repository, ".test-tmp"); await fs.mkdir(scratch, { recursive: true });
+  const root = await fs.mkdtemp(join(scratch, "gateway-r1-fixed-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = join(root, "store"), output = join(root, "bundle"), pnpm = join(root, "package-manager"); await fs.mkdir(store);
+  // Synthetic package-manager boundary, as in the existing fixed-bundle lane:
+  // dependencies already installed in the lane are supplied; no install/fetch.
+  // This is bundle/entry behavior proof, not real offline-install qualification.
+  await fs.writeFile(pnpm, "#!/bin/sh\nexit 0\n", { mode: 0o500 });
+  const esbuildVersion = JSON.parse(await fs.readFile(join(repository, "node_modules/esbuild/package.json"))).version;
+  const esbuild = join(repository, "node_modules/.pnpm", `@esbuild+${process.platform}-${process.arch}@${esbuildVersion}`,
+    `node_modules/@esbuild/${process.platform}-${process.arch}/bin/esbuild`);
+  const previous = process.env.CONTROL_ROOM_BUNDLE_TESTING; process.env.CONTROL_ROOM_BUNDLE_TESTING = "1";
+  let built;
+  try { built = await buildFixedUpdaterBundleV1({ source: repository, output, store, runtime: root,
+    pnpm, esbuild, policy: join(repository, "src/updater/v1/policy/bundle.json"), testNodeModules: join(repository, "node_modules") }); }
+  finally { if (previous === undefined) delete process.env.CONTROL_ROOM_BUNDLE_TESTING; else process.env.CONTROL_ROOM_BUNDLE_TESTING = previous; }
+  const install = await fixture(t, "gateway-r1-next-cli");
+  install.ports.buildFixedBundleV1 = async () => ({ bundle: output, uver: "1.2.3-aaaaaaaaaaaa", bundleDigest: built.digest });
+  // Synthetic stage boundary preserving exactly the fixed producer's modes;
+  // production stageUpdaterBundle uses each snapshot mode without release seal().
+  install.ports.stageUpdaterBundleV1 = async input => {
+    const target = join(input.root, "updater", input.uver);
+    await fs.cp(input.bundle.bundle, target, { recursive: true, errorOnExist: true, force: false });
+    return { target };
+  };
+  const first = await installControlRoomV1(install.options); assert.equal(first.state, "installed");
+  const current = join(install.root, "updater/current"), bytes = await fs.readFile(join(current, "manifest.json"));
+  const { verifyBundleManifestV1 } = await import("../src/updater/v1/attended-flip.mjs");
+  assert.deepEqual(JSON.parse(bytes), built.manifest, "the installed manifest is the producer's complete output");
+  assert.equal(await verifyBundleManifestV1(current, JSON.parse(bytes)), built.digest);
+  const { createHash } = await import("node:crypto");
+  console.log(JSON.stringify({ bundleDigest: built.digest, cliSha256: createHash("sha256").update(
+    await fs.readFile(join(current, "bin/control-room.mjs"))).digest("hex") }));
+  const cli = await import(pathToFileURL(join(current, "bin/control-room.mjs")).href);
+  const pointerBefore = await fs.readlink(join(install.root, "current"));
+  install.ports.runningBundleDigestV1 = async () => built.digest;
+  // Reach a new target in the actual installed CLI. A hostile parser fixture is
+  // created by its build port; current state/pointers were created by installation.
+  install.ports.buildReleaseV1 = async input => {
+    const target = join(input.job, "output"); await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(join(target, "gateway-local-capability.json"), "{broken", { mode: 0o400 });
+    return { output: target, releaseId: "1.2.3-bbbbbbbbbbbb", manifestDigest: `sha256:${"c".repeat(64)}` };
+  };
+  await assert.rejects(cli.runUpdaterCliV1(["install", "--commit", "b".repeat(40),
+    "--invoking-user", "fixture-owner", "--invoking-uid", "501", "--invoking-gid", "20"], {
+    root: install.root, getuid: () => 0, installerPorts: install.ports, terminal: install.options.terminal,
+    installerOptions: { accountsPolicy: install.options.accountsPolicy, systemPaths: install.systemPaths, webPort: 4383 },
+    stdout() {}, stderr() {},
+  }), /gateway_capability_refused/u, "next updater/current CLI invocation must execute R1's pre-switch reader");
+  assert.equal(await fs.readlink(join(install.root, "current")), pointerBefore);
+});

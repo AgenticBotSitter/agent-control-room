@@ -18,9 +18,14 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
+import { syncBuiltinESMExports } from "node:module";
+import { PassThrough } from "node:stream";
 import { planPgClusterLayoutV1 } from "../src/pg-runtime/v1/pg-cluster-layout.ts";
 import { applyReleaseSchemaV1 } from "../src/updater/v1/pg/apply-release-schema.mjs";
 import { sessionNotReadyV1, waitForSessionReadyV1 } from "../src/updater/v1/pg/sql-session.mjs";
+import { spawnPgFamily } from "../src/updater/v1/pg/database-phase-process.mjs";
 
 const REPO = resolve(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const SOCKET = "/install/pg/socket/.s.PGSQL.5432";
@@ -100,6 +105,42 @@ test("a server that never comes up is refused after the bound, naming the last a
 });
 
 // ---- the real phase, under the real sandbox, with a scripted psql ----------------
+
+test("the actual PG spawn forwards the allowed working directory on first use, retry and parallel calls", async () => {
+  const original = childProcess.spawn, calls = [];
+  let result = noSocket;
+  childProcess.spawn = (file, args, options) => {
+    calls.push({ file, args, options });
+    const child = new EventEmitter();
+    child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    child.stdin.resume();
+    const reply = result;
+    result = ready;
+    queueMicrotask(() => {
+      child.stdout.end(reply.stdout); child.stderr.end(reply.stderr);
+      child.emit("close", reply.code, null);
+    });
+    return child;
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await waitForSessionReadyV1({ user: "postgres", database: "control_room" }, context,
+      { spawn: spawnPgFamily, sleep: async () => {} }), 2);
+    result = peerFailed;
+    await assert.rejects(waitForSessionReadyV1({ user: "postgres", database: "control_room" }, context,
+      { spawn: spawnPgFamily }), /Peer authentication failed/u);
+    await Promise.all(Array.from({ length: 50 }, () =>
+      waitForSessionReadyV1({ user: "postgres", database: "control_room" }, context, { spawn: spawnPgFamily })));
+    assert.equal(calls.length, 53);
+    for (const call of calls) {
+      assert.equal(call.file, "/usr/bin/sandbox-exec");
+      // Literal from the requested pgRoot; do not copy the spawned options.
+      assert.equal(call.options.cwd, "/install/pg", "sandbox child must start in the allowed pgRoot");
+      assert.deepEqual([call.options.uid, call.options.gid], [401, 401]);
+      assert.equal(call.options.shell, false);
+    }
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
+});
 
 const darwin = process.platform === "darwin" ? false : "sandbox-exec is macOS only";
 

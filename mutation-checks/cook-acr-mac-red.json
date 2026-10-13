@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/updater/v1/pg/database-phase-process.mjs",
+    "find": "env: environment, cwd: options.cwd, shell: false",
+    "replace": "env: environment, shell: false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='the actual PG spawn forwards' tests/release-schema-readiness.test.mjs",
+    "why": "The named spawn-options assertion compares cwd against the literal requested /install/pg, including retry and 50 simultaneous callers."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "// inspecting the new path, especially before Darwin changes its mode.\n  await custody();",
+    "replace": "// inspecting the new path, especially before Darwin changes its mode.\n  // MUTATION: first temporary-path custody check disabled.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='substituted parent with the same temporary leaf' tests/updater-pair-restore.test.mjs",
+    "why": "The named no-foreign-temporary-inspection assertion observes a substituted parent before any temporary path access on every OS; foreign inode, bytes and mode are independently retained."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "if (!entry.isSymbolicLink() || entry.dev !== owned.dev || entry.ino !== owned.ino)\n      refuse(\"file_custody_refused\");",
+    "replace": "if (false)\n      refuse(\"file_custody_refused\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='a replaced temporary symlink' tests/updater-pair-restore.test.mjs",
+    "why": "The named pointer assertion compares the real reader with the independent pre-operation new-updater literal; disabling inode identity must publish replacement and fail it."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "await assertPointerLeaf(path);\n    await custody();\n    assertOwned(await lstat(temporary));",
+    "replace": "await assertPointerLeaf(path);\n    assertOwned(await lstat(temporary));",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='late parent substitution refuses' tests/updater-pair-restore.test.mjs",
+    "why": "The leaf-stage named assertion requires zero foreign temporary-path reads after substitution during the final destination inspection."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "assertOwned(await lstat(temporary));\n    await custody();\n    await rename(temporary, path);",
+    "replace": "assertOwned(await lstat(temporary));\n    await rename(temporary, path);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='late parent substitution refuses' tests/updater-pair-restore.test.mjs",
+    "why": "The temporary-stage named assertion compares the foreign current pointer to independent keep after substitution during the final temporary read."
+  }
+]

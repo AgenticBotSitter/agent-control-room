@@ -436,8 +436,13 @@ test("Serve capture and restore operate on :443 only", async () => {
   const snapshot = await captureTailscaleServe443V1(identity, execute);
   assert.deepEqual(snapshot, { schema: "control-room.tailscale-serve-443/v1", target: "http://127.0.0.1:7864" });
   await setTailscaleServe443V1(snapshot, identity, execute);
-  assert.deepEqual(calls.map(call => call.args), [
-    ["serve", "status", "--json"], ["serve", "--bg", "--https=443", "http://127.0.0.1:7864"],
+  // Wrapper contract: control-room-installer.test.mjs, owner sudo + CLI mode.
+  const wrapper = ["-n", "-u", "#501", "--", "/usr/bin/env", "TERM=dumb",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
+  assert.deepEqual(calls, [
+    { file: "/usr/bin/sudo", args: [...wrapper, "serve", "status", "--json"], options: { maxBuffer: 1024 * 1024 } },
+    { file: "/usr/bin/sudo", args: [...wrapper, "serve", "--bg", "--https=443", "http://127.0.0.1:7864"],
+      options: { maxBuffer: 1024 * 1024 } },
   ]);
   assert.equal(live.Web["redacted.example.ts.net:8443"].Handlers["/"].Proxy, "http://127.0.0.1:3310");
   await assert.rejects(setTailscaleServe443V1({ ...snapshot, target: "http://127.0.0.1:99999" }, identity, execute),

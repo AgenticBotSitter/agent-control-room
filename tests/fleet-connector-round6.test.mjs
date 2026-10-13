@@ -1,3 +1,4 @@
+import './helpers/block-agent-cli.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { promises as fs } from 'node:fs';
@@ -7,8 +8,12 @@ import { createServer } from 'node:http';
 import { fork } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import * as c from '../scripts/fleet/connector.mjs';
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
-assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
+test('agent CLI guard is established before connector tests run', () => {
+  assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1',
+    'connector tests must establish the independent safety value 1');
+});
 const id = n => n.toString(16).padStart(32, '0');
 const claim = { claimId: `fleet-claim:${id(1)}`, jobId: 'job:qa-one', title: 'QA task', instructions: 'Write a short note.', leaseState: 'active', taskState: 'leased', leaseExpiresAt: '2099-01-01T00:00:00Z' };
 const ok = result => Response.json({ok: true, result});
@@ -247,7 +252,7 @@ const token = JSON.parse(readFileSync(process.argv[2], 'utf8')).secret;
 process.stdout.write(token);
 writeFileSync(process.argv[4] + '/answer.txt', token);\n`, {mode: 0o700});
   await fs.writeFile(c.defaultToolAdaptersPath(p.configPath), JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 1, adapters: [{id: 'qa_echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 1, adapters: [{id: 'qa_echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 1000,
       maxOutputBytes: 1024, envAllowlist: []}]}), {mode: 0o600});
   let textHasToken = false, fileHasToken = false;
@@ -332,7 +337,7 @@ test('R6F-07 runner refreshes secrets when a profile rotates after runner constr
   const p = await profile(t), script = join(p.root, 'echo.mjs');
   await fs.writeFile(script, "import {readFileSync} from 'node:fs'; process.stdout.write(JSON.parse(readFileSync(process.argv[2])).secret);", {mode: 0o700});
   await fs.writeFile(c.defaultToolAdaptersPath(p.configPath), JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 1, adapters: [{id: 'echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 1, adapters: [{id: 'echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 1000, maxOutputBytes: 1024, envAllowlist: []}]}), {mode: 0o600});
   const runner = c.createLocalToolAdapterRunner(await c.loadToolAdapters(c.defaultToolAdaptersPath(p.configPath)),
     {secrets: [p.secret], configPath: p.configPath, temporaryRoot: p.root});

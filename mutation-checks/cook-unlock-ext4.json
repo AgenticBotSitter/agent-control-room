@@ -1,0 +1,9 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      await beforeRemovalCheck({ lockPath });",
+    "replace": "      await directoryHandle.close();\n      await beforeRemovalCheck({ lockPath });",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern \"unlock rejects replacement without birthtime and retries after interruption\" tests/fleet-connector-install.test.mjs",
+    "why": "Closing the observed directory before recheck permits ext4 inode reuse; replacement must be refused even with unavailable birthtime. Run real proof with TMPDIR on ext4; the lead runs the shared verifier."
+  }
+]

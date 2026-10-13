@@ -1,4 +1,4 @@
-import type { OwnerNotificationChannelV1, OwnerPushEventKindV1, OwnerPushStoreV1 } from "./types";
+import type { OwnerNotificationChannelV1, OwnerPushEventKindV1, OwnerPushStoreV1, OwnerPushCompletionResultV1 } from "./types";
 import { ownerPushPayloadV1 } from "./policy";
 import { pushRejectionReasonV1 } from "../../installer/shared/vapid.mjs";
 
@@ -60,57 +60,66 @@ export function ownerPushRetryAfterMsV1(headers: unknown, now: string): number |
  */
 export async function deliverOwnerPushV1(input: Readonly<{ tenantId: string; kind: OwnerPushEventKindV1; link: string;
   dedupeKey: string; now: string; store: OwnerPushStoreV1; channel: OwnerNotificationChannelV1;
-  subscriptionEndpoint?: string; onFailure?: (failure: OwnerPushFailureV1) => void }>): Promise<{ delivered: number; deduplicated: number; removed: number }> {
+  subscriptionEndpoint?: string; onFailure?: (failure: OwnerPushFailureV1) => void;
+  /** The dispatcher persists safe completion before publishing a retryable head.
+   * Direct test notifications retain the existing ledger path. */
+  recordResult?: (result: OwnerPushCompletionResultV1) => Promise<void>;
+  maySend?: () => Promise<boolean> }>): Promise<{ delivered: number; deduplicated: number; removed: number }> {
   if (!/^[a-z][a-z0-9:_-]{2,180}$/.test(input.dedupeKey)) throw new Error("owner_push_dedupe_key_invalid");
   const payload = ownerPushPayloadV1(input.kind, input.link, input.dedupeKey);
   let delivered = 0, deduplicated = 0, removed = 0;
   for (const subscription of await input.store.list(input.tenantId)) {
     if (input.subscriptionEndpoint !== undefined && subscription.endpoint !== input.subscriptionEndpoint) continue;
-    // The three-way answer is load bearing. A boolean version of this returned
-    // false for BOTH "already delivered" and "a previous attempt failed", and
-    // counting the second as a duplicate made a permanently broken endpoint
-    // indistinguishable from a delivered notification -- so a caller that
-    // trusted the duplicate count reported success for a push that never
-    // arrived, and stopped retrying.
+    if (input.maySend && !await input.maySend()) break;
     const outcome = await input.store.reserve(input.tenantId, subscription.id, input.dedupeKey, input.now);
     if (outcome === "already_delivered") { deduplicated++; continue; }
-    // 'reserved' and 'previous_attempt_failed' both mean "send it now": the
-    // second is a legitimate retry of a send that never landed.
-    try {
-      const response = await input.channel.send(subscription, payload);
-      // The status is checked BEFORE the ledger is written, not after. The real
-      // `web-push` library rejects on any non-2xx rather than resolving with
-      // one, so a resolved non-2xx is unreachable through it today -- which is
-      // exactly why the ordering has to be enforced by this code rather than by
-      // an external library's undocumented contract. `store.delivered()` is a
-      // TERMINAL, non-retryable write to the 0174 ledger: recording it for a
-      // response outside 2xx would make the dispatcher settle the item as
-      // delivered and never try again, so the phone would silently never ring
-      // for a stall.
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);
-        delivered++;
-      } else {
-        // Same shape as a thrown failure, and treated as one: the reservation
-        // stays re-sendable, the failure is reported, and the caller's bounded
-        // retry still owns what happens next.
-        await input.store.failed(input.tenantId, subscription.id, input.dedupeKey, response.statusCode, input.now);
-        input.onFailure?.({ subscriptionId: subscription.id, statusCode: response.statusCode, removed: false });
-      }
-    } catch (error) {
-      const statusCode = typeof error === "object" && error !== null && "statusCode" in error
-        && typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : undefined;
-      await input.store.failed(input.tenantId, subscription.id, input.dedupeKey, statusCode, input.now);
-      const gone = statusCode === 404 || statusCode === 410;
-      if (gone) { await input.store.unsubscribe(input.tenantId, subscription.endpoint); removed++; }
-      const rejectionReason = pushRejectionReasonV1(error);
-      if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: "owner_push_rejected",
-        subscriptionId: subscription.id, statusCode, rejectionReason }));
-      input.onFailure?.({ subscriptionId: subscription.id, statusCode, removed: gone,
-        rejectionReason,
-        retryAfterMs: statusCode === 429 && typeof error === "object" && error !== null && "headers" in error
-          ? ownerPushRetryAfterMsV1(error.headers, input.now) : undefined });
+    // A slow earlier send or reservation can outlive either authority. Reload
+    // the subscription too, so withdrawn endpoints and obsolete keys from the
+    // first list cannot authorize a never-started provider request.
+    let target = subscription;
+    if (input.maySend) {
+      let current = (await input.store.list(input.tenantId)).find(row => row.id === subscription.id);
+      if (!current) continue;
+      if (!await input.maySend()) break;
+      target = current;
     }
+    let statusCode: number | undefined, failure: unknown;
+    try {
+      const response = await input.channel.send(target, payload);
+      statusCode = response.statusCode;
+    } catch (error) {
+      failure = error;
+      statusCode = typeof error === "object" && error !== null && "statusCode" in error
+        && typeof error.statusCode === "number" ? error.statusCode : undefined;
+    }
+    const accepted = Number.isInteger(statusCode) && statusCode! >= 200 && statusCode! < 300;
+    // Invalid provider status is normalized once before either persistence sink.
+    // A SQL CHECK refusal is bookkeeping, never a new provider failure.
+    const safeStatus = Number.isInteger(statusCode) && statusCode! >= 100 && statusCode! <= 599 ? statusCode! : null;
+    const gone = !accepted && (statusCode === 404 || statusCode === 410);
+    if (accepted) delivered++;
+    else {
+      const rejectionReason = pushRejectionReasonV1(failure);
+      if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: "owner_push_rejected",
+        subscriptionId: subscription.id, statusCode: safeStatus, rejectionReason }));
+      input.onFailure?.({ subscriptionId: subscription.id, statusCode: safeStatus ?? undefined, removed: gone,
+        rejectionReason,
+        retryAfterMs: statusCode === 429 && typeof failure === "object" && failure !== null && "headers" in failure
+          ? ownerPushRetryAfterMsV1(failure.headers, input.now) : undefined });
+    }
+    if (input.recordResult) {
+      // Outside the provider catch: refusal cannot relabel known acceptance or
+      // overwrite it with a failure. The caller owns durable repair.
+      await input.recordResult({ subscription_id: subscription.id, event_tag: input.dedupeKey,
+        result: accepted ? "delivered" : "failed", status_code: safeStatus,
+        completed_at: input.now, remove: gone });
+    } else if (accepted) {
+      await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);
+    } else {
+      await input.store.failed(input.tenantId, subscription.id, input.dedupeKey, safeStatus ?? undefined, input.now);
+      if (gone) await input.store.unsubscribe(input.tenantId, subscription.endpoint);
+    }
+    if (gone) removed++;
   }
   return { delivered, deduplicated, removed };
 }
