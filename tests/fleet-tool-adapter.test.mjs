@@ -753,7 +753,7 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
     // post-drain work. Pipes and filesystem operations stay real; observation
     // latency and CPU stalls do not consume the independent declared budget.
     const declaredDrainMs = 250;
-    let registeringDrain = false, elapsed = 0, started, handoff;
+    let registeringDrain = false, elapsed = 0, started, realStarted, handoff;
     const drainTimers = new Set(), productTimers = new Set();
     const performance = { now: () => elapsed };
     const stopTimerObservation = observeToolTimerDelays(() => elapsed,
@@ -785,6 +785,7 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       // Preserve the base execute guard's origin at adapter handoff, including
       // time the product takes to attach its listeners after the spawner returns.
       started = performance.now();
+      realStarted = process.hrtime.bigint();
       // Replay the recorded exit; the holder keeps the real pipes open until
       // the test explicitly releases its attached control pipe below.
       queueMicrotask(() => {
@@ -824,6 +825,11 @@ process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
       const result = await pending;
       assert.equal(result.error?.code, "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
       assert.ok(performance.now() - started < 700, "an escaped stdout holder cannot wedge execute");
+      // Virtual drain checks exclude setup latency, but cannot see real stalls.
+      // The 800ms real bound leaves margin beyond the declared 250ms drain;
+      // it still refuses the review's independently injected 900ms stall.
+      assert.ok(Number(process.hrtime.bigint() - realStarted) / 1e6 < 800,
+        "an escaped stdout holder cannot wedge execute in real time");
     } catch (error) { handoffError = error; throw error; }
     finally {
       // Also release a live parent when a broken exit barrier is refused.
@@ -1084,6 +1090,8 @@ process.stdout.write("literal stdout"); process.stderr.write("literal stderr");`
   const result = await runner.execute(input("independent literal"));
   assert.equal(launch?.executable, join(dir, "node-tool"), "the prepared seam forwards the declared executable");
   assert.equal(launch.options.shell, false, "the real launch retains shell=false");
+  assert.equal(launch.options.detached, process.platform !== "win32",
+    "the product launch must own a process group on POSIX");
   assert.equal(result.summary, "literal stdout");
   assert.equal(stderr, "literal stderr", "the prepared launch retains its real stderr pipe");
   const observed = JSON.parse(Buffer.from(result.files[0].contentBase64, "base64"));

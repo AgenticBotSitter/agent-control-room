@@ -523,5 +523,19 @@
     "replace": "      // mutation: retain completed callers as live",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"stress: 50\" tests/fleet-tool-adapter.test.mjs",
     "why": "Live observation retires real closed callers; cumulative retention falsely exceeds the independent cap-four oracle and fails it by name."
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "shell: false, detached: process.platform !== \"win32\", stdio: [\"ignore\", \"pipe\", \"pipe\"]",
+    "replace": "shell: false, stdio: [\"ignore\", \"pipe\", \"pipe\"]",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"^E078: prepared launch preserves production fields and output$\" tests/fleet-tool-adapter.test.mjs",
+    "why": "F2: removing product detached launch must fail the named production-fields test against the independently required POSIX process-group invariant."
+  },
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "      assert.ok(Number(process.hrtime.bigint() - realStarted) / 1e6 < 800,\n        \"an escaped stdout holder cannot wedge execute in real time\");",
+    "replace": "      // mutation: omit independent real elapsed stall refusal",
+    "test": "node --input-type=module --eval 'import test from \"node:test\"; import assert from \"node:assert/strict\";\nimport {readFileSync,writeFileSync} from \"node:fs\"; import {spawn} from \"node:child_process\";\ntest(\"E078: real 900ms stall must fail the independent elapsed bound\", async()=>{\n const originals=new Map(); let child,timer,output=\"\",result;\n try {\n  for(const [path,find,replacement] of [[\"scripts/fleet/connector.mjs\",\"      killProcess(child, \\\"SIGKILL\\\"); child.stdout?.destroy(); child.stderr?.destroy();\",\"      killProcess(child, \\\"SIGKILL\\\"); child.stdout?.destroy(); child.stderr?.destroy();\\n      if (result.outputIncomplete) await new Promise(done=>setImmediate(()=>{const until=process.hrtime.bigint()+900_000_000n;while(process.hrtime.bigint()<until){};done();}));\"]]) {\n   const source=readFileSync(path,\"utf8\"); if(!originals.has(path)) originals.set(path,source);\n   assert.equal(source.split(find).length,2,\"one loaded intervention anchor\");\n   writeFileSync(path,source.replace(find,replacement));\n   assert.ok(readFileSync(path,\"utf8\").includes(replacement),\"intervention bytes loaded\");\n  }\n  child=spawn(process.execPath,[\"scripts/run-tests-with-quarantine.mjs\",\"--import\",\"tsx\",\"--test\",\"--test-concurrency=1\",\"--test-name-pattern=escaped pipe holder\",\"tests/fleet-tool-adapter.test.mjs\"],{detached:true,stdio:[\"ignore\",\"pipe\",\"pipe\"]});\n  child.stdout.on(\"data\",b=>{output+=b;});child.stderr.on(\"data\",b=>{output+=b;});\n  result=await new Promise((done,fail)=>{child.once(\"error\",fail);child.once(\"close\",(code,signal)=>done({code,signal}));timer=setTimeout(()=>process.kill(-child.pid,\"SIGKILL\"),120000);});\n } finally {\n  clearTimeout(timer); if(child?.pid)try{process.kill(-child.pid,\"SIGKILL\");}catch(e){if(e.code!==\"ESRCH\")throw e;}\n  for(const [path,source]of originals)writeFileSync(path,source);\n }\n assert.equal(result.signal,null,\"control completes without timeout or crash\");\n assert.equal(result.code,1,\"E078: real 900ms stall must fail the independent elapsed bound\");\n assert.ok(output.includes(\"an escaped stdout holder cannot wedge execute in real time\"),\"the expected named inner assertion must run\");\n for(const [key,value]of Object.entries({tests:1,pass:0,fail:1,cancelled:0,skipped:0,todo:0}))assert.ok(output.includes(\"# \"+key+\" \"+value+\"\\n\"),\"completed inner TAP \"+key);\n});'",
+    "why": "F1: inject a real 900ms post-drain stall independent of the virtual timer observer. Removing the elapsed-time assertion must fail the named outer control with one completed inner body; no crashes or timeouts count."
   }
 ]
