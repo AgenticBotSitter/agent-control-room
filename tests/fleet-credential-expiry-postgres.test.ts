@@ -100,3 +100,273 @@ test("R4F-06: a renewal queued before expiry must not publish a live successor a
     }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 90_000 });
 });
+
+// ---------------------------------------------------------------------------
+// R4F-06b: the stamp must be the database clock AFTER the credential row lock,
+// at full microsecond precision.
+//
+// R4F-06 above delays the transaction in application code, so it can only hit
+// the boundary by luck of timing. These cases place the expiry EXACTLY, from
+// the rotate statement's own recorded start time, by holding the credential row
+// lock from an administrator session while the real `rotate()` waits on it.
+// Production would reach the same state through any concurrent writer on that
+// row (an owner revocation, a second renewal) or a slow connection.
+//
+// Expected outcomes are independent of the code under test: the database
+// clock (`clock_timestamp()`), the rows read back as the administrator, and the
+// production fleet login's own `authenticate`.
+// ---------------------------------------------------------------------------
+
+type Rig = { pg: RealPostgres; db: DatabaseClient; gateway: FleetGatewayStoreV1; owner: FleetOwnerServiceV1;
+  newAdmin: () => Promise<Client> };
+
+async function withRig(body: (rig: Rig) => Promise<void>) {
+  await withRealPostgres(async pg => {
+    const admin = new Client(pg.admin({ database: pg.database }));
+    const fleet = pool(pg, "fleet"), ownerDb = pool(pg, "fleetOwner");
+    const extra: Client[] = [];
+    await admin.connect();
+    try {
+      await seedFleetTenant((sql, params) => admin.query(sql, params));
+      assert.equal((await fleet.client.query<{ current_user: string }>("SELECT current_user")).rows[0]?.current_user, "control_room_fleet");
+      const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT, operationsMode: async () => "running" });
+      const owner = new FleetOwnerServiceV1(ownerDb.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE });
+      await body({ pg, db: fleet.client, gateway, owner, newAdmin: async () => {
+        const client = new Client(pg.admin({ database: pg.database }));
+        extra.push(client); await client.connect(); return client;
+      } });
+    } finally {
+      await Promise.allSettled([fleet.close(), ownerDb.close(), admin.end(), ...extra.map(client => client.end())]);
+    }
+  }, { port: PORT + 1, allowedPorts: [PORT + 1], boundMs: 150_000 });
+}
+
+let enrolled = 0;
+async function enrollWorker(rig: Rig) {
+  const code = await rig.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Expiry fixture ${++enrolled}`, workerKind: "mcp-agent",
+    projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+  const secret = c.newSecret();
+  const worker = await rig.gateway.enroll({ code: code.code, workerKind: "mcp-agent", credentialDigest: c.sha256(secret),
+    platform: "linux", architecture: "x64", connectorVersion: c.CONNECTOR_VERSION, clientNonce: c.newEnrollmentNonce() });
+  const principal = await rig.gateway.authenticate({ bearer: secret, declaredWorkerId: worker.workerId });
+  return { worker, secret, principal };
+}
+
+const sleepFor = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
+
+/** Holds the predecessor's row lock from an administrator session, starts the
+ * real `rotate()`, and returns once its locked read is genuinely blocked. The
+ * blocked statement's start time comes from pg_stat_activity, which was probed
+ * on PG17 to equal that backend's statement_timestamp() to the microsecond. */
+async function rotateBlockedOnRowLock(rig: Rig, principal: Awaited<ReturnType<typeof enrollWorker>>["principal"]) {
+  const lock = await rig.newAdmin();
+  await lock.query("BEGIN");
+  // Administrator fixture surgery without a table lock: replica role skips the
+  // production credential guard so the fixture can place expires_at exactly.
+  await lock.query("SET LOCAL session_replication_role = replica");
+  await lock.query(`SELECT 1 FROM fleet_worker_credentials WHERE tenant_id=$1 AND credential_id=$2 FOR UPDATE`,
+    [FLEET_TENANT, principal.credentialId]);
+  const successorSecret = c.newSecret();
+  const rotation = rig.gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) })
+    .then(() => ({ accepted: true as const }), error => ({ accepted: false as const, error }));
+  let pid = 0;
+  for (let attempt = 0; attempt < 500 && !pid; attempt += 1) {
+    const rows = (await lock.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity WHERE usename='control_room_fleet'
+      AND wait_event_type='Lock' AND query ILIKE '%FOR UPDATE%' AND query ILIKE '%fleet_worker_credentials%'`)).rows;
+    if (rows.length > 1) throw new Error("expected exactly one blocked fleet statement");
+    pid = rows[0]?.pid ?? 0;
+    if (!pid) await sleepFor(10);
+  }
+  assert.ok(pid, "rotate() never blocked on the credential row lock");
+  return { lock, rotation, pid, successorSecret };
+}
+
+async function worldAfter(rig: Rig, admin: Client, workerId: string, predecessor: string) {
+  const rows = (await admin.query<{ credential_id: string; state: string; live: boolean }>(`SELECT credential_id,state,
+    (state='active' AND expires_at>clock_timestamp()) AS live FROM fleet_worker_credentials
+    WHERE tenant_id=$1 AND worker_id=$2 ORDER BY issued_at`, [FLEET_TENANT, workerId])).rows;
+  return { rows, predecessor: rows.find(row => row.credential_id === predecessor),
+    successors: (await admin.query<{ n: string }>(`SELECT count(*)::text AS n FROM fleet_worker_credentials
+      WHERE tenant_id=$1 AND rotated_from_credential_id=$2`, [FLEET_TENANT, predecessor])).rows[0]?.n };
+}
+
+// offsetMs is where the expiry sits relative to the blocked statement's own
+// start time t0: negative = already expired when the statement began (including
+// the sub-millisecond band a millisecond-truncated stamp falls below),
+// positive = expires while the statement waits for the lock.
+const EXPIRY_OFFSETS_MS = [-20, -1, -0.9, -0.1, -0.001, 0, 0.001, 0.1, 0.9, 1, 20];
+
+test("R4F-06b: a renewal blocked on the credential lock is refused when the expiry falls anywhere before the lock is granted", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRig(async rig => {
+    const admin = await rig.newAdmin();
+    const outcomes: Array<Record<string, unknown>> = [];
+    for (const offsetMs of EXPIRY_OFFSETS_MS) {
+      const { worker, principal } = await enrollWorker(rig);
+      const { lock, rotation, pid, successorSecret } = await rotateBlockedOnRowLock(rig, principal);
+      try {
+        await lock.query(`UPDATE fleet_worker_credentials SET expires_at=v.at, issued_at=v.at - interval '1 hour'
+          FROM (SELECT query_start + ($4::float8 * interval '1 millisecond') AS at FROM pg_stat_activity WHERE pid=$3) v
+          WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, principal.credentialId, pid, offsetMs]);
+        // Let the real database clock pass the expiry, then free the lock.
+        // Read through the lock-holding session: it alone sees its uncommitted expires_at.
+        let passed = false;
+        for (let attempt = 0; attempt < 2000 && !passed; attempt += 1) {
+          passed = (await lock.query<{ passed: boolean }>(`SELECT clock_timestamp()>expires_at+interval '5 milliseconds' AS passed
+            FROM fleet_worker_credentials WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, principal.credentialId])).rows[0]?.passed === true;
+          if (!passed) await sleepFor(5);
+        }
+        assert.ok(passed, `${offsetMs} ms: the database clock never passed the placed expiry`);
+      } finally { await lock.query("COMMIT"); }
+      const result = await rotation;
+      const world = await worldAfter(rig, admin, worker.workerId, principal.credentialId);
+      // The production fleet login agrees: the secret the renewal would have issued must not authenticate.
+      const login = await rig.gateway.authenticate({ bearer: successorSecret, declaredWorkerId: worker.workerId }).then(() => "accepted", () => "refused");
+      outcomes.push({ offsetMs, accepted: result.accepted, successors: world.successors,
+        liveCredentials: world.rows.filter(row => row.live).length, predecessorState: world.predecessor?.state, login });
+    }
+    // Reported together so a failure shows every offset, not just the first.
+    assert.deepEqual(outcomes, EXPIRY_OFFSETS_MS.map(offsetMs => ({ offsetMs, accepted: false, successors: "0", liveCredentials: 0,
+      predecessorState: "active", login: "refused" })), "every renewal blocked across the expiry must be refused and leave no live credential");
+  });
+});
+
+/** Wraps the real store connection and records every statement a transaction
+ * runs, with the rows it returned, so a test can compare what the store sent
+ * with what PostgreSQL itself said. Records only; never alters a statement. */
+function recording(db: DatabaseClient) {
+  const log: Array<{ sql: string; params: unknown[]; rows: unknown[] }> = [];
+  const client: DatabaseClient = {
+    query: db.query.bind(db),
+    transaction: body => db.transaction(tx => body({
+      query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
+        const result = await tx.query<T>(sql, params); log.push({ sql, params, rows: result.rows }); return result;
+      },
+    })),
+    transactionWithPreCommitCheck: db.transactionWithPreCommitCheck.bind(db),
+  };
+  return { client, log };
+}
+
+const THIRTY_DAYS_MS = 30 * 86_400_000;
+
+test("R4F-06c: an unexpired renewal that waits on the credential lock still succeeds once, with the database's exact stamp", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRig(async rig => {
+    const admin = await rig.newAdmin();
+    for (const round of [1, 2, 3, 4, 5]) {
+      const recorder = recording(rig.db);
+      const gateway = new FleetGatewayStoreV1(recorder.client, { tenantId: FLEET_TENANT, operationsMode: async () => "running" });
+      const { worker, principal } = await enrollWorker({ ...rig, gateway });
+      const lock = await rig.newAdmin();
+      await lock.query("BEGIN");
+      await lock.query(`SELECT 1 FROM fleet_worker_credentials WHERE tenant_id=$1 AND credential_id=$2 FOR UPDATE`, [FLEET_TENANT, principal.credentialId]);
+      const successorSecret = c.newSecret();
+      recorder.log.length = 0;
+      const rotation = gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) });
+      await sleepFor(150); // the renewal is now parked on the lock; a plain wait is the scenario, not a synchronisation
+      await lock.query("COMMIT"); await lock.end();
+      const reply = await rotation;
+      const rows = (await admin.query<{ credential_id: string; state: string; issued_at: string; ended_at: string | null;
+        lifetime_ms: string; expires_iso: string; live: boolean }>(`SELECT credential_id,state,issued_at::text,ended_at::text,
+        (extract(epoch FROM expires_at-issued_at)*1000)::bigint::text AS lifetime_ms,
+        to_char(date_trunc('milliseconds',expires_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS expires_iso,
+        (state='active' AND expires_at>clock_timestamp()) AS live
+        FROM fleet_worker_credentials WHERE tenant_id=$1 AND worker_id=$2 ORDER BY issued_at`, [FLEET_TENANT, worker.workerId])).rows;
+      assert.equal(rows.length, 2, `round ${round}: predecessor and exactly one successor`);
+      const [predecessor, successor] = rows;
+      assert.equal(predecessor?.state, "retired");
+      assert.equal(successor?.live, true, "the renewal of an unexpired credential must leave one live credential");
+      assert.equal(rows.filter(row => row.live).length, 1);
+      // Independent expected values: a literal 30-day lifetime, and the database's own text of the two instants.
+      assert.equal(successor?.lifetime_ms, String(THIRTY_DAYS_MS), "successor lifetime is exactly thirty days");
+      assert.equal(successor?.issued_at, predecessor?.ended_at, "the successor is issued at the exact instant the predecessor ended");
+      assert.equal(reply.credentialExpiresAt, successor?.expires_iso, "the reply states the stored expiry");
+      // What the store sent is what PostgreSQL said: the stamp is carried as the database's own text, never through a JavaScript Date.
+      const retireStatement = recorder.log.find(entry => /SET state='retired'/u.test(entry.sql));
+      const insertStatement = recorder.log.find(entry => /INSERT INTO fleet_worker_credentials/u.test(entry.sql));
+      const stamp = (retireStatement?.rows[0] as { stamp?: string } | undefined)?.stamp;
+      assert.equal(typeof stamp, "string");
+      assert.equal((await admin.query<{ same: boolean }>(`SELECT $1::timestamptz=ended_at AS same FROM fleet_worker_credentials
+        WHERE tenant_id=$2 AND credential_id=$3`, [stamp, FLEET_TENANT, principal.credentialId])).rows[0]?.same, true,
+      "the retiring UPDATE returned the stored ended_at, to the microsecond");
+      assert.equal(insertStatement?.params[4], stamp, "issued_at sent to the INSERT is the database's exact text");
+      const audit = (await admin.query<{ n: string }>(`SELECT count(*)::text AS n FROM audit_events WHERE tenant_id=$1
+        AND action='fleet.credential.rotated' AND target_id=$2 AND occurred_at=date_trunc('milliseconds',$3::timestamptz)`,
+      [FLEET_TENANT, worker.workerId, predecessor?.ended_at])).rows[0]?.n;
+      assert.equal(audit, "1", "the audit event is stamped with the retirement instant");
+      await gateway.authenticate({ bearer: successorSecret, declaredWorkerId: worker.workerId });
+    }
+  });
+});
+
+test("R4F-06d: a renewal interrupted while parked on the lock leaves nothing behind and can be retried", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRig(async rig => {
+    const admin = await rig.newAdmin();
+    const { worker, principal } = await enrollWorker(rig);
+    const { lock, rotation, pid } = await rotateBlockedOnRowLock(rig, principal);
+    try {
+      assert.equal((await lock.query<{ ok: boolean }>("SELECT pg_terminate_backend($1) AS ok", [pid])).rows[0]?.ok, true);
+      const result = await rotation;
+      assert.equal(result.accepted, false, "a renewal whose backend died must not report success");
+    } finally { await lock.query("COMMIT"); }
+    const after = await worldAfter(rig, admin, worker.workerId, principal.credentialId);
+    assert.equal(after.successors, "0");
+    assert.equal(after.predecessor?.state, "active");
+    // A transport failure quarantines the whole bounded pool (src/web/v1/bounded-database.ts), so the retry is a fresh pool, as after a process restart.
+    const restarted = pool(rig.pg, "fleet");
+    try {
+      const retry = await new FleetGatewayStoreV1(restarted.client, { tenantId: FLEET_TENANT, operationsMode: async () => "running" })
+        .rotate(principal, { newCredentialDigest: c.sha256(c.newSecret()) });
+      assert.ok(retry.credentialExpiresAt);
+    } finally { await restarted.close(); }
+    const final = await worldAfter(rig, admin, worker.workerId, principal.credentialId);
+    assert.equal(final.successors, "1");
+    assert.equal(final.rows.filter(row => row.live).length, 1);
+  });
+});
+
+test("R4F-06e: thirty renewals of one credential at once yield one successor; thirty at the expiry yield none", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRig(async rig => {
+    const admin = await rig.newAdmin();
+    const refusal = async (promise: Promise<unknown>) => promise.then(() => "accepted", (error: { code?: string }) => error?.code ?? String(error));
+    // Live credential: exactly one of thirty wins; the other twenty-nine are told unauthenticated.
+    const live = await enrollWorker(rig);
+    const liveOutcomes = await Promise.all(Array.from({ length: 30 }, () =>
+      refusal(rig.gateway.rotate(live.principal, { newCredentialDigest: c.sha256(c.newSecret()) }))));
+    // The production pool admits 8 and queues 8 more; the rest are refused at once as database_unavailable, which is overload, not an answer about the credential.
+    assert.equal(liveOutcomes.filter(outcome => outcome === "accepted").length, 1, `outcomes: ${liveOutcomes.join(",")}`);
+    assert.deepEqual([...new Set(liveOutcomes.filter(outcome => outcome !== "accepted"))].filter(outcome => outcome !== "database_unavailable"), ["unauthenticated"]);
+    const liveWorld = await worldAfter(rig, admin, live.worker.workerId, live.principal.credentialId);
+    assert.equal(liveWorld.successors, "1");
+    assert.equal(liveWorld.rows.filter(row => row.live).length, 1);
+    // Credential that expires while thirty renewals are parked on its lock: none may win.
+    const expiring = await enrollWorker(rig);
+    const lock = await rig.newAdmin();
+    await lock.query("BEGIN");
+    await lock.query("SET LOCAL session_replication_role = replica");
+    await lock.query(`SELECT 1 FROM fleet_worker_credentials WHERE tenant_id=$1 AND credential_id=$2 FOR UPDATE`, [FLEET_TENANT, expiring.principal.credentialId]);
+    const burst = Array.from({ length: 30 }, () => refusal(rig.gateway.rotate(expiring.principal, { newCredentialDigest: c.sha256(c.newSecret()) })));
+    const POOL_MAX = 8; // privatePgOptions().max: the most renewals that can be parked on the lock at once
+    let parked = 0;
+    for (let attempt = 0; attempt < 1000 && parked < POOL_MAX; attempt += 1) {
+      parked = Number((await lock.query<{ n: string }>(`SELECT count(*)::text AS n FROM pg_stat_activity WHERE usename='control_room_fleet'
+        AND wait_event_type='Lock' AND query ILIKE '%FOR UPDATE%' AND query ILIKE '%fleet_worker_credentials%'`)).rows[0]?.n);
+      if (parked < POOL_MAX) await sleepFor(10);
+    }
+    assert.equal(parked, POOL_MAX, "a full pool of renewals must be parked on the credential lock");
+    await lock.query(`UPDATE fleet_worker_credentials SET expires_at=clock_timestamp()+interval '300 milliseconds',
+      issued_at=clock_timestamp()-interval '1 hour' WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, expiring.principal.credentialId]);
+    await sleepFor(400); // under the production lock_timeout of 2 s, past the 300 ms expiry
+    await lock.query("COMMIT");
+    const expiredOutcomes = await Promise.all(burst);
+    assert.equal(expiredOutcomes.filter(outcome => outcome === "accepted").length, 0, `outcomes: ${expiredOutcomes.join(",")}`);
+    const expiredWorld = await worldAfter(rig, admin, expiring.worker.workerId, expiring.principal.credentialId);
+    assert.equal(expiredWorld.successors, "0");
+    assert.equal(expiredWorld.rows.filter(row => row.live).length, 0);
+    const deadlocks = (await admin.query<{ deadlocks: string }>(`SELECT deadlocks::text FROM pg_stat_database WHERE datname=$1`, [rig.pg.database])).rows[0]?.deadlocks;
+    assert.equal(deadlocks, "0", "the lock order must not deadlock under thirty contenders");
+  });
+});
