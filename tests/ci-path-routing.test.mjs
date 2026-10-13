@@ -348,12 +348,12 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.match(updater, /node-version: 22/u);
   assert.match(updater, /timeout-minutes: 45/u);
   assert.match(updater, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
-  assert.match(updater, /pnpm run test:updater/u);
+  assert.match(updater, /node scripts\/ci\/run-scripts-keep-going\.mjs test:updater /u);
   // The PostgreSQL updater tests boot the real updater and need macOS lockf, so
   // they run in the macOS job after PostgreSQL 17 is installed there, and not in
   // the Linux components lane.
   assert.match(updater, /brew install postgresql@17/u);
-  assert.match(updater, /pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres/u);
+  assert.match(updater, /node scripts\/ci\/run-scripts-keep-going\.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner/u);
   assert.doesNotMatch(scripts["test:components"], /pnpm test:updater(?:\s|$)/u);
   assert.doesNotMatch(scripts["test:components"], /test:updater-schema|test:updater-passkey-postgres/u);
   assert.match(scripts["test:components"], /pnpm test:updater:linux/u);
@@ -471,8 +471,8 @@ test("every lane command that ran before still runs, so no test loses its lane",
     "pnpm run test:build:demo",
     "pnpm run test",
     "pnpm run test:components",
-    "pnpm run test:updater",
-    "pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres",
+    "node scripts/ci/run-scripts-keep-going.mjs test:updater ",
+    "node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner",
     "node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts",
     "pnpm run test:build:articles",
     "node --test tests/check-test-lane-coverage.test.mjs",
