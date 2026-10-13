@@ -17,18 +17,28 @@ const originalChecks = baseline.job.steps.filter(step => step.if);
 const setup = baseline.job.steps.filter(step => !step.if);
 const chain = originalChecks.find(step => step.name === "Component lanes");
 const expected = originalChecks.flatMap(step => step === chain
-  ? baseline.units.map(unit => ({ name: unit.name, command: unit.command, env: chain.env }))
+  ? baseline.units.map(unit => ({ name: unit.name, command: `pnpm run ${unit.name}`, env: chain.env }))
   : [{ name: step.name, command: step.run, env: step.env ?? {} }]);
 const sort = values => [...values].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
-function selectedChecks() {
-  return shards.flatMap(shard => components.steps.filter(step =>
+function selectedChecks(job = components, packageScripts = scripts) {
+  return shards.flatMap(shard => job.steps.filter(step =>
     step.if === `\${{ !cancelled() && matrix.shard == '${shard}' }}`
     && step.name !== "Component shard workflow guard").flatMap(step => {
     const units = /^node scripts\/ci\/run-scripts-keep-going\.mjs ((?:test:[a-z0-9:.-]+ ?)+)$/u.exec(step.run)?.[1];
-    return units ? units.split(" ").map(name => ({ name, command: scripts[name], env: step.env ?? {} }))
+    return units ? units.split(" ").map(name => {
+      assert.equal(typeof packageScripts[name], "string", `${name}: package.json must define the selected lane`);
+      assert.match(packageScripts[name], /\S/u, `${name}: package.json lane must not be empty`);
+      return { name, command: `pnpm run ${name}`, env: step.env ?? {} };
+    })
       : [{ name: step.name, command: step.run, env: step.env ?? {} }];
   }));
+}
+
+function assertCoverage(job = components, packageScripts = scripts) {
+  // Pin lane invocation and environment, not the lane's evolving test-file list.
+  // Singleton commands stay pinned verbatim to the independent main capture.
+  assert.deepEqual(sort(selectedChecks(job, packageScripts)), sort(expected));
 }
 
 test("component shard fixture records the independently pinned main workflow", () => {
@@ -47,8 +57,34 @@ test("five component shards run independently without cancelling their peers", (
 });
 
 test("component shards cover every baseline command and environment exactly once", () => {
-  assert.deepEqual(sort(selectedChecks()), sort(expected));
+  assertCoverage();
 });
+
+const evolution = JSON.parse(readFileSync(new URL("./fixtures/ci-component-evolution.json", import.meta.url), "utf8"));
+
+for (const [action, command] of Object.entries(evolution.validCommands)) {
+  test(`component lane ${action} needs no shard or baseline fixture edit`, () => {
+    assertCoverage(components, { ...scripts, "test:database": command });
+  });
+}
+
+for (const [action, replacement] of Object.entries(evolution.invalidSteps)) {
+  test(`component coverage refuses a ${action} lane step`, () => {
+    const job = structuredClone(components);
+    const step = job.steps.find(step => step.run?.startsWith(evolution.runner)
+      && step.run.includes(evolution.lane));
+    step.run = action === "neutered" ? replacement
+      : step.run.replace(evolution.lane, replacement);
+    assert.throws(() => assertCoverage(job), { name: "AssertionError" });
+  });
+}
+
+for (const [action, command] of Object.entries(evolution.invalidCommands)) {
+  test(`component coverage refuses a ${action} package lane`, () => {
+    assert.throws(() => assertCoverage(components, { ...scripts, "test:database": command }),
+      { name: "AssertionError" });
+  });
+}
 
 test("component shard commands are not duplicated", () => {
   const names = selectedChecks().map(step => step.name);

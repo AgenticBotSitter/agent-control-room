@@ -194,5 +194,33 @@
     "replace": "defaults:\n  run:\n    shell: true {0}\njobs:\n",
     "test": "node --test tests/ci-component-shards.test.mjs",
     "why": "change workflow-defaults: workflow defaults preserve the baseline execution envelope"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "  assert.deepEqual(sort(selectedChecks(job, packageScripts)), sort(expected));",
+    "replace": "  selectedChecks(job, packageScripts);",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable coverage comparison: component coverage refuses a dropped lane step"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "      assert.equal(typeof packageScripts[name], \"string\", `${name}: package.json must define the selected lane`);",
+    "replace": "      if (packageScripts[name] == null) packageScripts[name] = \"node tests/synthetic.mjs\";",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable missing definition refusal: component coverage refuses a missing package lane"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "      assert.match(packageScripts[name], /\\S/u, `${name}: package.json lane must not be empty`);",
+    "replace": "      void packageScripts[name];",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable empty definition refusal: component coverage refuses a empty package lane"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "command: `pnpm run ${unit.name}`",
+    "replace": "command: unit.command",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "restore frozen package command comparison: component lane addition needs no shard or baseline fixture edit"
   }
 ]

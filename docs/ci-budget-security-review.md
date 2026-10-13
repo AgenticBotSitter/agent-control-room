@@ -439,6 +439,15 @@ and through the existing component catch-up path. The eight setup steps are repe
 on every leg; the guard pins step shell and working directory plus job/workflow
 defaults to the independently captured main revision `23fc8798`.
 
+The guard pins package lane names and their environments rather than frozen
+package command bodies. Adding or removing a test file inside an existing lane
+therefore requires no shard or baseline-fixture edit: the keep-going runner uses
+the current `package.json` command. Dropped or duplicated lanes, disabled or
+replaced workflow steps, and missing or empty package definitions are refused.
+Singleton workflow commands remain pinned verbatim. Adding a new lane still
+requires assigning it to one shard and updating the independent lane inventory;
+this guard checks workflow coverage, not the semantics of every package command.
+
 ### Timing basis and capacity
 
 The assignment used the largest measured duration of each group across ten
