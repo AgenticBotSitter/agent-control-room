@@ -27,12 +27,16 @@ export async function reserveBackupGenerationV1(out) {
   }
   let handle;
   try {
-    handle = await open(out, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));
-    // Identity comes from the open descriptor; the path is only compared to it afterwards.
-    // A held directory cannot have its inode recycled by an unlink and recreate.
+    // The first observation follows the exclusive mkdir; the open descriptor must be that same
+    // directory (a different one means it was substituted before acquisition).
+    const created = await lstat(out);
+    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     const held = await handle.stat();
-    const entry = await lstat(out);
-    if (!held.isDirectory() || !same(entry, held) || (held.mode & 0o777) !== 0o700)
+    // A recreated directory can reuse the freed inode number but has a later creation time.
+    // Held open, this directory's inode cannot be recycled, so the path must still name it.
+    const current = await lstat(out);
+    if (!held.isDirectory() || !same(created, held) || created.birthtimeMs !== held.birthtimeMs
+      || !same(current, held) || (held.mode & 0o777) !== 0o700)
       throw new Error("backup_output_reservation_refused");
     const token = Object.freeze({});
     // Keeping the unlinked directory open prevents its inode from being recycled.

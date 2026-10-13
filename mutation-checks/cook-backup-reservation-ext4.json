@@ -8,10 +8,17 @@
   },
   {
     "file": "src/installer/shared/backup-files.mjs",
-    "find": "!same(entry, held)",
+    "find": "!same(created, held)",
     "replace": "false",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
-    "why": "The path is compared with the identity of the already-open descriptor. A real unlink and recreate after the descriptor is held must be refused with the literal backup_output_reservation_refused."
+    "why": "The first observation after the exclusive mkdir must equal the opened descriptor. A directory renamed away and replaced just before open (distinct real inode numbers) must fail the named refusal assertion."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "!same(current, held)",
+    "replace": "false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "After open the path must still name the held directory. A directory renamed away and replaced after the descriptor is held must fail the named refusal assertion."
   },
   {
     "file": "src/installer/shared/backup-files.mjs",
@@ -19,20 +26,6 @@
     "replace": "false",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
     "why": "A chmod before the held stat must refuse non-private generation mode; expected 0700 comes from the ticket contract."
-  },
-  {
-    "file": "src/installer/shared/backup-files.mjs",
-    "find": "    handle = await open(out, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));\n    // Identity comes from the open descriptor; the path is only compared to it afterwards.\n    // A held directory cannot have its inode recycled by an unlink and recreate.\n    const held = await handle.stat();\n    const entry = await lstat(out);\n    if (!held.isDirectory() || !same(entry, held) || (held.mode & 0o777) !== 0o700)",
-    "replace": "    handle = await open(out, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));\n    // Identity comes from the open descriptor; the path is only compared to it afterwards.\n    // A held directory cannot have its inode recycled by an unlink and recreate.\n    const held = await handle.stat();\n    const entry = await lstat(out);\n    if (!held.isDirectory() || false || (held.mode & 0o777) !== 0o700)",
-    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
-    "why": "O_NOFOLLOW and the descriptor/path comparison both refuse a symlink that points back to the original directory. Disable both; the real symlink attack must fail the literal refusal assertion."
-  },
-  {
-    "file": "src/installer/shared/backup-files.mjs",
-    "find": "    handle = await open(out, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));\n    // Identity comes from the open descriptor; the path is only compared to it afterwards.\n    // A held directory cannot have its inode recycled by an unlink and recreate.\n    const held = await handle.stat();\n    const entry = await lstat(out);\n    if (!held.isDirectory() || !same(entry, held) || (held.mode & 0o777) !== 0o700)",
-    "replace": "    handle = await open(out, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));\n    // Identity comes from the open descriptor; the path is only compared to it afterwards.\n    // A held directory cannot have its inode recycled by an unlink and recreate.\n    const held = await handle.stat();\n    const entry = await lstat(out);\n    if (!same(entry, held) || (held.mode & 0o777) !== 0o700)",
-    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
-    "why": "Directory-only open and the held type check are redundant defenses. Disable both; a real mode-0700 file planted before open must fail the named refusal assertion."
   },
   {
     "file": "src/installer/shared/backup-files.mjs",
@@ -106,16 +99,23 @@
   },
   {
     "file": "src/installer/shared/backup-files.mjs",
-    "find": "    handle = await open(out, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));\n    // Identity comes from the open descriptor; the path is only compared to it afterwards.\n    // A held directory cannot have its inode recycled by an unlink and recreate.\n    const held = await handle.stat();\n    const entry = await lstat(out);\n",
-    "replace": "    const entry = await lstat(out);\n    handle = await open(out, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));\n    const held = await handle.stat();\n",
+    "find": "    const created = await lstat(out);\n    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n",
+    "replace": "    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n    const created = await lstat(out);\n",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
-    "why": "Restore the original order (path identity read before the open). The unlink-and-recreate test must fail on its already-open-descriptor assertion on every filesystem, not only where inodes are recycled."
+    "why": "Restore the round-1 order (identity read after open). The replacement is then observed twice and accepted; the substituted-before-open cases must fail the named refusal assertion."
   },
   {
     "file": "src/installer/shared/backup-files.mjs",
-    "find": "    const held = await handle.stat();\n    const entry = await lstat(out);\n",
-    "replace": "    const entry = await lstat(out);\n    const held = entry;\n",
+    "find": "    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n    // A recreated directory can reuse the freed inode number but has a later creation time.\n    // Held open, this directory's inode cannot be recycled, so the path must still name it.\n    const current = await lstat(out);\n    if (!held.isDirectory() || !same(created, held) || created.birthtimeMs !== held.birthtimeMs\n      || !same(current, held) || (held.mode & 0o777) !== 0o700)\n",
+    "replace": "    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY);\n    const held = await handle.stat();\n    // A recreated directory can reuse the freed inode number but has a later creation time.\n    // Held open, this directory's inode cannot be recycled, so the path must still name it.\n    const current = await lstat(out);\n    if (!held.isDirectory() || !same(created, held) || created.birthtimeMs !== held.birthtimeMs\n      || false || (held.mode & 0o777) !== 0o700)\n",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
-    "why": "Adopt the held identity from the replaceable path instead of the descriptor. A real unlink and recreate must then be accepted, failing the literal refusal assertion."
+    "why": "O_NOFOLLOW and the post-open path comparison both refuse a symlink that points back to the original directory (the first lstat and the followed open then agree). Disable both; the real symlink attack must fail the named refusal assertion."
+  },
+  {
+    "file": "src/installer/shared/backup-files.mjs",
+    "find": "    handle = await open(out, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n    // A recreated directory can reuse the freed inode number but has a later creation time.\n    // Held open, this directory's inode cannot be recycled, so the path must still name it.\n    const current = await lstat(out);\n    if (!held.isDirectory() || !same(created, held) || created.birthtimeMs !== held.birthtimeMs\n      || !same(current, held) || (held.mode & 0o777) !== 0o700)\n",
+    "replace": "    handle = await open(out, constants.O_RDONLY | constants.O_NOFOLLOW);\n    const held = await handle.stat();\n    // A recreated directory can reuse the freed inode number but has a later creation time.\n    // Held open, this directory's inode cannot be recycled, so the path must still name it.\n    const current = await lstat(out);\n    if (!same(created, held) || created.birthtimeMs !== held.birthtimeMs\n      || !same(current, held) || (held.mode & 0o777) !== 0o700)\n",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
+    "why": "Directory-only open and the held type check both refuse a non-directory. Disable both; a real mode-0700 file planted before the first lstat must fail the named refusal assertion."
   }
 ]
