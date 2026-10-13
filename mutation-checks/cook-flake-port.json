@@ -1,0 +1,23 @@
+[
+  {
+    "file": "tests/support/attack-kit/real-postgres.ts",
+    "find": "      done(!selfConnected);",
+    "replace": "      done(true);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/attack-kit-port-release.test.ts",
+    "why": "FLAKE-PORT-01 self-connect regression must fail when the fix is disabled"
+  },
+  {
+    "file": "tests/support/attack-kit/real-postgres.ts",
+    "find": "socket.localPort === port && socket.localAddress === \"127.0.0.1\"",
+    "replace": "socket.localAddress === \"127.0.0.1\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/attack-kit-port-release.test.ts",
+    "why": "a different-port loopback connection to a real listener must still be refused"
+  },
+  {
+    "file": "tests/support/attack-kit/real-postgres.ts",
+    "find": "socket.localPort === port && socket.localAddress === \"127.0.0.1\"",
+    "replace": "socket.localPort === port",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/attack-kit-port-release.test.ts",
+    "why": "matching port numbers on different local addresses must still refuse a foreign listener"
+  }
+]
