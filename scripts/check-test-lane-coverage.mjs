@@ -74,23 +74,54 @@ export function reachableTests(scripts, commands) {
   return reached;
 }
 
-// Only commands assigned to a macOS runner can prove a Darwin-only body.
-// Matrix steps must select a literal lane whose include entry is macOS; a
-// Linux sibling's command is never evidence for that entry.
+// This deliberately supports only the workflow's known condition grammar.
+// Unknown expressions cannot prove that a Darwin body can execute.
+function macosCondition(condition, lane) {
+  if (condition === undefined) return true;
+  condition = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/u, "$1");
+  if (condition === "true" || condition === "!cancelled()" || condition === "always()") return true;
+  if (condition === "runner.os == 'macOS'") return true;
+  if (lane && condition === `matrix.lane == '${lane}'`) return true;
+  if (lane && condition === `!cancelled() && matrix.lane == '${lane}' && needs.route.result == 'success' && needs.route.outputs.${lane} == 'false'`) return true;
+  return /^!cancelled\(\) && \(needs\.route\.result != 'success' \|\| needs\.route\.outputs\.[a-z_-]+ != 'false'\)$/u.test(condition);
+}
+
+function provenMacosCommands(step) {
+  return workflowCommands(step).flatMap(command => {
+    // Do not interpret shell programs. Conditional blocks, functions, loops
+    // and continuations need a dedicated proof before they can earn credit.
+    // One-line tool-report loops contain no test command and earn no credit.
+    if (/^\s*(?:if|elif|case|while|until|select|function)\b|^\s*\w+\s*\(\)\s*\{|\\\s*$/mu.test(command)
+      || /^\s*for\b(?![^\n]*;\s*done\s*$)/mu.test(command)) return [];
+    return command.split("\n").filter(line =>
+      /^\s*(?:pnpm\s+(?:run\s+)?[a-z][a-z0-9:.-]*|node\s+scripts\/[a-zA-Z0-9_./-]+\.mjs)(?:\s+[^;&|<>`]*?)?(?:\s+\|\|\s+[a-z_]+\s*=\s*\$\?)?\s*$/u.test(line));
+  });
+}
+
+// Credit individual steps, after proving both job and step conditions.
 export function macosWorkflowCommands(source) {
   const commands = [];
   const jobs = source.split(/^  [a-zA-Z0-9_-]+:\s*$/m).slice(1);
   for (const job of jobs) {
+    const jobCondition = /^    if:\s*(.+)$/m.exec(job)?.[1];
+    if (!macosCondition(jobCondition)) continue;
+    const steps = job.split(/^      - /m).slice(1);
     if (/^    runs-on: ['"]?macos-[a-zA-Z0-9.-]+['"]?\s*$/m.test(job)) {
-      commands.push(...workflowCommands(job));
+      for (const step of steps) {
+        const condition = /^(?:if:|        if:)\s*(.+)$/m.exec(step)?.[1];
+        if (macosCondition(condition)) commands.push(...provenMacosCommands(step));
+      }
       continue;
     }
     if (!/^    runs-on: \$\{\{ matrix\.runner \}\}\s*$/m.test(job)) continue;
     const macLanes = [...job.matchAll(/^          - lane: ([a-zA-Z0-9_-]+)\n            runner: macos-[a-zA-Z0-9.-]+\s*$/gm)]
       .map(match => match[1]);
-    for (const step of job.split(/^      - /m).slice(1)) {
-      const lane = /^        if: .*matrix\.lane == '([a-zA-Z0-9_-]+)'/m.exec(step)?.[1];
-      if (lane && macLanes.includes(lane)) commands.push(...workflowCommands(step));
+    for (const step of steps) {
+      const condition = /^(?:if:|        if:)\s*(.+)$/m.exec(step)?.[1];
+      const lane = /matrix\.lane == '([a-zA-Z0-9_-]+)'/u.exec(condition ?? "")?.[1];
+      if (lane && macLanes.includes(lane)) {
+        if (macosCondition(condition, lane)) commands.push(...provenMacosCommands(step));
+      }
     }
   }
   return commands;

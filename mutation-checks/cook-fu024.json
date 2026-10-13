@@ -43,16 +43,51 @@
   },
   {
     "file": ".github/workflows/ci.yml",
-    "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          pnpm run test:updater",
-    "replace": "            true\n          ) || darwin_pg_status=$?\n          pnpm run test:updater",
+    "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n\n  test-articles:",
+    "replace": "            true\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n\n  test-articles:",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disable the added PostgreSQL execution in primary macOS path. The independently inventoried five-file list must fail both hosted macOS paths execute every inventoried result PostgreSQL file, with complete body counts."
   },
   {
     "file": ".github/workflows/ci.yml",
-    "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater",
-    "replace": "            true\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater",
+    "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
+    "replace": "            true\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disable the added PostgreSQL execution in catch-up macOS path. The independently inventoried five-file list must fail both hosted macOS paths execute every inventoried result PostgreSQL file, with complete body counts."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "  if (condition === undefined) return true;",
+    "replace": "  return true;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Bypass condition enforcement: macOS coverage refuses Linux-only step on a macOS job must fail against independently authored literal private-pg path."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n\n  test-articles:",
+    "replace": "          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || true\n          exit \"${darwin_pg_status}\"\n\n  test-articles:",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/macos-updater-lane-status.test.mjs",
+    "why": "Disable aggregation in test-updater: named test-updater aggregates test:updater-schema and completes every lane must fail against independent exit 17."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
+    "replace": "          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || true\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/macos-updater-lane-status.test.mjs",
+    "why": "Disable aggregation in full-gate: named full-gate aggregates test:updater-schema and completes every lane must fail against independent exit 17."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "    if (/^\\s*(?:if|elif|case|while|until|select|function)\\b|^\\s*\\w+\\s*\\(\\)\\s*\\{|\\\\\\s*$/mu.test(command)\n      || /^\\s*for\\b(?![^\\n]*;\\s*done\\s*$)/mu.test(command)) return [];",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable shell conditional rejection: macOS coverage refuses shell uname condition on a macOS job must fail against the independently authored uncovered path."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "    return command.split(\"\\n\").filter(line =>\n      /^\\s*(?:pnpm\\s+(?:run\\s+)?[a-z][a-z0-9:.-]*|node\\s+scripts\\/[a-zA-Z0-9_./-]+\\.mjs)(?:\\s+[^;&|<>`]*?)?(?:\\s+\\|\\|\\s+[a-z_]+\\s*=\\s*\\$\\?)?\\s*$/u.test(line));",
+    "replace": "    return command.split(\"\\n\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable proven-command filtering: macOS coverage refuses inline shell condition must fail against independently authored uncovered path."
   }
 ]

@@ -600,8 +600,7 @@ jobs:
             export PG_BIN=/opt/homebrew/opt/postgresql@17/bin
             node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts
           ) || darwin_pg_status=$?
-          pnpm run test:updater
-          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres && pnpm run test:pg-runtime-postgres && pnpm run test:pg-runtime-stress && pnpm run test:test-runner
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?
           exit "${darwin_pg_status}"
 
   test-articles:
@@ -1093,7 +1092,7 @@ jobs:
             export PG_BIN=/opt/homebrew/opt/postgresql@17/bin
             node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts
           ) || darwin_pg_status=$?
-          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?
           exit "${darwin_pg_status}"
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}

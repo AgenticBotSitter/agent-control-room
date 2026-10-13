@@ -155,3 +155,19 @@ test("both hosted macOS paths execute every inventoried result PostgreSQL file",
     finally { rmSync(root, { recursive: true }); }
   }
 });
+
+for (const [name, workflow] of Object.entries({
+  "Linux-only step on a macOS job": macJob.replace("      - run:", "      - if: runner.os == 'Linux'\n        run:"),
+  "disabled step on a macOS job": macJob.replace("      - run:", "      - if: false\n        run:"),
+  "matrix macOS lane with an extra Linux condition": "jobs:\n  catchup:\n    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        include:\n          - lane: updater\n            runner: macos-26\n    steps:\n      - if: matrix.lane == 'updater' && runner.os == 'Linux'\n        run: pnpm run test:pg\n",
+  "shell uname condition on a macOS job": "jobs:\n  mac:\n    runs-on: macos-26\n    steps:\n      - run: |\n          if [ \"$(uname -s)\" = Linux ]; then\n            pnpm run test:pg\n          fi\n",
+  "unsupported condition": macJob.replace("      - run:", "      - if: contains(matrix.platform, 'mac')\n        run:"),
+  "disabled job": macJob.replace("    runs-on:", "    if: false\n    runs-on:"),
+  "inline shell condition": macJob.replace("pnpm run test:pg", "test $(uname -s) = Linux && pnpm run test:pg"),
+})) {
+  test(`macOS coverage refuses ${name}`, () => {
+    const root = pgFixture(linuxJob + workflow);
+    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+    finally { rmSync(root, { recursive: true }); }
+  });
+}

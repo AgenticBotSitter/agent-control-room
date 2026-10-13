@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test-runner:serve": "node scripts/test-runner/server.mjs",
-    "test:test-runner": "node scripts/run-tests-with-quarantine.mjs --test tests/test-runner-service.test.mjs tests/test-runner-disconnect.test.mjs",
+    "test:test-runner": "node scripts/run-tests-with-quarantine.mjs --test tests/test-runner-service.test.mjs tests/test-runner-disconnect.test.mjs tests/macos-updater-lane-status.test.mjs",
     "test:r7cfix-harness": "node scripts/run-tests-with-quarantine.mjs --test --test-timeout=30000 tests/r7cfix-mutation-classifier.test.mjs",
     "test:affected": "node scripts/ci/affected-tests.mjs --run",
     "test:agent-worktrees": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/agent-coding-worktrees.test.ts tests/codex-owner-trusted-local-exec.test.ts tests/worktree-change-audit.test.ts tests/worktree-change-audit-record.test.ts tests/worktree-change-audit-record-store.test.ts tests/worktree-evidence-web-authorization.test.ts tests/result-text.test.tsx",
