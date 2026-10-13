@@ -85,9 +85,37 @@ test("merge gate refuses failed cancelled skipped and missing component results"
     const script = source.replace(/\$\{\{ needs\.([a-z-]+)\.result \}\}/gu,
       (_, name) => name === "test-components" ? result : "success");
     assert.doesNotMatch(script, /\$\{\{/u, "all workflow expressions must be resolved before execution");
-    const run = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
+    const run = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000, env: { ...process.env, COMPONENTS_ROUTED: "true" } });
     assert.equal(run.error, undefined);
     assert.equal(run.signal, null);
     assert.equal(run.status, result === "success" ? 0 : 1, `component result=${result}: ${run.stdout}\n${run.stderr}`);
   }
+});
+
+
+test("routing omits the whole matrix only when the component catch-up succeeds", () => {
+  assert.equal(components.if, baseline.job.if, "routing is evaluated before matrix expansion");
+  const catchUp = workflow.jobs["full-gate"].steps.find(step => step.name === "Component lanes (merge gate)");
+  assert.equal(catchUp.if, "${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}");
+  const gate = workflow.jobs["merge-gate"].steps[0];
+  // Literal decisions and results are independent of the aggregation script.
+  // Failed/cancelled/missing shards cannot borrow the catch-up's success.
+  for (const component of ["failure", "cancelled", "skipped", ""]) {
+    for (const route of ["success", "failure", "cancelled", "skipped", ""]) {
+      for (const routed of ["true", "false", ""]) {
+        for (const caughtUp of ["success", "failure", "cancelled", "skipped", ""]) {
+          const script = gate.run.replace(/\$\{\{ needs\.([a-z-]+)\.result \}\}/gu,
+            (_, name) => ({ "test-components": component, route, "full-gate": caughtUp }[name] ?? "success"));
+          const run = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000,
+            env: { ...process.env, COMPONENTS_ROUTED: routed } });
+          const accepted = component === "skipped" && route === "success" && routed === "false" && caughtUp === "success";
+          assert.equal(run.error, undefined);
+          assert.equal(run.signal, null);
+          assert.equal(run.status, accepted ? 0 : 1,
+            `component=${component} route=${route} routed=${routed} catchUp=${caughtUp}: ${run.stdout}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(gate.env, { COMPONENTS_ROUTED: "${{ needs.route.outputs.components }}" });
 });

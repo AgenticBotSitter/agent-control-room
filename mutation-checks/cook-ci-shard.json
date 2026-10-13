@@ -131,5 +131,33 @@
     "replace": "      - name: Resource-bound connector contracts\n        if: ${{ false }}",
     "test": "node --test tests/ci-component-shards.test.mjs",
     "why": "disable shard selection for Resource-bound connector contracts: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if true && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${{ needs.test-components.result }}\" = \"skipped\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && true && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${{ needs.route.result }}\" = \"success\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && true && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${COMPONENTS_ROUTED}\" = \"false\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && true; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${{ needs.full-gate.result }}\" = \"success\" ]: routing omits the whole matrix only when the component catch-up succeeds"
   }
 ]

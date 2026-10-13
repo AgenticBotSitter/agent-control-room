@@ -1102,6 +1102,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Fail unless every lane passed or was caught up by the gate
+        env:
+          COMPONENTS_ROUTED: ${{ needs.route.outputs.components }}
         run: |
           set -euo pipefail
           status=0
@@ -1124,10 +1126,16 @@ jobs:
           check quick "${{ needs.quick.result }}"
           check demo "${{ needs.test-demo.result }}"
           check server "${{ needs.test-server.result }}"
-          check components "${{ needs.test-components.result }}"
+          echo "  components: ${{ needs.test-components.result }}"
           if [ "${{ needs.test-components.result }}" != "success" ]; then
-            echo "::error::every component shard must succeed"
-            status=1
+            # Job routing runs before matrix expansion. Only an omitted whole
+            # matrix can use catch-up; a selected shard must never be skipped.
+            if [ "${{ needs.test-components.result }}" = "skipped" ] && [ "${{ needs.route.result }}" = "success" ] && [ "${COMPONENTS_ROUTED}" = "false" ] && [ "${{ needs.full-gate.result }}" = "success" ]; then
+              echo "  components: routed to successful catch-up before shards were created"
+            else
+              echo "::error::every selected component shard must succeed"
+              status=1
+            fi
           fi
           check updater "${{ needs.test-updater.result }}"
           check articles "${{ needs.test-articles.result }}"
