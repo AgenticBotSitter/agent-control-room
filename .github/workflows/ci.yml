@@ -477,7 +477,7 @@ jobs:
       # shipped service worker against real IndexedDB and the real notification
       # API. Without it that file SKIPS visibly -- never silently -- and the
       # component lane would report the receiver half of R6C-05 as proved while
-      # having run nothing. One browser, one install step, no new job.
+      # having run nothing. Every shard retains the original browser setup.
       - name: Install Chromium for the owner-push receiver lane
         run: pnpm exec playwright install --with-deps chromium
       - name: Component shard workflow guard

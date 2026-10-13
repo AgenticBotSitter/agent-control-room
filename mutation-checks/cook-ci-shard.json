@@ -159,5 +159,12 @@
     "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && true; then",
     "test": "node --test tests/ci-component-shards.test.mjs",
     "why": "disable [ \"${{ needs.full-gate.result }}\" = \"success\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": "package.json",
+    "find": "pnpm test:soak:analysis && pnpm test:perf-read-indexes && pnpm test:ci-component-shards\"",
+    "replace": "pnpm test:soak:analysis && pnpm test:perf-read-indexes\"",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "remove catch-up registration: component catch-up reaches the new guard once and retains the frozen main units"
   }
 ]

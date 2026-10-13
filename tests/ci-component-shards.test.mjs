@@ -119,3 +119,12 @@ test("routing omits the whole matrix only when the component catch-up succeeds",
   }
   assert.deepEqual(gate.env, { COMPONENTS_ROUTED: "${{ needs.route.outputs.components }}" });
 });
+
+test("component catch-up reaches the new guard once and retains the frozen main units", () => {
+  const units = scripts["test:components"].split(/\s*&&\s*/u)
+    .map(command => /^pnpm (?:run )?(test:[a-z0-9:.-]+)$/u.exec(command)?.[1]);
+  assert.deepEqual(units, [
+    ...baseline.units.filter(unit => unit.name !== "test:mac-upgrade").map(unit => unit.name),
+    "test:ci-component-shards",
+  ]);
+});
