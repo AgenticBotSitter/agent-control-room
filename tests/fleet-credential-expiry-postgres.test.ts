@@ -364,6 +364,8 @@ test("R4F-06c: an unexpired renewal that waits on the credential lock still succ
       recorder.log.length = 0;
       const rotation = gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) });
       await waitUntilParked(lock, rotation, "%fleet_worker_credentials%FOR UPDATE%"); // the renewal really is parked on the lock
+      // Read from the lock-holding session's own clock just before it lets go: the retirement must be stamped after this instant.
+      const releasedAt = (await lock.query<{ at: string }>("SELECT clock_timestamp()::text AS at")).rows[0]!.at;
       await lock.query("COMMIT"); await lock.end();
       const reply = await rotation;
       const rows = (await admin.query<{ credential_id: string; state: string; issued_at: string; ended_at: string | null;
@@ -375,6 +377,9 @@ test("R4F-06c: an unexpired renewal that waits on the credential lock still succ
       assert.equal(rows.length, 2, `round ${round}: predecessor and exactly one successor`);
       const [predecessor, successor] = rows;
       assert.equal(predecessor?.state, "retired");
+      assert.equal((await admin.query<{ after: boolean }>(`SELECT ended_at>=$1::timestamptz AS after FROM fleet_worker_credentials
+        WHERE tenant_id=$2 AND credential_id=$3`, [releasedAt, FLEET_TENANT, principal.credentialId])).rows[0]?.after, true,
+      "the retirement instant is taken after the credential lock was released, not at the start of the transaction");
       assert.equal(successor?.live, true, "the renewal of an unexpired credential must leave one live credential");
       assert.equal(rows.filter(row => row.live).length, 1);
       // Independent expected values: a literal 30-day lifetime, and the database's own text of the two instants.
