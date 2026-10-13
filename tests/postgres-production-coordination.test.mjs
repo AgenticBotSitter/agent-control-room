@@ -21,6 +21,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool.ts";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 // The shared disposable-cluster teardown. `.mjs` because
 // `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
@@ -392,15 +393,16 @@ test("50ms-query burst keeps detail, projects, Home and needs-me below 1.5s with
   const poolOptions = { ...webTarget(),
     options: "-c search_path=pg_catalog,\\ public -c timezone=UTC -c transaction_timeout=10000",
     statement_timeout: 5_000, lock_timeout: 2_000, idle_in_transaction_session_timeout: 5_000 };
-  const setupPool = new Pool({ ...poolOptions, max: 1 });
+  const setupDrain = drainingPool({ ...poolOptions, max: 1 });
   let proposed;
   try {
-    const setupTasks = new WebTaskService(poolDatabase(setupPool), scope, Date.now);
+    const setupTasks = new WebTaskService(poolDatabase(setupDrain.pool), scope, Date.now);
     proposed = await setupTasks.propose(pageIdentity, "project:latency", taskDraft, "latency-task-0001");
-  } finally { await setupPool.end(); }
+  } finally { await setupDrain.end(); }
   // The measured pool is bound before its first checkout so every connection
   // receives the production lifecycle and qualification observers.
-  const pool = new Pool({ ...poolOptions, max: 8 });
+  const drained = drainingPool({ ...poolOptions, max: 8 });
+  const pool = drained.pool;
   let production;
   try {
     production = delayedProductionDatabase(pool, 50);
@@ -423,7 +425,7 @@ test("50ms-query burst keeps detail, projects, Home and needs-me below 1.5s with
       `all burst reads must succeed: ${results.filter(result => result.status !== 200).map(result => String(result.error))}`);
     assert.ok(results.every(result => result.elapsedMs < 1_500), `each read must stay below 1.5s: ${JSON.stringify({ wall, results })}`);
     assert.ok(wall < 1_500, `the twelve-request burst must overlap through the eight-connection pool: ${wall}`);
-  } finally { if (production) await production.close(); else await pool.end(); }
+  } finally { try { if (production) await production.close(); } finally { await drained.end(); } }
 });
 
 test("page composition holds its authorization locks: a concurrent revocation blocks, then the snapshot hides a concurrent insert", needsPg, async () => {

@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after, before } from "node:test";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { WebTaskReviewService } from "../src/web/v1/task-review-service";
 import { NativeResultVerificationService } from "../src/completion-gate/v1/native-result-verification";
@@ -42,13 +43,15 @@ const DATABASE = "cr_gate_lock_order";
 const OWNER_APP = "gate-lock-order-owner", QUALITY_APP = "gate-lock-order-quality";
 const exec = promisify(execFile);
 let run = "", started = false;
-const pools: Pool[] = [];
+const pools: ReturnType<typeof drainingPool>[] = [];
 const native = (name: string, args: string[]) => exec(join(BIN, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", LANG: "C", TMPDIR: run, NODE_ENV: "test" }, timeout: 120_000, maxBuffer: 1 << 26 });
 const pool = (user: string, application_name: string, password?: string) => {
-  const created = new Pool({ host: "127.0.0.1", port: PORT, database: DATABASE, user, password, max: 4, application_name });
-  created.on("error", () => {});
-  pools.push(created); return created;
+  const drained = drainingPool({ host: "127.0.0.1", port: PORT, database: DATABASE, user, password, max: 4, application_name });
+  // Retain the existing listener: draining prevents the teardown race, but
+  // does not establish that other idle-client error events are impossible.
+  drained.pool.on("error", () => {});
+  pools.push(drained); return drained.pool;
 };
 
 /** The PGlite surface the shared fixtures use, over a superuser pool. */
@@ -115,9 +118,11 @@ async function applyRoles() {
 }
 
 after(async () => {
-  await Promise.allSettled(pools.map(value => value.end()));
-  if (started) await native("pg_ctl", ["-D", join(run, "data"), "-m", "fast", "-w", "-t", "30", "stop"]).catch(() => {});
-  if (run) await rm(run, { recursive: true, force: true });
+  try { await Promise.all(pools.map(value => value.end())); }
+  finally {
+    if (started) await native("pg_ctl", ["-D", join(run, "data"), "-m", "fast", "-w", "-t", "30", "stop"]).catch(() => {});
+    if (run) await rm(run, { recursive: true, force: true });
+  }
 });
 
 test("owner accept and a concurrent quality inspection of the same job cannot deadlock on the completion gate", needsPg, async t => {
