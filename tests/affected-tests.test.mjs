@@ -302,7 +302,9 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
 });
 
 test("every skipped-test exemption names an existing file and non-empty reason", () => {
-  assert.equal(skippedTestExemptions.size, 28, "the documented exemption list must stay deliberately bounded");
+  assert.equal(skippedTestExemptions.size, 29, "the documented exemption list must stay deliberately bounded");
+  assert.ok(skippedTestExemptions.has("tests/gateway-rollback-reboot.test.mjs"),
+    "the gateway rollback/reboot exemption must remain explicitly accounted for");
   for (const [file, reason] of skippedTestExemptions) {
     assert.ok(existsSync(join(process.cwd(), file)), `exemption file must exist: ${file}`);
     assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);

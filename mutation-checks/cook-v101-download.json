@@ -1,0 +1,156 @@
+[
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (diagnostic.stderr === \"Failure writing output to destination\") return false;",
+    "replace": "if (diagnostic.stderr === \"Failure writing output to destination\") return true;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recorded write failure\" tests/updater-runtime-vendor.test.mjs",
+    "why": "recorded exit 56 write failure must refuse after one attempt"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "|| diagnostic.exitCode === 56 && diagnostic.stderr === \"Receive failure\";",
+    "replace": "|| diagnostic.exitCode === 56;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 transient retries stop\" tests/updater-runtime-vendor.test.mjs",
+    "why": "unknown receive exit 56 refuses without retry"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "return [6, 7, 18, 28, 35, 52].includes(diagnostic.exitCode)",
+    "replace": "return false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recorded transient failure\" tests/updater-runtime-vendor.test.mjs",
+    "why": "recorded connect failure retries and converges"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "  for (let attempt = 1; attempt <= 3; attempt += 1) {\n    remaining();\n    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? \"/usr/bin/curl\", args: [...args],\n      uid: identity.uid, gid: identity.gid });\n    try {\n      await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);\n      remaining();\n      return;\n    } catch (error) {\n      if (attempt === 3 || !transientDownloadFailure(error.runtimeDownload)) throw error;",
+    "replace": "  for (let attempt = 1; attempt <= 4; attempt += 1) {\n    remaining();\n    await runtime.observeDownloadSpawn?.({ file: runtime.curlPath ?? \"/usr/bin/curl\", args: [...args],\n      uid: identity.uid, gid: identity.gid });\n    try {\n      await run(runtime.curlPath ?? \"/usr/bin/curl\", args, { env: SAFE_ENVIRONMENT, uid: identity.uid, gid: identity.gid }, runtime);\n      remaining();\n      return;\n    } catch (error) {\n      if (attempt === 4 || !transientDownloadFailure(error.runtimeDownload)) throw error;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 transient retries stop\" tests/updater-runtime-vendor.test.mjs",
+    "why": "the loop and terminal refusal together enforce the independently specified maximum three attempts"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "await rm(destination, { force: true });\n      await clock.sleep",
+    "replace": "void destination;\n      await clock.sleep",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recorded transient failure\" tests/updater-runtime-vendor.test.mjs",
+    "why": "exclusive fake curl verifies actual partial deletion before retry"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "await assertDownloadDestination(destination, identity, runtime);",
+    "replace": "void identity;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
+    "why": "real identity permission refusals must precede curl"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "&& RUNTIME_DOWNLOAD_REASONS_V1.has(stderr)) {",
+    "replace": "&& true) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "private paths URLs and control bytes cannot enter safe detail"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "&& Object.keys(diagnostic).sort().join(\",\") === \"exitCode,stderr\"",
+    "replace": "&& true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "extra fields disqualify the runtime diagnostic"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "&& (exitCode === null || Number.isInteger(exitCode) && exitCode >= 1 && exitCode <= 255)",
+    "replace": "&& true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "diagnostic exit code must be null or an OS exit status"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "if (error?.code === \"runtime_download_failed\" && diagnostic !== null",
+    "replace": "if (diagnostic !== null",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "only runtime download refusals admit the diagnostic"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "message = error.code === \"runtime_download_failed\" ? safeErrorLabelV1(error) : error.code;",
+    "replace": "message = error.code;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "the owner direct-code stop line keeps the admitted runtime cause"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "&& (Object.getPrototypeOf(diagnostic) === Object.prototype || Object.getPrototypeOf(diagnostic) === null)",
+    "replace": "&& true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "non-record diagnostic values cannot enter the runtime safe-error channel"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "details.push(stderr);",
+    "replace": "details.push(diagnostic.stderr);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 direct runtime refusal\" tests/updater-cli-flip.test.mjs",
+    "why": "validation and printing must use the same captured diagnostic value"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "umask 077; set -C; printf probe",
+    "replace": "umask 077; printf probe",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
+    "why": "a collision before the actual account probe must refuse without starting curl"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "attempt === 1 ? 5000 : 15000",
+    "replace": "attempt === 1 ? 100 : 15000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 backoff survives\" tests/updater-runtime-vendor.test.mjs",
+    "why": "lead five-second first retry wait survives a two-second outage"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "attempt === 1 ? 5000 : 15000",
+    "replace": "attempt === 1 ? 5000 : 200",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 backoff survives\" tests/updater-runtime-vendor.test.mjs",
+    "why": "lead fifteen-second second retry wait survives a nineteen-second outage"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "if (ms <= 0) {",
+    "replace": "if (false) {",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
+    "why": "literal forty-five-minute deadline refuses further attempts"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "Math.min(runtime.downloadTimeoutMs ?? 30 * 60 * 1000, runtime.remainingDownloadMs?.() ?? Infinity)",
+    "replace": "runtime.downloadTimeoutMs ?? 30 * 60 * 1000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline bounds\" tests/updater-runtime-vendor.test.mjs",
+    "why": "hung attempt watchdog uses only remaining archive budget"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "Math.min(attempt === 1 ? 5000 : 15000, remaining())",
+    "replace": "attempt === 1 ? 5000 : 15000",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
+    "why": "backoff cannot extend the literal forty-five-minute archive budget"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "await rm(downloadRoot, { recursive: true, force: true }).catch(() => {});",
+    "replace": "void downloadRoot;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 real account write and traversal\" tests/updater-runtime-vendor.test.mjs",
+    "why": "strict ENOENT cleanup assertion detects a retained folder with parent traversal restored"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "const deadline = clock.now() + 45 * 60 * 1000;",
+    "replace": "const deadline = clock.now() + 90 * 60 * 1000;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline stops\" tests/updater-runtime-vendor.test.mjs",
+    "why": "overall ceiling is an independent lead-specified forty-five minutes, not three thirty-minute attempts"
+  },
+  {
+    "file": "src/updater/v1/install/runtime.mjs",
+    "find": "      remaining();\n      return;",
+    "replace": "      return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 overall archive deadline refuses success\" tests/updater-runtime-vendor.test.mjs",
+    "why": "success delivered after the independently specified overall deadline must not install the archive"
+  }
+]

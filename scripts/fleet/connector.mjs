@@ -668,58 +668,65 @@ export async function unlockConnector({ name, homeDir, env = process.env, platfo
   getProcessIdentity: inspectProcessIdentity = getProcessIdentity, beforeRemovalCheck = async () => {} } = {}) {
   const paths = connectorInstallPaths({ homeDir, env, platform, name });
   const lockPath = `${paths.configPath}.rotate.lock`;
-  let observed;
-  try { observed = await stat(lockPath); }
+  let directoryHandle;
+  try { directoryHandle = await open(lockPath, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY); }
   catch (error) {
     if (error?.code === "ENOENT") throw new Error(`No credential lock exists for ${name}.`);
-    throw error;
-  }
-  if (!observed.isDirectory()) throw new Error(`The credential lock for ${name} is not an empty lock directory.`);
-  if (clock() - observed.mtimeMs < staleMs)
-    throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);
-  const unlockMarker = `${lockPath}.unlock-${lockGeneration(observed)}`;
-  let marker;
-  try { marker = await open(unlockMarker, "wx", 0o600); }
-  catch (error) {
-    if (error?.code === "EEXIST") throw new Error(`Another unlock check is already running for ${name}.`);
+    if (error?.code === "ENOTDIR") throw new Error(`The credential lock for ${name} is not an empty lock directory.`);
     throw error;
   }
   try {
-    await marker.writeFile(`${JSON.stringify({ pid: process.pid, processIdentity: await inspectProcessIdentity(process.pid) })}\n`);
-    await marker.sync();
-    if ((await readdir(lockPath)).length !== 0)
-      throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);
-
-    const directory = dirname(lockPath), prefix = `${basename(lockPath)}.`, suffix = ".tmp";
-    const deadContenders = [];
-    for (const entry of await readdir(directory)) {
-      if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
-      const match = /^(\d+)\.([a-f0-9]{32})$/u.exec(entry.slice(prefix.length, -suffix.length));
-      if (!match) continue;
-      const contenderPath = joinPath(directory, entry), contenderPid = Number(match[1]);
-      let contenderIdentity = null;
-      try {
-        const contender = JSON.parse(await readFile(contenderPath, "utf8"));
-        if (contender?.pid === contenderPid && contender?.token === match[2]
-          && typeof contender.processIdentity === "string") contenderIdentity = contender.processIdentity;
-      } catch (error) { if (error?.code === "ENOENT") continue; }
-      if (await sameProcess(contenderPid, contenderIdentity, isPidAlive, inspectProcessIdentity))
-        throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);
-      deadContenders.push(contenderPath);
+    // Keep the observed inode allocated until removal finishes. A deleted
+    // directory can otherwise reuse dev+ino immediately on ext4. This relies
+    // on descriptor lifetime, not optional or coarse filesystem birthtime.
+    const observed = await directoryHandle.stat();
+    if (!observed.isDirectory()) throw new Error(`The credential lock for ${name} is not an empty lock directory.`);
+    if (clock() - observed.mtimeMs < staleMs)
+      throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);
+    const unlockMarker = `${lockPath}.unlock-${lockGeneration(observed)}`;
+    let marker;
+    try { marker = await open(unlockMarker, "wx", 0o600); }
+    catch (error) {
+      if (error?.code === "EEXIST") throw new Error(`Another unlock check is already running for ${name}.`);
+      throw error;
     }
+    try {
+      await marker.writeFile(`${JSON.stringify({ pid: process.pid, processIdentity: await inspectProcessIdentity(process.pid) })}\n`);
+      await marker.sync();
+      if ((await readdir(lockPath)).length !== 0)
+        throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);
 
-    await beforeRemovalCheck({ lockPath });
-    const current = await stat(lockPath);
-    if (String(current.dev) !== String(observed.dev) || String(current.ino) !== String(observed.ino)
-      || !current.isDirectory() || (await readdir(lockPath)).length !== 0)
-      throw new Error(`The credential lock for ${name} changed while unlock was checking it. Try again.`);
-    await rmdir(lockPath);
-    await Promise.all(deadContenders.map(path => rm(path, { force: true })));
-    return Object.freeze({ unlocked: name });
-  } finally {
-    try { await marker.close(); }
-    finally { await rm(unlockMarker, { force: true }); }
-  }
+      const directory = dirname(lockPath), prefix = `${basename(lockPath)}.`, suffix = ".tmp";
+      const deadContenders = [];
+      for (const entry of await readdir(directory)) {
+        if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
+        const match = /^(\d+)\.([a-f0-9]{32})$/u.exec(entry.slice(prefix.length, -suffix.length));
+        if (!match) continue;
+        const contenderPath = joinPath(directory, entry), contenderPid = Number(match[1]);
+        let contenderIdentity = null;
+        try {
+          const contender = JSON.parse(await readFile(contenderPath, "utf8"));
+          if (contender?.pid === contenderPid && contender?.token === match[2]
+            && typeof contender.processIdentity === "string") contenderIdentity = contender.processIdentity;
+        } catch (error) { if (error?.code === "ENOENT") continue; }
+        if (await sameProcess(contenderPid, contenderIdentity, isPidAlive, inspectProcessIdentity))
+          throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);
+        deadContenders.push(contenderPath);
+      }
+
+      await beforeRemovalCheck({ lockPath });
+      const current = await stat(lockPath);
+      if (String(current.dev) !== String(observed.dev) || String(current.ino) !== String(observed.ino)
+        || !current.isDirectory() || (await readdir(lockPath)).length !== 0)
+        throw new Error(`The credential lock for ${name} changed while unlock was checking it. Try again.`);
+      await rmdir(lockPath);
+      await Promise.all(deadContenders.map(path => rm(path, { force: true })));
+      return Object.freeze({ unlocked: name });
+    } finally {
+      try { await marker.close(); }
+      finally { await rm(unlockMarker, { force: true }); }
+    }
+  } finally { await directoryHandle.close(); }
 }
 
 async function recoverPendingUnlocked({ configPath, fetcher, checkAgreement = true }) {

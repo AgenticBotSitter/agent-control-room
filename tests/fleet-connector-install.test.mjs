@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -1062,6 +1062,55 @@ test("unlock removes only a stale empty profile lock after excluding live conten
     assert.match(result.reason?.message ?? "", /Another unlock check|No credential lock exists/u);
 });
 
+test("unlock rejects replacement without birthtime and retries after interruption (synthetic metadata)", async t => {
+  const homeDir = await temporary(t, "connector-unlock-no-birthtime-"), name = "wedged";
+  const paths = connector.connectorInstallPaths({ homeDir, platform: "linux", env: {}, name });
+  const lockPath = `${paths.configPath}.rotate.lock`, old = new Date(Date.now() - 60_000);
+  const options = { name, homeDir, platform: "linux", env: {}, staleMs: 1 };
+  // Synthetic metadata: only birthtime is unavailable. Real open descriptors,
+  // replacement, directory reads and removal still exercise the filesystem.
+  const probe = await open(homeDir, "r");
+  const prototype = Object.getPrototypeOf(probe), originalStat = prototype.stat;
+  await probe.close();
+  let observedHandle;
+  t.mock.method(prototype, "stat", async function (...args) {
+    observedHandle = this;
+    const info = await originalStat.apply(this, args);
+    info.birthtimeMs = 0;
+    info.birthtime = new Date(0);
+    return info;
+  });
+  await mkdir(lockPath, { recursive: true });
+  for (const restoreAge of [false, true]) {
+    await utimes(lockPath, old, old);
+    let remainedPinned = false;
+    await assert.rejects(connector.unlockConnector({ ...options,
+      beforeRemovalCheck: async () => {
+        // Independent POSIX lifetime invariant: the observed directory must
+        // still have an open reference, even on a filesystem without reuse.
+        remainedPinned = observedHandle !== undefined
+          && await originalStat.call(observedHandle).then(() => true, () => false);
+        await rmdir(lockPath);
+        await mkdir(lockPath);
+        if (restoreAge) await utimes(lockPath, old, old);
+      },
+    }), /changed while unlock was checking/u, "replacement must survive even without birthtime");
+    assert.equal(remainedPinned, true, "observed directory must stay open through the replacement check");
+    assert.equal((await stat(lockPath)).isDirectory(), true);
+    assert.deepEqual(await readdir(lockPath), []);
+    assert.deepEqual((await readdir(dirname(lockPath))).filter(entry => entry.includes(".unlock-")), []);
+  }
+  await utimes(lockPath, old, old);
+  await assert.rejects(connector.unlockConnector({ ...options,
+    beforeRemovalCheck: async () => { throw new Error("probe interrupted before removal"); },
+  }), /probe interrupted before removal/u);
+  assert.equal((await stat(lockPath)).isDirectory(), true);
+  assert.deepEqual((await readdir(dirname(lockPath))).filter(entry => entry.includes(".unlock-")), []);
+  assert.deepEqual(await connector.unlockConnector(options), { unlocked: name });
+  await assert.rejects(stat(lockPath), error => error.code === "ENOENT");
+  await assert.rejects(connector.unlockConnector(options), /No credential lock exists/u);
+});
+
 test("a reused live PID does not preserve a dead owner generation", async t => {
   const root = await temporary(t, "connector-pid-reuse-"), lockPath = join(root, "bot.rotate.lock");
   const token = "c".repeat(32), ownerPath = join(lockPath, `owner-${token}.json`);
@@ -1391,18 +1440,70 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     import { resolve } from "node:path";
     import { pathToFileURL } from "node:url";
     const { rotate } = await import(pathToFileURL(resolve("scripts/fleet/connector.mjs")).href);
+    const { getProcessIdentity } = await import(pathToFileURL(resolve("scripts/fleet/connector-update.mjs")).href);
+    const parentExited = () => process.exit(1);
+    process.once("disconnect", parentExited);
     try {
       process.send("ready");
       await new Promise(resolveStart => process.once("message", resolveStart));
-      process.disconnect();
-      const result = await rotate({ configPath: process.argv[1] });
+      let acquisitionDeadline, holding = false, admitted = false;
+      const result = await rotate({ configPath: process.argv[1], lock: {
+        clock: () => {
+          const now = Date.now();
+          acquisitionDeadline ??= now + 10_000;
+          return now;
+        },
+        getProcessIdentity: async pid => {
+          if (!admitted) {
+            // rotate has read the real profile before inspecting its owner.
+            // Every caller must observe this generation before any writes it.
+            await new Promise((resolveAdmission, rejectAdmission) => {
+              const admit = () => {
+                clearTimeout(timer);
+                process.off("message", admit);
+                admitted = true;
+                resolveAdmission();
+              };
+              const timer = setTimeout(() => {
+                process.off("message", admit);
+                rejectAdmission(new Error("Snapshot admission exceeded the original 10s acquisition deadline."));
+              }, Math.max(0, acquisitionDeadline - Date.now()));
+              process.once("message", admit);
+              process.send("observed");
+            });
+          }
+          return getProcessIdentity(pid);
+        },
+        sleep: ms => new Promise(resolveRetry => {
+          const resume = () => {
+            clearTimeout(timer);
+            process.off("message", resume);
+            resolveRetry();
+          };
+          // Completion may wake us sooner, but a held owner cannot suspend
+          // the product's original acquisition deadline. Retirement is a
+          // separate bounded retry loop, so holders retain its normal sleep.
+          const timer = setTimeout(resume, holding ? ms : Math.max(0, acquisitionDeadline - Date.now()));
+          process.once("message", resume);
+          process.send("waiting");
+        }),
+        afterOwnerPublication: () => { holding = true; process.send("holding"); },
+      } });
       process.stdout.write(JSON.stringify(result));
     } catch (error) {
       process.stderr.write(String(error?.stack ?? error));
       process.exitCode = 1;
+    } finally {
+      process.off("disconnect", parentExited);
+      if (process.connected) process.disconnect();
     }
   `;
-  const rotateInProcess = () => {
+  const launched = [];
+  let closingChildren = false;
+  const rotateInProcess = (lockState = (state, child) => {
+    if (state === "observed") child.send("admit");
+    if (state === "waiting") child.send("retry");
+  }) => {
     const child = spawn(process.execPath, ["--input-type=module", "--eval", childSource, configPath], {
       cwd: resolve("."), env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -1413,50 +1514,105 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
     const ready = new Promise((resolveReady, rejectReady) => {
       child.once("message", message => message === "ready" ? resolveReady() : rejectReady(new Error("child was not ready")));
       child.once("error", rejectReady);
+      child.once("close", () => rejectReady(new Error("child closed before readiness")));
+    });
+    child.on("message", message => {
+      if (message === "observed" || message === "waiting" || message === "holding") lockState(message, child);
     });
     const done = new Promise(resolveChild => {
-      child.once("error", error => resolveChild({ code: null, stdout, stderr: String(error) }));
-      child.once("close", code => resolveChild({ code, stdout, stderr }));
+      child.once("error", error => { stderr += String(error); });
+      child.once("close", code => {
+        lockState("finished", child);
+        resolveChild({ code, stdout, stderr });
+      });
     });
-    return { child, ready, done };
+    const entry = { child, ready, done };
+    launched.push(entry);
+    return entry;
   };
   const runBurst = async () => {
-    const processes = Array.from({ length: 50 }, rotateInProcess);
+    // All fifty real profile reads precede a simultaneous lock race.
+    // Only subsequent retries are queued:
+    // Linux's synchronous flock probes must not exhaust the unchanged 10s
+    // product deadline by repeatedly competing with the holder for two CPUs.
+    const observed = new Set(), attempting = new Set(), waiting = new Set(), holding = new Set();
+    let retries = 0;
+    const lockState = (state, child) => {
+      if (closingChildren) return;
+      if (state === "observed") {
+        observed.add(child);
+        if (observed.size === processes.length) {
+          for (const entry of processes) entry.child.send("admit");
+        }
+        return;
+      }
+      // The same sleep callback is also used to retry retirement. A holder
+      // must finish releasing before queued acquisition retries can run.
+      if (state === "waiting" && holding.has(child)) {
+        retries++; child.send("retry"); return;
+      }
+      attempting.delete(child);
+      if (state === "waiting") { waiting.add(child); retries++; }
+      if (state === "holding") holding.add(child);
+      if (state === "finished") { holding.delete(child); waiting.delete(child); }
+      if (attempting.size === 0 && holding.size === 0 && waiting.size > 0) {
+        const next = waiting.values().next().value;
+        waiting.delete(next); attempting.add(next);
+        next.send("retry");
+      }
+    };
+    const processes = Array.from({ length: 50 }, () => {
+      const entry = rotateInProcess(lockState);
+      attempting.add(entry.child);
+      return entry;
+    });
     await Promise.all(processes.map(childProcess => childProcess.ready));
     for (const childProcess of processes) childProcess.child.send("rotate");
-    return Promise.all(processes.map(childProcess => childProcess.done));
+    const results = await Promise.all(processes.map(childProcess => childProcess.done));
+    t.diagnostic(`50 cross-process callers completed with ${retries} progress-driven retries`);
+    return results;
   };
-  const results = await runBurst();
-  assert.deepEqual(results.filter(result => result.code !== 0), [],
-    `all child rotations must succeed: ${JSON.stringify(results.filter(result => result.code !== 0))}`);
-  assert.equal(state.rotations, 1);
-  assert.equal(state.maximumActiveRotations, 1);
-  assert.equal(results.filter(result => JSON.parse(result.stdout).coalesced === true).length, 49);
-  assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
+  try {
+    const results = await runBurst();
+    assert.deepEqual(results.filter(result => result.code !== 0), [],
+      `all child rotations must succeed: ${JSON.stringify(results.filter(result => result.code !== 0))}`);
+    assert.equal(state.rotations, 1);
+    assert.equal(state.maximumActiveRotations, 1);
+    assert.equal(results.filter(result => JSON.parse(result.stdout).coalesced === true).length, 49);
+    assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
 
-  blockedStarted = new Promise(resolveStarted => { blockedRequestStarted = resolveStarted; });
-  blockedAllowed = new Promise(resolveAllowed => { allowBlockedRequest = resolveAllowed; });
-  blockedFinished = new Promise(resolveFinished => { blockedRequestFinished = resolveFinished; });
-  state.blockNext = true;
-  const killedOwner = rotateInProcess();
-  await killedOwner.ready;
-  killedOwner.child.send("rotate");
-  await blockedStarted;
-  const lockPath = `${configPath}.rotate.lock`;
-  assert.equal((await readdir(lockPath)).filter(file => file.startsWith("owner-")).length, 1);
-  killedOwner.child.kill("SIGKILL");
-  const killedResult = await killedOwner.done;
-  assert.notEqual(killedResult.code, 0);
-  allowBlockedRequest();
-  await blockedFinished;
+    blockedStarted = new Promise(resolveStarted => { blockedRequestStarted = resolveStarted; });
+    blockedAllowed = new Promise(resolveAllowed => { allowBlockedRequest = resolveAllowed; });
+    blockedFinished = new Promise(resolveFinished => { blockedRequestFinished = resolveFinished; });
+    state.blockNext = true;
+    const killedOwner = rotateInProcess();
+    await killedOwner.ready;
+    killedOwner.child.send("rotate");
+    await blockedStarted;
+    const lockPath = `${configPath}.rotate.lock`;
+    assert.equal((await readdir(lockPath)).filter(file => file.startsWith("owner-")).length, 1);
+    killedOwner.child.kill("SIGKILL");
+    const killedResult = await killedOwner.done;
+    assert.notEqual(killedResult.code, 0);
+    allowBlockedRequest();
+    await blockedFinished;
 
-  const recovered = await runBurst();
-  assert.deepEqual(recovered.filter(result => result.code !== 0), [],
-    `all dead-lock recovery callers must succeed: ${JSON.stringify(recovered.filter(result => result.code !== 0))}`);
-  assert.equal(state.rotations, 2);
-  assert.equal(state.maximumActiveRotations, 1);
-  assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 50);
-  assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
+    const recovered = await runBurst();
+    assert.deepEqual(recovered.filter(result => result.code !== 0), [],
+      `all dead-lock recovery callers must succeed: ${JSON.stringify(recovered.filter(result => result.code !== 0))}`);
+    assert.equal(state.rotations, 2);
+    assert.equal(state.maximumActiveRotations, 1);
+    assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 50);
+    assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
+  } finally {
+    closingChildren = true;
+    allowBlockedRequest?.();
+    for (const entry of launched) {
+      if (entry.child.exitCode === null && entry.child.signalCode === null) entry.child.kill("SIGKILL");
+    }
+    await Promise.all(launched.map(entry => entry.done));
+    server.closeAllConnections();
+  }
 });
 
 test("directory election admits only one contender before owner publication", async t => {

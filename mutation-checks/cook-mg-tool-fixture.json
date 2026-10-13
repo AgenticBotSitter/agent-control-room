@@ -1,0 +1,16 @@
+[
+  {
+    "file": "tests/fleet-tool-adapter.test.mjs",
+    "find": "const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));\n  let spawned = 0;",
+    "replace": "const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script, { executable: process.execPath })]));\n  let spawned = 0;",
+    "test": "node --input-type=module -e 'import {mkdtempSync,copyFileSync,chmodSync,rmSync} from \"node:fs\"; import {tmpdir} from \"node:os\"; import {join} from \"node:path\"; import {spawnSync} from \"node:child_process\"; const dir=mkdtempSync(join(tmpdir(),\"tool-loose-node-\")); try {const node=join(dir,\"node\"); copyFileSync(process.execPath,node); chmodSync(dir,0o775); chmodSync(node,0o775); const r=spawnSync(node,[\"scripts/run-tests-with-quarantine.mjs\",\"--test\",\"--test-name-pattern\",\"task data cannot select argv\",\"tests/fleet-tool-adapter.test.mjs\"],{stdio:\"inherit\",timeout:60000}); process.exitCode=r.status ?? 1;} finally {rmSync(dir,{recursive:true,force:true});}'",
+    "why": "a test-owned executable works even when the test interpreter is group-writable; reverting one adapter must fail task data cannot select argv with the manifest refusal"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if ((info.mode & 0o022) !== 0 || (uid !== undefined && info.uid !== 0 && info.uid !== uid))",
+    "replace": "if (false || (uid !== undefined && info.uid !== 0 && info.uid !== uid))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
+    "why": "the manifest validation body must reject independently specified executable mode 0722; disabling the production file mode check must fail its expected rejection"
+  }
+]

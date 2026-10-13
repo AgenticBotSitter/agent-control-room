@@ -1,3 +1,4 @@
+import './helpers/block-agent-cli.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { promises as fs } from 'node:fs';
@@ -6,8 +7,12 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import * as c from '../scripts/fleet/connector.mjs';
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 
-assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1');
+test('agent CLI guard is established before connector tests run', () => {
+  assert.equal(process.env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI, '1',
+    'connector tests must establish the independent safety value 1');
+});
 const claim = {claimId: `fleet-claim:${'1'.repeat(32)}`, jobId: 'job:encoding', title: 'Fixture',
   instructions: 'Write a note.', leaseState: 'active', taskState: 'leased', leaseExpiresAt: '2099-01-01T00:00:00Z'};
 // Exercise real alphabet characters and both letter cases on every run.
@@ -211,7 +216,7 @@ else writeFileSync(process.argv[4] + '/answer.txt', Buffer.concat([Buffer.from([
 `, {mode: 0o700});
   const manifestPath = join(p.root, 'tools.json');
   await fs.writeFile(manifestPath, JSON.stringify({schema: 'control-room.local-tool-adapters/v1',
-    maxConcurrent: 2, adapters: [{id: 'echo', capability: 'tool.qa', executable: process.execPath,
+    maxConcurrent: 2, adapters: [{id: 'echo', capability: 'tool.qa', executable: await createPrivateNodeTool(p.root),
       arguments: [script, p.configPath, '{input:source}', '{output:result}'], timeoutMs: 2000,
       maxOutputBytes: 65536, envAllowlist: []}]}), {mode: 0o600});
   const runner = c.createLocalToolAdapterRunner(await c.loadToolAdapters(manifestPath),

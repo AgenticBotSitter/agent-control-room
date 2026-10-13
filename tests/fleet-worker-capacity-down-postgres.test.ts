@@ -119,7 +119,9 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //  9. cook/10int10: perf2's 0272/0273, r5bk's 0285 and r6proj's grants moved the
 //     whole ledger to ef71e299... (= privateWebSchemaDigest); 0234's down alone, on
 //     real PostgreSQL 17 from that tree, gives the value below (was 78e43fc8...).
-const PRE_0234_DIGEST = "eae7b94ec3ce36c305be438df6ba4c692714ce00d9b760950aecddc1e49b3655";
+// 10.0300 adds durable owner-push completion. Measured as the production web
+// login after the full ledger and0234 down;0300 down recovers the prior release.
+const PRE_0234_DIGEST = "2725341d4abf53506ecb8a6649be897f7b4c87ce4fcb885dfd9711d101db7445";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

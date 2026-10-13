@@ -1,6 +1,6 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { ownerPushLinkV1 } from "./policy";
-import type { OwnerNotificationChannelV1, OwnerPushStoreV1 } from "./types";
+import type { OwnerNotificationChannelV1, OwnerPushStoreV1, OwnerPushCompletionResultV1 } from "./types";
 import { deliverOwnerPushV1 } from "./delivery";
 
 /**
@@ -42,6 +42,13 @@ import { deliverOwnerPushV1 } from "./delivery";
  * inside a transaction and a slow or dropped push endpoint cannot hold a
  * database connection or a row lock (the owner-visible failure this must not
  * have: the coordinator going unavailable because a phone did not answer).
+ *
+ * Safe per-subscription results are recorded on the head as 'completing'
+ * before repair publishes another sendable head. Completing work is database
+ * write-only, bounded and reconstructed by a fresh dispatcher. No claim or
+ * refused-write closure is retained across ticks. Complete database write
+ * outage, including readable-but-write-refused outage past the stale threshold,
+ * retains the accepted same-tag crash ambiguity; no fencing is claimed.
  *
  * The cost of that ordering is a crash in the window between commit and
  * completion: the row is left 'reserved' with no `completed_at`. That is
@@ -273,9 +280,15 @@ type HeadRow = {
   action_inbox_id: string;
   link: string;
   attempt_count: number | string;
-  state: "pending" | "reserved" | "delivered" | "failed";
+  state: "pending" | "reserved" | "completing" | "delivered" | "failed";
+  completion_data?: OwnerPushCompletionResultV1[];
+  completion_disposition?: "delivered" | "retry" | "deferred" | "failed" | null;
+  completion_next_attempt_at?: string | Date | null;
+  completion_reason_code?: string | null;
+  completion_retry_count?: number | string;
   next_attempt_at: string | Date;
   reserved_at: string | Date | null;
+  updated_at?: string | Date;
 };
 
 /** Only the two owner-facing destinations a Needs-you or incident push may open. */
@@ -428,7 +441,7 @@ export class OwnerPushDispatcherV1 {
   }
 
   /**
-   * Claim the due items and send each one, one at a time, each claim already
+   * Claim the due items and send with bounded worker width, each claim already
    * committed. Returns one outcome per item examined.
    *
    * `FOR UPDATE SKIP LOCKED` is what makes a second dispatcher safe: it takes
@@ -440,6 +453,7 @@ export class OwnerPushDispatcherV1 {
       throw new Error("owner_push_limit_invalid");
     await this.adoptOpenAttention(limit);
     await this.recoverStaleReservations();
+    const completions = await this.#dueCompletions();
     const at = safeNow(this.#clock());
     // Is there anybody to send to?
     //
@@ -458,7 +472,10 @@ export class OwnerPushDispatcherV1 {
     // The one thing this must not become is a snapshot the whole batch trusts:
     // `deliverOwnerPushV1` lists again per item, so a subscription that
     // disappears mid-batch is caught by the send path, not skipped here.
-    if ((await this.input.store.list(this.input.tenantId)).length === 0) return await this.#deferUntilSubscribed(at);
+    if ((await this.input.store.list(this.input.tenantId)).length === 0) {
+      await this.#runCompletions(completions);
+      return await this.#deferUntilSubscribed(at);
+    }
     // The claim SELECTs and RESERVES in ONE transaction, and it is BOTH the lock
     // and the compare-and-set that make the claim exclusive.
     //
@@ -491,6 +508,7 @@ export class OwnerPushDispatcherV1 {
         JOIN control_action_inbox i ON i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id
         WHERE h.tenant_id=$1 AND h.state='pending' AND h.next_attempt_at<=$2
           AND h.attempt_count<${OWNER_PUSH_ATTEMPT_LIMIT_V1} AND i.state='open'
+          AND (i.expires_at IS NULL OR i.expires_at>$2)
         ORDER BY h.next_attempt_at,h.action_inbox_id LIMIT $3
         FOR UPDATE OF h SKIP LOCKED`, [this.input.tenantId, at, limit]);
       // Reserve exactly the rows this transaction holds locked. The WHERE clause
@@ -503,153 +521,231 @@ export class OwnerPushDispatcherV1 {
       [this.input.tenantId, at, due.rows.map(row => row.action_inbox_id)]);
       return reserved.rows;
     });
-    const outcomes: OwnerPushDispatchOutcomeV1[] = [];
-    // Bounded concurrency, not serial. A wedged push endpoint costs one full
-    // round trip per item, so sending a claimed batch one after another makes
-    // the delay to the owner's phone grow with the size of the stall burst --
-    // exactly when the alert matters most. The bound is small and fixed: a burst
-    // of 50 against a 2s endpoint still finishes in well under a loop interval
-    // per item, and a smaller bound cannot exhaust the web pool or the push
-    // service's own rate limit.
-    //
-    // No database connection is held while any of these run. Each attempt is a
-    // short reservation transaction, then a network call, then a short settle.
-    const settled = new Array<OwnerPushDispatchOutcomeV1>(claimed.length);
+    // Fresh and repair work share one total worker width. Repair has its own
+    // eight-item budget, so a poison receipt cannot become a serial tail.
+    const work = [...completions.map(head => ({ head, repair: true })),
+      ...claimed.map(head => ({ head, repair: false }))];
+    const settled = new Array<OwnerPushDispatchOutcomeV1 | undefined>(work.length);
+    const errors: unknown[] = [];
     let next = 0;
     const worker = async () => {
-      for (let index = next++; index < claimed.length; index = next++) {
-        // One shape of alert, one shape of payload. A service incident and a
-        // second stall both open /needs-me, so they push the same generic title
-        // and tag; which one it was stays in the database, never in the payload.
-        settled[index] = await this.#attempt(claimed[index]!);
+      for (let index = next++; index < work.length; index = next++) {
+        const item = work[index]!;
+        try { settled[index] = item.repair ? await this.#complete(item.head) : await this.#attempt(item.head); }
+        catch (error) { errors.push(error); }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY_V1, claimed.length) }, worker));
-    for (const outcome of settled) if (outcome) outcomes.push(outcome);
-    return Object.freeze(outcomes);
+    await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY_V1, work.length) }, worker));
+    // Reporting happens after all siblings have finished. No closures, claims
+    // or outcomes survive this call; the next reader reconstructs durable work.
+    if (errors.length) throw new Error("owner_push_completion_unavailable");
+    return Object.freeze(settled.filter((row): row is OwnerPushDispatchOutcomeV1 => row !== undefined));
   }
 
-  /**
-   * One item: the row is ALREADY reserved by dispatch(), so this sends outside
-   * any transaction and then settles the outcome.
-   */
-  async #attempt(head: HeadRow): Promise<OwnerPushDispatchOutcomeV1> {
-    const id = head.action_inbox_id;
-    const now = safeNow(this.#clock());
-    const attempt = Number(head.attempt_count);
-    // A send that failed, as distinct from one that never happened. `deliverOwnerPushV1`
-    // absorbs the per-subscription failure internally, so this is how the
-    // difference is observed: without it, a dead push service is indistinguishable
-    // from an owner who has not subscribed this browser, and the bounded retry
-    // would quietly give up on a phone that is merely offline.
+  async #live(head: HeadRow): Promise<boolean> {
+    const result = await this.input.db.query(`SELECT h.action_inbox_id
+      FROM control_owner_push_attempt_heads h JOIN control_action_inbox i
+        ON i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id
+      WHERE h.tenant_id=$1 AND h.action_inbox_id=$2 AND h.attempt_count=$3 AND h.reserved_at=$4
+        AND h.state IN ('reserved','completing') AND i.state='open'
+        AND (i.expires_at IS NULL OR i.expires_at>$5)`,
+    [this.input.tenantId, head.action_inbox_id, Number(head.attempt_count), head.reserved_at, safeNow(this.#clock())]);
+    return result.rows.length === 1;
+  }
+
+  /** Persist one safe result before any head can become resendable. Bounded
+   * same-cycle retry handles admission refusal without retaining a closure. */
+  async #record(head: HeadRow, receipts: readonly OwnerPushCompletionResultV1[],
+    disposition: "delivered" | "retry" | "deferred" | "failed" | null = null,
+    when: string | null = null, reason: string | null = null): Promise<void> {
+    const at = safeNow(this.#clock());
+    for (let retry = 0; ; retry++) {
+      try {
+        const result = await this.input.db.query(`UPDATE control_owner_push_attempt_heads
+          SET state='completing',completion_data=$5::jsonb,completion_disposition=$6::text,
+            completion_next_attempt_at=$7::timestamptz,completion_reason_code=$8::text,
+            next_attempt_at=$9::timestamptz,updated_at=$9::timestamptz
+          WHERE tenant_id=$1 AND action_inbox_id=$2 AND attempt_count=$3 AND reserved_at=$4::timestamptz
+            AND state IN ('reserved','completing') RETURNING action_inbox_id`,
+        [this.input.tenantId, head.action_inbox_id, Number(head.attempt_count), head.reserved_at,
+          JSON.stringify(receipts), disposition, when, reason, at]);
+        if (result.rows.length !== 1) throw new Error("owner_push_claim_changed");
+        return;
+      } catch (error) { if (retry >= 1) throw error; }
+    }
+  }
+
+  async #attempt(head: HeadRow): Promise<OwnerPushDispatchOutcomeV1 | undefined> {
+    const now = safeNow(this.#clock()), attempt = Number(head.attempt_count);
+    const receipts: OwnerPushCompletionResultV1[] = [];
     let sendFailure: { statusCode: number | undefined; removed: boolean } | undefined;
-    let retryAfterMs = 0;
-    let deliveredCount = 0;
-    let deduplicated = 0;
+    let retryAfterMs = 0, deliveredCount = 0, deduplicated = 0;
+    let interrupted = false;
     try {
-      // `ownerPushLinkV1` re-validates the stored link on the way out. The column
-      // CHECK constrains it in the database, but a value that reached here some
-      // other way must not become an open redirect on a phone.
-      const link = ownerPushLinkV1(head.link);
-      const result = await deliverOwnerPushV1({ tenantId: this.input.tenantId, kind: "needs_you", link,
-        dedupeKey: ownerPushDedupeKeyV1(id), now, store: this.input.store, channel: this.input.channel,
+      if (!await this.#live(head)) return await this.#finish(head, receipts, "failed", now,
+        "owner_push_item_no_longer_open");
+      const result = await deliverOwnerPushV1({ tenantId: this.input.tenantId, kind: "needs_you",
+        link: ownerPushLinkV1(head.link), dedupeKey: ownerPushDedupeKeyV1(head.action_inbox_id), now,
+        store: this.input.store, channel: this.input.channel,
+        maySend: () => this.#live(head),
+        recordResult: async receipt => {
+          receipts.push(receipt);
+          if (receipt.result === "delivered") deliveredCount++;
+          await this.#record(head, receipts);
+        },
         onFailure: failure => {
-          // A removed phone cannot make another phone's temporary failure terminal.
-          if (!sendFailure || !failure.removed) sendFailure = { statusCode: failure.statusCode, removed: failure.removed };
+          if (!sendFailure || !failure.removed) sendFailure = failure;
           retryAfterMs = Math.max(retryAfterMs, failure.retryAfterMs ?? 0);
         } });
-      deliveredCount = result.delivered;
-      deduplicated = result.deduplicated;
-    } catch (error) {
-      sendFailure = { statusCode: typeof error === "object" && error !== null && "statusCode" in error
-        && typeof (error as { statusCode?: unknown }).statusCode === "number"
-        ? (error as { statusCode: number }).statusCode : undefined, removed: false };
+      deliveredCount = result.delivered; deduplicated = result.deduplicated;
+    } catch {
+      // An interruption before later subscriptions is retryable. Acceptance
+      // already observed stays acceptance; a bookkeeping refusal is not 503.
+      interrupted = true;
     }
-    const spent = attempt;
-    const backoffUntil = new Date(Date.parse(now) + Math.max(ownerPushBackoffMsV1(spent), retryAfterMs)).toISOString();
-    if ((!sendFailure || sendFailure.removed) && deliveredCount > 0) return this.#settle(id, "delivered", spent, now, null);
-    if ((!sendFailure || sendFailure.removed) && deduplicated > 0)
-      // The browser already holds this exact event: a send DID land for this
-      // item, the acknowledgement was simply lost (the restart window above). The
-      // dedupe ledger is the evidence, so this is delivered, not a retry.
-      return this.#settle(id, "delivered", spent, now, null);
-    if (!sendFailure) {
-      // No subscription left by the time this item was sent to. The pre-claim
-      // check catches the common case, so reaching here means the owner's only
-      // subscription was removed (or pruned as expired) DURING this batch --
-      // between the gate above and this send. There is still nothing to retry
-      // and no reason to spend the bounded attempts on a phone that was never
-      // going to be handed this item: the owner still has it on /needs-me.
-      //
-      // The attempt is NOT refunded. It was genuinely spent by the claim, and
-      // 0225's guard is right to refuse a decrement: a decrement is
-      // indistinguishable from a caller rewinding a delivered head, and the
-      // guard has no way to tell this honest release from that attack. So the
-      // honest record is "we claimed, sent to nobody, and it cost us one try",
-      // and what protects the item from the old starvation is the bound below
-      // -- a head at the limit becomes 'failed', which is a visible, terminal,
-      // explainable state rather than a row nothing can ever claim again.
-      return this.#settle(id, "deferred", spent, backoffUntil, "owner_push_no_subscription");
-    }
-    // 404/410: the push service reports the browser subscription is gone, and
-    // `deliverOwnerPushV1` has already removed it. Retrying would reach nothing,
-    // so the item stops here as permanently undeliverable rather than as a stall
-    // that keeps spending attempts.
-    if (sendFailure.removed) return this.#settle(id, "failed", spent, now, "owner_push_subscription_gone");
-    return this.#settle(id, "retry", spent, backoffUntil, "owner_push_endpoint_unavailable");
+    const backoffUntil = new Date(Date.parse(now) + Math.max(ownerPushBackoffMsV1(attempt), retryAfterMs)).toISOString();
+    if (!interrupted && (!sendFailure || sendFailure.removed) && deliveredCount+deduplicated>0)
+      return this.#finish(head, receipts, "delivered", now, null);
+    if (!interrupted && !sendFailure) return this.#finish(head, receipts, "deferred", backoffUntil, "owner_push_no_subscription");
+    if (!interrupted && sendFailure?.removed) return this.#finish(head, receipts, "failed", now, "owner_push_subscription_gone");
+    return this.#finish(head, receipts, interrupted && receipts.some(r=>r.result === "delivered") ? null : "retry",
+      backoffUntil, "owner_push_endpoint_unavailable");
   }
 
-  /**
-   * Write the outcome. A delivered head is terminal under 0225's guard, and the
-   * bound is enforced here as well as in the column CHECK: at the limit the head
-   * becomes 'failed' rather than 'pending', so a permanently broken push service
-   * costs exactly ATTEMPT_LIMIT sends and then stops.
-   */
-  async #settle(id: string, disposition: "delivered" | "retry" | "deferred" | "failed", spent: number,
-    when: string, safeReasonCode: string | null): Promise<OwnerPushDispatchOutcomeV1> {
-    const terminal = disposition === "delivered" || disposition === "failed" || spent >= OWNER_PUSH_ATTEMPT_LIMIT_V1;
-    const state = terminal ? (disposition === "delivered" ? "delivered" : "failed") : "pending";
-    // A head that ran out of attempts records WHY it stopped trying, which is
-    // the bound -- not the last individual failure. "the endpoint was
-    // unavailable" is true of every retry and says nothing about the head being
-    // finished, so an operator reading the ledger would be told to wait for a
-    // retry that will never come. A head that stopped for a specific reason
-    // (a removed subscription) keeps that reason, because it is the actionable
-    // one.
-    //
-    // 'deferred' is a RETRY, not a distinct terminal state, and it is the one
-    // case where the bound reaching the limit is the only thing that can stop
-    // it: nobody was subscribed, so nothing about the item is permanently
-    // undeliverable and an item that reached the bound with nobody to send it
-    // is reported as exhausted exactly as a dead endpoint would be. The
-    // difference is that this one cannot be reached at all through the
-    // pre-claim gate -- only through a subscription that vanished mid-batch --
-    // and the pre-claim gate is what makes a fresh install heal the moment the
-    // owner subscribes.
-    const exhausted = state === "failed" && disposition !== "failed";
-    const reason = state === "failed" ? (exhausted ? "owner_push_attempts_exhausted" : safeReasonCode) : safeReasonCode;
-    // Every parameter carries an explicit cast. A bare NULL placeholder carries
-    // no type for PostgreSQL to resolve, and the statement fails to plan with
-    // "could not determine data type of parameter" -- so the casts are load
-    // bearing, not decoration.
-    //
-    // The caller passes the instant to write in each case: the backoff deadline
-    // for a retry, the settle instant for a terminal outcome. It is passed
-    // rather than recomputed here so the value written is exactly the one the
-    // caller chose.
-    const completedAt = terminal ? when : null;
-    await this.input.db.query(`UPDATE control_owner_push_attempt_heads
-      SET state=$3::text,
-        next_attempt_at=$4::timestamptz,
-        reserved_at=NULL,
-        completed_at=$5::timestamptz,
-        safe_reason_code=$6::text,
-        updated_at=$7::timestamptz
-      WHERE tenant_id=$1 AND action_inbox_id=$2 AND state='reserved'`,
-    [this.input.tenantId, id, state, when, completedAt, reason, when]);
-    return Object.freeze({ actionInboxId: id,
-      result: state === "delivered" ? "delivered" : state === "failed" ? "exhausted" : "retry_scheduled",
-      attempt: spent, nextAttemptAt: when });
+  async #finish(head: HeadRow, receipts: readonly OwnerPushCompletionResultV1[],
+    disposition: "delivered" | "retry" | "deferred" | "failed" | null, when: string, reason: string | null) {
+    if (disposition === null) {
+      await this.#record(head, receipts);
+      const accepted = receipts.filter(row => row.result === "delivered").map(row => row.subscription_id);
+      const remaining = await this.input.db.query(`SELECT id FROM owner_web_push_subscriptions s WHERE tenant_id=$1
+        AND NOT (s.id=ANY($3::text[])) AND NOT EXISTS (SELECT 1 FROM owner_web_push_deliveries d
+          WHERE d.tenant_id=s.tenant_id AND d.subscription_id=s.id AND d.dedupe_key=$2 AND d.state='delivered')`,
+      [this.input.tenantId, ownerPushDedupeKeyV1(head.action_inbox_id), accepted]);
+      disposition = remaining.rows.length === 0 && accepted.length > 0 ? "delivered" : "retry";
+      if (disposition === "delivered") reason = null;
+    }
+    await this.#record(head, receipts, disposition, when, reason);
+    return await this.#complete({ ...head, completion_data: [...receipts], completion_disposition: disposition,
+      completion_next_attempt_at: disposition === null ? null : when, completion_reason_code: reason, completion_retry_count: 0 }, true);
+  }
+
+  async #dueCompletions(): Promise<HeadRow[]> {
+    const at = safeNow(this.#clock());
+    const staleBefore = new Date(Date.parse(at)-OWNER_PUSH_RESERVATION_STALE_MS_V1).toISOString();
+    const result = await this.input.db.query<HeadRow>(`SELECT action_inbox_id,link,attempt_count,state,
+      next_attempt_at,reserved_at,completion_data,completion_disposition,completion_next_attempt_at,
+      completion_reason_code,completion_retry_count,updated_at FROM control_owner_push_attempt_heads
+      WHERE tenant_id=$1 AND state='completing' AND next_attempt_at<=$2
+        AND (completion_disposition IS NOT NULL OR updated_at<=$3)
+      ORDER BY next_attempt_at,action_inbox_id LIMIT ${SEND_CONCURRENCY_V1}`, [this.input.tenantId, at, staleBefore]);
+    return result.rows;
+  }
+
+  async #runCompletions(heads: readonly HeadRow[]): Promise<void> {
+    const errors: unknown[] = [];
+    await Promise.all(heads.map(async head => { try { await this.#complete(head); } catch (error) { errors.push(error); } }));
+    if (errors.length) throw new Error("owner_push_completion_unavailable");
+  }
+
+  /** Apply receipts and publish the final head in ONE transaction. A refusal
+   * rolls back every ledger edit. No provider operation runs in this path. */
+  async #complete(head: HeadRow, owner = false): Promise<OwnerPushDispatchOutcomeV1 | undefined> {
+    const now = safeNow(this.#clock()), spent = Number(head.attempt_count);
+    let retryCount = Number(head.completion_retry_count ?? 0);
+    try {
+      return await this.input.db.transaction(async tx => {
+        const locked = await tx.query<HeadRow>(`SELECT action_inbox_id,link,attempt_count,state,next_attempt_at,reserved_at,
+          completion_data,completion_disposition,completion_next_attempt_at,completion_reason_code,completion_retry_count,updated_at
+          FROM control_owner_push_attempt_heads WHERE tenant_id=$1 AND action_inbox_id=$2
+            AND state='completing' AND attempt_count=$3 AND reserved_at=$4::timestamptz FOR UPDATE`,
+        [this.input.tenantId, head.action_inbox_id, spent, head.reserved_at]);
+        const current = locked.rows[0];
+        if (!current) return undefined; // A peer completed this exact receipt.
+        retryCount = Number(current.completion_retry_count ?? 0);
+        // Due selection is a snapshot shared by competing peers. A refused
+        // repair may have moved the deadline while this peer waited for the
+        // head lock; its current backoff must govern the next write attempt.
+        if (!owner && new Date(current.next_attempt_at).getTime() > Date.parse(now))
+          return undefined;
+        if (!owner && !current.completion_disposition && current.updated_at
+          && new Date(current.updated_at).getTime() > Date.parse(now)-OWNER_PUSH_RESERVATION_STALE_MS_V1)
+          return undefined; // An active sender advanced progress after our due read.
+        const receipts = current.completion_data ?? [];
+        // ONE global lock order: every subscription's resources (its parent row,
+        // the 0174 delivery rows a parent delete cascades over, and this item's
+        // own delivery row) are taken in ascending subscription id. A removed
+        // parent is deleted immediately before its own delivery write, so a peer
+        // completion or unsubscribe holding a lower id can only make this wait,
+        // never close a cycle with a higher one.
+        const ordered = [...receipts].sort((a, b) => a.subscription_id < b.subscription_id ? -1
+          : a.subscription_id > b.subscription_id ? 1 : 0);
+        for (const receipt of ordered) {
+          if (receipt.remove)
+            await tx.query(`DELETE FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
+              [this.input.tenantId, receipt.subscription_id]);
+          const result = await tx.query(`UPDATE owner_web_push_deliveries
+            SET state=$4::text,completed_at=$5::timestamptz,status_code=$6::integer
+            WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3 AND state='reserved'
+            RETURNING subscription_id`, [this.input.tenantId,receipt.subscription_id,receipt.event_tag,
+            receipt.result,receipt.completed_at,receipt.status_code]);
+          if (result.rows.length !== 1) {
+            const proof = await tx.query<{ state: string }>(`SELECT state FROM owner_web_push_deliveries
+              WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3`,
+            [this.input.tenantId,receipt.subscription_id,receipt.event_tag]);
+            const live = await tx.query(`SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND id=$2`,
+              [this.input.tenantId,receipt.subscription_id]);
+            // A missing ledger row means the subscription was replaced after the
+            // receipt (delete then re-save of one endpoint gives the same id, and
+            // the cascade took the row), so there is nothing left to complete. An
+            // existing row in a conflicting state is still refused.
+            if (live.rows.length && proof.rows.length && proof.rows[0]!.state !== receipt.result)
+              throw new Error("owner_push_completion_record_changed");
+          }
+        }
+        let disposition = current.completion_disposition;
+        // An unsealed progress receipt is recovered only after the stale window.
+        // Repaired successes suppress their own subscription on the next send.
+        if (!disposition) {
+          const remaining = await tx.query(`SELECT id FROM owner_web_push_subscriptions s WHERE tenant_id=$1
+            AND NOT EXISTS (SELECT 1 FROM owner_web_push_deliveries d WHERE d.tenant_id=s.tenant_id
+              AND d.subscription_id=s.id AND d.dedupe_key=$2 AND d.state='delivered')`,
+          [this.input.tenantId, ownerPushDedupeKeyV1(head.action_inbox_id)]);
+          disposition = remaining.rows.length === 0 && receipts.some(r=>r.result==='delivered') ? "delivered" : "retry";
+        }
+        const when = current.completion_next_attempt_at
+          ? new Date(current.completion_next_attempt_at).toISOString()
+          : disposition === "delivered" ? now : new Date(Date.parse(now)+ownerPushBackoffMsV1(spent)).toISOString();
+        const terminal = disposition === "delivered" || disposition === "failed" || spent >= OWNER_PUSH_ATTEMPT_LIMIT_V1;
+        const state = terminal ? (disposition === "delivered" ? "delivered" : "failed") : "pending";
+        const exhausted = state === "failed" && disposition !== "failed";
+        const reason = exhausted ? "owner_push_attempts_exhausted" : current.completion_reason_code;
+        const changed = await tx.query(`UPDATE control_owner_push_attempt_heads
+          SET state=$3::text,next_attempt_at=$4::timestamptz,reserved_at=NULL,completed_at=$5::timestamptz,
+            safe_reason_code=$6::text,updated_at=$7::timestamptz,completion_data=NULL,completion_disposition=NULL,
+            completion_next_attempt_at=NULL,completion_reason_code=NULL,completion_retry_count=0
+          WHERE tenant_id=$1 AND action_inbox_id=$2 AND state='completing'
+            AND attempt_count=$8 AND reserved_at=$9::timestamptz RETURNING action_inbox_id`,
+        [this.input.tenantId,head.action_inbox_id,state,when,terminal?now:null,reason,now,spent,head.reserved_at]);
+        if (changed.rows.length !== 1) throw new Error("owner_push_claim_changed");
+        return Object.freeze({ actionInboxId: head.action_inbox_id,
+          result: state === "delivered" ? "delivered" as const : state === "failed" ? "exhausted" as const : "retry_scheduled" as const,
+          attempt: spent, nextAttemptAt: when });
+      });
+    } catch (error) {
+      // Retry writes, not sends; the send-attempt counter never moves here.
+      // The transaction released its lock on refusal. Compare its observed
+      // retry count and due deadline so a peer publication cannot be replaced,
+      // including when the retry count has reached its cap.
+      const count = Math.min(retryCount+1,OWNER_PUSH_ATTEMPT_LIMIT_V1);
+      const retryAt = new Date(Date.parse(now)+ownerPushBackoffMsV1(count)).toISOString();
+      await this.input.db.query(`UPDATE control_owner_push_attempt_heads
+        SET next_attempt_at=$5,completion_retry_count=$6,updated_at=$7
+        WHERE tenant_id=$1 AND action_inbox_id=$2 AND state='completing'
+          AND attempt_count=$3 AND reserved_at=$4::timestamptz
+          AND completion_retry_count=$8 AND next_attempt_at<=$7::timestamptz RETURNING action_inbox_id`,
+      [this.input.tenantId,head.action_inbox_id,spent,head.reserved_at,retryAt,count,now,retryCount]);
+      throw error;
+    }
   }
 
   /**

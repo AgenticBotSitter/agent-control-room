@@ -452,10 +452,11 @@ test("the fixed attended release builder emits only its reviewed manifest policy
     await mkdir(join(source, name), { recursive: true }); await writeFile(join(source, name, "entry"), `${name}\n`);
   }
   const commit = "a".repeat(40), manifest = await buildAttendedReleaseV1({ source, output, commit });
-  assert.equal(manifest.fileCount, files.length + 7); assert.equal(manifest.commit, commit);
+  assert.equal(manifest.fileCount, files.length + 8);
+  assert.ok(manifest.files.some(file => file.path === "gateway-local-capability.json")); assert.equal(manifest.commit, commit);
   assert.deepEqual((await import("node:fs/promises").then(fs => fs.readdir(output))).sort(),
     ["LICENSE", "NOTICE", "RELEASE_MANIFEST.json", "THIRD_PARTY.md", "db", "deploy", "dist-vps", "package.json",
-      "pnpm-lock.yaml", "scripts", "src", "third_party"]);
+      "gateway-local-capability.json", "pnpm-lock.yaml", "scripts", "src", "third_party"].sort());
   const linkedOutput = join(root, "linked-output"); await mkdir(linkedOutput); await rm(join(source, "LICENSE"));
   await symlink("NOTICE", join(source, "LICENSE"));
   await assert.rejects(buildAttendedReleaseV1({ source, output: linkedOutput, commit }), /updater_build_input_refused/u);
