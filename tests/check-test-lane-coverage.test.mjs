@@ -185,6 +185,7 @@ for (const [name, shell] of Object.entries({
   "function": "f() {\npnpm run test:pg\n}",
   "continuation": "false && \\\n pnpm run test:pg",
   "unterminated subshell": "darwin_pg_status=0\n(\npnpm run test:pg",
+  "nested subshell with one close": "darwin_pg_status=0\n(\n(\npnpm run test:pg\n) || darwin_pg_status=$?",
   "nested subshell": "darwin_pg_status=0\n(\n(\npnpm run test:pg\n) || darwin_pg_status=$?\n) || darwin_pg_status=$?",
   "unopened subshell": "darwin_pg_status=0\npnpm run test:pg\n) || darwin_pg_status=$?",
   "uncaptured subshell": "(\npnpm run test:pg\n) || darwin_pg_status=$?",

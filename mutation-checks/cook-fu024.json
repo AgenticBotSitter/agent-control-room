@@ -102,7 +102,7 @@
     "find": "      if (line === \"(\") {\n        if (subshell) return [];",
     "replace": "      if (line === \"(\") {\n        if (false) return [];",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses nested subshell must fail against independently specified missing path. All bodies and cleanup must complete."
+    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses nested subshell with one close must fail against independently specified missing path. All bodies and cleanup must complete."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
