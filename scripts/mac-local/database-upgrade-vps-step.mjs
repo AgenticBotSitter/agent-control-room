@@ -5,7 +5,7 @@ import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
  * changed plan or a missing login code, takes a backup, and only then writes.
  * A login code arrives on stdin and is never printed or written to a file. */
 import { rm, statfs, writeFile } from "node:fs/promises";
-import { reserveBackupGenerationV1 } from "../../src/installer/shared/backup-files.mjs";
+import { releaseBackupGenerationV1, reserveBackupGenerationV1 } from "../../src/installer/shared/backup-files.mjs";
 import { isAbsolute, join } from "node:path";
 import { connectTarget, readSchemaDigest } from "../../deploy/postgres/evidence.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../ops/backup-database.mjs";
@@ -104,14 +104,15 @@ export async function runMacDatabaseUpgradeVpsStepV1({ args, readCode = readStdi
   const out = join(backupRoot, `pre-${short}-${stamp}`);
   write(`Backing up to ${out} …\n`);
   let created = false;
+  let generation;
   try {
-    const generation = await reserveBackupGenerationV1(out);
+    generation = await reserveBackupGenerationV1(out);
     created = true;
     await createMacLocalDatabaseBackupV1({ source: target, out, pgBin, generation });
   } catch (cause) {
     if (created) await rm(out, { recursive: true, force: true });
     throw Object.assign(refusal("upgrade_backup_failed", "Refused: the backup failed. Nothing was changed."), { cause });
-  }
+  } finally { await releaseBackupGenerationV1(generation); }
   await writeFile(join(out, "plan.json"), `${JSON.stringify({ commit, digest, plan })}\n`, { mode: 0o600, flag: "wx" });
   write("Applying …\n");
   await runMacDatabaseUpgradeCommandV1({ args: ["--apply", "--expected-main", commit, "--expected-plan-digest", digest],

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { IntakeCoordinatorV1, workBatchProposalDigestV1, PostgresIntakePlannerFailureStoreV1,
@@ -65,27 +66,6 @@ function poolDatabase(pool: Pool): DatabaseClient {
       try { return await database(client as unknown as Client).transaction(work); } finally { client.release(); }
     },
   } as DatabaseClient;
-}
-
-/** pg-pool removes idle clients before their sockets acknowledge end. Keep the
- * same client-end barrier as the production private database before the fixture
- * can stop PostgreSQL; do not hide shutdown errors with a pool error listener. */
-function drainingPool(options: ConstructorParameters<typeof Pool>[0]) {
-  const pool = new Pool(options);
-  const endings = new Set<Promise<void>>();
-  pool.on("connect", client => {
-    let finished!: () => void;
-    const ended = new Promise<void>(resolve => { finished = resolve; });
-    endings.add(ended);
-    client.once("end", () => { endings.delete(ended); finished(); });
-  });
-  return {
-    pool,
-    async end() {
-      await pool.end();
-      await Promise.all([...endings]);
-    },
-  };
 }
 
 /** A proposal for `projectId`. The caller names the project, so a fixture for a

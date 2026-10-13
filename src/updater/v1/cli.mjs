@@ -414,7 +414,7 @@ try {
     if (result.passkey && result.passkey.status !== "registered") {
       context.stdout(`Not ready: Face ID is NOT set up (the passkey step stopped: ${result.passkey.reason}). `
         + `Control Room release ${result.version} is installed and current. Self-update is Off. `
-        + "Stop here and show this to the lead after reopening Claude. Do not retry, and do not run passkey add yourself.\n");
+        + "To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone. Finish within the time shown by that command.\n");
     } else context.stdout(`Ready: Control Room release ${result.version} is current. Self-update is Off.\n`);
     return 0;
   }
@@ -461,14 +461,25 @@ try {
           || typeof registration.expectedOrigin !== "string" && typeof registration.config?.expectedOrigin !== "string")
         throw updaterRefuseV1("updater_passkey_control_reply_refused");
       const expectedOrigin = registration.expectedOrigin ?? registration.config.expectedOrigin;
-      context.stdout(`${expectedOrigin}/setup#reg=${registration.registrationSecret}&mode=${mode}\n`);
+      const registrationUrl = `${expectedOrigin}/setup#reg=${registration.registrationSecret}&mode=${mode}`;
+      const { terminalQrTextV1 } = await import("./terminal/qr.mjs");
+      context.stdout(terminalQrTextV1(registrationUrl));
+      context.stdout(`${registrationUrl}\n`);
+      context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the owner code from the install Terminal window. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.\n");
+      const registrationRemainingMs = Date.parse(registration.expiresAt) - context.now().getTime();
+      const completionTimeoutMs = Number.isFinite(registrationRemainingMs)
+        ? Math.max(0, Math.min(300_000, registrationRemainingMs)) : 300_000;
+      const completionWindow = completionTimeoutMs === 300_000 ? "5 minutes"
+        : `${Math.floor(completionTimeoutMs / 1000)} seconds`;
+      context.stdout(`Time available: ${completionWindow}.\n`);
+      context.stdout("Finish within the time shown: scan, use Face ID, then type the 6-character code here.\n");
       // The message is the only place the owner learns this passkey is live
       // tonight, so it is printed per mode rather than as one message with a
       // caveat: the INACTIVE case is the one that must not read as success.
       context.stdout(mode === "initial"
-        ? "The registration expires in 30 minutes. This is the first passkey on this Mac, so it is active as soon as you finish.\n"
-        : "The registration expires in 30 minutes. The new passkey needs approval from an active passkey, or it remains inactive for 24 hours.\n");
-      const typedCode = await readCodeV1(terminal);
+        ? "This is the first passkey on this Mac, so it is active as soon as you finish.\n"
+        : "The new passkey needs approval from an active passkey, or it remains inactive for 24 hours.\n");
+      const typedCode = await readCodeV1(terminal, { timeoutMs: completionTimeoutMs });
       const result = authority ? await authority.completeRegistration({ registrationSecret: registration.registrationSecret,
         typedCode }) : await context.send(join(root, "updater-state/control.sock"), {
           schema: "control-room.updater-control/v1", requestId: `cli-${process.pid}-${Date.now()}`,

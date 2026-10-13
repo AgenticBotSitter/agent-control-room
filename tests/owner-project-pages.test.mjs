@@ -128,10 +128,16 @@ test("both hosts reach every shared project section and preserve Mac-local setup
   }
   // These documented top-level exceptions remain shell-only on Mac-local.
   // Hosted-only modules keep their own routes, outside the shared project list.
-  for (const [path, hostedStatus] of [["/workers/connect", 404], ["/setup", 404], ["/settings", 503]]) {
+  for (const [path, hostedStatus, signedOutStatus] of [["/workers/connect", 404, 303], ["/setup", 404, 200], ["/settings", 503, 303]]) {
     assert.equal((await localSend(path)).status, 200);
     assert.equal((await hostedSend(path)).status, hostedStatus);
-    assert.equal((await localSend(path, false)).status, 303);
+    const signedOut = await localSend(path, false);
+    assert.equal(signedOut.status, signedOutStatus);
+    if (path === "/setup") {
+      assert.equal(await signedOut.text(), "local shell");
+      assert.equal(signedOut.headers.get("cache-control"), "no-store");
+      assert.equal(signedOut.headers.get("referrer-policy"), "no-referrer");
+    }
     assert.equal((await localSend(path + "?unexpected=1")).status, 400);
   }
 });
