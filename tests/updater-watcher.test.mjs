@@ -468,3 +468,44 @@ const result=spawnSync('git',args,{env:process.env,stdio:'inherit'});process.exi
   const result = await source.fetchMain().then(async value => { await value.release?.(); return "accepted"; }, error => error.code);
   assert.equal(result, "accepted", "real watcher fetch suppresses the observed detached maintenance command");
 });
+
+for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-475: legacy hold survives unrelated ${state} attention`, async t => {
+  const f = await heldLoopFixture(t);
+  // Reproduce the old producer's file contract: it published real status but
+  // had neither hold-file method. The separate baseline probe runs that version.
+  const legacyFiles = {
+    readSelfUpdate: () => f.files.readSelfUpdate(),
+    hasRescueMarker: () => f.files.hasRescueMarker(),
+    publicFacts: () => f.files.publicFacts(), writeStatus: value => f.files.writeStatus(value),
+  };
+  const make = (stateFiles, store) => new UpdaterMainLoopV1({
+    runner: { async runOnce() { return { status: "idle" }; } }, stateFiles, store,
+    mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } },
+  });
+  const holdPath = join(f.f.updaterRoot, "updater-state/watcher-hold.json");
+  await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "setup leaves the product's hold file absent");
+  const legacy = make(legacyFiles, { async unhandledOwnerRequests() { return []; } });
+  await legacy.tick(); await legacy.shutdown();
+  const reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+  assert.equal((await f.read()).reason, reason, "real Git refusal produced the legacy warning");
+  await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "legacy producer has no dedicated hold file");
+  await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "Off\n");
+  let attention = { runId: "fixture-run", state, code: null };
+  // Synthetic run attention isolates file recovery; this is not a DB acknowledgement.
+  const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
+    async openRunAttention() { return attention; } };
+  const upgraded = make(f.files, store); await upgraded.tick(); await upgraded.shutdown();
+  assert.equal((await f.read()).needsYou, true);
+  attention = null;
+  const reconstructed = make(f.files, store);
+  try {
+    await reconstructed.tick();
+    assert.equal((await f.read()).needsYou, true,
+      "settling unrelated run attention must not erase the unresolved history hold");
+    assert.equal((await f.read()).reason, reason, "the original history reason returns after settlement");
+    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")),
+      { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
+      "the recovered legacy evidence is durable before public status can mask it");
+  } finally { await reconstructed.shutdown(); }
+});

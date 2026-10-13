@@ -1,12 +1,13 @@
 import { publishLocalFixtureV1 } from "./support/publish-local-fixture.mjs";
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import childProcess, { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { syncBuiltinESMExports } from "node:module";
 import {
   abortAttendedV1, buildFixedBundleV1, buildReleaseV1, classifyAttendedSourceV1, confirmAttendedV1, fetchVerifiedSourceV1, installAttendedCommitV1,
   isAttendedDatabasePathV1,
@@ -1342,31 +1343,46 @@ test("FIX-475: refused fetch never publishes the provisional main ref", async t 
     "a successful retry publishes main");
 });
 
+async function rangeReaderBarrier(expected, runReaders, rewrite, timeoutMs = 5000) {
+  let arrived = 0, release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  // A missing reader must produce a named failure, never an event-loop cancellation.
+  const timer = setTimeout(release, timeoutMs);
+  try {
+    const results = await runReaders(async () => {
+      arrived += 1;
+      if (arrived === expected) { await rewrite(); release(); }
+      await barrier;
+    });
+    assert.equal(arrived, expected, `range_reader_barrier: arrived=${arrived} expected=${expected}`);
+    return results;
+  } finally { clearTimeout(timer); release(); }
+}
+
 test("FIX-475: twenty range readers share pinned history across a process barrier", async t => {
   const f = await fixture(t), { sideTip, merge } = await hiddenSideMigration(f);
   await markInstalled(f, f.commit); await publishLocalFixtureV1(f.repository);
   const mirror = join(f.root, "updater-state/mirror.git");
-  let armed = false, arrived = 0, release;
-  const barrier = new Promise(resolve => { release = resolve; });
+  let arrive;
   const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: merge, onSpawn: async call => {
-    if (armed && call.args.includes("--diff-merges=separate")) {
-      arrived += 1;
-      if (arrived === 20) {
-        await exec(process.execPath, ["--input-type=module", "-e",
-          "import {writeFile} from 'node:fs/promises'; await writeFile(process.argv[1], process.argv[2]);",
-          join(mirror, "info/grafts"), `${sideTip}\n`]);
-        release();
-      }
-      await barrier;
-    }
+    if (arrive && call.args.includes("--diff-merges=separate")) await arrive();
   } });
   try {
-    await mirrorGit(mirror, "config", "log.showRoot", "false"); armed = true;
-    const results = await Promise.all(Array.from({ length: 20 }, () => classifyAttendedSourceV1(fetched)));
-    assert.equal(arrived, 20, "all twenty real readers reached the barrier");
+    await mirrorGit(mirror, "config", "log.showRoot", "false");
+    const results = await rangeReaderBarrier(20, async onArrival => {
+      arrive = onArrival;
+      return Promise.all(Array.from({ length: 20 }, () => classifyAttendedSourceV1(fetched)));
+    }, () => exec(process.execPath, ["--input-type=module", "-e",
+      "import {writeFile} from 'node:fs/promises'; await writeFile(process.argv[1], process.argv[2]);",
+      join(mirror, "info/grafts"), `${sideTip}\n`]));
     assert.equal(results.filter(value => !value.changesDatabase).length, 0,
       "zero false code-only approvals under a concurrent history rewrite");
-  } finally { release(); await abortAttendedV1(fetched); }
+  } finally { await abortAttendedV1(fetched); }
+});
+
+test("FIX-475: range barrier reports a missing reader", async () => {
+  await assert.rejects(rangeReaderBarrier(2, arrive => Promise.all([arrive()]), async () => {}, 20),
+    /range_reader_barrier: arrived=1 expected=2/u, "an absent caller must fail with its actual arrival count");
 });
 
 for (const variant of ["symlink", "alternates", "http-alternates", "oversize"]) test(`FIX-475: snapshot refuses ${variant} storage`, async t => {
@@ -1416,4 +1432,52 @@ test("FIX-475: copied snapshot is audited before its first Git read", async t =>
       "a copied snapshot with a late external link must never reach a Git reader");
     assert.equal(injected, true, "the copy completed before the link was injected");
   } finally { fs.cp = realCopy; syncBuiltinESMExports(); if (admitted) await abortAttendedV1(admitted); }
+});
+
+test("FIX-475: Git readers drain real stdout after exit", async t => {
+  const f = await fixture(t), originalSpawn = childProcess.spawn;
+  await markInstalled(f, f.commit);
+  const target = await commitFiles(f.repository, "plain code", { "src/plain.mjs": "export const plain = true;\n" });
+  await publishLocalFixtureV1(f.repository);
+  let delayed = 0, fetched;
+  childProcess.spawn = (...args) => {
+    const child = originalSpawn(...args);
+    if (args[0] === gitPath) {
+      const output = child.stdout, originalEmit = output.emit, chunks = [];
+      // Delay only recorded bytes from real Git, never fabricate its answer.
+      output.emit = function (event, ...values) {
+        if (event === "data") { chunks.push(values); delayed += 1; return true; }
+        return originalEmit.call(this, event, ...values);
+      };
+      child.once("close", () => {
+        output.emit = originalEmit;
+        for (const values of chunks) originalEmit.call(output, "data", ...values);
+      });
+    }
+    return child;
+  };
+  syncBuiltinESMExports();
+  try {
+    const result = await fetchVerifiedSourceV1({ ...f.materialize(), commit: target }).then(async value => {
+      fetched = value; return (await classifyAttendedSourceV1(value)).baseline;
+    }, error => error.code);
+    assert.equal(result, "forward", "complete real Git history remains proven when stdout arrives after exit");
+    assert.ok(delayed > 0, "real Git output was delayed across the exit boundary");
+  } finally {
+    childProcess.spawn = originalSpawn; syncBuiltinESMExports();
+    if (fetched) await abortAttendedV1(fetched);
+  }
+});
+
+for (const count of [1, 20, 50]) test(`FIX-475: ${count} pristine range readers prove complete history`, async t => {
+  const f = await fixture(t); await markInstalled(f, f.commit);
+  const target = await commitFiles(f.repository, "plain code", { "src/plain.mjs": "export const plain = true;\n" });
+  await publishLocalFixtureV1(f.repository);
+  const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: target });
+  try {
+    const results = await Promise.all(Array.from({ length: count }, () => classifyAttendedSourceV1(fetched)));
+    assert.deepEqual(results.map(value => value.baseline), Array(count).fill("forward"),
+      "every pristine caller must prove the independently committed installed history");
+    assert.deepEqual(results.map(value => value.changesDatabase), Array(count).fill(false));
+  } finally { await abortAttendedV1(fetched); }
 });

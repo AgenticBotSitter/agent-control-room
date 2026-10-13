@@ -376,5 +376,26 @@
     "replace": "// Mutation: do not persist clearance.",
     "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
     "why": "only the successful real recheck writes the durable cleared warning"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      if (recovered !== null) await this.writeWatcherHold(recovered);",
+    "replace": "      // Mutation: leave legacy evidence only in the display cache.",
+    "test": "node --test --test-name-pattern='FIX-475: legacy hold' tests/updater-watcher.test.mjs",
+    "why": "Recovered legacy evidence must survive every unrelated attention state and reconstruction while Off; the literal history reason and needsYou true are independent expected values."
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    waitForClose: true });",
+    "replace": "    waitForClose: options.waitForClose });",
+    "test": "node --test --test-name-pattern='FIX-475: Git readers drain' tests/updater-attended-source.test.mjs",
+    "why": "Complete real Git stdout is replayed after exit; a pristine committed range must remain forward, never a wrong refusal or unproven history."
+  },
+  {
+    "file": "tests/updater-attended-source.test.mjs",
+    "find": "    assert.equal(arrived, expected, `range_reader_barrier: arrived=${arrived} expected=${expected}`);",
+    "replace": "    // Mutation: silently accept a missing caller.",
+    "test": "node --test --test-name-pattern='FIX-475: range barrier reports' tests/updater-attended-source.test.mjs",
+    "why": "The independent two-caller requirement and one actual arrival must produce a named bounded diagnostic; removing the assertion yields missing expected rejection."
   }
 ]

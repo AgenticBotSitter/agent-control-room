@@ -93,8 +93,12 @@ export class UpdaterStateFilesV1 {
       let previous;
       try { previous = JSON.parse(await readFileNoFollowV1(this.root, "status/status.json", { maxBytes: 8192 })); }
       catch (failure) { if (failure?.code === "ENOENT") return null; throw updaterRefuseV1("watcher_history_unproven"); }
-      return previous?.schema === "control-room.updater-status/v1"
+      const recovered = previous?.schema === "control-room.updater-status/v1"
         && previous.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? "watcher_history_unproven" : null;
+      // Promote the only legacy evidence before another status writer can mask
+      // it. A later display-cache miss must never erase an unresolved hold.
+      if (recovered !== null) await this.writeWatcherHold(recovered);
+      return recovered;
     }
     if (value?.schema !== "control-room.watcher-hold/v1" || ![null, "watcher_history_unproven"].includes(value.code))
       throw updaterRefuseV1("watcher_history_unproven");

@@ -170,7 +170,7 @@ async function commandResult(file, args, options = {}) {
     child.stderr.on("data", chunk => { stderr = append(stderr, chunk); });
     child.once("error", error => finish(reject, error));
     // "exit" can fire before the last stdout chunk arrives. A caller that decides
-    // from the whole output (the change classifier) waits for "close" instead; the
+    // from the whole output (every Git reader) waits for "close" instead; the
     // builder steps keep "exit", because a daemonised child can hold the pipe open.
     child.once(options.waitForClose ? "close" : "exit", (code, signal) => {
       if (options.detached) killGroup(child.pid);
@@ -211,7 +211,7 @@ async function git(input, gitPath, mirror, args, options = {}) {
   const env = trustedToolEnvironment("git");
   return run(input, gitPath, ["-c", "maintenance.auto=false", "--git-dir", mirror, ...args], { env, timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
     cwd: options.cwd, acceptExitCodes: options.acceptExitCodes, maxOutputBytes: options.maxOutputBytes,
-    waitForClose: options.waitForClose });
+    waitForClose: true });
 }
 
 function parseTree(text, limits) {
