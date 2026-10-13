@@ -837,7 +837,7 @@ export async function fetchVerifiedSourceV1(input) {
     try {
       await git(input, tools.git, mirror, fetchArgs).catch(() => refuse("updater_fetch_refused"));
       fetched = (await git(input, tools.git, mirror, ["rev-parse", `${provisionalRef}^{commit}`])).stdout.trim();
-    } finally { await git(input, tools.git, mirror, ["update-ref", "-d", provisionalRef]); }
+    } finally { await git({ ...input, signal: undefined, onSpawn: undefined }, tools.git, mirror, ["update-ref", "-d", provisionalRef]); }
     if (!COMMIT.test(fetched)) refuse("updater_main_ref_refused");
     await git(input, tools.git, mirror, ["cat-file", "-e", `${commit}^{commit}`]);
     // A graft, replace ref or shallow boundary could put a commit main never had on main.
@@ -845,8 +845,12 @@ export async function fetchVerifiedSourceV1(input) {
     session.historyMirror = await pinMirrorHistoryV1(mirror).catch(() => refuse("updater_mirror_history_refused"));
     const historyMirror = session.historyMirror;
     if (!await mirrorHistoryCompleteV1(historyMirror, args => git(input, tools.git, historyMirror, args))) refuse("updater_mirror_history_refused");
-    await git(input, tools.git, historyMirror, ["merge-base", "--is-ancestor", commit, fetched])
-      .catch(() => refuse("updater_commit_not_on_main"));
+    await git(input, tools.git, historyMirror, ["update-ref", MAIN_REF, fetched]);
+    { // The admission ref belongs to the checked snapshot, never the live mirror.
+      const mirror = historyMirror;
+      await git(input, tools.git, mirror, ["merge-base", "--is-ancestor", commit, MAIN_REF])
+        .catch(() => refuse("updater_commit_not_on_main"));
+    }
     const limits = { maxTreeFiles: input.maxTreeFiles ?? MAX_TREE_FILES, maxTreeBytes: input.maxTreeBytes ?? MAX_TREE_BYTES,
       maxTreeFileBytes: input.maxTreeFileBytes ?? MAX_TREE_FILE_BYTES };
     const tree = await readTree(input, tools.git, historyMirror, commit, limits);
@@ -855,9 +859,12 @@ export async function fetchVerifiedSourceV1(input) {
     await git(input, tools.git, historyMirror, ["archive", "--format=tar", `--output=${archive}`, commit], { timeoutMs: 120_000 });
     await run(input, tools.tar, ["-xf", archive, "-C", source], { env: buildTrustedEnvironment(), timeoutMs: 120_000 });
     await input.hooks?.afterArchive?.({ mirror, source, job, mainRef: MAIN_REF });
-    const afterArchive = (await git(input, tools.git, mirror, ["rev-parse", "--verify", `${MAIN_REF}^{commit}`])
-      .catch(() => ({ stdout: "" }))).stdout.trim();
-    if (afterArchive !== previousMain && !(previousMain === "0".repeat(40) && afterArchive === "")) refuse("updater_main_ref_moved");
+    { // Compare with the previously fetched trusted tip; publication is later.
+      const fetched = previousMain;
+      const afterArchive = (await git(input, tools.git, mirror, ["rev-parse", "--verify", `${MAIN_REF}^{commit}`])
+        .catch(() => ({ stdout: "0".repeat(40) }))).stdout.trim();
+      if (afterArchive !== fetched) refuse("updater_main_ref_moved");
+    }
     const sourceFileCount = await compareArchive(input, tools.git, source, tree);
     await rm(archive); await mkdir(output); await mkdir(store); await mkdir(join(job, "tmp"));
     if (input.tools === undefined) tools = await stageBuilderTools(tools, join(job, "builder-tools"),

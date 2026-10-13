@@ -162,21 +162,25 @@ export class GitMirrorSourceV1 {
     const pending = `refs/updater/pending-${randomBytes(12).toString("hex")}`;
     let snapshot;
     try {
-      // Fetch objects without publishing the trusted ref. Validation and its
-      // consumers all read the same private graph before the compare-and-swap.
-      await this.#git(["fetch", "--no-tags", "origin", `refs/heads/main:${pending}`],
-        { credential: this.origin.startsWith("https://") });
-      const commit = (await this.#git(["rev-parse", `${pending}^{commit}`])).stdout.trim();
-      validCommitV1(commit);
-      const kib = parseGitSizeV1((await this.#git(["count-objects", "-v"])).stdout);
-      if (kib > this.maxRepositoryKiB) throw updaterRefuseV1("watcher_repository_too_large");
       snapshot = await pinMirrorHistoryV1(this.mirror).catch(() => { throw updaterRefuseV1("watcher_history_unproven"); });
+      await this.#assertHistoryComplete(snapshot);
+      // The non-forcing fetch advances only the private ref. The original
+      // trusted ref is published after every admission check succeeds.
+      await this.#git(["fetch", "--no-tags", "origin", "refs/heads/main:refs/updater/main"],
+        { credential: this.origin.startsWith("https://"), repository: snapshot });
+      const commit = (await this.#git(["rev-parse", "refs/updater/main^{commit}"], { repository: snapshot })).stdout.trim();
+      validCommitV1(commit);
+      const kib = parseGitSizeV1((await this.#git(["count-objects", "-v"], { repository: snapshot })).stdout);
+      if (kib > this.maxRepositoryKiB) throw updaterRefuseV1("watcher_repository_too_large");
       await this.#assertHistoryComplete(snapshot);
       if (!(await this.#isAncestor(this.fromCommit, commit, snapshot))
           || previous !== "0".repeat(40) && !(await this.#isAncestor(previous, commit, snapshot)))
         throw updaterRefuseV1("watcher_history_rewritten");
       const tree = (await this.#git(["rev-parse", `${commit}^{tree}`], { repository: snapshot })).stdout.trim(); validCommitV1(tree);
+      // Import only the verified private tip into an unpublished local ref.
+      await this.#git(["-c", "protocol.file.allow=always", "fetch", "--no-tags", snapshot, `refs/updater/main:${pending}`]);
       await this.#git(["update-ref", "refs/updater/main", commit, previous]);
+      await this.#git(["update-ref", "-d", pending]);
       const repository = snapshot;
       snapshot = undefined;
       return Object.freeze({ commit, tree, repository,
