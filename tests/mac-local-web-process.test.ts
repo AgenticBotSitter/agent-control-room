@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import test, { after } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -381,10 +382,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     const withQuery = await app.handle(request(`${page}?unexpected=value`, { headers: { cookie: cookie! } }),
       () => { throw new Error(`${page} must reject query strings before it renders`); });
     assert.equal(withQuery.status, 400, `${page}?unexpected=value was accepted`);
-    // ...and signed out, it must not render the shell at all.
+    // Setup consumes the installer fragment before sign-in; the other shells
+    // still require a session. This public exception reads no private data.
     const signedOutPage = await app.handle(request(page),
-      () => { throw new Error(`${page} must not render signed out`); });
-    assert.ok([303, 401].includes(signedOutPage.status), `signed-out ${page}: ${signedOutPage.status}`);
+      () => { assert.equal(page, "/setup"); return new Response("setup shell"); });
+    if (page === "/setup") assert.equal(signedOutPage.status, 200);
+    else assert.ok([303, 401].includes(signedOutPage.status), `signed-out ${page}: ${signedOutPage.status}`);
   }
   const sessionWatchShell = await app.handle(request("/session-watch", { headers: { cookie: cookie! } }),
     () => new Response("real session watch shell"));
@@ -720,4 +723,90 @@ test("the Mac-local pipeline consent port is capability-free: consent cannot exe
   for (const file of ["src/web/v1/mac-local-host.ts", "src/web/v1/mac-local-serving.ts"])
     assert.doesNotMatch(readFileSync(file, "utf8"), /PipelineAdvanceCapabilityV1|pipelineAdvance\s*[:?]\s*\{/,
       `${file} must not offer a Mac-local host a way to inject an advance capability`);
+});
+
+
+test("V101: cookieless setup shell preserves local checks and private endpoint authority under load", async t => {
+  const origin = "http://127.0.0.1:3229";
+  let databaseCalls = 0, renders = 0;
+  const unavailable = async (): Promise<never> => { databaseCalls += 1; throw new Error("unexpected database access"); };
+  const app = createMacLocalWebProcessV1({ origin, workspaceId: "workspace:setup",
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:setup", provider: "local",
+      subject: "owner:setup", ownerCodeDigest: sha256Digest({ ownerCode: "A".repeat(43) }), sessionSeconds: 900 },
+    database: { client: { query: unavailable, transaction: unavailable, transactionWithPreCommitCheck: unavailable },
+      close: async () => {}, isAvailable: () => true } });
+  t.after(() => app.close());
+  const render = () => { renders += 1; return new Response("registration shell"); };
+  const response = await app.handle(new Request(origin + "/setup"), render);
+  assert.equal(response.status, 200, "a first phone must reach the registration shell without a cookie");
+  assert.equal(await response.text(), "registration shell");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  for (const [url, init, expected] of [
+    [origin + "/setup?code=extra", {}, 400],
+    [origin + "/setup", { method: "POST" }, 400],
+    [origin + "/setup", { method: "HEAD" }, 400],
+    ["https://foreign.example.test/setup", {}, 403],
+    [origin + "/setup", { headers: { origin: "https://foreign.example.test" } }, 403],
+    [origin + "/setup", { headers: { forwarded: "for=127.0.0.1" } }, 403],
+    [origin + "/setup", { headers: { "x-forwarded-host": "foreign.example.test" } }, 403],
+    [origin + "/setup", { headers: { "sec-fetch-site": "cross-site" } }, 403],
+  ] as const) assert.equal((await app.handle(new Request(url, init), render)).status, expected, url);
+  assert.equal(renders, 1, "refused setup requests must never render");
+  for (const path of ["/api/v1/passkeys/registration/options", "/api/v1/passkeys/registration"]) {
+    assert.equal((await app.handle(new Request(origin + path, { method: "POST", headers: { origin,
+      "content-type": "application/json" }, body: JSON.stringify({ registrationSecret: "R".repeat(43) }) }), render)).status, 401);
+  }
+  for (const path of ["/settings", "/projects", "/workers"]) {
+    assert.equal((await app.handle(new Request(origin + path), render)).status, 303);
+  }
+  const burst = await Promise.all(Array.from({ length: 50 }, () => app.handle(new Request(origin + "/setup"), render)));
+  assert.equal(burst.filter(item => item.status === 200).length, 50);
+  assert.equal(databaseCalls, 0, "the public shell must neither read nor write private data");
+  assert.equal((await app.handle(new Request(origin + "/setup"), render)).status, 200, "retry remains available");
+});
+
+
+test("V101: real setup HTTP transport omits fragments and survives a dropped slow reader and a 64-request burst", async () => {
+  const server = createServer(), seen: string[] = [];
+  let app: ReturnType<typeof createMacLocalWebProcessV1> | undefined;
+  let releaseSlow: (() => void) | undefined;
+  try {
+    await new Promise<void>((resolveListen, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolveListen); });
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    const localOrigin = `http://127.0.0.1:${address.port}`, code = "A".repeat(43), secret = "R".repeat(43);
+    const unavailable = async (): Promise<never> => { throw new Error("shell must not touch database"); };
+    app = createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:http-setup",
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: localOrigin, tenantId: "tenant:http-setup",
+        provider: "local", subject: "owner:http-setup", ownerCodeDigest: sha256Digest({ ownerCode: code }), sessionSeconds: 900 },
+      database: { client: { query: unavailable, transaction: unavailable, transactionWithPreCommitCheck: unavailable },
+        close: async () => {}, isAvailable: () => true } });
+    let slow = false, enteredSlow: (() => void) | undefined;
+    const entered = new Promise<void>(resolveEntered => { enteredSlow = resolveEntered; });
+    const held = new Promise<void>(resolveHeld => { releaseSlow = resolveHeld; });
+    const handler = createMacLocalNodeHandler({ origin: localOrigin, application: app,
+      assets: { count: 0, digest: "synthetic:no-assets", respond: () => undefined },
+      handler: request => { seen.push(request.url); return app!.handle(request, async () => {
+        if (slow) { enteredSlow!(); await held; }
+        return new Response("setup shell");
+      }); } });
+    server.on("request", (input, output) => { void handler.handle(input, output); });
+    const link = `${localOrigin}/setup#code=${code}&reg=${secret}`;
+    const first = await fetch(link); assert.equal(first.status, 200); assert.equal(await first.text(), "setup shell");
+    assert.deepEqual(seen, [localOrigin + "/setup"], "fragments must never reach the server request");
+    const burst = await Promise.all(Array.from({ length: 64 }, async () => {
+      const response = await fetch(link); await response.text(); return response.status;
+    }));
+    assert.deepEqual(burst, Array(64).fill(200));
+    slow = true; const abort = new AbortController();
+    const dropped = fetch(link, { signal: abort.signal }).then(() => "unexpected response", () => "aborted");
+    await entered; abort.abort(); assert.equal(await dropped, "aborted");
+    slow = false; releaseSlow!();
+    const retry = await fetch(link); assert.equal(retry.status, 200); await retry.text();
+    assert.equal(seen.every(url => !url.includes(code) && !url.includes(secret) && !url.includes("#")), true);
+  } finally {
+    releaseSlow?.(); server.closeAllConnections();
+    await new Promise<void>(resolveClose => server.close(() => resolveClose()));
+    await app?.close();
+  }
 });

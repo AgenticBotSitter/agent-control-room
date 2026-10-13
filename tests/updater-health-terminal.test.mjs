@@ -330,6 +330,8 @@ test("initial-mode terminal QR decodes to the typed fallback and always carries 
   assert.equal(decodedMatrix(createQrMatrixV1(url)), url, "an independent decoder must recover the exact URL");
   const writes = [], rendered = renderInitialPasskeyV1({ rpId, ownerCode, registrationSecret },
     { write: value => writes.push(value) });
+  assert.equal(writes.join("").split("\n").includes(`Owner code (43 characters):`), true);
+  assert.equal(writes.join("").split("\n").includes(ownerCode), true, "owner code must be on its own line");
   assert.equal(rendered.url, url); assert.match(writes[0], /[▀▄█]/u); assert.match(writes.join(""), new RegExp(url, "u"));
   assert.equal(new URL(url).hash, `#code=${ownerCode}&reg=${registrationSecret}`);
   const qrText = terminalQrTextV1(url); assert.match(qrText, /[▀▄█]/u);
