@@ -57,7 +57,7 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "        + \"To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\\n\");",
+    "find": "        + \"To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone. Finish within the time shown by that command.\\n\");",
     "replace": "        + \"Registration stopped.\\n\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='R2-08: repeating install' tests/installer-round2.test.mjs",
     "why": "Stopped install must explain the approved QR scan and same-page owner-code recovery path."
@@ -92,10 +92,10 @@
   },
   {
     "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
-    "find": "Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.",
+    "find": "Finish within the time shown: scan, use Face ID, then type the 6-character code here.",
     "replace": "The link is ready.",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=V101 tests/install-night-owner-guide.test.mjs tests/owner-paste-file.test.mjs",
-    "why": "R2: unchanged code prompt expires after 300000ms; guide and generated reader must state the five-minute effective completion limit."
+    "why": "FIX480: approved guidance requires the displayed effective time, not a fixed five-minute promise; guide and generated paste readers must retain the independently specified completion steps."
   },
   {
     "file": "private-app/app/setup/passkey-registration.tsx",
@@ -197,10 +197,10 @@
   },
   {
     "file": "src/updater/v1/cli.mjs",
-    "find": "      context.stdout(`Finish within ${completionWindow}: scan, use Face ID, then type the 6-character code here.\\n`);",
+    "find": "      context.stdout(\"Finish within the time shown: scan, use Face ID, then type the 6-character code here.\\n\");",
     "replace": "",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 passkey add prints\" tests/updater-cli-flip.test.mjs",
-    "why": "R2: independent lead instruction and unchanged five-minute timer require a standalone deadline; named deadline assertion must fail when printing is removed."
+    "why": "FIX480: independently specified completion instruction must be printed beside the actual effective deadline; removing it fails the named CLI output assertion."
   },
   {
     "file": "private-app/app/setup/passkey-registration.tsx",
@@ -239,10 +239,10 @@
   },
   {
     "file": "private-app/app/setup/passkey-registration.tsx",
-    "find": "Enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.",
+    "find": "Enter the owner code from the install Terminal window. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.",
     "replace": "Enter the owner code.",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 recovery fresh\" tests/setup-passkey-page.test.tsx",
-    "why": "N1: independently specified Terminal source and lead fallback must appear in the rendered form."
+    "why": "FIX480: the rendered form must name the original Terminal code and honest lost-code stop guidance; the approved literal comes from the owner contract."
   },
   {
     "file": "src/updater/v1/cli.mjs",
@@ -320,5 +320,12 @@
     "replace": "",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"V101 N9 plain anchor reload stays without registration\" tests/setup-passkey-page.test.tsx",
     "why": "N9: the layout anchor must survive mount without registration state or requests. Literal #private-main, absent section and zero requests are independent expectations."
+  },
+  {
+    "file": "docs/INSTALL_NIGHT_OWNER_GUIDE.md",
+    "find": "Finish within the time shown: scan, use Face ID, then type the 6-character code here.",
+    "replace": "Finish within the time shown: scan, use Face ID, then type the 6-character code here. Ask the lead. Finish within 5 minutes.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-name-pattern=FIX480 tests/install-night-owner-guide.test.mjs",
+    "why": "FIX480: the owner contract independently forbids advice implying the lead can supply a lost code and a fixed five-minute deadline. Preserve the required positive wording while reintroducing both forbidden promises so the new named negative guard, rather than a missing-text check, must fail."
   }
 ]
