@@ -5,12 +5,12 @@ import { join } from "node:path";
 import test from "node:test";
 import { findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
 
-function fixture({ scripts, workflow, tests }) {
+function fixture({ scripts, workflow, tests, sources = {} }) {
   const root = mkdtempSync(join(tmpdir(), "control-room-lane-coverage-"));
   mkdirSync(join(root, ".github/workflows"), { recursive: true });
   for (const file of tests) {
     mkdirSync(join(root, file, ".."), { recursive: true });
-    writeFileSync(join(root, file), "");
+    writeFileSync(join(root, file), sources[file] ?? "");
   }
   writeFileSync(join(root, "package.json"), JSON.stringify({ scripts }));
   writeFileSync(join(root, ".github/workflows/ci.yml"), workflow);
@@ -64,4 +64,78 @@ test("quoted and block workflow commands are extracted", () => {
     "      pnpm run test:two",
     "      node --test tests/direct.test.js",
   ].join("\n")), ["pnpm install --frozen-lockfile", "pnpm run test:one", "pnpm run test:two\nnode --test tests/direct.test.js"]);
+});
+
+const darwinPgSource = "import { withRealPostgres } from './support/attack-kit/index'; if (process.platform !== 'darwin') { return; }";
+const linuxJob = "jobs:\n  linux:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm run test:pg\n";
+const macJob = "  mac:\n    runs-on: macos-26\n    steps:\n      - run: pnpm run test:pg\n";
+
+function pgFixture(workflow, source = darwinPgSource) {
+  return fixture({ scripts: { "test:pg": "node --test tests/private-pg.test.ts" }, workflow,
+    tests: ["tests/private-pg.test.ts"], sources: { "tests/private-pg.test.ts": source } });
+}
+
+test("Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it", () => {
+  const root = pgFixture(linuxJob);
+  try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("a macOS package chain covers Darwin-only PostgreSQL", () => {
+  const root = pgFixture(linuxJob + macJob);
+  try { assert.deepEqual(findUncoveredTests(root), []); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("a Linux matrix command cannot impersonate the macOS matrix entry", () => {
+  const root = pgFixture("jobs:\n  catchup:\n    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        include:\n          - lane: components\n            runner: ubuntu-latest\n          - lane: updater\n            runner: macos-26\n    steps:\n      - name: Linux only\n        if: matrix.lane == 'components'\n        run: pnpm run test:pg\n");
+  try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("a macOS matrix command covers Darwin-only PostgreSQL", () => {
+  const root = pgFixture("jobs:\n  catchup:\n    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        include:\n          - lane: updater\n            runner: macos-26\n    steps:\n      - name: Mac only\n        if: matrix.lane == 'updater'\n        run: pnpm run test:pg\n");
+  try { assert.deepEqual(findUncoveredTests(root), []); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("helper-level kernel lock gating also requires macOS PostgreSQL execution", () => {
+  const root = pgFixture(linuxJob, "withRealPostgres(() => {}); if (!KERNEL_OPEN_LOCK_HOST_V1) { return; }");
+  try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("portable PostgreSQL remains covered by Linux", () => {
+  const root = pgFixture(linuxJob, "withRealPostgres(() => {});");
+  try { assert.deepEqual(findUncoveredTests(root), []); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("portable platform paths and fixture strings do not claim Darwin-only PostgreSQL", () => {
+  for (const source of [
+    "const PG_BIN = '/pg'; const root = process.platform === 'darwin' ? '/private/tmp' : tmpdir();",
+    "const fixture = \"withRealPostgres(); if (process.platform !== 'darwin') return;\";",
+    "// withRealPostgres(); if (process.platform !== 'darwin') return;",
+  ]) {
+    const root = pgFixture(linuxJob, source);
+    try { assert.deepEqual(findUncoveredTests(root), []); }
+    finally { rmSync(root, { recursive: true }); }
+  }
+});
+
+test("a helper wrapper without PostgreSQL does not need a database macOS lane", () => {
+  const root = pgFixture(linuxJob, "kernelOpenLockTestV1('unit', () => {});");
+  try { assert.deepEqual(findUncoveredTests(root), []); }
+  finally { rmSync(root, { recursive: true }); }
+});
+
+test("aliased and reversed Darwin PostgreSQL gates cannot hide behind Linux coverage", () => {
+  for (const source of [
+    "const PG_BIN = '/pg'; const isMac = process.platform === 'darwin'; test('pg', { skip: !isMac }, () => {});",
+    "withRealPostgres(); if ('darwin' !== process.platform) return;",
+  ]) {
+    const root = pgFixture(linuxJob, source);
+    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+    finally { rmSync(root, { recursive: true }); }
+  }
 });

@@ -74,23 +74,62 @@ export function reachableTests(scripts, commands) {
   return reached;
 }
 
+// Only commands assigned to a macOS runner can prove a Darwin-only body.
+// Matrix steps must select a literal lane whose include entry is macOS; a
+// Linux sibling's command is never evidence for that entry.
+export function macosWorkflowCommands(source) {
+  const commands = [];
+  const jobs = source.split(/^  [a-zA-Z0-9_-]+:\s*$/m).slice(1);
+  for (const job of jobs) {
+    if (/^    runs-on: ['"]?macos-[a-zA-Z0-9.-]+['"]?\s*$/m.test(job)) {
+      commands.push(...workflowCommands(job));
+      continue;
+    }
+    if (!/^    runs-on: \$\{\{ matrix\.runner \}\}\s*$/m.test(job)) continue;
+    const macLanes = [...job.matchAll(/^          - lane: ([a-zA-Z0-9_-]+)\n            runner: macos-[a-zA-Z0-9.-]+\s*$/gm)]
+      .map(match => match[1]);
+    for (const step of job.split(/^      - /m).slice(1)) {
+      const lane = /^        if: .*matrix\.lane == '([a-zA-Z0-9_-]+)'/m.exec(step)?.[1];
+      if (lane && macLanes.includes(lane)) commands.push(...workflowCommands(step));
+    }
+  }
+  return commands;
+}
+
+export function needsMacosPostgres(source) {
+  // Ignore prose and fixture-authored programs, retaining the platform literal.
+  source = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/gu,
+    token => token === '"darwin"' || token === "'darwin'" ? token : " ");
+  const postgres = /\b(?:withRealPostgres|requiresRealPostgres|PG_BIN|REAL_PG_BIN)\b/u.test(source);
+  // Shared kernel/Seatbelt wrappers replace the database body on Linux with
+  // a refusal proof. That refusal does not exercise the Darwin production path.
+  const darwin = /process\.platform\s*(?:===|!==|==|!=)\s*['"]darwin['"](?!\s*\?)/u.test(source)
+    || /['"]darwin['"]\s*(?:===|!==|==|!=)\s*process\.platform/u.test(source)
+    || /\b(?:KERNEL_OPEN_LOCK_HOST_V1|kernelOpenLockTestV1|seatbeltTest)\b/u.test(source);
+  return postgres && darwin;
+}
+
 export function findUncoveredTests(repositoryRoot = process.cwd()) {
   const scripts = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")).scripts ?? {};
   const workflow = readFileSync(join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
   const reached = reachableTests(scripts, workflowCommands(workflow));
-  return listTestFiles(repositoryRoot).filter(file => !reached.has(file));
+  const macReached = reachableTests(scripts, macosWorkflowCommands(workflow));
+  return listTestFiles(repositoryRoot).filter(file => {
+    const source = readFileSync(join(repositoryRoot, file), "utf8");
+    return !reached.has(file) || (needsMacosPostgres(source) && !macReached.has(file));
+  });
 }
 
 function main() {
   const tests = listTestFiles(process.cwd()), uncovered = findUncoveredTests();
   if (uncovered.length > 0) {
-    console.error(`${uncovered.length} test file(s) are not reachable from GitHub Actions:`);
+    console.error(`${uncovered.length} test file(s) lack required GitHub Actions execution (Darwin PostgreSQL needs macOS):`);
     for (const file of uncovered) console.error(`  ${file}`);
     console.error("\nAdd each test to a workflow-reachable lane. An unused package script is not coverage.");
     process.exitCode = 1;
     return;
   }
-  console.log(`all ${tests.length} test files are reachable from GitHub Actions`);
+  console.log(`all ${tests.length} test files have required GitHub Actions execution (including macOS PostgreSQL)`);
 }
 
 if (isMainModuleV1(process.argv[1], import.meta.url)) main();

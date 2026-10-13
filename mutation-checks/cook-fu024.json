@@ -1,0 +1,30 @@
+[
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "needsMacosPostgres(source) && !macReached.has(file)",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disabling this decision must fail the named assertion: Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it. Expected values are literal fixture paths, independently specified in the test. Complete suite counts and cleanup are required."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "if (lane && macLanes.includes(lane))",
+    "replace": "if (lane)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disabling this decision must fail the named assertion: a Linux matrix command cannot impersonate the macOS matrix entry. Expected values are literal fixture paths, independently specified in the test. Complete suite counts and cleanup are required."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "return postgres && darwin;",
+    "replace": "return darwin;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disabling this decision must fail the named assertion: a helper wrapper without PostgreSQL does not need a database macOS lane. Expected values are literal fixture paths, independently specified in the test. Complete suite counts and cleanup are required."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "return postgres && darwin;",
+    "replace": "return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disabling Darwin PostgreSQL classification fails the independent literal-path refusal assertions, including helper-level and aliased gates; a completed assertion failure is required."
+  }
+]

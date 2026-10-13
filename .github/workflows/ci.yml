@@ -551,7 +551,7 @@ jobs:
       - name: Launch daemon bundle with native plutil
         run: pnpm run test:launch-daemons
       # This lane uses macOS lockf, Developer Tools and BSD file metadata.
-      # Default PostgreSQL artifacts are synthetic; live database lanes stay in components.
+      # PostgreSQL bodies that require macOS kernel locks also run in this lane.
       # The opt-in HARD7 dump proof needs a separately supplied migrated fixture.
       - name: Report the macOS tools the updater depends on
         run: |
@@ -571,11 +571,12 @@ jobs:
           set -euo pipefail
           # BSD children inherit the containing directory's group. Use the
           # test login's primary group, not the shared temporary directory's.
-          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          updater_tmp="$(mktemp -d "${HOME}/.acr-pg.XXXXXX")"
           trap 'rm -rf -- "${updater_tmp}"' EXIT
           chgrp "$(id -g)" "${updater_tmp}"
           chmod 0700 "${updater_tmp}"
           export TMPDIR="${updater_tmp}"
+          export PG_BIN=/opt/homebrew/opt/postgresql@17/bin
           # The full Xcode image can have writable ancestors. The installed
           # Command Line Tools use the root-owned path this lane verifies.
           sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
@@ -588,8 +589,11 @@ jobs:
           # far longer than a developer's, so run the lane from a short copy.
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
-          pnpm run test:updater
-          pnpm run test:updater-schema && pnpm run test:updater-passkey-postgres && pnpm run test:pg-runtime-postgres && pnpm run test:pg-runtime-stress && pnpm run test:test-runner
+          # Linux proves refusal only; exercise the kernel-lock database bodies here.
+          status=0
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts || status=$?
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || status=$?
+          exit "${status}"
 
   test-articles:
     name: Article build lane
@@ -1051,11 +1055,12 @@ jobs:
           test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
           # BSD children inherit the containing directory's group. Use the
           # test login's primary group, not the shared temporary directory's.
-          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          updater_tmp="$(mktemp -d "${HOME}/.acr-pg.XXXXXX")"
           trap 'rm -rf -- "${updater_tmp}"' EXIT
           chgrp "$(id -g)" "${updater_tmp}"
           chmod 0700 "${updater_tmp}"
           export TMPDIR="${updater_tmp}"
+          export PG_BIN=/opt/homebrew/opt/postgresql@17/bin
           # The full Xcode image can have writable ancestors. The installed
           # Command Line Tools use the root-owned path this lane verifies.
           sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
@@ -1068,7 +1073,11 @@ jobs:
           # far longer than a developer's, so run the lane from a short copy.
           short_root="${HOME}/acr"
           rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
-          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner
+          # Repeat this proof when the primary macOS lane was deferred by routing.
+          status=0
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts || status=$?
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || status=$?
+          exit "${status}"
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |
