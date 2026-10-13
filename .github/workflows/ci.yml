@@ -302,8 +302,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # These five need no dependencies, so they report in seconds, before the
-      # install that the type checks require.
+      # The coverage checker and its callers require the frozen dependencies.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
@@ -339,7 +339,6 @@ jobs:
         env:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
-      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the fleet gateway refusal tolerance
         env:
           CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'

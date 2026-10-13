@@ -70,7 +70,7 @@ test("quoted and block workflow commands are extracted", () => {
 });
 
 const require = createRequire(import.meta.url);
-const { load, dump } = require(require.resolve("js-yaml", { paths: [require.resolve("eslint")] }));
+const { load, dump } = require("js-yaml");
 const capturedWorkflow = readFileSync(new URL("./fixtures/fu024-r6-workflow.yml", import.meta.url), "utf8");
 const allMappedFiles = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-download-postgres.test.ts", "tests/result-file-upload-race-postgres.test.ts", "tests/result-upload-store-postgres.test.ts", "tests/text-copy-derivation-postgres.test.ts", "tests/pg-runtime-copy-stress.test.ts", "tests/test-runner-service.test.mjs"];
 const darwinPgSource = "import { withRealPostgres } from './support/attack-kit/index'; if (process.platform !== 'darwin') { return; }";

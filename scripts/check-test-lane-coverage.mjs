@@ -8,7 +8,7 @@ import { parseArguments } from "./ci/run-scripts-keep-going.mjs";
 
 // js-yaml is the workflow parser supplied by the existing ESLint dependency.
 const require = createRequire(import.meta.url);
-const { load: loadYaml } = require(require.resolve("js-yaml", { paths: [require.resolve("eslint")] }));
+const { load: loadYaml } = require("js-yaml");
 
 const testPattern = /\.test\.(?:ts|tsx|mjs|js)$/;
 const packageScriptPattern = /(?:^|[\s;&|])pnpm\s+(?:run\s+)?([a-z][a-z0-9:.-]*)(?=$|[\s;&|])/g;
