@@ -167,10 +167,13 @@ async function rotateBlockedOnRowLock(rig: Rig, principal: Awaited<ReturnType<ty
   await lock.query(`SELECT 1 FROM fleet_worker_credentials WHERE tenant_id=$1 AND credential_id=$2 FOR UPDATE`,
     [FLEET_TENANT, principal.credentialId]);
   const successorSecret = c.newSecret();
+  const startedAt = Date.now();
   const rotation = rig.gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) })
-    .then(() => ({ accepted: true as const }), error => ({ accepted: false as const, error }));
+    .then(() => ({ accepted: true as const, afterMs: Date.now() - startedAt }), error => ({ accepted: false as const, error, afterMs: Date.now() - startedAt }));
   let pid = 0;
   for (let attempt = 0; attempt < 500 && !pid; attempt += 1) {
+    // pg_stat_activity is snapshotted once per transaction; the lock session is in one, so drop the snapshot before every look.
+    await lock.query("SELECT pg_stat_clear_snapshot()");
     const rows = (await lock.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity WHERE usename='control_room_fleet'
       AND wait_event_type='Lock' AND query ILIKE '%FOR UPDATE%' AND query ILIKE '%fleet_worker_credentials%'`)).rows;
     if (rows.length > 1) throw new Error("expected exactly one blocked fleet statement");
@@ -405,12 +408,13 @@ test("R4F-06e: thirty renewals of one credential at once yield one successor; th
     // Wait until the number parked stops growing: connections open one by one, so the count settles somewhere up to the pool size.
     let parked = 0, steady = 0;
     for (let attempt = 0; attempt < 1000 && steady < 30; attempt += 1) {
+      await lock.query("SELECT pg_stat_clear_snapshot()");
       const now = Number((await lock.query<{ n: string }>(`SELECT count(*)::text AS n FROM pg_stat_activity WHERE usename='control_room_fleet'
         AND wait_event_type='Lock' AND query ILIKE '%FOR UPDATE%' AND query ILIKE '%fleet_worker_credentials%'`)).rows[0]?.n);
       steady = now > parked ? 0 : steady + 1; parked = Math.max(parked, now);
       await sleepFor(10);
     }
-    assert.ok(parked >= 2 && parked <= POOL_MAX, `several renewals must be parked on the credential lock at once (parked ${parked}, pool ${POOL_MAX})`);
+    assert.equal(parked, POOL_MAX, "a full pool of renewals must be parked on the credential lock");
     await lock.query(`UPDATE fleet_worker_credentials SET expires_at=clock_timestamp()+interval '300 milliseconds',
       issued_at=clock_timestamp()-interval '1 hour' WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, expiring.principal.credentialId]);
     await sleepFor(400); // under the production lock_timeout of 2 s, past the 300 ms expiry
