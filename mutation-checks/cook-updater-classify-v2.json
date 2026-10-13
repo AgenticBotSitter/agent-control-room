@@ -190,20 +190,6 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "              this.#watcherHold = error.code;",
-    "replace": "              // Mutation: discard the hold.",
-    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
-    "why": "a watcher refused for untrusted history holds every update, so the hold must be recorded for the owner"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "            this.#watcherHold = null;",
-    "replace": "            // Mutation: retain stale hold.",
-    "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
-    "why": "the hold clears on the next successful watcher tick, so a repaired mirror does not keep a stale attention item"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
     "find": "Boolean(outstanding) || watcherHold !== null",
     "replace": "Boolean(outstanding)",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
@@ -267,20 +253,6 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "this.#watcherHold = await this.stateFiles.readWatcherHold();",
-    "replace": "this.#watcherHold = null;",
-    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
-    "why": "an unresolved warning survives reconstruction until a real successful recheck"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "await this.stateFiles.writeWatcherHold?.(error.code);",
-    "replace": "// Mutation: do not persist.",
-    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
-    "why": "the real runtime writes the durable warning before publishing status"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
     "find": "flag === \"On\" && this.#watcherHold !== null ? \"needs_attention\"",
     "replace": "this.#watcherHold !== null ? \"needs_attention\"",
     "test": "node --test --test-name-pattern='FIX-475: Off and quiet' tests/updater-watcher.test.mjs",
@@ -292,20 +264,6 @@
     "replace": "if (false) return outcome;",
     "test": "node --test --test-name-pattern='FIX-475: busy' tests/updater-watcher.test.mjs",
     "why": "busy/live-run/unknown answers never successfully rechecked source history"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "if (value?.schema !== \"control-room.watcher-hold/v1\" || ![null, \"watcher_history_unproven\"].includes(value.code))",
-    "replace": "if (false)",
-    "test": "node --test --test-name-pattern='FIX-475: unreadable' tests/updater-watcher.test.mjs",
-    "why": "the independent durable record schema and allowlisted code are required before clearing attention"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "        } catch {\n          this.#watcherHold = \"watcher_history_unproven\";\n          this.#watcherHoldUnpersisted = true;\n        }",
-    "replace": "        } catch {\n          this.#watcherHold = null;\n          this.#watcherHoldUnpersisted = false;\n        }",
-    "test": "node --test --test-name-pattern='FIX-475: unreadable' tests/updater-watcher.test.mjs",
-    "why": "malformed or unreadable persisted warning must fail closed"
   },
   {
     "file": "src/updater/v1/mirror-history.mjs",
@@ -336,13 +294,6 @@
     "why": "interrupted sessions retire their private snapshot before unlock"
   },
   {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "previous.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? \"watcher_history_unproven\" : null",
-    "replace": "false ? \"watcher_history_unproven\" : null",
-    "test": "node --test --test-name-pattern='FIX-475: a legacy' tests/updater-watcher.test.mjs",
-    "why": "a warning published by an earlier version survives missing hold state until a real recheck"
-  },
-  {
     "file": "src/updater/v1/watcher.mjs",
     "find": "await source.release?.();",
     "replace": "/* Mutation: leak the checked snapshot. */",
@@ -371,20 +322,6 @@
     "why": "Git automatic maintenance cannot detach beyond the owned command group"
   },
   {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "await this.stateFiles.writeWatcherHold?.(null);",
-    "replace": "// Mutation: do not persist clearance.",
-    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
-    "why": "only the successful real recheck writes the durable cleared warning"
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "      if (recovered !== null) await this.writeWatcherHold(recovered);",
-    "replace": "      // Mutation: leave legacy evidence only in the display cache.",
-    "test": "node --test --test-name-pattern='FIX-475: legacy hold' tests/updater-watcher.test.mjs",
-    "why": "Recovered legacy evidence must survive every unrelated attention state and reconstruction while Off; the literal history reason and needsYou true are independent expected values."
-  },
-  {
     "file": "src/updater/v1/attended-source.mjs",
     "find": "    waitForClose: true });",
     "replace": "    waitForClose: options.waitForClose });",
@@ -397,13 +334,6 @@
     "replace": "    // Mutation: silently accept a missing caller.",
     "test": "node --test --test-name-pattern='FIX-475: range barrier reports' tests/updater-attended-source.test.mjs",
     "why": "The independent two-caller requirement and one actual arrival must produce a named bounded diagnostic; removing the assertion yields missing expected rejection."
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "\n          this.#watcherHoldUnpersisted = true;\n",
-    "replace": "\n          this.#watcherHoldUnpersisted = false;\n",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed legacy promotion' tests/updater-watcher.test.mjs",
-    "why": "Failed legacy promotion must preserve the independent history sentence across unrelated attention, Off, settlement, reconstruction and retry."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
@@ -427,73 +357,143 @@
     "why": "Real Home status must read attention throughout failed promotion and reconstruction; unrelated final attention cannot mask the only history record."
   },
   {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "\n              this.#watcherHoldUnpersisted = true;\n",
-    "replace": "\n              this.#watcherHoldUnpersisted = false;\n",
-    "test": "node --test --test-name-pattern='FIX-475 R6: a new history refusal' tests/updater-watcher.test.mjs",
-    "why": "Real new source refusal with a failed hold-file write must keep the independent history sentence recoverable across unrelated attention and reconstruction."
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "      if (memory.generation !== startGeneration) return undefined;",
+    "replace": "      if (false) return undefined;",
+    "test": "node --test --test-name-pattern='FIX-475 R7: a recheck that started before' tests/updater-watcher.test.mjs",
+    "why": "Generation compare-and-set: a clearance whose recheck started before a newer refusal must not apply; the literal generation-2 held record must survive the stale clearance."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "disk !== null && disk !== unreadable ? disk.generation : 0) + 1, code, durable: false };",
+    "replace": "disk !== null && disk !== unreadable ? disk.generation : 0) + 0, code, durable: false };",
+    "test": "node --test --test-name-pattern='FIX-475 R7: refusal wins over 49' tests/updater-watcher.test.mjs",
+    "why": "Refusal wins: every refusal must take a new generation so no clearance started earlier can match it; the literal final held record must remain."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "  catch (error) { return error?.code === \"ENOENT\" ? null : unreadable; }",
+    "replace": "  catch (error) { return null; }",
+    "test": "node --test --test-name-pattern='FIX-475 R4: an unreadable hold record' tests/updater-watcher.test.mjs",
+    "why": "Fail-closed read: a symlinked, linked, FIFO, directory or oversize record is unknown, never absent; the published card must keep needsYou=true."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "  try { value = JSON.parse(text); } catch { return unreadable; }",
+    "replace": "  try { value = JSON.parse(text); } catch { return null; }",
+    "test": "node --test --test-name-pattern='FIX-475 R4: an unreadable hold record .truncated' tests/updater-watcher.test.mjs",
+    "why": "Fail-closed read: a torn record is unknown, never absent."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "      || !Number.isSafeInteger(value.generation) || value.generation < 1\n",
+    "replace": "\n",
+    "test": "node --test --test-name-pattern='FIX-475 R4: an unreadable hold record .generation 0' tests/updater-watcher.test.mjs",
+    "why": "Fail-closed read: a record without a valid generation cannot take part in compare-and-set and must read held."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "      this.#failClosed(disk === unreadable ? null : disk);\n      return this.#persist();\n    });\n  }\n\n  /** A source recheck refused",
+    "replace": "      return undefined;\n    });\n  }\n\n  /** A source recheck refused",
+    "test": "node --test --test-name-pattern='FIX-475 R4: the hold is one atomic' tests/updater-watcher.test.mjs",
+    "why": "A record corrupted or removed under a running writer must read held at a generation above every one seen (literal 6 and 8)."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "    await rename(temporary, target);\n",
+    "replace": "    await (await import(\"node:fs/promises\")).writeFile(target, \"{\");\n    await rename(temporary, target);\n",
+    "test": "node --test --test-name-pattern='FIX-475 R4: a crash before-rename' tests/updater-watcher.test.mjs",
+    "why": "Atomic replacement: a crash before the rename must leave the old complete record; writing the target in place leaves a torn one."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "        return this.#persist();\n      }\n      if (disk === null ? memory.generation === 0",
+    "replace": "        return undefined;\n      }\n      if (disk === null ? memory.generation === 0",
+    "test": "node --test --test-name-pattern='FIX-475 R4: a failed write keeps the hold' tests/updater-watcher.test.mjs",
+    "why": "A pending hold whose write failed must be retried on a later tick until the literal held record is durable."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "      catch (error) { return error; }\n      this.#memory = { ...cleared, durable: true };",
+    "replace": "      catch (error) { this.#memory = { ...cleared, durable: true }; return error; }\n      this.#memory = { ...cleared, durable: true };",
+    "test": "node --test --test-name-pattern='FIX-475 R4: a failed write keeps the hold' tests/updater-watcher.test.mjs",
+    "why": "A clearance that could not be written must leave the hold; publishing clear from memory would disagree with the durable record."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "      if (memory.code === null && memory.durable) return undefined;\n",
+    "replace": "\n",
+    "test": "node --test --test-name-pattern='FIX-475 R4: the hold is one atomic' tests/updater-watcher.test.mjs",
+    "why": "A repeated successful recheck on an already-cleared durable record writes nothing; the literal generation stays 3."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "    if (value?.schema !== \"control-room.watcher-hold/v1\" || value.code !== null) return HELD;",
+    "replace": "    if (false) return HELD;",
+    "test": "node --test --test-name-pattern='FIX-475 R4: earlier hold files fold once' tests/updater-watcher.test.mjs",
+    "why": "Migration fold: a held or malformed earlier hold file must fold into a held record."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "    && status.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? HELD : null;",
+    "replace": "    && status.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? null : null;",
+    "test": "node --test --test-name-pattern='FIX-475: legacy hold survives unrelated rolled_back' tests/updater-watcher.test.mjs",
+    "why": "Migration fold: a status card from an earlier version that carries the history sentence is the only evidence and must fold into a held record."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "    if (disk !== null) { this.#memory = { ...disk, durable: true }; return undefined; }",
+    "replace": "    if (disk !== null && false) { this.#memory = { ...disk, durable: true }; return undefined; }",
+    "test": "node --test --test-name-pattern='FIX-475 R4: earlier hold files fold once' tests/updater-watcher.test.mjs",
+    "why": "Leftover earlier files must never override an existing record; folding is only for an absent record."
+  },
+  {
+    "file": "src/updater/v1/hold-record.mjs",
+    "find": "  catch { return null; }\n  return status?.schema",
+    "replace": "  catch { return HELD; }\n  return status?.schema",
+    "test": "node --test --test-name-pattern='SELFUPD-04: R7U-01 no status file' tests/updater-self-update-safety.test.mjs",
+    "why": "A damaged status display cache is not hold evidence (R7U-01): it must not publish needs_attention."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "if (code === \"watcher_history_unproven\")",
-    "replace": "if (false)",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "Failed new refusal must be recorded in the writable status directory before an older clearance can mask it."
+    "find": "            const view = this.#applyWatcherHold(await this.stateFiles.clearWatcherHold(startGeneration));",
+    "replace": "            const view = this.#applyWatcherHold(await this.stateFiles.clearWatcherHold(this.#watcherHoldGeneration));",
+    "test": "node --test --test-name-pattern='FIX-475 R7: a recheck that started before' tests/updater-watcher.test.mjs",
+    "why": "The clearance must carry the generation its recheck started against, not one observed later by the same loop."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "const retryHold = await this.#readWatcherRetry();",
-    "replace": "const retryHold = null;",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "The validated supplemental refusal outranks the independent older cleared file."
+    "find": "            const view = this.#applyWatcherHold(await this.stateFiles.clearWatcherHold(startGeneration));",
+    "replace": "            const view = undefined;",
+    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
+    "why": "Only a successful real recheck writes the cleared record; without it the hold never clears."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "if (retry?.schema !== \"control-room.watcher-hold/v1\" || ![null, \"watcher_history_unproven\"].includes(retry.code))",
-    "replace": "if (false)",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "Malformed supplemental schema/code cannot turn the older clearance into a healthy answer."
+    "find": "                const view = this.#applyWatcherHold(await this.stateFiles.refuseWatcherHold(error.code));",
+    "replace": "                const view = undefined;",
+    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
+    "why": "A real history refusal must be recorded before publication so it survives reconstruction (literal generation-1 held record)."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "catch (error) { if (error?.code === \"ENOENT\") return null; throw updaterRefuseV1(\"watcher_history_unproven\"); }",
-    "replace": "catch (error) { return null; }",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "Unreadable or non-JSON supplemental evidence is unknown, never absence; named corrupted-record assertion fails."
+    "find": "        try { this.#applyWatcherHold(await this.stateFiles.observeWatcherHold()); }",
+    "replace": "        try { }",
+    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
+    "why": "Each tick reads the durable record; a reconstructed loop must publish the unresolved hold while Off."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "if (retryHold !== null && value.code === null)",
-    "replace": "if (false)",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "A real newer failed-write refusal survives an older durable clearance across reconstruction."
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "if (code === null) {",
-    "replace": "if (false) {",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "The successful real source recheck must durably retire both primary and supplemental holds."
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "if (retryHold !== null) { await this.writeWatcherHold(retryHold); return retryHold; }",
-    "replace": "if (false) { await this.writeWatcherHold(retryHold); return retryHold; }",
+    "find": "    this.#watcherHoldUnpersisted = view.code !== null && !view.durable;",
+    "replace": "    this.#watcherHoldUnpersisted = false;",
     "test": "node --test --test-name-pattern='FIX-475 R6: failed legacy promotion' tests/updater-watcher.test.mjs",
-    "why": "Supplemental evidence survives a second real status producer even when the primary file is absent."
+    "why": "While the hold write fails, publication must keep the history sentence over unrelated attention."
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "catch (error) { if (error?.code === \"ENOENT\") return null; throw updaterRefuseV1(\"watcher_history_unproven\"); }",
-    "replace": "catch (error) { if (false) return null; throw updaterRefuseV1(\"watcher_history_unproven\"); }",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "Absent optional supplemental state remains an ordinary independent null reader result after a real successful source recheck."
-  },
-  {
-    "file": "src/updater/v1/runtime.mjs",
-    "find": "catch (error) { if (error?.code === \"ENOENT\") return; throw error; }",
-    "replace": "catch (error) { if (false) return; throw error; }",
-    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
-    "why": "An absent optional supplemental record cannot turn the real successful clearance writer into an ENOENT refusal."
+    "find": "Boolean(outstanding) || watcherHold !== null",
+    "replace": "Boolean(outstanding)",
+    "test": "node --import tsx --test --test-name-pattern='FIX-475 R4: Home never shows healthy or off' tests/updater-home-status.test.tsx",
+    "why": "Home must read attention, never off or healthy, at every held step (literal Home states)."
   }
 ]

@@ -3,6 +3,7 @@ import { lstat, readlink, unlink } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
+import { HistoryHoldV1 } from "./hold-record.mjs";
 import { parseSelfUpdateFlagV1, publicStatusV1, SAFE_ID_V1, UPDATER_RUN_REASON_V1, updaterRefuseV1, updaterRunAttentionV1 } from "./contracts.mjs";
 export { FileStepJournalV1, RefusalAggregatorV1, reconcileJournalDisplayV1 } from "./journal.mjs";
 
@@ -40,7 +41,8 @@ function refreshedSelfUpgradeNeedsAttention(facts) {
 }
 
 export class UpdaterStateFilesV1 {
-  constructor(root, leaseToken) { this.root = root; this.leaseToken = leaseToken; }
+  #historyHold;
+  constructor(root, leaseToken) { this.root = root; this.leaseToken = leaseToken; this.#historyHold = new HistoryHoldV1(root); }
   readSelfUpdate() { return readFileNoFollowV1(this.root, "updater-state/self-update", { maxBytes: 16 }); }
   async hasRescueMarker() {
     try {
@@ -82,60 +84,12 @@ export class UpdaterStateFilesV1 {
       schema: "control-room.updater-mode/v1", mode,
     })}\n`);
   }
-  async #readWatcherRetry() {
-    let retry;
-    try { retry = JSON.parse(await readFileNoFollowV1(this.root, "status/watcher-hold-retry.json", { maxBytes: 256 })); }
-    catch (error) { if (error?.code === "ENOENT") return null; throw updaterRefuseV1("watcher_history_unproven"); }
-    if (retry?.schema !== "control-room.watcher-hold/v1" || ![null, "watcher_history_unproven"].includes(retry.code))
-      throw updaterRefuseV1("watcher_history_unproven");
-    return retry.code;
-  }
-  async readWatcherHold() {
-    const retryHold = await this.#readWatcherRetry();
-    let value;
-    try { value = JSON.parse(await readFileNoFollowV1(this.root, "updater-state/watcher-hold.json", { maxBytes: 256 })); }
-    catch (error) {
-      if (error?.code !== "ENOENT") throw updaterRefuseV1("watcher_history_unproven");
-      if (retryHold !== null) { await this.writeWatcherHold(retryHold); return retryHold; }
-      // Earlier versions published this warning without its own durable file.
-      // Preserve that real reader record during upgrade until a recheck writes
-      // an explicit cleared hold. A cleared record never falls back to status.
-      let previous;
-      try { previous = JSON.parse(await readFileNoFollowV1(this.root, "status/status.json", { maxBytes: 8192 })); }
-      catch (failure) { if (failure?.code === "ENOENT") return null; throw updaterRefuseV1("watcher_history_unproven"); }
-      const recovered = previous?.schema === "control-room.updater-status/v1"
-        && previous.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? "watcher_history_unproven" : null;
-      // Promote the only legacy evidence before another status writer can mask
-      // it. A later display-cache miss must never erase an unresolved hold.
-      if (recovered !== null) await this.writeWatcherHold(recovered);
-      return recovered;
-    }
-    if (value?.schema !== "control-room.watcher-hold/v1" || ![null, "watcher_history_unproven"].includes(value.code))
-      throw updaterRefuseV1("watcher_history_unproven");
-    if (retryHold !== null && value.code === null) {
-      await this.writeWatcherHold(retryHold);
-      return retryHold;
-    }
-    return value.code;
-  }
-  async writeWatcherHold(code) {
-    const body = `${JSON.stringify({ schema: "control-room.watcher-hold/v1", code })}\n`;
-    try { await atomicWriteNoFollowV1(this.root, "updater-state/watcher-hold.json", body); }
-    catch (error) {
-      // Status is a separate writable directory in the promotion-failure case.
-      // Preserve the new refusal there before an earlier cleared record can
-      // hide it on reconstruction. A failed write still reports its failure.
-      if (code === "watcher_history_unproven")
-        await atomicWriteNoFollowV1(this.root, "status/watcher-hold-retry.json", body);
-      throw error;
-    }
-    if (code === null) {
-      try { await lstat(`${this.root}/status/watcher-hold-retry.json`); }
-      catch (error) { if (error?.code === "ENOENT") return; throw error; }
-      // Only the successful source recheck's clearance retires both records.
-      await atomicWriteNoFollowV1(this.root, "status/watcher-hold-retry.json", body);
-    }
-  }
+  // FIX-475: the history hold has one record and one serialized writer per
+  // state-files instance (hold-record.mjs). Each answer is a view
+  // `{ generation, code, durable, error? }`.
+  observeWatcherHold() { return this.#historyHold.observe(); }
+  refuseWatcherHold(code) { return this.#historyHold.refuse(code); }
+  clearWatcherHold(startGeneration) { return this.#historyHold.clear(startGeneration); }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({
       schema: "control-room.updater-heartbeat/v1", at: new Date().toISOString(), ...value,
@@ -238,6 +192,7 @@ const WATCHER_HOLD_CODES_V1 = Object.freeze(["watcher_history_unproven"]);
 
 export class UpdaterMainLoopV1 {
   #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false; #watcherHold = null; #watcherHoldUnpersisted = false;
+  #watcherHoldGeneration = 0;
   constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, alerts = null,
     alertFacts = async () => ({}), intervalMs = 5_000, watcherTimeoutMs = 5000, ownerActionTimeoutMs = 300_000, onError = () => {} }) {
     assertOwnerActionTimeoutV1(ownerActionTimeoutMs);
@@ -296,6 +251,14 @@ export class UpdaterMainLoopV1 {
       code: typeof durable.code === "string" ? durable.code : null });
   }
 
+  // Views come from one serialized writer, so they settle in the order written.
+  #applyWatcherHold(view) {
+    if (!view) return view;
+    this.#watcherHold = view.code; this.#watcherHoldGeneration = view.generation;
+    this.#watcherHoldUnpersisted = view.code !== null && !view.durable;
+    return view;
+  }
+
   async #publishStatus(value) {
     // Until the hold write succeeds, status may be the only recoverable
     // evidence. Preserve it through both progress and outcome publication so
@@ -318,11 +281,9 @@ export class UpdaterMainLoopV1 {
       let flag = "Off", switchUnreadable;
       try { flag = parseSelfUpdateFlagV1(await this.stateFiles.readSelfUpdate()); }
       catch (error) { switchUnreadable = cleanReason(error); }
-      if (this.stateFiles.readWatcherHold) {
-        try {
-          this.#watcherHold = await this.stateFiles.readWatcherHold();
-          this.#watcherHoldUnpersisted = false;
-        } catch {
+      if (this.stateFiles.observeWatcherHold) {
+        try { this.#applyWatcherHold(await this.stateFiles.observeWatcherHold()); }
+        catch {
           this.#watcherHold = "watcher_history_unproven";
           this.#watcherHoldUnpersisted = true;
         }
@@ -332,19 +293,24 @@ export class UpdaterMainLoopV1 {
       // builder. Only timer work and risk-reducing owner requests run.
       if (requestsSettled && !this.#stopping && flag === "On" && this.watcher) {
         if (!this.#watching) {
+          // The clearance may complete after this tick gave up waiting. It
+          // carries the generation this recheck started against, so it can
+          // never clear a hold recorded after that (FIX-475 R7-01).
+          const startGeneration = this.#watcherHoldGeneration;
           const watching = Promise.resolve().then(() => this.watcher.tick()).then(async outcome => {
             // Busy/run-active answers skipped the source and are not rechecks.
             if (!["no_candidate", "unchanged", "created", "existing"].includes(outcome?.status)) return outcome;
-            await this.stateFiles.writeWatcherHold?.(null);
-            this.#watcherHold = null;
-            this.#watcherHoldUnpersisted = false;
+            if (!this.stateFiles.clearWatcherHold) { this.#watcherHold = null; return outcome; }
+            const view = this.#applyWatcherHold(await this.stateFiles.clearWatcherHold(startGeneration));
+            if (view?.error) throw view.error;
             return outcome;
           }, async error => {
             if (WATCHER_HOLD_CODES_V1.includes(error?.code)) {
-              this.#watcherHold = error.code;
-              this.#watcherHoldUnpersisted = true;
-              await this.stateFiles.writeWatcherHold?.(error.code);
-              this.#watcherHoldUnpersisted = false;
+              if (!this.stateFiles.refuseWatcherHold) this.#watcherHold = error.code;
+              else {
+                const view = this.#applyWatcherHold(await this.stateFiles.refuseWatcherHold(error.code));
+                if (view?.error) try { this.onError(view.error); } catch { /* reporting cannot block the runner */ }
+              }
             }
             throw error;
           });

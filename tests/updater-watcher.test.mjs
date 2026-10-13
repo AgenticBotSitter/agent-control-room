@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:https";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import fsPromises, { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -359,9 +360,9 @@ async function heldLoopFixture(t) {
 test("FIX-475: reconstruction while Off preserves the unresolved real watcher warning", async t => {
   const f = await heldLoopFixture(t), first = f.make();
   await first.tick(); assert.equal((await f.read()).needsYou, true);
-  const holdRecord = () => readFile(join(f.f.updaterRoot, "updater-state/watcher-hold.json"), "utf8")
+  const holdRecord = () => readFile(join(f.f.updaterRoot, "status/history-hold.json"), "utf8")
     .then(JSON.parse, () => null);
-  assert.deepEqual(await holdRecord(), { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
+  assert.deepEqual(await holdRecord(), { schema: "control-room.watcher-hold/v2", generation: 1, code: "watcher_history_unproven" },
     "the runtime persists the hold independently of the display cache");
   await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "Off\n");
   await first.shutdown();
@@ -374,7 +375,7 @@ test("FIX-475: reconstruction while Off preserves the unresolved real watcher wa
   assert.equal((await f.read()).needsYou, true, "repair alone is not a successful recheck");
   await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "On\n");
   await reconstructed.tick(); assert.equal((await f.read()).needsYou, false, "a real successful recheck settles the warning");
-  assert.deepEqual(await holdRecord(), { schema: "control-room.watcher-hold/v1", code: null },
+  assert.deepEqual(await holdRecord(), { schema: "control-room.watcher-hold/v2", generation: 2, code: null },
     "successful recheck persists clearance independently of this loop's memory");
   await reconstructed.shutdown();
 });
@@ -437,9 +438,14 @@ test("FIX-475: busy and live-run answers cannot settle a persisted warning", asy
 
 test("FIX-475: unreadable and malformed persisted holds remain visible while Off", async t => {
   const f = await heldLoopFixture(t); await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "Off\n");
-  for (const body of ["{", '{"schema":"wrong","code":null}', '{"schema":"control-room.watcher-hold/v1","code":"unknown"}']) {
-    await writeFile(join(f.f.updaterRoot, "updater-state/watcher-hold.json"), body);
-    const loop = f.make(); await loop.tick();
+  for (const body of ["{", '{"schema":"wrong","code":null}', '{"schema":"control-room.watcher-hold/v1","code":"unknown"}',
+    '{"schema":"control-room.watcher-hold/v2","generation":0,"code":null}', '{"schema":"control-room.watcher-hold/v2","generation":1,"code":"unknown"}']) {
+    // The current record, and the earlier record folded while no current record exists.
+    for (const path of ["status/history-hold.json", "updater-state/watcher-hold.json"]) await writeFile(join(f.f.updaterRoot, path), body);
+    const loop = new UpdaterMainLoopV1({ runner: { async runOnce() { return { status: "idle" }; } },
+      store: { async unhandledOwnerRequests() { return []; } }, stateFiles: new UpdaterStateFilesV1(f.f.updaterRoot),
+      mode: { async read() { return "running"; } }, ownerActions: {}, watcher: { async tick() { assert.fail("Off cannot recheck"); } } });
+    await loop.tick();
     assert.equal((await f.read()).needsYou, true, "invalid persisted hold data never publishes a healthy card");
     await loop.shutdown();
   }
@@ -448,9 +454,12 @@ test("FIX-475: unreadable and malformed persisted holds remain visible while Off
 
 test("FIX-475: a legacy published history warning survives restart while Off", async t => {
   const f = await heldLoopFixture(t), first = f.make(); await first.tick(); await first.shutdown();
-  await rm(join(f.f.updaterRoot, "updater-state/watcher-hold.json"), { force: true });
+  await rm(join(f.f.updaterRoot, "status/history-hold.json"), { force: true });
   await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "Off\n");
-  const next = f.make(); await next.tick();
+  const next = new UpdaterMainLoopV1({ runner: { async runOnce() { return { status: "idle" }; } },
+    store: { async unhandledOwnerRequests() { return []; } }, stateFiles: new UpdaterStateFilesV1(f.f.updaterRoot),
+    mode: { async read() { return "running"; } }, ownerActions: {}, watcher: { async tick() { assert.fail("Off cannot recheck"); } } });
+  await next.tick();
   assert.equal((await f.read()).needsYou, true, "a real legacy status warning is not erased by reconstruction");
   await next.shutdown();
 });
@@ -483,7 +492,7 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
     mode: { async read() { return "running"; } }, ownerActions: {},
     watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } },
   });
-  const holdPath = join(f.f.updaterRoot, "updater-state/watcher-hold.json");
+  const holdPath = join(f.f.updaterRoot, "status/history-hold.json");
   await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "setup leaves the product's hold file absent");
   const legacy = make(legacyFiles, { async unhandledOwnerRequests() { return []; } });
   await legacy.tick(); await legacy.shutdown();
@@ -505,14 +514,24 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
       "settling unrelated run attention must not erase the unresolved history hold");
     assert.equal((await f.read()).reason, reason, "the original history reason returns after settlement");
     assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")),
-      { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
+      { schema: "control-room.watcher-hold/v2", generation: 1, code: "watcher_history_unproven" },
       "the recovered legacy evidence is durable before public status can mask it");
   } finally { await reconstructed.shutdown(); }
 });
 
+// FIX-475 R4: the hold record lives in status/ beside the status card, so an
+// unwritable updater-state no longer fails it. A directory planted at the
+// record path is a real write failure that leaves status.json writable.
+async function blockHoldRecord(root) {
+  const record = join(root, "status/history-hold.json");
+  await rm(record, { force: true }); await mkdir(record);
+  await assert.rejects(writeFile(record, "x"), { code: "EISDIR" }, "the record path really refuses writes");
+  return () => rm(record, { recursive: true, force: true });
+}
+
 for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-475 R6: failed legacy promotion preserves ${state} evidence until recheck`, async t => {
   const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
-  const holdPath = join(f.f.updaterRoot, "updater-state/watcher-hold.json"), stateDir = join(f.f.updaterRoot, "updater-state");
+  const holdPath = join(f.f.updaterRoot, "status/history-hold.json"), stateDir = join(f.f.updaterRoot, "updater-state");
   let attention = null, sourceCalls = 0;
   const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
     async openRunAttention() { return attention; } }; // Synthetic unrelated DB attention, not a SQL authority proof.
@@ -529,40 +548,41 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
   await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "legacy producer leaves durable hold absent");
   await writeFile(join(stateDir, "self-update"), "Off\n");
   attention = { runId: "fixture-run", state, code: null };
-  await chmod(stateDir, 0o500);
+  // Both the round-6 fault (updater-state unwritable) and a failing record.
+  await chmod(stateDir, 0o500); const unblock = await blockHoldRecord(f.f.updaterRoot);
   const loops = [];
   try {
-    await assert.rejects(writeFile(join(stateDir, "permission-probe"), "x"), { code: "EACCES" }, "real directory refuses promotion writes");
-    const upgraded = make(f.files); loops.push(upgraded); await upgraded.tick();
+    await assert.rejects(writeFile(join(stateDir, "permission-probe"), "x"), { code: "EACCES" }, "real directory refuses writes");
+    const upgraded = make(new UpdaterStateFilesV1(f.f.updaterRoot)); loops.push(upgraded); await upgraded.tick();
     assert.equal((await f.read()).reason, reason, "failed promotion must not overwrite the only legacy history evidence");
     assert.equal((await f.read()).needsYou, true, "failed promotion keeps the published hold raised");
     // Another real status producer can publish while this process is absent.
-    // The supplemental hold must survive that cache replacement too.
     await f.files.writeStatus({ state: state === "error" ? "needs_attention" : state, needsYou: true, selfUpdate: "Off" });
-    await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "failed promotion cannot fabricate durable evidence");
     attention = null;
     const retry = make(new UpdaterStateFilesV1(f.f.updaterRoot)); loops.push(retry); await retry.tick();
     assert.equal((await f.read()).reason, reason, "reconstruction while still unwritable retains the history sentence");
     assert.equal((await f.read()).needsYou, true, "settlement cannot clear a failed-promotion hold");
     assert.equal(sourceCalls, 1, "Off never rechecks source history");
-    await chmod(stateDir, 0o700);
+    await chmod(stateDir, 0o700); await unblock();
     await retry.tick();
-    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
-      "a later tick retries promotion before any unrelated status replaces legacy evidence");
+    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 1, code: "watcher_history_unproven" },
+      "a later tick retries the write of the pending hold");
     assert.equal((await f.read()).reason, reason, "writable retry is persistence, not a successful source recheck");
     // A burst enters the real loop; exactly one tick owns its work and all other
     // callers take the observed busy branch, without a scheduling-time window.
     const burst = await Promise.all(Array.from({ length: 50 }, () => retry.tick()));
     assert.equal(burst.filter(value => value.status === "busy").length, 49, "49 losing concurrent tick branches ran");
     assert.equal((await f.read()).needsYou, true);
+    const reconstructed = make(new UpdaterStateFilesV1(f.f.updaterRoot)); loops.push(reconstructed); await reconstructed.tick();
+    assert.equal((await f.read()).needsYou, true, "the persisted hold survives reconstruction while Off");
     await rm(join(f.source.mirror, "info/grafts"));
-    await retry.tick(); assert.equal((await f.read()).needsYou, true, "repair while Off cannot clear the hold");
+    await reconstructed.tick(); assert.equal((await f.read()).needsYou, true, "repair while Off cannot clear the hold");
     await writeFile(join(stateDir, "self-update"), "On\n");
-    await retry.tick();
+    await reconstructed.tick();
     assert.equal(sourceCalls, 2, "clearance follows a real successful source recheck");
     assert.equal((await f.read()).needsYou, false, "successful recheck alone clears the unresolved hold");
-    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: null });
-  } finally { await chmod(stateDir, 0o700); await Promise.all(loops.map(loop => loop.shutdown())); }
+    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 2, code: null });
+  } finally { await chmod(stateDir, 0o700); await unblock(); await Promise.all(loops.map(loop => loop.shutdown())); }
 });
 
 test("FIX-475 R6: pending promotion preserves the legacy warning during running progress", async t => {
@@ -573,7 +593,7 @@ test("FIX-475 R6: pending promotion preserves the legacy warning during running 
     store: { async unhandledOwnerRequests() { return []; } }, mode: { async read() { return "running"; } }, ownerActions: {},
     watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
   await old.tick(); await old.shutdown();
-  const stateDir = join(f.f.updaterRoot, "updater-state"); await chmod(stateDir, 0o500);
+  const unblock = await blockHoldRecord(f.f.updaterRoot);
   let progressSeen = false;
   const loop = new UpdaterMainLoopV1({ stateFiles: f.files, runner: { async runOnce({ onProgress }) {
     await onProgress(); progressSeen = true;
@@ -583,64 +603,386 @@ test("FIX-475 R6: pending promotion preserves the legacy warning during running 
   } }, store: { async unhandledOwnerRequests() { return []; } }, mode: { async read() { return "running"; } }, ownerActions: {},
     watcher: { async tick() { return { status: "busy" }; } } }); // A synthetic skipped recheck, never source approval.
   try { await loop.tick(); assert.equal(progressSeen, true); assert.equal((await f.read()).reason, reason); }
-  finally { await chmod(stateDir, 0o700); await loop.shutdown(); }
+  finally { await unblock(); await loop.shutdown(); }
 });
 
 test("FIX-475 R6: a new history refusal survives its failed hold write and reconstruction", async t => {
   const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
-  const stateDir = join(f.f.updaterRoot, "updater-state"), holdPath = join(stateDir, "watcher-hold.json");
-  const loop = new UpdaterMainLoopV1({ stateFiles: f.files, runner: { async runOnce() { return { status: "idle" }; } },
-    store: { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
-      async openRunAttention() { return { runId: "fixture-run", state: "rolled_back", code: null }; } },
-    mode: { async read() { return "running"; } }, ownerActions: {},
+  const record = join(f.f.updaterRoot, "status/history-hold.json"), statusDir = join(f.f.updaterRoot, "status");
+  const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
+    async openRunAttention() { return { runId: "fixture-run", state: "rolled_back", code: null }; } };
+  const make = () => new UpdaterMainLoopV1({ stateFiles: new UpdaterStateFilesV1(f.f.updaterRoot), store,
+    runner: { async runOnce() { return { status: "idle" }; } }, mode: { async read() { return "running"; } }, ownerActions: {},
     watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
-  await assert.rejects(readFile(holdPath), { code: "ENOENT" });
-  await chmod(stateDir, 0o500);
+  await assert.rejects(readFile(record), { code: "ENOENT" }, "setup leaves the record absent");
+  // A real refusal and a real successful recheck produce the earlier clearance.
+  const loop = make();
   try {
+    await loop.tick(); await rm(join(f.source.mirror, "info/grafts")); await loop.tick();
+    assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 2, code: null });
+    await writeFile(join(f.source.mirror, "info/grafts"), `${f.f.fromCommit}\n`);
+    await chmod(statusDir, 0o500);
+    await assert.rejects(writeFile(join(statusDir, "permission-probe"), "x"), { code: "EACCES" });
+    // Neither the record nor the card can be written: the tick reports it.
+    await assert.rejects(loop.tick(), { code: "EACCES" });
+    assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 2, code: null },
+      "a failed write leaves the old complete record, never a half state");
+    await chmod(statusDir, 0o755); await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "Off\n");
     await loop.tick();
-    assert.equal((await f.read()).reason, reason, "a failed new hold write cannot let unrelated attention replace history evidence");
+    assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 3, code: "watcher_history_unproven" },
+      "the next tick retries the pending refusal before anything can clear it");
     assert.equal((await f.read()).needsYou, true);
-    await assert.rejects(readFile(holdPath), { code: "ENOENT" });
-    await writeFile(join(stateDir, "self-update"), "Off\n");
-    await loop.shutdown();
-    const reconstructed = f.make();
-    try { await reconstructed.tick(); assert.equal((await f.read()).reason, reason, "the new refusal survives reconstruction without a durable file"); }
-    finally { await reconstructed.shutdown(); }
-  } finally { await chmod(stateDir, 0o700); await loop.shutdown(); }
+  } finally { await chmod(statusDir, 0o755); await loop.shutdown(); }
+  const reconstructed = make();
+  try {
+    await reconstructed.tick();
+    assert.equal((await f.read()).needsYou, true, "the new refusal survives reconstruction while Off");
+    assert.equal((await f.read()).state, "rolled_back", "a durable hold keeps the unrelated outcome visible");
+  } finally { await reconstructed.shutdown(); }
 });
 
 test("FIX-475 R6: failed hold write after prior clearance retains the newer refusal", async t => {
   const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
-  const dir = join(f.f.updaterRoot, "updater-state"), hold = join(dir, "watcher-hold.json");
+  const record = join(f.f.updaterRoot, "status/history-hold.json"), selfUpdate = join(f.f.updaterRoot, "updater-state/self-update");
+  const make = () => new UpdaterMainLoopV1({ stateFiles: new UpdaterStateFilesV1(f.f.updaterRoot),
+    store: { async unhandledOwnerRequests() { return []; } }, runner: { async runOnce() { return { status: "idle" }; } },
+    mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
   await rm(join(f.source.mirror, "info/grafts"));
-  const retryPath = join(f.f.updaterRoot, "status/watcher-hold-retry.json");
-  await assert.rejects(readFile(retryPath), { code: "ENOENT" }, "setup leaves supplemental product state absent");
-  const primed = f.make(); await primed.tick(); await primed.shutdown();
-  assert.equal((await f.read()).needsYou, false, "missing supplemental record is ordinary first use");
-  assert.equal(await f.files.readWatcherHold().catch(error => error.code), null, "missing supplemental record does not refuse the real reader after clearance");
-  assert.equal(await f.files.writeWatcherHold(null).then(() => "cleared", error => error.code), "cleared", "missing supplemental record does not refuse the real clearance writer");
-  assert.deepEqual(JSON.parse(await readFile(hold, "utf8")), { schema: "control-room.watcher-hold/v1", code: null }, "real successful recheck creates the earlier clearance");
+  const primed = make(); await primed.tick(); await primed.shutdown();
+  assert.equal((await f.read()).needsYou, false, "first use with a trusted history is quiet");
+  await assert.rejects(readFile(record), { code: "ENOENT" }, "a quiet first use needs no record");
   await writeFile(join(f.source.mirror, "info/grafts"), `${f.f.fromCommit}\n`);
-  const failed = f.make(); await chmod(dir, 0o500);
+  const held = make(); await held.tick(); await rm(join(f.source.mirror, "info/grafts")); await held.tick(); await held.shutdown();
+  assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 2, code: null },
+    "real refusal then real successful recheck create the earlier clearance");
+  await writeFile(join(f.source.mirror, "info/grafts"), `${f.f.fromCommit}\n`);
+  const unblock = await blockHoldRecord(f.f.updaterRoot);
+  const failed = make();
   try {
-    await failed.tick(); assert.equal((await f.read()).reason, reason);
-    await writeFile(join(dir, "self-update"), "Off\n"); await failed.shutdown();
-    const restored = f.make();
+    await failed.tick(); assert.equal((await f.read()).reason, reason, "the newer refusal is published although its write failed");
+    await writeFile(selfUpdate, "Off\n"); await failed.shutdown();
+    const restored = make();
     try {
       await restored.tick(); assert.equal((await f.read()).needsYou, true, "an older clearance cannot erase a newer failed-write refusal");
-      assert.equal((await f.read()).reason, reason, "the newer history warning survives reconstruction despite the older cleared file");
-      assert.deepEqual(JSON.parse(await readFile(retryPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
-        "the product persists the newer refusal separately from the older clearance");
-      for (const body of ['{"schema":"wrong","code":null}', '{', '{"schema":"control-room.watcher-hold/v1","code":"unknown"}']) {
-        await writeFile(retryPath, body);
-        await restored.tick(); assert.equal((await f.read()).needsYou, true, "invalid supplemental evidence must not resurrect an older clearance");
-      }
-      await assert.rejects(f.files.writeWatcherHold("watcher_history_unproven"), { code: "EACCES" }, "real failed writer restores its own supplemental evidence");
-      await chmod(dir, 0o700); await restored.tick();
-      assert.equal((await f.read()).needsYou, true, "successful promotion is persistence, not clearance");
-      await rm(join(f.source.mirror, "info/grafts")); await writeFile(join(dir, "self-update"), "On\n");
+      assert.equal((await f.read()).reason, reason, "the newer history warning survives reconstruction");
+      await unblock(); await restored.tick();
+      assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 1, code: "watcher_history_unproven" },
+        "the retry replaces the unreadable record with a held one");
+      assert.equal((await f.read()).needsYou, true, "successful persistence is not clearance");
+      await rm(join(f.source.mirror, "info/grafts")); await writeFile(selfUpdate, "On\n");
       await restored.tick(); assert.equal((await f.read()).needsYou, false, "real successful recheck retires the newer refusal");
-      assert.deepEqual(JSON.parse(await readFile(retryPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: null }, "successful recheck durably clears supplemental evidence");
+      assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 2, code: null });
     } finally { await restored.shutdown(); }
-  } finally { await chmod(dir, 0o700); await failed.shutdown(); }
+  } finally { await unblock(); await failed.shutdown(); }
+});
+
+// ---------------------------------------------------------------------------
+// FIX-475 R4: one hold record, one serialized writer, generation compare-and-set.
+// Expected records are literals from the ticket's rules (a refusal writes
+// generation + 1 held, a successful recheck writes generation + 1 cleared),
+// counted by hand for each sequence; none is read back from the product.
+// ---------------------------------------------------------------------------
+const HOLD_V2 = (generation, code) => ({ schema: "control-room.watcher-hold/v2", generation, code });
+const HISTORY_HOLD = "watcher_history_unproven";
+const HISTORY_REASON = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+const holdRecordOf = root => readFile(join(root, "status/history-hold.json"), "utf8").then(JSON.parse);
+function gateV1() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
+function holdLoopV1(root, { stateFiles = new UpdaterStateFilesV1(root), watcher, store, watcherTimeoutMs } = {}) {
+  return new UpdaterMainLoopV1({ stateFiles, runner: { async runOnce() { return { status: "idle" }; } },
+    store: store ?? { async unhandledOwnerRequests() { return []; } }, mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: watcher ?? { async tick() { assert.fail("Off cannot recheck source history"); } },
+    ...(watcherTimeoutMs === undefined ? {} : { watcherTimeoutMs }) });
+}
+
+for (const [contenders, watcherTimeoutMs] of [[1, 10], [20, 10], [50, 10], [1, undefined]]) test(`FIX-475 R7: a late successful recheck stays cleared against ${contenders} Off ticks (deadline ${watcherTimeoutMs ?? "default"})`, async t => {
+  const f = await heldLoopFixture(t), root = f.f.updaterRoot, selfUpdate = join(root, "updater-state/self-update");
+  await assert.rejects(holdRecordOf(root), { code: "ENOENT" }, "setup leaves the record absent");
+  const go = gateV1(), paused = gateV1(), resume = gateV1(), cleared = gateV1();
+  let sourceCalls = 0, gated = false, armed = false;
+  const watcher = { async tick() {
+    sourceCalls += 1; if (gated) await go.promise;
+    await (await f.source.fetchMain()).release(); return { status: "no_candidate" };
+  } };
+  const files = new UpdaterStateFilesV1(root), loop = holdLoopV1(root, { stateFiles: files, watcher, watcherTimeoutMs });
+  // Pause the clearance's real rename, the one write it makes, so Off ticks
+  // arrive while it is in flight. Every other call keeps the real function.
+  const original = fsPromises.rename;
+  fsPromises.rename = async function (from, to, ...rest) {
+    if (armed && String(to).endsWith("/history-hold.json")) { armed = false; paused.resolve(); await resume.promise;
+      const result = await original.call(this, from, to, ...rest); cleared.resolve(); return result; }
+    return original.call(this, from, to, ...rest);
+  };
+  syncBuiltinESMExports();
+  try {
+    // The setup refusal runs to completion under the default deadline.
+    const refusing = holdLoopV1(root, { stateFiles: files, watcher }); await refusing.tick(); await refusing.shutdown();
+    assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD), "a real Git refusal records generation 1 held");
+    await rm(join(f.source.mirror, "info/grafts")); gated = true;
+    await loop.tick();
+    assert.equal(sourceCalls, 2, "the recheck started and outlived the watcher deadline");
+    assert.equal((await f.read()).needsYou, true, "the timed-out tick still publishes the hold");
+    await writeFile(selfUpdate, "Off\n"); armed = true; go.resolve(); await paused.promise;
+    assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD), "mid-clearance the old complete record is on disk");
+    let ownerSettled = false;
+    const ticks = Array.from({ length: contenders }, () => loop.tick());
+    ticks[0].then(() => { ownerSettled = true; }, () => { ownerSettled = true; });
+    const losers = await Promise.all(ticks.slice(1));
+    assert.equal(losers.filter(value => value.status === "busy").length, contenders - 1, "every losing Off tick took the busy branch");
+    assert.equal(ownerSettled, false, "the owning Off tick waits behind the in-flight clearance");
+    resume.resolve(); await cleared.promise; await ticks[0];
+    assert.deepEqual(await holdRecordOf(root), HOLD_V2(2, null), "the late clearance applied once against generation 1");
+    assert.equal((await f.read()).needsYou, false, "the owning Off tick publishes the completed clearance");
+    for (let i = 0; i < 3; i += 1) await loop.tick();
+    assert.deepEqual(await holdRecordOf(root), HOLD_V2(2, null), "later Off ticks never promote the old hold back");
+    assert.equal(sourceCalls, 2, "Off ticks never rechecked");
+  } finally { armed = false; resume.resolve(); go.resolve(); fsPromises.rename = original; syncBuiltinESMExports(); await loop.shutdown(); }
+  const next = holdLoopV1(root);
+  try { await next.tick(); assert.equal((await f.read()).needsYou, false, "reconstruction reads the completed clearance"); }
+  finally { await next.shutdown(); }
+});
+
+test("FIX-475 R7: a recheck that started before a newer refusal cannot clear it, across two loops sharing the writer", async t => {
+  const f = await heldLoopFixture(t), root = f.f.updaterRoot;
+  // Loop B refuses through its own real grafted mirror; loop A succeeds
+  // through the shared, trusted one. Both loops share one state-files writer.
+  const other = await repository(t);
+  const refusing = new GitMirrorSourceV1({ root: other.updaterRoot, origin: other.origin, fromCommit: other.fromCommit, testing: true });
+  await (await refusing.fetchMain()).release?.();
+  await writeFile(join(refusing.mirror, "info/grafts"), `${other.fromCommit}\n`);
+  await rm(join(f.source.mirror, "info/grafts"));
+  const files = new UpdaterStateFilesV1(root);
+  let gate = gateV1(), started = gateV1();
+  const a = holdLoopV1(root, { stateFiles: files, watcherTimeoutMs: 10, watcher: { async tick() {
+    started.resolve(); await gate.promise; await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
+  const makeB = () => holdLoopV1(root, { stateFiles: files, watcher: { async tick() {
+    await (await refusing.fetchMain()).release(); return { status: "no_candidate" }; } } });
+  const b = makeB();
+  try {
+    await b.tick(); assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD));
+    // A starts against generation 1 and times out; B refuses again meanwhile.
+    await a.tick(); await started.promise;
+    await b.tick(); assert.deepEqual(await holdRecordOf(root), HOLD_V2(2, HISTORY_HOLD), "the newer refusal is generation 2");
+    // A ticks while its own recheck is still running: it observes 2 but its
+    // recheck still started against 1.
+    assert.equal((await a.tick()).status, "idle"); assert.equal((await f.read()).needsYou, true);
+    gate.resolve(); await a.shutdown();
+    assert.deepEqual(await holdRecordOf(root), HOLD_V2(2, HISTORY_HOLD), "the stale clearance (started at 1) changed nothing");
+    await b.tick(); assert.equal((await f.read()).needsYou, true, "the refusal is still published");
+    // The other order: a clearance that completes first, then a refusal.
+    gate = gateV1(); started = gateV1();
+    const a2 = holdLoopV1(root, { stateFiles: files, watcherTimeoutMs: 10, watcher: { async tick() {
+      started.resolve(); await gate.promise; await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
+    await a2.tick(); await started.promise; gate.resolve(); await a2.shutdown();
+    assert.deepEqual(await holdRecordOf(root), HOLD_V2(4, null), "B's tick at 3 then A2's clearance at 4");
+    await b.tick(); assert.deepEqual(await holdRecordOf(root), HOLD_V2(5, HISTORY_HOLD), "a refusal after any clearance wins");
+    assert.equal((await f.read()).needsYou, true);
+  } finally { gate.resolve(); await b.shutdown(); await a.shutdown(); }
+});
+
+for (const refusalIndex of [0, 1, 25, 49]) test(`FIX-475 R7: refusal wins over 49 concurrent clearances (refusal at ${refusalIndex})`, async t => {
+  const root = await mkdtemp(join(tmpdir(), "hold-burst-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const files = new UpdaterStateFilesV1(root);
+  const start = await files.refuseWatcherHold(HISTORY_HOLD);
+  assert.equal(start.generation, 1); assert.equal(start.durable, true);
+  const views = await Promise.all(Array.from({ length: 50 }, (_, index) => index === refusalIndex
+    ? files.refuseWatcherHold(HISTORY_HOLD) : files.clearWatcherHold(1)));
+  // Calls serialize in call order: only a clearance ahead of the refusal applies.
+  const applied = refusalIndex > 0 ? 1 : 0;
+  assert.equal(views.filter(view => view.code === null).length, refusalIndex, "every clearance before the refusal reads clear");
+  assert.equal(views.filter(view => view.code === null && view.generation === 2).length, refusalIndex,
+    "only one write happened among them; later ones saw the cleared generation");
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(1 + applied + 1, HISTORY_HOLD), "the refusal is the final word");
+  assert.equal((await files.observeWatcherHold()).code, HISTORY_HOLD);
+  assert.deepEqual((await readdir(join(root, "status"))).sort(), ["history-hold.json"], "no temporary or second record remains");
+});
+
+test("FIX-475 R4: the hold is one atomic 0600 record whose generation rises with each transition", async t => {
+  const root = await mkdtemp(join(tmpdir(), "hold-atomic-")); t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "updater-state"));
+  const files = new UpdaterStateFilesV1(root);
+  assert.deepEqual(await files.observeWatcherHold(), { generation: 0, code: null, durable: true }, "first use is quietly clear");
+  await assert.rejects(holdRecordOf(root), { code: "ENOENT" }, "a quiet first use writes nothing");
+  assert.equal((await files.clearWatcherHold(0)).generation, 0, "clearing an absent hold writes nothing");
+  await assert.rejects(holdRecordOf(root), { code: "ENOENT" });
+  const steps = [["refuse", HOLD_V2(1, HISTORY_HOLD)], ["refuse", HOLD_V2(2, HISTORY_HOLD)], ["clear", HOLD_V2(3, null)],
+    ["clear", HOLD_V2(3, null)], ["refuse", HOLD_V2(4, HISTORY_HOLD)]];
+  let generation = 0;
+  for (const [step, expected] of steps) {
+    const view = step === "refuse" ? await files.refuseWatcherHold(HISTORY_HOLD) : await files.clearWatcherHold(generation);
+    generation = view.generation;
+    assert.deepEqual(await holdRecordOf(root), expected, `${step} -> ${JSON.stringify(expected)}`);
+    assert.equal((await stat(join(root, "status/history-hold.json"))).mode & 0o777, 0o600, "root-only record");
+  }
+  const before = await stat(join(root, "status/history-hold.json"));
+  for (let i = 0; i < 5; i += 1) assert.equal((await files.observeWatcherHold()).code, HISTORY_HOLD);
+  const after = await stat(join(root, "status/history-hold.json"));
+  assert.equal(after.ino, before.ino, "observing a consistent record never rewrites it");
+  assert.deepEqual((await readdir(join(root, "status"))).sort(), ["history-hold.json"], "one record, no temp or retry file");
+  await assert.rejects(lstat(join(root, "updater-state/watcher-hold.json")), { code: "ENOENT" }, "the old record is never written");
+  // A record that changes under a running writer fails closed above every generation seen.
+  await files.clearWatcherHold(4); assert.deepEqual(await holdRecordOf(root), HOLD_V2(5, null));
+  await writeFile(join(root, "status/history-hold.json"), "{");
+  assert.equal((await files.observeWatcherHold()).code, HISTORY_HOLD, "a record corrupted after it was written reads held");
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(6, HISTORY_HOLD), "and is replaced by a valid held record");
+  await files.clearWatcherHold(6); await rm(join(root, "status/history-hold.json"));
+  assert.equal((await files.observeWatcherHold()).code, HISTORY_HOLD, "a record removed after it was written reads held");
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(8, HISTORY_HOLD));
+});
+
+const UNREADABLE_HOLDS_V1 = [
+  ["truncated", '{"schema":"control-room.watcher-hold/v2","generation":3,'], ["empty", ""], ["null", "null"], ["array", "[]"],
+  ["old schema", '{"schema":"control-room.watcher-hold/v1","code":null}'],
+  ["extra key", '{"schema":"control-room.watcher-hold/v2","generation":3,"code":null,"x":1}'],
+  ["generation 0", '{"schema":"control-room.watcher-hold/v2","generation":0,"code":null}'],
+  ["negative generation", '{"schema":"control-room.watcher-hold/v2","generation":-1,"code":null}'],
+  ["fractional generation", '{"schema":"control-room.watcher-hold/v2","generation":1.5,"code":null}'],
+  ["string generation", '{"schema":"control-room.watcher-hold/v2","generation":"3","code":null}'],
+  ["unsafe generation", '{"schema":"control-room.watcher-hold/v2","generation":9007199254740992,"code":null}'],
+  ["unknown code", '{"schema":"control-room.watcher-hold/v2","generation":3,"code":"unknown"}'],
+  ["oversize", `{"schema":"control-room.watcher-hold/v2","generation":3,"code":null}${" ".repeat(300)}`],
+];
+for (const [name, body] of [...UNREADABLE_HOLDS_V1, ["symlink to a cleared record"], ["dangling symlink"], ["hard link to a cleared record"], ["fifo"], ["directory"]]) test(`FIX-475 R4: an unreadable hold record (${name}) is held, published and repaired`, async t => {
+  const root = await mkdtemp(join(tmpdir(), "hold-unreadable-")); t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+  await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const record = join(root, "status/history-hold.json"), sentinel = join(root, "sentinel.json");
+  const cleared = `${JSON.stringify(HOLD_V2(9, null))}\n`;
+  await writeFile(sentinel, cleared);
+  if (body !== undefined) await writeFile(record, body);
+  else if (name.startsWith("symlink")) await symlink(sentinel, record);
+  else if (name === "dangling symlink") await symlink(join(root, "missing.json"), record);
+  else if (name.startsWith("hard link")) await link(sentinel, record);
+  else if (name === "fifo") await run("mkfifo", [record]);
+  else await mkdir(record);
+  const loop = holdLoopV1(root);
+  try {
+    await loop.tick();
+    const status = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+    assert.equal(status.needsYou, true, "an unreadable record is never read as clear");
+    assert.equal(status.reason, HISTORY_REASON);
+    assert.equal(await readFile(sentinel, "utf8"), cleared, "the repair never writes through a link");
+    if (name === "directory") {
+      assert.equal((await lstat(record)).isDirectory(), true, "a directory cannot be replaced, so the hold stays");
+      await loop.tick(); assert.equal(JSON.parse(await readFile(join(root, "status/status.json"), "utf8")).needsYou, true);
+    } else {
+      assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD), "the next write replaces it with a valid held record");
+      assert.equal((await lstat(record)).isFile(), true);
+    }
+  } finally { await loop.shutdown(); }
+});
+
+test("FIX-475 R4: a failed write keeps the hold in memory, retries it, and a failed clearance is never replayed", async t => {
+  const root = await mkdtemp(join(tmpdir(), "hold-failure-")); t.after(async () => { await chmod(join(root, "status"), 0o755).catch(() => {}); await rm(root, { recursive: true, force: true }); });
+  await mkdir(join(root, "status"));
+  const files = new UpdaterStateFilesV1(root), status = join(root, "status");
+  await chmod(status, 0o500);
+  try {
+    const refused = await files.refuseWatcherHold(HISTORY_HOLD);
+    assert.equal(refused.code, HISTORY_HOLD); assert.equal(refused.durable, false); assert.equal(refused.error?.code, "EACCES");
+    const retried = await files.observeWatcherHold();
+    assert.equal(retried.code, HISTORY_HOLD, "still held while the write keeps failing"); assert.equal(retried.durable, false);
+  } finally { await chmod(status, 0o755); }
+  await assert.rejects(holdRecordOf(root), { code: "ENOENT" }, "nothing half-written while unwritable");
+  assert.equal((await files.observeWatcherHold()).durable, true, "a later observation retries and persists");
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD));
+  await chmod(status, 0o500);
+  try {
+    const failed = await files.clearWatcherHold(1);
+    assert.equal(failed.code, HISTORY_HOLD, "a clearance that could not be written leaves the hold"); assert.equal(failed.error?.code, "EACCES");
+  } finally { await chmod(status, 0o755); }
+  assert.equal((await files.observeWatcherHold()).code, HISTORY_HOLD, "the lost clearance is not replayed from memory");
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD));
+  const reread = await new UpdaterStateFilesV1(root).observeWatcherHold();
+  assert.equal(reread.code, HISTORY_HOLD, "a new process reads the same held record");
+  assert.equal((await files.clearWatcherHold(1)).code, null, "a new successful recheck clears it");
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(2, null));
+});
+
+for (const phase of ["before-rename", "after-rename"]) test(`FIX-475 R4: a crash ${phase} leaves one complete record and reconstruction publishes it`, async t => {
+  const root = await mkdtemp(join(tmpdir(), "hold-crash-")); t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+  await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const files = new UpdaterStateFilesV1(root);
+  await files.refuseWatcherHold(HISTORY_HOLD); await files.clearWatcherHold(1);
+  assert.deepEqual(await holdRecordOf(root), HOLD_V2(2, null), "a real earlier clearance");
+  const script = join(root, "crash.mjs");
+  await writeFile(script, `import fs from "node:fs/promises"; import { syncBuiltinESMExports } from "node:module";
+const [root, phase, runtime] = process.argv.slice(2), original = fs.rename;
+fs.rename = async (from, to) => {
+  if (!String(to).endsWith("/history-hold.json")) return original(from, to);
+  if (phase === "before-rename") process.kill(process.pid, "SIGKILL");
+  await original(from, to); process.kill(process.pid, "SIGKILL");
+};
+syncBuiltinESMExports();
+const { UpdaterStateFilesV1 } = await import(runtime);
+const files = new UpdaterStateFilesV1(root);
+await files.observeWatcherHold(); process.stdout.write("ready\\n");
+await files.refuseWatcherHold("watcher_history_unproven"); process.stdout.write("survived\\n");
+`);
+  const child = spawn(process.execPath, [script, root, phase, new URL("../src/updater/v1/runtime.mjs", import.meta.url).href],
+    { stdio: ["pipe", "pipe", "pipe"] });
+  let output = "";
+  child.stdout.on("data", chunk => { output += chunk; });
+  try {
+    const [code, signal] = await once(child, "close");
+    assert.equal(signal, "SIGKILL", `the writer died mid-write (code ${code})`);
+    assert.equal(output, "ready\n", "the crash happened inside the refusal write");
+  } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
+  const expected = phase === "before-rename" ? HOLD_V2(2, null) : HOLD_V2(3, HISTORY_HOLD);
+  assert.deepEqual(await holdRecordOf(root).catch(() => "torn"), expected, "the old or the new complete record, nothing else");
+  const strays = (await readdir(join(root, "status"))).filter(name => name.startsWith(".history-hold.json."));
+  assert.equal(strays.length, phase === "before-rename" ? 1 : 0, "only an unrenamed temp file can remain, and it is never read");
+  const loop = holdLoopV1(root);
+  try {
+    await loop.tick();
+    assert.equal(JSON.parse(await readFile(join(root, "status/status.json"), "utf8")).needsYou, expected.code !== null,
+      "reconstruction publishes exactly the record on disk");
+  } finally { await loop.shutdown(); }
+});
+
+const LEGACY_HOLD_BODIES_V1 = {
+  // Recorded from the earlier writers (60e2bc03 runtime) for these files.
+  held: `${JSON.stringify({ schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" })}\n`,
+  cleared: `${JSON.stringify({ schema: "control-room.watcher-hold/v1", code: null })}\n`, corrupt: "{",
+};
+test("FIX-475 R4: earlier hold files fold once (a hold anywhere is held) and never override the new record", async t => {
+  const base = await mkdtemp(join(tmpdir(), "hold-fold-")); t.after(() => rm(base, { recursive: true, force: true }));
+  let cases = 0;
+  for (const primary of ["absent", "held", "cleared", "corrupt"]) for (const retry of ["absent", "held", "cleared", "corrupt"])
+    for (const card of ["absent", "quiet", "held", "damaged"]) {
+      const root = join(base, `${primary}-${retry}-${card}`);
+      await mkdir(join(root, "updater-state"), { recursive: true }); await mkdir(join(root, "status"));
+      if (primary !== "absent") await writeFile(join(root, "updater-state/watcher-hold.json"), LEGACY_HOLD_BODIES_V1[primary]);
+      if (retry !== "absent") await writeFile(join(root, "status/watcher-hold-retry.json"), LEGACY_HOLD_BODIES_V1[retry]);
+      // The real status writer produces the earlier display record.
+      // A damaged display cache is not hold evidence (SELFUPD-04, R7U-01).
+      if (card === "damaged") await writeFile(join(root, "status/status.json"), "");
+      else if (card !== "absent") await new UpdaterStateFilesV1(root).writeStatus({ state: card === "held" ? "needs_attention" : "idle",
+        needsYou: card === "held", selfUpdate: "Off", ...(card === "held" ? { reason: HISTORY_REASON } : {}) });
+      const before = await Promise.all(["updater-state/watcher-hold.json", "status/watcher-hold-retry.json"]
+        .map(path => readFile(join(root, path), "utf8").catch(error => error.code)));
+      const expectHeld = ["held", "corrupt"].includes(primary) || ["held", "corrupt"].includes(retry) || card === "held";
+      const view = await new UpdaterStateFilesV1(root).observeWatcherHold();
+      const label = `${primary}/${retry}/${card}`;
+      assert.equal(view.code, expectHeld ? HISTORY_HOLD : null, label);
+      if (expectHeld) assert.deepEqual(await holdRecordOf(root), HOLD_V2(1, HISTORY_HOLD), `${label}: folded once into the record`);
+      else await assert.rejects(holdRecordOf(root), { code: "ENOENT" }, `${label}: nothing to fold writes nothing`);
+      assert.deepEqual(await Promise.all(["updater-state/watcher-hold.json", "status/watcher-hold-retry.json"]
+        .map(path => readFile(join(root, path), "utf8").catch(error => error.code))), before, `${label}: old files are never written`);
+      cases += 1;
+    }
+  assert.equal(cases, 64);
+  for (const [legacy, current, expected] of [["held", HOLD_V2(5, null), null], ["cleared", HOLD_V2(5, HISTORY_HOLD), HISTORY_HOLD]]) {
+    const root = join(base, `leftover-${legacy}`);
+    await mkdir(join(root, "updater-state"), { recursive: true }); await mkdir(join(root, "status"));
+    await writeFile(join(root, "updater-state/watcher-hold.json"), LEGACY_HOLD_BODIES_V1[legacy]);
+    await writeFile(join(root, "status/watcher-hold-retry.json"), LEGACY_HOLD_BODIES_V1[legacy]);
+    await new UpdaterStateFilesV1(root).writeStatus({ state: "idle", needsYou: legacy === "held", selfUpdate: "Off",
+      ...(legacy === "held" ? { reason: HISTORY_REASON } : {}) });
+    await writeFile(join(root, "status/history-hold.json"), `${JSON.stringify(current)}\n`, { mode: 0o600 });
+    const files = new UpdaterStateFilesV1(root);
+    for (let i = 0; i < 3; i += 1) assert.equal((await files.observeWatcherHold()).code, expected, `leftover ${legacy} files never override the record`);
+    assert.deepEqual(await holdRecordOf(root), current);
+  }
 });

@@ -565,7 +565,10 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
   await legacy.tick(); await legacy.shutdown();
   await writeFile(join(stateDir, "self-update"), "Off\n");
   const reader = createUpdaterHomeStatusReaderV1({ root: f.root });
-  outstanding = { runId: "fixture-run", state, code: null }; await chmod(stateDir, 0o500);
+  // FIX-475 R4: the hold record lives beside status.json; a directory planted
+  // at its path is the real failed write, alongside the round-6 fault.
+  const record = join(f.status, "history-hold.json");
+  outstanding = { runId: "fixture-run", state, code: null }; await chmod(stateDir, 0o500); await mkdir(record);
   const loops: UpdaterMainLoopV1[] = [];
   try {
     await assert.rejects(writeFile(join(stateDir, "permission-probe"), "x"), { code: "EACCES" });
@@ -573,12 +576,54 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
     await blocked.tick();
     assert.equal((await reader.read()).state, "attention", "Home must not replace an unresolved promotion warning with another outcome");
     assert.equal(JSON.parse(await readFile(join(f.status, "status.json"), "utf8")).reason, reason);
-    outstanding = null; await chmod(stateDir, 0o700);
+    outstanding = null; await chmod(stateDir, 0o700); await rm(record, { recursive: true, force: true });
     const reconstructed = make(new UpdaterStateFilesV1(f.root), { async tick() { assert.fail("Off cannot recheck history"); } }); loops.push(reconstructed);
     await reconstructed.tick();
     assert.equal((await reader.read()).state, "attention", "real Home reader must retain the unresolved warning after writable reconstruction");
     assert.equal(JSON.parse(await readFile(join(f.status, "status.json"), "utf8")).reason, reason);
     const replies = await Promise.all(Array.from({ length: 50 }, () => reader.read()));
     assert.equal(replies.filter(reply => reply.state === "attention").length, 50, "50 concurrent Home reads preserve the hold");
-  } finally { await chmod(stateDir, 0o700); await Promise.all(loops.map(loop => loop.shutdown())); }
+    assert.deepEqual(JSON.parse(await readFile(record, "utf8")), { schema: "control-room.watcher-hold/v2", generation: 1,
+      code: "watcher_history_unproven" }, "the writable reconstruction persists the pending hold");
+  } finally { await chmod(stateDir, 0o700); await rm(record, { recursive: true, force: true }); await Promise.all(loops.map(loop => loop.shutdown())); }
+});
+
+test("FIX-475 R4: Home never shows healthy or off while the history hold is unresolved", async t => {
+  const f = await fixture(t), stateDir = join(f.root, "updater-state"); await mkdir(stateDir);
+  const selfUpdate = join(stateDir, "self-update"), record = join(f.status, "history-hold.json");
+  await writeFile(selfUpdate, "On\n");
+  let outstanding: { runId: string; state: string; code: null } | null = null, trusted = false, sourceCalls = 0;
+  const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
+    async openRunAttention() { return outstanding; } }; // Synthetic unrelated attention; SQL boundary unverified here.
+  // Replays the real Git refusal code recorded by updater-watcher's grafted
+  // history fixture, then a successful recheck once history is trusted.
+  const watcher = { async tick() { sourceCalls += 1;
+    if (!trusted) throw Object.assign(new Error("recorded history refusal"), { code: "watcher_history_unproven" });
+    return { status: "no_candidate" }; } };
+  const make = (): UpdaterMainLoopV1 => Reflect.construct(UpdaterMainLoopV1, [{ stateFiles: new UpdaterStateFilesV1(f.root), store, watcher,
+    runner: { async runOnce() { return { status: "idle" }; } }, mode: { async read() { return "running"; } }, ownerActions: {} }]);
+  const reader = createUpdaterHomeStatusReaderV1({ root: f.root });
+  const steps: Array<[string, () => Promise<void>, string]> = [
+    ["refusal while On", async () => {}, "needs_owner"],
+    ["switched Off", async () => { await writeFile(selfUpdate, "Off\n"); }, "attention"],
+    ["unrelated outcome outstanding", async () => { outstanding = { runId: "fixture-run", state: "rolled_back", code: null }; }, "attention"],
+    ["unrelated outcome settled", async () => { outstanding = null; }, "attention"],
+    ["record unwritable and unreadable", async () => { await rm(record, { force: true }); await mkdir(record); }, "attention"],
+    ["record writable again", async () => { await rm(record, { recursive: true, force: true }); }, "attention"],
+    ["history repaired but still Off", async () => { trusted = true; }, "attention"],
+  ];
+  for (const [name, change, expected] of steps) {
+    await change();
+    const loop = make(); // every step is also a reconstruction from disk
+    try { await loop.tick(); } finally { await loop.shutdown(); }
+    const shown = (await reader.read()).state;
+    assert.equal(shown, expected, name);
+    assert.ok(!["healthy", "off"].includes(shown), `${name}: Home must not look fine while held`);
+  }
+  assert.equal(sourceCalls, 1, "only the first On tick rechecked");
+  await writeFile(selfUpdate, "On\n");
+  const loop = make();
+  try { await loop.tick(); } finally { await loop.shutdown(); }
+  assert.equal((await reader.read()).state, "healthy", "only a successful recheck clears the hold");
+  assert.equal(sourceCalls, 2);
 });
