@@ -302,8 +302,8 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "catch { this.#watcherHold = \"watcher_history_unproven\"; }",
-    "replace": "catch { this.#watcherHold = null; }",
+    "find": "        } catch {\n          this.#watcherHold = \"watcher_history_unproven\";\n          this.#watcherHoldUnpersisted = true;\n        }",
+    "replace": "        } catch {\n          this.#watcherHold = null;\n          this.#watcherHoldUnpersisted = false;\n        }",
     "test": "node --test --test-name-pattern='FIX-475: unreadable' tests/updater-watcher.test.mjs",
     "why": "malformed or unreadable persisted warning must fail closed"
   },
@@ -397,5 +397,40 @@
     "replace": "    // Mutation: silently accept a missing caller.",
     "test": "node --test --test-name-pattern='FIX-475: range barrier reports' tests/updater-attended-source.test.mjs",
     "why": "The independent two-caller requirement and one actual arrival must produce a named bounded diagnostic; removing the assertion yields missing expected rejection."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "\n          this.#watcherHoldUnpersisted = true;\n",
+    "replace": "\n          this.#watcherHoldUnpersisted = false;\n",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed legacy promotion' tests/updater-watcher.test.mjs",
+    "why": "Failed legacy promotion must preserve the independent history sentence across unrelated attention, Off, settlement, reconstruction and retry."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (this.#watcherHoldUnpersisted) value =",
+    "replace": "if (false) value =",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed legacy promotion' tests/updater-watcher.test.mjs",
+    "why": "Disable held publication: real failed writes must not overwrite the only legacy history evidence."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "await this.#publishStatus({ ...publicFacts, state: \"running\", needsYou: false, selfUpdate: flag });",
+    "replace": "await this.stateFiles.writeStatus({ ...publicFacts, state: \"running\", needsYou: false, selfUpdate: flag });",
+    "test": "node --test --test-name-pattern='FIX-475 R6: pending promotion' tests/updater-watcher.test.mjs",
+    "why": "Running progress must retain the independent history sentence and needsYou=true before the final status write."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "await this.#publishStatus({ ...refreshedFacts, state: finalState",
+    "replace": "await this.stateFiles.writeStatus({ ...refreshedFacts, state: finalState",
+    "test": "node --import tsx --test --test-name-pattern='FIX-475 R6: Home retains' tests/updater-home-status.test.tsx",
+    "why": "Real Home status must read attention throughout failed promotion and reconstruction; unrelated final attention cannot mask the only history record."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "\n              this.#watcherHoldUnpersisted = true;\n",
+    "replace": "\n              this.#watcherHoldUnpersisted = false;\n",
+    "test": "node --test --test-name-pattern='FIX-475 R6: a new history refusal' tests/updater-watcher.test.mjs",
+    "why": "Real new source refusal with a failed hold-file write must keep the independent history sentence recoverable across unrelated attention and reconstruction."
   }
 ]

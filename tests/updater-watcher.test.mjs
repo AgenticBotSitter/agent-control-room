@@ -509,3 +509,99 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
       "the recovered legacy evidence is durable before public status can mask it");
   } finally { await reconstructed.shutdown(); }
 });
+
+for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-475 R6: failed legacy promotion preserves ${state} evidence until recheck`, async t => {
+  const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+  const holdPath = join(f.f.updaterRoot, "updater-state/watcher-hold.json"), stateDir = join(f.f.updaterRoot, "updater-state");
+  let attention = null, sourceCalls = 0;
+  const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
+    async openRunAttention() { return attention; } }; // Synthetic unrelated DB attention, not a SQL authority proof.
+  const make = stateFiles => new UpdaterMainLoopV1({ stateFiles, store,
+    runner: { async runOnce({ onProgress } = {}) { await onProgress?.(); return { status: "idle" }; } },
+    mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: { async tick() { sourceCalls += 1; await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
+  // The earlier file port has no hold persistence. Real Git refusal and the
+  // real runtime/status writer produce its legacy record; setup writes neither.
+  const legacy = make({ readSelfUpdate: () => f.files.readSelfUpdate(), hasRescueMarker: () => f.files.hasRescueMarker(),
+    publicFacts: () => f.files.publicFacts(), writeStatus: value => f.files.writeStatus(value) });
+  await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "setup leaves durable hold absent");
+  await legacy.tick(); await legacy.shutdown(); assert.equal((await f.read()).reason, reason);
+  await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "legacy producer leaves durable hold absent");
+  await writeFile(join(stateDir, "self-update"), "Off\n");
+  attention = { runId: "fixture-run", state, code: null };
+  await chmod(stateDir, 0o500);
+  const loops = [];
+  try {
+    await assert.rejects(writeFile(join(stateDir, "permission-probe"), "x"), { code: "EACCES" }, "real directory refuses promotion writes");
+    const upgraded = make(f.files); loops.push(upgraded); await upgraded.tick();
+    assert.equal((await f.read()).reason, reason, "failed promotion must not overwrite the only legacy history evidence");
+    assert.equal((await f.read()).needsYou, true, "failed promotion keeps the published hold raised");
+    await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "failed promotion cannot fabricate durable evidence");
+    attention = null;
+    const retry = make(new UpdaterStateFilesV1(f.f.updaterRoot)); loops.push(retry); await retry.tick();
+    assert.equal((await f.read()).reason, reason, "reconstruction while still unwritable retains the history sentence");
+    assert.equal((await f.read()).needsYou, true, "settlement cannot clear a failed-promotion hold");
+    assert.equal(sourceCalls, 1, "Off never rechecks source history");
+    await chmod(stateDir, 0o700);
+    await retry.tick();
+    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
+      "a later tick retries promotion before any unrelated status replaces legacy evidence");
+    assert.equal((await f.read()).reason, reason, "writable retry is persistence, not a successful source recheck");
+    // A burst enters the real loop; exactly one tick owns its work and all other
+    // callers take the observed busy branch, without a scheduling-time window.
+    const burst = await Promise.all(Array.from({ length: 50 }, () => retry.tick()));
+    assert.equal(burst.filter(value => value.status === "busy").length, 49, "49 losing concurrent tick branches ran");
+    assert.equal((await f.read()).needsYou, true);
+    await rm(join(f.source.mirror, "info/grafts"));
+    await retry.tick(); assert.equal((await f.read()).needsYou, true, "repair while Off cannot clear the hold");
+    await writeFile(join(stateDir, "self-update"), "On\n");
+    await retry.tick();
+    assert.equal(sourceCalls, 2, "clearance follows a real successful source recheck");
+    assert.equal((await f.read()).needsYou, false, "successful recheck alone clears the unresolved hold");
+    assert.deepEqual(JSON.parse(await readFile(holdPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: null });
+  } finally { await chmod(stateDir, 0o700); await Promise.all(loops.map(loop => loop.shutdown())); }
+});
+
+test("FIX-475 R6: pending promotion preserves the legacy warning during running progress", async t => {
+  const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+  const oldPort = { readSelfUpdate: () => f.files.readSelfUpdate(), hasRescueMarker: () => f.files.hasRescueMarker(),
+    publicFacts: () => f.files.publicFacts(), writeStatus: value => f.files.writeStatus(value) };
+  const old = new UpdaterMainLoopV1({ stateFiles: oldPort, runner: { async runOnce() { return { status: "idle" }; } },
+    store: { async unhandledOwnerRequests() { return []; } }, mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
+  await old.tick(); await old.shutdown();
+  const stateDir = join(f.f.updaterRoot, "updater-state"); await chmod(stateDir, 0o500);
+  let progressSeen = false;
+  const loop = new UpdaterMainLoopV1({ stateFiles: f.files, runner: { async runOnce({ onProgress }) {
+    await onProgress(); progressSeen = true;
+    assert.equal((await f.read()).reason, reason, "running progress cannot replace the only legacy evidence");
+    assert.equal((await f.read()).needsYou, true, "running progress cannot publish an unresolved hold as healthy");
+    return { status: "idle" };
+  } }, store: { async unhandledOwnerRequests() { return []; } }, mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: { async tick() { return { status: "busy" }; } } }); // A synthetic skipped recheck, never source approval.
+  try { await loop.tick(); assert.equal(progressSeen, true); assert.equal((await f.read()).reason, reason); }
+  finally { await chmod(stateDir, 0o700); await loop.shutdown(); }
+});
+
+test("FIX-475 R6: a new history refusal survives its failed hold write and reconstruction", async t => {
+  const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+  const stateDir = join(f.f.updaterRoot, "updater-state"), holdPath = join(stateDir, "watcher-hold.json");
+  const loop = new UpdaterMainLoopV1({ stateFiles: f.files, runner: { async runOnce() { return { status: "idle" }; } },
+    store: { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
+      async openRunAttention() { return { runId: "fixture-run", state: "rolled_back", code: null }; } },
+    mode: { async read() { return "running"; } }, ownerActions: {},
+    watcher: { async tick() { await (await f.source.fetchMain()).release(); return { status: "no_candidate" }; } } });
+  await assert.rejects(readFile(holdPath), { code: "ENOENT" });
+  await chmod(stateDir, 0o500);
+  try {
+    await loop.tick();
+    assert.equal((await f.read()).reason, reason, "a failed new hold write cannot let unrelated attention replace history evidence");
+    assert.equal((await f.read()).needsYou, true);
+    await assert.rejects(readFile(holdPath), { code: "ENOENT" });
+    await writeFile(join(stateDir, "self-update"), "Off\n");
+    await loop.shutdown();
+    const reconstructed = f.make();
+    try { await reconstructed.tick(); assert.equal((await f.read()).reason, reason, "the new refusal survives reconstruction without a durable file"); }
+    finally { await reconstructed.shutdown(); }
+  } finally { await chmod(stateDir, 0o700); await loop.shutdown(); }
+});

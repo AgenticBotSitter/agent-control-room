@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,7 +11,7 @@ import { createRoot } from "react-dom/client";
 import { createUpdaterHomeStatusReaderV1 } from "../src/web/v1/updater-home-status";
 import { UPDATER_RUN_REASON_V1, UPDATER_RUN_STATE_REASON_V1 } from "../src/updater/v1/contracts.mjs";
 import { withUpdaterAlertWarningV1 } from "../src/updater/v1/updater.mjs";
-import { UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
+import { UpdaterMainLoopV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 import { publicStatusV1 } from "../src/updater/v1/contracts.mjs";
 import { readUpdaterHomeStatusV1 } from "../src/web/v1/updater-home-status-browser";
 import { UPDATER_OWNER_UI_SCHEMA_V1, type UpdaterOwnerUiPortV1, type UpdaterOwnerUiReadV1 } from "../src/web/v1/updater-owner-ui-wire";
@@ -542,4 +542,41 @@ for (const [index, warning] of vapidWarnings.entries()) test(`R2-1: VAPID warnin
       reason: "An update could not finish cleanly. Control Room needs you.", nextAction: "review_recovery" }));
     assert.match(outstanding.text, /I have seen this/u, "a durable outcome still offers acknowledgement");
   }
+});
+
+
+for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-475 R6: Home retains failed-promotion ${state} warning after reconstruction`, async t => {
+  const f = await fixture(t), stateDir = join(f.root, "updater-state"); await mkdir(stateDir);
+  await writeFile(join(stateDir, "self-update"), "On\n");
+  const files = new UpdaterStateFilesV1(f.root), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+  let outstanding: { runId: string; state: string; code: null } | null = null;
+  const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
+    async openRunAttention() { return outstanding; } }; // Synthetic unrelated attention; SQL boundary unverified here.
+  const make = (stateFiles: unknown, watcher: unknown) => new UpdaterMainLoopV1({ stateFiles, store, watcher,
+    runner: { async runOnce() { return { status: "idle" }; } }, mode: { async read() { return "running"; } }, ownerActions: {} });
+  // Replay the real Git refusal code recorded by updater-watcher's grafted
+  // history fixture. This Home seam uses the actual runtime and status writer.
+  const legacy = make({ readSelfUpdate: () => files.readSelfUpdate(), hasRescueMarker: () => files.hasRescueMarker(),
+    publicFacts: () => files.publicFacts(), writeStatus: (value: unknown) => files.writeStatus(value) },
+    { async tick() { throw Object.assign(new Error("recorded history refusal"), { code: "watcher_history_unproven" }); } });
+  await assert.rejects(readFile(join(stateDir, "watcher-hold.json")), { code: "ENOENT" }, "setup leaves hold absent");
+  await legacy.tick(); await legacy.shutdown();
+  await writeFile(join(stateDir, "self-update"), "Off\n");
+  const reader = createUpdaterHomeStatusReaderV1({ root: f.root });
+  outstanding = { runId: "fixture-run", state, code: null }; await chmod(stateDir, 0o500);
+  const loops: UpdaterMainLoopV1[] = [];
+  try {
+    await assert.rejects(writeFile(join(stateDir, "permission-probe"), "x"), { code: "EACCES" });
+    const blocked = make(files, { async tick() { assert.fail("Off cannot recheck history"); } }); loops.push(blocked);
+    await blocked.tick();
+    assert.equal((await reader.read()).state, "attention", "Home must not replace an unresolved promotion warning with another outcome");
+    assert.equal(JSON.parse(await readFile(join(f.status, "status.json"), "utf8")).reason, reason);
+    outstanding = null; await chmod(stateDir, 0o700);
+    const reconstructed = make(new UpdaterStateFilesV1(f.root), { async tick() { assert.fail("Off cannot recheck history"); } }); loops.push(reconstructed);
+    await reconstructed.tick();
+    assert.equal((await reader.read()).state, "attention", "real Home reader must retain the unresolved warning after writable reconstruction");
+    assert.equal(JSON.parse(await readFile(join(f.status, "status.json"), "utf8")).reason, reason);
+    const replies = await Promise.all(Array.from({ length: 50 }, () => reader.read()));
+    assert.equal(replies.filter(reply => reply.state === "attention").length, 50, "50 concurrent Home reads preserve the hold");
+  } finally { await chmod(stateDir, 0o700); await Promise.all(loops.map(loop => loop.shutdown())); }
 });

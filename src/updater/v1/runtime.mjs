@@ -210,7 +210,7 @@ const cleanReason = error => String(error?.code ?? error?.message ?? "unknown")
 const WATCHER_HOLD_CODES_V1 = Object.freeze(["watcher_history_unproven"]);
 
 export class UpdaterMainLoopV1 {
-  #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false; #watcherHold = null;
+  #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false; #watcherHold = null; #watcherHoldUnpersisted = false;
   constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, alerts = null,
     alertFacts = async () => ({}), intervalMs = 5_000, watcherTimeoutMs = 5000, ownerActionTimeoutMs = 300_000, onError = () => {} }) {
     assertOwnerActionTimeoutV1(ownerActionTimeoutMs);
@@ -269,6 +269,15 @@ export class UpdaterMainLoopV1 {
       code: typeof durable.code === "string" ? durable.code : null });
   }
 
+  async #publishStatus(value) {
+    // Until the hold write succeeds, status may be the only recoverable
+    // evidence. Preserve it through both progress and outcome publication so
+    // reconstruction can retry promotion, even while the switch remains Off.
+    if (this.#watcherHoldUnpersisted) value = { ...value, state: "needs_attention", needsYou: true,
+      reason: UPDATER_RUN_REASON_V1.watcher_history_unproven, nextAction: null };
+    await this.stateFiles.writeStatus(value);
+  }
+
   async #tick() {
     if (this.#ticking) return { status: "busy" };
     this.#ticking = true;
@@ -283,8 +292,13 @@ export class UpdaterMainLoopV1 {
       try { flag = parseSelfUpdateFlagV1(await this.stateFiles.readSelfUpdate()); }
       catch (error) { switchUnreadable = cleanReason(error); }
       if (this.stateFiles.readWatcherHold) {
-        try { this.#watcherHold = await this.stateFiles.readWatcherHold(); }
-        catch { this.#watcherHold = "watcher_history_unproven"; }
+        try {
+          this.#watcherHold = await this.stateFiles.readWatcherHold();
+          this.#watcherHoldUnpersisted = false;
+        } catch {
+          this.#watcherHold = "watcher_history_unproven";
+          this.#watcherHoldUnpersisted = true;
+        }
       }
       const requestsSettled = await this.#requests(flag);
       // R5iii: while Off, do not read approval rows, watch sources or invoke a
@@ -296,11 +310,14 @@ export class UpdaterMainLoopV1 {
             if (!["no_candidate", "unchanged", "created", "existing"].includes(outcome?.status)) return outcome;
             await this.stateFiles.writeWatcherHold?.(null);
             this.#watcherHold = null;
+            this.#watcherHoldUnpersisted = false;
             return outcome;
           }, async error => {
             if (WATCHER_HOLD_CODES_V1.includes(error?.code)) {
               this.#watcherHold = error.code;
+              this.#watcherHoldUnpersisted = true;
               await this.stateFiles.writeWatcherHold?.(error.code);
+              this.#watcherHoldUnpersisted = false;
             }
             throw error;
           });
@@ -328,7 +345,7 @@ export class UpdaterMainLoopV1 {
           ? `The self-update switch could not be read (${switchUnreadable}); self-update is being treated as Off.`
           : "Self-update is Off." }
         : await this.runner.runOnce({ onProgress: async () => {
-          await this.stateFiles.writeStatus({ ...publicFacts, state: "running", needsYou: false, selfUpdate: flag });
+          await this.#publishStatus({ ...publicFacts, state: "running", needsYou: false, selfUpdate: flag });
         } });
       // -------------------------------------------------------------------
       // R7U-01: THE OWNER-VISIBLE STATE IS A DURABLE DATABASE FACT.
@@ -476,7 +493,7 @@ export class UpdaterMainLoopV1 {
       // The hold has no reviewed action key, so it publishes none rather than the
       // derived "review_recovery", which would send the owner to a recovery
       // that never happened.
-      await this.stateFiles.writeStatus({ ...refreshedFacts, state: finalState, needsYou: finalNeedsYou, selfUpdate: flag,
+      await this.#publishStatus({ ...refreshedFacts, state: finalState, needsYou: finalNeedsYou, selfUpdate: flag,
         ...(nextAction === undefined ? holdNamesState ? { nextAction: null } : {} : { nextAction }),
         ...(watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}),
         ...(attention ? { reason: attention.reason } : {}) });
