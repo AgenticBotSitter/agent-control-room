@@ -166,5 +166,33 @@
     "replace": "pnpm test:soak:analysis && pnpm test:perf-read-indexes\"",
     "test": "node --test tests/ci-component-shards.test.mjs",
     "why": "remove catch-up registration: component catch-up reaches the new guard once and retains the frozen main units"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 1\n",
+    "replace": "      - name: Component lanes shard 1\n        shell: 'true {0}'\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change step-shell: component run steps preserve the baseline shell"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 1\n",
+    "replace": "      - name: Component lanes shard 1\n        working-directory: .github\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change step-directory: component run steps preserve the baseline working directory"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "  test-components:\n",
+    "replace": "  test-components:\n    defaults:\n      run:\n        shell: true {0}\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change job-defaults: component job defaults preserve the baseline execution envelope"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "jobs:\n",
+    "replace": "defaults:\n  run:\n    shell: true {0}\njobs:\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change workflow-defaults: workflow defaults preserve the baseline execution envelope"
   }
 ]

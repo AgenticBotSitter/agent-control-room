@@ -428,5 +428,11 @@
       "name": "test:mac-upgrade",
       "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs tests/mac-local-upgrade-recovery.test.mjs && pnpm run test:entry-guards && pnpm run test:mac-upgrade-default-path"
     }
-  ]
+  ],
+  "envelope": {
+    "workflowDefaults": null,
+    "jobDefaults": null,
+    "stepShell": null,
+    "stepWorkingDirectory": null
+  }
 }

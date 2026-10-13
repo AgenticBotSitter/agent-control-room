@@ -69,6 +69,30 @@ test("every shard preserves setup and continues its selected checks after a fail
   assert.equal(scripts["test:ci-component-shards"], "node scripts/run-tests-with-quarantine.mjs --test tests/ci-component-shards.test.mjs");
 });
 
+// The fixture's envelope is captured from main 23fc8798. These assertions
+// protect execution itself, including the new guard and unconditional setup.
+test("component run steps preserve the baseline shell", () => {
+  for (const step of components.steps.filter(step => step.run)) {
+    assert.deepEqual(step.shell ?? null, baseline.envelope.stepShell,
+      `${step.name ?? step.run}: shell must match pinned main`);
+  }
+});
+
+test("component run steps preserve the baseline working directory", () => {
+  for (const step of components.steps.filter(step => step.run)) {
+    assert.deepEqual(step["working-directory"] ?? null, baseline.envelope.stepWorkingDirectory,
+      `${step.name ?? step.run}: working-directory must match pinned main`);
+  }
+});
+
+test("component job defaults preserve the baseline execution envelope", () => {
+  assert.deepEqual(components.defaults ?? null, baseline.envelope.jobDefaults);
+});
+
+test("workflow defaults preserve the baseline execution envelope", () => {
+  assert.deepEqual(workflow.defaults ?? null, baseline.envelope.workflowDefaults);
+});
+
 test("merge gate depends on all component shards", () => {
   const gate = workflow.jobs["merge-gate"];
   // A needs edge to the matrix job waits for all its runs, rather than a
