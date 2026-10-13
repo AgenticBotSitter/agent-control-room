@@ -78,13 +78,6 @@
   },
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
-    "find": "if [[ -z \"$base\" ]]; then",
-    "replace": "if false; then",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "non-PR fallback keeps existing branch selection without a PR diff must fail; expected paths and refusals are independent literals"
-  },
-  {
-    "file": "scripts/ci/check-mutation-manifest-branch.sh",
     "find": "  own=true",
     "replace": "  own=false",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",

@@ -4,7 +4,8 @@
 # renames are checked as deletion + addition.
 set -euo pipefail
 expected="$1"
-base="$2"
+# With no PR base, HEAD...HEAD is empty: retain branch-only selection.
+base="${2:-HEAD}"
 
 regular_manifest() {
   local kind entry
@@ -20,12 +21,6 @@ own=false
 if git cat-file -e "HEAD:$expected" 2>/dev/null; then
   regular_manifest "$expected"
   own=true
-fi
-
-# Main pushes and manual dispatches retain branch-only selection.
-if [[ -z "$base" ]]; then
-  if [[ "$own" == true ]]; then printf '%s\0' "$expected"; fi
-  exit 0
 fi
 
 # NUL delimiters preserve filenames; pipefail refuses unreadable PR bases.
