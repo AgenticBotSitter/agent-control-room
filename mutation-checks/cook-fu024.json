@@ -40,5 +40,19 @@
     "replace": "    if (true)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disabling the literal macOS runner check classifies a Linux job as macOS and must fail Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          pnpm run test:updater",
+    "replace": "            true\n          ) || darwin_pg_status=$?\n          pnpm run test:updater",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable the added PostgreSQL execution in primary macOS path. The independently inventoried five-file list must fail both hosted macOS paths execute every inventoried result PostgreSQL file, with complete body counts."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater",
+    "replace": "            true\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable the added PostgreSQL execution in catch-up macOS path. The independently inventoried five-file list must fail both hosted macOS paths execute every inventoried result PostgreSQL file, with complete body counts."
   }
 ]

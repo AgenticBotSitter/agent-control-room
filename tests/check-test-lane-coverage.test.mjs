@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -136,6 +136,22 @@ test("aliased and reversed Darwin PostgreSQL gates cannot hide behind Linux cove
   ]) {
     const root = pgFixture(linuxJob, source);
     try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+    finally { rmSync(root, { recursive: true }); }
+  }
+});
+
+test("both hosted macOS paths execute every inventoried result PostgreSQL file", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+  const files = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-download-postgres.test.ts",
+    "tests/result-file-upload-race-postgres.test.ts", "tests/result-upload-store-postgres.test.ts",
+    "tests/text-copy-derivation-postgres.test.ts"];
+  for (const job of ["test-updater", "full-gate"]) {
+    const block = workflow.match(new RegExp(`^  ${job}:[\\s\\S]*?(?=^  [a-z][a-z-]+:|$(?![\\s\\S]))`, "mu"))?.[0];
+    assert.ok(block, `hosted path exists: ${job}`);
+    const root = fixture({ scripts, workflow: "jobs:\n" + block, tests: files,
+      sources: Object.fromEntries(files.map(file => [file, darwinPgSource])) });
+    try { assert.deepEqual(findUncoveredTests(root), [], `all five real file arguments reached on ${job}`); }
     finally { rmSync(root, { recursive: true }); }
   }
 });
