@@ -371,8 +371,11 @@ test("as the migrator the REVOKE really would have been refused, so the filter i
 // update grant, upgraded through the real Mac upgrade path.
 //
 // The earlier install is the pinned base release ITSELF: its commit is fetched by SHA
-// into a shallow scratch repository (as on GitHub's shallow checkout) and its db/ tree
-// and shipped ledger are installed unchanged. It is never derived by subtracting one
+// into a shallow scratch repository (as on GitHub's shallow checkout). Its
+// db/migrations/**, deploy/postgres/migration-ledger.json and
+// db/roles/private_web_roles.sql are installed unchanged; database provisioning
+// and the other narrow-role files still come from the candidate tree. The historical
+// migration set is never derived by subtracting one
 // migration from the current tree, so migrations added after the pin (0300, 0301, ...)
 // cannot change what "the earlier release" means. The two constants below are digests
 // CAPTURED from that release -- never read from the current ledger -- so a wrong pin, a
@@ -429,17 +432,51 @@ async function installedCluster(label, { provision = ["-f", join(repoRoot, "depl
   }
 }
 
+test("F1: pinned base fetch failure redacts remote credentials and git argv", async () => {
+  await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+  const root = await mkdtemp(join(scratchRoot, "acr-fetch-redaction-"));
+  try {
+    const checkout = join(root, "checkout");
+    await mkdir(checkout);
+    execFileSync("git", ["init", "--quiet", checkout], { stdio: "pipe" });
+    // An unsupported transport fails locally: real Git supplies the failure,
+    // with no server, network request, credential or fabricated exec error.
+    const cases = [
+      ["acr-f1-missing://fixture-user:fixture-token@example.invalid/release", "acr-f1-missing://***@example.invalid/release"],
+      ["acr-f1-missing://fixture-user@example.invalid/release", "acr-f1-missing://***@example.invalid/release"],
+      ["acr-f1-missing://fixture%40user:fixture%3Atoken@example.invalid/release", "acr-f1-missing://***@example.invalid/release"],
+      ["acr-f1-missing://example.invalid/release", "acr-f1-missing://example.invalid/release"],
+    ];
+    for (const [index, [source, safeSource]] of cases.entries()) {
+      execFileSync("git", ["-C", checkout, "config", "remote.origin.url", source], { stdio: "pipe" });
+      const destination = join(root, `base-${index}`);
+      await mkdir(destination);
+      await assert.rejects(baseReleaseTree(destination, checkout), error => {
+        assert.ok(error.message.includes(`from ${safeSource} (fetch by SHA failed)`), "remote userinfo is redacted");
+        assert.ok(error.message.includes(BASE_RELEASE_COMMIT), "failure identifies the pinned SHA");
+        assert.ok(!error.message.includes("fixture-user") && !error.message.includes("fixture-token")
+          && !error.message.includes("fixture%40user") && !error.message.includes("fixture%3Atoken"), "no credential bytes reach the thrown message");
+        assert.ok(!error.message.includes("Command failed:") && !error.message.includes("--depth"), "git argv is not echoed");
+        return true;
+      });
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 /** The pinned base release's migration tree, role file and ledger, checked against captured digests. */
-async function baseReleaseTree(directory) {
-  const gitFlags = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+async function baseReleaseTree(directory, checkoutRoot = repoRoot) {
+  const gitFlags = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "maintenance.auto=false"];
   const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...gitFlags, ...args], { timeout: 120_000, stdio: "pipe", encoding: "utf8" });
   // A shallow checkout (GitHub's) lacks the pinned commit, so fetch it by SHA: from this
   // checkout when it holds the commit, otherwise from the real origin.
   let source = pathToFileURL(repoRoot).href;
-  try { git(repoRoot, "cat-file", "-e", `${BASE_RELEASE_COMMIT}^{commit}`); } catch { source = git(repoRoot, "remote", "get-url", "origin").trim(); }
+  try { git(checkoutRoot, "cat-file", "-e", `${BASE_RELEASE_COMMIT}^{commit}`); } catch { source = git(checkoutRoot, "remote", "get-url", "origin").trim(); }
   git(directory, "init", "--quiet");
   try { git(directory, "fetch", "--quiet", "--depth", "1", source, BASE_RELEASE_COMMIT); } catch (error) {
-    throw new Error(`cannot obtain the pinned base release ${BASE_RELEASE_COMMIT} from ${source} (fetch by SHA failed): ${error.message}`);
+    const safeSource = source.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/]*@/giu, "$1***@");
+    // execFileSync's message includes argv and stderr, either of which can
+    // contain credentials. Report only the safe source and numeric exit status.
+    throw new Error(`cannot obtain the pinned base release ${BASE_RELEASE_COMMIT} from ${safeSource} (fetch by SHA failed): git exit ${Number.isInteger(error.status) ? error.status : "unavailable"}`);
   }
   assert.equal(git(directory, "rev-parse", "FETCH_HEAD").trim(), BASE_RELEASE_COMMIT, "the fetched commit is the pinned base release");
   git(directory, "checkout", "--quiet", BASE_RELEASE_COMMIT, "--", "db", "deploy/postgres/migration-ledger.json");

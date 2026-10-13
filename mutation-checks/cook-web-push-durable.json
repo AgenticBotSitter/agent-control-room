@@ -327,5 +327,12 @@
     "replace": "    try { void source; }",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^WP-D15: released producer data survives provisioned upgrade and fresh schema agrees [(]PG[)]$' tests/owner-push-migrations-postgres.test.ts",
     "why": "Independent released-commit contract: a shallow checkout holds only the head, so the historical release must be fetched by SHA before checkout."
+  },
+  {
+    "file": "tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "find": "const safeSource = source.replace(/([a-z][a-z0-9+.-]*:\\/\\/)[^/]*@/giu, \"$1***@\");",
+    "replace": "const safeSource = source;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^F1:\" tests/mac-local-updater-grant-schema-pg17.test.mjs",
+    "why": "F1: removing URL userinfo redaction must fail the named remote-userinfo assertion against handwritten safe URL literals after a real local Git fetch failure."
   }
 ]
