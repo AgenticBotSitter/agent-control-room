@@ -600,6 +600,15 @@ export class FleetGatewayStoreV1 {
       await appendAuditWith(tx, { id: `audit:fleet-rotate:${credentialId.slice(17)}`, tenantId: this.#tenantId,
         actorId: principal.identityId, actorType: "worker", action: "fleet.credential.rotated", targetType: "fleet_worker",
         targetId: principal.workerId, occurredAt: iso(retired.stamp_at), safeMetadata: { from: current.credential_id, to: credentialId } });
+      // The audit chain head lock and the INSERT's foreign-key check on
+      // fleet_workers can both wait after the stamp above was taken, so 0141's
+      // guard may have judged the predecessor against a reading from before that
+      // wait. This is the last statement before COMMIT: its own reading is taken
+      // after every wait, and a predecessor that has expired by then rolls the
+      // whole renewal back.
+      const stillLive = (await tx.query<{ ok: boolean }>(`SELECT expires_at>statement_timestamp() AS ok FROM fleet_worker_credentials
+        WHERE tenant_id=$1 AND credential_id=$2`, [this.#tenantId, current.credential_id])).rows[0];
+      if (stillLive?.ok !== true) return fleetFail("unauthenticated");
       return Object.freeze({ credentialExpiresAt: expiresAt });
     });
   }

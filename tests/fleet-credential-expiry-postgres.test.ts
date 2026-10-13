@@ -1,12 +1,27 @@
-// R4F-06 on real PostgreSQL: a renewal queued before its predecessor's expiry
-// must not publish a live successor after that expiry. `rotate()` used to
-// capture `now` in application code, outside its transaction; a pool-
-// connection or row-lock delay crossing the boundary let a credential stamped
-// from a stale, pre-expiry timestamp be born already expired-but-active,
-// outliving the revocation it should have respected. The fix captures `now`
-// from `statement_timestamp()` inside the SELECT ... FOR UPDATE that locks
-// the predecessor, so the authority check and the stamp use one database
-// clock reading rather than a second, possibly later, one.
+// R4F-06 on real PostgreSQL: a renewal (`rotate()`) must not publish a live
+// successor after its predecessor credential expired.
+//
+// The defect: a successor stamped from a clock reading taken BEFORE a wait
+// (a pool connection, the credential row lock, the tenant audit chain head
+// lock, a foreign-key check on fleet_workers) passed migration 0141's
+// `prior.expires_at > NEW.issued_at` guard even though the predecessor had
+// expired by the time the transaction committed.
+//
+// The fix, in `rotate()`: the row lock is its own statement with no clock; the
+// next statement stamps `ended_at = statement_timestamp()` (after the lock) and
+// the successor reuses that exact database text, in microseconds; and the LAST
+// statement before COMMIT, after the audit append, re-reads the predecessor's
+// expiry against a fresh reading and rolls the renewal back if it has passed.
+// What this does not close: the COMMIT itself, which cannot be guarded without
+// a deferred commit-time trigger (a migration).
+//
+// Which case guards what:
+//   R4F-06  an older bug only: `now` captured in application code before the
+//           transaction started (it also passes on the stamp-after-lock code).
+//   R4F-06b expiry between the lock request and the lock grant (the credential row lock).
+//   R4F-06g expiry during a wait AFTER the stamp (audit chain head lock, worker row lock).
+//   R4F-06c unexpired renewals that wait still succeed, with the database's exact stamp.
+//   R4F-06d/e/f interruption, thirty contenders, and the same-millisecond boundary.
 //
 // Run AS the production fleet-gateway login, with only the grants
 // db/roles/fleet_gateway_roles.sql gives it, on this file's reserved
@@ -34,7 +49,7 @@ function pool(postgres: RealPostgres, role: string) {
   return { client: bound.client as DatabaseClient, close: () => bound.close() };
 }
 
-test("R4F-06: a renewal queued before expiry must not publish a live successor after expiry", async t => {
+test("R4F-06: a renewal whose transaction start is delayed past the expiry in application code is refused (guards the old application-clock stamp)", async t => {
   if (!PG) { t.skip(realPostgresSkipMessage()); return; }
   await withRealPostgres(async pg => {
     const admin = new Client(pg.admin({ database: pg.database }));
@@ -154,6 +169,28 @@ async function enrollWorker(rig: Rig) {
 
 const sleepFor = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
 
+/** Waits until exactly one statement of the fleet login is blocked on a lock and
+ * its text matches `queryPattern` (an ILIKE pattern), and returns its pid. Fails
+ * loudly, with what the sessions were doing, when nothing ever parks. */
+async function waitUntilParked(lock: Client, rotation: Promise<unknown>, queryPattern: string) {
+  let pid = 0;
+  for (let attempt = 0; attempt < 500 && !pid; attempt += 1) {
+    // pg_stat_activity is snapshotted once per transaction; the lock session is in one, so drop the snapshot before every look.
+    await lock.query("SELECT pg_stat_clear_snapshot()");
+    const rows = (await lock.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity WHERE usename='control_room_fleet'
+      AND wait_event_type='Lock' AND query ILIKE $1`, [queryPattern])).rows;
+    if (rows.length > 1) throw new Error("expected exactly one blocked fleet statement");
+    pid = rows[0]?.pid ?? 0;
+    if (!pid) await sleepFor(10);
+  }
+  if (!pid) {
+    const settled = await Promise.race([rotation, sleepFor(50).then(() => "still pending")]);
+    const seen = (await lock.query(`SELECT state,wait_event_type,left(query,50) AS q FROM pg_stat_activity WHERE usename='control_room_fleet'`)).rows;
+    assert.fail(`rotate() never blocked on ${queryPattern}; rotation: ${JSON.stringify(settled, (_k, v) => v instanceof Error ? `${v.name}:${(v as { code?: string }).code}` : v)}; sessions: ${JSON.stringify(seen)}`);
+  }
+  return pid;
+}
+
 /** Holds the predecessor's row lock from an administrator session, starts the
  * real `rotate()`, and returns once its locked read is genuinely blocked. The
  * blocked statement's start time comes from pg_stat_activity, which was probed
@@ -170,21 +207,7 @@ async function rotateBlockedOnRowLock(rig: Rig, principal: Awaited<ReturnType<ty
   const startedAt = Date.now();
   const rotation = rig.gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) })
     .then(() => ({ accepted: true as const, afterMs: Date.now() - startedAt }), error => ({ accepted: false as const, error, afterMs: Date.now() - startedAt }));
-  let pid = 0;
-  for (let attempt = 0; attempt < 500 && !pid; attempt += 1) {
-    // pg_stat_activity is snapshotted once per transaction; the lock session is in one, so drop the snapshot before every look.
-    await lock.query("SELECT pg_stat_clear_snapshot()");
-    const rows = (await lock.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity WHERE usename='control_room_fleet'
-      AND wait_event_type='Lock' AND query ILIKE '%FOR UPDATE%' AND query ILIKE '%fleet_worker_credentials%'`)).rows;
-    if (rows.length > 1) throw new Error("expected exactly one blocked fleet statement");
-    pid = rows[0]?.pid ?? 0;
-    if (!pid) await sleepFor(10);
-  }
-  if (!pid) {
-    const settled = await Promise.race([rotation, sleepFor(50).then(() => "still pending")]);
-    const seen = (await lock.query(`SELECT state,wait_event_type,left(query,50) AS q FROM pg_stat_activity WHERE usename='control_room_fleet'`)).rows;
-    assert.fail(`rotate() never blocked on the credential row lock; rotation: ${JSON.stringify(settled, (_k, v) => v instanceof Error ? `${v.name}:${(v as { code?: string }).code}` : v)}; sessions: ${JSON.stringify(seen)}`);
-  }
+  const pid = await waitUntilParked(lock, rotation, "%fleet_worker_credentials%FOR UPDATE%");
   return { lock, rotation, pid, successorSecret };
 }
 
@@ -238,6 +261,75 @@ test("R4F-06b: a renewal blocked on the credential lock is refused when the expi
   });
 });
 
+// ---------------------------------------------------------------------------
+// R4F-06g: waits AFTER the successor's stamp. `rotate()` still takes two locks
+// once the stamp (and 0141's guard) are behind it: the tenant-wide audit chain
+// head (appendAuditWith) and, through the INSERT's foreign key, a key-share lock
+// on the fleet_workers row, which an owner rekey or revocation holds. A renewal
+// parked there across the predecessor's expiry has already passed the guard.
+// The last statement before COMMIT must refuse it. The expiry is placed 1 s
+// ahead, the renewal is confirmed parked while it is still in the future, and
+// the lock is released only after the database clock is 50 ms past it.
+// ---------------------------------------------------------------------------
+const LATER_LOCKS = [
+  { name: "audit chain head", lockSql: "SELECT 1 FROM control_audit_chain_heads WHERE tenant_id=$1 FOR UPDATE",
+    lockParams: (_workerId: string) => [FLEET_TENANT], parked: "%control_audit_chain_heads%FOR UPDATE%" },
+  { name: "worker row", lockSql: "SELECT 1 FROM fleet_workers WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE",
+    lockParams: (workerId: string) => [FLEET_TENANT, workerId], parked: "%INSERT INTO fleet_worker_credentials%" },
+];
+
+test("R4F-06g: a renewal parked on a lock taken after its stamp is refused when the predecessor expires during the wait", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRig(async rig => {
+    const admin = await rig.newAdmin();
+    const outcomes: Array<Record<string, unknown>> = [];
+    const expected: Array<Record<string, unknown>> = [];
+    for (const later of LATER_LOCKS) {
+      for (const crossesExpiry of [true, true, false]) {
+        const { worker, principal } = await enrollWorker(rig);
+        if (crossesExpiry) {
+          await admin.query("BEGIN");
+          await admin.query("SET LOCAL session_replication_role = replica");
+          await admin.query(`UPDATE fleet_worker_credentials SET expires_at=clock_timestamp()+interval '1000 milliseconds'
+            WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, principal.credentialId]);
+          await admin.query("COMMIT");
+        }
+        const lock = await rig.newAdmin();
+        await lock.query("BEGIN");
+        await lock.query(later.lockSql, later.lockParams(worker.workerId));
+        const successorSecret = c.newSecret();
+        const rotation = rig.gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) })
+          .then(() => ({ accepted: true as const }), (error: { code?: string }) => ({ accepted: false as const, code: error?.code }));
+        try {
+          await waitUntilParked(lock, rotation, later.parked);
+          if (crossesExpiry) {
+            // Parked behind the later lock means the stamp and the guard are already behind it: the expiry must still be ahead.
+            const ahead = (await admin.query<{ ahead: boolean }>(`SELECT expires_at>clock_timestamp() AS ahead FROM fleet_worker_credentials
+              WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, principal.credentialId])).rows[0]?.ahead;
+            assert.equal(ahead, true, `${later.name}: the renewal parked after the expiry had already passed; the case would not exercise the post-stamp wait`);
+            let passed = false;
+            for (let attempt = 0; attempt < 1000 && !passed; attempt += 1) {
+              passed = (await admin.query<{ passed: boolean }>(`SELECT clock_timestamp()>expires_at+interval '50 milliseconds' AS passed
+                FROM fleet_worker_credentials WHERE tenant_id=$1 AND credential_id=$2`, [FLEET_TENANT, principal.credentialId])).rows[0]?.passed === true;
+              if (!passed) await sleepFor(5);
+            }
+            assert.ok(passed, `${later.name}: the database clock never passed the placed expiry`);
+          } else { await sleepFor(100); }
+        } finally { await lock.query("COMMIT"); }
+        const result = await rotation;
+        const world = await worldAfter(rig, admin, worker.workerId, principal.credentialId);
+        const login = await rig.gateway.authenticate({ bearer: successorSecret, declaredWorkerId: worker.workerId }).then(() => "accepted", () => "refused");
+        outcomes.push({ lock: later.name, crossesExpiry, accepted: result.accepted, code: "code" in result ? result.code : undefined,
+          successors: world.successors, liveCredentials: world.rows.filter(row => row.live).length, predecessorState: world.predecessor?.state, login });
+        expected.push(crossesExpiry
+          ? { lock: later.name, crossesExpiry, accepted: false, code: "unauthenticated", successors: "0", liveCredentials: 0, predecessorState: "active", login: "refused" }
+          : { lock: later.name, crossesExpiry, accepted: true, code: undefined, successors: "1", liveCredentials: 1, predecessorState: "retired", login: "accepted" });
+      }
+    }
+    assert.deepEqual(outcomes, expected, "a renewal that waits after its stamp must be refused when the predecessor expired meanwhile, and still succeed when it did not");
+  });
+});
+
 /** Wraps the real store connection and records every statement a transaction
  * runs, with the rows it returned, so a test can compare what the store sent
  * with what PostgreSQL itself said. Records only; never alters a statement. */
@@ -271,7 +363,7 @@ test("R4F-06c: an unexpired renewal that waits on the credential lock still succ
       const successorSecret = c.newSecret();
       recorder.log.length = 0;
       const rotation = gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) });
-      await sleepFor(150); // the renewal is now parked on the lock; a plain wait is the scenario, not a synchronisation
+      await waitUntilParked(lock, rotation, "%fleet_worker_credentials%FOR UPDATE%"); // the renewal really is parked on the lock
       await lock.query("COMMIT"); await lock.end();
       const reply = await rotation;
       const rows = (await admin.query<{ credential_id: string; state: string; issued_at: string; ended_at: string | null;
