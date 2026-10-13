@@ -1,0 +1,58 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "handle = await open(path, \"wx\", 0o600);",
+    "replace": "handle = await open(path, \"w\", 0o600);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"claim locks release on failure, recover dead owners, and bound incomplete-owner waits\" tests/fleet-held-result.test.ts",
+    "why": "M1 live-owner write refusal and byte preservation; expected busy literal from the declared contract"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "owner.pid > 0 && !pidAlive(owner.pid)",
+    "replace": "owner.pid > 0",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"claim locks release on failure, recover dead owners, and bound incomplete-owner waits\" tests/fleet-held-result.test.ts",
+    "why": "M2 live process retains its owner lock until explicit pipe release"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const known = earliestInstant(current?.deadlineAt, record.deadlineAt);",
+    "replace": "const known = record.deadlineAt ?? null;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M3 independent literal shorter deadline survives stale recovery and every successful burst input"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const heldAt = earliestInstant(current?.heldAt, record.heldAt);",
+    "replace": "const heldAt = record.heldAt;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M4 independent original held anchor survives later burst inputs"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (Date.now() - started >= 2_000) throw new Error(\"The held-answer record is locked by another session or an incomplete lock. Retry after checking that session.\");",
+    "replace": "if (Date.now() - started >= 2_000) return;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"claim locks release on failure, recover dead owners, and bound incomplete-owner waits\" tests/fleet-held-result.test.ts",
+    "why": "M5 bounded wait must reject a live-owner competing write instead of returning success without work"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      await handle.sync();\n      return await work();",
+    "replace": "      await handle.sync();\n      await new Promise(done => setTimeout(done, 100));\n      return await work();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M6 a 100 ms hold exceeds the reviewer-specified half-writer initial-refusal ceiling under an IO-quiescent policy clock; healthy clock-controlled bursts have zero refusals"
+  },
+  {
+    "file": "tests/fleet-held-result.test.ts",
+    "find": "if (ioPending.size === 0) t.mock.timers.tick(10);",
+    "replace": "t.mock.timers.tick(10);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M7 clock must wait for observed real filesystem quiescence; disabling that guard fails the named independent half-writer progress assertion"
+  },
+  {
+    "file": "tests/fleet-held-result.test.ts",
+    "find": "ioPending.add(id);",
+    "replace": "void id;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"synchronized recovery callers merge the current disk minimum, including 50 callers\" tests/fleet-held-result.test.ts",
+    "why": "M8 filesystem request observation must actually track outstanding work; disabling it fails the named independent half-writer progress assertion"
+  }
+]
