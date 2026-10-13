@@ -486,7 +486,7 @@ test('the snapshot checksum reaches check-serve as the shell variable, never as 
 test('V101 generated live guidance follows stopped Face ID recovery through the QR in any browser', async () => {
   const output = await makeOwnerPasteFile(input);
   const live = output.split(": '11.")[1].split(": '12.")[0];
-  assert.ok(live.includes('To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.'));
+  assert.ok(live.includes('To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.'));
   assert.doesNotMatch(live, /do not run.*passkey add/iu);
   assert.ok(live.includes('Keep the Terminal message on screen.'));
   assert.ok(live.includes('Do not retry or reload the stopped phone page.'));

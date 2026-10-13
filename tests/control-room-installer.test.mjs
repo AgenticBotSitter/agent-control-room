@@ -2648,7 +2648,7 @@ test("the install line never says Ready when the Face ID step stopped", async t 
   // atk-fa F8: the CLI printed "Ready" whatever the passkey result, so nothing told the
   // owner there was no passkey.
   for (const [name, portOptions, expected, absent] of [
-    ["stopped", { passkeyFailure: true }, "Not ready: Face ID is NOT set up (the passkey step stopped: passkey_terminal_required). Control Room release 1.2.3-aaaaaaaaaaaa is installed and current. Self-update is Off. To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\n", /Ready:/u],
+    ["stopped", { passkeyFailure: true }, "Not ready: Face ID is NOT set up (the passkey step stopped: passkey_terminal_required). Control Room release 1.2.3-aaaaaaaaaaaa is installed and current. Self-update is Off. To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone. Finish within the time shown by that command.\n", /Ready:/u],
     ["registered", {}, "Ready: Control Room release 1.2.3-aaaaaaaaaaaa is current. Self-update is Off.\n", /Not ready/u]]) {
     const f = await fixture(t, `cli-passkey-${name}`, portOptions);
     const output = [];
