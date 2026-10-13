@@ -94,7 +94,7 @@ function provenMacosCommands(step) {
     if (/^\s*(?:if|elif|case|while|until|select|function)\b|^\s*\w+\s*\(\)\s*\{|\\\s*$/mu.test(command)
       || /^\s*for\b(?![^\n]*;\s*done\s*$)/mu.test(command)) return [];
     return command.split("\n").filter(line =>
-      /^\s*(?:pnpm\s+(?:run\s+)?[a-z][a-z0-9:.-]*|node\s+scripts\/[a-zA-Z0-9_./-]+\.mjs)(?:\s+[^;&|<>`]*?)?(?:\s+\|\|\s+[a-z_]+\s*=\s*\$\?)?\s*$/u.test(line));
+      /^\s*(?:pnpm\s+(?:run\s+)?[a-z][a-z0-9:.-]*|node\s+scripts\/ci\/run-scripts-keep-going\.mjs\s+[a-z0-9:._ -]+|node\s+(?:scripts\/run-tests-with-quarantine\.mjs|--test)\s+[a-zA-Z0-9_=./ -]+)(?:\s+\|\|\s+[a-z_]+\s*=\s*\$\?)?\s*$/u.test(line));
   });
 }
 

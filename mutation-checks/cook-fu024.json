@@ -85,7 +85,7 @@
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "    return command.split(\"\\n\").filter(line =>\n      /^\\s*(?:pnpm\\s+(?:run\\s+)?[a-z][a-z0-9:.-]*|node\\s+scripts\\/[a-zA-Z0-9_./-]+\\.mjs)(?:\\s+[^;&|<>`]*?)?(?:\\s+\\|\\|\\s+[a-z_]+\\s*=\\s*\\$\\?)?\\s*$/u.test(line));",
+    "find": "    return command.split(\"\\n\").filter(line =>\n      /^\\s*(?:pnpm\\s+(?:run\\s+)?[a-z][a-z0-9:.-]*|node\\s+scripts\\/ci\\/run-scripts-keep-going\\.mjs\\s+[a-z0-9:._ -]+|node\\s+(?:scripts\\/run-tests-with-quarantine\\.mjs|--test)\\s+[a-zA-Z0-9_=./ -]+)(?:\\s+\\|\\|\\s+[a-z_]+\\s*=\\s*\\$\\?)?\\s*$/u.test(line));",
     "replace": "    return command.split(\"\\n\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disable proven-command filtering: macOS coverage refuses inline shell condition must fail against independently authored uncovered path."

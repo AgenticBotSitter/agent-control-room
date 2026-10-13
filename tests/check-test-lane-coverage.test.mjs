@@ -163,6 +163,7 @@ for (const [name, workflow] of Object.entries({
   "shell uname condition on a macOS job": "jobs:\n  mac:\n    runs-on: macos-26\n    steps:\n      - run: |\n          if [ \"$(uname -s)\" = Linux ]; then\n            pnpm run test:pg\n          fi\n",
   "unsupported condition": macJob.replace("      - run:", "      - if: contains(matrix.platform, 'mac')\n        run:"),
   "disabled job": macJob.replace("    runs-on:", "    if: false\n    runs-on:"),
+  "unsupported node wrapper": macJob.replace("pnpm run test:pg", "node scripts/unknown.mjs pnpm run test:pg"),
   "inline shell condition": macJob.replace("pnpm run test:pg", "test $(uname -s) = Linux && pnpm run test:pg"),
 })) {
   test(`macOS coverage refuses ${name}`, () => {
