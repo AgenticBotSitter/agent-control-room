@@ -1162,7 +1162,7 @@ test("the stress Python prerequisite declares an absent executable", () => {
 });
 
 async function runLockStressProbe({ exerciseDeadline = process.env.CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE === "1",
-  startupStall = false, closeStall = false, deadlineMs = 60_000, closeGraceMs = 5_000, onChild } = {}) {
+  startupStall = false, startupDelayMs = 0, closeStall = false, deadlineMs = 60_000, closeGraceMs = 5_000, onChild } = {}) {
   const workers = 2, acquisitions = 40;
   const root = await mkdtemp(join(tmpdir(), "connector-stress-deadline-"));
   let ownedGroup, ownedChild;
@@ -1235,7 +1235,7 @@ if (typeof process.send === "function") {
       // setpgrp keeps this direct child attached, unlike detached/setsid.
       // exec preserves its PID as the group ID inherited by every worker.
       const child = spawn("python3", ["-c",
-        (startupStall ? "import os,time,json; open(os.environ['CONTROL_ROOM_STRESS_STARTUP_RECORD'],'w').write(json.dumps({'pid':os.getpid()})); time.sleep(90); " : "") +
+        (startupStall ? `import os,time,json; time.sleep(${startupDelayMs / 1000}); open(os.environ['CONTROL_ROOM_STRESS_STARTUP_RECORD'],'w').write(json.dumps({'pid':os.getpid()})); time.sleep(90); ` : "") +
         "import os,sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])",
         process.execPath, "scripts/fleet/stress-connector-lock.mjs",
         String(workers), String(acquisitions), "0.05"], {
@@ -1281,9 +1281,17 @@ if (typeof process.send === "function") {
       }
       assert.equal(groupAlive(), false, "outer test timeout must leave no live owned descendants");
       if (startupStall) {
-        const stalled = JSON.parse(await readFile(join(root, "startup.json"), "utf8"));
-        assert.equal(stalled.pid, child.pid, "startup fault must precede setpgrp in the real owned child");
         assert.equal(child.signalCode, "SIGKILL", "startup deadline must reap the owned direct child");
+        // A slow interpreter can be killed before it writes the stall marker.
+        // That still proves the direct-child fallback: no process group exists.
+        const marker = await readFile(join(root, "startup.json"), "utf8").catch(error => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (marker !== null) {
+          const stalled = JSON.parse(marker);
+          assert.equal(stalled.pid, child.pid, "startup fault must precede setpgrp in the real owned child");
+        }
       }
       if (exerciseDeadline) {
         const stalled = JSON.parse(await readFile(join(root, "stalled.json"), "utf8"));
@@ -1341,8 +1349,12 @@ test("the lock stress deadline kills a child stalled before setpgrp", { skip: py
   let expired = false;
   const safety = setTimeout(() => { expired = true; owned?.kill("SIGKILL"); }, 8_000);
   try {
-    await runLockStressProbe({ startupStall: true, deadlineMs: 1_000, closeGraceMs: 1_000,
-      onChild: child => { owned = child; } });
+    // Exercise both a visible stall and a kill before readiness. The injected
+    // delay is a fault, not a readiness assumption or an increased deadline.
+    for (const startupDelayMs of [0, 1_500]) {
+      await runLockStressProbe({ startupStall: true, startupDelayMs, deadlineMs: 1_000, closeGraceMs: 1_000,
+        onChild: child => { owned = child; } });
+    }
     assert.equal(expired, false, "pre-group startup must finish before the independent safety deadline");
     // Retry after a killed startup must still do the requested real work.
     await runLockStressProbe();

@@ -54,5 +54,12 @@
     "replace": "  if (result.error?.code === \"ENOENT\") return false;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^the stress Python prerequisite declares an absent executable$\" tests/fleet-connector-install.test.mjs",
     "why": "A real absent executable must produce the independent literal prerequisite skip reason, never success."
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "          if (error.code === \"ENOENT\") return null;",
+    "replace": "          // Mutation: refuse the absent pre-readiness marker.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^the lock stress deadline kills a child stalled before setpgrp$\" tests/fleet-connector-install.test.mjs",
+    "why": "A real owned child killed before marker creation must satisfy the named deadline assertion, using independent SIGKILL and absent group/scratch expectations; removing absent-marker handling must fail the named test with ENOENT versus ERR_ASSERTION."
   }
 ]
