@@ -1,0 +1,201 @@
+# Captured from the pre-fix workflow; data only, never executed.
+jobs:
+  test-updater:
+    name: macOS updater tests
+    needs: route
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+      LC_ALL: C
+      LANG: C
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Launch daemon bundle with native plutil
+        run: pnpm run test:launch-daemons
+      - name: Report the macOS tools the updater depends on
+        run: |
+          sw_vers || true
+          for tool in /usr/bin/lockf /usr/bin/xcrun /usr/bin/codesign /usr/sbin/lsof /bin/zsh; do
+            if [ -x "$tool" ]; then ls -l "$tool"; else echo "MISSING: $tool"; fi
+          done
+          umask; id; ls -ld /private/tmp || true
+      - name: Install PostgreSQL 17 for the updater database tests
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install postgresql@17 && test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
+      - name: Updater lane
+        run: |
+          set -euo pipefail
+          # BSD children inherit the containing directory's group. Use the
+          # test login's primary group, not the shared temporary directory's.
+          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          trap 'rm -rf -- "${updater_tmp}"' EXIT
+          chgrp "$(id -g)" "${updater_tmp}"
+          chmod 0700 "${updater_tmp}"
+          export TMPDIR="${updater_tmp}"
+          # The full Xcode image can have writable ancestors. The installed
+          # Command Line Tools use the root-owned path this lane verifies.
+          sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
+          test -x /usr/bin/lockf
+          for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
+          pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
+          node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          # The guard's control socket lives under the worktree's .test-tmp and
+          # macOS caps a socket path at 104 bytes; the hosted checkout path is
+          # far longer than a developer's, so run the lane from a short copy.
+          short_root="${HOME}/acr"
+          rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
+          # Linux exercises refusal only; these bodies need macOS kernel locks.
+          # Use a separate short private root without a writable shared ancestor.
+          darwin_pg_status=0
+          (
+            darwin_pg_tmp="$(mktemp -d "${HOME}/.acr-pg.XXXXXX")" || exit 1
+            trap 'rm -rf -- "${darwin_pg_tmp}"' EXIT
+            chgrp "$(id -g)" "${darwin_pg_tmp}" || exit 1
+            chmod 0700 "${darwin_pg_tmp}" || exit 1
+            export TMPDIR="${darwin_pg_tmp}"
+            export PG_BIN=/opt/homebrew/opt/postgresql@17/bin
+            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts
+          ) || darwin_pg_status=$?
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?
+          exit "${darwin_pg_status}"
+  full-gate:
+    name: Merge gate catch-up
+    needs: route
+    if: ${{ !cancelled() }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: demo
+            runner: ubuntu-latest
+            timeout: 25
+          - lane: server
+            runner: ubuntu-latest
+            timeout: 30
+          - lane: components
+            runner: ubuntu-latest
+            timeout: 180
+          - lane: updater
+            runner: macos-26
+            timeout: 45
+          - lane: articles
+            runner: ubuntu-latest
+            timeout: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Note which lane this entry covers
+        run: |
+          echo "Merge-gate entry for lane: ${{ matrix.lane }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare Linux component catch-up prerequisites
+        if: ${{ !cancelled() && matrix.lane == 'components' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
+      - name: Install PostgreSQL 17 from PGDG for the components catch-up
+        if: ${{ !cancelled() && matrix.lane == 'components' }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          echo "PG_BIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+      - name: Demo tests (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/ci/run-scripts-keep-going.mjs test:demo test:build:demo
+      - name: Server build tests (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/ci/run-scripts-keep-going.mjs test
+      - name: Component lanes (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          status=0
+          node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:attack-kit || status=$?
+          echo '::group::Resource-bound connector contracts'
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts || status=$?
+          echo '::endgroup::'
+          exit "${status}"
+      - name: Updater lane (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'updater' && needs.route.result == 'success' && needs.route.outputs.updater == 'false' }}
+        env:
+          CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+          LC_ALL: C
+          LANG: C
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --ignore-scripts
+          # The PostgreSQL-backed updater tests run here too (see test-updater).
+          brew install postgresql@17
+          test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl
+          # BSD children inherit the containing directory's group. Use the
+          # test login's primary group, not the shared temporary directory's.
+          updater_tmp="$(mktemp -d /private/tmp/acr-updater.XXXXXX)"
+          trap 'rm -rf -- "${updater_tmp}"' EXIT
+          chgrp "$(id -g)" "${updater_tmp}"
+          chmod 0700 "${updater_tmp}"
+          export TMPDIR="${updater_tmp}"
+          # The full Xcode image can have writable ancestors. The installed
+          # Command Line Tools use the root-owned path this lane verifies.
+          sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools
+          test -x /usr/bin/lockf
+          for tool in strip otool; do t="$(xcrun -f "$tool")"; echo "== $t"; file "$t"; xcrun otool -L "$t" | cat -vet | head -12; done
+          pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true
+          node --input-type=module -e 'import { resolveDeveloperTools } from "./src/updater/v1/trusted-runtime.mjs"; await resolveDeveloperTools();'
+          # The guard's control socket lives under the worktree's .test-tmp and
+          # macOS caps a socket path at 104 bytes; the hosted checkout path is
+          # far longer than a developer's, so run the lane from a short copy.
+          short_root="${HOME}/acr"
+          rm -rf -- "${short_root}" && ditto "${PWD}" "${short_root}" && cd "${short_root}"
+          # Linux exercises refusal only; these bodies need macOS kernel locks.
+          # Use a separate short private root without a writable shared ancestor.
+          darwin_pg_status=0
+          (
+            darwin_pg_tmp="$(mktemp -d "${HOME}/.acr-pg.XXXXXX")" || exit 1
+            trap 'rm -rf -- "${darwin_pg_tmp}"' EXIT
+            chgrp "$(id -g)" "${darwin_pg_tmp}" || exit 1
+            chmod 0700 "${darwin_pg_tmp}" || exit 1
+            export TMPDIR="${darwin_pg_tmp}"
+            export PG_BIN=/opt/homebrew/opt/postgresql@17/bin
+            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts
+          ) || darwin_pg_status=$?
+          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?
+          exit "${darwin_pg_status}"
+      - name: Article build lane (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/ci/run-scripts-keep-going.mjs test:build:articles

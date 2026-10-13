@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,6 +69,10 @@ test("quoted and block workflow commands are extracted", () => {
   ].join("\n")), ["pnpm install --frozen-lockfile", "pnpm run test:one", "pnpm run test:two\nnode --test tests/direct.test.js"]);
 });
 
+const require = createRequire(import.meta.url);
+const { load, dump } = require(require.resolve("js-yaml", { paths: [require.resolve("eslint")] }));
+const capturedWorkflow = readFileSync(new URL("./fixtures/fu024-r6-workflow.yml", import.meta.url), "utf8");
+const allMappedFiles = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-download-postgres.test.ts", "tests/result-file-upload-race-postgres.test.ts", "tests/result-upload-store-postgres.test.ts", "tests/text-copy-derivation-postgres.test.ts", "tests/pg-runtime-copy-stress.test.ts", "tests/test-runner-service.test.mjs"];
 const darwinPgSource = "import { withRealPostgres } from './support/attack-kit/index'; if (process.platform !== 'darwin') { return; }";
 // Independent ticket inventory and literal workflow command, not checker exports.
 const files = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-download-postgres.test.ts",
@@ -74,24 +80,12 @@ const files = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-
   "tests/text-copy-derivation-postgres.test.ts"];
 const command = "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts";
 function fixedWorkflow(first = command, second = command) {
-  return `jobs:
-  test-updater:
-    runs-on: macos-26
-    steps:
-      - run: |
-          ${first}
-  full-gate:
-    runs-on: \${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - lane: updater
-            runner: macos-26
-    steps:
-      - if: matrix.lane == 'updater'
-        run: |
-          ${second}
-`;
+  const doc = load(capturedWorkflow);
+  for (const [job, value] of [["test-updater", first], ["full-gate", second]]) {
+    const step = doc.jobs[job].steps.find(s => s.name?.startsWith("Updater lane"));
+    step.run = step.run.replace(command, value);
+  }
+  return dump(doc, { lineWidth: -1 });
 }
 function pgFixture(workflow, tests = files, source = darwinPgSource) {
   return fixture({ scripts: { "test:pg": "node --test " + tests.join(" ") },
@@ -169,7 +163,12 @@ test("portable platform paths and fixture strings do not claim Darwin-only Postg
 const legacyFiles = ["tests/pg-runtime-copy-stress.test.ts", "tests/test-runner-service.test.mjs"];
 const legacyCommand = "node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?";
 function legacyWorkflow(first = legacyCommand, second = legacyCommand) {
-  return fixedWorkflow(command + "\n          " + first, command + "\n          " + second);
+  const doc = load(fixedWorkflow());
+  for (const [job, value] of [["test-updater", first], ["full-gate", second]]) {
+    const step = doc.jobs[job].steps.find(s => s.name?.startsWith("Updater lane"));
+    step.run = step.run.replace(legacyCommand, value);
+  }
+  return dump(doc, { lineWidth: -1 });
 }
 for (const file of legacyFiles) {
   test(`legacy Darwin PostgreSQL ${file} in fixed map passes`, () => {
@@ -183,6 +182,7 @@ for (const file of legacyFiles) {
     const url = new URL("../scripts/check-test-lane-coverage.mjs", import.meta.url);
     const source = readFileSync(url, "utf8")
       .replace(`  "${file}": DARWIN_LEGACY_COMMAND,\n`, "")
+      .replace("createRequire(import.meta.url)", `createRequire(new URL(${JSON.stringify(url.href)}))`)
       .replace(/from "(\.\.?\/[^"]+)"/gu, (_, relative) => `from "${new URL(relative, url).href}"`);
     const root = pgFixture(legacyWorkflow(), [file]);
     try {
@@ -213,4 +213,63 @@ for (const file of legacyFiles) {
 }
 test("real seven-file Darwin PostgreSQL workflow passes", () => {
   assert.deepEqual(findUncoveredTests(fileURLToPath(new URL("..", import.meta.url))), []);
+});
+
+// Independently captured original YAML is the input; expectations are ticket literals.
+for (const jobName of ["test-updater", "full-gate"]) {
+  for (const [variant, field, change] of [
+    ["job if", "if", (job) => { job.if = false; }],
+    ["job env", "env", (job) => { job.env = { SHADOW: "true" }; }],
+    ["job defaults", "defaults", (job) => { job.defaults = {run:{shell:"python"}}; }],
+    ["job strategy", "strategy", (job) => { job.strategy = {matrix:{runner:["ubuntu-latest"]}}; }],
+    ["extra step field", "continue-on-error", (_, step) => { step["continue-on-error"] = true; }],
+    ["runs-on", "runs-on", (job) => { job["runs-on"] = "ubuntu-latest"; }],
+    ["step if false", "if", (_, step) => { step.if = false; }],
+    ["step if expression", "if", (_, step) => { step.if = "${{ false }}"; }],
+    ["Linux-only step", "if", (_, step) => { step.if = "runner.os == 'Linux'"; }],
+    ["run text", "run", (_, step) => { step.run += "echo altered\n"; }],
+    ["exit before command", "run", (_, step) => { step.run = step.run.replace(command, "exit 0\n" + command); }],
+    ["aggregation step", "run", (_, step) => { step.run = step.run.replace("darwin_pg_status=0", "exit 0\ndarwin_pg_status=0"); }],
+    ["step name scalar", "step count", (_, step) => { step.name = command + "\n"; step.run = "true\n"; }],
+    ["step env text", "env", (_, step) => { step.env = { DOCUMENTATION: command }; }],
+    ["shell", "shell", (_, step) => { step.shell = "python"; }],
+    ["working directory", "working-directory", (_, step) => { step["working-directory"] = "elsewhere"; }],
+    ["missing step", "step count", (job, step) => { job.steps.splice(job.steps.indexOf(step), 1); }],
+    ["duplicate step", "step count", (job, step) => { job.steps.push(structuredClone(step)); }],
+    ["moved step", "step position", (job, step) => { job.steps.splice(job.steps.indexOf(step), 1); job.steps.unshift(step); }],
+    ["move command to disabled step", "run", (job, step) => { step.run = step.run.replace(command, "true"); job.steps.push({name:"disabled",if:false,run:command}); }],
+    ["YAML job lookup", "job lookup", (_, __, doc) => { doc.jobs[jobName + "-renamed"] = doc.jobs[jobName]; delete doc.jobs[jobName]; }],
+    ["quoted job absorbs command", "run", (_, step, doc) => { step.run = step.run.replace(command, "true"); doc.jobs["extra quoted job"] = {steps:[{run:command}]}; }],
+  ]) {
+    test(`literal pin refuses ${jobName} ${variant}`, () => {
+      const doc = load(capturedWorkflow), job = doc.jobs[jobName];
+      const step = job.steps.find(s => s.name?.startsWith("Updater lane"));
+      const name = step.name;
+      change(job, step, doc);
+      const root = pgFixture(dump(doc, {lineWidth:-1}), allMappedFiles);
+      try {
+        assert.deepEqual(findUncoveredTests(root), allMappedFiles.slice().sort(), `${variant} refuses seven mapped files`);
+        const cli = spawnSync(process.execPath, [fileURLToPath(new URL("../scripts/check-test-lane-coverage.mjs",import.meta.url))], {cwd:root,encoding:"utf8",timeout:10000});
+        assert.equal(cli.status, 1);
+        assert.ok(cli.stderr.includes(`${jobName}: step ${name}, field ${field}`), cli.stderr);
+        assert.ok(cli.stderr.includes("A legitimate future edit to these steps must update the pinned literal in the checker."));
+      } finally { rmSync(root,{recursive:true,force:true}); }
+    });
+  }
+}
+test("literal pins allow unrelated step and job edits and a portable new test", () => {
+  const doc = load(capturedWorkflow);
+  doc.jobs["test-updater"].steps[0].with["fetch-depth"] = 1;
+  doc.jobs.unrelated = {"runs-on":"ubuntu-latest", steps:[{run:"echo unrelated"}]};
+  const root = pgFixture(dump(doc,{lineWidth:-1}), [...allMappedFiles,"tests/portable-new.test.mjs"], "withRealPostgres();");
+  try { assert.deepEqual(findUncoveredTests(root),[]); }
+  finally { rmSync(root,{recursive:true,force:true}); }
+});
+
+test("literal pins refuse malformed and duplicate-key YAML", () => {
+  for (const workflow of ["jobs: [", capturedWorkflow + "\njobs: {}\n"]) {
+    const root = pgFixture(workflow, allMappedFiles);
+    try { assert.deepEqual(findUncoveredTests(root), allMappedFiles.slice().sort()); }
+    finally { rmSync(root, {recursive:true,force:true}); }
+  }
 });

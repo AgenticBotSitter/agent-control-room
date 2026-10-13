@@ -15,22 +15,22 @@
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "[\"test-updater\", \"full-gate\"].every",
-    "replace": "[\"full-gate\"].every",
+    "find": "for (const jobName of [\"test-updater\", \"full-gate\"]) {",
+    "replace": "for (const jobName of [\"full-gate\"]) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Ignore primary path: exact Darwin PostgreSQL command missing from test-updater fails must fail against the independent five-file inventory."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "[\"test-updater\", \"full-gate\"].every",
-    "replace": "[\"test-updater\"].every",
+    "find": "for (const jobName of [\"test-updater\", \"full-gate\"]) {",
+    "replace": "for (const jobName of [\"test-updater\"]) {",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Ignore catch-up path: exact Darwin PostgreSQL command missing from full-gate fails must fail against the independent five-file inventory."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "line.trim() === requiredCommand",
-    "replace": "line.trim().includes(requiredCommand)",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"run\" && !isDeepStrictEqual(step[field], pin.step[field])",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Allow appended arguments: editing Darwin PostgreSQL command in test-updater fails verbatim check must fail against the independent literal command."
   },
@@ -103,5 +103,124 @@
     "replace": "command === DARWIN_LEGACY_COMMAND || hasDarwinPostgresCommands(workflow, command)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disable legacy command guard: legacy command missing in test-updater refuses tests/pg-runtime-copy-stress.test.ts must fail against the owner literal file expectation."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "replace": "field !== \"if\" && !isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable job if pin: literal pin refuses test-updater job if must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "replace": "field !== \"runs-on\" && !isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable runs-on pin: literal pin refuses test-updater runs-on must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"if\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable step if false pin: literal pin refuses test-updater step if false must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"run\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable run text pin: literal pin refuses test-updater run text must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"run\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable aggregation step pin: literal pin refuses test-updater aggregation step must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"env\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable step env text pin: literal pin refuses test-updater step env text must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"shell\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable shell pin: literal pin refuses test-updater shell must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"working-directory\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable working directory pin: literal pin refuses test-updater working directory must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "const job = document?.jobs?.[jobName];",
+    "replace": "const job = document?.jobs?.[jobName] ?? document?.jobs?.[jobName + \"-renamed\"];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable YAML job lookup: literal pin refuses test-updater YAML job lookup must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "matches.length !== 1",
+    "replace": "matches.length === 0",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable duplicate step guard: literal pin refuses test-updater duplicate step must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "steps[pin.index] !== matches[0]",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable moved step guard: literal pin refuses test-updater moved step must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "replace": "field !== \"env\" && !isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable job env pin: literal pin refuses test-updater job env must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "replace": "field !== \"defaults\" && !isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable job defaults pin: literal pin refuses test-updater job defaults must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "replace": "field !== \"strategy\" && !isDeepStrictEqual(job[field] ?? null, pin[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable job strategy pin: literal pin refuses test-updater job strategy must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "!isDeepStrictEqual(step[field], pin.step[field])",
+    "replace": "field !== \"continue-on-error\" && !isDeepStrictEqual(step[field], pin.step[field])",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable extra field refusal: literal pin refuses test-updater extra step field must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "catch { fail(\"workflow\", \"YAML\", \"parse\"); return errors; }",
+    "replace": "catch { return []; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable YAML fail-closed refusal: literal pins refuse malformed and duplicate-key YAML must fail against independent seven-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "if (matches.length !== 1) { fail(jobName, pin.step.name, \"step count\"); continue; }",
+    "replace": "if (matches.length !== 1) { continue; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable missing/duplicate step refusal: literal pin refuses test-updater missing step must fail against independent seven-file inventory."
   }
 ]

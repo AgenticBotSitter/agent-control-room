@@ -1,8 +1,14 @@
 import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Proves every test file is reachable from a command GitHub Actions actually runs.
+import { createRequire } from "node:module";
+import { isDeepStrictEqual } from "node:util";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parseArguments } from "./ci/run-scripts-keep-going.mjs";
+
+// js-yaml is the workflow parser supplied by the existing ESLint dependency.
+const require = createRequire(import.meta.url);
+const { load: loadYaml } = require(require.resolve("js-yaml", { paths: [require.resolve("eslint")] }));
 
 const testPattern = /\.test\.(?:ts|tsx|mjs|js)$/;
 const packageScriptPattern = /(?:^|[\s;&|])pnpm\s+(?:run\s+)?([a-z][a-z0-9:.-]*)(?=$|[\s;&|])/g;
@@ -88,14 +94,105 @@ const DARWIN_POSTGRES_FILES = {
   "tests/test-runner-service.test.mjs": DARWIN_LEGACY_COMMAND,
 };
 
+// Literal snapshot of the executing/aggregating steps. Future legitimate edits
+// must deliberately update these pins, rather than weakening the checker.
+const DARWIN_JOB_PINS = {
+  "test-updater": {
+    "if": "${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}",
+    "runs-on": "macos-26",
+    "env": {
+      "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI": "1",
+      "LC_ALL": "C",
+      "LANG": "C"
+    },
+    "defaults": null,
+    "strategy": null,
+    "index": 7,
+    "step": {
+      "name": "Updater lane",
+      "run": "set -euo pipefail\n# BSD children inherit the containing directory's group. Use the\n# test login's primary group, not the shared temporary directory's.\nupdater_tmp=\"$(mktemp -d /private/tmp/acr-updater.XXXXXX)\"\ntrap 'rm -rf -- \"${updater_tmp}\"' EXIT\nchgrp \"$(id -g)\" \"${updater_tmp}\"\nchmod 0700 \"${updater_tmp}\"\nexport TMPDIR=\"${updater_tmp}\"\n# The full Xcode image can have writable ancestors. The installed\n# Command Line Tools use the root-owned path this lane verifies.\nsudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools\ntest -x /usr/bin/lockf\nfor tool in strip otool; do t=\"$(xcrun -f \"$tool\")\"; echo \"== $t\"; file \"$t\"; xcrun otool -L \"$t\" | cat -vet | head -12; done\npkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true\nnode --input-type=module -e 'import { resolveDeveloperTools } from \"./src/updater/v1/trusted-runtime.mjs\"; await resolveDeveloperTools();'\n# The guard's control socket lives under the worktree's .test-tmp and\n# macOS caps a socket path at 104 bytes; the hosted checkout path is\n# far longer than a developer's, so run the lane from a short copy.\nshort_root=\"${HOME}/acr\"\nrm -rf -- \"${short_root}\" && ditto \"${PWD}\" \"${short_root}\" && cd \"${short_root}\"\n# Linux exercises refusal only; these bodies need macOS kernel locks.\n# Use a separate short private root without a writable shared ancestor.\ndarwin_pg_status=0\n(\n  darwin_pg_tmp=\"$(mktemp -d \"${HOME}/.acr-pg.XXXXXX\")\" || exit 1\n  trap 'rm -rf -- \"${darwin_pg_tmp}\"' EXIT\n  chgrp \"$(id -g)\" \"${darwin_pg_tmp}\" || exit 1\n  chmod 0700 \"${darwin_pg_tmp}\" || exit 1\n  export TMPDIR=\"${darwin_pg_tmp}\"\n  export PG_BIN=/opt/homebrew/opt/postgresql@17/bin\n  node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n) || darwin_pg_status=$?\nnode scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\nexit \"${darwin_pg_status}\"\n"
+    }
+  },
+  "full-gate": {
+    "if": "${{ !cancelled() }}",
+    "runs-on": "${{ matrix.runner }}",
+    "env": null,
+    "defaults": null,
+    "strategy": {
+      "fail-fast": false,
+      "matrix": {
+        "include": [
+          {
+            "lane": "demo",
+            "runner": "ubuntu-latest",
+            "timeout": 25
+          },
+          {
+            "lane": "server",
+            "runner": "ubuntu-latest",
+            "timeout": 30
+          },
+          {
+            "lane": "components",
+            "runner": "ubuntu-latest",
+            "timeout": 180
+          },
+          {
+            "lane": "updater",
+            "runner": "macos-26",
+            "timeout": 45
+          },
+          {
+            "lane": "articles",
+            "runner": "ubuntu-latest",
+            "timeout": 25
+          }
+        ]
+      }
+    },
+    "index": 9,
+    "step": {
+      "name": "Updater lane (merge gate)",
+      "if": "${{ !cancelled() && matrix.lane == 'updater' && needs.route.result == 'success' && needs.route.outputs.updater == 'false' }}",
+      "env": {
+        "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI": "1",
+        "LC_ALL": "C",
+        "LANG": "C",
+        "HOMEBREW_NO_AUTO_UPDATE": "1"
+      },
+      "run": "set -euo pipefail\npnpm install --frozen-lockfile --ignore-scripts\n# The PostgreSQL-backed updater tests run here too (see test-updater).\nbrew install postgresql@17\ntest -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl\n# BSD children inherit the containing directory's group. Use the\n# test login's primary group, not the shared temporary directory's.\nupdater_tmp=\"$(mktemp -d /private/tmp/acr-updater.XXXXXX)\"\ntrap 'rm -rf -- \"${updater_tmp}\"' EXIT\nchgrp \"$(id -g)\" \"${updater_tmp}\"\nchmod 0700 \"${updater_tmp}\"\nexport TMPDIR=\"${updater_tmp}\"\n# The full Xcode image can have writable ancestors. The installed\n# Command Line Tools use the root-owned path this lane verifies.\nsudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools\ntest -x /usr/bin/lockf\nfor tool in strip otool; do t=\"$(xcrun -f \"$tool\")\"; echo \"== $t\"; file \"$t\"; xcrun otool -L \"$t\" | cat -vet | head -12; done\npkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true\nnode --input-type=module -e 'import { resolveDeveloperTools } from \"./src/updater/v1/trusted-runtime.mjs\"; await resolveDeveloperTools();'\n# The guard's control socket lives under the worktree's .test-tmp and\n# macOS caps a socket path at 104 bytes; the hosted checkout path is\n# far longer than a developer's, so run the lane from a short copy.\nshort_root=\"${HOME}/acr\"\nrm -rf -- \"${short_root}\" && ditto \"${PWD}\" \"${short_root}\" && cd \"${short_root}\"\n# Linux exercises refusal only; these bodies need macOS kernel locks.\n# Use a separate short private root without a writable shared ancestor.\ndarwin_pg_status=0\n(\n  darwin_pg_tmp=\"$(mktemp -d \"${HOME}/.acr-pg.XXXXXX\")\" || exit 1\n  trap 'rm -rf -- \"${darwin_pg_tmp}\"' EXIT\n  chgrp \"$(id -g)\" \"${darwin_pg_tmp}\" || exit 1\n  chmod 0700 \"${darwin_pg_tmp}\" || exit 1\n  export TMPDIR=\"${darwin_pg_tmp}\"\n  export PG_BIN=/opt/homebrew/opt/postgresql@17/bin\n  node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n) || darwin_pg_status=$?\nnode scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\nexit \"${darwin_pg_status}\"\n"
+    }
+  }
+};
+
+export function darwinWorkflowViolations(workflow) {
+  const errors = [];
+  const fail = (job, step, field) => errors.push(
+    `${job}: step ${step}, field ${field} differs from the pinned literal. A legitimate future edit to these steps must update the pinned literal in the checker.`);
+  let document;
+  try { document = loadYaml(workflow); }
+  catch { fail("workflow", "YAML", "parse"); return errors; }
+  for (const jobName of ["test-updater", "full-gate"]) {
+    const pin = DARWIN_JOB_PINS[jobName];
+    const job = document?.jobs?.[jobName];
+    if (!job || typeof job !== "object") { fail(jobName, pin.step.name, "job lookup"); continue; }
+    for (const field of ["if", "runs-on", "env", "defaults", "strategy"]) {
+      if (!isDeepStrictEqual(job[field] ?? null, pin[field])) fail(jobName, pin.step.name, field);
+    }
+    const steps = Array.isArray(job.steps) ? job.steps : [];
+    const matches = steps.filter(step => step?.name === pin.step.name);
+    if (matches.length !== 1) { fail(jobName, pin.step.name, "step count"); continue; }
+    if (steps[pin.index] !== matches[0]) fail(jobName, pin.step.name, "step position");
+    const step = matches[0];
+    for (const field of new Set(["name", "if", "shell", "working-directory", "env", "run", ...Object.keys(step), ...Object.keys(pin.step)])) {
+      if (!isDeepStrictEqual(step[field], pin.step[field])) fail(jobName, pin.step.name, field);
+    }
+  }
+  return errors;
+}
+
 function hasDarwinPostgresCommands(workflow, requiredCommand) {
-  // Inspect only the two named job blocks and compare entire command lines.
-  // This is a text contract, not a claim to interpret arbitrary workflow shell.
-  return ["test-updater", "full-gate"].every(job => {
-    const block = workflow.split(new RegExp(`^  ${job}:\\s*$`, "mu"))[1]
-      ?.split(/^  [a-zA-Z0-9_-]+:/mu)[0] ?? "";
-    return block.split(/\r?\n/u).some(line => line.trim() === requiredCommand);
-  });
+  return darwinWorkflowViolations(workflow).length === 0;
 }
 
 export function needsMacosPostgres(source) {
@@ -126,6 +223,8 @@ export function findUncoveredTests(repositoryRoot = process.cwd()) {
 }
 
 function main() {
+  const violations = darwinWorkflowViolations(readFileSync(join(process.cwd(), ".github/workflows/ci.yml"), "utf8"));
+  if (violations.length) { for (const error of violations) console.error(error); process.exitCode = 1; }
   const tests = listTestFiles(process.cwd()), uncovered = findUncoveredTests();
   if (uncovered.length > 0) {
     console.error(`${uncovered.length} test file(s) lack required GitHub Actions execution (Darwin PostgreSQL needs macOS):`);
