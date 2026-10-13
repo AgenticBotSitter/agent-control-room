@@ -617,6 +617,8 @@ test("FIX-475 R6: failed hold write after prior clearance retains the newer refu
   await assert.rejects(readFile(retryPath), { code: "ENOENT" }, "setup leaves supplemental product state absent");
   const primed = f.make(); await primed.tick(); await primed.shutdown();
   assert.equal((await f.read()).needsYou, false, "missing supplemental record is ordinary first use");
+  assert.equal(await f.files.readWatcherHold().catch(error => error.code), null, "missing supplemental record does not refuse the real reader after clearance");
+  assert.equal(await f.files.writeWatcherHold(null).then(() => "cleared", error => error.code), "cleared", "missing supplemental record does not refuse the real clearance writer");
   assert.deepEqual(JSON.parse(await readFile(hold, "utf8")), { schema: "control-room.watcher-hold/v1", code: null }, "real successful recheck creates the earlier clearance");
   await writeFile(join(f.source.mirror, "info/grafts"), `${f.f.fromCommit}\n`);
   const failed = f.make(); await chmod(dir, 0o500);

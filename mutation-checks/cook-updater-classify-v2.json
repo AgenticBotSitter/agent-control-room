@@ -481,5 +481,19 @@
     "replace": "if (false) { await this.writeWatcherHold(retryHold); return retryHold; }",
     "test": "node --test --test-name-pattern='FIX-475 R6: failed legacy promotion' tests/updater-watcher.test.mjs",
     "why": "Supplemental evidence survives a second real status producer even when the primary file is absent."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch (error) { if (error?.code === \"ENOENT\") return null; throw updaterRefuseV1(\"watcher_history_unproven\"); }",
+    "replace": "catch (error) { if (false) return null; throw updaterRefuseV1(\"watcher_history_unproven\"); }",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "Absent optional supplemental state remains an ordinary independent null reader result after a real successful source recheck."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch (error) { if (error?.code === \"ENOENT\") return; throw error; }",
+    "replace": "catch (error) { if (false) return; throw error; }",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "An absent optional supplemental record cannot turn the real successful clearance writer into an ENOENT refusal."
   }
 ]
