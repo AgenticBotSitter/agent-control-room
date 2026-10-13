@@ -37,11 +37,11 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macReleaseOwnedGrantV1, macUpdaterOwnedSchema,
@@ -370,11 +370,14 @@ test("as the migrator the REVOKE really would have been refused, so the filter i
 // CR-E075: a real installed database from the release BEFORE the subscription
 // update grant, upgraded through the real Mac upgrade path.
 //
-// The earlier install is rebuilt from bytes whose digests were CAPTURED from the
-// pinned base release (2e5c622a): the migration ledger without 0299 and the
-// private-web role file without its one new grant line. The two constants below
-// are those captured digests -- never read from the current ledger -- so a
-// derivation that drifted from the shipped base fails before anything installs.
+// The earlier install is the pinned base release ITSELF: its commit is fetched by SHA
+// into a shallow scratch repository (as on GitHub's shallow checkout) and its db/ tree
+// and shipped ledger are installed unchanged. It is never derived by subtracting one
+// migration from the current tree, so migrations added after the pin (0300, 0301, ...)
+// cannot change what "the earlier release" means. The two constants below are digests
+// CAPTURED from that release -- never read from the current ledger -- so a wrong pin, a
+// tampered fetch or a drifted tree fails before anything installs.
+const BASE_RELEASE_COMMIT = "2e5c622aa240eb06787764b7b2f3a9129e17f9cf";
 const BASE_LEDGER_DIGEST = "c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03";
 const BASE_PRIVATE_WEB_ROLES_SHA256 = "0fea0207392fb36f5b8d9e8716984f80ad1b7d9975db658104434672d7c54e92"; // trailing whitespace trimmed
 const SUBSCRIPTION_GRANT = /^GRANT UPDATE \([^)]*\) ON owner_web_push_subscriptions TO control_room_private_web;\n/gmu;
@@ -426,24 +429,37 @@ async function installedCluster(label, { provision = ["-f", join(repoRoot, "depl
   }
 }
 
-/** The base release's migration tree and ledger, checked against captured digests. */
+/** The pinned base release's migration tree, role file and ledger, checked against captured digests. */
 async function baseReleaseTree(directory) {
-  const current = await collectLedgerEntries(repoRoot);
-  const migration = current.find(entry => entry.file.includes("0299_owner_web_push_subscription_update_grant"));
-  assert.ok(migration, "the candidate ships migration 0299");
-  const entries = current.filter(entry => entry !== migration).map((entry, index) => ({ ...entry, order: index + 1 }));
-  assert.equal(ledgerDigest(entries), BASE_LEDGER_DIGEST, "the derived earlier ledger is byte-identical to the captured base ledger");
-  await cp(join(repoRoot, "db"), join(directory, "db"), { recursive: true });
-  await rm(join(directory, migration.file));
-  await mkdir(join(directory, "deploy/postgres"), { recursive: true });
-  await writeFile(join(directory, "deploy/postgres/migration-ledger.json"),
-    `${JSON.stringify({ version: 1, digest: BASE_LEDGER_DIGEST, entries }, null, 2)}\n`);
+  const gitFlags = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+  const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...gitFlags, ...args], { timeout: 120_000, stdio: "pipe", encoding: "utf8" });
+  // A shallow checkout (GitHub's) lacks the pinned commit, so fetch it by SHA: from this
+  // checkout when it holds the commit, otherwise from the real origin.
+  let source = pathToFileURL(repoRoot).href;
+  try { git(repoRoot, "cat-file", "-e", `${BASE_RELEASE_COMMIT}^{commit}`); } catch { source = git(repoRoot, "remote", "get-url", "origin").trim(); }
+  git(directory, "init", "--quiet");
+  try { git(directory, "fetch", "--quiet", "--depth", "1", source, BASE_RELEASE_COMMIT); } catch (error) {
+    throw new Error(`cannot obtain the pinned base release ${BASE_RELEASE_COMMIT} from ${source} (fetch by SHA failed): ${error.message}`);
+  }
+  assert.equal(git(directory, "rev-parse", "FETCH_HEAD").trim(), BASE_RELEASE_COMMIT, "the fetched commit is the pinned base release");
+  git(directory, "checkout", "--quiet", BASE_RELEASE_COMMIT, "--", "db", "deploy/postgres/migration-ledger.json");
+  const ledgerPath = join(directory, "deploy/postgres/migration-ledger.json");
+  const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
+  assert.equal(ledger.digest, BASE_LEDGER_DIGEST, "the pinned release ships the captured base ledger");
+  assert.equal(ledgerDigest(ledger.entries), BASE_LEDGER_DIGEST, "the pinned release's ledger entries hash to the captured base ledger digest");
+  for (const entry of ledger.entries)
+    assert.equal(createHash("sha256").update(await readFile(join(directory, entry.file))).digest("hex"), entry.sha256,
+      `${entry.file} in the pinned release tree matches its ledger entry`);
+  assert.ok((await collectLedgerEntries(repoRoot)).some(entry => entry.file.includes("0299_owner_web_push_subscription_update_grant")),
+    "the candidate ships migration 0299");
+  assert.ok(!ledger.entries.some(entry => entry.file.includes("0299_owner_web_push_subscription_update_grant")), "the pinned release predates migration 0299");
   const roles = await readFile(join(repoRoot, "db/roles/private_web_roles.sql"), "utf8");
   assert.equal(roles.match(SUBSCRIPTION_GRANT)?.length, 1, "the current role file carries exactly one subscription column grant");
-  const earlier = roles.replace(SUBSCRIPTION_GRANT, "");
+  const earlier = await readFile(join(directory, "db/roles/private_web_roles.sql"), "utf8");
   assert.equal(createHash("sha256").update(earlier.trimEnd()).digest("hex"), BASE_PRIVATE_WEB_ROLES_SHA256,
-    "the derived earlier role file is byte-identical to the captured base role file");
-  return { ledgerPath: join(directory, "deploy/postgres/migration-ledger.json"), rootDir: directory, roles, earlier };
+    "the pinned release's role file is byte-identical to the captured base role file");
+  assert.equal(earlier.match(SUBSCRIPTION_GRANT), null, "the pinned release's role file has no subscription column grant");
+  return { ledgerPath, rootDir: directory, roles, earlier };
 }
 
 const webLogin = (cluster, password) => {
