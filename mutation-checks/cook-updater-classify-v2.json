@@ -246,24 +246,24 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "    const historyMirror = session.historyMirror;",
-    "replace": "    const historyMirror = mirror;",
+    "find": "      const mirror = historyMirror;",
+    "replace": "      const mirror = await lstat(join(root, \"updater-state/mirror.git\", MAIN_REF)).then(() => join(root, \"updater-state/mirror.git\"), () => historyMirror);",
     "test": "node --test --test-name-pattern='FIX-475: late fetch' tests/updater-attended-source.test.mjs",
     "why": "admission ancestry cannot reread the live mirror after checking completeness"
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
     "find": "    if (!COMMIT.test(fetched)) refuse(\"updater_main_ref_refused\");",
-    "replace": "    await git(input, tools.git, mirror, [\"update-ref\", MAIN_REF, fetched]);\n    if (!COMMIT.test(fetched)) refuse(\"updater_main_ref_refused\");",
+    "replace": "    if (previousMain !== \"0\".repeat(40)) await git(input, tools.git, mirror, [\"update-ref\", MAIN_REF, fetched]);\n    if (!COMMIT.test(fetched)) refuse(\"updater_main_ref_refused\");",
     "test": "node --test --test-name-pattern='FIX-475: refused fetch' tests/updater-attended-source.test.mjs",
     "why": "trusted main remains on its independently recorded old commit until validation succeeds"
   },
   {
     "file": "src/updater/v1/watcher.mjs",
     "find": "{ repository: snapshot }); return true;",
-    "replace": "{ repository: this.mirror }); return true;",
+    "replace": "{ repository: repository ? snapshot : this.mirror }); return true;",
     "test": "node --test --test-name-pattern='FIX-475: a late watcher' tests/updater-watcher.test.mjs",
-    "why": "existing-plan ancestry must use the checked private graph"
+    "why": "standalone ancestry must use its checked private graph rather than rereading live metadata"
   },
   {
     "file": "src/updater/v1/runtime.mjs",
