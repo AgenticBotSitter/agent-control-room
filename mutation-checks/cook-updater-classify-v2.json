@@ -141,24 +141,17 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "    if (!await mirrorHistoryCompleteV1(mirror, args => git(input, tools.git, mirror, args))) refuse(\"updater_mirror_history_refused\");\n",
-    "replace": "",
+    "find": "    if (!await mirrorHistoryCompleteV1(mirror, args => git(input, tools.git, mirror, args))) refuse(\"updater_mirror_history_refused\");\n    session.historyMirror = await pinMirrorHistoryV1(mirror).catch(() => refuse(\"updater_mirror_history_refused\"));\n    const historyMirror = session.historyMirror;\n    if (!await mirrorHistoryCompleteV1(historyMirror, args => git(input, tools.git, historyMirror, args))) refuse(\"updater_mirror_history_refused\");\n",
+    "replace": "    session.historyMirror = await pinMirrorHistoryV1(mirror).catch(() => refuse(\"updater_mirror_history_refused\"));\n    const historyMirror = session.historyMirror;\n",
     "test": "node --test --test-name-pattern='a graft cannot put a commit main never had' tests/updater-attended-source.test.mjs",
     "why": "a graft, replace ref or shallow boundary can make a commit main never had look like main's ancestor at fetch admission"
   },
   {
     "file": "src/updater/v1/watcher.mjs",
-    "find": "    await this.#ensureMirror();\n    await this.#assertHistoryComplete();\n",
-    "replace": "    await this.#ensureMirror();\n",
+    "find": "    if (!await mirrorHistoryCompleteV1(repository, args => this.#git(args, { repository })))",
+    "replace": "    if (false && !await mirrorHistoryCompleteV1(repository, args => this.#git(args, { repository })))",
     "test": "node --test --test-name-pattern='a graft cannot manufacture ancestry' tests/updater-watcher.test.mjs",
-    "why": "a fetch through a grafted mirror would fast-forward the trusted main ref to an unrelated commit before any ancestry check"
-  },
-  {
-    "file": "src/updater/v1/watcher.mjs",
-    "find": "  async #isAncestor(ancestor, descendant) {\n    await this.#assertHistoryComplete();\n",
-    "replace": "  async #isAncestor(ancestor, descendant) {\n",
-    "test": "node --test --test-name-pattern='a graft cannot manufacture ancestry' tests/updater-watcher.test.mjs",
-    "why": "the existing-plan ancestry check asks the same mirror and must not trust fabricated parents"
+    "why": "all watcher admission and ancestry readers refuse incomplete history in their pinned repository"
   },
   {
     "file": "src/updater/v1/mirror-history.mjs",
@@ -183,8 +176,8 @@
   },
   {
     "file": "src/updater/v1/attended-source.mjs",
-    "find": "    if (!await complete()) refuse(\"updater_mirror_history_refused\");\n    try { await git(session.input, session.tools.git, session.mirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
-    "replace": "    try { await git(session.input, session.tools.git, session.mirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
+    "find": "    if (!await complete()) refuse(\"updater_mirror_history_refused\");\n    try { await git(session.input, session.tools.git, session.historyMirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
+    "replace": "    try { await git(session.input, session.tools.git, session.historyMirror, [\"merge-base\", \"--is-ancestor\", from.commit, session.commit]); }\n",
     "test": "node --test --test-name-pattern='graft written after classification' tests/updater-attended-source.test.mjs",
     "why": "an incomplete mirror is never asked whether the installed commit is an ancestor; its answer could waive downgrade consent"
   },
@@ -197,15 +190,15 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "            error => { if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code; });",
-    "replace": "            () => {});",
+    "find": "              this.#watcherHold = error.code;",
+    "replace": "              // Mutation: discard the hold.",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
     "why": "a watcher refused for untrusted history holds every update, so the hold must be recorded for the owner"
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "          watching.then(() => { this.#watcherHold = null; },",
-    "replace": "          watching.then(() => {},",
+    "find": "            this.#watcherHold = null;",
+    "replace": "            // Mutation: retain stale hold.",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
     "why": "the hold clears on the next successful watcher tick, so a repaired mirror does not keep a stale attention item"
   },
@@ -225,7 +218,7 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "        : this.#watcherHold !== null ? \"needs_attention\"\n",
+    "find": "        : flag === \"On\" && this.#watcherHold !== null ? \"needs_attention\"\n",
     "replace": "",
     "test": "node --test --test-name-pattern='held by untrusted history' tests/updater-watcher.test.mjs",
     "why": "a held update is an attention item, not a quiet idle card"
@@ -243,5 +236,124 @@
     "replace": "",
     "test": "node --test --test-name-pattern='shallow, grafted or replaced mirror proves nothing' tests/updater-attended-source.test.mjs",
     "why": "the classifier never asks an incomplete mirror about ancestry"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "session.tools.git, session.historyMirror, args,",
+    "replace": "session.tools.git, session.mirror, args,",
+    "test": "node --test --test-name-pattern='FIX-475: late|FIX-475: twenty' tests/updater-attended-source.test.mjs",
+    "why": "classification range paths are read from the same private history as admission, even under a twenty-reader late rewrite"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    const historyMirror = session.historyMirror;",
+    "replace": "    const historyMirror = mirror;",
+    "test": "node --test --test-name-pattern='FIX-475: late fetch' tests/updater-attended-source.test.mjs",
+    "why": "admission ancestry cannot reread the live mirror after checking completeness"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "    if (!COMMIT.test(fetched)) refuse(\"updater_main_ref_refused\");",
+    "replace": "    await git(input, tools.git, mirror, [\"update-ref\", MAIN_REF, fetched]);\n    if (!COMMIT.test(fetched)) refuse(\"updater_main_ref_refused\");",
+    "test": "node --test --test-name-pattern='FIX-475: refused fetch' tests/updater-attended-source.test.mjs",
+    "why": "trusted main remains on its independently recorded old commit until validation succeeds"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "{ repository: snapshot }); return true;",
+    "replace": "{ repository: this.mirror }); return true;",
+    "test": "node --test --test-name-pattern='FIX-475: a late watcher' tests/updater-watcher.test.mjs",
+    "why": "existing-plan ancestry must use the checked private graph"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "this.#watcherHold = await this.stateFiles.readWatcherHold();",
+    "replace": "this.#watcherHold = null;",
+    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
+    "why": "an unresolved warning survives reconstruction until a real successful recheck"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "await this.stateFiles.writeWatcherHold?.(error.code);",
+    "replace": "// Mutation: do not persist.",
+    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
+    "why": "the real runtime writes the durable warning before publishing status"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "flag === \"On\" && this.#watcherHold !== null ? \"needs_attention\"",
+    "replace": "this.#watcherHold !== null ? \"needs_attention\"",
+    "test": "node --test --test-name-pattern='FIX-475: Off and quiet' tests/updater-watcher.test.mjs",
+    "why": "quiet Off retains its actual paused or stopped state while preserving the unresolved warning"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (![\"no_candidate\", \"unchanged\", \"created\", \"existing\"].includes(outcome?.status)) return outcome;",
+    "replace": "if (false) return outcome;",
+    "test": "node --test --test-name-pattern='FIX-475: busy' tests/updater-watcher.test.mjs",
+    "why": "busy/live-run/unknown answers never successfully rechecked source history"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (value?.schema !== \"control-room.watcher-hold/v1\" || ![null, \"watcher_history_unproven\"].includes(value.code))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='FIX-475: unreadable' tests/updater-watcher.test.mjs",
+    "why": "the independent durable record schema and allowlisted code are required before clearing attention"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch { this.#watcherHold = \"watcher_history_unproven\"; }",
+    "replace": "catch { this.#watcherHold = null; }",
+    "test": "node --test --test-name-pattern='FIX-475: unreadable' tests/updater-watcher.test.mjs",
+    "why": "malformed or unreadable persisted warning must fail closed"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "if (entry.isSymbolicLink() || !entry.isDirectory() && !entry.isFile()) throw new Error(\"mirror_snapshot_refused\");",
+    "replace": "if (false) throw new Error(\"mirror_snapshot_refused\");",
+    "test": "node --test --test-name-pattern='FIX-475: snapshot refuses symlink' tests/updater-attended-source.test.mjs",
+    "why": "a private snapshot never contains symbolic links to shared mutable bytes"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "bytes > 256 * 1024 * 1024 || [\"alternates\", \"http-alternates\"].includes(basename(path))",
+    "replace": "[\"alternates\", \"http-alternates\"].includes(basename(path))",
+    "test": "node --test --test-name-pattern='FIX-475: snapshot refuses oversize' tests/updater-attended-source.test.mjs",
+    "why": "snapshot copy uses the independent 256 MiB repository budget"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "bytes > 256 * 1024 * 1024 || [\"alternates\", \"http-alternates\"].includes(basename(path))",
+    "replace": "bytes > 256 * 1024 * 1024",
+    "test": "node --test --test-name-pattern='FIX-475: snapshot refuses .*alternates' tests/updater-attended-source.test.mjs",
+    "why": "alternate stores would let a checked snapshot read live external objects"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "  if (session.historyMirror) {",
+    "replace": "  if (false && session.historyMirror) {",
+    "test": "node --test --test-name-pattern='a stop while the ancestry question' tests/updater-attended-source.test.mjs",
+    "why": "interrupted sessions retire their private snapshot before unlock"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "previous.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? \"watcher_history_unproven\" : null",
+    "replace": "false ? \"watcher_history_unproven\" : null",
+    "test": "node --test --test-name-pattern='FIX-475: a legacy' tests/updater-watcher.test.mjs",
+    "why": "a warning published by an earlier version survives missing hold state until a real recheck"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "await source.release?.();",
+    "replace": "/* Mutation: leak the checked snapshot. */",
+    "test": "node --test --test-name-pattern='local bare origin:' tests/updater-watcher.test.mjs",
+    "why": "every successful watcher path retires its private history view"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "previous !== \"0\".repeat(40) && !(await this.#isAncestor(previous, commit, snapshot))",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='a forced/re-written main' tests/updater-watcher.test.mjs",
+    "why": "trusted watcher main only moves forward in the pinned graph"
   }
 ]

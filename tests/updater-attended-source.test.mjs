@@ -1278,4 +1278,110 @@ test("a stop while the ancestry question is asked is reported as a stop, not as 
     await assert.rejects(classifyAttendedSourceV1(fetched), /updater_attended_stopped/u);
     assert.match(stoppedAt ?? "", /merge-base --is-ancestor/u, "the stop arrived at the ancestry question");
   } finally { await abortAttendedV1(fetched); }
+
+  assert.deepEqual((await readdir(join(f.root, "updater-state"))).filter(name => name.startsWith(".history-")), [],
+    "interrupted history reader removes its snapshot");
+});
+
+for (const variant of ["shallow", "graft", "replace"]) test(`FIX-475: late ${variant} cannot hide a side migration`, async t => {
+  const f = await fixture(t), { sideTip, merge } = await hiddenSideMigration(f);
+  await markInstalled(f, f.commit); await publishLocalFixtureV1(f.repository);
+  const mirror = join(f.root, "updater-state/mirror.git");
+  let armed = false, injected = false;
+  const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: merge, onSpawn: async call => {
+    if (armed && !injected && call.args.includes("--diff-merges=separate")) {
+      injected = true;
+      if (variant === "shallow") await writeFile(join(mirror, "shallow"), `${sideTip}\n`);
+      if (variant === "graft") await writeFile(join(mirror, "info/grafts"), `${sideTip}\n`);
+      if (variant === "replace") await mirrorGit(mirror, "replace", "--graft", sideTip);
+    }
+  } });
+  try {
+    await mirrorGit(mirror, "config", "log.showRoot", "false"); armed = true;
+    const result = await classifyAttendedSourceV1(fetched);
+    assert.equal(injected, true, "late metadata was written at the range reader");
+    assert.equal(result.changesDatabase, true, "the real side branch SQL cannot disappear after completeness checking");
+    assert.ok(result.changedPaths.includes("db/migrations/0007_side.sql"), "the pinned range retains the reverted SQL path");
+  } finally { await abortAttendedV1(fetched); }
+});
+
+test("FIX-475: late fetch graft cannot admit a non-main commit", async t => {
+  const f = await fixture(t);
+  await git(f.repository, "checkout", "-q", "-b", "dropped", f.commit);
+  const dropped = await commitFiles(f.repository, "dropped", { "src/dropped.mjs": "export const d = 1;\n" });
+  await publishLocalFixtureV1(f.repository, "dropped");
+  await abortAttendedV1(await fetchVerifiedSourceV1({ ...f.materialize(), commit: dropped }));
+  await git(f.repository, "checkout", "-q", "main");
+  const tip = await commitFiles(f.repository, "main only", { "src/main.mjs": "export const m = 1;\n" });
+  await publishLocalFixtureV1(f.repository);
+  const mirror = join(f.root, "updater-state/mirror.git"); let injected = false;
+  let admitted;
+  try {
+    await assert.rejects(async () => { admitted = await fetchVerifiedSourceV1({ ...f.materialize(), commit: dropped,
+      onSpawn: async call => { if (!injected && call.args.includes("merge-base")) {
+        injected = true; await writeFile(join(mirror, "info/grafts"), `${tip} ${f.commit} ${dropped}\n`);
+      } } }); }, error => error?.code === "updater_commit_not_on_main",
+    "a commit on the dropped branch is not on the real main graph");
+    assert.equal(injected, true);
+  } finally { if (admitted) await abortAttendedV1(admitted); }
+});
+
+test("FIX-475: refused fetch never publishes the provisional main ref", async t => {
+  const f = await fixture(t), mirror = join(f.root, "updater-state/mirror.git");
+  await abortAttendedV1(await fetchVerifiedSourceV1(f.materialize()));
+  const tip = await commitFiles(f.repository, "new main", { "src/new.mjs": "export const x = 1;\n" });
+  await publishLocalFixtureV1(f.repository);
+  await writeFile(join(mirror, "info/grafts"), `${tip} ${f.commit}\n`);
+  await assert.rejects(fetchVerifiedSourceV1({ ...f.materialize(), commit: tip }), /updater_mirror_history_refused/u);
+  assert.equal((await mirrorGit(mirror, "rev-parse", "refs/heads/control-room-attended-main")).stdout.trim(), f.commit,
+    "refusal keeps the last accepted main commit");
+  await rm(join(mirror, "info/grafts"));
+  await abortAttendedV1(await fetchVerifiedSourceV1({ ...f.materialize(), commit: tip }));
+  assert.equal((await mirrorGit(mirror, "rev-parse", "refs/heads/control-room-attended-main")).stdout.trim(), tip,
+    "a successful retry publishes main");
+});
+
+test("FIX-475: twenty range readers share pinned history across a process barrier", async t => {
+  const f = await fixture(t), { sideTip, merge } = await hiddenSideMigration(f);
+  await markInstalled(f, f.commit); await publishLocalFixtureV1(f.repository);
+  const mirror = join(f.root, "updater-state/mirror.git");
+  let armed = false, arrived = 0, release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const fetched = await fetchVerifiedSourceV1({ ...f.materialize(), commit: merge, onSpawn: async call => {
+    if (armed && call.args.includes("--diff-merges=separate")) {
+      arrived += 1;
+      if (arrived === 20) {
+        await exec(process.execPath, ["--input-type=module", "-e",
+          "import {writeFile} from 'node:fs/promises'; await writeFile(process.argv[1], process.argv[2]);",
+          join(mirror, "info/grafts"), `${sideTip}\n`]);
+        release();
+      }
+      await barrier;
+    }
+  } });
+  try {
+    await mirrorGit(mirror, "config", "log.showRoot", "false"); armed = true;
+    const results = await Promise.all(Array.from({ length: 20 }, () => classifyAttendedSourceV1(fetched)));
+    assert.equal(arrived, 20, "all twenty real readers reached the barrier");
+    assert.equal(results.filter(value => !value.changesDatabase).length, 0,
+      "zero false code-only approvals under a concurrent history rewrite");
+  } finally { release(); await abortAttendedV1(fetched); }
+});
+
+for (const variant of ["symlink", "alternates", "http-alternates", "oversize"]) test(`FIX-475: snapshot refuses ${variant} storage`, async t => {
+  const f = await fixture(t), mirror = join(f.root, "updater-state/mirror.git");
+  await abortAttendedV1(await fetchVerifiedSourceV1(f.materialize()));
+  if (variant === "symlink") {
+    const object = join(mirror, "objects", "symlink-unused"), copy = join(f.temporary, "saved-object");
+    await writeFile(copy, "external mutable bytes\n"); await symlink(copy, object);
+  } else if (variant === "oversize") {
+    const file = await import("node:fs/promises").then(fs => fs.open(join(mirror, "objects", "oversized-unused"), "w"));
+    try { await file.truncate(256 * 1024 * 1024 + 1); } finally { await file.close(); }
+  } else await writeFile(join(mirror, "objects/info", variant), "");
+  let admitted;
+  try { await assert.rejects(async () => { admitted = await fetchVerifiedSourceV1(f.materialize()); }, /updater_mirror_history_refused/u,
+    "snapshot bytes must be independent, local and bounded"); }
+  finally { if (admitted) await abortAttendedV1(admitted); }
+  assert.deepEqual((await readdir(join(f.root, "updater-state"))).filter(name => name.startsWith(".history-")), [],
+    "refused snapshot leaves no private history directory");
 });

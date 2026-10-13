@@ -82,6 +82,29 @@ export class UpdaterStateFilesV1 {
       schema: "control-room.updater-mode/v1", mode,
     })}\n`);
   }
+  async readWatcherHold() {
+    let value;
+    try { value = JSON.parse(await readFileNoFollowV1(this.root, "updater-state/watcher-hold.json", { maxBytes: 256 })); }
+    catch (error) {
+      if (error?.code !== "ENOENT") throw updaterRefuseV1("watcher_history_unproven");
+      // Earlier versions published this warning without its own durable file.
+      // Preserve that real reader record during upgrade until a recheck writes
+      // an explicit cleared hold. A cleared record never falls back to status.
+      let previous;
+      try { previous = JSON.parse(await readFileNoFollowV1(this.root, "status/status.json", { maxBytes: 8192 })); }
+      catch (failure) { if (failure?.code === "ENOENT") return null; throw updaterRefuseV1("watcher_history_unproven"); }
+      return previous?.schema === "control-room.updater-status/v1"
+        && previous.reason === UPDATER_RUN_REASON_V1.watcher_history_unproven ? "watcher_history_unproven" : null;
+    }
+    if (value?.schema !== "control-room.watcher-hold/v1" || ![null, "watcher_history_unproven"].includes(value.code))
+      throw updaterRefuseV1("watcher_history_unproven");
+    return value.code;
+  }
+  writeWatcherHold(code) {
+    return atomicWriteNoFollowV1(this.root, "updater-state/watcher-hold.json", `${JSON.stringify({
+      schema: "control-room.watcher-hold/v1", code,
+    })}\n`);
+  }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({
       schema: "control-room.updater-heartbeat/v1", at: new Date().toISOString(), ...value,
@@ -255,18 +278,31 @@ export class UpdaterMainLoopV1 {
       let flag = "Off", switchUnreadable;
       try { flag = parseSelfUpdateFlagV1(await this.stateFiles.readSelfUpdate()); }
       catch (error) { switchUnreadable = cleanReason(error); }
+      if (this.stateFiles.readWatcherHold) {
+        try { this.#watcherHold = await this.stateFiles.readWatcherHold(); }
+        catch { this.#watcherHold = "watcher_history_unproven"; }
+      }
       const requestsSettled = await this.#requests(flag);
       // R5iii: while Off, do not read approval rows, watch sources or invoke a
       // builder. Only timer work and risk-reducing owner requests run.
       if (requestsSettled && !this.#stopping && flag === "On" && this.watcher) {
         if (!this.#watching) {
-          const watching = Promise.resolve().then(() => this.watcher.tick());
+          const watching = Promise.resolve().then(() => this.watcher.tick()).then(async outcome => {
+            // Busy/run-active answers skipped the source and are not rechecks.
+            if (!["no_candidate", "unchanged", "created", "existing"].includes(outcome?.status)) return outcome;
+            await this.stateFiles.writeWatcherHold?.(null);
+            this.#watcherHold = null;
+            return outcome;
+          }, async error => {
+            if (WATCHER_HOLD_CODES_V1.includes(error?.code)) {
+              this.#watcherHold = error.code;
+              await this.stateFiles.writeWatcherHold?.(error.code);
+            }
+            throw error;
+          });
           this.#watching = watching;
           watching.finally(() => { if (this.#watching === watching) this.#watching = undefined; }).catch(() => {});
-          // The hold follows the watcher's own settled answer (registered before the
-          // race below, so it is recorded before this tick publishes).
-          watching.then(() => { this.#watcherHold = null; },
-            error => { if (WATCHER_HOLD_CODES_V1.includes(error?.code)) this.#watcherHold = error.code; });
+          // Persistence completes with the watcher answer before publication.
           let timer;
           try { await Promise.race([watching, new Promise((_, reject) => {
             timer = setTimeout(() => reject(updaterRefuseV1("updater_watcher_timeout")), this.watcherTimeoutMs);
@@ -373,7 +409,7 @@ export class UpdaterMainLoopV1 {
         : status === "rolled_back" ? "rolled_back"
         : status === "refused" ? "refused"
         : ["busy", "needs_attention", "error"].includes(status) ? "needs_attention"
-        : this.#watcherHold !== null ? "needs_attention"
+        : flag === "On" && this.#watcherHold !== null ? "needs_attention"
         : mode !== "running" ? mode
         : "idle";
       // A held watcher is published only when nothing above it names the state,

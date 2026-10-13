@@ -10,7 +10,7 @@ import { directoryCustodyV1, removeOwnedFileV1 } from "../../installer/shared/fi
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { verifyBundleManifestV1 } from "./attended-flip.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
-import { mirrorHistoryCompleteV1 } from "./mirror-history.mjs";
+import { mirrorHistoryCompleteV1, pinMirrorHistoryV1 } from "./mirror-history.mjs";
 
 import { signAttendedConnectorReleaseV1 } from "./install/connector-release.mjs";
 import { captureReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
@@ -273,7 +273,7 @@ async function compareArchive(input, gitPath, source, tree) {
     if (!item || file.entry.size !== item.size || (item.mode === "100755") !== ((file.entry.mode & 0o111) !== 0))
       refuse("updater_archive_tree_mismatch");
   }
-  const paths = `${files.map(file => file.path).join("\n")}\n`;
+  const paths = `${files.map(file => join(source, file.path)).join("\n")}\n`;
   await input.onSpawn?.({ file: gitPath, args: ["hash-object", "--no-filters", "--stdin-paths"],
     env: { ...trustedToolEnvironment("git") } });
   const result = await new Promise((resolvePromise, reject) => {
@@ -309,7 +309,7 @@ async function compareArchivedSource(input, gitPath, source, tree) {
       }
     }
   }
-  const paths = `${files.map(file => file.path).join("\n")}\n`;
+  const paths = `${files.map(file => join(source, file.path)).join("\n")}\n`;
   await input.onSpawn?.({ file: gitPath, args: ["hash-object", "--no-filters", "--stdin-paths"],
     env: { ...trustedToolEnvironment("git") } });
   const result = await new Promise((resolvePromise, reject) => {
@@ -775,6 +775,9 @@ async function closeSession(session) {
     try { await killAndVerifyBuilder(session.control, session.identity); } catch (error) { cleanupError = error; }
   }
   attendedSessions.delete(session.job);
+  if (session.historyMirror) {
+    try { await rm(session.historyMirror, { recursive: true, force: true }); } catch (error) { cleanupError ??= error; }
+  }
   await rm(session.job, { recursive: true, force: true }).catch(() => {});
   await session.unlock();
   if (cleanupError) throw cleanupError;
@@ -824,33 +827,45 @@ export async function fetchVerifiedSourceV1(input) {
     if (!(await lstat(join(mirror, "HEAD")).then(() => true, error => error?.code === "ENOENT" ? false : Promise.reject(error))))
       await run(input, tools.git, ["init", "--bare", mirror], { env: trustedToolEnvironment("git"), timeoutMs: 30_000 });
     const helper = `!${shellQuote(tools.helper)} ${shellQuote(credential)}`;
+    const previousMain = (await git(input, tools.git, mirror, ["rev-parse", "--verify", MAIN_REF])
+      .catch(() => ({ stdout: "0".repeat(40) }))).stdout.trim();
+    const provisionalRef = `refs/updater/pending-${jobId}`;
     const fetchArgs = [...remotePolicy, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
       "-c", "transfer.fsckObjects=true", "-c", "core.hooksPath=/dev/null", "-c", `credential.helper=${helper}`,
-      "fetch", "--force", "--no-tags", config.remoteUrl, `+refs/heads/main:${MAIN_REF}`];
-    await git(input, tools.git, mirror, fetchArgs).catch(() => refuse("updater_fetch_refused"));
-    const fetched = (await git(input, tools.git, mirror, ["rev-parse", `${MAIN_REF}^{commit}`])).stdout.trim();
+      "fetch", "--force", "--no-tags", config.remoteUrl, `refs/heads/main:${provisionalRef}`];
+    let fetched;
+    try {
+      await git(input, tools.git, mirror, fetchArgs).catch(() => refuse("updater_fetch_refused"));
+      fetched = (await git(input, tools.git, mirror, ["rev-parse", `${provisionalRef}^{commit}`])).stdout.trim();
+    } finally { await git(input, tools.git, mirror, ["update-ref", "-d", provisionalRef]); }
     if (!COMMIT.test(fetched)) refuse("updater_main_ref_refused");
     await git(input, tools.git, mirror, ["cat-file", "-e", `${commit}^{commit}`]);
     // A graft, replace ref or shallow boundary could put a commit main never had on main.
     if (!await mirrorHistoryCompleteV1(mirror, args => git(input, tools.git, mirror, args))) refuse("updater_mirror_history_refused");
-    await git(input, tools.git, mirror, ["merge-base", "--is-ancestor", commit, MAIN_REF])
+    session.historyMirror = await pinMirrorHistoryV1(mirror).catch(() => refuse("updater_mirror_history_refused"));
+    const historyMirror = session.historyMirror;
+    if (!await mirrorHistoryCompleteV1(historyMirror, args => git(input, tools.git, historyMirror, args))) refuse("updater_mirror_history_refused");
+    await git(input, tools.git, historyMirror, ["merge-base", "--is-ancestor", commit, fetched])
       .catch(() => refuse("updater_commit_not_on_main"));
     const limits = { maxTreeFiles: input.maxTreeFiles ?? MAX_TREE_FILES, maxTreeBytes: input.maxTreeBytes ?? MAX_TREE_BYTES,
       maxTreeFileBytes: input.maxTreeFileBytes ?? MAX_TREE_FILE_BYTES };
-    const tree = await readTree(input, tools.git, mirror, commit, limits);
+    const tree = await readTree(input, tools.git, historyMirror, commit, limits);
     await mkdir(job, { mode: 0o700 }); await mkdir(source, { mode: 0o700 });
     const archive = join(job, "source.tar");
-    await git(input, tools.git, mirror, ["archive", "--format=tar", `--output=${archive}`, commit], { timeoutMs: 120_000 });
+    await git(input, tools.git, historyMirror, ["archive", "--format=tar", `--output=${archive}`, commit], { timeoutMs: 120_000 });
     await run(input, tools.tar, ["-xf", archive, "-C", source], { env: buildTrustedEnvironment(), timeoutMs: 120_000 });
     await input.hooks?.afterArchive?.({ mirror, source, job, mainRef: MAIN_REF });
-    const afterArchive = (await git(input, tools.git, mirror, ["rev-parse", `${MAIN_REF}^{commit}`])).stdout.trim();
-    if (afterArchive !== fetched) refuse("updater_main_ref_moved");
+    const afterArchive = (await git(input, tools.git, mirror, ["rev-parse", "--verify", `${MAIN_REF}^{commit}`])
+      .catch(() => ({ stdout: "" }))).stdout.trim();
+    if (afterArchive !== previousMain && !(previousMain === "0".repeat(40) && afterArchive === "")) refuse("updater_main_ref_moved");
     const sourceFileCount = await compareArchive(input, tools.git, source, tree);
     await rm(archive); await mkdir(output); await mkdir(store); await mkdir(join(job, "tmp"));
     if (input.tools === undefined) tools = await stageBuilderTools(tools, join(job, "builder-tools"),
       { rootUid: identity.rootUid, rootGid: identity.rootGid }, ["buildEntry"]);
     await changeOwnership(input, job, identity.builderUid, identity.builderGid);
     Object.assign(session, { trustedRuntime, identity, control, toolRoot, tools, mirror, tree, sourceFileCount });
+    await git(input, tools.git, mirror, ["update-ref", MAIN_REF, fetched, previousMain])
+      .catch(() => refuse("updater_main_ref_moved"));
     attendedSessions.set(job, session);
     return Object.freeze({ job, source, tree: Object.freeze({ entries: tree.entries.length, bytes: tree.bytes }), mainCommit: fetched });
   } catch (error) { await closeSession(session).catch(() => {}); throw error; }
@@ -1030,7 +1045,7 @@ export async function confirmAttendedV1(input) {
     const complete = () => mirrorHistoryCompleteV1(session.mirror,
       args => git(session.input, session.tools.git, session.mirror, args));
     if (!await complete()) refuse("updater_mirror_history_refused");
-    try { await git(session.input, session.tools.git, session.mirror, ["merge-base", "--is-ancestor", from.commit, session.commit]); }
+    try { await git(session.input, session.tools.git, session.historyMirror, ["merge-base", "--is-ancestor", from.commit, session.commit]); }
     catch { downgrade = true; }
     if (!await complete()) refuse("updater_mirror_history_refused");
   }
@@ -1093,11 +1108,11 @@ export async function classifyAttendedSourceV1(input) {
     refuse("updater_attended_session_refused");
   }
   const from = await installedReleaseForPlanV1(session), target = session.commit;
-  const names = async args => (await git(session.input, session.tools.git, session.mirror, args,
+  const names = async args => (await git(session.input, session.tools.git, session.historyMirror, args,
     { waitForClose: true, maxOutputBytes: CLASSIFY_OUTPUT_BYTES })).stdout.split("\0").filter(Boolean);
   // Exit 1 is "not an ancestor"; any other failure, such as an unknown commit,
   // proves nothing. Only a stop or timeout propagates, so it is reported as itself.
-  const descends = async (ancestor, descendant) => (await git(session.input, session.tools.git, session.mirror,
+  const descends = async (ancestor, descendant) => (await git(session.input, session.tools.git, session.historyMirror,
     ["merge-base", "--is-ancestor", ancestor, descendant], { acceptExitCodes: [1] })
     .catch(error => STOPPED_CODES.includes(error?.code) ? Promise.reject(error) : null))?.code === 0;
   // Ancestry holds through any one parent, so a shallow boundary, a graft or a
