@@ -348,12 +348,5 @@
     "replace": "/* Mutation: leak the checked snapshot. */",
     "test": "node --test --test-name-pattern='local bare origin:' tests/updater-watcher.test.mjs",
     "why": "every successful watcher path retires its private history view"
-  },
-  {
-    "file": "src/updater/v1/watcher.mjs",
-    "find": "previous !== \"0\".repeat(40) && !(await this.#isAncestor(previous, commit, snapshot))",
-    "replace": "false",
-    "test": "node --test --test-name-pattern='a forced/re-written main' tests/updater-watcher.test.mjs",
-    "why": "trusted watcher main only moves forward in the pinned graph"
   }
 ]

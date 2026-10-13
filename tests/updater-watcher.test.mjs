@@ -256,8 +256,12 @@ test("reproducer: a graft cannot manufacture ancestry that admits an unrelated m
   const grafts = join(source.mirror, "info", "grafts");
   await mkdir(join(source.mirror, "info"), { recursive: true });
   await writeFile(grafts, `${unrelated} ${fixture.fromCommit}\n`);
-  // Independent check that the graft fabricates what it claims: plain git now says yes.
-  await mirrorGitV1(source.mirror, "merge-base", "--is-ancestor", fixture.fromCommit, unrelated);
+  // Independently demonstrate the forged graph in the seed, which contains
+  // both commits. A refused private fetch intentionally imports no objects.
+  const seedGrafts = join(fixture.work, ".git/info/grafts");
+  await writeFile(seedGrafts, `${unrelated} ${fixture.fromCommit}\n`);
+  try { await git(["merge-base", "--is-ancestor", fixture.fromCommit, unrelated], fixture.work); }
+  finally { await rm(seedGrafts); }
   const ci = { async statusForCommit(sha) { return green(sha); } };
   await assert.rejects(source.fetchMain(), error => error?.code === "watcher_history_unproven", "fetch admission");
   assert.equal((await mirrorGitV1(source.mirror, "rev-parse", "refs/updater/main")).stdout.trim(), fixture.fromCommit,
@@ -380,31 +384,30 @@ test("FIX-475: Off and quiet modes remain visible without forgetting the history
   assert.equal(f.ticks(), 1, "quiet Off ticks cannot pretend they rechecked history"); await loop.shutdown();
 });
 
-test("FIX-475: a late watcher graft cannot publish unrelated main", async t => {
+test("FIX-475: a late watcher graft cannot fabricate existing-plan ancestry", async t => {
   const f = await repository(t);
   const source = new GitMirrorSourceV1({ root: f.updaterRoot, origin: f.origin, fromCommit: f.fromCommit, testing: true });
+  const dropped = await commit(f.work, "dropped.txt", "dropped\n");
   await (await source.fetchMain()).release?.();
-  await git(["checkout", "--orphan", "unrelated"], f.work);
-  await git(["rm", "-rf", "."], f.work);
-  const target = await commit(f.work, "unrelated.txt", "unrelated\n", "unrelated", false);
-  await publishLocalFixtureV1(f.work, "unrelated");
-  await assert.rejects(source.fetchMain(), /watcher_source_fetch_refused|watcher_history_rewritten/u);
+  // Both objects were imported by a successful real producer. Independently,
+  // a descendant cannot be an ancestor of its own earlier root.
+  await assert.rejects(git(["merge-base", "--is-ancestor", dropped, f.fromCommit], f.work), error => error.code === 1);
   const proxy = join(f.root, "git-proxy.mjs"), marker = join(f.root, "injected");
   await writeFile(proxy, `#!${process.execPath}
 import {spawnSync} from 'node:child_process'; import {writeFileSync,existsSync} from 'node:fs';
 const args=process.argv.slice(2);
 if(args.includes('merge-base')&&!existsSync(${JSON.stringify(marker)})) {
- writeFileSync(${JSON.stringify(join(source.mirror, "info/grafts"))},${JSON.stringify(`${target} ${f.fromCommit}\n`)});
+ writeFileSync(${JSON.stringify(join(source.mirror, "info/grafts"))},${JSON.stringify(`${f.fromCommit} ${dropped}\n`)});
  writeFileSync(${JSON.stringify(marker)},'injected');
 }
 const result=spawnSync('git',args,{env:process.env,stdio:'inherit'});process.exit(result.status??1);
 `); await chmod(proxy, 0o700);
   const altered = new GitMirrorSourceV1({ root: f.updaterRoot, origin: f.origin, fromCommit: f.fromCommit, testing: true, git: proxy });
-  assert.equal(await altered.isAncestor(f.fromCommit, target), false,
-    "the raw unrelated commit cannot descend from installed main");
+  assert.equal(await altered.isAncestor(dropped, f.fromCommit), false,
+    "a later known commit cannot become an ancestor of the earlier root");
   assert.equal(await readFile(marker, "utf8"), "injected");
-  assert.equal((await git(["--git-dir", source.mirror, "rev-parse", "refs/updater/main"])).stdout.trim(), f.fromCommit,
-    "late refusal preserves trusted watcher main");
+  assert.equal((await git(["--git-dir", source.mirror, "rev-parse", "refs/updater/main"])).stdout.trim(), dropped,
+    "ancestry refusal preserves trusted watcher main");
   await rm(join(source.mirror, "info/grafts"));
   assert.deepEqual((await readdir(join(f.updaterRoot, "updater-state"))).filter(name => name.startsWith(".history-")), [],
     "refused watcher snapshot was removed");

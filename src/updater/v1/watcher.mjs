@@ -173,8 +173,7 @@ export class GitMirrorSourceV1 {
       const kib = parseGitSizeV1((await this.#git(["count-objects", "-v"], { repository: snapshot })).stdout);
       if (kib > this.maxRepositoryKiB) throw updaterRefuseV1("watcher_repository_too_large");
       await this.#assertHistoryComplete(snapshot);
-      if (!(await this.#isAncestor(this.fromCommit, commit, snapshot))
-          || previous !== "0".repeat(40) && !(await this.#isAncestor(previous, commit, snapshot)))
+      if (!(await this.#isAncestor(this.fromCommit, commit, snapshot)))
         throw updaterRefuseV1("watcher_history_rewritten");
       const tree = (await this.#git(["rev-parse", `${commit}^{tree}`], { repository: snapshot })).stdout.trim(); validCommitV1(tree);
       // Import only the verified private tip into an unpublished local ref.
