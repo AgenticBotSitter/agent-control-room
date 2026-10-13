@@ -74,104 +74,25 @@ export function reachableTests(scripts, commands) {
   return reached;
 }
 
-// This deliberately supports only the workflow's known condition grammar.
-// Unknown expressions cannot prove that a Darwin body can execute.
-function macosCondition(condition, lane) {
-  if (condition === undefined) return true;
-  condition = condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/u, "$1");
-  if (condition === "true" || condition === "!cancelled()" || condition === "always()") return true;
-  if (condition === "runner.os == 'macOS'") return true;
-  if (lane && condition === `matrix.lane == '${lane}'`) return true;
-  if (lane && condition === `!cancelled() && matrix.lane == '${lane}' && needs.route.result == 'success' && needs.route.outputs.${lane} == 'false'`) return true;
-  return /^!cancelled\(\) && \(needs\.route\.result != 'success' \|\| needs\.route\.outputs\.[a-z_-]+ != 'false'\)$/u.test(condition);
-}
+// Fixed ticket inventory: adding another Darwin-only PostgreSQL file requires
+// deliberately extending both this list and the literal workflow command.
+const DARWIN_POSTGRES_FILES = [
+  "tests/result-file-catalog-postgres.test.ts",
+  "tests/result-file-download-postgres.test.ts",
+  "tests/result-file-upload-race-postgres.test.ts",
+  "tests/result-upload-store-postgres.test.ts",
+  "tests/text-copy-derivation-postgres.test.ts",
+];
+const DARWIN_POSTGRES_COMMAND = "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts";
 
-// These are the workflow's existing setup/diagnostic forms, not a shell parser.
-// Keep them literal: broadening one can make later test commands unreachable.
-const macosSetupLines = new Set([
-  "set -euo pipefail",
-  "updater_tmp=\"$(mktemp -d /private/tmp/acr-updater.XXXXXX)\"",
-  "trap 'rm -rf -- \"${updater_tmp}\"' EXIT",
-  "chgrp \"$(id -g)\" \"${updater_tmp}\"",
-  "chmod 0700 \"${updater_tmp}\"",
-  "export TMPDIR=\"${updater_tmp}\"",
-  "sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools",
-  "test -x /usr/bin/lockf",
-  "for tool in strip otool; do t=\"$(xcrun -f \"$tool\")\"; echo \"== $t\"; file \"$t\"; xcrun otool -L \"$t\" | cat -vet | head -12; done",
-  "pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true",
-  "node --input-type=module -e 'import { resolveDeveloperTools } from \"./src/updater/v1/trusted-runtime.mjs\"; await resolveDeveloperTools();'",
-  "short_root=\"${HOME}/acr\"",
-  "rm -rf -- \"${short_root}\" && ditto \"${PWD}\" \"${short_root}\" && cd \"${short_root}\"",
-  "darwin_pg_tmp=\"$(mktemp -d \"${HOME}/.acr-pg.XXXXXX\")\" || exit 1",
-  "trap 'rm -rf -- \"${darwin_pg_tmp}\"' EXIT",
-  "chgrp \"$(id -g)\" \"${darwin_pg_tmp}\" || exit 1",
-  "chmod 0700 \"${darwin_pg_tmp}\" || exit 1",
-  "export TMPDIR=\"${darwin_pg_tmp}\"",
-  "export PG_BIN=/opt/homebrew/opt/postgresql@17/bin",
-  "test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl",
-  "brew install postgresql@17",
-  "pnpm install --frozen-lockfile --ignore-scripts",
-]);
-const macosTestCommand = /^(?:(?:CI=true|(?:PG_BIN|TMPDIR)=[a-zA-Z0-9_./-]+|(?:LC_ALL|LANG)=[a-zA-Z0-9_.-]+|CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1)\s+)*(?:pnpm\s+(?:run\s+)?[a-z][a-z0-9:.-]*|node\s+scripts\/ci\/run-scripts-keep-going\.mjs\s+[a-z0-9:._ -]+|node\s+(?:scripts\/run-tests-with-quarantine\.mjs|--test)\s+[a-zA-Z0-9_=./ -]+)(?:\s+\|\|\s+darwin_pg_status=\$\?)?$/u;
-
-function provenMacosCommands(step) {
-  return workflowCommands(step).flatMap(command => {
-    const lines = command.split("\n").map(line => line.trim())
-      .filter(line => line && !line.startsWith("#"));
-    let subshell = false, capturesStatus = false;
-    for (const [index, line] of lines.entries()) {
-      if (line === "(") {
-        if (subshell) return [];
-        subshell = true;
-      } else if (line === ") || darwin_pg_status=$?") {
-        if (!subshell || !capturesStatus) return [];
-        subshell = false;
-      } else if (line === "darwin_pg_status=0") {
-        capturesStatus = true;
-      } else if (line === 'exit "${darwin_pg_status}"') {
-        // The existing aggregate exit is safe only at the end of the step.
-        if (subshell || !capturesStatus || index !== lines.length - 1) return [];
-      } else if (!macosSetupLines.has(line)
-        && !/^(?:export\s+)?(?:CI=true|(?:PG_BIN|TMPDIR)=[a-zA-Z0-9_./-]+|(?:LC_ALL|LANG)=[a-zA-Z0-9_.-]+|CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1)$/u.test(line)
-        && !/^cd\s+[a-zA-Z0-9_./-]+$/u.test(line)
-        && !macosTestCommand.test(line)) {
-        // Whole-step refusal: an unrecognized line can change whether any
-        // later line executes (exit, heredoc, chains, functions, loops, etc.).
-        return [];
-      }
-    }
-    if (subshell) return [];
-    return lines.filter(line => macosTestCommand.test(line));
+function hasDarwinPostgresCommands(workflow) {
+  // Inspect only the two named job blocks and compare entire command lines.
+  // This is a text contract, not a claim to interpret arbitrary workflow shell.
+  return ["test-updater", "full-gate"].every(job => {
+    const block = workflow.split(new RegExp(`^  ${job}:\\s*$`, "mu"))[1]
+      ?.split(/^  [a-zA-Z0-9_-]+:/mu)[0] ?? "";
+    return block.split(/\r?\n/u).some(line => line.trim() === DARWIN_POSTGRES_COMMAND);
   });
-}
-
-// Credit individual steps, after proving both job and step conditions.
-export function macosWorkflowCommands(source) {
-  const commands = [];
-  const jobs = source.split(/^  [a-zA-Z0-9_-]+:\s*$/m).slice(1);
-  for (const job of jobs) {
-    const jobCondition = /^    if:\s*(.+)$/m.exec(job)?.[1];
-    if (!macosCondition(jobCondition)) continue;
-    const steps = job.split(/^      - /m).slice(1);
-    if (/^    runs-on: ['"]?macos-[a-zA-Z0-9.-]+['"]?\s*$/m.test(job)) {
-      for (const step of steps) {
-        const condition = /^(?:if:|        if:)\s*(.+)$/m.exec(step)?.[1];
-        if (macosCondition(condition)) commands.push(...provenMacosCommands(step));
-      }
-      continue;
-    }
-    if (!/^    runs-on: \$\{\{ matrix\.runner \}\}\s*$/m.test(job)) continue;
-    const macLanes = [...job.matchAll(/^          - lane: ([a-zA-Z0-9_-]+)\n            runner: macos-[a-zA-Z0-9.-]+\s*$/gm)]
-      .map(match => match[1]);
-    for (const step of steps) {
-      const condition = /^(?:if:|        if:)\s*(.+)$/m.exec(step)?.[1];
-      const lane = /matrix\.lane == '([a-zA-Z0-9_-]+)'/u.exec(condition ?? "")?.[1];
-      if (lane && macLanes.includes(lane)) {
-        if (macosCondition(condition, lane)) commands.push(...provenMacosCommands(step));
-      }
-    }
-  }
-  return commands;
 }
 
 export function needsMacosPostgres(source) {
@@ -191,10 +112,12 @@ export function findUncoveredTests(repositoryRoot = process.cwd()) {
   const scripts = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")).scripts ?? {};
   const workflow = readFileSync(join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
   const reached = reachableTests(scripts, workflowCommands(workflow));
-  const macReached = reachableTests(scripts, macosWorkflowCommands(workflow));
+  const darwinCommandsPresent = hasDarwinPostgresCommands(workflow);
   return listTestFiles(repositoryRoot).filter(file => {
     const source = readFileSync(join(repositoryRoot, file), "utf8");
-    return !reached.has(file) || (needsMacosPostgres(source) && !macReached.has(file));
+    return !reached.has(file)
+      || (needsMacosPostgres(source) && !DARWIN_POSTGRES_FILES.includes(file))
+      || (DARWIN_POSTGRES_FILES.includes(file) && !darwinCommandsPresent);
   });
 }
 

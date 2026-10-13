@@ -67,48 +67,89 @@ test("quoted and block workflow commands are extracted", () => {
 });
 
 const darwinPgSource = "import { withRealPostgres } from './support/attack-kit/index'; if (process.platform !== 'darwin') { return; }";
-const linuxJob = "jobs:\n  linux:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm run test:pg\n";
-const macJob = "  mac:\n    runs-on: macos-26\n    steps:\n      - run: pnpm run test:pg\n";
-
-function pgFixture(workflow, source = darwinPgSource) {
-  return fixture({ scripts: { "test:pg": "node --test tests/private-pg.test.ts" }, workflow,
-    tests: ["tests/private-pg.test.ts"], sources: { "tests/private-pg.test.ts": source } });
+// Independent ticket inventory and literal workflow command, not checker exports.
+const files = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-download-postgres.test.ts",
+  "tests/result-file-upload-race-postgres.test.ts", "tests/result-upload-store-postgres.test.ts",
+  "tests/text-copy-derivation-postgres.test.ts"];
+const command = "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts";
+function fixedWorkflow(first = command, second = command) {
+  return `jobs:
+  test-updater:
+    runs-on: macos-26
+    steps:
+      - run: |
+          ${first}
+  full-gate:
+    runs-on: \${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - lane: updater
+            runner: macos-26
+    steps:
+      - if: matrix.lane == 'updater'
+        run: |
+          ${second}
+`;
+}
+function pgFixture(workflow, tests = files, source = darwinPgSource) {
+  return fixture({ scripts: { "test:pg": "node --test " + tests.join(" ") },
+    workflow: workflow + "  linux:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm run test:pg\n",
+    tests, sources: Object.fromEntries(tests.map(file => [file, source])) });
 }
 
-test("Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it", () => {
-  const root = pgFixture(linuxJob);
-  try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
-  finally { rmSync(root, { recursive: true }); }
+test("Darwin-only PostgreSQL file missing from fixed list fails", () => {
+  for (const source of [darwinPgSource,
+    "withRealPostgres(() => {}); if (!KERNEL_OPEN_LOCK_HOST_V1) { return; }",
+    "withRealPostgres(() => {}); seatbeltTest('pg', () => {});",
+    "const PG_BIN = '/pg'; const isMac = process.platform === 'darwin'; test('pg', { skip: !isMac }, () => {});",
+    "withRealPostgres(); if ('darwin' !== process.platform) return;",
+  ]) {
+    const root = pgFixture(fixedWorkflow() + "  other-mac:\n    runs-on: macos-26\n    steps:\n      - run: pnpm run test:pg\n",
+      ["tests/private-pg.test.ts"], source);
+    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+    finally { rmSync(root, { recursive: true }); }
+  }
 });
 
-test("a macOS package chain covers Darwin-only PostgreSQL", () => {
-  const root = pgFixture(linuxJob + macJob);
-  try { assert.deepEqual(findUncoveredTests(root), []); }
-  finally { rmSync(root, { recursive: true }); }
+for (const [job, first, second] of [
+  ["test-updater", "true", command], ["full-gate", command, "true"],
+]) {
+  test(`exact Darwin PostgreSQL command missing from ${job} fails`, () => {
+    // Even another macOS job with the command cannot replace the named path.
+    const root = pgFixture(fixedWorkflow(first, second)
+      + `  other-mac:\n    runs-on: macos-26\n    steps:\n      - run: |\n          ${command}\n`);
+    try { assert.deepEqual(findUncoveredTests(root), files.slice().sort()); }
+    finally { rmSync(root, { recursive: true }); }
+  });
+}
+
+test("exact Darwin PostgreSQL command present in both paths passes", () => {
+  for (const workflow of [fixedWorkflow(), readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")]) {
+    const root = pgFixture(workflow);
+    try { assert.deepEqual(findUncoveredTests(root), []); }
+    finally { rmSync(root, { recursive: true }); }
+  }
 });
 
-test("a Linux matrix command cannot impersonate the macOS matrix entry", () => {
-  const root = pgFixture("jobs:\n  catchup:\n    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        include:\n          - lane: components\n            runner: ubuntu-latest\n          - lane: updater\n            runner: macos-26\n    steps:\n      - name: Linux only\n        if: matrix.lane == 'components'\n        run: pnpm run test:pg\n");
-  try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
-  finally { rmSync(root, { recursive: true }); }
-});
+for (const job of ["test-updater", "full-gate"]) {
+  test(`editing Darwin PostgreSQL command in ${job} fails verbatim check`, () => {
+    for (const changed of [command.replace("--import tsx", "--help --import tsx"),
+      command.replace("--import tsx", "--test-name-pattern=unmatched --import tsx"),
+      command.replace("--import tsx", "--import  tsx"), command + " --help"]) {
+      const root = pgFixture(job === "test-updater" ? fixedWorkflow(changed, command) : fixedWorkflow(command, changed));
+      try { assert.deepEqual(findUncoveredTests(root), files.slice().sort()); }
+      finally { rmSync(root, { recursive: true }); }
+    }
+  });
+}
 
-test("a macOS matrix command covers Darwin-only PostgreSQL", () => {
-  const root = pgFixture("jobs:\n  catchup:\n    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        include:\n          - lane: updater\n            runner: macos-26\n    steps:\n      - name: Mac only\n        if: matrix.lane == 'updater'\n        run: pnpm run test:pg\n");
-  try { assert.deepEqual(findUncoveredTests(root), []); }
-  finally { rmSync(root, { recursive: true }); }
-});
-
-test("helper-level kernel lock gating also requires macOS PostgreSQL execution", () => {
-  const root = pgFixture(linuxJob, "withRealPostgres(() => {}); if (!KERNEL_OPEN_LOCK_HOST_V1) { return; }");
-  try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
-  finally { rmSync(root, { recursive: true }); }
-});
-
-test("portable PostgreSQL remains covered by Linux", () => {
-  const root = pgFixture(linuxJob, "withRealPostgres(() => {});");
-  try { assert.deepEqual(findUncoveredTests(root), []); }
-  finally { rmSync(root, { recursive: true }); }
+test("portable PostgreSQL and non-database Darwin wrappers retain ordinary coverage", () => {
+  for (const source of ["withRealPostgres(() => {});", "kernelOpenLockTestV1('unit', () => {});"]) {
+    const root = pgFixture(fixedWorkflow(), ["tests/private-pg.test.ts"], source);
+    try { assert.deepEqual(findUncoveredTests(root), []); }
+    finally { rmSync(root, { recursive: true }); }
+  }
 });
 
 test("portable platform paths and fixture strings do not claim Darwin-only PostgreSQL", () => {
@@ -117,102 +158,8 @@ test("portable platform paths and fixture strings do not claim Darwin-only Postg
     "const fixture = \"withRealPostgres(); if (process.platform !== 'darwin') return;\";",
     "// withRealPostgres(); if (process.platform !== 'darwin') return;",
   ]) {
-    const root = pgFixture(linuxJob, source);
+    const root = pgFixture(fixedWorkflow(), ["tests/private-pg.test.ts"], source);
     try { assert.deepEqual(findUncoveredTests(root), []); }
     finally { rmSync(root, { recursive: true }); }
   }
 });
-
-test("a helper wrapper without PostgreSQL does not need a database macOS lane", () => {
-  const root = pgFixture(linuxJob, "kernelOpenLockTestV1('unit', () => {});");
-  try { assert.deepEqual(findUncoveredTests(root), []); }
-  finally { rmSync(root, { recursive: true }); }
-});
-
-test("aliased and reversed Darwin PostgreSQL gates cannot hide behind Linux coverage", () => {
-  for (const source of [
-    "const PG_BIN = '/pg'; const isMac = process.platform === 'darwin'; test('pg', { skip: !isMac }, () => {});",
-    "withRealPostgres(); if ('darwin' !== process.platform) return;",
-  ]) {
-    const root = pgFixture(linuxJob, source);
-    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
-    finally { rmSync(root, { recursive: true }); }
-  }
-});
-
-test("both hosted macOS paths execute every inventoried result PostgreSQL file", () => {
-  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
-  const files = ["tests/result-file-catalog-postgres.test.ts", "tests/result-file-download-postgres.test.ts",
-    "tests/result-file-upload-race-postgres.test.ts", "tests/result-upload-store-postgres.test.ts",
-    "tests/text-copy-derivation-postgres.test.ts"];
-  for (const job of ["test-updater", "full-gate"]) {
-    const block = workflow.match(new RegExp(`^  ${job}:[\\s\\S]*?(?=^  [a-z][a-z-]+:|$(?![\\s\\S]))`, "mu"))?.[0];
-    assert.ok(block, `hosted path exists: ${job}`);
-    const root = fixture({ scripts, workflow: "jobs:\n" + block, tests: files,
-      sources: Object.fromEntries(files.map(file => [file, darwinPgSource])) });
-    try { assert.deepEqual(findUncoveredTests(root), [], `all five real file arguments reached on ${job}`); }
-    finally { rmSync(root, { recursive: true }); }
-  }
-});
-
-for (const [name, workflow] of Object.entries({
-  "Linux-only step on a macOS job": macJob.replace("      - run:", "      - if: runner.os == 'Linux'\n        run:"),
-  "disabled step on a macOS job": macJob.replace("      - run:", "      - if: false\n        run:"),
-  "matrix macOS lane with an extra Linux condition": "jobs:\n  catchup:\n    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        include:\n          - lane: updater\n            runner: macos-26\n    steps:\n      - if: matrix.lane == 'updater' && runner.os == 'Linux'\n        run: pnpm run test:pg\n",
-  "shell uname condition on a macOS job": "jobs:\n  mac:\n    runs-on: macos-26\n    steps:\n      - run: |\n          if [ \"$(uname -s)\" = Linux ]; then\n            pnpm run test:pg\n          fi\n",
-  "unsupported condition": macJob.replace("      - run:", "      - if: contains(matrix.platform, 'mac')\n        run:"),
-  "disabled job": macJob.replace("    runs-on:", "    if: false\n    runs-on:"),
-  "unsupported node wrapper": macJob.replace("pnpm run test:pg", "node scripts/unknown.mjs pnpm run test:pg"),
-  "early successful exit": macJob.replace("pnpm run test:pg", "|\n          exit 0\n          pnpm run test:pg"),
-  "here-document prose": macJob.replace("pnpm run test:pg", "|\n          cat <<'DOC'\n          pnpm run test:pg\n          DOC"),
-  "multiline false and": macJob.replace("pnpm run test:pg", "|\n          false &&\n          pnpm run test:pg"),
-  "inline shell condition": macJob.replace("pnpm run test:pg", "test $(uname -s) = Linux && pnpm run test:pg"),
-})) {
-  test(`macOS coverage refuses ${name}`, () => {
-    const root = pgFixture(linuxJob + workflow);
-    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
-    finally { rmSync(root, { recursive: true }); }
-  });
-}
-
-// Unknown shell lines invalidate the entire step, including earlier commands.
-for (const [name, shell] of Object.entries({
-  "unknown trailing line": "pnpm run test:pg\nunknown",
-  "inline false or": "false || pnpm run test:pg",
-  "loop": "for item in one; do\npnpm run test:pg\ndone",
-  "case": "case x in y)\npnpm run test:pg\nesac",
-  "function": "f() {\npnpm run test:pg\n}",
-  "continuation": "false && \\\n pnpm run test:pg",
-  "unterminated subshell": "darwin_pg_status=0\n(\npnpm run test:pg",
-  "nested subshell with one close": "darwin_pg_status=0\n(\n(\npnpm run test:pg\n) || darwin_pg_status=$?",
-  "nested subshell": "darwin_pg_status=0\n(\n(\npnpm run test:pg\n) || darwin_pg_status=$?\n) || darwin_pg_status=$?",
-  "unopened subshell": "darwin_pg_status=0\npnpm run test:pg\n) || darwin_pg_status=$?",
-  "uncaptured subshell": "(\npnpm run test:pg\n) || darwin_pg_status=$?",
-  "early aggregate exit": 'darwin_pg_status=0\nexit "${darwin_pg_status}"\npnpm run test:pg',
-  "uninitialized aggregate exit": 'pnpm run test:pg\nexit "${darwin_pg_status}"',
-  "aggregate exit inside subshell": 'darwin_pg_status=0\n(\npnpm run test:pg\nexit "${darwin_pg_status}"\n) || darwin_pg_status=$?',
-  "unsafe environment assignment": "NODE_OPTIONS=--help\npnpm run test:pg",
-  "test command help argument": "pnpm run test:pg --help",
-})) {
-  test(`macOS whole-step grammar refuses ${name}`, () => {
-    const workflow = macJob.replace("pnpm run test:pg", "|\n" + shell.split("\n").map(line => "          " + line).join("\n"));
-    const root = pgFixture(linuxJob + workflow);
-    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
-    finally { rmSync(root, { recursive: true }); }
-  });
-}
-
-for (const [name, shell] of Object.entries({
-  "comments and blank lines": "# if Linux\n\npnpm run test:pg\n# exit 0",
-  "environment and cd": "export CI=true\ncd .\nCI=true pnpm run test:pg",
-  "known subshell and aggregate exit": 'darwin_pg_status=0\n(\npnpm run test:pg\n) || darwin_pg_status=$?\nexit "${darwin_pg_status}"',
-  "known error capture": "darwin_pg_status=0\npnpm run test:pg || darwin_pg_status=$?",
-})) {
-  test(`macOS whole-step grammar accepts ${name}`, () => {
-    const workflow = macJob.replace("pnpm run test:pg", "|\n" + shell.split("\n").map(line => "          " + line).join("\n"));
-    const root = pgFixture(linuxJob + workflow);
-    try { assert.deepEqual(findUncoveredTests(root), []); }
-    finally { rmSync(root, { recursive: true }); }
-  });
-}

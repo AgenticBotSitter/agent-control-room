@@ -1,31 +1,52 @@
 [
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "needsMacosPostgres(source) && !macReached.has(file)",
+    "find": "needsMacosPostgres(source) && !DARWIN_POSTGRES_FILES.includes(file)",
     "replace": "false",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disabling this decision must fail the named assertion: Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it. Expected values are literal fixture paths, independently specified in the test. Complete suite counts and cleanup are required."
+    "why": "Disable fixed-list membership refusal: Darwin-only PostgreSQL file missing from fixed list fails must fail against independent literal tests/private-pg.test.ts."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "if (lane && macLanes.includes(lane))",
-    "replace": "if (lane)",
+    "find": "DARWIN_POSTGRES_FILES.includes(file) && !darwinCommandsPresent",
+    "replace": "false",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disabling this decision must fail the named assertion: a Linux matrix command cannot impersonate the macOS matrix entry. Expected values are literal fixture paths, independently specified in the test. Complete suite counts and cleanup are required."
+    "why": "Disable fixed-command requirement: exact Darwin PostgreSQL command missing from test-updater fails must fail against the independent five-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "[\"test-updater\", \"full-gate\"].every",
+    "replace": "[\"full-gate\"].every",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Ignore primary path: exact Darwin PostgreSQL command missing from test-updater fails must fail against the independent five-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "[\"test-updater\", \"full-gate\"].every",
+    "replace": "[\"test-updater\"].every",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Ignore catch-up path: exact Darwin PostgreSQL command missing from full-gate fails must fail against the independent five-file inventory."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "line.trim() === DARWIN_POSTGRES_COMMAND",
+    "replace": "line.trim().includes(DARWIN_POSTGRES_COMMAND)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Allow appended arguments: editing Darwin PostgreSQL command in test-updater fails verbatim check must fail against the independent literal command."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
     "find": "return postgres && darwin;",
     "replace": "return darwin;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disabling this decision must fail the named assertion: a helper wrapper without PostgreSQL does not need a database macOS lane. Expected values are literal fixture paths, independently specified in the test. Complete suite counts and cleanup are required."
+    "why": "Disable database classification: portable PostgreSQL and non-database Darwin wrappers retain ordinary coverage must fail against independent empty uncovered list."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
     "find": "return postgres && darwin;",
     "replace": "return false;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disabling Darwin PostgreSQL classification fails the independent literal-path refusal assertions, including helper-level and aliased gates; a completed assertion failure is required."
+    "why": "Disable Darwin PostgreSQL classification: Darwin-only PostgreSQL file missing from fixed list fails must fail against independent literal path."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
@@ -35,32 +56,18 @@
     "why": "Disabling source sanitization must fail portable platform paths and fixture strings do not claim Darwin-only PostgreSQL against the independent empty uncovered list."
   },
   {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "    if (/^    runs-on: ['\"]?macos-[a-zA-Z0-9.-]+['\"]?\\s*$/m.test(job))",
-    "replace": "    if (true)",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disabling the literal macOS runner check classifies a Linux job as macOS and must fail Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it."
-  },
-  {
     "file": ".github/workflows/ci.yml",
     "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n\n  test-articles:",
     "replace": "            true\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n\n  test-articles:",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable the added PostgreSQL execution in primary macOS path. The independently inventoried five-file list must fail both hosted macOS paths execute every inventoried result PostgreSQL file, with complete body counts."
+    "why": "Remove workflow command in one named job: exact Darwin PostgreSQL command present in both paths passes must fail against independent empty uncovered list for the real workflow."
   },
   {
     "file": ".github/workflows/ci.yml",
     "find": "            node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
     "replace": "            true\n          ) || darwin_pg_status=$?\n          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable the added PostgreSQL execution in catch-up macOS path. The independently inventoried five-file list must fail both hosted macOS paths execute every inventoried result PostgreSQL file, with complete body counts."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "  if (condition === undefined) return true;",
-    "replace": "  return true;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Bypass condition enforcement: macOS coverage refuses Linux-only step on a macOS job must fail against independently authored literal private-pg path."
+    "why": "Remove workflow command in one named job: exact Darwin PostgreSQL command present in both paths passes must fail against independent empty uncovered list for the real workflow."
   },
   {
     "file": ".github/workflows/ci.yml",
@@ -75,61 +82,5 @@
     "replace": "          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || true\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/macos-updater-lane-status.test.mjs",
     "why": "Disable aggregation in full-gate: named full-gate aggregates test:updater-schema and completes every lane must fail against independent exit 17."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
-    "replace": "        if (line === \"exit 0\") continue;\n        return [];",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable whole-step refusal for early successful exit: named macOS coverage refuses early successful exit must fail against independent literal tests/private-pg.test.ts; complete assertion failure required."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
-    "replace": "        if (line === \"cat <<'DOC'\" || line === \"DOC\") continue;\n        return [];",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable whole-step refusal for here-document prose: named macOS coverage refuses here-document prose must fail against independent literal tests/private-pg.test.ts; complete assertion failure required."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
-    "replace": "        if (line === \"false &&\") continue;\n        return [];",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable whole-step refusal for multiline false and: named macOS coverage refuses multiline false and must fail against independent literal tests/private-pg.test.ts; complete assertion failure required."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "      if (line === \"(\") {\n        if (subshell) return [];",
-    "replace": "      if (line === \"(\") {\n        if (false) return [];",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses nested subshell with one close must fail against independently specified missing path. All bodies and cleanup must complete."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "if (!subshell || !capturesStatus) return [];",
-    "replace": "if (false) return [];",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses unopened subshell must fail against independently specified missing path. All bodies and cleanup must complete."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "if (subshell || !capturesStatus || index !== lines.length - 1) return [];",
-    "replace": "if (false) return [];",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses early aggregate exit must fail against independently specified missing path. All bodies and cleanup must complete."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "    if (subshell) return [];\n    return lines.filter",
-    "replace": "    if (false) return [];\n    return lines.filter",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses unterminated subshell must fail against independently specified missing path. All bodies and cleanup must complete."
-  },
-  {
-    "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
-    "replace": "        continue;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses unknown trailing line must fail against independently specified missing path. All bodies and cleanup must complete."
   }
 ]
