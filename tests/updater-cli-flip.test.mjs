@@ -747,8 +747,8 @@ test("V101 passkey add prints a decodable QR before its link without reading the
     assert.ok(qrIndex >= 0, "passkey add prints a terminal QR code");
     const link = `https://control-room.example.test/setup#reg=${secret}&mode=${mode}`;
     assert.equal(output[qrIndex + 1], `${link}\n`, "text link follows QR");
-    assert.equal(output[qrIndex + 2], "Scan this QR code with your phone's camera. If the page asks, enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.\n");
-    assert.ok(output.includes("Finish within 5 minutes: scan, use Face ID, then type the 6-character code here.\n"), "R2: effective deadline is printed on its own line");
+    assert.equal(output[qrIndex + 2], "Scan this QR code with your phone's camera. If the page asks, enter the owner code from the install Terminal window. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.\n");
+    assert.ok(output.includes("Finish within the time shown: scan, use Face ID, then type the 6-character code here.\n"), "R2: effective deadline is printed on its own line");
     assert.doesNotMatch(output.join(""), /expires in 30 minutes/u);
     assert.ok(!output.join("").includes("Owner code ("), "passkey add has no owner code to print");
     // Independent decoder reads the actual terminal block pixels, including the
@@ -781,7 +781,7 @@ test("V101 R2 completion deadline is the earliest of the prompt and registration
         assert.equal(delays.at(-1), expected, "R2: actual prompt timeout uses the independent earlier deadline");
         return "ABC234";
       } }), 0);
-    assert.ok(output.includes(`Finish within ${line}: scan, use Face ID, then type the 6-character code here.\n`),
+    assert.ok(output.includes(`Time available: ${line}.\n`),
       "R2: printed effective deadline matches the independent expected duration");
   }
 });

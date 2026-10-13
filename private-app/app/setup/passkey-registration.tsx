@@ -206,7 +206,7 @@ export function PasskeyRegistration() {
       signIn.current?.(code);
     }}>
       {state.retry ? <button type="button" onClick={() => retrySignIn.current?.()}>Try again</button> : <>
-      <p>Enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.</p>
+      <p>Enter the owner code from the install Terminal window. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.</p>
       <label htmlFor="setup-owner-code">Owner code</label>
       <input id="setup-owner-code" name="ownerCode" type="password" autoComplete="off" required />
       <button type="submit">Sign in and continue</button></>}

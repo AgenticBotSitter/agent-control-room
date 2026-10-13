@@ -176,7 +176,7 @@ for (const scenario of ["fresh", "session", "forbidden", "expired", "limited", "
       assert.match(dom.window.document.body.textContent ?? "", scenario === "limited" ? /Too many tries — wait 37 seconds/ : /Registration stopped/);
       assert.equal(requests.length, 1); return;
     }
-    assert.match(dom.window.document.body.textContent ?? "", /the 43-character owner code printed in the Terminal window where you installed Control Room.*If that window is unavailable, ask the lead/u, "N1: manual code source is actionable");
+    assert.ok((dom.window.document.body.textContent ?? "").includes("Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone."), "FIX480: missing-window guidance stops without promising a replacement code");
     assert.ok(dom.window.document.querySelector('input[name="ownerCode"]'), "unauthenticated setup offers an owner-code field on the same page");
     const submit = async (code: string, burst = 1) => {
       const field = dom.window.document.querySelector('input[name="ownerCode"]') as HTMLInputElement;

@@ -414,7 +414,7 @@ try {
     if (result.passkey && result.passkey.status !== "registered") {
       context.stdout(`Not ready: Face ID is NOT set up (the passkey step stopped: ${result.passkey.reason}). `
         + `Control Room release ${result.version} is installed and current. Self-update is Off. `
-        + "To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks.\n");
+        + "To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone. Finish within the time shown by that command.\n");
     } else context.stdout(`Ready: Control Room release ${result.version} is current. Self-update is Off.\n`);
     return 0;
   }
@@ -465,13 +465,14 @@ try {
       const { terminalQrTextV1 } = await import("./terminal/qr.mjs");
       context.stdout(terminalQrTextV1(registrationUrl));
       context.stdout(`${registrationUrl}\n`);
-      context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the 43-character owner code printed in the Terminal window where you installed Control Room. If that window is unavailable, ask the lead.\n");
+      context.stdout("Scan this QR code with your phone's camera. If the page asks, enter the owner code from the install Terminal window. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.\n");
       const registrationRemainingMs = Date.parse(registration.expiresAt) - context.now().getTime();
       const completionTimeoutMs = Number.isFinite(registrationRemainingMs)
         ? Math.max(0, Math.min(300_000, registrationRemainingMs)) : 300_000;
       const completionWindow = completionTimeoutMs === 300_000 ? "5 minutes"
         : `${Math.floor(completionTimeoutMs / 1000)} seconds`;
-      context.stdout(`Finish within ${completionWindow}: scan, use Face ID, then type the 6-character code here.\n`);
+      context.stdout(`Time available: ${completionWindow}.\n`);
+      context.stdout("Finish within the time shown: scan, use Face ID, then type the 6-character code here.\n");
       // The message is the only place the owner learns this passkey is live
       // tonight, so it is printed per mode rather than as one message with a
       // caveat: the INACTIVE case is the one that must not read as success.
