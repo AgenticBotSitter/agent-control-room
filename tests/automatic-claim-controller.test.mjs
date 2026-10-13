@@ -79,22 +79,7 @@ test("strict claim request format rejects ambiguity and shell-shaped input witho
   assert.equal(api.calls.length, 0);
 });
 
-test("the workflow serializes claims repository-wide with only repository-read and issue-write access", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/automatic-job-claim.yml", import.meta.url), "utf8");
-  assert.match(workflow, /issue_comment:\n\s+types: \[created\]/);
-  assert.match(workflow, /contents: read\n\s+issues: write/);
-  assert.ok(workflow.includes("group: automatic-job-claim-${{ github.repository_id }}"));
-  assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /queue: max/);
-  assert.match(workflow, /persist-credentials: false/);
-  assert.ok(!workflow.includes("github.event.comment.body }}"));
-});
-
-test("the workflow routes malformed embedded commands so the controller can explain the error", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/automatic-job-claim.yml", import.meta.url), "utf8");
-  assert.ok(workflow.includes("contains(github.event.comment.body, 'CLAIM REQUEST')"));
-  assert.ok(!workflow.includes("startsWith(github.event.comment.body, 'CLAIM REQUEST')"));
-  assert.ok(workflow.includes("github.event.comment.user.type != 'Bot'"));
+test("malformed embedded claim commands remain ignored with an explanatory result", async () => {
   const body = "<!-- acr-public-work:claim-request v1 -->\nCLAIM REQUEST\nworker-id: worker:test-01";
   assert.equal(parseClaimCommand(body), undefined);
   assert.match(formatClaimResult({ status: "ignored" }, body), /CLAIM COMMAND NOT APPLIED/);
@@ -805,21 +790,6 @@ test("a lost renew response reconciles from the exact saved comment", async () =
   assert.match(saved.body, /^CLAIM RENEWED —/);
   const retry = await runClaimRenew({ event: lifecycleEvent("CLAIM RENEW\nworker-id: worker:lost-01"), repository, api, now: 1_700_000_200_000 });
   assert.equal(retry.status, "renewed");
-});
-
-test("the claim workflow routes every lifecycle command with least privilege and no secret access", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/automatic-job-claim.yml", import.meta.url), "utf8");
-  for (const command of ["CLAIM REQUEST", "CLAIM RENEW", "CLAIM SUBMIT", "CLAIM RELEASE"])
-    assert.ok(workflow.includes(`'${command}'`), command);
-  assert.match(workflow, /contents: read\n\s+issues: write\n(\s+#[^\n]*\n\s+)*pull-requests: read/);
-  assert.ok(!workflow.includes("secrets."));
-  assert.ok(!workflow.includes("pull-requests: write"));
-  assert.ok(!/^\s+(actions|checks|statuses|deployments|packages|pages|security-events|code-scanning-alerts|members|metadata|organization-projects|projects):/m.test(workflow.replace(/^\s+#[^\n]*$/gm, "")));
-  assert.ok(!workflow.includes("actions/checkout@") || workflow.includes("persist-credentials: false"));
-  assert.ok(workflow.includes("automatic-job-claim-${{ github.repository_id }}"));
-  assert.match(workflow, /cancel-in-progress: false/);
-  assert.ok(!workflow.includes("github.event.comment.body }}"));
-  assert.ok(workflow.includes("--sweep"));
 });
 
 test("a released issue is reservable again by a new claim", async () => {

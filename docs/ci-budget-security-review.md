@@ -1,5 +1,7 @@
 # Public CI: reviewed settings
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Enabled September 12, 2026 with owner authorization; workflow introduced by PR #15.
 This supersedes earlier instructions to keep public Actions disabled.
 

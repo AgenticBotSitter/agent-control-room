@@ -1,5 +1,7 @@
 # Agent Control Room: public roadmap
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 This is the phase-level roadmap for the public product. It says what each phase
 delivers, what must be true before the next one starts, and how the project's
 autonomy grows. It deliberately contains no dates, no estimates and no

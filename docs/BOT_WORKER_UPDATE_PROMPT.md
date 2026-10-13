@@ -1,5 +1,7 @@
 # Bot worker update prompt
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Give the prompt below to each automated contributor once. Replace `WORKER_ID` with that
 installation's existing stable, role-based worker ID. Do not use a bot brand, person's
 name, shared GitHub login, private project name, credential, or machine hostname.

@@ -1,5 +1,7 @@
 # Continuous build operation
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 The goal is that contributors and maintainers coordinate through GitHub without the
 project owner relaying messages. Measurements help diagnose waiting; they do not by
 themselves create, review, or complete work.

@@ -1,5 +1,7 @@
 # Local worker inbox watchers
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 A small, read-only watcher that runs the accepted public worker inbox on a schedule and
 tells you when your assigned action changes. It exists so an operator stops re-checking the
 queue by hand while a review is pending.
