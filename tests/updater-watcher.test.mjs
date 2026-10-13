@@ -359,6 +359,10 @@ async function heldLoopFixture(t) {
 test("FIX-475: reconstruction while Off preserves the unresolved real watcher warning", async t => {
   const f = await heldLoopFixture(t), first = f.make();
   await first.tick(); assert.equal((await f.read()).needsYou, true);
+  const holdRecord = () => readFile(join(f.f.updaterRoot, "updater-state/watcher-hold.json"), "utf8")
+    .then(JSON.parse, () => null);
+  assert.deepEqual(await holdRecord(), { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
+    "the runtime persists the hold independently of the display cache");
   await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "Off\n");
   await first.shutdown();
   const reconstructed = f.make(); await reconstructed.tick();
@@ -370,6 +374,8 @@ test("FIX-475: reconstruction while Off preserves the unresolved real watcher wa
   assert.equal((await f.read()).needsYou, true, "repair alone is not a successful recheck");
   await writeFile(join(f.f.updaterRoot, "updater-state/self-update"), "On\n");
   await reconstructed.tick(); assert.equal((await f.read()).needsYou, false, "a real successful recheck settles the warning");
+  assert.deepEqual(await holdRecord(), { schema: "control-room.watcher-hold/v1", code: null },
+    "successful recheck persists clearance independently of this loop's memory");
   await reconstructed.shutdown();
 });
 

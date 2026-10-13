@@ -369,5 +369,12 @@
     "replace": "",
     "test": "node --test --test-name-pattern='FIX-475: watcher Git fetch' tests/updater-watcher.test.mjs",
     "why": "Git automatic maintenance cannot detach beyond the owned command group"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "await this.stateFiles.writeWatcherHold?.(null);",
+    "replace": "// Mutation: do not persist clearance.",
+    "test": "node --test --test-name-pattern='FIX-475: reconstruction' tests/updater-watcher.test.mjs",
+    "why": "only the successful real recheck writes the durable cleared warning"
   }
 ]
