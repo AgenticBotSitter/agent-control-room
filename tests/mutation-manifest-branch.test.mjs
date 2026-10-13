@@ -32,15 +32,14 @@ function fixture(t, initial = {}) {
   git(root, "init", "-q");
   const commit = () => {
     git(root, "add", ".");
-    git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
-      "commit", "--allow-empty", "-qm", "fixture revision");
+    git(root, "commit", "--allow-empty", "-qm", "fixture revision");
     return git(root, "rev-parse", "HEAD");
   };
   const base = commit();
   return { root, write, commit, base };
 }
 
-function run(f, { branch = "cook/fu021", base = f.base, shared = false, ref = "unrelated" } = {}) {
+function run(f, { branch = "cook/fu021", base = f.base, ref = "unrelated" } = {}) {
   const script = "scripts/ci/check-mutation-manifest-branch.sh";
   // Copy the real checker into the disposable Git checkout; fixtures create
   // changed PR inputs only. The product writes GITHUB_OUTPUT, which starts absent.
@@ -48,11 +47,10 @@ function run(f, { branch = "cook/fu021", base = f.base, shared = false, ref = "u
   try { source = readFileSync(join(repository, script), "utf8"); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   if (source !== undefined) {
-    if (shared) source = source.replace("shared_manifests=()", 'shared_manifests=("mutation-checks/shared.json")');
     f.write(script, source);
   }
   const outputPath = join(f.root, "step-output");
-  const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", body], {
+  const result = spawnSync("bash", ["-c", body], {
     cwd: f.root, encoding: "utf8", timeout: 10_000,
     env: { ...process.env, HEAD_REF: branch, REF_NAME: ref, BASE_SHA: base, GITHUB_OUTPUT: outputPath },
   });
@@ -74,26 +72,34 @@ test("matching changed manifest selects branch mutations", t => {
 });
 
 test("mismatched added manifest refuses with expected and found names", t => {
-  const f = fixture(t); f.write("mutation-checks/cook-previous.json"); f.commit();
-  refusal(run(f), "mutation-checks/cook-fu021.json", "mutation-checks/cook-previous.json");
+  // Recorded escape: a renamed branch added the previous branch name.
+  const f = fixture(t); f.write("mutation-checks/cook-updater-classify.json"); f.commit();
+  refusal(run(f, { branch: "cook/updater-classify-v2" }),
+    "mutation-checks/cook-updater-classify-v2.json", "mutation-checks/cook-updater-classify.json");
 });
 
-test("mismatched modified manifest refuses even when matching manifest exists", t => {
+test("modified foreign manifest passes when matching manifest exists", t => {
   const f = fixture(t, { "mutation-checks/cook-previous.json": "[]\n", "mutation-checks/cook-fu021.json": "[]\n" });
   f.write("mutation-checks/cook-previous.json", "[{}]\n"); f.commit();
-  refusal(run(f), "mutation-checks/cook-fu021.json", "mutation-checks/cook-previous.json");
+  const result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=true\n");
 });
 
-test("explicitly shared allowlisted manifest passes", t => {
-  const f = fixture(t); f.write("mutation-checks/shared.json"); f.commit();
-  const result = run(f, { shared: true });
+test("modified foreign manifest passes when matching manifest is absent", t => {
+  const f = fixture(t, { "mutation-checks/shared.json": "[]\n" });
+  f.write("mutation-checks/shared.json", "[{}]\n"); f.commit();
+  const result = run(f);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=false\n");
 });
 
-test("shared-looking name without allowlist refuses", t => {
-  const f = fixture(t); f.write("mutation-checks/shared.json"); f.commit();
-  refusal(run(f), "mutation-checks/cook-fu021.json", "mutation-checks/shared.json");
+test("foreign addition alongside own manifest passes", t => {
+  const f = fixture(t);
+  f.write("mutation-checks/shared.json"); f.write("mutation-checks/cook-fu021.json"); f.commit();
+  const result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=true\n");
 });
 
 test("no changed manifest preserves absent-manifest behavior", t => {
@@ -150,7 +156,10 @@ test("non-PR fallback keeps existing branch selection without a PR diff", t => {
   assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=true\n");
 });
 
-test("shared allowlist is exact and does not permit another manifest", t => {
-  const f = fixture(t); f.write("mutation-checks/shared-other.json"); f.commit();
-  refusal(run(f, { shared: true }), "mutation-checks/cook-fu021.json", "mutation-checks/shared-other.json");
+test("rename to foreign manifest passes when own manifest remains at HEAD", t => {
+  const f = fixture(t, { "mutation-checks/cook-fu021.json": "[]\n", "mutation-checks/previous.json": "[]\n" });
+  git(f.root, "mv", "mutation-checks/previous.json", "mutation-checks/other.json"); f.commit();
+  const result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=true\n");
 });

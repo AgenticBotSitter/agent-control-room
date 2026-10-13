@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
-# PRs may edit another branch's manifest only after an explicit shared entry
-# is reviewed here. Keep entries as exact repository-relative filenames.
+# Refuse newly added misnamed manifests only when the branch's own manifest
+# is absent at HEAD. Maintenance of existing manifests is always allowed.
+# Deletions are out of scope; renames are checked as deletion + addition.
 set -euo pipefail
 expected="$1"
 base="$2"
-shared_manifests=()
 
 # Main pushes and manual dispatches have no PR base; retain their selection.
 if [[ -z "$base" ]]; then exit 0; fi
 
-# Treat renames as deletion + addition: only the destination needs validation.
 # NUL delimiters keep spaces/newlines literal; pipefail refuses unreadable diffs.
-git diff --no-renames --name-only -z --diff-filter=ACMT "${base}...HEAD" -- 'mutation-checks/*.json' |
+# Inspect additions even when the expected manifest exists, so bad bases fail.
+git diff --no-renames --name-only -z --diff-filter=A "${base}...HEAD" -- 'mutation-checks/*.json' |
   while IFS= read -r -d '' changed; do
-    shared=false
-    for allowed in ${shared_manifests[@]+"${shared_manifests[@]}"}; do
-      if [[ "$changed" == "$allowed" ]]; then shared=true; fi
-    done
-    if [[ "$changed" != "$expected" && "$shared" != true ]]; then
-      printf "%s\n" "Mutation manifest mismatch: expected '${expected}', found '${changed}'. Rename the changed manifest to the branch-derived name or explicitly list it in shared_manifests in scripts/ci/check-mutation-manifest-branch.sh." >&2
+    if [[ "$changed" != "$expected" ]] && ! git cat-file -e "HEAD:$expected" 2>/dev/null; then
+      printf "%s\n" "Mutation manifest mismatch: expected '${expected}', found '${changed}'. Add or rename a manifest to the branch-derived name; that manifest is absent at HEAD." >&2
       exit 1
     fi
   done

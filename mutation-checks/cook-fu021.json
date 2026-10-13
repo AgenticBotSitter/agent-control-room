@@ -1,23 +1,37 @@
 [
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
-    "find": "if [[ \"$changed\" != \"$expected\" && \"$shared\" != true ]]; then",
+    "find": "if [[ \"$changed\" != \"$expected\" ]] && ! git cat-file -e \"HEAD:$expected\" 2>/dev/null; then",
     "replace": "if false; then",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "mismatched added manifest refuses with expected and found names must fail when mismatch refusal is disabled"
+    "why": "mismatched added manifest refuses with expected and found names must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
   },
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
-    "find": "if [[ \"$changed\" == \"$allowed\" ]]; then shared=true; fi",
-    "replace": "if true; then shared=true; fi",
+    "find": " && ! git cat-file -e \"HEAD:$expected\" 2>/dev/null",
+    "replace": "",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "shared allowlist is exact and does not permit another manifest must fail when allowlist membership is bypassed"
+    "why": "foreign addition alongside own manifest passes must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=A ",
+    "replace": "--diff-filter=ACMT ",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "modified foreign manifest passes when matching manifest is absent must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
   },
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
     "find": "set -euo pipefail",
     "replace": "set -eu",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "unreadable PR base fails rather than accepting unknown changes must fail when Git pipeline failure propagation is disabled"
+    "why": "unreadable PR base fails rather than accepting unknown changes must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" || exit $?",
+    "replace": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "mismatched added manifest refuses with expected and found names must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
   }
 ]
