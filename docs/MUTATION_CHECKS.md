@@ -76,7 +76,8 @@ allowed and now runs their mutations even when the branch has no manifest of its
 Deletions are outside selection; renames are treated as deletion plus addition. Main pushes and
 manual runs retain branch-only selection. Selected manifests must be regular Git blobs: trees
 and symbolic links are refused before selection outputs are published. Manifests must be directly
-inside the top-level `mutation-checks/` directory; the verifier ignores paths outside it.
+inside the top-level `mutation-checks/` directory. Nested JSON files are outside manifest
+selection; the verifier ignores paths outside that directory.
 
 When no manifest is selected, CI examines added and removed lines under `src/**`, `db/migrations/**`,
 and `db/roles/**`. It emits a warning, not a failure, for source refusal words or uppercase SQL

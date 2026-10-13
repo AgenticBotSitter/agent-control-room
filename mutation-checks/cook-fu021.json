@@ -89,5 +89,19 @@
     "replace": "    : # regular-file refusal disabled",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
     "why": "modified foreign symlink refuses even when own manifest exists must fail; expected paths and refusals are independent literals"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=A \"${base}...HEAD\" -- ':(top,glob)mutation-checks/*.json'",
+    "replace": "--diff-filter=A \"${base}...HEAD\" -- 'mutation-checks/*.json'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "nested JSON addition without own manifest preserves empty selection must fail; top-level directory constraint comes from the real verifier and existing documentation"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=AM \"${base}...HEAD\" -- ':(top,glob)mutation-checks/*.json'",
+    "replace": "--diff-filter=AM \"${base}...HEAD\" -- 'mutation-checks/*.json'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "nested JSON files are not top-level manifests must fail; top-level directory constraint comes from the real verifier and existing documentation"
   }
 ]

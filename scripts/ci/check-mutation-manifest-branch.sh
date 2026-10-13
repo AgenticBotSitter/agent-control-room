@@ -24,7 +24,7 @@ if git cat-file -e "HEAD:$expected" 2>/dev/null; then
 fi
 
 # NUL delimiters preserve filenames; pipefail refuses unreadable PR bases.
-git diff --no-renames --name-only -z --diff-filter=A "${base}...HEAD" -- 'mutation-checks/*.json' |
+git diff --no-renames --name-only -z --diff-filter=A "${base}...HEAD" -- ':(top,glob)mutation-checks/*.json' |
   while IFS= read -r -d '' changed; do
     if [[ "$changed" != "$expected" && "$own" != true ]]; then
       printf "%s\n" "Mutation manifest mismatch: expected '${expected}', found '${changed}'. Add or rename a manifest to the branch-derived name; no mutations were selected." >&2
@@ -33,7 +33,7 @@ git diff --no-renames --name-only -z --diff-filter=A "${base}...HEAD" -- 'mutati
   done
 
 if [[ "$own" == true ]]; then printf '%s\0' "$expected"; fi
-git diff --no-renames --name-only -z --diff-filter=AM "${base}...HEAD" -- 'mutation-checks/*.json' |
+git diff --no-renames --name-only -z --diff-filter=AM "${base}...HEAD" -- ':(top,glob)mutation-checks/*.json' |
   while IFS= read -r -d '' changed; do
     regular_manifest "$changed"
     if [[ "$changed" != "$expected" ]]; then printf '%s\0' "$changed"; fi

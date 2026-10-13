@@ -282,3 +282,20 @@ test("verifier loop keeps going after failure and fails the aggregate", t => {
   assert.equal(retried.status, 0, retried.stdout + retried.stderr);
   assert.equal((retried.stdout.match(/the mutation was caught/g) ?? []).length, 2);
 });
+
+test("nested JSON files are not top-level manifests", t => {
+  const f = fixture(t, { "mutation-checks/cook-fu021.json": "[]\n" });
+  f.write("mutation-checks/nested/other.json"); f.commit();
+  const result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.manifests, ["mutation-checks/cook-fu021.json"], "nested JSON must not be passed to a verifier that ignores it");
+});
+
+test("nested JSON addition without own manifest preserves empty selection", t => {
+  const f = fixture(t);
+  f.write("mutation-checks/nested/other.json"); f.commit();
+  const result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=false\n");
+  assert.deepEqual(result.manifests, []);
+});
