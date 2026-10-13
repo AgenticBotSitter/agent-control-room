@@ -293,6 +293,7 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     // project_id) stays outside the grant on purpose.
     "planner_mode", "planner_worker_id", "planner_worker_kind", "planner_model", "planner_effort"],
   control_update_candidates: ["state", "version", "decided_at"],
+  owner_web_push_subscriptions: ["p256dh", "auth", "expires_at", "updated_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
   // 0206-0208: the owner's two retention decisions and the one-time spend of a
   // download grant. Every other catalog column is read-only to the web login,
