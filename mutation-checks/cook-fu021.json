@@ -50,8 +50,8 @@
   },
   {
     "file": ".github/workflows/ci.yml",
-    "find": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" > \"$list\" || exit $?",
-    "replace": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" > \"$list\"",
+    "find": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" \"$PR_HEAD_SHA\" > \"$list\" || exit $?",
+    "replace": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" \"$PR_HEAD_SHA\" > \"$list\"",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
     "why": "mismatched added manifest refuses with expected and found names must fail; independent expected paths, exits and counts are literal ticket outcomes"
   },
