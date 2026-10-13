@@ -65,7 +65,10 @@ the same checkout at once.
 ## CI behavior and security boundary
 
 For pull requests, the **Mutation checks** job verifies every manifest added or modified
-against the PR base, plus the branch-derived manifest when it exists at HEAD. Each selected
+against the test merge's first parent when its second parent matches the event PR head SHA.
+Otherwise selection falls back to the event PR base SHA. This excludes manifests introduced
+by main after the PR fork. Selection also includes the branch-derived manifest when it exists
+at HEAD. Each selected
 manifest runs once. The loop keeps going after failures, reports every result, and fails the
 step if any verification fails. All declared anchors are still validated on every run.
 

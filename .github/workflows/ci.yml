@@ -231,11 +231,12 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           REF_NAME: ${{ github.ref_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           branch="${HEAD_REF:-${REF_NAME}}"
           manifest="mutation-checks/${branch//\//-}.json"
           list=$(mktemp "${RUNNER_TEMP}/mutation-manifests.XXXXXX")
-          bash scripts/ci/check-mutation-manifest-branch.sh "$manifest" "$BASE_SHA" > "$list" || exit $?
+          bash scripts/ci/check-mutation-manifest-branch.sh "$manifest" "$BASE_SHA" "$PR_HEAD_SHA" > "$list" || exit $?
           echo "path=${manifest}" >> "$GITHUB_OUTPUT"
           echo "list=${list}" >> "$GITHUB_OUTPUT"
           if [ -s "$list" ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi

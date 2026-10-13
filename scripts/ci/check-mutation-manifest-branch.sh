@@ -6,6 +6,12 @@ set -euo pipefail
 expected="$1"
 # With no PR base, HEAD...HEAD is empty: retain branch-only selection.
 base="${2:-HEAD}"
+pr_head="${3:-}"
+# Checkout tests the PR merge against the current base tip, which may be
+# newer than the event base. Only trust that topology for the event PR head.
+if [[ -n "$pr_head" ]] && [[ "$(git rev-parse --verify HEAD^2 2>/dev/null || true)" == "$pr_head" ]]; then
+  base=$(git rev-parse --verify HEAD^1)
+fi
 
 regular_manifest() {
   local kind entry

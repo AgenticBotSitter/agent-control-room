@@ -110,5 +110,40 @@
     "replace": "if true; then",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
     "why": "matching changed manifest selects branch mutations must fail if own manifest is emitted twice; the ticket path is an independent literal and documented exactly-once list expectation"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "  base=$(git rev-parse --verify HEAD^1)",
+    "replace": "  base=\"${2:-HEAD}\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "stale PR base excludes main manifests when own manifest is absent must fail; the ticket independently requires an empty list for an ordinary PR"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "[[ \"$(git rev-parse --verify HEAD^2 2>/dev/null || true)\" == \"$pr_head\" ]]",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "merge with a different second parent falls back to event base must fail; event head equality is the independent topology requirement"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "[[ -n \"$pr_head\" ]]",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "nonmerge without PR head retains the complete event-base range must fail; the event base independently requires refusing the earlier misnamed addition"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "\"$manifest\" \"$BASE_SHA\" \"$PR_HEAD_SHA\" >",
+    "replace": "\"$manifest\" \"$BASE_SHA\" >",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "stale PR base selects only the PR own manifest must fail when the workflow omits the event PR head; literal own-only selection comes from the ticket"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+    "replace": "          PR_HEAD_SHA: \"\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "workflow supplies event PR head SHA to base selection must fail; expected expression is specified independently by the ticket"
   }
 ]

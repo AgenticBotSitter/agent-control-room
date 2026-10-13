@@ -45,7 +45,7 @@ function fixture(t, initial = {}) {
   return { root, write, commit, base };
 }
 
-function run(f, { branch = "cook/fu021", base = f.base, ref = "unrelated" } = {}) {
+function run(f, { branch = "cook/fu021", base = f.base, ref = "unrelated", prHead = "" } = {}) {
   const script = "scripts/ci/check-mutation-manifest-branch.sh";
   // Copy the real checker into the disposable Git checkout; fixtures create
   // changed PR inputs only. The product writes GITHUB_OUTPUT, which starts absent.
@@ -59,7 +59,7 @@ function run(f, { branch = "cook/fu021", base = f.base, ref = "unrelated" } = {}
   assert.equal(existsSync(outputPath), false, "fixture leaves product output absent");
   const result = spawnSync("bash", ["-c", body], {
     cwd: f.root, encoding: "utf8", timeout: 10_000,
-    env: { ...process.env, HEAD_REF: branch, REF_NAME: ref, BASE_SHA: base, GITHUB_OUTPUT: outputPath, RUNNER_TEMP: f.root },
+    env: { ...process.env, HEAD_REF: branch, REF_NAME: ref, BASE_SHA: base, PR_HEAD_SHA: prHead, GITHUB_OUTPUT: outputPath, RUNNER_TEMP: f.root },
   });
   const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
   const list = /^list=(.*)$/m.exec(output)?.[1];
@@ -299,4 +299,73 @@ test("nested JSON addition without own manifest preserves empty selection", t =>
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=false\n");
   assert.deepEqual(result.manifests, []);
+});
+
+// Real Git topology: B0 -> PR, B0 -> B1 -> merge(PR). Git itself
+// creates the merge parents; expected selections remain independent literals.
+function staleMerge(t, manifests = []) {
+  const f = fixture(t, { "README.md": "base\n" });
+  git(f.root, "checkout", "-qb", "cook/fu021");
+  f.write("pr.txt", "PR\n");
+  for (const path of manifests) f.write(path);
+  const prHead = f.commit();
+  git(f.root, "checkout", "--detach", f.base);
+  f.write("mutation-checks/cook-other.json");
+  const freshBase = f.commit();
+  git(f.root, "merge", "--no-ff", "-qm", "fixture test merge", prHead);
+  assert.equal(git(f.root, "rev-parse", "HEAD^1"), freshBase);
+  assert.equal(git(f.root, "rev-parse", "HEAD^2"), prHead);
+  return { ...f, prHead, freshBase };
+}
+
+test("stale PR base excludes main manifests when own manifest is absent", t => {
+  const f = staleMerge(t);
+  const result = run(f, { prHead: f.prHead });
+  assert.equal(result.status, 0, `ordinary PR must not refuse main additions: ${result.stderr}`);
+  assert.deepEqual(result.manifests, [], "main's unrelated manifest must not be selected");
+  assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=false\n");
+});
+
+test("stale PR base selects only the PR own manifest", t => {
+  const f = staleMerge(t, ["mutation-checks/cook-fu021.json"]);
+  const result = run(f, { prHead: f.prHead });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.manifests, ["mutation-checks/cook-fu021.json"], "main's unrelated manifest must not be verified");
+});
+
+test("misnamed PR addition still refuses with stale and fresh event bases", t => {
+  for (const useFresh of [false, true]) {
+    const f = staleMerge(t, ["mutation-checks/cook-wrong.json"]);
+    refusal(run(f, { prHead: f.prHead, base: useFresh ? f.freshBase : f.base }),
+      "mutation-checks/cook-fu021.json", "mutation-checks/cook-wrong.json");
+  }
+});
+
+test("merge with a different second parent falls back to event base", t => {
+  const f = staleMerge(t);
+  refusal(run(f, { prHead: f.freshBase }),
+    "mutation-checks/cook-fu021.json", "mutation-checks/cook-other.json");
+});
+
+test("merge without PR head falls back to event base", t => {
+  const f = staleMerge(t);
+  refusal(run(f), "mutation-checks/cook-fu021.json", "mutation-checks/cook-other.json");
+});
+
+test("nonmerge PR checkout falls back to event base", t => {
+  const f = fixture(t);
+  f.write("mutation-checks/cook-wrong.json"); const prHead = f.commit();
+  refusal(run(f, { prHead }), "mutation-checks/cook-fu021.json", "mutation-checks/cook-wrong.json");
+});
+
+
+test("nonmerge without PR head retains the complete event-base range", t => {
+  const f = fixture(t);
+  f.write("mutation-checks/cook-wrong.json"); f.commit();
+  f.write("pr.txt", "later commit\n"); f.commit();
+  refusal(run(f), "mutation-checks/cook-fu021.json", "mutation-checks/cook-wrong.json");
+});
+
+test("workflow supplies event PR head SHA to base selection", () => {
+  assert.match(step, /PR_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
 });
