@@ -26,5 +26,19 @@
     "replace": "return false;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disabling Darwin PostgreSQL classification fails the independent literal-path refusal assertions, including helper-level and aliased gates; a completed assertion failure is required."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "  source = source.replace(/\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`/gu,\n    token => token === '\"darwin\"' || token === \"'darwin'\" ? token : \" \");\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disabling source sanitization must fail portable platform paths and fixture strings do not claim Darwin-only PostgreSQL against the independent empty uncovered list."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "    if (/^    runs-on: ['\"]?macos-[a-zA-Z0-9.-]+['\"]?\\s*$/m.test(job))",
+    "replace": "    if (true)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disabling the literal macOS runner check classifies a Linux job as macOS and must fail Darwin-only PostgreSQL requires a macOS execution even when Linux reaches it."
   }
 ]
