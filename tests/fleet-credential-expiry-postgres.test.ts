@@ -283,7 +283,7 @@ test("R4F-06c: an unexpired renewal that waits on the credential lock still succ
       assert.equal(successor?.issued_at, predecessor?.ended_at, "the successor is issued at the exact instant the predecessor ended");
       assert.equal(reply.credentialExpiresAt, successor?.expires_iso, "the reply states the stored expiry");
       // What the store sent is what PostgreSQL said: the stamp is carried as the database's own text, never through a JavaScript Date.
-      const retireStatement = recorder.log.find(entry => /SET state='retired'/u.test(entry.sql));
+      const retireStatement = recorder.log.find(entry => /state='retired'/u.test(entry.sql));
       const insertStatement = recorder.log.find(entry => /INSERT INTO fleet_worker_credentials/u.test(entry.sql));
       const stamp = (retireStatement?.rows[0] as { stamp?: string } | undefined)?.stamp;
       assert.equal(typeof stamp, "string");
@@ -324,13 +324,13 @@ test("R4F-06f: a successor stamped within the same millisecond as the expiry, bu
         transactionWithPreCommitCheck: rig.db.transactionWithPreCommitCheck.bind(rig.db),
         transaction: body => rig.db.transaction(tx => body({
           query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
-            if (/SET state='retired'/u.test(sql)) {
+            if (/state='retired'/u.test(sql)) {
               for (let spin = 0; spin < 200_000; spin += 1) {
                 if ((await tx.query<{ ok: boolean }>(`SELECT clock_timestamp() >= $1::timestamptz+interval '0.6 millisecond' AS ok`, [boundary])).rows[0]?.ok) break;
               }
             }
             const result = await tx.query<T>(sql, params);
-            if (/SET state='retired'/u.test(sql)) stamp = (result.rows[0] as { stamp?: string } | undefined)?.stamp;
+            if (/state='retired'/u.test(sql)) stamp = (result.rows[0] as { stamp?: string } | undefined)?.stamp;
             return result;
           } })) };
       const gateway = new FleetGatewayStoreV1(waiting, { tenantId: FLEET_TENANT, operationsMode: async () => "running" });
