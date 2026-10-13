@@ -552,8 +552,10 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
   let outstanding: { runId: string; state: string; code: null } | null = null;
   const store = { async unhandledOwnerRequests() { return []; }, async observeRunAttention() {},
     async openRunAttention() { return outstanding; } }; // Synthetic unrelated attention; SQL boundary unverified here.
-  const make = (stateFiles: unknown, watcher: unknown) => new UpdaterMainLoopV1({ stateFiles, store, watcher,
-    runner: { async runOnce() { return { status: "idle" }; } }, mode: { async read() { return "running"; } }, ownerActions: {} });
+  // Construct the JavaScript port with its runtime fixture shape: inferred
+  // default-null parameters do not describe its supported watcher object.
+  const make = (stateFiles: unknown, watcher: unknown): UpdaterMainLoopV1 => Reflect.construct(UpdaterMainLoopV1, [{ stateFiles, store, watcher,
+    runner: { async runOnce() { return { status: "idle" }; } }, mode: { async read() { return "running"; } }, ownerActions: {} }]);
   // Replay the real Git refusal code recorded by updater-watcher's grafted
   // history fixture. This Home seam uses the actual runtime and status writer.
   const legacy = make({ readSelfUpdate: () => files.readSelfUpdate(), hasRescueMarker: () => files.hasRescueMarker(),
