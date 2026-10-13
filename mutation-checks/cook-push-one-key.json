@@ -246,8 +246,8 @@
   },
   {
     "file": "src/web-push/v1/delivery.ts",
-    "find": "if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode, rejectionReason }));",
-    "replace": "if (false) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode, rejectionReason }));",
+    "find": "if (rejectionReason !== undefined) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode: safeStatus, rejectionReason }));",
+    "replace": "if (false) console.warn(JSON.stringify({ event: \"owner_push_rejected\",\n        subscriptionId: subscription.id, statusCode: safeStatus, rejectionReason }));",
     "test": "node --import tsx --test --test-name-pattern='bounded provider' tests/owner-web-push.test.ts",
     "why": "Record a bounded web-provider diagnosis even when the production dispatcher discards its failure callback fields."
   },

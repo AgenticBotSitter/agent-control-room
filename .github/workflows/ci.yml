@@ -218,6 +218,8 @@ jobs:
     name: Mutation checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      PG_BIN: /usr/lib/postgresql/17/bin
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -241,6 +243,22 @@ jobs:
       - name: Install the frozen dependency graph
         if: steps.manifest.outputs.exists == 'true'
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install PostgreSQL 17 from PGDG
+        if: steps.manifest.outputs.exists == 'true'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations

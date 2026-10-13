@@ -1,3 +1,4 @@
+import { readGatewayLocalCapabilityV1 } from "./gateway-local-capability.mjs";
 import { readJsonlPrefixV1 } from "../../../installer/shared/jsonl-prefix.mjs";
 import { acquirePrivateProcessLockV1 } from "../../../installer/shared/private-process-lock.mjs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -968,7 +969,24 @@ async function runAttendedCoreV1({ root, commit, accounts, fresh, write, ports, 
     classification = await ports.classifyAttendedSourceV1({ ...common, ...fetched, release, bundle });
     if (!classification || typeof classification.changesDatabase !== "boolean"
       || !Array.isArray(classification.changedPaths)) refuse("attended_classification_refused");
-    if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
+    try {
+      if (!fresh && classification.changesDatabase) refuse("attended_database_change_requires_upgrader");
+    } catch (error) {
+      // Scratch-only cleanup after a refusal is not a rolled-back update.
+      // Guidance is optional: a failed journal read must not replace the refusal.
+      try {
+        const entries = await readJournal(root);
+        const requestStart = entries.findLastIndex(row => row.command === "install"
+          && row.action === "transaction" && row.phase === "planned");
+        const prior = entries[requestStart - 1];
+        const recoveredPastClassification = entries.some(row => row.command === "install"
+          && row.transactionId === prior?.data?.installTransactionId && row.phase === "planned"
+          && ["confirm", "stage", "switch-pointers"].includes(row.action));
+        error.unfinishedUpdateRecovered = prior?.command === "recovery" && prior.action === "transaction"
+          && prior.phase === "done" && prior.data?.state === "recovered" && recoveredPastClassification;
+      } catch { error.unfinishedUpdateRecovered = false; }
+      throw error;
+    }
     const runningBundleDigest = options.runningBundleDigest === undefined
       ? await ports.runningBundleDigestV1({ root }) : options.runningBundleDigest;
     const updateUpdater = runningBundleDigest !== bundle.bundleDigest;
@@ -988,6 +1006,8 @@ async function runAttendedCoreV1({ root, commit, accounts, fresh, write, ports, 
       for (const target of [staged.updater?.target, staged.release.target].filter(Boolean))
         await retireStagedTarget(root, target, `${target}.rolled-back-${commit.slice(0, 12)}`).catch(() => {});
     });
+    await readGatewayLocalCapabilityV1({ root, expectedRelease: `releases/${release.releaseId}`,
+      manifestDigest: release.manifestDigest });
     // Persist all four old pointers before the first link changes. The planned
     // record is also the recovery receipt if the switch never returns.
     switchResult = { oldCurrent: await pointer(root, "current"), oldPrevious: await pointer(root, "previous"),

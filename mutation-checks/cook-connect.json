@@ -295,36 +295,36 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if (error?.code === \"EEXIST\") throw new Error(`Another unlock check is already running for ${name}.`);",
-    "replace": "    if (false) throw new Error(`Another unlock check is already running for ${name}.`);",
+    "find": "      if (error?.code === \"EEXIST\") throw new Error(`Another unlock check is already running for ${name}.`);",
+    "replace": "      if (false) throw new Error(`Another unlock check is already running for ${name}.`);",
     "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
     "why": "concurrent unlock callers lose through one explicit election instead of racing directory removal"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (clock() - observed.mtimeMs < staleMs)\n    throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);",
-    "replace": "  if (false)\n    throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);",
+    "find": "    if (clock() - observed.mtimeMs < staleMs)\n      throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);",
+    "replace": "    if (false)\n      throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);",
     "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
     "why": "unlock never removes the fresh publication or release gap of a running connector"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if ((await readdir(lockPath)).length !== 0)\n      throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);",
-    "replace": "    if (false)\n      throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);",
+    "find": "      if ((await readdir(lockPath)).length !== 0)\n        throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);",
+    "replace": "      if (false)\n        throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);",
     "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
     "why": "unlock refuses a lock directory that still names an owner"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "      if (await sameProcess(contenderPid, contenderIdentity, isPidAlive, inspectProcessIdentity))\n        throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);",
-    "replace": "      if (false)\n        throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);",
+    "find": "        if (await sameProcess(contenderPid, contenderIdentity, isPidAlive, inspectProcessIdentity))\n          throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);",
+    "replace": "        if (false)\n          throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);",
     "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
     "why": "unlock refuses while the elected connector contender is still alive"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if (String(current.dev) !== String(observed.dev) || String(current.ino) !== String(observed.ino)\n      || !current.isDirectory() || (await readdir(lockPath)).length !== 0)",
-    "replace": "    if (false)",
+    "find": "      if (String(current.dev) !== String(observed.dev) || String(current.ino) !== String(observed.ino)\n        || !current.isDirectory() || (await readdir(lockPath)).length !== 0)",
+    "replace": "      if (false)",
     "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
     "why": "unlock rechecks the exact empty directory generation immediately before removal"
   },

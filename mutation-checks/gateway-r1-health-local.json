@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/updater/v1/install/gateway-local-capability.mjs",
+    "find": "      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.uid !== uid\n        || (before.mode & 0o222) !== 0 || before.size < 1 || before.size > limit) refuse();",
+    "replace": "      if (false) refuse();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^old updater installs R1 without moving the gateway$' tests/gateway-rollback-reboot.test.mjs",
+    "why": "The real installed R1 invocation must refuse a non-root target before any health request; lead-run practice VM with OLD fixture and reviewed controller adapter."
+  }
+]

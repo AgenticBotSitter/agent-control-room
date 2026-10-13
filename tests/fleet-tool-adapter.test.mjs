@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { createPrivateNodeTool } from "./support/private-node-tool.mjs";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 import { RELEASE_TRUST_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
@@ -14,11 +15,400 @@ import { RELEASE_TRUST_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
 const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
   digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
 
+let privateToolDirectory, privateTool;
+test.after(async () => {
+  if (privateToolDirectory) await rm(privateToolDirectory, { recursive: true, force: true });
+});
+
+async function workspaceNodeTool(dir) {
+  privateTool ??= (async () => {
+    privateToolDirectory = await mkdtemp(join(tmpdir(), "fleet-tool-runtime-"));
+    return createPrivateNodeTool(privateToolDirectory);
+  })();
+  const path = join(dir, "node-tool");
+  // Workspaces have private names and directories, but share one immutable copy.
+  // Never link the installed executable: its owner/mode may be unsafe for tools.
+  await link(await privateTool, path);
+  return path;
+}
+
+// Setup bounds diagnose a missing observation; they never release a gate.
+async function waitForToolSignal(signal, message, { timeoutMs = 10_000 } = {}) {
+  let timer;
+  try {
+    return await Promise.race([signal, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new assert.AssertionError({ message })), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function waitForToolState(observe, message, options = {}) {
+  let finished = false;
+  try {
+    await waitForToolSignal((async () => {
+      while (!finished && !await observe()) {
+        await new Promise(done => setImmediate(done));
+      }
+    })(), message, options);
+  } finally { finished = true; }
+}
+
+// One hook owns process retirement and workspace removal. A removal error must
+// never prevent killing/reaping another child, or leave a writer racing rm.
+const resources = new WeakMap();
+function toolResources(t) {
+  let state = resources.get(t);
+  if (!state) {
+    state = { children: [], removals: [] };
+    resources.set(t, state);
+    t.after(() => cleanupToolResources(t));
+  }
+  return state;
+}
+function removeToolWorkspace(t, remove) {
+  toolResources(t).removals.push(remove);
+}
+function trackToolProcess(t, child) {
+  const closed = new Promise(done => child.once("close", done));
+  toolResources(t).children.push({ child, closed });
+  return closed;
+}
+async function cleanupToolProcesses(state) {
+  const children = state.children.splice(0);
+  const results = await Promise.allSettled(children.map(async ({ child, closed }) => {
+    try {
+      if (child.pid) process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+    } catch (error) { if (error?.code !== "ESRCH") throw error; }
+    finally { await closed; }
+  }));
+  const failure = results.find(result => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
+async function cleanupToolResources(t) {
+  const state = resources.get(t);
+  if (!state) return;
+  try { await cleanupToolProcesses(state); }
+  finally {
+    const results = await Promise.allSettled(state.removals.splice(0).map(remove => remove()));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure) throw failure.reason;
+  }
+}
+
+async function waitForProcessGone(pid, message) {
+  await waitForToolState(() => {
+    try { process.kill(pid, 0); return false; }
+    catch (error) { if (error?.code !== "ESRCH") throw error; return true; }
+  }, message);
+  assert.throws(() => process.kill(pid, 0), /ESRCH/u, message);
+}
+
+
 async function workspace(t) {
   const dir = await mkdtemp(join(tmpdir(), "fleet-tool-adapter-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  removeToolWorkspace(t, () => rm(dir, { recursive: true, force: true, maxRetries: 3 }));
+  await workspaceNodeTool(dir);
   return dir;
 }
+
+test("workspaces share one private executable while keeping their files isolated", async t => {
+  const first = await workspace(t), second = await workspace(t);
+  const a = await stat(join(first, "node-tool")), b = await stat(join(second, "node-tool"));
+  assert.deepEqual([a.dev, a.ino], [b.dev, b.ino], "workspaces reuse the private executable copy");
+  assert.equal(a.mode & 0o777, 0o700, "the shared executable stays private");
+  const installed = await stat(process.execPath);
+  assert.notDeepEqual([a.dev, a.ino], [installed.dev, installed.ino], "the installed executable is not linked");
+  await writeFile(join(first, "workspace-only"), "first");
+  await assert.rejects(readFile(join(second, "workspace-only")), { code: "ENOENT" });
+});
+
+async function readyTool(t, script, marker, heartbeat, { stdin = "ignore", control = false, observation = () => {}, startProcess = nodeSpawn, clock = () => performance.now() } = {}) {
+  const child = startProcess(join(dirname(script), "node-tool"), [script], {
+    env: {}, shell: false, detached: process.platform !== "win32", stdio: [stdin, "pipe", "pipe", ...(control ? ["pipe"] : [])],
+  });
+  let failure;
+  child.on("error", error => { failure = error; });
+  trackToolProcess(t, child);
+  // The adapter's clock measures killing a live group, not two Node startups.
+  // Setup observes the real child files; it never creates readiness itself.
+  const deadline = clock() + 10_000;
+  while (true) {
+    if (failure) throw failure;
+    assert.ok(child.exitCode === null && child.signalCode === null, "the fixture must stay alive until adapter handoff");
+    try {
+      const values = await Promise.all([readFile(marker), readFile(heartbeat)]);
+      observation(values);
+      const pid = Number(values[0].toString());
+      if (Number.isSafeInteger(pid) && pid > 0 && values[1].length > 0) break;
+    }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    assert.ok(clock() < deadline, "the tool must write its PID and heartbeat within the setup bound");
+    await new Promise(done => setTimeout(done, 10));
+  }
+  return child;
+}
+
+// Capture a real exit before testing the pipe-drain seam. A busy parent may
+// take longer to exit than the adapter's timeout even after its child is ready.
+// The caller replays this recorded tuple after the adapter installs listeners;
+// stdout/stderr remain the real pipes held open by the escaped descendant.
+async function exitedTool(child, release = () => child.stdin.end()) {
+  let timer, observed;
+  const exited = new Promise((resolveExit, rejectExit) => {
+    observed = (code, signal) => resolveExit([code, signal]);
+    child.once("exit", observed);
+    timer = setTimeout(() => rejectExit(new Error("The fixture must exit within the original 10s setup bound.")), 10_000);
+  });
+  try {
+    release();
+    return await exited;
+  } finally {
+    clearTimeout(timer);
+    child.off("exit", observed);
+  }
+}
+
+test("exit barrier waits for the real parent exit before drain handoff", async t => {
+  const dir = await workspace(t), marker = join(dir, "pid"), ready = join(dir, "ready");
+  const gated = join(dir, "gated");
+  const script = await executable(dir, `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+writeFileSync(${JSON.stringify(ready)}, "ready");
+process.stdin.on("data", bytes => {
+  if (bytes.toString() === "exit") process.exit(0);
+  writeFileSync(${JSON.stringify(gated)}, "gated");
+});`);
+  const child = await readyTool(t, script, marker, ready, { stdin: "pipe" });
+  let handedOff = false;
+  const pending = exitedTool(child, () => child.stdin.write("gate")).then(exit => { handedOff = true; return exit; });
+  try {
+    await waitForToolState(async () => {
+      try { await readFile(gated); return true; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; return false; }
+    }, "the real parent must reach its exit gate");
+    await new Promise(done => setImmediate(done));
+    assert.equal(handedOff, false, "drain handoff must wait for actual exit, not merely readiness");
+  } finally {
+    child.stdin.end("exit");
+    await pending;
+  }
+  assert.deepEqual(await pending, [0, null], "exit arguments come from the real parent");
+});
+
+test("readiness barrier waits for the real tool PID and heartbeat before handoff", async t => {
+  const dir = await workspace(t), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat");
+  const started = join(dir, "started"), release = join(dir, "release");
+  const script = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(started)}, "started");
+const timer = setInterval(() => {
+  if (!existsSync(${JSON.stringify(release)})) return;
+  writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+  writeFileSync(${JSON.stringify(heartbeat)}, "ready");
+  clearInterval(timer); setInterval(() => {}, 1000);
+}, 10);`);
+  let handedOff = false;
+  const pending = readyTool(t, script, marker, heartbeat).then(child => { handedOff = true; return child; });
+  pending.catch(() => {}); // Handle setup refusal while observing the startup gate.
+  try {
+    const deadline = performance.now() + 10_000;
+    while (true) {
+      try { await readFile(started); break; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; }
+      assert.ok(performance.now() < deadline, "the real tool must reach its startup gate");
+      await new Promise(done => setTimeout(done, 10));
+    }
+    await new Promise(done => setImmediate(done));
+    assert.equal(handedOff, false, "handoff must wait for PID and heartbeat, not merely spawn");
+  } finally {
+    // Release the live fixture even when the readiness assertion fails.
+    await writeFile(release, "release");
+    await pending;
+  }
+  assert.equal(handedOff, true);
+  assert.equal(await readFile(heartbeat, "utf8"), "ready");
+});
+
+test("readiness barrier refuses partial PID and heartbeat files", async t => {
+  for (const [name, partialPid, partialHeartbeat, expectedPublications] of [
+    ["partial PID", true, false, [2, 1]], ["partial heartbeat", false, true, [1, 2]], ["both partial", true, true, [2, 2]],
+  ]) await t.test(name, async sub => {
+    const dir = await workspace(sub), marker = join(dir, "pid"), heartbeat = join(dir, "heartbeat"), started = join(dir, "partial-started"), completed = join(dir, "partial-completed");
+    const completionRelease = join(dir, "partial-release");
+    const script = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
+  const publications = [0, 0];
+  const publish = (index, path, value) => { writeFileSync(path, value); publications[index] += 1; };
+  const timer = setInterval(() => {
+    if (!existsSync(${JSON.stringify(completionRelease)})) return;
+    clearInterval(timer);
+    // Complete only partial fields: rewriting ready content can truncate it
+    // after the reader has already observed a valid PID/heartbeat pair.
+    if (${JSON.stringify(partialPid)}) publish(0, ${JSON.stringify(marker)}, String(process.pid));
+    if (${JSON.stringify(partialHeartbeat)}) publish(1, ${JSON.stringify(heartbeat)}, "ready");
+    writeFileSync(${JSON.stringify(completed)}, JSON.stringify(publications));
+  }, 10);
+  publish(0, ${JSON.stringify(marker)}, ${JSON.stringify(partialPid)} ? "" : String(process.pid));
+  publish(1, ${JSON.stringify(heartbeat)}, ${JSON.stringify(partialHeartbeat)} ? "" : "ready");
+  writeFileSync(${JSON.stringify(started)}, String(process.pid)); process.stdin.resume();`);
+    let handedOff = false, pid, observedPartial, readinessError;
+    const partialRead = new Promise(done => { observedPartial = done; });
+    const pending = readyTool(sub, script, marker, heartbeat, { stdin: "pipe", observation: values => {
+      if ((values[0].length === 0) === partialPid && (values[1].length === 0) === partialHeartbeat) observedPartial();
+    } }).then(child => { handedOff = true; return child; });
+    pending.catch(() => {}); // A missing file must fail the body, not become an unhandled rejection.
+    try {
+      await waitForToolState(async () => {
+        try { pid = Number(await readFile(started, "utf8")); return Number.isSafeInteger(pid) && pid > 0; }
+        catch (error) { if (error?.code !== "ENOENT") throw error; return false; }
+      }, "the real child must reach the partial-write gate");
+      await waitForToolSignal(Promise.race([partialRead, pending]),
+        "the real child must expose its partial readiness before the setup bound");
+      await new Promise(done => setImmediate(done));
+      assert.equal(handedOff, false, "partial readiness files cannot release handoff before their real contents arrive");
+    } catch (error) { readinessError = error; throw error; }
+    finally {
+      // A persistent release survives delayed scheduling; no signal is needed.
+      await writeFile(completionRelease, "release");
+      await pending.catch(error => {
+        if (!readinessError) throw new assert.AssertionError({
+          message: "the partial-write gate was observed but completion stimulus did not publish readiness",
+          cause: error,
+        });
+      });
+    }
+    let actualPublications;
+    await waitForToolState(async () => {
+      try { actualPublications = JSON.parse(await readFile(completed, "utf8")); return true; }
+      catch (error) { if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; return false; }
+    }, "the real child must acknowledge completed partial publication within the setup bound");
+    assert.deepEqual(actualPublications, expectedPublications,
+      "already-ready fixture content must never be republished after handoff");
+    assert.equal(await readFile(marker, "utf8"), String(pid));
+    assert.equal(await readFile(heartbeat, "utf8"), "ready");
+  });
+});
+
+test("state barrier waits for observation and process disappearance", async t => {
+  let ready = false, settled = false;
+  const pending = waitForToolState(() => ready, "test state must become ready").then(() => { settled = true; });
+  try {
+    await new Promise(done => setImmediate(done));
+    assert.equal(settled, false, "state barrier cannot release before its independent observation");
+  } finally { ready = true; await pending; }
+
+  const dir = await workspace(t), pidFile = join(dir, "pid"), initialized = join(dir, "initialized");
+  const script = await executable(dir, `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+writeFileSync(${JSON.stringify(initialized)}, "initialized"); process.stdin.resume();`);
+  const child = await readyTool(t, script, pidFile, initialized, { stdin: "pipe" });
+  let gone = false;
+  const disappearance = waitForProcessGone(child.pid, "the owned process must disappear").then(() => { gone = true; },
+    error => { gone = true; return error; });
+  try {
+    await new Promise(done => setImmediate(done));
+    assert.equal(gone, false, "process barrier cannot release while the owned child is alive");
+  } finally {
+    child.stdin.end();
+    const result = await disappearance;
+    assert.equal(result, undefined, "the owned process must disappear");
+  }
+});
+
+
+test("state barrier bounds an unresolved asynchronous observation", async () => {
+  let release, observer;
+  const observation = new Promise(done => { release = done; });
+  const pending = waitForToolState(() => observation, "unresolved readiness observation exceeded its bound", { timeoutMs: 50 })
+    .then(() => ({ refused: false }), error => ({ refused: true, error }));
+  try {
+    const result = await Promise.race([pending, new Promise(done => { observer = setTimeout(() => done({ refused: false }), 1000); })]);
+    assert.equal(result.refused, true, "an unresolved observation must fail at its setup bound");
+    assert.equal(result.error.message, "unresolved readiness observation exceeded its bound");
+  } finally { clearTimeout(observer); release(true); await pending; }
+});
+
+test("signal barrier refuses a missing acknowledgement and propagates preparation failure", async () => {
+  let release, observer;
+  const signal = new Promise(done => { release = done; });
+  const pending = waitForToolSignal(signal, "missing work acknowledgement exceeded its bound", { timeoutMs: 50 })
+    .then(() => ({ refused: false }), error => ({ refused: true, error }));
+  try {
+    const result = await Promise.race([pending, new Promise(done => { observer = setTimeout(() => done({ refused: false }), 1000); })]);
+    assert.equal(result.refused, true, "a missing acknowledgement must fail at its setup bound");
+    assert.equal(result.error.message, "missing work acknowledgement exceeded its bound");
+    const error = new Error("recorded preparation refusal");
+    await assert.rejects(waitForToolSignal(Promise.reject(error), "missing acknowledgement"), value => value === error);
+  } finally { clearTimeout(observer); release(); await pending; }
+});
+
+test("readiness checks propagate spawn failure and refuse a signal-dead parent", async t => {
+  const dir = await workspace(t), marker = join(dir, "missing.pid"), heartbeat = join(dir, "missing.ready");
+  const script = await executable(dir, "process.stdin.resume();");
+  await assert.rejects(readyTool(t, script, marker, heartbeat, { stdin: "pipe", startProcess: (_command, args, options) =>
+    nodeSpawn(join(dir, "absent-node-tool"), args, options) }), { code: "ENOENT" },
+    "the original real spawn error must reach the readiness caller");
+  await assert.rejects(readyTool(t, script, marker, heartbeat, { stdin: "pipe", startProcess: (...args) => {
+    const child = nodeSpawn(...args);
+    child.once("spawn", () => child.kill("SIGKILL"));
+    return child;
+  } }), { message: "the fixture must stay alive until adapter handoff" },
+  "a signal-dead parent must fail its liveness check before handoff");
+});
+
+test("readiness setup bound refuses missing publication and permits a fresh retry", async t => {
+  const dir = await workspace(t), marker = join(dir, "pid"), heartbeat = join(dir, "ready"), release = join(dir, "release");
+  const script = await executable(dir, `import { existsSync, writeFileSync } from "node:fs";
+process.stdin.resume(); const timer = setInterval(() => {
+  if (!existsSync(${JSON.stringify(release)})) return;
+  writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+  writeFileSync(${JSON.stringify(heartbeat)}, "ready"); clearInterval(timer);
+}, 10);`);
+  let elapsed = 0;
+  const pending = readyTool(t, script, marker, heartbeat, { stdin: "pipe", clock: () => elapsed })
+    .then(child => ({ child }), error => ({ error }));
+  // A virtual monotonic clock crosses the independently specified 10s bound.
+  // A separate observer releases the real fixture even when this guard is disabled.
+  elapsed = 10_001;
+  let result;
+  try {
+    result = await waitForToolSignal(pending, "the readiness bound did not refuse", { timeoutMs: 1_000 })
+      .catch(() => ({}));
+  } finally { await writeFile(release, "release"); await pending; }
+  assert.equal(result.error?.message, "the tool must write its PID and heartbeat within the setup bound",
+    "missing publication must fail the readiness setup bound");
+  await cleanupToolProcesses(resources.get(t));
+  await rm(marker, { force: true }); await rm(heartbeat, { force: true });
+  const retry = await executable(dir, `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, String(process.pid)); writeFileSync(${JSON.stringify(heartbeat)}, "ready"); process.stdin.resume();`);
+  const child = await readyTool(t, retry, marker, heartbeat, { stdin: "pipe" });
+  assert.equal(await readFile(marker, "utf8"), String(child.pid), "fresh readiness retry observes its own producer");
+});
+
+test("workspace removal refusal follows retirement of every live fixture writer", async t => {
+  const dir = await workspace(t), marker = join(dir, "writer.pid"), heartbeat = join(dir, "writer.ready");
+  const script = await executable(dir, `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, String(process.pid)); writeFileSync(${JSON.stringify(heartbeat)}, "ready");
+process.stdin.resume(); setInterval(() => writeFileSync(${JSON.stringify(join(dir, "writing"))}, "writing"), 1);`);
+  const hooks = [], context = { after: hook => hooks.push(hook) };
+  let liveAtRemoval, removalEntered = false;
+  const child = await readyTool(context, script, marker, heartbeat, { stdin: "pipe" });
+  const refusal = Object.assign(new Error("recorded workspace removal refusal"), { code: "ENOTEMPTY" });
+  removeToolWorkspace(context, async () => {
+    removalEntered = true;
+    try { process.kill(child.pid, 0); liveAtRemoval = true; }
+    catch (error) { if (error?.code !== "ESRCH") throw error; liveAtRemoval = false; }
+    throw refusal;
+  });
+  try {
+    await assert.rejects(hooks[0](), error => error === refusal);
+    assert.equal(removalEntered, true, "removal refusal was reached");
+    assert.equal(liveAtRemoval, false, "live fixture writer must be retired before workspace removal can refuse");
+    assert.throws(() => process.kill(child.pid, 0), /ESRCH/u, "removal failure cannot skip fixture retirement");
+  } finally {
+    // Independent safety cleanup also runs when retirement is deliberately disabled.
+    try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error?.code !== "ESRCH") throw error; }
+    child.stdin.destroy(); await cleanupToolProcesses(resources.get(context));
+  }
+});
 
 async function executable(dir, source) {
   const path = join(dir, `tool-${Math.random().toString(16).slice(2)}.mjs`);
@@ -30,7 +420,7 @@ async function executable(dir, source) {
 const entry = (script, extra = {}) => ({
   id: "whisper_local",
   capability: "tool.whisper",
-  executable: process.execPath,
+  executable: join(dirname(script), "node-tool"),
   arguments: [script, "{input:audio}", "{output:transcript}"],
   timeoutMs: 2_000,
   maxOutputBytes: 64 * 1024,
@@ -76,6 +466,7 @@ test("task data cannot select argv: inputs are staged and unknown adapter ids ar
 const [inputPath, outputDir] = process.argv.slice(2);
 writeFileSync(outputDir + "/argv.json", JSON.stringify({ argv: process.argv.slice(2), body: readFileSync(inputPath, "utf8") }));
 console.log("transcribed");`);
+  await assert.doesNotReject(async () => {
   const registry = await connector.loadToolAdapters(await manifest(dir, [entry(script)]));
   let spawned = 0;
   const runner = connector.createLocalToolAdapterRunner(registry, { spawner: (...args) => { spawned += 1;
@@ -95,6 +486,7 @@ console.log("transcribed");`);
   assert.match(observed.argv[0], /control-room-tool-.*\/inputs\/audio\/[A-Za-z0-9._-]+$/u);
   assert.match(observed.argv[1], /control-room-tool-.*\/outputs\/transcript$/u);
   assert.equal(observed.argv.join(" ").includes("/bin/sh"), false);
+  }, "the test-owned private executable must load independently of interpreter permissions");
 });
 
 test("timeout and stop kill the process group, including a spawned child", { timeout: 20_000 }, async t => {
@@ -106,11 +498,13 @@ import { writeFileSync } from "node:fs";
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(heartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
-writeFileSync(${JSON.stringify(marker)}, String(child.pid));
 process.on("SIGTERM", () => {});
+writeFileSync(${JSON.stringify(marker)}, String(child.pid));
 setInterval(() => {}, 1000);`);
   const timed = await connector.loadToolAdapters(await manifest(dir, [entry(script, { timeoutMs: 150 })], 1, "timed.json"));
-  await assert.rejects(connector.createLocalToolAdapterRunner(timed).execute(input()), error => error?.code === "tool_adapter_timeout");
+  const timedChild = await readyTool(t, script, marker, heartbeat);
+  await assert.rejects(connector.createLocalToolAdapterRunner(timed, { spawner: () => timedChild }).execute(input()),
+    error => error?.code === "tool_adapter_timeout");
   const childPid = Number(await readFile(marker, "utf8"));
   t.after(() => { try { process.kill(childPid, "SIGKILL"); } catch {} });
   const afterTimeout = await readFile(heartbeat, "utf8");
@@ -124,14 +518,20 @@ import { writeFileSync } from "node:fs";
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
 const marker = ${JSON.stringify(stoppedHeartbeat)}; process.on("SIGTERM", () => {});
 writeFileSync(marker, String(Date.now())); setInterval(() => writeFileSync(marker, String(Date.now())), 25);`)}], { stdio: "ignore" });
-writeFileSync(${JSON.stringify(stoppedMarker)}, String(child.pid));
 process.on("SIGTERM", () => {});
+writeFileSync(${JSON.stringify(stoppedMarker)}, String(child.pid));
 setInterval(() => {}, 1000);`);
   const stoppable = await connector.loadToolAdapters(await manifest(dir, [entry(stoppedScript, { timeoutMs: 10_000 })], 1, "stop.json"));
   const controller = new AbortController();
-  const pending = connector.createLocalToolAdapterRunner(stoppable).execute(input(), controller.signal);
-  while (true) { try { await Promise.all([readFile(stoppedMarker), readFile(stoppedHeartbeat)]); break; }
-    catch { await new Promise(done => setTimeout(done, 10)); } }
+  const stoppedChild = await readyTool(t, stoppedScript, stoppedMarker, stoppedHeartbeat);
+  let handedOff;
+  const handoff = new Promise(done => { handedOff = done; });
+  const pending = connector.createLocalToolAdapterRunner(stoppable, { spawner: () => {
+    // This runs after the adapter installs its listeners in the same turn.
+    queueMicrotask(handedOff);
+    return stoppedChild;
+  } }).execute(input(), controller.signal);
+  await Promise.race([handoff, pending.then(() => assert.fail("the live tool must reach adapter handoff"))]);
   controller.abort();
   await assert.rejects(pending, error => error?.code === "tool_adapter_aborted");
   const stoppedPid = Number(await readFile(stoppedMarker, "utf8"));
@@ -288,16 +688,129 @@ test("overflow terminates once, an escaped pipe holder is bounded, and same-grou
   assert.equal(kills.filter(signal => signal === "SIGTERM").length, 1, "overflow has one termination attempt");
 
   const escapedPid = join(dir, "escaped.pid");
+  const escapedReady = join(dir, "escaped.ready");
   const escaped = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 5000)"], { detached: true, stdio: "inherit" });
-writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid)); process.exit(0);`);
-  const started = Date.now();
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(escapedReady)}, "ready");
+process.stdin.on("data", () => {
+  process.stdout.write("held"); process.stderr.write("held");
+});
+process.stdin.once("end", () => process.exit(0));`)}], { detached: true, stdio: [3, "inherit", "inherit"] });
+writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid));
+process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
+  const escapedRegistry = await connector.loadToolAdapters(await manifest(dir,
+    [entry(escaped, { timeoutMs: 1_500 })], 1, "escaped.json"));
   try {
-    await assert.rejects(connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
-      [entry(escaped, { timeoutMs: 1_500 })], 1, "escaped.json"))).execute(input()),
-      error => error?.code === "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
-    assert.ok(Date.now() - started < 700, "an escaped stdout holder cannot wedge execute");
+    const escapedChild = await readyTool(t, escaped, escapedPid, escapedReady, { stdin: "pipe", control: true });
+    let controlError;
+    // Record transport errors as test data, so teardown can report a named
+    // assertion rather than a late uncaught socket error.
+    escapedChild.stdio[3].on("error", error => { controlError = error; });
+    const exit = await exitedTool(escapedChild);
+    assert.deepEqual(exit, [0, null], "the real escaped-pipe parent exits successfully before handoff");
+    // Read fresh bytes after the parent exits: paused streams can report
+    // readableEnded=false even after EOF, so that property alone proves nothing.
+    async function heldPipe(stream) {
+      let timer, data, end;
+      try {
+        return await new Promise(resolve => {
+          data = () => resolve(true);
+          end = () => resolve(false);
+          stream.once("data", data); stream.once("end", end);
+          timer = setTimeout(() => resolve(false), 10_000);
+          stream.resume();
+        });
+      } finally {
+        clearTimeout(timer);
+        stream.off("data", data); stream.off("end", end);
+        stream.pause();
+      }
+    }
+    const heldReply = Promise.all([heldPipe(escapedChild.stdout), heldPipe(escapedChild.stderr)]);
+    escapedChild.stdio[3].write("probe");
+    const held = await heldReply;
+    assert.equal(held[0], true, "the real escaped stdout pipe produces bytes after parent exit at handoff");
+    assert.equal(held[1], true, "the real escaped stderr pipe produces bytes after parent exit at handoff");
+    // Control only the timeout registered synchronously by the product's exit
+    // listener; real pipes, filesystem work and all other timers stay real.
+    // This separates the declared deadline from scheduling delays on CI.
+    // Accepted LOW gap (CR-E078): keep round-6 wall-clock accounting.
+    // The separate virtual clock proves the 250 ms drain bound; a post-drain
+    // wedge of 450–700 ms remains unguarded pending a load-safe tighter check.
+    const declaredDrainMs = 250;
+    let registeringDrain = false, elapsed = 0, started, handoff;
+    const drainTimers = new Set();
+    const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+    const timeoutMock = t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => {
+      if (!registeringDrain) return realSetTimeout(callback, delay, ...args);
+      const timer = { at: elapsed + delay, callback: () => callback(...args) };
+      drainTimers.add(timer); return timer;
+    });
+    const clearMock = t.mock.method(globalThis, "clearTimeout", timer => {
+      if (!drainTimers.delete(timer)) realClearTimeout(timer);
+    });
+    const handedOff = new Promise(done => { handoff = done; });
+    const advanceDrain = ms => {
+      elapsed += ms;
+      for (const timer of drainTimers) if (timer.at <= elapsed) {
+        drainTimers.delete(timer); timer.callback();
+      }
+    };
+    const pipesClosed = Promise.all([escapedChild.stdout, escapedChild.stderr, escapedChild.stdio[3]].map(stream =>
+      new Promise(done => stream.once("close", done))));
+    const pending = connector.createLocalToolAdapterRunner(escapedRegistry, { spawner: () => {
+      assert.equal(escapedChild.exitCode, 0, "drain clock starts only after a real parent exit");
+      // Preserve the base execute guard's origin at adapter handoff, including
+      // time the product takes to attach its listeners after the spawner returns.
+      started = performance.now();
+      // Replay the recorded exit; the holder keeps the real pipes open until
+      // the test explicitly releases its attached control pipe below.
+      queueMicrotask(() => {
+        registeringDrain = true;
+        try { escapedChild.emit("exit", ...exit); }
+        finally { registeringDrain = false; handoff(); }
+      });
+      return escapedChild;
+    } }).execute(input()).then(value => ({ value }), error => ({ error }));
+    let handoffError;
+    try {
+      await waitForToolSignal(Promise.race([handedOff, pending.then(result => {
+        throw result.error ?? new Error("execute settled before drain handoff");
+      })]), "the recorded parent exit must reach the drain listener");
+      assert.equal(drainTimers.size, 1, "the real exit listener must declare one drain deadline");
+      advanceDrain(declaredDrainMs - 1);
+      await new Promise(done => setImmediate(done));
+      assert.equal(escapedChild.stdout.destroyed || escapedChild.stderr.destroyed, false,
+        "the product must preserve both held pipes before the declared drain deadline");
+      advanceDrain(1);
+      await new Promise(done => setImmediate(done));
+      assert.equal(escapedChild.stdout.destroyed, true,
+        "escaped stdout must close at the independently declared 250ms drain bound");
+      assert.equal(escapedChild.stderr.destroyed, true,
+        "escaped stderr must close at the independently declared 250ms drain bound");
+      const result = await pending;
+      assert.equal(result.error?.code, "tool_adapter_failed", "unclosed pipes cannot submit truncated output");
+      assert.ok(performance.now() - started < 700, "an escaped stdout holder cannot wedge execute");
+    } catch (error) { handoffError = error; throw error; }
+    finally {
+      // Also release a live parent when a broken exit barrier is refused.
+      // Preserve the first assertion if later pipe cleanup fails too.
+      escapedChild.stdin.end();
+      // Release controls natural EOF. It never races a fixture lifetime timer.
+      escapedChild.stdio[3].end();
+      // Close our unused read half before group retirement. Otherwise a
+      // holder exiting with unread control bytes can reset the duplex socket.
+      escapedChild.stdio[3].destroy();
+      advanceDrain(20_000);
+      timeoutMock.mock.restore(); clearMock.mock.restore();
+      await pending;
+      try {
+        await waitForToolSignal(pipesClosed, "both real inherited pipes must close after controlled release");
+        assert.equal(controlError, undefined, "controlled holder release must not leave a transport error");
+      } catch (error) { if (!handoffError) throw error; }
+    }
+
   } finally {
     try {
       const pid = Number(await readFile(escapedPid, "utf8"));
@@ -307,16 +820,28 @@ writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid)); process.exit(0)
     catch (error) { if (!["ENOENT", "ESRCH"].includes(error?.code)) throw error; }
   }
 
-  const groupedPid = join(dir, "grouped.pid");
+  const groupedPid = join(dir, "grouped.pid"), groupedReady = join(dir, "grouped.ready");
   const grouped = await executable(dir, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-writeFileSync(${JSON.stringify(groupedPid)}, String(child.pid)); process.exit(0);`);
-  await connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
-    [entry(grouped, { timeoutMs: 1_000 })], 1, "grouped.json"))).execute(input());
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(`const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(groupedReady)}, "ready"); setInterval(() => {}, 1000);`)}], { stdio: ["pipe", "ignore", "ignore"] });
+writeFileSync(${JSON.stringify(groupedPid)}, String(child.pid));
+process.stdin.resume(); process.stdin.once("end", () => process.exit(0));`);
+  const groupedRegistry = await connector.loadToolAdapters(await manifest(dir,
+    [entry(grouped, { timeoutMs: 1_000 })], 1, "grouped.json"));
+  const groupedChild = await readyTool(t, grouped, groupedPid, groupedReady, { stdin: "pipe" });
+  const groupedClosed = new Promise(done => groupedChild.once("close", (code, signal) => done([code, signal])));
+  const groupedExit = await exitedTool(groupedChild);
+  const groupedClose = await waitForToolSignal(groupedClosed, "the same-group pipes must close within the setup bound");
+  assert.deepEqual(groupedExit, [0, null], "the real same-group parent exits successfully before handoff");
   const pid = Number(await readFile(groupedPid, "utf8"));
-  await new Promise(done => setTimeout(done, 40));
-  assert.throws(() => process.kill(pid, 0), /ESRCH/u, "same-group child is gone before execute returns");
+  assert.doesNotThrow(() => process.kill(pid, 0), "the real same-group descendant is alive before product termination");
+  await assert.doesNotReject(connector.createLocalToolAdapterRunner(groupedRegistry, { spawner: () => {
+    assert.equal(groupedChild.exitCode, 0, "same-group clock starts only after a real parent exit");
+    queueMicrotask(() => { groupedChild.emit("exit", ...groupedExit); groupedChild.emit("close", ...groupedClose); });
+    return groupedChild;
+  } }).execute(input()), "an observed same-group exit and close must succeed");
+  await waitForProcessGone(pid, "same-group child is gone after group termination");
 });
 
 test("rechecks executable identity, refuses output hard links, and cleanup failure still releases the slot", async t => {
