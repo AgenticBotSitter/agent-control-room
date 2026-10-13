@@ -11,6 +11,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:ci-component-shards": "node scripts/run-tests-with-quarantine.mjs --test tests/ci-component-shards.test.mjs",
     "test-runner:serve": "node scripts/test-runner/server.mjs",
     "test:test-runner": "node scripts/run-tests-with-quarantine.mjs --test tests/test-runner-service.test.mjs tests/test-runner-disconnect.test.mjs",
     "test:r7cfix-harness": "node scripts/run-tests-with-quarantine.mjs --test --test-timeout=30000 tests/r7cfix-mutation-classifier.test.mjs",
