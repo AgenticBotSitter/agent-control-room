@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -13,7 +13,13 @@ const step = workflow.slice(start, workflow.indexOf("      - uses:", start));
 const body = step.split("        run: |\n")[1].split("\n").map(line => line.slice(10)).join("\n");
 
 function git(root, ...args) {
-  const result = spawnSync("git", args, { cwd: root, encoding: "utf8", timeout: 10_000 });
+  // Disposable input commits use a role identity, independent of host/CI config.
+  // Branch commits retain the checkout's configured identity.
+  const result = spawnSync("git", args, {
+    cwd: root, encoding: "utf8", timeout: 10_000,
+    env: { ...process.env, GIT_AUTHOR_NAME: "the fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+      GIT_COMMITTER_NAME: "the fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" },
+  });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
@@ -50,11 +56,12 @@ function run(f, { branch = "cook/fu021", base = f.base, ref = "unrelated" } = {}
     f.write(script, source);
   }
   const outputPath = join(f.root, "step-output");
+  assert.equal(existsSync(outputPath), false, "fixture leaves product output absent");
   const result = spawnSync("bash", ["-c", body], {
     cwd: f.root, encoding: "utf8", timeout: 10_000,
     env: { ...process.env, HEAD_REF: branch, REF_NAME: ref, BASE_SHA: base, GITHUB_OUTPUT: outputPath },
   });
-  const output = result.status === 0 ? readFileSync(outputPath, "utf8") : "";
+  const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
   return { ...result, output };
 }
 
@@ -62,6 +69,7 @@ function refusal(result, expected, found) {
   assert.equal(result.status, 1, `mismatch must refuse: ${result.stdout}${result.stderr}`);
   assert.ok(result.stderr.includes(`expected '${expected}'`), result.stderr);
   assert.ok(result.stderr.includes(`found '${found}'`), result.stderr);
+  assert.equal(result.output, "", "refusal must not publish mutation-selection outputs");
 }
 
 test("matching changed manifest selects branch mutations", t => {
