@@ -78,16 +78,58 @@
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "    if (/^\\s*(?:if|elif|case|while|until|select|function)\\b|^\\s*\\w+\\s*\\(\\)\\s*\\{|\\\\\\s*$/mu.test(command)\n      || /^\\s*for\\b(?![^\\n]*;\\s*done\\s*$)/mu.test(command)) return [];",
-    "replace": "",
+    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
+    "replace": "        if (line === \"exit 0\") continue;\n        return [];",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable shell conditional rejection: macOS coverage refuses shell uname condition on a macOS job must fail against the independently authored uncovered path."
+    "why": "Disable whole-step refusal for early successful exit: named macOS coverage refuses early successful exit must fail against independent literal tests/private-pg.test.ts; complete assertion failure required."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "    return command.split(\"\\n\").filter(line =>\n      /^\\s*(?:pnpm\\s+(?:run\\s+)?[a-z][a-z0-9:.-]*|node\\s+scripts\\/ci\\/run-scripts-keep-going\\.mjs\\s+[a-z0-9:._ -]+|node\\s+(?:scripts\\/run-tests-with-quarantine\\.mjs|--test)\\s+[a-zA-Z0-9_=./ -]+)(?:\\s+\\|\\|\\s+[a-z_]+\\s*=\\s*\\$\\?)?\\s*$/u.test(line));",
-    "replace": "    return command.split(\"\\n\");",
+    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
+    "replace": "        if (line === \"cat <<'DOC'\" || line === \"DOC\") continue;\n        return [];",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
-    "why": "Disable proven-command filtering: macOS coverage refuses inline shell condition must fail against independently authored uncovered path."
+    "why": "Disable whole-step refusal for here-document prose: named macOS coverage refuses here-document prose must fail against independent literal tests/private-pg.test.ts; complete assertion failure required."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
+    "replace": "        if (line === \"false &&\") continue;\n        return [];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable whole-step refusal for multiline false and: named macOS coverage refuses multiline false and must fail against independent literal tests/private-pg.test.ts; complete assertion failure required."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "      if (line === \"(\") {\n        if (subshell) return [];",
+    "replace": "      if (line === \"(\") {\n        if (false) return [];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses nested subshell must fail against independently specified missing path. All bodies and cleanup must complete."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "if (!subshell || !capturesStatus) return [];",
+    "replace": "if (false) return [];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses unopened subshell must fail against independently specified missing path. All bodies and cleanup must complete."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "if (subshell || !capturesStatus || index !== lines.length - 1) return [];",
+    "replace": "if (false) return [];",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses early aggregate exit must fail against independently specified missing path. All bodies and cleanup must complete."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "    if (subshell) return [];\n    return lines.filter",
+    "replace": "    if (false) return [];\n    return lines.filter",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses unterminated subshell must fail against independently specified missing path. All bodies and cleanup must complete."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "        // Whole-step refusal: an unrecognized line can change whether any\n        // later line executes (exit, heredoc, chains, functions, loops, etc.).\n        return [];",
+    "replace": "        continue;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable structural/whole-step refusal: named macOS whole-step grammar refuses unknown trailing line must fail against independently specified missing path. All bodies and cleanup must complete."
   }
 ]

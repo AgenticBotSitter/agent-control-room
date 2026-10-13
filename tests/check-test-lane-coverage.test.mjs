@@ -164,11 +164,54 @@ for (const [name, workflow] of Object.entries({
   "unsupported condition": macJob.replace("      - run:", "      - if: contains(matrix.platform, 'mac')\n        run:"),
   "disabled job": macJob.replace("    runs-on:", "    if: false\n    runs-on:"),
   "unsupported node wrapper": macJob.replace("pnpm run test:pg", "node scripts/unknown.mjs pnpm run test:pg"),
+  "early successful exit": macJob.replace("pnpm run test:pg", "|\n          exit 0\n          pnpm run test:pg"),
+  "here-document prose": macJob.replace("pnpm run test:pg", "|\n          cat <<'DOC'\n          pnpm run test:pg\n          DOC"),
+  "multiline false and": macJob.replace("pnpm run test:pg", "|\n          false &&\n          pnpm run test:pg"),
   "inline shell condition": macJob.replace("pnpm run test:pg", "test $(uname -s) = Linux && pnpm run test:pg"),
 })) {
   test(`macOS coverage refuses ${name}`, () => {
     const root = pgFixture(linuxJob + workflow);
     try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+    finally { rmSync(root, { recursive: true }); }
+  });
+}
+
+// Unknown shell lines invalidate the entire step, including earlier commands.
+for (const [name, shell] of Object.entries({
+  "unknown trailing line": "pnpm run test:pg\nunknown",
+  "inline false or": "false || pnpm run test:pg",
+  "loop": "for item in one; do\npnpm run test:pg\ndone",
+  "case": "case x in y)\npnpm run test:pg\nesac",
+  "function": "f() {\npnpm run test:pg\n}",
+  "continuation": "false && \\\n pnpm run test:pg",
+  "unterminated subshell": "darwin_pg_status=0\n(\npnpm run test:pg",
+  "nested subshell": "darwin_pg_status=0\n(\n(\npnpm run test:pg\n) || darwin_pg_status=$?\n) || darwin_pg_status=$?",
+  "unopened subshell": "darwin_pg_status=0\npnpm run test:pg\n) || darwin_pg_status=$?",
+  "uncaptured subshell": "(\npnpm run test:pg\n) || darwin_pg_status=$?",
+  "early aggregate exit": 'darwin_pg_status=0\nexit "${darwin_pg_status}"\npnpm run test:pg',
+  "uninitialized aggregate exit": 'pnpm run test:pg\nexit "${darwin_pg_status}"',
+  "aggregate exit inside subshell": 'darwin_pg_status=0\n(\npnpm run test:pg\nexit "${darwin_pg_status}"\n) || darwin_pg_status=$?',
+  "unsafe environment assignment": "NODE_OPTIONS=--help\npnpm run test:pg",
+  "test command help argument": "pnpm run test:pg --help",
+})) {
+  test(`macOS whole-step grammar refuses ${name}`, () => {
+    const workflow = macJob.replace("pnpm run test:pg", "|\n" + shell.split("\n").map(line => "          " + line).join("\n"));
+    const root = pgFixture(linuxJob + workflow);
+    try { assert.deepEqual(findUncoveredTests(root), ["tests/private-pg.test.ts"]); }
+    finally { rmSync(root, { recursive: true }); }
+  });
+}
+
+for (const [name, shell] of Object.entries({
+  "comments and blank lines": "# if Linux\n\npnpm run test:pg\n# exit 0",
+  "environment and cd": "export CI=true\ncd .\nCI=true pnpm run test:pg",
+  "known subshell and aggregate exit": 'darwin_pg_status=0\n(\npnpm run test:pg\n) || darwin_pg_status=$?\nexit "${darwin_pg_status}"',
+  "known error capture": "darwin_pg_status=0\npnpm run test:pg || darwin_pg_status=$?",
+})) {
+  test(`macOS whole-step grammar accepts ${name}`, () => {
+    const workflow = macJob.replace("pnpm run test:pg", "|\n" + shell.split("\n").map(line => "          " + line).join("\n"));
+    const root = pgFixture(linuxJob + workflow);
+    try { assert.deepEqual(findUncoveredTests(root), []); }
     finally { rmSync(root, { recursive: true }); }
   });
 }

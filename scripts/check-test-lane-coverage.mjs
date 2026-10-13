@@ -86,15 +86,62 @@ function macosCondition(condition, lane) {
   return /^!cancelled\(\) && \(needs\.route\.result != 'success' \|\| needs\.route\.outputs\.[a-z_-]+ != 'false'\)$/u.test(condition);
 }
 
+// These are the workflow's existing setup/diagnostic forms, not a shell parser.
+// Keep them literal: broadening one can make later test commands unreachable.
+const macosSetupLines = new Set([
+  "set -euo pipefail",
+  "updater_tmp=\"$(mktemp -d /private/tmp/acr-updater.XXXXXX)\"",
+  "trap 'rm -rf -- \"${updater_tmp}\"' EXIT",
+  "chgrp \"$(id -g)\" \"${updater_tmp}\"",
+  "chmod 0700 \"${updater_tmp}\"",
+  "export TMPDIR=\"${updater_tmp}\"",
+  "sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools",
+  "test -x /usr/bin/lockf",
+  "for tool in strip otool; do t=\"$(xcrun -f \"$tool\")\"; echo \"== $t\"; file \"$t\"; xcrun otool -L \"$t\" | cat -vet | head -12; done",
+  "pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep version || true",
+  "node --input-type=module -e 'import { resolveDeveloperTools } from \"./src/updater/v1/trusted-runtime.mjs\"; await resolveDeveloperTools();'",
+  "short_root=\"${HOME}/acr\"",
+  "rm -rf -- \"${short_root}\" && ditto \"${PWD}\" \"${short_root}\" && cd \"${short_root}\"",
+  "darwin_pg_tmp=\"$(mktemp -d \"${HOME}/.acr-pg.XXXXXX\")\" || exit 1",
+  "trap 'rm -rf -- \"${darwin_pg_tmp}\"' EXIT",
+  "chgrp \"$(id -g)\" \"${darwin_pg_tmp}\" || exit 1",
+  "chmod 0700 \"${darwin_pg_tmp}\" || exit 1",
+  "export TMPDIR=\"${darwin_pg_tmp}\"",
+  "export PG_BIN=/opt/homebrew/opt/postgresql@17/bin",
+  "test -x /opt/homebrew/opt/postgresql@17/bin/pg_ctl",
+  "brew install postgresql@17",
+  "pnpm install --frozen-lockfile --ignore-scripts",
+]);
+const macosTestCommand = /^(?:(?:CI=true|(?:PG_BIN|TMPDIR)=[a-zA-Z0-9_./-]+|(?:LC_ALL|LANG)=[a-zA-Z0-9_.-]+|CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1)\s+)*(?:pnpm\s+(?:run\s+)?[a-z][a-z0-9:.-]*|node\s+scripts\/ci\/run-scripts-keep-going\.mjs\s+[a-z0-9:._ -]+|node\s+(?:scripts\/run-tests-with-quarantine\.mjs|--test)\s+[a-zA-Z0-9_=./ -]+)(?:\s+\|\|\s+darwin_pg_status=\$\?)?$/u;
+
 function provenMacosCommands(step) {
   return workflowCommands(step).flatMap(command => {
-    // Do not interpret shell programs. Conditional blocks, functions, loops
-    // and continuations need a dedicated proof before they can earn credit.
-    // One-line tool-report loops contain no test command and earn no credit.
-    if (/^\s*(?:if|elif|case|while|until|select|function)\b|^\s*\w+\s*\(\)\s*\{|\\\s*$/mu.test(command)
-      || /^\s*for\b(?![^\n]*;\s*done\s*$)/mu.test(command)) return [];
-    return command.split("\n").filter(line =>
-      /^\s*(?:pnpm\s+(?:run\s+)?[a-z][a-z0-9:.-]*|node\s+scripts\/ci\/run-scripts-keep-going\.mjs\s+[a-z0-9:._ -]+|node\s+(?:scripts\/run-tests-with-quarantine\.mjs|--test)\s+[a-zA-Z0-9_=./ -]+)(?:\s+\|\|\s+[a-z_]+\s*=\s*\$\?)?\s*$/u.test(line));
+    const lines = command.split("\n").map(line => line.trim())
+      .filter(line => line && !line.startsWith("#"));
+    let subshell = false, capturesStatus = false;
+    for (const [index, line] of lines.entries()) {
+      if (line === "(") {
+        if (subshell) return [];
+        subshell = true;
+      } else if (line === ") || darwin_pg_status=$?") {
+        if (!subshell || !capturesStatus) return [];
+        subshell = false;
+      } else if (line === "darwin_pg_status=0") {
+        capturesStatus = true;
+      } else if (line === 'exit "${darwin_pg_status}"') {
+        // The existing aggregate exit is safe only at the end of the step.
+        if (subshell || !capturesStatus || index !== lines.length - 1) return [];
+      } else if (!macosSetupLines.has(line)
+        && !/^(?:export\s+)?(?:CI=true|(?:PG_BIN|TMPDIR)=[a-zA-Z0-9_./-]+|(?:LC_ALL|LANG)=[a-zA-Z0-9_.-]+|CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1)$/u.test(line)
+        && !/^cd\s+[a-zA-Z0-9_./-]+$/u.test(line)
+        && !macosTestCommand.test(line)) {
+        // Whole-step refusal: an unrecognized line can change whether any
+        // later line executes (exit, heredoc, chains, functions, loops, etc.).
+        return [];
+      }
+    }
+    if (subshell) return [];
+    return lines.filter(line => macosTestCommand.test(line));
   });
 }
 
