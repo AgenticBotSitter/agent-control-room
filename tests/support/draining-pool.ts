@@ -12,27 +12,33 @@ export function drainingPool(options: ConstructorParameters<typeof Pool>[0], bou
     endings.add(ended);
     client.once("end", () => { endings.delete(ended); finished(); });
   });
+  const nativeEnd = pool.end.bind(pool);
   let closing: Promise<void> | undefined;
-  return {
-    pool,
-    end() {
-      // Share the barrier: pg-pool refuses a second end() call.
-      return closing ??= (async () => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            (async () => {
-              await pool.end();
-              await Promise.all([...endings]);
-            })(),
-            new Promise<never>((_resolve, reject) => {
-              timer = setTimeout(() => reject(new Error(
-                `test pool drain timed out after ${boundMs}ms waiting for client end acknowledgements`,
-              )), boundMs);
-            }),
-          ]);
-        } finally { clearTimeout(timer); }
-      })();
-    },
-  };
+  function end() {
+    // Share the barrier: pg-pool refuses a second end() call.
+    return closing ??= (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          (async () => {
+            await nativeEnd();
+            await Promise.all([...endings]);
+          })(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(
+              `test pool drain timed out after ${boundMs}ms waiting for client end acknowledgements`,
+            )), boundMs);
+          }),
+        ]);
+      } finally { clearTimeout(timer); }
+    })();
+  }
+  // Production adapters receive the raw Pool. Route their shutdown through
+  // the same barrier as fixture cleanup, including pg's callback overload.
+  pool.end = ((callback?: (error?: Error) => void) => {
+    const ending = end();
+    if (callback) { void ending.then(() => callback(), error => callback(error)); }
+    else return ending;
+  }) as Pool["end"];
+  return { pool, end };
 }
