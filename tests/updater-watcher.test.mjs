@@ -34,7 +34,9 @@ async function repository(t) {
   const origin = join(root, "origin.git"), work = join(root, "work"), updaterRoot = join(root, "updater-root");
   await mkdir(join(updaterRoot, "updater-state", "plans"), { recursive: true });
   await mkdir(join(updaterRoot, "updater-state"), { recursive: true });
-  await git(["init", "--bare", origin]); await git(["clone", origin, work]);
+  await git(["init", "--bare", origin]);
+  await git(["--git-dir", origin, "config", "maintenance.auto", "false"]);
+  await git(["clone", origin, work]); await git(["config", "maintenance.auto", "false"], work);
   await git(["config", "user.email", "watcher@example.invalid"], work); await git(["config", "user.name", "Watcher Test"], work);
   await writeFile(join(work, "README.md"), "initial\n"); await git(["add", "."], work); await git(["commit", "-m", "initial"], work);
   await git(["branch", "-M", "main"], work); await publishLocalFixtureV1(work);
@@ -442,4 +444,18 @@ test("FIX-475: a legacy published history warning survives restart while Off", a
   const next = f.make(); await next.tick();
   assert.equal((await f.read()).needsYou, true, "a real legacy status warning is not erased by reconstruction");
   await next.shutdown();
+});
+
+test("FIX-475: watcher Git fetch cannot start detached maintenance", async t => {
+  const f = await repository(t), proxy = join(f.root, "foreground-git.mjs");
+  await writeFile(proxy, `#!${process.execPath}
+import {spawnSync} from 'node:child_process';
+const args=process.argv.slice(2);
+// Refuse before starting an unsafe tool in the disabling mutation.
+if(args.includes('fetch')&&!args.includes('maintenance.auto=false')) process.exit(70);
+const result=spawnSync('git',args,{env:process.env,stdio:'inherit'});process.exit(result.status??1);
+`); await chmod(proxy, 0o700);
+  const source = new GitMirrorSourceV1({ root: f.updaterRoot, origin: f.origin, fromCommit: f.fromCommit, testing: true, git: proxy });
+  const result = await source.fetchMain().then(async value => { await value.release?.(); return "accepted"; }, error => error.code);
+  assert.equal(result, "accepted", "real watcher fetch suppresses the observed detached maintenance command");
 });

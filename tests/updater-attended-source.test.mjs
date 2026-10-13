@@ -48,6 +48,7 @@ async function fixture(t) {
   });
   const repository = join(temporary, "repository"), remote = join(temporary, "remote.git"), root = join(temporary, "root");
   await mkdir(repository); await git(repository, "init", "-b", "main");
+  await git(repository, "config", "maintenance.auto", "false");
   await git(repository, "config", "user.email", "builder@example.invalid"); await git(repository, "config", "user.name", "Builder");
   await mkdir(join(repository, "src/updater/v1"), { recursive: true });
   // The crossed-in cluster layout goes in the BASE fixture, not only in
@@ -94,7 +95,7 @@ async function fixture(t) {
   await mkdir(join(repository, "updater-bundle")); await writeFile(join(repository, "updater-bundle/evil.mjs"), "throw new Error('candidate output');\n");
   await git(repository, "add", "."); await git(repository, "commit", "-m", "initial");
   const commit = await git(repository, "rev-parse", "HEAD");
-  await exec(gitPath, ["init", "--bare", remote]); await git(repository, "remote", "add", "origin", `file://${remote}`);
+  await exec(gitPath, ["init", "--bare", remote]); await git(remote, "config", "maintenance.auto", "false"); await git(repository, "remote", "add", "origin", `file://${remote}`);
   await publishLocalFixtureV1(repository);
   for (const path of ["updater-state/plans", "updater-state/confirmations", "build", "releases", "updater", "trusted"])
     await mkdir(join(root, path), { recursive: true });
@@ -1384,4 +1385,35 @@ for (const variant of ["symlink", "alternates", "http-alternates", "oversize"]) 
   finally { if (admitted) await abortAttendedV1(admitted); }
   assert.deepEqual((await readdir(join(f.root, "updater-state"))).filter(name => name.startsWith(".history-")), [],
     "refused snapshot leaves no private history directory");
+});
+
+test("FIX-475: attended Git fetch cannot start detached maintenance", async t => {
+  const f = await fixture(t); let fetches = 0;
+  const verdict = await fetchVerifiedSourceV1({ ...f.materialize(), onSpawn: call => {
+    if (call.args.includes("fetch")) {
+      fetches += 1;
+      // Block the unsafe tool before startup in the disabling mutation.
+      if (!call.args.includes("maintenance.auto=false")) throw new Error("unsafe_maintenance_startup");
+    }
+  } }).then(async fetched => { await abortAttendedV1(fetched); return "accepted"; }, error => error.code);
+  assert.equal(verdict, "accepted", "real fetch must suppress the observed detached maintenance command");
+  assert.equal(fetches, 1, "the actual source producer fetched once");
+});
+
+test("FIX-475: copied snapshot is audited before its first Git read", async t => {
+  const f = await fixture(t), fs = (await import("node:fs/promises")).default;
+  const { syncBuiltinESMExports } = await import("node:module"), realCopy = fs.cp;
+  const external = join(f.temporary, "external-bytes"); await writeFile(external, "external\n");
+  let injected = false, admitted;
+  fs.cp = async (...args) => {
+    const result = await realCopy(...args);
+    if (String(args[1]).includes(".history-")) { await symlink(external, join(args[1], "objects/late-link")); injected = true; }
+    return result;
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(async () => { admitted = await fetchVerifiedSourceV1(f.materialize()); }, /updater_mirror_history_refused/u,
+      "a copied snapshot with a late external link must never reach a Git reader");
+    assert.equal(injected, true, "the copy completed before the link was injected");
+  } finally { fs.cp = realCopy; syncBuiltinESMExports(); if (admitted) await abortAttendedV1(admitted); }
 });

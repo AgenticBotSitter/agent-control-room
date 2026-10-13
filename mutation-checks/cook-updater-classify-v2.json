@@ -348,5 +348,26 @@
     "replace": "/* Mutation: leak the checked snapshot. */",
     "test": "node --test --test-name-pattern='local bare origin:' tests/updater-watcher.test.mjs",
     "why": "every successful watcher path retires its private history view"
+  },
+  {
+    "file": "src/updater/v1/mirror-history.mjs",
+    "find": "    await audit(snapshot);",
+    "replace": "    // Mutation: skip the destination audit.",
+    "test": "node --test --test-name-pattern='FIX-475: copied snapshot' tests/updater-attended-source.test.mjs",
+    "why": "destination is independently audited after copying and before any Git reader"
+  },
+  {
+    "file": "src/updater/v1/attended-source.mjs",
+    "find": "\"-c\", \"maintenance.auto=false\", ",
+    "replace": "",
+    "test": "node --test --test-name-pattern='FIX-475: attended Git fetch' tests/updater-attended-source.test.mjs",
+    "why": "Git automatic maintenance cannot detach beyond the owned command group"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "\"-c\", \"maintenance.auto=false\", ",
+    "replace": "",
+    "test": "node --test --test-name-pattern='FIX-475: watcher Git fetch' tests/updater-watcher.test.mjs",
+    "why": "Git automatic maintenance cannot detach beyond the owned command group"
   }
 ]

@@ -209,7 +209,7 @@ async function acquireLock(root) {
 
 async function git(input, gitPath, mirror, args, options = {}) {
   const env = trustedToolEnvironment("git");
-  return run(input, gitPath, ["--git-dir", mirror, ...args], { env, timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
+  return run(input, gitPath, ["-c", "maintenance.auto=false", "--git-dir", mirror, ...args], { env, timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
     cwd: options.cwd, acceptExitCodes: options.acceptExitCodes, maxOutputBytes: options.maxOutputBytes,
     waitForClose: options.waitForClose });
 }

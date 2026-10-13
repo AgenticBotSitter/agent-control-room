@@ -100,7 +100,7 @@ export class GitMirrorSourceV1 {
   get mirror() { return join(this.root, "updater-state", "mirror.git"); }
 
   async #git(args, { credential = false, repository = this.mirror } = {}) {
-    const config = ["-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true",
+    const config = ["-c", "maintenance.auto=false", "-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true",
       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always"];
     if (this.testing) config.push("-c", "protocol.file.allow=always", "-c", "http.sslVerify=false");
     if (credential) {
