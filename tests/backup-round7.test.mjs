@@ -386,25 +386,21 @@ test('reservation release is idempotent and invalidates both readers', {timeout:
 test('reservation acquisition closes handles on raced identity, type, mode and stat failures', {timeout:10000}, async t => {
   const f = await fixture(t);
   assert.equal(typeof releaseBackupGenerationV1, 'function', 'reservation acquisition must hold and release a descriptor');
-  const originalOpen = nativeFs.promises.open, originalLstat = nativeFs.promises.lstat;
+  const originalOpen = nativeFs.promises.open;
   for (const change of ['identity', 'type', 'link', 'mode', 'stat', 'type-before-stat']) {
     const out = join(f.root, change);
     let held;
-    nativeFs.promises.lstat = async (path, ...args) => {
-      if (path === out && change === 'type-before-stat') {
-        await fs.rmdir(out);
-        await fs.writeFile(out, 'not a directory', {mode:0o700});
-      }
-      return originalLstat(path, ...args);
-    };
     nativeFs.promises.open = async (path, ...args) => {
-      if (path === out && ['identity', 'type', 'link'].includes(change)) {
+      if (path === out && ['type', 'link', 'type-before-stat'].includes(change)) {
         await fs.rename(out, out + '-original');
-        if (change === 'identity') await fs.mkdir(out, {mode:0o700});
-        else if (change === 'link') await fs.symlink(out + '-original', out);
-        else await fs.writeFile(out, 'not a directory');
+        if (change === 'link') await fs.symlink(out + '-original', out);
+        else await fs.writeFile(out, 'not a directory', {mode:0o700});
       }
       held = await originalOpen(path, ...args);
+      if (path === out && change === 'identity') {
+        await fs.rmdir(out);
+        await fs.mkdir(out, {mode:0o700});
+      }
       if (path === out && change === 'mode') await fs.chmod(out, 0o755);
       if (path === out && change === 'stat') held.stat = async () => { throw Error('injected stat failure'); };
       return held;
@@ -416,7 +412,6 @@ test('reservation acquisition closes handles on raced identity, type, mode and s
       if (held) assert.equal(held.fd, -1, 'acquisition failure must close its real descriptor');
     } finally {
       nativeFs.promises.open = originalOpen;
-      nativeFs.promises.lstat = originalLstat;
       syncBuiltinESMExports();
       if (held) await held.close();
     }
@@ -603,4 +598,57 @@ test('reservation holds valid long and spaced paths and refuses a linked parent'
   await fs.symlink(parent, linked);
   await assert.rejects(reserveBackupGenerationV1(join(linked, 'other-generation')), /backup_output_path_refused/);
   await assert.rejects(fs.lstat(join(parent, 'other-generation')), {code:'ENOENT'}, 'refusal must not create state');
+});
+
+
+// R482-01: the directory is unlinked and recreated at the first identity read. The
+// oracles are kernel facts (real descriptor liveness, real replacement inode), not the code under test.
+test('reservation acquisition pins the directory before identity observation', {timeout:10000}, async t => {
+  const f = await fixture(t);
+  const originalOpen = nativeFs.promises.open, originalLstat = nativeFs.promises.lstat;
+  for (const leaf of ['acquire', 'acquire spaced ü', 'a'.repeat(125)]) {
+    const out = join(f.root, leaf);
+    let held, descriptorLiveAtSwap = false, swapped = false, replacementIno;
+    const swap = async entry => {
+      swapped = true;
+      descriptorLiveAtSwap = !!held && held.fd !== -1;
+      await fs.rmdir(out);
+      await fs.mkdir(out, {mode:0o700});
+      replacementIno = (await originalLstat(out)).ino;
+      if (descriptorLiveAtSwap) assert.notEqual(replacementIno, entry.ino, 'a held directory must not have its inode recycled');
+    };
+    nativeFs.promises.open = async (...args) => {
+      const handle = await originalOpen(...args);
+      if (args[0] === out) {
+        held = handle;
+        const stat = handle.stat.bind(handle);
+        handle.stat = async (...statArgs) => {
+          const entry = await stat(...statArgs);
+          if (!swapped) await swap(entry);
+          return entry;
+        };
+      }
+      return handle;
+    };
+    nativeFs.promises.lstat = async (path, ...args) => {
+      const entry = await originalLstat(path, ...args);
+      if (path === out && !swapped) await swap(entry);
+      return entry;
+    };
+    syncBuiltinESMExports();
+    let token;
+    try {
+      const result = await outcome(reserveBackupGenerationV1(out).then(value => { token = value; return value; }));
+      assert.equal(swapped, true, 'the unlink and recreate must have happened during acquisition');
+      assert.equal(descriptorLiveAtSwap, true, 'identity must be observed through an already-open directory descriptor');
+      assert.equal(result.error, 'backup_output_reservation_refused', 'acquisition must refuse the unlinked and recreated directory');
+      assert.equal(held.fd, -1, 'refused acquisition must close its directory descriptor');
+    } finally {
+      nativeFs.promises.open = originalOpen;
+      nativeFs.promises.lstat = originalLstat;
+      syncBuiltinESMExports();
+      if (token) await releaseBackupGenerationV1(token);
+      if (held) await held.close();
+    }
+  }
 });
