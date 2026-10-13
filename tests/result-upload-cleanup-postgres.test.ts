@@ -66,7 +66,34 @@ const EXPIRED_EVERY = 100;
 const hex32 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex").slice(0, 32);
 const hex64 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 const issuedAt = () => new Date(Date.now() - 60_000).toISOString();
-const hoursFromNow = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
+const hoursFromNow = (hours: number, now: number) => new Date(now + hours * 3_600_000).toISOString();
+
+function uploadTimes(createdHours: number, expiresHours: number, voidedHours?: number) {
+  // The table permits at most 24 hours. A second clock read would add elapsed
+  // milliseconds to an expired row's exact 24-hour window.
+  const now = Date.now();
+  return [hoursFromNow(createdHours, now), hoursFromNow(expiresHours, now),
+    voidedHours === undefined ? null : hoursFromNow(voidedHours, now)];
+}
+
+test("upload seed timestamps share one clock read even when the clock advances", (t) => {
+  const epoch = Date.parse("2026-10-12T12:00:00.000Z");
+  const cases = [
+    { hours: [-25, -1], expected: ["2026-10-11T11:00:00.000Z", "2026-10-12T11:00:00.000Z", null] },
+    { hours: [-1, 20], expected: ["2026-10-12T11:00:00.000Z", "2026-10-13T08:00:00.000Z", null] },
+    { hours: [-23, 0.5, -0.5], expected: ["2026-10-11T13:00:00.000Z", "2026-10-12T12:30:00.000Z", "2026-10-12T11:30:00.000Z"] },
+    { hours: [-1 / 60, 23], expected: ["2026-10-12T11:59:00.000Z", "2026-10-13T11:00:00.000Z", null] },
+  ];
+  for (const { hours, expected } of cases) {
+    let reads = 0;
+    t.mock.method(Date, "now", () => epoch + reads++);
+    try {
+      assert.deepEqual(uploadTimes(hours[0]!, hours[1]!, hours[2]), expected,
+        "expired, reserved, stopped and live seed dates keep their independently specified offsets");
+      assert.equal(reads, 1, "each row reads the clock exactly once");
+    } finally { t.mock.restoreAll(); }
+  }
+});
 
 async function rows<T>(postgres: RealPostgres, role: AttackRole | "admin",
   sql: string, params: unknown[]): Promise<T[]> {
@@ -144,9 +171,8 @@ test("stopped uploads are findable at volume, and an abandoned one can be ended"
             // questions, so the bulk rows are built to satisfy them honestly.
             // Reserved sessions expire 20 hours out; voided ones were created 23
             // hours ago and ended in a spread, so the ordering is a real ordering.
-            expired ? hoursFromNow(-25) : (reserved ? hoursFromNow(-1) : hoursFromNow(-23)),
-            expired ? hoursFromNow(-1) : hoursFromNow(reserved ? 20 : 0.5),
-            reserved ? null : hoursFromNow(-0.5 - index / 10000)]);
+            ...uploadTimes(expired ? -25 : (reserved ? -1 : -23),
+              expired ? -1 : (reserved ? 20 : 0.5), reserved ? undefined : -0.5 - index / 10000)]);
         }
         await seedConnection.query("SET LOCAL session_replication_role = origin");
         await seedConnection.query("COMMIT");
@@ -226,7 +252,7 @@ test("stopped uploads are findable at volume, and an abandoned one can be ended"
           $7,'fleet-claim:${"c".repeat(32)}',4096,$8,4096,1,'reserved',
           $9::timestamptz,$10::timestamptz)`,
         [TENANT, abandonedId, PROJECT, abandoned.jobId, abandoned.attemptId, abandoned.setId, abandoned.worker,
-          BODY_DIGEST, hoursFromNow(-25), hoursFromNow(-1)]);
+          BODY_DIGEST, ...uploadTimes(-25, -1).slice(0, 2)]);
         await seedConnection.query("SET LOCAL session_replication_role = origin");
         await seedConnection.query("COMMIT");
         assert.equal((await admin(`SELECT fleet_claim_is_live($1,$2,$3) AS live`,
@@ -255,7 +281,7 @@ test("stopped uploads are findable at volume, and an abandoned one can be ended"
           'fleet-worker:${"a".repeat(32)}','fleet-claim:${"d".repeat(32)}',4096,$7,4096,1,'reserved',
           $8::timestamptz,$9::timestamptz)`,
         [TENANT, liveId, PROJECT, live.jobId, live.attemptId, live.setId, BODY_DIGEST,
-          issuedAt(), hoursFromNow(23)]);
+          ...uploadTimes(-1 / 60, 23).slice(0, 2)]);
         await seedConnection.query("SET LOCAL session_replication_role = origin");
         await seedConnection.query("COMMIT");
         await refuses(gatewayClient.query(
