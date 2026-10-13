@@ -1,0 +1,23 @@
+[
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" != \"$expected\" && \"$shared\" != true ]]; then",
+    "replace": "if false; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "mismatched added manifest refuses with expected and found names must fail when mismatch refusal is disabled"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" == \"$allowed\" ]]; then shared=true; fi",
+    "replace": "if true; then shared=true; fi",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "shared allowlist is exact and does not permit another manifest must fail when allowlist membership is bypassed"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "set -euo pipefail",
+    "replace": "set -eu",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "unreadable PR base fails rather than accepting unknown changes must fail when Git pipeline failure propagation is disabled"
+  }
+]
