@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readFile, readdir, rm } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { reserveBackupGenerationV1 } from "../shared/backup-files.mjs";
+import { releaseBackupGenerationV1, reserveBackupGenerationV1 } from "../shared/backup-files.mjs";
 import { acquireRecoverablePrivateProcessLockV1 } from "../shared/private-process-lock.mjs";
 import { BACKUP_MANIFEST_SCHEMA_V1, parseNightlyBackupConfigurationV1 } from "./nightly-backup-configuration";
 
@@ -274,103 +274,105 @@ export async function runNightlyBackupV1(configurationPath: string | undefined,
     // Reserve a fresh generation before the dump; failure cleanup must never remove an older backup.
     let generation: object | void;
     try { generation = await runtime.prepareBackup(out); } catch { throw new Error("nightly_backup_output_refused"); }
-    let result: BackupResultV1;
     try {
-      result = await runtime.backup({
-        source: { host: parsed.database.host, port: parsed.database.port, database: parsed.database.name,
-          user: parsed.database.login, password },
-        out, generation, pgBin: parsed.pgBin, ledgerDigest: parsed.ledgerDigest,
-        requiredTables: [...parsed.requiredTables], release: "mac-local-nightly",
-      });
-      if (result.planned !== false || !/^sha256:[a-f0-9]{64}$/u.test(result.identityDigest ?? "")) {
-        throw new Error("nightly_backup_incomplete");
+      let result: BackupResultV1;
+      try {
+        result = await runtime.backup({
+          source: { host: parsed.database.host, port: parsed.database.port, database: parsed.database.name,
+            user: parsed.database.login, password },
+          out, generation, pgBin: parsed.pgBin, ledgerDigest: parsed.ledgerDigest,
+          requiredTables: [...parsed.requiredTables], release: "mac-local-nightly",
+        });
+        if (result.planned !== false || !/^sha256:[a-f0-9]{64}$/u.test(result.identityDigest ?? "")) {
+          throw new Error("nightly_backup_incomplete");
+        }
+      } catch (error) {
+        await runtime.removeBackup(out);
+        if (error instanceof Error && error.message === "nightly_backup_incomplete") throw error;
+        if (error instanceof Error && error.message === "nightly_backup_dependency_missing") throw error;
+        throw new Error("nightly_backup_execution_failed");
       }
-    } catch (error) {
-      await runtime.removeBackup(out);
-      if (error instanceof Error && error.message === "nightly_backup_incomplete") throw error;
-      if (error instanceof Error && error.message === "nightly_backup_dependency_missing") throw error;
-      throw new Error("nightly_backup_execution_failed");
-    }
-    // R4B-01: the run's OWN generation is checked before it is allowed to
-    // count as this night's backup.
-    //
-    // Every other generation is verified by the scanner in `listBackups`, which
-    // is what stops damaged history from spending retention. This one has not
-    // been scanned yet at this point in the run — it was created by
-    // `prepareBackup` seconds ago and the scan happens below, after retention is
-    // decided — so without this line a run whose OWN dump was silently damaged
-    // would still print "completed", and the nightly row in the owner's head
-    // would be a night with no backup on it. That is the same silent-failure
-    // shape as R4S-03, one layer up and reachable without any failure at all.
-    //
-    // A generation that cannot bind its own bytes is REMOVED rather than left:
-    // it is not a partial folder somebody will recognise as one, it is a folder
-    // with a dump and a metadata file in it that looks exactly like a backup.
-    //
-    // `removeBackup` failing must not mask the refusal, so the removal is its
-    // own best-effort step and the code is thrown either way: a generation this
-    // run cannot vouch for is never reported as this night's backup, whether or
-    // not its bytes could be cleaned up.
-    let bound = false;
-    try { bound = (await runtime.readGeneratedGeneration(out)).bound; } catch { bound = false; }
-    if (!bound) {
-      try { await runtime.removeBackup(out); } catch {}
-      throw new Error("nightly_backup_unbound_generation");
-    }
-    try {
-      const generations = (await runtime.listBackups(parsed.outputRoot))
-        .filter(entry => backupNamePattern.test(entry.name));
-      if (generations.some(entry => !entry.directory || entry.symbolicLink)) throw new Error("unsafe_generation");
-      const ordered = generations.filter(entry => entry.completed).map(entry => entry.name).sort();
-      // R4S-09: a generation dated LATER than this run is not a reason to stop
-      // retiring. That early return is what one clock glitch did: the early
-      // return matched the future-dated generation, so every later night
-      // returned at the same line, nothing was ever retired again, and the
-      // backup root grew without bound until the calendar caught up with the
-      // bad date — months of disk, one bad clock.
+      // R4B-01: the run's OWN generation is checked before it is allowed to
+      // count as this night's backup.
       //
-      // The two protections the early return was actually written for both
-      // survive, and survive more precisely:
+      // Every other generation is verified by the scanner in `listBackups`, which
+      // is what stops damaged history from spending retention. This one has not
+      // been scanned yet at this point in the run — it was created by
+      // `prepareBackup` seconds ago and the scan happens below, after retention is
+      // decided — so without this line a run whose OWN dump was silently damaged
+      // would still print "completed", and the nightly row in the owner's head
+      // would be a night with no backup on it. That is the same silent-failure
+      // shape as R4S-03, one layer up and reachable without any failure at all.
       //
-      //   - A CLOCK STEP BACKWARDS still keeps every later-dated generation. This
-      //     run is a genuine backup; the generations after it are the only copies
-      //     of nights this run cannot replace, and nothing here can know whether
-      //     their names are a bad clock or a real future. They are kept, and the
-      //     names are REPORTED, so the owner can see the bad date rather than
-      //     have this module decide it is a fault.
-      //   - A FUTURE-DATED generation cannot be used as the yardstick for
-      //     "latest by day", or a single bad name would silently retire good
-      //     history one day at a time on its own schedule. Retention is measured
-      //     against this run's own date, so only this run's own past is spent.
+      // A generation that cannot bind its own bytes is REMOVED rather than left:
+      // it is not a partial folder somebody will recognise as one, it is a folder
+      // with a dump and a metadata file in it that looks exactly like a backup.
       //
-      // R4S-10: an incomplete generation is not spendable (a partial folder is
-      // not a restore point) but it is disk, and nothing else ever removed it,
-      // because both the retention filter and the old clean-up skipped it. One
-      // older than a day is removed HERE, under the same lock as everything
-      // else, so the removal is serialized with any other run. The age comes
-      // from the generation's own name, and a name that does not parse is left
-      // alone rather than guessed at — `backupNamePattern` already proved the
-      // shape, so this only guards a calendar date the runtime cannot represent.
-      const laterDated = ordered.filter(generation => generation > name);
-      const thisRunInstant = generationInstant(name);
-      const partial = generations.filter(entry => !entry.completed)
-        .filter(entry => Number.isFinite(thisRunInstant) && generationInstant(entry.name) <= thisRunInstant - PARTIAL_GENERATION_MINIMUM_AGE_MS_V1)
-        .map(entry => entry.name);
-      // History this run can retire: completed generations on or before this
-      // run's own date. Anything later is the clock-backwards case above.
-      const spendable = ordered.filter(generation => generation <= name);
-      const latestByDay = new Map(spendable.map(generation => [generation.slice(0, 10), generation]));
-      const kept = new Set([...latestByDay.values()].slice(-parsed.retention.dailyBackups));
-      kept.add(name);
-      const retired = spendable.filter(generation => !kept.has(generation));
-      for (const retiredName of [...retired, ...partial]) {
-        await runtime.removeBackup(join(parsed.outputRoot, retiredName));
+      // `removeBackup` failing must not mask the refusal, so the removal is its
+      // own best-effort step and the code is thrown either way: a generation this
+      // run cannot vouch for is never reported as this night's backup, whether or
+      // not its bytes could be cleaned up.
+      let bound = false;
+      try { bound = (await runtime.readGeneratedGeneration(out)).bound; } catch { bound = false; }
+      if (!bound) {
+        try { await runtime.removeBackup(out); } catch {}
+        throw new Error("nightly_backup_unbound_generation");
       }
-      return Object.freeze({ laterDatedGenerations: Object.freeze([...laterDated]) });
-    } catch (error) {
-      if (error instanceof Error && error.message === "unsafe_generation") throw error;
-      throw new Error("nightly_backup_retention_failed");
-    }
+      try {
+        const generations = (await runtime.listBackups(parsed.outputRoot))
+          .filter(entry => backupNamePattern.test(entry.name));
+        if (generations.some(entry => !entry.directory || entry.symbolicLink)) throw new Error("unsafe_generation");
+        const ordered = generations.filter(entry => entry.completed).map(entry => entry.name).sort();
+        // R4S-09: a generation dated LATER than this run is not a reason to stop
+        // retiring. That early return is what one clock glitch did: the early
+        // return matched the future-dated generation, so every later night
+        // returned at the same line, nothing was ever retired again, and the
+        // backup root grew without bound until the calendar caught up with the
+        // bad date — months of disk, one bad clock.
+        //
+        // The two protections the early return was actually written for both
+        // survive, and survive more precisely:
+        //
+        //   - A CLOCK STEP BACKWARDS still keeps every later-dated generation. This
+        //     run is a genuine backup; the generations after it are the only copies
+        //     of nights this run cannot replace, and nothing here can know whether
+        //     their names are a bad clock or a real future. They are kept, and the
+        //     names are REPORTED, so the owner can see the bad date rather than
+        //     have this module decide it is a fault.
+        //   - A FUTURE-DATED generation cannot be used as the yardstick for
+        //     "latest by day", or a single bad name would silently retire good
+        //     history one day at a time on its own schedule. Retention is measured
+        //     against this run's own date, so only this run's own past is spent.
+        //
+        // R4S-10: an incomplete generation is not spendable (a partial folder is
+        // not a restore point) but it is disk, and nothing else ever removed it,
+        // because both the retention filter and the old clean-up skipped it. One
+        // older than a day is removed HERE, under the same lock as everything
+        // else, so the removal is serialized with any other run. The age comes
+        // from the generation's own name, and a name that does not parse is left
+        // alone rather than guessed at — `backupNamePattern` already proved the
+        // shape, so this only guards a calendar date the runtime cannot represent.
+        const laterDated = ordered.filter(generation => generation > name);
+        const thisRunInstant = generationInstant(name);
+        const partial = generations.filter(entry => !entry.completed)
+          .filter(entry => Number.isFinite(thisRunInstant) && generationInstant(entry.name) <= thisRunInstant - PARTIAL_GENERATION_MINIMUM_AGE_MS_V1)
+          .map(entry => entry.name);
+        // History this run can retire: completed generations on or before this
+        // run's own date. Anything later is the clock-backwards case above.
+        const spendable = ordered.filter(generation => generation <= name);
+        const latestByDay = new Map(spendable.map(generation => [generation.slice(0, 10), generation]));
+        const kept = new Set([...latestByDay.values()].slice(-parsed.retention.dailyBackups));
+        kept.add(name);
+        const retired = spendable.filter(generation => !kept.has(generation));
+        for (const retiredName of [...retired, ...partial]) {
+          await runtime.removeBackup(join(parsed.outputRoot, retiredName));
+        }
+        return Object.freeze({ laterDatedGenerations: Object.freeze([...laterDated]) });
+      } catch (error) {
+        if (error instanceof Error && error.message === "unsafe_generation") throw error;
+        throw new Error("nightly_backup_retention_failed");
+      }
+    } finally { await releaseBackupGenerationV1(generation); }
   } finally {
     try { if (releaseLock) await releaseLock(); }
     finally { active = false; }
