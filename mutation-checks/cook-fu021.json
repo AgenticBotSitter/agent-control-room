@@ -103,5 +103,12 @@
     "replace": "--diff-filter=AM \"${base}...HEAD\" -- 'mutation-checks/*.json'",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
     "why": "nested JSON files are not top-level manifests must fail; top-level directory constraint comes from the real verifier and existing documentation"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" != \"$expected\" ]]; then",
+    "replace": "if true; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "matching changed manifest selects branch mutations must fail if own manifest is emitted twice; the ticket path is an independent literal and documented exactly-once list expectation"
   }
 ]

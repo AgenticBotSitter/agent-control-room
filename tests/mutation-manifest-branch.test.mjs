@@ -79,6 +79,7 @@ test("matching changed manifest selects branch mutations", t => {
   const result = run(f);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.output, "path=mutation-checks/cook-fu021.json\nexists=true\n");
+  assert.deepEqual(result.manifests, ["mutation-checks/cook-fu021.json"], "own changed manifest must be verified exactly once");
 });
 
 test("mismatched added manifest refuses with expected and found names", t => {
