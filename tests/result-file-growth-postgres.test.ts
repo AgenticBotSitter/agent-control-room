@@ -18,7 +18,10 @@
 // error rather than as a plan.
 //
 // WHAT IT ASSERTS, and what it deliberately does not. It asserts that no read
-// SEQUENTIALLY SCANS a table that has grown, that the cleanup reads use the
+// SEQUENTIALLY SCANS a grown table or visits more than 1,000 rows per
+// reader for a selective read, regardless of the access path. The broad quota SUM
+// may consume all active sets only with independently checked rows and bytes.
+// It also asserts that the cleanup reads use the
 // indexes 0256 added and need no sort, and that every read returns exactly the
 // rows it should — correctness at volume, not merely speed. It does NOT assert
 // wall-clock milliseconds: a timing assertion on a shared machine is a flaky
@@ -56,32 +59,281 @@ const issuedAt = () => new Date(Date.now() - 60_000).toISOString();
 const hoursFrom = (now: number, hours: number) => new Date(now + hours * 3_600_000).toISOString();
 const digestFor = (n: number) => `sha256:${n.toString(16).padStart(64, "0")}`;
 
+// EXPLAIN reports rounded per-loop averages for parallel scans. These observer
+// sessions pin serial execution; production SQL, costs and statistics stay unchanged.
+const serialPlanWorkers: number = 0;
+const serialPlanOptions = `-c statement_timeout=60000 -c max_parallel_workers_per_gather=${serialPlanWorkers}`;
 async function connect(postgres: RealPostgres, role: AttackRole | "admin"): Promise<Client> {
   const options = role === "admin" ? { ...postgres.admin({ database: postgres.database }),
-    options: "-c statement_timeout=60000" } : (() => { const login = postgres.connection(role);
+    options: serialPlanOptions } : (() => { const login = postgres.connection(role);
     return { host: login.host, port: postgres.port, database: postgres.database, user: login.user,
-      password: login.password, options: "-c statement_timeout=60000" }; })();
+      password: login.password, options: serialPlanOptions }; })();
   const client = new Client(options);
   await client.connect();
   return client;
 }
 
+interface PlanNode {
+  readonly "Node Type": string;
+  readonly "Relation Name"?: string;
+  readonly "Index Name"?: string;
+  readonly "Actual Rows"?: number;
+  readonly "Actual Loops"?: number;
+  readonly "Rows Removed by Filter"?: number;
+  readonly "Rows Removed by Index Recheck"?: number;
+  readonly Plans?: readonly PlanNode[];
+}
 interface Plan {
+  readonly root: PlanNode;
+  readonly nodes: readonly PlanNode[];
   readonly lines: readonly string[];
   readonly milliseconds: number;
+  readonly buffers: number;
 }
 
-/** The plan AND the time it actually took, as the named login. */
+/** Traverse every child, including readers below a sort, join or aggregate.
+ * Malformed/empty plans cannot silently turn into an empty list of scans. */
+function readPlan(value: unknown): Plan {
+  assert.ok(Array.isArray(value) && value.length === 1, "one JSON plan document is required");
+  const document = value[0] as Record<string, unknown>;
+  const nodes: PlanNode[] = [];
+  function visit(value: unknown): PlanNode {
+    assert.ok(value && typeof value === "object" && !Array.isArray(value), "a plan node is required");
+    const node = value as PlanNode;
+    assert.ok(typeof node["Node Type"] === "string" && node["Node Type"].length > 0,
+      "a plan node type is required");
+    assert.ok(node.Plans === undefined || Array.isArray(node.Plans), "plan children must be an array");
+    nodes.push(node);
+    for (const child of node.Plans ?? []) visit(child);
+    return node;
+  }
+  const root = visit(document?.Plan);
+  const milliseconds = document["Execution Time"];
+  assert.ok(typeof milliseconds === "number" && Number.isFinite(milliseconds) && milliseconds >= 0,
+    "finite nonnegative execution time is required");
+  return { root, nodes, lines: [JSON.stringify(value)],
+    milliseconds,
+    buffers: Number((root as unknown as Record<string, unknown>)["Shared Hit Blocks"] ?? 0)
+      + Number((root as unknown as Record<string, unknown>)["Shared Read Blocks"] ?? 0) };
+}
+
+/** Actual production-login plan, time and buffers; no planner cost override. */
 async function plan(client: Client, sql: string, params: unknown[]): Promise<Plan> {
-  const result = await client.query(
-    `EXPLAIN (ANALYZE, TIMING OFF, COSTS OFF, SUMMARY ON) ${sql}`, params);
-  const lines = (result.rows as { "QUERY PLAN": string }[]).map(row => row["QUERY PLAN"]);
-  const timing = lines.find(line => /^Execution Time:/.test(line));
-  return { lines, milliseconds: timing ? Number(timing.replace(/[^0-9.]/gu, "")) : Number.NaN };
+  const result = await client.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`, params);
+  return readPlan(result.rows[0]?.["QUERY PLAN"]);
+}
+const grownTables = ["control_result_files", "control_result_file_sets", "control_result_upload_sessions"];
+const scans = (p: Plan) => p.nodes.filter(node => node["Node Type"] === "Seq Scan")
+  .map(node => node["Relation Name"]);
+const sorted = (p: Plan) => p.nodes.some(node => ["Sort", "Incremental Sort"].includes(node["Node Type"]));
+function requireIndex(p: Plan, name: string, label: string) {
+  const relation = name.startsWith("control_result_file_sets_")
+    ? "control_result_file_sets" : "control_result_upload_sessions";
+  assert.ok(p.nodes.some(node => node["Relation Name"] === relation), `${label} has its expected table reader`);
+  assert.ok(p.nodes.some(node => node["Index Name"] === name
+    && ["Index Scan", "Index Only Scan", "Bitmap Index Scan"].includes(node["Node Type"])),
+  `${label} reaches expected index ${name}:\n${p.lines.join("\n")}`);
+}
+function noGrownScan(p: Plan, label: string, broadRows?: number) {
+  // Table scans require relation identity even when it is absent from the JSON.
+  // Bitmap Index Scan identifies an index; its heap sibling identifies the table.
+  const readers = p.nodes.filter(node => node["Relation Name"] !== undefined
+    || (node["Node Type"].endsWith("Scan") && !["Bitmap Index Scan", "Subquery Scan", "CTE Scan",
+      "WorkTable Scan", "Function Scan", "Table Function Scan", "Values Scan", "Named Tuplestore Scan"]
+      .includes(node["Node Type"])));
+  assert.ok(readers.length > 0 && readers.every(node => typeof node["Relation Name"] === "string"
+    && grownTables.includes(node["Relation Name"])
+    && node["Relation Name"] === readers[0]!["Relation Name"]),
+  `${label} has nonempty complete unmixed grown-table reader identities`);
+  if (label === "0206 quota sum" && broadRows !== undefined) {
+    quotaInputs(p, broadRows);
+    return;
+  }
+  assert.ok(!scans(p).some(table => grownTables.includes(table ?? "")),
+    `${label} does not scan a grown table:\n${p.lines.join("\n")}`);
+  for (const node of readers) {
+    const counters = [node["Actual Rows"], node["Actual Loops"],
+      node["Rows Removed by Filter"] === undefined ? 0 : node["Rows Removed by Filter"],
+      node["Rows Removed by Index Recheck"] === undefined ? 0 : node["Rows Removed by Index Recheck"]];
+    assert.ok(counters.every(value => typeof value === "number" && Number.isFinite(value) && value >= 0)
+      && node["Actual Loops"]! > 0, `${label} has valid selective work counters`);
+    // Independent ceiling: a page returns 100 files and completeness returns 5.
+    // Ten pages of work is a generous bound, yet refuses a full 10k-row visit.
+    const visited = (counters[0]! + counters[2]! + counters[3]!) * counters[1]!;
+    assert.ok(visited <= 1000, `${label} has bounded selective reader work:\n${p.lines.join("\n")}`);
+  }
+}
+function quotaInputs(p: Plan, rows: number) {
+  assert.ok(p.root["Node Type"] === "Aggregate" && p.root["Actual Rows"] === 1
+    && p.root["Actual Loops"] === 1, "quota returns one aggregate row once");
+  const readers = p.nodes.filter(node => node["Relation Name"] !== undefined);
+  assert.ok(readers.length > 0 && readers.every(node => node["Relation Name"] === "control_result_file_sets"),
+    "quota has nonempty unmixed set readers");
+  assert.equal(readers.length, 1, "quota has exactly one set reader under the serial session contract");
+  assert.ok(readers.every(node => node["Actual Rows"] === rows && node["Actual Loops"] === 1),
+    "quota qualifying row count matches the independent fixture");
+  assert.ok(readers.every(node => (node["Rows Removed by Filter"] ?? 0) === 0
+    && (node["Rows Removed by Index Recheck"] ?? 0) === 0), "quota does no unrelated filter work");
 }
 
-const scans = (p: Plan) => p.lines.filter(line => /(?:Seq|Bitmap Heap) Scan on ([a-z_]+)/u.exec(line)?.[1]);
-const sorted = (p: Plan) => p.lines.some(line => /^ *Sort \(/u.test(line) || /^ *Sort  /u.test(line));
+// Synthetic JSON adversaries exercise the observer, not a mocked PostgreSQL
+// boundary. The real plans and SQL results are exercised separately below.
+test("JSON growth oracle rejects selective scans and narrowly checks the broad quota", () => {
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  // Captured at the pinned base, PG17, production web login, scans forced.
+  const capturedCatalog = readPlan([{"Plan":{"Node Type":"Limit","Parallel Aware":false,"Async Capable":false,"Startup Cost":124.2,"Total Cost":124.25,"Plan Rows":21,"Plan Width":271,"Actual Startup Time":0.395,"Actual Total Time":0.396,"Actual Rows":21,"Actual Loops":1,"Shared Hit Blocks":90,"Shared Read Blocks":0,"Shared Dirtied Blocks":0,"Shared Written Blocks":0,"Local Hit Blocks":0,"Local Read Blocks":0,"Local Dirtied Blocks":0,"Local Written Blocks":0,"Temp Read Blocks":0,"Temp Written Blocks":0,"Plans":[{"Node Type":"Sort","Parent Relationship":"Outer","Parallel Aware":false,"Async Capable":false,"Startup Cost":124.2,"Total Cost":124.45,"Plan Rows":100,"Plan Width":271,"Actual Startup Time":0.394,"Actual Total Time":0.395,"Actual Rows":21,"Actual Loops":1,"Sort Key":["created_at DESC","set_id COLLATE \"C\""],"Sort Method":"top-N heapsort","Sort Space Used":35,"Sort Space Type":"Memory","Shared Hit Blocks":90,"Shared Read Blocks":0,"Shared Dirtied Blocks":0,"Shared Written Blocks":0,"Local Hit Blocks":0,"Local Read Blocks":0,"Local Dirtied Blocks":0,"Local Written Blocks":0,"Temp Read Blocks":0,"Temp Written Blocks":0,"Plans":[{"Node Type":"Seq Scan","Parent Relationship":"Outer","Parallel Aware":false,"Async Capable":false,"Relation Name":"control_result_file_sets","Alias":"control_result_file_sets","Startup Cost":0,"Total Cost":121.5,"Plan Rows":100,"Plan Width":271,"Actual Startup Time":0.009,"Actual Total Time":0.363,"Actual Rows":100,"Actual Loops":1,"Filter":"((tenant_id = 'tenant:mf3-growth'::text) AND (project_id = 'project:mf3-g0'::text) AND (retention_state = ANY ('{provisional,retained,trash}'::text[])))","Rows Removed by Filter":1900,"Shared Hit Blocks":84,"Shared Read Blocks":0,"Shared Dirtied Blocks":0,"Shared Written Blocks":0,"Local Hit Blocks":0,"Local Read Blocks":0,"Local Dirtied Blocks":0,"Local Written Blocks":0,"Temp Read Blocks":0,"Temp Written Blocks":0}]}]},"Planning":{"Shared Hit Blocks":180,"Shared Read Blocks":0,"Shared Dirtied Blocks":0,"Shared Written Blocks":0,"Local Hit Blocks":0,"Local Read Blocks":0,"Local Dirtied Blocks":0,"Local Written Blocks":0,"Temp Read Blocks":0,"Temp Written Blocks":0},"Planning Time":0.727,"Triggers":[],"Execution Time":0.414}]);
+  assert.throws(() => noGrownScan(capturedCatalog, "owner catalog list"), /does not scan a grown table/u);
+  assert.throws(() => requireIndex(capturedCatalog, "control_result_file_sets_project", "owner catalog list"),
+    /reaches expected index/u);
+  assert.ok(sorted(capturedCatalog), "captured catalog sort is detected");
+  const reader = { "Node Type": "Seq Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 2000, "Actual Loops": 1 };
+  const broad = make({ "Node Type": "Aggregate", "Actual Rows": 1, "Actual Loops": 1, Plans: [reader] });
+  noGrownScan(broad, "0206 quota sum", 2000);
+  for (const label of ["owner catalog list", "unknown", "0206 selective quota sum"])
+    assert.throws(() => noGrownScan(broad, label, 2000), /does not scan a grown table/u, label);
+  // A scan in the SECOND child must be found, even when the first child uses an index.
+  const nested = make({ "Node Type": "Nested Loop", Plans: [
+    { "Node Type": "Index Scan", "Index Name": "control_result_file_sets_project",
+      "Relation Name": "control_result_file_sets", "Actual Rows": 1, "Actual Loops": 1 },
+    { "Node Type": "Limit", Plans: [{ "Node Type": "Sort", Plans: [reader] }] }] });
+  assert.throws(() => noGrownScan(nested, "owner catalog list"), /does not scan a grown table/u);
+  requireIndex(nested, "control_result_file_sets_project", "catalog");
+  assert.throws(() => requireIndex(nested, "control_result_file_sets_quota", "catalog"), /reaches expected index/u);
+  assert.throws(() => requireIndex(make({ "Node Type": "Index Scan",
+    "Index Name": "control_result_file_sets_quota" }), "control_result_file_sets_quota", "missing"),
+    /expected table reader/u);
+  assert.ok(sorted(nested), "nested sort is detected");
+  assert.ok(sorted(make({ "Node Type": "Incremental Sort", Plans: [reader] })), "incremental sort is detected");
+  for (const type of ["Index Scan", "Index Only Scan"])
+    requireIndex(make({ "Node Type": type, "Index Name": "control_result_file_sets_quota",
+      "Relation Name": "control_result_file_sets" }), "control_result_file_sets_quota", "selective quota");
+  requireIndex(make({ "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
+    Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }),
+    "control_result_file_sets_quota", "bitmap selective quota");
+  for (const count of [0, 1999, 2001])
+    assert.throws(() => noGrownScan(make({ ...broad.root, Plans: [{ ...reader, "Actual Rows": count }] }),
+      "0206 quota sum", 2000), /qualifying row count/u);
+  assert.throws(() => quotaInputs(make({ ...broad.root, "Actual Rows": 0 }), 2000), /one aggregate row/u);
+  assert.throws(() => quotaInputs(make({ ...broad.root, Plans: [] }), 2000), /nonempty unmixed/u);
+  assert.throws(() => quotaInputs(make({ ...broad.root, Plans: [reader,
+    { ...reader, "Relation Name": "control_result_files" }] }), 2000), /nonempty unmixed/u);
+  assert.throws(() => quotaInputs(make({ ...broad.root, Plans: [{ ...reader, "Actual Loops": 2 }] }), 2000),
+    /qualifying row count/u);
+  for (const field of ["Rows Removed by Filter", "Rows Removed by Index Recheck"])
+    assert.throws(() => quotaInputs(make({ ...broad.root, Plans: [{ ...reader, [field]: 1 }] }), 2000),
+      /unrelated filter work/u);
+  assert.throws(() => readPlan([{ Plan: { "Node Type": "Result" } }, { Plan: { "Node Type": "Result" } }]),
+    /one JSON plan document is required/u);
+  assert.throws(() => readPlan([{ Plan: [] }]), /a plan node is required/u);
+  for (const type of [undefined, null, "", 0])
+    assert.throws(() => readPlan([{ Plan: { "Node Type": type }, "Execution Time": 0 }]),
+      /a plan node type is required/u);
+  for (const value of [undefined, [], [{ Plan: {} }], [{ Plan: { "Node Type": "Aggregate", Plans: {} } }],
+    [{ Plan: { "Node Type": "Aggregate", Plans: [null] } }]])
+    assert.throws(() => readPlan(value), /required|array/u);
+});
+
+// Independent fail-closed contract: table readers must identify a grown table;
+// intermediary and bitmap-index nodes do not carry a table identity in PG JSON.
+test("JSON reader identity refuses missing, malformed and mixed growth readers", () => {
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  const reject = (root: PlanNode, reason: string) => assert.throws(
+    () => noGrownScan(make(root), "0206 selective quota sum"),
+    /nonempty complete unmixed grown-table reader identities/u, reason);
+  // Original L1-E074-01 input, with a literal expected refusal from the spec.
+  reject({ "Node Type": "Seq Scan", "Actual Rows": 1, "Actual Loops": 1 },
+    "a selective Seq Scan with missing relation identity must refuse, never silently pass");
+  reject({ "Node Type": "Result" }, "a reader-free selective plan must refuse");
+  for (const type of ["Seq Scan", "Index Scan", "Index Only Scan", "Bitmap Heap Scan"])
+    for (const identity of [undefined, null, "", " ", "control_result_file_sets ", 0, [], {}, "unrelated_table"])
+      reject({ "Node Type": type, "Relation Name": identity } as unknown as PlanNode,
+        `${type} must refuse incomplete or unrelated relation identity ${JSON.stringify(identity)}`);
+  const valid = { "Node Type": "Index Only Scan", "Relation Name": "control_result_file_sets",
+    "Index Name": "control_result_file_sets_quota", "Actual Rows": 1, "Actual Loops": 1 };
+  for (const invalid of [{ "Node Type": "Index Scan" },
+    { ...valid, "Relation Name": "unrelated_table" }, { ...valid, "Relation Name": null },
+    { ...valid, "Relation Name": "control_result_files" }])
+    reject({ "Node Type": "Aggregate", Plans: [valid,
+      { "Node Type": "Limit", Plans: [invalid as PlanNode] }] },
+    "a valid sibling must not hide a nested incomplete or mixed reader");
+  for (const root of [valid, { "Node Type": "Subquery Scan", Plans: [valid] },
+    { "Node Type": "Limit", Plans: [valid] },
+    { "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
+      "Actual Rows": 1, "Actual Loops": 1, Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }])
+    noGrownScan(make(root), "0206 selective quota sum");
+  // The broad exception cannot hide a malformed reader beside a valid one.
+  const broad = { "Node Type": "Aggregate", "Actual Rows": 1, "Actual Loops": 1,
+    Plans: [{ "Node Type": "Seq Scan", "Relation Name": "control_result_file_sets",
+      "Actual Rows": 2000, "Actual Loops": 1 }, { "Node Type": "Seq Scan" }] };
+  assert.throws(() => noGrownScan(make(broad), "0206 quota sum", 2000),
+    /nonempty complete unmixed grown-table reader identities/u, "broad exemption refuses incomplete readers too");
+});
+
+test("JSON L2-001 selective work budget rejects non-Seq full reads", () => {
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  for (const type of ["Bitmap Heap Scan", "Index Scan", "Index Only Scan", "Tid Range Scan"]) {
+    const reader = { "Node Type": type, "Relation Name": "control_result_files",
+      "Actual Rows": 100, "Actual Loops": 1, "Rows Removed by Filter": 9900 };
+    assert.throws(() => noGrownScan(make(reader), "owner files for one page"),
+      /bounded selective reader work/u, `${type} must refuse a 10k-row visit`);
+    noGrownScan(make({ ...reader, "Rows Removed by Filter": 0 }), "owner files for one page");
+    noGrownScan(make({ ...reader, "Actual Rows": 1000, "Rows Removed by Filter": 0 }), "literal budget edge");
+    for (const change of [{ "Actual Rows": 1001, "Rows Removed by Filter": 0 },
+      { "Actual Rows": 1, "Rows Removed by Filter": 0, "Rows Removed by Index Recheck": 1000 },
+      { "Actual Rows": 501, "Actual Loops": 2, "Rows Removed by Filter": 0 }])
+      assert.throws(() => noGrownScan(make({ ...reader, ...change }), "budget overflow"),
+        /bounded selective reader work/u);
+    for (const field of ["Actual Rows", "Actual Loops", "Rows Removed by Filter", "Rows Removed by Index Recheck"])
+      for (const value of [null, "1", -1, NaN, Infinity])
+        assert.throws(() => noGrownScan(make({ ...reader, "Rows Removed by Filter": 0,
+          [field]: value } as unknown as PlanNode), "invalid work counter"), /valid selective work counters/u);
+    for (const field of ["Actual Rows", "Actual Loops"])
+      assert.throws(() => noGrownScan(make({ ...reader, "Rows Removed by Filter": 0,
+        [field]: undefined }), "missing work counter"), /valid selective work counters/u);
+    assert.throws(() => noGrownScan(make({ ...reader, "Actual Loops": 0 }), "unexecuted reader"),
+      /valid selective work counters/u);
+  }
+});
+
+test("JSON L2-002 broad quota refuses duplicate readers under the serial session contract", () => {
+  assert.equal(serialPlanWorkers, 0,
+    "observer startup pins the independently specified serial session contract");
+  const reader = { "Node Type": "Seq Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 2000, "Actual Loops": 1 };
+  const make = (readers: PlanNode[]) => readPlan([{ Plan: { "Node Type": "Aggregate",
+    "Actual Rows": 1, "Actual Loops": 1, Plans: readers }, "Execution Time": 0 }]);
+  assert.throws(() => quotaInputs(make([reader, reader]), 2000), /exactly one set reader/u,
+    "duplicated siblings must not read the complete fixture twice");
+  quotaInputs(make([reader]), 2000);
+  assert.throws(() => quotaInputs(make([{ ...reader, "Actual Rows": 667, "Actual Loops": 3 }]), 2000),
+    /qualifying row count/u, "parallel averages are outside the pinned serial statement contract");
+});
+
+test("JSON L2-003 reader exclusions and relation-bearing nodes have positive controls", () => {
+  const valid = { "Node Type": "Index Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 1, "Actual Loops": 1 };
+  const make = (root: PlanNode) => readPlan([{ Plan: root, "Execution Time": 0 }]);
+  for (const type of ["Subquery Scan", "CTE Scan", "WorkTable Scan", "Function Scan", "Table Function Scan",
+    "Values Scan", "Named Tuplestore Scan"])
+    noGrownScan(make({ "Node Type": type, Plans: [valid] }), "valid intermediary");
+  noGrownScan(make({ "Node Type": "Bitmap Heap Scan", "Relation Name": "control_result_file_sets",
+    "Actual Rows": 1, "Actual Loops": 1,
+    Plans: [{ "Node Type": "Bitmap Index Scan", "Index Name": "control_result_file_sets_quota" }] }),
+  "valid bitmap intermediary");
+  noGrownScan(make({ ...valid, "Node Type": "Custom Reader" }), "relation identifies a non-Scan reader");
+  assert.throws(() => noGrownScan(make({ "Node Type": "Custom Reader", "Relation Name": "unrelated_table",
+    Plans: [valid] }), "foreign relation-bearing parent"),
+  /nonempty complete unmixed grown-table reader identities/u);
+});
+
+test("JSON L2-004 execution time refuses absent malformed and nonfinite values", () => {
+  for (const value of [undefined, null, "0", "", NaN, Infinity, -Infinity, -1])
+    assert.throws(() => readPlan([{ Plan: { "Node Type": "Result" }, "Execution Time": value }]),
+      /finite nonnegative execution time/u, `must refuse ${String(value)}`);
+  for (const value of [0, 0.414, 100])
+    assert.equal(readPlan([{ Plan: { "Node Type": "Result" }, "Execution Time": value }]).milliseconds, value);
+});
 
 test("the catalog, the downloads and both cleanup reads stay index-backed at 10,000 files",
   { timeout: 600_000 }, async (t) => {
@@ -116,6 +368,15 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
           FROM control_result_file_sets WHERE tenant_id=$1 AND project_id=$2 AND ($3::text IS NULL OR job_id=$3)
             AND retention_state=ANY($5::text[]) ORDER BY created_at DESC,set_id COLLATE "C" LIMIT $4`,
         [TENANT, project, null, 21, ["provisional", "retained", "trash"]]);
+        requireIndex(catalog, "control_result_file_sets_project", "owner catalog list");
+        const wrapped = await plan(web, `SELECT set_id FROM (
+          SELECT set_id FROM control_result_file_sets WHERE tenant_id=$1 AND project_id=$2
+          ORDER BY created_at DESC,set_id COLLATE "C" LIMIT 21 OFFSET 0
+        ) page WHERE set_id<>$3`, [TENANT, project, "result-set:missing"]);
+        assert.equal(wrapped.root["Node Type"], "Subquery Scan", "PG produces a real no-relation intermediary");
+        assert.equal(wrapped.root["Relation Name"], undefined, "the intermediary does not name a base table");
+        noGrownScan(wrapped, "wrapped catalog intermediary");
+
         results.push({ label: "owner catalog list", plan: catalog,
           rows: (await web.query(`SELECT count(*)::int AS n FROM (SELECT set_id FROM control_result_file_sets
             WHERE tenant_id=$1 AND project_id=$2 AND ($3::text IS NULL OR job_id=$3)
@@ -174,6 +435,12 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
           FROM control_result_file_sets s WHERE s.tenant_id=$1
             AND s.retention_state IN ('provisional','retained') AND s.set_id<>$2`,
         [TENANT, `result-set:${hex32("excluded")}`])).rows[0]!.n;
+        assert.equal(Number(occupied), 40_960_000, "10k file promises sum to the literal byte total");
+        assert.equal(Number((await web.query(`SELECT coalesce(sum(s.total_bytes),0) AS n
+          FROM control_result_file_sets s WHERE s.tenant_id=$1
+            AND s.retention_state IN ('provisional','retained') AND s.set_id<>$2`,
+        [TENANT, `result-set:${"0".repeat(32)}`])).rows[0].n), 40_939_520,
+        "excluding the existing first 10k set subtracts its literal 20480-byte promise");
         results.push({ label: "0206 quota sum", plan: quota, rows: Number(occupied),
           expectNoScan: true });
 
@@ -199,8 +466,7 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
               AND expires_at<=$2 ORDER BY expires_at,upload_id LIMIT 100) batch`,
         [TENANT, new Date().toISOString()])).rows[0]!.n;
         results.push({ label: "0256 expired uploads", plan: expired, rows: expiredRows });
-        assert.ok(expired.lines.some(line => /Index (?:Only )?Scan using control_result_upload_sessions_open/u
-          .test(line)), `the expired read uses 0256's index:\n${expired.lines.join("\n")}`);
+        requireIndex(expired, "control_result_upload_sessions_open", "0256 expired uploads");
         assert.ok(!sorted(expired), `and needs no sort:\n${expired.lines.join("\n")}`);
 
         const stopped = await plan(gateway, `SELECT upload_id FROM control_result_upload_sessions
@@ -211,8 +477,7 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
               AND void_reason='stopped' ORDER BY voided_at,upload_id LIMIT 100) batch`, [TENANT])).rows[0]!.n;
         results.push({ label: "0256 stopped uploads", plan: stopped, rows: stoppedRows });
         assert.equal(stoppedRows, 100, "a full batch of stopped uploads is found: cleanup finds ALL of them");
-        assert.ok(stopped.lines.some(line => /Index (?:Only )?Scan using control_result_upload_sessions_stopped/u
-          .test(line)), `the stopped read uses 0256's index:\n${stopped.lines.join("\n")}`);
+        requireIndex(stopped, "control_result_upload_sessions_stopped", "0256 stopped uploads");
         assert.ok(!sorted(stopped), `and needs no sort:\n${stopped.lines.join("\n")}`);
 
         // ---- the assertions the whole lane exists for -------------------------
@@ -236,13 +501,10 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
 
         // SPEED, as a plan and never as a wall-clock assertion.
         for (const entry of results.filter(row => row.expectNoScan)) {
-          const tables = scans(entry.plan);
-          assert.ok(!tables.includes("control_result_files") && !tables.includes("control_result_file_sets")
-            && !tables.includes("control_result_upload_sessions"),
-          `${entry.label} does not scan a grown table at ${FILES} files:\n${entry.plan.lines.join("\n")}`);
+          noGrownScan(entry.plan, entry.label, entry.label === "0206 quota sum" ? 2000 : undefined);
         }
         for (const entry of results) t.diagnostic(`${entry.label}: ${entry.plan.milliseconds} ms, `
-          + `${entry.rows} rows, scanned ${scans(entry.plan).join(",") || "nothing"}`);
+          + `${entry.plan.buffers} buffers, ${entry.rows} rows, scanned ${scans(entry.plan).join(",") || "nothing"}`);
         const slowest = results.reduce((worst, entry) =>
           entry.plan.milliseconds > worst.plan.milliseconds ? entry : worst);
         t.diagnostic(`slowest of the ${results.length} production reads at ${FILES} files: `
@@ -251,6 +513,135 @@ test("the catalog, the downloads and both cleanup reads stay index-backed at 10,
         await admin.end(); await web.end(); await gateway.end();
       }
     }, { port: PORT, allowedPorts: PORTS, database: "control_room" });
+  });
+
+const quotaSQL = `SELECT coalesce(sum(s.total_bytes),0) FROM control_result_file_sets s
+  WHERE s.tenant_id=$1 AND s.retention_state IN ('provisional','retained') AND s.set_id<>$2`;
+const absentSet = `result-set:${hex32("excluded")}`;
+const firstSet = `result-set:${"0".repeat(32)}`;
+
+test("broad and selective quota readers at 10k and 100k agree with literal fixture totals",
+  { timeout: 600_000 }, async t => {
+    if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+    for (const fixture of [
+      { files: 100_000, sets: 20_000, selective: false, inputs: 20_000, bytes: 409_600_000, excludingFirst: 409_579_520 },
+      { files: 10_000, sets: 2_000, selective: true, inputs: 1, bytes: 20_480, excludingFirst: 0 },
+      { files: 100_000, sets: 20_000, selective: true, inputs: 1, bytes: 20_480, excludingFirst: 0 },
+    ]) {
+      await withRealPostgres(async postgres => {
+        const admin = await connect(postgres, "admin");
+        const web = await connect(postgres, "web");
+        const results = await connect(postgres, "results");
+        const burst: Client[] = [];
+        try {
+          assert.equal(Number((await admin.query("SELECT count(*) FROM control_result_file_sets")).rows[0].count),
+            0, "migrations create the empty catalog; fixture setup has not populated it yet");
+          await seedTenant(admin);
+          await seedCatalog(admin, fixture.files, fixture.selective);
+          assert.deepEqual((await admin.query(`SELECT
+            (SELECT count(*)::int FROM control_result_files) AS files,
+            (SELECT count(*)::int FROM control_result_file_sets) AS sets,
+            (SELECT count(*)::int FROM control_result_file_sets
+              WHERE retention_state IN ('provisional','retained')) AS active,
+            (SELECT count(*)::int FROM control_result_file_sets WHERE state='declared') AS declared`)).rows[0],
+          { files: fixture.files, sets: fixture.sets, active: fixture.inputs, declared: fixture.selective ? 1 : 0 },
+          "fresh fixture really contains the independent file/set counts and declared promises");
+          await admin.query("ANALYZE");
+          for (const [role, client] of [["web", web], ["results", results]] as const) {
+            assert.equal((await client.query("SELECT session_user")).rows[0].session_user,
+              `control_room_${role}`, "quota uses the actual production login");
+            assert.equal((await client.query("SHOW max_parallel_workers_per_gather")).rows[0].max_parallel_workers_per_gather,
+              "0", "quota observer sessions explicitly use the serial plan contract");
+            const p = await plan(client, quotaSQL, [TENANT, absentSet]);
+            if (fixture.selective) {
+              requireIndex(p, "control_result_file_sets_quota", "0206 selective quota sum");
+              noGrownScan(p, "0206 selective quota sum");
+              quotaInputs(p, 1);
+            } else noGrownScan(p, "0206 quota sum", 20_000);
+            for (const [tenant, excluded, expected] of [
+              [TENANT, absentSet, fixture.bytes], [TENANT, firstSet, fixture.excludingFirst],
+              ["tenant:missing", absentSet, 0],
+            ] as const)
+              assert.equal(Number((await client.query(quotaSQL, [tenant, excluded])).rows[0].coalesce),
+                expected, "quota totals come from hand arithmetic, including missing/excluded inputs");
+            await assert.rejects(client.query("UPDATE control_result_file_sets SET total_bytes=0"),
+              (error: { code?: string }) => error.code === "42501", "quota reader cannot rewrite promises");
+            t.diagnostic(`quota ${role}: ${fixture.files} files, selective=${fixture.selective}, `
+              + `${fixture.inputs} inputs, ${fixture.bytes} bytes, ${p.milliseconds} ms, ${p.buffers} buffers`);
+          }
+          if (fixture.selective) {
+            await admin.query("DROP INDEX control_result_file_sets_quota");
+            try {
+              const dropped = await plan(web, quotaSQL, [TENANT, absentSet]);
+              assert.throws(() => noGrownScan(dropped, "0206 selective quota sum"),
+                /0206 selective quota sum does not scan a grown table/u,
+                "dropping the real quota index reaches the named selective refusal");
+              t.diagnostic(`DROP_INDEX_NAMED_FAILURE at ${fixture.files} files: ${dropped.lines.join("\n")}`);
+            } finally {
+              // Literal DDL from migration 0206, independent of the observed plan.
+              await admin.query(`CREATE INDEX control_result_file_sets_quota ON control_result_file_sets(tenant_id)
+                WHERE retention_state IN ('provisional','retained')`);
+            }
+            const restored = await plan(web, quotaSQL, [TENANT, absentSet]);
+            requireIndex(restored, "control_result_file_sets_quota", "restored selective quota");
+            noGrownScan(restored, "0206 selective quota sum");
+            quotaInputs(restored, 1);
+          }
+          // Fifty independent backends have connected before any burst query is released.
+          for (let index = 0; index < 50; index += 1) burst.push(await connect(postgres, "web"));
+          const backends = await Promise.all(burst.map(client => client.query(`SELECT pg_backend_pid() AS pid,
+            (${quotaSQL}) AS bytes`, [TENANT, absentSet])));
+          assert.equal(new Set(backends.map(value => value.rows[0].pid)).size, 50,
+            "the burst reached fifty distinct server processes");
+          assert.ok(backends.every(value => Number(value.rows[0].bytes) === fixture.bytes),
+            "all fifty completed readers return the independent byte total");
+          t.diagnostic(`BURST_COMPLETED ${fixture.files} files selective=${fixture.selective}: 50 distinct backends`);
+          // Hold a real reader at a lock, cancel halfway, release and retry.
+          const pid = backends[0]!.rows[0].pid as number;
+          await admin.query("BEGIN");
+          let pending: Promise<unknown> | undefined;
+          try {
+            await admin.query("LOCK TABLE control_result_file_sets IN ACCESS EXCLUSIVE MODE");
+            pending = assert.rejects(burst[0]!.query(quotaSQL, [TENANT, absentSet]),
+              (error: { code?: string }) => error.code === "57014", "cancelled blocked quota is refused");
+            let blocked = false;
+            const deadline = Date.now() + 10_000;
+            while (Date.now() < deadline && !blocked)
+              blocked = (await admin.query("SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1", [pid]))
+                .rows[0]?.wait_event_type === "Lock";
+            assert.ok(blocked, "slow quota reader reached the server lock before cancellation");
+            assert.equal((await admin.query("SELECT pg_cancel_backend($1) AS cancelled", [pid])).rows[0].cancelled,
+              true, "the exact blocked backend was cancelled");
+            await pending;
+          } finally {
+            await admin.query("ROLLBACK");
+            await pending;
+          }
+          assert.equal(Number((await burst[0]!.query(quotaSQL, [TENANT, absentSet])).rows[0].coalesce),
+            fixture.bytes, "retry after a halfway cancellation returns the same promises");
+          const dropped = burst.pop()!;
+          const errors: { code?: string }[] = [];
+          dropped.on("error", error => errors.push(error as { code?: string }));
+          const ended = new Promise<void>(resolve => dropped.once("end", resolve));
+          assert.equal((await admin.query("SELECT pg_terminate_backend($1) AS terminated",
+            [backends[49]!.rows[0].pid])).rows[0].terminated, true);
+          await ended;
+          assert.ok(errors.some(error => error.code === "57P01"), "dropped reader reports the server termination");
+          await dropped.end();
+          const replacement = await connect(postgres, "web"); burst.push(replacement);
+          assert.equal(Number((await replacement.query(quotaSQL, [TENANT, absentSet])).rows[0].coalesce),
+            fixture.bytes, "reconnecting after a dropped connection preserves the read");
+          assert.equal(Number((await admin.query("SELECT deadlocks FROM pg_stat_database WHERE datname=$1",
+            [postgres.database])).rows[0].deadlocks), 0, "read load and cancellation caused no server deadlocks");
+          t.diagnostic("INTERRUPTION_AND_RETRY_COMPLETED: lock wait cancelled, dropped connection replaced, deadlocks=0");
+        } finally {
+          await Promise.all(burst.map(client => client.end()));
+          await admin.end(); await web.end(); await results.end();
+        }
+      }, { port: PORT, allowedPorts: PORTS, database: "control_room" });
+      // Emitted after the cluster's real teardown, never when a fixture is merely registered.
+      t.diagnostic(`FIXTURE_COMPLETED_AND_CLEANED ${fixture.files} files selective=${fixture.selective}`);
+    }
   });
 
 test("the real-PostgreSQL lane ran, so no step above was skipped", () => {
@@ -312,21 +703,23 @@ async function seedTenant(admin: Client) {
  * which does not depend on a guard having fired, and the CORRECTNESS of those
  * reads over rows that exist. Every read is then issued as the production login
  * that really issues it, so a missing grant appears as an error and not as a plan. */
-async function seedCatalog(admin: Client) {
+async function seedCatalog(admin: Client, files = FILES, selective = false) {
+  const sets = files / FILES_PER_SET;
   const now = issuedAt();
   await admin.query("BEGIN");
   await admin.query("SET LOCAL session_replication_role = replica");
-  for (let index = 0; index < SETS; index += 1) {
+  for (let index = 0; index < sets; index += 1) {
     const setId = `result-set:${index.toString(16).padStart(32, "0")}`;
     const projectId = `project:mf3-g${index % PROJECTS}`;
     const jobId = `job:mf3-${index % PROJECTS}`;
     const createdAt = new Date(Date.parse(now) - index * 1_000).toISOString();
     await admin.query(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,
         producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,
-        created_at,stored_at) VALUES($1,$2,$3,$4,$5,'fleet',$6,'stored','file-store',$7,$8,$9,'provisional',
-        $10::timestamptz,$10::timestamptz)`,
+        created_at,stored_at) VALUES($1,$2,$3,$4,$5,'fleet',$6,$12,'file-store',$7,$8,$9,$11,
+        $10::timestamptz,CASE WHEN $12='stored' THEN $10::timestamptz ELSE NULL END)`,
     [TENANT, setId, projectId, jobId, `attempt:mf3-${index}`, `fleet-worker:${hex32("no-worker")}`,
-      FILES_PER_SET, FILES_PER_SET * 4096, digestFor(0), createdAt]);
+      FILES_PER_SET, FILES_PER_SET * 4096, digestFor(0), createdAt, selective && index > 0 ? "trash" : "provisional",
+      selective && index === 0 ? "declared" : "stored"]);
     for (let ordinal = 1; ordinal <= FILES_PER_SET; ordinal += 1) {
       const fileNumber = index * FILES_PER_SET + ordinal;
       await admin.query(`INSERT INTO control_result_files(tenant_id,set_id,project_id,job_id,ordinal,file_id,
@@ -348,8 +741,8 @@ async function seedCatalog(admin: Client) {
         expected_chunks,state,void_reason,created_at,expires_at,voided_at)
       VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,4096,$9,4096,1,$10,$11,$12::timestamptz,$13::timestamptz,$14::timestamptz)`,
     [TENANT, `result-upload:${index.toString(16).padStart(32, "0")}`, `project:mf3-g${index % PROJECTS}`,
-      `job:mf3-${index % PROJECTS}`, `attempt:mf3-${index % SETS}`,
-      `result-set:${(index % SETS).toString(16).padStart(32, "0")}`, `fleet-worker:${hex32("no-worker")}`,
+      `job:mf3-${index % PROJECTS}`, `attempt:mf3-${index % sets}`,
+      `result-set:${(index % sets).toString(16).padStart(32, "0")}`, `fleet-worker:${hex32("no-worker")}`,
       `fleet-claim:${hex32("no-claim")}`, digestFor((index % FILES_PER_SET) + 1),
       reserved ? "reserved" : "voided", reserved ? null : "stopped",
       expired ? hoursFrom(sessionNow, -25) : (reserved ? hoursFrom(sessionNow, -1) : hoursFrom(sessionNow, -23)),
