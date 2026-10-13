@@ -176,8 +176,8 @@
   },
   {
     "file": "tests/attack-kit-real-postgres.test.ts",
-    "find": " error\", needsPgOrFail(), async () => {\n    countedRealPostgresRun();",
-    "replace": " error\", needsPgOrFail(), async () => {\n    return;\n    countedRealPostgresRun();",
+    "find": "    countedRealPostgresRun();\n    const port = PORTS[0]!;\n    let captured: RealPostgres | undefined;",
+    "replace": "    return;\n    countedRealPostgresRun();\n    const port = PORTS[0]!;\n    let captured: RealPostgres | undefined;",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-name-pattern=\"CR-E081 conserves every original feature name exactly once in its partition\" tests/attack-kit-lane-partitions.test.mjs",
     "why": "adj-empty-body: independent frozen 9c8ab635 executable source contract and original literal allocations require feature allocation; loaded disabled source must fail the named completed oracle body, not startup."
   },
