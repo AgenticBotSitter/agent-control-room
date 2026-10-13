@@ -411,8 +411,11 @@ if(args.includes('merge-base')&&!existsSync(${JSON.stringify(marker)})) {
 const result=spawnSync('git',args,{env:process.env,stdio:'inherit'});process.exit(result.status??1);
 `); await chmod(proxy, 0o700);
   const altered = new GitMirrorSourceV1({ root: f.updaterRoot, origin: f.origin, fromCommit: f.fromCommit, testing: true, git: proxy });
-  assert.equal(await altered.isAncestor(dropped, f.fromCommit), false,
-    "a later known commit cannot become an ancestor of the earlier root");
+  for (const repository of [undefined, source.mirror]) {
+    await rm(marker, { force: true }); await rm(join(source.mirror, "info/grafts"), { force: true });
+    assert.equal(await altered.isAncestor(dropped, f.fromCommit, repository), false,
+      "a caller-supplied live repository never overrides the private ancestry copy");
+  }
   assert.equal(await readFile(marker, "utf8"), "injected");
   assert.equal((await git(["--git-dir", source.mirror, "rev-parse", "refs/updater/main"])).stdout.trim(), dropped,
     "ancestry refusal preserves trusted watcher main");

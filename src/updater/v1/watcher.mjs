@@ -183,6 +183,10 @@ export class GitMirrorSourceV1 {
       const repository = snapshot;
       snapshot = undefined;
       return Object.freeze({ commit, tree, repository,
+        isAncestor: (ancestor, descendant) => {
+          validCommitV1(ancestor); validCommitV1(descendant);
+          return this.#isAncestor(ancestor, descendant, repository);
+        },
         release: () => rm(repository, { recursive: true, force: true }) });
     } finally {
       try { await this.#git(["update-ref", "-d", pending]); }
@@ -190,9 +194,9 @@ export class GitMirrorSourceV1 {
     }
   }
 
-  async isAncestor(ancestor, descendant, repository) {
+  async isAncestor(ancestor, descendant) {
     validCommitV1(ancestor); validCommitV1(descendant);
-    return this.#isAncestor(ancestor, descendant, repository);
+    return this.#isAncestor(ancestor, descendant);
   }
 }
 
@@ -284,7 +288,8 @@ export class UpdaterWatcherV1 {
       }
       if (existing) {
         const oldCommit = candidateCommitV1(existing.plan);
-        if (!oldCommit || !(await this.source.isAncestor(oldCommit, source.commit, source.repository)))
+        const isAncestor = source.isAncestor ?? ((ancestor, descendant) => this.source.isAncestor(ancestor, descendant));
+        if (!oldCommit || !(await isAncestor(oldCommit, source.commit)))
           throw updaterRefuseV1("watcher_history_rewritten");
       }
       const classification = await this.classifier.classify({ repository: source.repository, fromCommit: this.source.fromCommit,
