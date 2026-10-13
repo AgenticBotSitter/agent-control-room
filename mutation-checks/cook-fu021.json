@@ -1,37 +1,100 @@
 [
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
-    "find": "if [[ \"$changed\" != \"$expected\" ]] && ! git cat-file -e \"HEAD:$expected\" 2>/dev/null; then",
+    "find": "if [[ \"$changed\" != \"$expected\" && \"$own\" != true ]]; then",
     "replace": "if false; then",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "mismatched added manifest refuses with expected and found names must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+    "why": "mismatched added manifest refuses with expected and found names must fail; independent expected paths, exits and counts are literal ticket outcomes"
   },
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
-    "find": " && ! git cat-file -e \"HEAD:$expected\" 2>/dev/null",
+    "find": " && \"$own\" != true",
     "replace": "",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "foreign addition alongside own manifest passes must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+    "why": "foreign addition alongside own manifest passes must fail; independent expected paths, exits and counts are literal ticket outcomes"
   },
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
     "find": "--diff-filter=A ",
-    "replace": "--diff-filter=ACMT ",
+    "replace": "--diff-filter=AM ",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "modified foreign manifest passes when matching manifest is absent must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+    "why": "modified foreign manifest passes when matching manifest is absent must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=AM ",
+    "replace": "--diff-filter=A ",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "R1 modified foreign manifest is selected when own manifest is absent must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$kind\" != blob ]] || [[ \"$entry\" != 100644\\ blob\\ * && \"$entry\" != 100755\\ blob\\ * ]]; then",
+    "replace": "if false; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "R2 tree at own manifest path refuses before publishing selection must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "[[ \"$entry\" != 100644\\ blob\\ * && \"$entry\" != 100755\\ blob\\ * ]]",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "symlink at own manifest path refuses a nonregular blob must fail; independent expected paths, exits and counts are literal ticket outcomes"
   },
   {
     "file": "scripts/ci/check-mutation-manifest-branch.sh",
     "find": "set -euo pipefail",
     "replace": "set -eu",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "unreadable PR base fails rather than accepting unknown changes must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+    "why": "unreadable PR base fails rather than accepting unknown changes must fail; independent expected paths, exits and counts are literal ticket outcomes"
   },
   {
     "file": ".github/workflows/ci.yml",
-    "find": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" || exit $?",
-    "replace": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\"",
+    "find": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" > \"$list\" || exit $?",
+    "replace": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" > \"$list\"",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
-    "why": "mismatched added manifest refuses with expected and found names must fail when this guard is disabled; expected values are ticket-specified literal exits and workflow outputs"
+    "why": "mismatched added manifest refuses with expected and found names must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": " || failed=1",
+    "replace": " || true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "verifier loop keeps going after failure and fails the aggregate must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": " || failed=1",
+    "replace": " || exit 1",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "verifier loop keeps going after failure and fails the aggregate must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" != \"$expected\" ]]; then printf '%s\\0' \"$changed\"; fi",
+    "replace": "if false; then printf '%s\\0' \"$changed\"; fi",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "all changed manifests plus unchanged own manifest are selected once must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ -z \"$base\" ]]; then",
+    "replace": "if false; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "non-PR fallback keeps existing branch selection without a PR diff must fail; expected paths and refusals are independent literals"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "  own=true",
+    "replace": "  own=false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "matching changed manifest selects branch mutations must fail; expected paths and refusals are independent literals"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "    regular_manifest \"$changed\"",
+    "replace": "    : # regular-file refusal disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "modified foreign symlink refuses even when own manifest exists must fail; expected paths and refusals are independent literals"
   }
 ]

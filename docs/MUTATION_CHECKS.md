@@ -64,13 +64,21 @@ the same checkout at once.
 
 ## CI behavior and security boundary
 
-The **Mutation checks** job derives the manifest name from the pull request head branch. It only
-installs dependencies and invokes the mutation verifier when that exact file exists. Manifests
-must be regular files directly inside the top-level `mutation-checks/` directory; a symbolic-link
-manifest is refused and fails the job. A path passed to the verifier outside that directory is
-ignored.
+For pull requests, the **Mutation checks** job verifies every manifest added or modified
+against the PR base, plus the branch-derived manifest when it exists at HEAD. Each selected
+manifest runs once. The loop keeps going after failures, reports every result, and fails the
+step if any verification fails. All declared anchors are still validated on every run.
 
-When no manifest exists, CI examines added and removed lines under `src/**`, `db/migrations/**`,
+An added manifest with a different name is refused when the branch-derived manifest is absent:
+`Mutation manifest mismatch: expected '<branch-derived path>', found '<added path>'.`
+Add or rename a manifest to the branch-derived name. Modifying existing foreign manifests is
+allowed and now runs their mutations even when the branch has no manifest of its own.
+Deletions are outside selection; renames are treated as deletion plus addition. Main pushes and
+manual runs retain branch-only selection. Selected manifests must be regular Git blobs: trees
+and symbolic links are refused before selection outputs are published. Manifests must be directly
+inside the top-level `mutation-checks/` directory; the verifier ignores paths outside it.
+
+When no manifest is selected, CI examines added and removed lines under `src/**`, `db/migrations/**`,
 and `db/roles/**`. It emits a warning, not a failure, for source refusal words or uppercase SQL
 `GRANT`, `REVOKE`, `SECURITY DEFINER`, `POLICY`, and `TRIGGER` markers. This is deliberately a
 reminder rather than a parser; it can miss guards with different wording and can warn on comments.
