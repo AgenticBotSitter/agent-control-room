@@ -8,10 +8,10 @@
   },
   {
     "file": "src/installer/shared/backup-files.mjs",
-    "find": "!same(created, held)",
+    "find": "!same(created, held) || created.birthtimeMs !== held.birthtimeMs",
     "replace": "false",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='reservation acquisition' tests/backup-round7.test.mjs",
-    "why": "The first observation after the exclusive mkdir must equal the opened descriptor. A directory renamed away and replaced just before open (distinct real inode numbers) must fail the named refusal assertion."
+    "why": "The first observation after the exclusive mkdir must equal the opened descriptor by inode and creation time. Disable both comparisons (each alone is covered by the other for a renamed replacement); a directory renamed away and replaced just before open must fail the named refusal assertion."
   },
   {
     "file": "src/installer/shared/backup-files.mjs",

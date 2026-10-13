@@ -389,9 +389,10 @@ test('reservation acquisition closes handles on raced identity, type, mode and s
   const originalOpen = nativeFs.promises.open, originalLstat = nativeFs.promises.lstat;
   for (const change of ['identity', 'type', 'link', 'mode', 'stat', 'type-before-stat']) {
     const out = join(f.root, change);
-    let held;
+    let held, planted = false;
     nativeFs.promises.lstat = async (path, ...args) => {
-      if (path === out && change === 'type-before-stat') {
+      if (path === out && change === 'type-before-stat' && !planted) {
+        planted = true;
         await fs.rmdir(out);
         await fs.writeFile(out, 'not a directory', {mode:0o700});
       }
