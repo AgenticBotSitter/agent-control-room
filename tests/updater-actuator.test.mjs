@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, open, readFile, readlink, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, readlink, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,7 +11,7 @@ const digest = value => `sha256:${String(value).padStart(64, "0")}`;
 const pair = (releaseId, pgDataId, value = pgDataId.slice(-1)) => ({ releaseId, pgDataId, schemaDigest: digest(value) });
 
 async function fixtureV1(t, { releases = ["r0", "r1", "r2", "r3"], data = ["p0", "p1", "p2", "p3"] } = {}) {
-  const root = await mkdtemp(join(tmpdir(), "updater-actuator-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "updater-actuator-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   await Promise.all([mkdir(join(root, "updater-state")), mkdir(join(root, "releases")), mkdir(join(root, "pg"))]);
   for (const id of releases) { await mkdir(join(root, "releases", id)); await writeFile(join(root, "releases", id, "manifest"), id); }
