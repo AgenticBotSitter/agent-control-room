@@ -26,5 +26,19 @@
     "replace": "const bypassEnd = ((callback?: (error?: Error) => void) => {",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/draining-pool.test.ts",
     "why": "draining pool shares raw adapter and fixture shutdown and ends the native pool once must fail if raw adapter shutdown bypasses the shared barrier"
+  },
+  {
+    "file": "tests/support/draining-pool.ts",
+    "find": "void ending.then(() => callback(), error => callback(error));",
+    "replace": "callback();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/draining-pool.test.ts",
+    "why": "draining pool preserves callback shutdown and waits for acknowledgement must fail if callbacks bypass the drain"
+  },
+  {
+    "file": "tests/support/draining-pool.ts",
+    "find": "error => callback(error)",
+    "replace": "() => callback()",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/draining-pool.test.ts",
+    "why": "draining pool retains a failed shutdown for raw, callback and fixture retries must fail if callback errors are swallowed"
   }
 ]
