@@ -82,11 +82,21 @@ export class UpdaterStateFilesV1 {
       schema: "control-room.updater-mode/v1", mode,
     })}\n`);
   }
+  async #readWatcherRetry() {
+    let retry;
+    try { retry = JSON.parse(await readFileNoFollowV1(this.root, "status/watcher-hold-retry.json", { maxBytes: 256 })); }
+    catch (error) { if (error?.code === "ENOENT") return null; throw updaterRefuseV1("watcher_history_unproven"); }
+    if (retry?.schema !== "control-room.watcher-hold/v1" || ![null, "watcher_history_unproven"].includes(retry.code))
+      throw updaterRefuseV1("watcher_history_unproven");
+    return retry.code;
+  }
   async readWatcherHold() {
+    const retryHold = await this.#readWatcherRetry();
     let value;
     try { value = JSON.parse(await readFileNoFollowV1(this.root, "updater-state/watcher-hold.json", { maxBytes: 256 })); }
     catch (error) {
       if (error?.code !== "ENOENT") throw updaterRefuseV1("watcher_history_unproven");
+      if (retryHold !== null) { await this.writeWatcherHold(retryHold); return retryHold; }
       // Earlier versions published this warning without its own durable file.
       // Preserve that real reader record during upgrade until a recheck writes
       // an explicit cleared hold. A cleared record never falls back to status.
@@ -102,12 +112,29 @@ export class UpdaterStateFilesV1 {
     }
     if (value?.schema !== "control-room.watcher-hold/v1" || ![null, "watcher_history_unproven"].includes(value.code))
       throw updaterRefuseV1("watcher_history_unproven");
+    if (retryHold !== null && value.code === null) {
+      await this.writeWatcherHold(retryHold);
+      return retryHold;
+    }
     return value.code;
   }
-  writeWatcherHold(code) {
-    return atomicWriteNoFollowV1(this.root, "updater-state/watcher-hold.json", `${JSON.stringify({
-      schema: "control-room.watcher-hold/v1", code,
-    })}\n`);
+  async writeWatcherHold(code) {
+    const body = `${JSON.stringify({ schema: "control-room.watcher-hold/v1", code })}\n`;
+    try { await atomicWriteNoFollowV1(this.root, "updater-state/watcher-hold.json", body); }
+    catch (error) {
+      // Status is a separate writable directory in the promotion-failure case.
+      // Preserve the new refusal there before an earlier cleared record can
+      // hide it on reconstruction. A failed write still reports its failure.
+      if (code === "watcher_history_unproven")
+        await atomicWriteNoFollowV1(this.root, "status/watcher-hold-retry.json", body);
+      throw error;
+    }
+    if (code === null) {
+      try { await lstat(`${this.root}/status/watcher-hold-retry.json`); }
+      catch (error) { if (error?.code === "ENOENT") return; throw error; }
+      // Only the successful source recheck's clearance retires both records.
+      await atomicWriteNoFollowV1(this.root, "status/watcher-hold-retry.json", body);
+    }
   }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({

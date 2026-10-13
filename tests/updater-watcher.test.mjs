@@ -536,6 +536,9 @@ for (const state of ["rolled_back", "refused", "uncertain", "error"]) test(`FIX-
     const upgraded = make(f.files); loops.push(upgraded); await upgraded.tick();
     assert.equal((await f.read()).reason, reason, "failed promotion must not overwrite the only legacy history evidence");
     assert.equal((await f.read()).needsYou, true, "failed promotion keeps the published hold raised");
+    // Another real status producer can publish while this process is absent.
+    // The supplemental hold must survive that cache replacement too.
+    await f.files.writeStatus({ state: state === "error" ? "needs_attention" : state, needsYou: true, selfUpdate: "Off" });
     await assert.rejects(readFile(holdPath), { code: "ENOENT" }, "failed promotion cannot fabricate durable evidence");
     attention = null;
     const retry = make(new UpdaterStateFilesV1(f.f.updaterRoot)); loops.push(retry); await retry.tick();
@@ -604,4 +607,38 @@ test("FIX-475 R6: a new history refusal survives its failed hold write and recon
     try { await reconstructed.tick(); assert.equal((await f.read()).reason, reason, "the new refusal survives reconstruction without a durable file"); }
     finally { await reconstructed.shutdown(); }
   } finally { await chmod(stateDir, 0o700); await loop.shutdown(); }
+});
+
+test("FIX-475 R6: failed hold write after prior clearance retains the newer refusal", async t => {
+  const f = await heldLoopFixture(t), reason = "Update held: the update copy's history can't be trusted. Nothing was installed.";
+  const dir = join(f.f.updaterRoot, "updater-state"), hold = join(dir, "watcher-hold.json");
+  await rm(join(f.source.mirror, "info/grafts"));
+  const retryPath = join(f.f.updaterRoot, "status/watcher-hold-retry.json");
+  await assert.rejects(readFile(retryPath), { code: "ENOENT" }, "setup leaves supplemental product state absent");
+  const primed = f.make(); await primed.tick(); await primed.shutdown();
+  assert.equal((await f.read()).needsYou, false, "missing supplemental record is ordinary first use");
+  assert.deepEqual(JSON.parse(await readFile(hold, "utf8")), { schema: "control-room.watcher-hold/v1", code: null }, "real successful recheck creates the earlier clearance");
+  await writeFile(join(f.source.mirror, "info/grafts"), `${f.f.fromCommit}\n`);
+  const failed = f.make(); await chmod(dir, 0o500);
+  try {
+    await failed.tick(); assert.equal((await f.read()).reason, reason);
+    await writeFile(join(dir, "self-update"), "Off\n"); await failed.shutdown();
+    const restored = f.make();
+    try {
+      await restored.tick(); assert.equal((await f.read()).needsYou, true, "an older clearance cannot erase a newer failed-write refusal");
+      assert.equal((await f.read()).reason, reason, "the newer history warning survives reconstruction despite the older cleared file");
+      assert.deepEqual(JSON.parse(await readFile(retryPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: "watcher_history_unproven" },
+        "the product persists the newer refusal separately from the older clearance");
+      for (const body of ['{"schema":"wrong","code":null}', '{', '{"schema":"control-room.watcher-hold/v1","code":"unknown"}']) {
+        await writeFile(retryPath, body);
+        await restored.tick(); assert.equal((await f.read()).needsYou, true, "invalid supplemental evidence must not resurrect an older clearance");
+      }
+      await assert.rejects(f.files.writeWatcherHold("watcher_history_unproven"), { code: "EACCES" }, "real failed writer restores its own supplemental evidence");
+      await chmod(dir, 0o700); await restored.tick();
+      assert.equal((await f.read()).needsYou, true, "successful promotion is persistence, not clearance");
+      await rm(join(f.source.mirror, "info/grafts")); await writeFile(join(dir, "self-update"), "On\n");
+      await restored.tick(); assert.equal((await f.read()).needsYou, false, "real successful recheck retires the newer refusal");
+      assert.deepEqual(JSON.parse(await readFile(retryPath, "utf8")), { schema: "control-room.watcher-hold/v1", code: null }, "successful recheck durably clears supplemental evidence");
+    } finally { await restored.shutdown(); }
+  } finally { await chmod(dir, 0o700); await failed.shutdown(); }
 });

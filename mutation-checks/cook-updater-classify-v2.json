@@ -432,5 +432,54 @@
     "replace": "\n              this.#watcherHoldUnpersisted = false;\n",
     "test": "node --test --test-name-pattern='FIX-475 R6: a new history refusal' tests/updater-watcher.test.mjs",
     "why": "Real new source refusal with a failed hold-file write must keep the independent history sentence recoverable across unrelated attention and reconstruction."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (code === \"watcher_history_unproven\")",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "Failed new refusal must be recorded in the writable status directory before an older clearance can mask it."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "const retryHold = await this.#readWatcherRetry();",
+    "replace": "const retryHold = null;",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "The validated supplemental refusal outranks the independent older cleared file."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (retry?.schema !== \"control-room.watcher-hold/v1\" || ![null, \"watcher_history_unproven\"].includes(retry.code))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "Malformed supplemental schema/code cannot turn the older clearance into a healthy answer."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "catch (error) { if (error?.code === \"ENOENT\") return null; throw updaterRefuseV1(\"watcher_history_unproven\"); }",
+    "replace": "catch (error) { return null; }",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "Unreadable or non-JSON supplemental evidence is unknown, never absence; named corrupted-record assertion fails."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (retryHold !== null && value.code === null)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "A real newer failed-write refusal survives an older durable clearance across reconstruction."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (code === null) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed hold write after prior' tests/updater-watcher.test.mjs",
+    "why": "The successful real source recheck must durably retire both primary and supplemental holds."
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (retryHold !== null) { await this.writeWatcherHold(retryHold); return retryHold; }",
+    "replace": "if (false) { await this.writeWatcherHold(retryHold); return retryHold; }",
+    "test": "node --test --test-name-pattern='FIX-475 R6: failed legacy promotion' tests/updater-watcher.test.mjs",
+    "why": "Supplemental evidence survives a second real status producer even when the primary file is absent."
   }
 ]
