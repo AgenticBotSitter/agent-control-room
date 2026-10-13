@@ -553,3 +553,64 @@ async function recordedMacAclWiring(t, folderHeader, fileHeader) {
     childProcess.spawnSync = realRun; fs.open = realOpen; syncBuiltinESMExports();
   }
 }
+
+
+for (const kind of ['directory', 'file', 'grandparent']) {
+  test(`late ${kind} allow ACL must refuse after sync`, async t => {
+    const { root } = await fixture(t);
+    const parent = kind === 'grandparent' ? join(root, 'nested') : root;
+    if (parent !== root) await fs.mkdir(parent, { mode: 0o700 });
+    const path = join(parent, 'ledger.lock');
+    await assert.rejects(fs.lstat(path), { code: 'ENOENT' }, 'product creates the lock');
+    const target = kind === 'file' ? path : root;
+    const realOpen = fs.open, realRun = childProcess.spawnSync;
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    const native = process.platform === 'darwin';
+    let lock, armed = true;
+    try {
+      if (!native) {
+        // Replay the real ls -lde shapes recorded above; this proves Darwin
+        // wiring on Linux, not native Mac ACL enforcement or kernel exclusion.
+        Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+        childProcess.spawnSync = (binary, args, options) => {
+          if (binary !== '/bin/ls') return realRun(binary, args, options);
+          assert.equal(args[0], '-lde');
+          const header = args[1] === path
+            ? '-rw-------@ 1 role  staff  8 Oct  7 22:49 /literal path\n'
+            : 'drwx------@ 3 role  staff  96 Oct  7 22:49 /literal path\n';
+          const acl = !armed && args[1] === target
+            ? ` 0: group:everyone allow ${kind === 'file' ? 'write,delete' : 'delete_child'}\n` : '';
+          return { status: 0, stdout: header + acl, stderr: '' };
+        };
+        t.diagnostic('native late Mac ACL branch NOT-RUN: recorded Darwin probe replay only');
+      }
+      fs.open = async (name, flags, ...rest) => {
+        const handle = await realOpen(name, native ? flags : flags & ~0x20, ...rest);
+        const sync = handle.sync.bind(handle);
+        if (name === path) handle.sync = async () => {
+          await sync();
+          if (armed) {
+            if (native) execFileSync('/bin/chmod', ['+a', kind === 'file'
+              ? 'everyone allow write,delete' : 'everyone allow delete_child', target]);
+            armed = false;
+          }
+        };
+        return handle;
+      };
+      syncBuiltinESMExports();
+      let outcome;
+      try { lock = await acquire(path); outcome = 'acquired'; }
+      catch (error) { outcome = error.code; }
+      assert.equal(armed, false, 'late ACL insertion reached the real sync seam');
+      assert.equal(outcome, 'passkey_ledger_lock_refused',
+        `late ${kind} allow ACL must refuse before authority is returned`);
+    } finally {
+      fs.open = realOpen; childProcess.spawnSync = realRun;
+      Object.defineProperty(process, 'platform', platform); syncBuiltinESMExports();
+      try { await lock?.release(); }
+      finally { if (native && !armed) execFileSync('/bin/chmod', ['-N', target]); }
+    }
+    const retry = await acquire(path);
+    await retry.release();
+  });
+}

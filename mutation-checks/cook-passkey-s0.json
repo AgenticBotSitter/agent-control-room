@@ -222,5 +222,19 @@
     "replace": "return / (?:inherited )?allow /u.test(acl.at(-1) ?? \"\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
     "why": "acl-allow-first: recorded allow-first ACL refused before inherited deny"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "      if (process.platform === \"darwin\" && macLockPathHasAclV1(current)) refuse();",
+    "replace": "      // late directory ACL check disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "late-directory-acl: late directory allow ACL must refuse before authority is returned"
+  },
+  {
+    "file": "src/installer/shared/private-process-lock.mjs",
+    "find": "    if (!same(owned, await lstat(path))) refuse();\n    if (process.platform === \"darwin\" && macLockPathHasAclV1(path)) refuse();",
+    "replace": "    if (!same(owned, await lstat(path))) refuse();\n    // final file ACL check disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/passkey-ledger-lock.test.mjs",
+    "why": "late-file-acl: late file allow ACL must refuse before authority is returned"
   }
 ]
