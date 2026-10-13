@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
 
@@ -162,4 +163,54 @@ test("portable platform paths and fixture strings do not claim Darwin-only Postg
     try { assert.deepEqual(findUncoveredTests(root), []); }
     finally { rmSync(root, { recursive: true }); }
   }
+});
+
+// Legacy lanes are independent literals captured from the existing workflow.
+const legacyFiles = ["tests/pg-runtime-copy-stress.test.ts", "tests/test-runner-service.test.mjs"];
+const legacyCommand = "node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?";
+function legacyWorkflow(first = legacyCommand, second = legacyCommand) {
+  return fixedWorkflow(command + "\n          " + first, command + "\n          " + second);
+}
+for (const file of legacyFiles) {
+  test(`legacy Darwin PostgreSQL ${file} in fixed map passes`, () => {
+    const root = pgFixture(legacyWorkflow(), [file]);
+    try { assert.deepEqual(findUncoveredTests(root), []); }
+    finally { rmSync(root, { recursive: true }); }
+  });
+  test(`legacy Darwin PostgreSQL ${file} missing from map is refused`, async () => {
+    // Load a disposable checker with just this map key absent. Imports still
+    // use the real helpers; no alternate coverage implementation is supplied.
+    const url = new URL("../scripts/check-test-lane-coverage.mjs", import.meta.url);
+    const source = readFileSync(url, "utf8")
+      .replace(`  "${file}": DARWIN_LEGACY_COMMAND,\n`, "")
+      .replace(/from "(\.\.?\/[^"]+)"/gu, (_, relative) => `from "${new URL(relative, url).href}"`);
+    const root = pgFixture(legacyWorkflow(), [file]);
+    try {
+      const path = join(root, "checker.mjs");
+      writeFileSync(path, source);
+      const checker = await import(pathToFileURL(path).href);
+      assert.deepEqual(checker.findUncoveredTests(root), [file]);
+    }
+    finally { rmSync(root, { recursive: true }); }
+  });
+  for (const job of ["test-updater", "full-gate"]) {
+    for (const mode of ["missing", "edited"]) {
+      test(`legacy command ${mode} in ${job} refuses ${file}`, () => {
+        const variants = mode === "missing" ? ["true"] : [
+          legacyCommand.replace("test:pg-runtime-stress", "test:pg-runtime-stress-typo"),
+          legacyCommand.replace("test:test-runner", "test:test-runner-typo"),
+          legacyCommand + " # edited",
+          legacyCommand.replace(" test:updater ", "  test:updater "),
+        ];
+        for (const changed of variants) {
+          const root = pgFixture(job === "test-updater" ? legacyWorkflow(changed) : legacyWorkflow(legacyCommand, changed), [file]);
+          try { assert.deepEqual(findUncoveredTests(root), [file]); }
+          finally { rmSync(root, { recursive: true }); }
+        }
+      });
+    }
+  }
+}
+test("real seven-file Darwin PostgreSQL workflow passes", () => {
+  assert.deepEqual(findUncoveredTests(fileURLToPath(new URL("..", import.meta.url))), []);
 });

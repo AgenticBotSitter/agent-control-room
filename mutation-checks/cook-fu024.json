@@ -1,14 +1,14 @@
 [
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "needsMacosPostgres(source) && !DARWIN_POSTGRES_FILES.includes(file)",
+    "find": "needsMacosPostgres(source) && !Object.hasOwn(DARWIN_POSTGRES_FILES, file)",
     "replace": "false",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disable fixed-list membership refusal: Darwin-only PostgreSQL file missing from fixed list fails must fail against independent literal tests/private-pg.test.ts."
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "DARWIN_POSTGRES_FILES.includes(file) && !darwinCommandsPresent",
+    "find": "Object.hasOwn(DARWIN_POSTGRES_FILES, file) && !commandsPresent.get(DARWIN_POSTGRES_FILES[file])",
     "replace": "false",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Disable fixed-command requirement: exact Darwin PostgreSQL command missing from test-updater fails must fail against the independent five-file inventory."
@@ -29,8 +29,8 @@
   },
   {
     "file": "scripts/check-test-lane-coverage.mjs",
-    "find": "line.trim() === DARWIN_POSTGRES_COMMAND",
-    "replace": "line.trim().includes(DARWIN_POSTGRES_COMMAND)",
+    "find": "line.trim() === requiredCommand",
+    "replace": "line.trim().includes(requiredCommand)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
     "why": "Allow appended arguments: editing Darwin PostgreSQL command in test-updater fails verbatim check must fail against the independent literal command."
   },
@@ -82,5 +82,26 @@
     "replace": "          node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || true\n          exit \"${darwin_pg_status}\"\n      - name: Article build lane (merge gate)",
     "test": "node scripts/run-tests-with-quarantine.mjs --test tests/macos-updater-lane-status.test.mjs",
     "why": "Disable aggregation in full-gate: named full-gate aggregates test:updater-schema and completes every lane must fail against independent exit 17."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "  \"tests/pg-runtime-copy-stress.test.ts\": DARWIN_LEGACY_COMMAND,\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Remove legacy map entry: legacy Darwin PostgreSQL tests/pg-runtime-copy-stress.test.ts in fixed map passes must fail against independently specified empty uncovered list."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "  \"tests/test-runner-service.test.mjs\": DARWIN_LEGACY_COMMAND,\n",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Remove legacy map entry: legacy Darwin PostgreSQL tests/test-runner-service.test.mjs in fixed map passes must fail against independently specified empty uncovered list."
+  },
+  {
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "find": "hasDarwinPostgresCommands(workflow, command)",
+    "replace": "command === DARWIN_LEGACY_COMMAND || hasDarwinPostgresCommands(workflow, command)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs",
+    "why": "Disable legacy command guard: legacy command missing in test-updater refuses tests/pg-runtime-copy-stress.test.ts must fail against the owner literal file expectation."
   }
 ]

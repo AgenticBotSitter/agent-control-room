@@ -74,24 +74,27 @@ export function reachableTests(scripts, commands) {
   return reached;
 }
 
-// Fixed ticket inventory: adding another Darwin-only PostgreSQL file requires
-// deliberately extending both this list and the literal workflow command.
-const DARWIN_POSTGRES_FILES = [
-  "tests/result-file-catalog-postgres.test.ts",
-  "tests/result-file-download-postgres.test.ts",
-  "tests/result-file-upload-race-postgres.test.ts",
-  "tests/result-upload-store-postgres.test.ts",
-  "tests/text-copy-derivation-postgres.test.ts",
-];
+// Fixed ticket inventory: each Darwin-only PostgreSQL file requires its
+// literal command line in both named macOS updater jobs.
 const DARWIN_POSTGRES_COMMAND = "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts tests/result-file-download-postgres.test.ts tests/result-file-upload-race-postgres.test.ts tests/result-upload-store-postgres.test.ts tests/text-copy-derivation-postgres.test.ts";
+const DARWIN_LEGACY_COMMAND = "node scripts/ci/run-scripts-keep-going.mjs test:updater test:updater-schema test:updater-passkey-postgres test:pg-runtime-postgres test:pg-runtime-stress test:test-runner || darwin_pg_status=$?";
+const DARWIN_POSTGRES_FILES = {
+  "tests/result-file-catalog-postgres.test.ts": DARWIN_POSTGRES_COMMAND,
+  "tests/result-file-download-postgres.test.ts": DARWIN_POSTGRES_COMMAND,
+  "tests/result-file-upload-race-postgres.test.ts": DARWIN_POSTGRES_COMMAND,
+  "tests/result-upload-store-postgres.test.ts": DARWIN_POSTGRES_COMMAND,
+  "tests/text-copy-derivation-postgres.test.ts": DARWIN_POSTGRES_COMMAND,
+  "tests/pg-runtime-copy-stress.test.ts": DARWIN_LEGACY_COMMAND,
+  "tests/test-runner-service.test.mjs": DARWIN_LEGACY_COMMAND,
+};
 
-function hasDarwinPostgresCommands(workflow) {
+function hasDarwinPostgresCommands(workflow, requiredCommand) {
   // Inspect only the two named job blocks and compare entire command lines.
   // This is a text contract, not a claim to interpret arbitrary workflow shell.
   return ["test-updater", "full-gate"].every(job => {
     const block = workflow.split(new RegExp(`^  ${job}:\\s*$`, "mu"))[1]
       ?.split(/^  [a-zA-Z0-9_-]+:/mu)[0] ?? "";
-    return block.split(/\r?\n/u).some(line => line.trim() === DARWIN_POSTGRES_COMMAND);
+    return block.split(/\r?\n/u).some(line => line.trim() === requiredCommand);
   });
 }
 
@@ -112,12 +115,13 @@ export function findUncoveredTests(repositoryRoot = process.cwd()) {
   const scripts = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")).scripts ?? {};
   const workflow = readFileSync(join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
   const reached = reachableTests(scripts, workflowCommands(workflow));
-  const darwinCommandsPresent = hasDarwinPostgresCommands(workflow);
+  const commandsPresent = new Map(Object.values(DARWIN_POSTGRES_FILES)
+    .map(command => [command, hasDarwinPostgresCommands(workflow, command)]));
   return listTestFiles(repositoryRoot).filter(file => {
     const source = readFileSync(join(repositoryRoot, file), "utf8");
     return !reached.has(file)
-      || (needsMacosPostgres(source) && !DARWIN_POSTGRES_FILES.includes(file))
-      || (DARWIN_POSTGRES_FILES.includes(file) && !darwinCommandsPresent);
+      || (needsMacosPostgres(source) && !Object.hasOwn(DARWIN_POSTGRES_FILES, file))
+      || (Object.hasOwn(DARWIN_POSTGRES_FILES, file) && !commandsPresent.get(DARWIN_POSTGRES_FILES[file]));
   });
 }
 
