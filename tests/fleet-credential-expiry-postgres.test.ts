@@ -300,6 +300,54 @@ test("R4F-06c: an unexpired renewal that waits on the credential lock still succ
   });
 });
 
+test("R4F-06f: a successor stamped within the same millisecond as the expiry, but after it, is refused", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRig(async rig => {
+    const admin = await rig.newAdmin();
+    const outcomes: Array<Record<string, unknown>> = [];
+    let aligned = 0;
+    const ATTEMPTS = 20;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+      const { worker, principal } = await enrollWorker(rig);
+      // X is a whole millisecond about 300 ms ahead; the expiry sits half a millisecond past it.
+      const boundary = (await admin.query<{ x: string }>(`SELECT (date_trunc('milliseconds',clock_timestamp())+interval '300 milliseconds')::text AS x`)).rows[0]!.x;
+      await admin.query("BEGIN");
+      await admin.query("SET LOCAL session_replication_role = replica");
+      await admin.query(`UPDATE fleet_worker_credentials SET expires_at=$3::timestamptz+interval '0.5 millisecond',
+        issued_at=$3::timestamptz+interval '0.5 millisecond'-interval '1 hour' WHERE tenant_id=$1 AND credential_id=$2`,
+      [FLEET_TENANT, principal.credentialId, boundary]);
+      await admin.query("COMMIT");
+      let stamp: string | undefined;
+      // Only this wrapper waits, in the renewal's own transaction, until the database clock is 0.6 ms past X, so the
+      // retiring statement starts after the expiry but inside the same millisecond. It sends no altered statement.
+      const waiting: DatabaseClient = { query: rig.db.query.bind(rig.db),
+        transactionWithPreCommitCheck: rig.db.transactionWithPreCommitCheck.bind(rig.db),
+        transaction: body => rig.db.transaction(tx => body({
+          query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
+            if (/SET state='retired'/u.test(sql)) {
+              for (let spin = 0; spin < 200_000; spin += 1) {
+                if ((await tx.query<{ ok: boolean }>(`SELECT clock_timestamp() >= $1::timestamptz+interval '0.6 millisecond' AS ok`, [boundary])).rows[0]?.ok) break;
+              }
+            }
+            const result = await tx.query<T>(sql, params);
+            if (/SET state='retired'/u.test(sql)) stamp = (result.rows[0] as { stamp?: string } | undefined)?.stamp;
+            return result;
+          } })) };
+      const gateway = new FleetGatewayStoreV1(waiting, { tenantId: FLEET_TENANT, operationsMode: async () => "running" });
+      const successorSecret = c.newSecret();
+      const result = await gateway.rotate(principal, { newCredentialDigest: c.sha256(successorSecret) })
+        .then(() => ({ accepted: true as const }), (error: unknown) => ({ accepted: false as const, error }));
+      const world = await worldAfter(rig, admin, worker.workerId, principal.credentialId);
+      outcomes.push({ attempt, accepted: result.accepted, successors: world.successors, predecessorState: world.predecessor?.state });
+      if (stamp !== undefined && (await admin.query<{ same_ms: boolean }>(`SELECT $1::timestamptz >= $2::timestamptz+interval '0.5 millisecond'
+        AND $1::timestamptz < $2::timestamptz+interval '1 millisecond' AS same_ms`, [stamp, boundary])).rows[0]?.same_ms) aligned += 1;
+    }
+    assert.deepEqual(outcomes, Array.from({ length: ATTEMPTS }, (_, index) => ({ attempt: index + 1, accepted: false, successors: "0",
+      predecessorState: "active" })), "a renewal stamped after the expiry must be refused even inside the expiry's own millisecond");
+    assert.ok(aligned >= 1, `no attempt landed inside the expiry's millisecond (${aligned}/${ATTEMPTS}); the case did not exercise the boundary`);
+  });
+});
+
 test("R4F-06d: a renewal interrupted while parked on the lock leaves nothing behind and can be retried", async t => {
   if (!PG) { t.skip(realPostgresSkipMessage()); return; }
   await withRig(async rig => {
