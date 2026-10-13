@@ -33,5 +33,26 @@
     "replace": "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"the deadline stall group expires after external test interruption\" tests/fleet-connector-install.test.mjs",
     "why": "removing the bounded stall must fail external test interruption must leave no live stress group within 100 seconds against independent ESRCH; the external safety fallback is unchanged"
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "        if (child.exitCode === null && child.signalCode === null) child.kill(\"SIGKILL\");",
+    "replace": "        // Mutation: omit the direct pre-group child signal.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^the lock stress deadline kills a child stalled before setpgrp$\" tests/fleet-connector-install.test.mjs",
+    "why": "Without the direct PID signal, pre-group startup must fail the named deadline-close assertion; expected closure is independently required and the external fallback reaps the owned child."
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "              reject(new assert.AssertionError({ message: \"stress deadline must bound waiting for child close\" }));",
+    "replace": "              // Mutation: omit close deadline settlement.",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^the lock stress deadline bounds a missing close notification$\" tests/fleet-connector-install.test.mjs",
+    "why": "Without bounded close settlement, the independent eight-second safety assertion fails by name; real child is contained and scratch removed."
+  },
+  {
+    "file": "tests/fleet-connector-install.test.mjs",
+    "find": "  if (result.error?.code === \"ENOENT\") return \"requires python3 with POSIX os.setpgrp\";",
+    "replace": "  if (result.error?.code === \"ENOENT\") return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^the stress Python prerequisite declares an absent executable$\" tests/fleet-connector-install.test.mjs",
+    "why": "A real absent executable must produce the independent literal prerequisite skip reason, never success."
   }
 ]

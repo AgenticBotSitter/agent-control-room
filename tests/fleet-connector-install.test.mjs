@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -1143,11 +1143,29 @@ test("a live process generation is never cleaned merely because its lock is old"
     { pid: process.pid, processIdentity: "same-process", token });
 });
 
-test("the lock stress probe completes every requested acquisition", async () => {
+// Probe only this optional launcher dependency; missing Python is an explicit
+// prerequisite skip, while a broken installed Python remains a real failure.
+function stressPythonPrerequisite(command = "python3") {
+  const result = spawnSync(command, ["-c", "import os; assert callable(os.setpgrp)"], {
+    stdio: "ignore", timeout: 10_000,
+  });
+  if (result.error?.code === "ENOENT") return "requires python3 with POSIX os.setpgrp";
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`python3 prerequisite exited ${result.status}`);
+  return false;
+}
+const python3Prerequisite = stressPythonPrerequisite();
+
+test("the stress Python prerequisite declares an absent executable", () => {
+  assert.equal(stressPythonPrerequisite(resolve(".test-tmp", "absent-python-fix-479")),
+    "requires python3 with POSIX os.setpgrp", "missing Python must declare the prerequisite skip reason");
+});
+
+async function runLockStressProbe({ exerciseDeadline = process.env.CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE === "1",
+  startupStall = false, closeStall = false, deadlineMs = 60_000, closeGraceMs = 5_000, onChild } = {}) {
   const workers = 2, acquisitions = 40;
-  const exerciseDeadline = process.env.CONTROL_ROOM_TEST_STRESS_OUTER_DEADLINE === "1";
   const root = await mkdtemp(join(tmpdir(), "connector-stress-deadline-"));
-  let ownedGroup;
+  let ownedGroup, ownedChild;
   let killSent = false;
   const groupAlive = () => {
     if (!ownedGroup) return false;
@@ -1168,7 +1186,8 @@ test("the lock stress probe completes every requested acquisition", async () => 
     let forced = false, stdout = "", stderr = "";
     try {
       const env = { ...process.env, TMPDIR: root, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1",
-        CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "30000" };
+        CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "30000",
+        CONTROL_ROOM_STRESS_STARTUP_RECORD: join(root, "startup.json") };
       if (exerciseDeadline) {
         // Replay the review's fault: block a real worker and its real parent
         // only after IPC proves a successful acquisition. No timing guess.
@@ -1216,39 +1235,56 @@ if (typeof process.send === "function") {
       // setpgrp keeps this direct child attached, unlike detached/setsid.
       // exec preserves its PID as the group ID inherited by every worker.
       const child = spawn("python3", ["-c",
+        (startupStall ? "import os,time,json; open(os.environ['CONTROL_ROOM_STRESS_STARTUP_RECORD'],'w').write(json.dumps({'pid':os.getpid()})); time.sleep(90); " : "") +
         "import os,sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])",
         process.execPath, "scripts/fleet/stress-connector-lock.mjs",
         String(workers), String(acquisitions), "0.05"], {
         cwd: resolve("."), env, stdio: ["ignore", "pipe", "pipe"],
       });
       ownedGroup = child.pid;
+      ownedChild = child;
+      onChild?.(child, root);
       const stop = () => {
         if (!child.pid) return;
         try { process.kill(-child.pid, "SIGKILL"); }
         catch (error) {
           if (error.code !== "ESRCH" && !(killSent && error.code === "EPERM")) throw error;
         }
+        // Before setpgrp, -pid does not exist. The direct child is still ours.
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
         killSent = true;
       };
       child.stdout.on("data", chunk => { stdout += chunk; });
       child.stderr.on("data", chunk => { stderr += chunk; });
-      let force;
+      let force, drain;
       let code;
       try {
         code = await new Promise((resolveClose, reject) => {
           child.once("error", reject);
-          child.once("close", resolveClose);
+          child.once("close", code => { if (!closeStall) resolveClose(code); });
           force = setTimeout(() => {
             forced = true;
             try { stop(); } catch (error) { reject(error); }
-          }, 60_000);
+            // Exit and close are different events: inherited pipes can stay open.
+            drain = setTimeout(() => {
+              child.stdout.destroy();
+              child.stderr.destroy();
+              reject(new assert.AssertionError({ message: "stress deadline must bound waiting for child close" }));
+            }, closeGraceMs);
+          }, deadlineMs);
         });
       } finally {
         clearTimeout(force);
+        clearTimeout(drain);
         stop();
         await waitForGroup();
       }
       assert.equal(groupAlive(), false, "outer test timeout must leave no live owned descendants");
+      if (startupStall) {
+        const stalled = JSON.parse(await readFile(join(root, "startup.json"), "utf8"));
+        assert.equal(stalled.pid, child.pid, "startup fault must precede setpgrp in the real owned child");
+        assert.equal(child.signalCode, "SIGKILL", "startup deadline must reap the owned direct child");
+      }
       if (exerciseDeadline) {
         const stalled = JSON.parse(await readFile(join(root, "stalled.json"), "utf8"));
         assert.equal(stalled.parent, child.pid, "fault injection must block the real stress parent");
@@ -1268,6 +1304,9 @@ if (typeof process.send === "function") {
     } finally {
       // Contain even a deliberately broken cleanup mutation before returning.
       // This external safety fallback is never the guard being mutated.
+      if (ownedChild?.exitCode === null && ownedChild?.signalCode === null) ownedChild.kill("SIGKILL");
+      ownedChild?.stdout.destroy();
+      ownedChild?.stderr.destroy();
       if (ownedGroup) {
         try { process.kill(-ownedGroup, "SIGKILL"); }
         catch (error) {
@@ -1281,7 +1320,7 @@ if (typeof process.send === "function") {
     }
   };
   try {
-    if (exerciseDeadline)
+    if (exerciseDeadline || startupStall)
       await assert.rejects(run(), { code: "ERR_ASSERTION",
         message: /stress probe exceeded its 60-second outer deadline/u });
     else await run();
@@ -1289,11 +1328,63 @@ if (typeof process.send === "function") {
     // Keep a scratch-deletion mutation confined to this test's private root.
     await rm(root, { recursive: true, force: true });
   }
+}
+
+test("the lock stress probe completes every requested acquisition", { skip: python3Prerequisite }, async () => {
+  await runLockStressProbe();
+});
+
+test("the lock stress deadline kills a child stalled before setpgrp", { skip: python3Prerequisite }, async () => {
+  let owned;
+  // Independent safety containment also lets the old-code/mutation run fail a
+  // named assertion rather than leaving a stalled process for the owner.
+  let expired = false;
+  const safety = setTimeout(() => { expired = true; owned?.kill("SIGKILL"); }, 8_000);
+  try {
+    await runLockStressProbe({ startupStall: true, deadlineMs: 1_000, closeGraceMs: 1_000,
+      onChild: child => { owned = child; } });
+    assert.equal(expired, false, "pre-group startup must finish before the independent safety deadline");
+    // Retry after a killed startup must still do the requested real work.
+    await runLockStressProbe();
+  } finally {
+    clearTimeout(safety);
+    if (owned?.exitCode === null && owned?.signalCode === null) owned.kill("SIGKILL");
+  }
+});
+
+test("the lock stress deadline bounds a missing close notification", { skip: python3Prerequisite }, async () => {
+  // Synthetic event-delivery fault at the real ChildProcess boundary. The
+  // real producer runs; only delivery of its close notification is withheld.
+  let safety, owned, scratchRoot;
+  const independentDeadline = new Promise((_, reject) => {
+    safety = setTimeout(() => reject(new assert.AssertionError({
+      message: "close wait must finish before the independent safety deadline",
+    })), 8_000);
+  });
+  try {
+    await assert.rejects(Promise.race([
+      runLockStressProbe({ closeStall: true, deadlineMs: 1_000, closeGraceMs: 1_000,
+        onChild: (child, root) => { owned = child; scratchRoot = root; } }),
+      independentDeadline,
+    ]), {
+      code: "ERR_ASSERTION", message: "stress deadline must bound waiting for child close",
+    });
+  } finally {
+    clearTimeout(safety);
+    if (owned?.exitCode === null && owned?.signalCode === null) owned.kill("SIGKILL");
+    if (owned?.pid) {
+      try { process.kill(-owned.pid, "SIGKILL"); }
+      catch (error) { if (!["ESRCH", "EPERM"].includes(error.code)) throw error; }
+    }
+    owned?.stdout.destroy();
+    owned?.stderr.destroy();
+    if (scratchRoot) await rm(scratchRoot, { recursive: true, force: true });
+  }
 });
 
 // Deliberately slow (about 90 seconds): CI runs this through test:fleet.
 // Kill the outer runner, so its finally cannot hide an unbounded stall.
-test("the deadline stall group expires after external test interruption", { timeout: 140_000 }, async () => {
+test("the deadline stall group expires after external test interruption", { timeout: 140_000, skip: python3Prerequisite }, async () => {
   const root = await mkdtemp(join(tmpdir(), "connector-stress-interrupt-"));
   let outer, stressGroup;
   const alive = group => {
@@ -1354,6 +1445,7 @@ test("the deadline stall group expires after external test interruption", { time
   } finally {
     // External safety containment, including an intentionally unbounded mutant.
     kill(outer?.pid);
+    if (outer?.exitCode === null && outer?.signalCode === null) outer.kill("SIGKILL");
     kill(stressGroup);
     await waitGone(outer?.pid, 5_000);
     await waitGone(stressGroup, 5_000);
