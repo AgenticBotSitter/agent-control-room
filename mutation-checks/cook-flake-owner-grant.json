@@ -1,6 +1,6 @@
 [
   {
-    "file": "tests/orchestrator-split-suggestions-postgres.test.ts",
+    "file": "tests/support/draining-pool.ts",
     "find": "      await Promise.all([...endings]);",
     "replace": "      // Client-end barrier disabled for the guard mutation.",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"raw pool shutdown acknowledges every client end before fixture stop\" tests/orchestrator-split-suggestions-postgres.test.ts",

@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import { concurrently } from "./support/attack-kit/index";
 import type { AttackRole, RealPostgres } from "./support/attack-kit/index";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
@@ -497,12 +498,12 @@ test("the real download path, the grant it writes, two sessions one file, the qu
         // login the refusals above use, and the production driver's endpoint
         // policy is deliberately not involved in a fixture's own pool.
         const resultsLogin = postgres.connection("results");
-        const publisherPool = new Pool({ host: resultsLogin.host, port: postgres.port,
+        const publisherDrain = drainingPool({ host: resultsLogin.host, port: postgres.port,
           database: postgres.database, user: resultsLogin.user, password: resultsLogin.password, max: 20 });
         const quotaResults = await concurrently(racers, async index => {
           const attempt = `attempt:race-${index}`;
           const set = `result-set:${(0x1000 + index).toString(16).padStart(32, "0")}`;
-          return publisherPool.connect().then(async handle => {
+          return publisherDrain.pool.connect().then(async handle => {
             const pg = handle;
             try {
               await pg.query("BEGIN");
@@ -546,7 +547,7 @@ test("the real download path, the grant it writes, two sessions one file, the qu
                 detail: String((error as { message?: string }).message ?? "").slice(0, 120) };
             } finally { handle.release(); }
           });
-        }, { boundMs: 120_000 }).finally(() => publisherPool.end());
+        }, { boundMs: 120_000 }).finally(() => publisherDrain.end());
         const committed = quotaResults.filter(result => result.committed);
         const refused = quotaResults.filter(result => !result.committed);
         // The tenant must be WITHIN the quota. That is the assertion the review's

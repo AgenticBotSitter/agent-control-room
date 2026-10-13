@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Client, Pool, type PoolClient } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { ProjectEventStoreV1, TaskProjectEventWriterV1, taskProjectEventActionsV1 } from "../src/project-events/v1";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
@@ -370,8 +371,8 @@ const WRITER_ROLES = ["web", "coordinator", "publisher"] as const;
 type WriterRole = (typeof WRITER_ROLES)[number];
 
 /** One pool per production login, so each assertion is about that role and no other. */
-function rolePool(postgres: RealPostgres, role: WriterRole): Pool {
-  return new Pool({ ...postgres.connection(role), max: 2,
+function rolePool(postgres: RealPostgres, role: WriterRole) {
+  return drainingPool({ ...postgres.connection(role), max: 2,
     application_name: `control-room-activity-lifecycle-${role}` });
 }
 
@@ -433,11 +434,11 @@ test("lifecycle appends succeed as each production login, and are refused across
   const result = await withRealPostgres(async postgres => {
     await seedFixture(postgres);
     const observed: Record<string, { appended: number; crossWorkspace: string }> = {};
-    const pools: Pool[] = [];
+    const pools: ReturnType<typeof drainingPool>[] = [];
     try {
       for (const role of WRITER_ROLES) {
         const pool = rolePool(postgres, role); pools.push(pool);
-        const client = roleClient(pool);
+        const client = roleClient(pool.pool);
         // The very same store and writer the product code uses, authenticated
         // as this production login.
         const store = new ProjectEventStoreV1(client, KEY, () => EVENT_NOW);
@@ -498,7 +499,7 @@ test("lifecycle appends succeed as each production login, and are refused across
           "an event must only ever land in the project its own login was appending for");
       } finally { await admin.end(); }
       return observed;
-    } finally { for (const pool of pools) await pool.end().catch(() => {}); }
+    } finally { await Promise.all(pools.map(pool => pool.end())); }
   }, { port: LIVE_PORT, allowedPorts: ALLOWED_PORTS, boundMs: 300_000 });
   t.diagnostic(JSON.stringify(result.value));
   for (const role of WRITER_ROLES) {
@@ -514,11 +515,11 @@ test("lifecycle appends succeed as each production login, and are refused across
 test("the stream head row lock is taken by each production login, not by a superuser", needsPg, async t => {
   await withRealPostgres(async postgres => {
     await seedFixture(postgres);
-    const pools: Pool[] = [];
+    const pools: ReturnType<typeof drainingPool>[] = [];
     try {
       for (const role of WRITER_ROLES) {
         const pool = rolePool(postgres, role); pools.push(pool);
-        const client = roleClient(pool);
+        const client = roleClient(pool.pool);
         const writer = new TaskProjectEventWriterV1(new ProjectEventStoreV1(client, KEY, () => EVENT_NOW));
         await client.transaction(tx => writer.appendInSession(tx, lifecycleWrite(OWN_PROJECT, WORKSPACE_ID, 0)));
         // UPDATE on the head, restricted to the four columns the store writes,
@@ -540,7 +541,7 @@ test("the stream head row lock is taken by each production login, not by a super
         assert.equal(projects.rows[0]?.workspace_id, WORKSPACE_ID,
           `${role} must be able to read the project row its activity event is scoped by`);
       }
-    } finally { for (const pool of pools) await pool.end().catch(() => {}); }
+    } finally { await Promise.all(pools.map(pool => pool.end())); }
   }, { port: LIVE_PORT + 1, allowedPorts: ALLOWED_PORTS, boundMs: 300_000 });
   t.diagnostic("head UPDATE and the projects read both succeed as every production login");
 });
