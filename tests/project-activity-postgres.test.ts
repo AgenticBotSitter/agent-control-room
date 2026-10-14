@@ -50,6 +50,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "../src/web/v1/access-v
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 import { sha256Digest } from "../src/security";
 import { concurrently } from "./support/attack-kit";
+import { isPortConflict } from "./helpers/disposable-postgres-cluster";
 
 // This file provisions its OWN disposable PostgreSQL 17 cluster in a temp
 // directory, applies the real migrations and the real private-web grants, and
@@ -282,9 +283,19 @@ before(async () => {
   assert.match((await native("postgres", ["--version"])).stdout, /PostgreSQL\) 17\./);
   await native("initdb", ["-D", data, "-U", "pa_admin", "--auth-local=trust", "--auth-host=trust", "--no-locale", "--encoding=UTF8"]);
   started = true;
-  await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
-    `-p ${PORT} -k '${run}' -c listen_addresses=127.0.0.1 -c shared_buffers=32MB -c max_connections=60`,
-    "start"]);
+  try {
+    await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
+      `-p ${PORT} -k '${run}' -c listen_addresses=127.0.0.1 -c shared_buffers=32MB -c max_connections=60`,
+      "start"]);
+  } catch (error) {
+    // pg_ctl only says "could not start server"; the cause is in server.log.
+    const failure = error as Error & { serverLog?: string };
+    const log = await readFile(join(run, "server.log"), "utf8").catch(() => "server.log missing");
+    const tail = log.trimEnd().split("\n").slice(-80).join("\n");
+    failure.serverLog = tail;
+    failure.message += `\n--- server.log (last 80 lines) ---\n${tail}\nport conflict: ${isPortConflict(failure, tail) ? "yes" : "no"}`;
+    throw failure;
+  }
   const bootstrap = new Client({ host: "127.0.0.1", port: PORT, database: "postgres", user: "pa_admin" });
   await bootstrap.connect();
   try { await bootstrap.query(`CREATE DATABASE ${PG.database}`); } finally { await bootstrap.end(); }
