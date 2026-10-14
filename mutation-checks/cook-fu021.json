@@ -1,0 +1,149 @@
+[
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" != \"$expected\" && \"$own\" != true ]]; then",
+    "replace": "if false; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "mismatched added manifest refuses with expected and found names must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": " && \"$own\" != true",
+    "replace": "",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "foreign addition alongside own manifest passes must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=A ",
+    "replace": "--diff-filter=AM ",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "modified foreign manifest passes when matching manifest is absent must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=AM ",
+    "replace": "--diff-filter=A ",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "R1 modified foreign manifest is selected when own manifest is absent must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$kind\" != blob ]] || [[ \"$entry\" != 100644\\ blob\\ * && \"$entry\" != 100755\\ blob\\ * ]]; then",
+    "replace": "if false; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "R2 tree at own manifest path refuses before publishing selection must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "[[ \"$entry\" != 100644\\ blob\\ * && \"$entry\" != 100755\\ blob\\ * ]]",
+    "replace": "false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "symlink at own manifest path refuses a nonregular blob must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "set -euo pipefail",
+    "replace": "set -eu",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "unreadable PR base fails rather than accepting unknown changes must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" \"$PR_HEAD_SHA\" > \"$list\" || exit $?",
+    "replace": "bash scripts/ci/check-mutation-manifest-branch.sh \"$manifest\" \"$BASE_SHA\" \"$PR_HEAD_SHA\" > \"$list\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "mismatched added manifest refuses with expected and found names must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": " || failed=1",
+    "replace": " || true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "verifier loop keeps going after failure and fails the aggregate must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": " || failed=1",
+    "replace": " || exit 1",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "verifier loop keeps going after failure and fails the aggregate must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" != \"$expected\" ]]; then printf '%s\\0' \"$changed\"; fi",
+    "replace": "if false; then printf '%s\\0' \"$changed\"; fi",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "all changed manifests plus unchanged own manifest are selected once must fail; independent expected paths, exits and counts are literal ticket outcomes"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "  own=true",
+    "replace": "  own=false",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "matching changed manifest selects branch mutations must fail; expected paths and refusals are independent literals"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "    regular_manifest \"$changed\"",
+    "replace": "    : # regular-file refusal disabled",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "modified foreign symlink refuses even when own manifest exists must fail; expected paths and refusals are independent literals"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=A \"${base}...HEAD\" -- ':(top,glob)mutation-checks/*.json'",
+    "replace": "--diff-filter=A \"${base}...HEAD\" -- 'mutation-checks/*.json'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "nested JSON addition without own manifest preserves empty selection must fail; top-level directory constraint comes from the real verifier and existing documentation"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "--diff-filter=AM \"${base}...HEAD\" -- ':(top,glob)mutation-checks/*.json'",
+    "replace": "--diff-filter=AM \"${base}...HEAD\" -- 'mutation-checks/*.json'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "nested JSON files are not top-level manifests must fail; top-level directory constraint comes from the real verifier and existing documentation"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "if [[ \"$changed\" != \"$expected\" ]]; then",
+    "replace": "if true; then",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "matching changed manifest selects branch mutations must fail if own manifest is emitted twice; the ticket path is an independent literal and documented exactly-once list expectation"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "  base=$(git rev-parse --verify HEAD^1)",
+    "replace": "  base=\"${2:-HEAD}\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "stale PR base excludes main manifests when own manifest is absent must fail; the ticket independently requires an empty list for an ordinary PR"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "[[ \"$(git rev-parse --verify HEAD^2 2>/dev/null || true)\" == \"$pr_head\" ]]",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "merge with a different second parent falls back to event base must fail; event head equality is the independent topology requirement"
+  },
+  {
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "find": "[[ -n \"$pr_head\" ]]",
+    "replace": "true",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "nonmerge without PR head retains the complete event-base range must fail; the event base independently requires refusing the earlier misnamed addition"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "\"$manifest\" \"$BASE_SHA\" \"$PR_HEAD_SHA\" >",
+    "replace": "\"$manifest\" \"$BASE_SHA\" >",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "stale PR base selects only the PR own manifest must fail when the workflow omits the event PR head; literal own-only selection comes from the ticket"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+    "replace": "          PR_HEAD_SHA: \"\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --test tests/mutation-manifest-branch.test.mjs",
+    "why": "workflow supplies event PR head SHA to base selection must fail; expected expression is specified independently by the ticket"
+  }
+]
