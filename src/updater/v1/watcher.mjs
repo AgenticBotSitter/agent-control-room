@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { canonicalJsonV1 } from "./cli.mjs";
 import { assertPlainObjectV1, assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
+import { mirrorHistoryCompleteV1, pinMirrorHistoryV1 } from "./mirror-history.mjs";
 
 async function execFileAsync(file, args, options) {
   const child = spawn(file, args, { env: options.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -98,8 +99,8 @@ export class GitMirrorSourceV1 {
 
   get mirror() { return join(this.root, "updater-state", "mirror.git"); }
 
-  async #git(args, { credential = false } = {}) {
-    const config = ["-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true",
+  async #git(args, { credential = false, repository = this.mirror } = {}) {
+    const config = ["-c", "maintenance.auto=false", "-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true",
       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always"];
     if (this.testing) config.push("-c", "protocol.file.allow=always", "-c", "http.sslVerify=false");
     if (credential) {
@@ -107,7 +108,7 @@ export class GitMirrorSourceV1 {
       config.push("-c", `credential.helper=${helper}`, "-c", "credential.useHttpPath=true");
     }
     try {
-      return await execFileAsync(this.git, [...config, "--git-dir", this.mirror, ...args], {
+      return await execFileAsync(this.git, [...config, "--git-dir", repository, ...args], {
         encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: this.commandTimeoutMs, killSignal: "SIGKILL",
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: "/var/empty", GIT_CONFIG_NOSYSTEM: "1",
           GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", LC_ALL: "C",
@@ -125,7 +126,7 @@ export class GitMirrorSourceV1 {
       if (error?.code !== "ENOENT") throw updaterRefuseV1("watcher_mirror_refused");
       await execFileAsync(this.git, ["init", "--bare", this.mirror], { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: this.commandTimeoutMs, killSignal: "SIGKILL",
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: "/var/empty", GIT_CONFIG_NOSYSTEM: "1",
-          GIT_CONFIG_GLOBAL: "/dev/null", LC_ALL: "C" } }).catch(() => { throw updaterRefuseV1("watcher_mirror_refused"); });
+          GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", LC_ALL: "C" } }).catch(() => { throw updaterRefuseV1("watcher_mirror_refused"); });
     }
     let remote;
     try { remote = (await this.#git(["remote", "get-url", "origin"])).stdout.trim(); }
@@ -133,24 +134,64 @@ export class GitMirrorSourceV1 {
     if (remote !== this.origin) throw updaterRefuseV1("watcher_origin_changed");
   }
 
-  async #isAncestor(ancestor, descendant) {
-    try { await this.#git(["merge-base", "--is-ancestor", ancestor, descendant]); return true; }
-    catch { return false; }
+  // A graft, replace ref or shallow boundary rewrites parents locally, so the
+  // mirror would answer yes for history the fetched commits do not have - and a
+  // fetch would fast-forward the trusted main ref along it. Asked before the
+  // fetch and before every ancestry answer (admission and the existing-plan check).
+  async #assertHistoryComplete(repository = this.mirror) {
+    if (!await mirrorHistoryCompleteV1(repository, args => this.#git(args, { repository })))
+      throw updaterRefuseV1("watcher_history_unproven");
+  }
+
+  async #isAncestor(ancestor, descendant, repository) {
+    await this.#assertHistoryComplete();
+    const snapshot = repository ?? await pinMirrorHistoryV1(this.mirror)
+      .catch(() => { throw updaterRefuseV1("watcher_history_unproven"); });
+    try {
+      await this.#assertHistoryComplete(snapshot);
+      try { await this.#git(["merge-base", "--is-ancestor", ancestor, descendant], { repository: snapshot }); return true; }
+      catch { return false; }
+    } finally { if (!repository) await rm(snapshot, { recursive: true, force: true }); }
   }
 
   async fetchMain() {
     await this.#ensureMirror();
-    // Deliberately no '+' on the refspec. Git rejects a forced update rather
-    // than silently replacing the last trusted main tip in the mirror.
-    await this.#git(["fetch", "--no-tags", "origin", "refs/heads/main:refs/updater/main"],
-      { credential: this.origin.startsWith("https://") });
-    const commit = (await this.#git(["rev-parse", "refs/updater/main^{commit}"])).stdout.trim();
-    validCommitV1(commit);
-    const tree = (await this.#git(["rev-parse", `${commit}^{tree}`])).stdout.trim(); validCommitV1(tree);
-    if (!(await this.#isAncestor(this.fromCommit, commit))) throw updaterRefuseV1("watcher_history_rewritten");
-    const kib = parseGitSizeV1((await this.#git(["count-objects", "-v"])).stdout);
-    if (kib > this.maxRepositoryKiB) throw updaterRefuseV1("watcher_repository_too_large");
-    return Object.freeze({ commit, tree, repository: this.mirror });
+    await this.#assertHistoryComplete();
+    const previous = (await this.#git(["rev-parse", "--verify", "refs/updater/main"])
+      .catch(() => ({ stdout: "0".repeat(40) }))).stdout.trim();
+    const pending = `refs/updater/pending-${randomBytes(12).toString("hex")}`;
+    let snapshot;
+    try {
+      snapshot = await pinMirrorHistoryV1(this.mirror).catch(() => { throw updaterRefuseV1("watcher_history_unproven"); });
+      await this.#assertHistoryComplete(snapshot);
+      // The non-forcing fetch advances only the private ref. The original
+      // trusted ref is published after every admission check succeeds.
+      await this.#git(["fetch", "--no-tags", "origin", "refs/heads/main:refs/updater/main"],
+        { credential: this.origin.startsWith("https://"), repository: snapshot });
+      const commit = (await this.#git(["rev-parse", "refs/updater/main^{commit}"], { repository: snapshot })).stdout.trim();
+      validCommitV1(commit);
+      const kib = parseGitSizeV1((await this.#git(["count-objects", "-v"], { repository: snapshot })).stdout);
+      if (kib > this.maxRepositoryKiB) throw updaterRefuseV1("watcher_repository_too_large");
+      await this.#assertHistoryComplete(snapshot);
+      if (!(await this.#isAncestor(this.fromCommit, commit, snapshot)))
+        throw updaterRefuseV1("watcher_history_rewritten");
+      const tree = (await this.#git(["rev-parse", `${commit}^{tree}`], { repository: snapshot })).stdout.trim(); validCommitV1(tree);
+      // Import only the verified private tip into an unpublished local ref.
+      await this.#git(["-c", "protocol.file.allow=always", "fetch", "--no-tags", snapshot, `refs/updater/main:${pending}`]);
+      await this.#git(["update-ref", "refs/updater/main", commit, previous]);
+      await this.#git(["update-ref", "-d", pending]);
+      const repository = snapshot;
+      snapshot = undefined;
+      return Object.freeze({ commit, tree, repository,
+        isAncestor: (ancestor, descendant) => {
+          validCommitV1(ancestor); validCommitV1(descendant);
+          return this.#isAncestor(ancestor, descendant, repository);
+        },
+        release: () => rm(repository, { recursive: true, force: true }) });
+    } finally {
+      try { await this.#git(["update-ref", "-d", pending]); }
+      finally { if (snapshot) await rm(snapshot, { recursive: true, force: true }); }
+    }
   }
 
   async isAncestor(ancestor, descendant) {
@@ -237,34 +278,37 @@ export class UpdaterWatcherV1 {
     // the runner is finishing or restoring it.
     if (await this.plans.liveRun?.()) return { status: "run_active" };
     const source = await this.source.fetchMain();
-    if (source.commit === this.source.fromCommit) return { status: "no_candidate" };
-    const status = await this.ci.statusForCommit(source.commit);
-    const checkRuns = greenChecksV1(status, source.commit, this.requiredChecks);
-    const existing = await this.plans.openPlan();
-    if (existing && candidateCommitV1(existing.plan) === source.commit) {
-      await this.planFiles.write(existing.plan); return { status: "unchanged", planId: existing.planId };
-    }
-    if (existing) {
-      const oldCommit = candidateCommitV1(existing.plan);
-      if (!oldCommit || !(await this.source.isAncestor(oldCommit, source.commit)))
-        throw updaterRefuseV1("watcher_history_rewritten");
-    }
-    const classification = await this.classifier.classify({ repository: source.repository, fromCommit: this.source.fromCommit,
-      candidateCommit: source.commit });
-    if (!classification || classification.refused === true || !Array.isArray(classification.classes))
-      throw updaterRefuseV1("watcher_classification_refused");
-    const now = await this.plans.databaseNow();
-    if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw updaterRefuseV1("watcher_database_time_refused");
-    const draft = makePlanV1({ installationId: this.installationId,
-      source: { ...source, fromCommit: this.source.fromCommit, checkRuns }, classification, now });
-    const result = await this.plans.replaceOpenPlan({ ...draft, state: "building", expectedOpenPlanId: existing?.planId ?? null });
-    if (result?.status === "raced") return this.#tick(attempt + 1);
-    if (!result || !["created", "existing"].includes(result.status) || !result.plan)
-      throw updaterRefuseV1("watcher_plan_store_refused");
-    // A concurrent watcher may have won. Only persist the exact plan that the
-    // atomic store selected, never this loser's nonce/digest.
-    await this.planFiles.write(result.plan);
-    return { status: result.status, planId: result.plan.planId, classification: result.plan.kind };
+    try {
+      if (source.commit === this.source.fromCommit) return { status: "no_candidate" };
+      const status = await this.ci.statusForCommit(source.commit);
+      const checkRuns = greenChecksV1(status, source.commit, this.requiredChecks);
+      const existing = await this.plans.openPlan();
+      if (existing && candidateCommitV1(existing.plan) === source.commit) {
+        await this.planFiles.write(existing.plan); return { status: "unchanged", planId: existing.planId };
+      }
+      if (existing) {
+        const oldCommit = candidateCommitV1(existing.plan);
+        const isAncestor = source.isAncestor ?? ((ancestor, descendant) => this.source.isAncestor(ancestor, descendant));
+        if (!oldCommit || !(await isAncestor(oldCommit, source.commit)))
+          throw updaterRefuseV1("watcher_history_rewritten");
+      }
+      const classification = await this.classifier.classify({ repository: source.repository, fromCommit: this.source.fromCommit,
+        candidateCommit: source.commit });
+      if (!classification || classification.refused === true || !Array.isArray(classification.classes))
+        throw updaterRefuseV1("watcher_classification_refused");
+      const now = await this.plans.databaseNow();
+      if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw updaterRefuseV1("watcher_database_time_refused");
+      const draft = makePlanV1({ installationId: this.installationId,
+        source: { ...source, fromCommit: this.source.fromCommit, checkRuns }, classification, now });
+      const result = await this.plans.replaceOpenPlan({ ...draft, state: "building", expectedOpenPlanId: existing?.planId ?? null });
+      if (result?.status === "raced") return this.#tick(attempt + 1);
+      if (!result || !["created", "existing"].includes(result.status) || !result.plan)
+        throw updaterRefuseV1("watcher_plan_store_refused");
+      // A concurrent watcher may have won. Only persist the exact plan that the
+      // atomic store selected, never this loser's nonce/digest.
+      await this.planFiles.write(result.plan);
+      return { status: result.status, planId: result.plan.planId, classification: result.plan.kind };
+    } finally { await source.release?.(); }
   }
 
   async tick() {

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { chmod, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { installAttendedCommitV1 } from '../src/updater/v1/attended-source.mjs';
+import { installAttendedCommitV1, verifyAttendedBuildOutputV1 } from '../src/updater/v1/attended-source.mjs';
 import { authorizeAttendedInstallV1, canonicalJsonV1, confirmationWordsV1, confirmV1 } from '../src/updater/v1/cli.mjs';
-import { digest, initialPair, newRoot, sourceFixture } from './support/updater-rescue-fixes.mjs';
+import { digest, initialPair, installedPayloadV1, installedReleaseId, newRoot, sourceFixture } from './support/updater-rescue-fixes.mjs';
 
 async function publishPlan(root, plan) {
   const planDigest = digest(Buffer.from(canonicalJsonV1(plan)));
@@ -17,7 +17,7 @@ test('R6U-03: an older attended release names the installed pair and requires ex
   const f = await sourceFixture(t, { version: '1.0.0' }); await initialPair(f.root);
   const output = [];
   f.input.authorize = async ({ plan, planDigest }) => {
-    assert.equal(plan.from.releaseId, '2.0.0-old');
+    assert.equal(plan.from.releaseId, '2.0.0-cccccccccccc');
     assert.equal(plan.from.commit, 'c'.repeat(40));
     assert.equal(plan.updaterDerived.downgrade, true);
     const words = confirmationWordsV1(planDigest);
@@ -27,7 +27,7 @@ test('R6U-03: an older attended release names the installed pair and requires ex
   };
   const result = await installAttendedCommitV1(f.input);
   assert.match(output.join(''), /DOWNGRADE.*older/s);
-  assert.match(output.join(''), /From: 2\.0\.0-old/);
+  assert.match(output.join(''), /From: 2\.0\.0-cccccccccccc/);
   assert.equal(await readlink(join(f.root, 'current')), `releases/${result.releaseId}`);
 });
 
@@ -40,7 +40,7 @@ test('R6U-03: declining or omitting downgrade consent preserves the installed re
       else await writeFile(join(f.root, `updater-state/confirmations/${plan.planId}.json`), JSON.stringify({ confirmed: true, planId: plan.planId, planDigest }));
     };
     await assert.rejects(installAttendedCommitV1(f.input), /updater_confirm_words_refused|updater_install_confirmation_missing/);
-    assert.equal(await readlink(join(f.root, 'current')), 'releases/2.0.0-old');
+    assert.equal(await readlink(join(f.root, 'current')), `releases/${installedReleaseId}`);
   }
 });
 
@@ -119,15 +119,40 @@ test('R6U-03: version precedence and missing ancestry distinguish upgrade from d
 });
 
 test('installed plan identity refuses malformed, missing or substituted release metadata', { timeout: 30000 }, async t => {
-  for (const bad of ['version', 'commit', 'missing', 'symlink']) {
+  const schema = 'control-room.attended-build-manifest/v1';
+  for (const bad of ['version', 'commit', 'missing', 'symlink', 'schema', 'other-commit', 'other-version']) {
     const f = await sourceFixture(t); await initialPair(f.root);
-    const path = join(f.root, 'releases/2.0.0-old/RELEASE_MANIFEST.json');
+    const path = join(f.root, 'releases', installedReleaseId, 'RELEASE_MANIFEST.json');
+    await chmod(path, 0o600); // the producer leaves it read-only; this test rewrites it
     if (bad === 'missing') await import('node:fs/promises').then(fs => fs.rm(path));
     else if (bad === 'symlink') { await import('node:fs/promises').then(async fs => { await fs.rm(path); await fs.symlink('../absent', path); }); }
-    else await writeFile(path, JSON.stringify({ version: bad === 'version' ? 'bad' : '2.0.0', commit: bad === 'commit' ? 'bad' : 'c'.repeat(40) }));
+    else if (bad === 'schema') await writeFile(path, JSON.stringify({ version: '2.0.0', commit: 'c'.repeat(40) }));
+    // Well-formed builder manifests that name a release other than the directory `current` points at.
+    else if (bad === 'other-commit') await writeFile(path, JSON.stringify({ schema, version: '2.0.0', commit: 'd'.repeat(40) }));
+    else if (bad === 'other-version') await writeFile(path, JSON.stringify({ schema, version: '2.0.1', commit: 'c'.repeat(40) }));
+    else await writeFile(path, JSON.stringify({ schema, version: bad === 'version' ? 'bad' : '2.0.0', commit: bad === 'commit' ? 'bad' : 'c'.repeat(40) }));
     let asked = false; f.input.authorize = async () => { asked = true; };
-    await assert.rejects(installAttendedCommitV1(f.input), /updater_installed_release_refused|ENOENT|updater_symlink_refused/);
+    await assert.rejects(installAttendedCommitV1(f.input), bad.startsWith('other-') ? /updater_installed_release_mismatch/
+      : /updater_installed_release_refused|ENOENT|updater_symlink_refused/, bad);
     assert.equal(asked, false);
-    assert.equal(await readlink(join(f.root, 'current')), 'releases/2.0.0-old');
+    assert.equal(await readlink(join(f.root, 'current')), `releases/${installedReleaseId}`);
   }
+});
+
+test('the installed rescue pair carries the producer manifest and a payload that matches it', { timeout: 10000 }, async t => {
+  const root = await newRoot(t, 'installed-pair'); await initialPair(root);
+  const release = join(root, 'releases', installedReleaseId);
+  assert.equal(await readlink(join(root, 'current')), `releases/${installedReleaseId}`);
+  const manifest = JSON.parse(await readFile(join(release, 'RELEASE_MANIFEST.json'), 'utf8'));
+  // The producer's field list (build-attended-release.mjs), written out here.
+  assert.deepEqual(Object.keys(manifest), ['schema', 'commit', 'version', 'fileCount', 'byteCount', 'files']);
+  assert.deepEqual(manifest.files.map(item => Object.keys(item)), [['path', 'sha256', 'mode', 'bytes']]);
+  // Independent bytes, mode and hash for the payload, checked on disk.
+  const bytes = await readFile(join(release, 'package.json'));
+  assert.equal(bytes.length, 42); assert.equal(digest(bytes), 'sha256:e4577b7842dd1e2265350fe71dfd5b24f83d08090efa4ba4260591f5b552d70a');
+  assert.equal((await stat(join(release, 'package.json'))).mode & 0o777, 0o400);
+  assert.equal(installedPayloadV1.sha256, digest(bytes));
+  // The product's own build-output verifier accepts the installed tree as a builder output.
+  const verified = await verifyAttendedBuildOutputV1(release, { commit: 'c'.repeat(40) });
+  assert.equal(verified.fileCount, 1); assert.equal(verified.byteCount, 42);
 });

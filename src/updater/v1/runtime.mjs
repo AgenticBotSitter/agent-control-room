@@ -3,7 +3,8 @@ import { lstat, readlink, unlink } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
-import { parseSelfUpdateFlagV1, publicStatusV1, SAFE_ID_V1, updaterRefuseV1, updaterRunAttentionV1 } from "./contracts.mjs";
+import { HistoryHoldV1 } from "./hold-record.mjs";
+import { parseSelfUpdateFlagV1, publicStatusV1, SAFE_ID_V1, UPDATER_RUN_REASON_V1, updaterRefuseV1, updaterRunAttentionV1 } from "./contracts.mjs";
 export { FileStepJournalV1, RefusalAggregatorV1, reconcileJournalDisplayV1 } from "./journal.mjs";
 
 /** R7U-01: a durable run state, as the PUBLIC status state the owner reads.
@@ -40,7 +41,8 @@ function refreshedSelfUpgradeNeedsAttention(facts) {
 }
 
 export class UpdaterStateFilesV1 {
-  constructor(root, leaseToken) { this.root = root; this.leaseToken = leaseToken; }
+  #historyHold;
+  constructor(root, leaseToken) { this.root = root; this.leaseToken = leaseToken; this.#historyHold = new HistoryHoldV1(root); }
   readSelfUpdate() { return readFileNoFollowV1(this.root, "updater-state/self-update", { maxBytes: 16 }); }
   async hasRescueMarker() {
     try {
@@ -82,6 +84,12 @@ export class UpdaterStateFilesV1 {
       schema: "control-room.updater-mode/v1", mode,
     })}\n`);
   }
+  // FIX-475: the history hold has one record and one serialized writer per
+  // state-files instance (hold-record.mjs). Each answer is a view
+  // `{ generation, code, durable, error? }`.
+  observeWatcherHold() { return this.#historyHold.observe(); }
+  refuseWatcherHold(code) { return this.#historyHold.refuse(code); }
+  clearWatcherHold(startGeneration) { return this.#historyHold.clear(startGeneration); }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({
       schema: "control-room.updater-heartbeat/v1", at: new Date().toISOString(), ...value,
@@ -175,8 +183,16 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 const cleanReason = error => String(error?.code ?? error?.message ?? "unknown")
   .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ").slice(0, 120);
 
+// Watcher refusals that HOLD every future update until the owner acts: the
+// update copy's history cannot be trusted, so no candidate can be admitted. The
+// hold is published as an attention item and lasts until a watcher tick
+// succeeds. Other watcher failures (network, CI not green, a timeout) are
+// ordinary waiting and stay on the error sink only.
+const WATCHER_HOLD_CODES_V1 = Object.freeze(["watcher_history_unproven"]);
+
 export class UpdaterMainLoopV1 {
-  #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false;
+  #timer; #ticking = false; #watching; #activeTick; #ownerAction; #stopping = false; #watcherHold = null; #watcherHoldUnpersisted = false;
+  #watcherHoldGeneration = 0;
   constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, alerts = null,
     alertFacts = async () => ({}), intervalMs = 5_000, watcherTimeoutMs = 5000, ownerActionTimeoutMs = 300_000, onError = () => {} }) {
     assertOwnerActionTimeoutV1(ownerActionTimeoutMs);
@@ -235,6 +251,23 @@ export class UpdaterMainLoopV1 {
       code: typeof durable.code === "string" ? durable.code : null });
   }
 
+  // Views come from one serialized writer, so they settle in the order written.
+  #applyWatcherHold(view) {
+    if (!view) return view;
+    this.#watcherHold = view.code; this.#watcherHoldGeneration = view.generation;
+    this.#watcherHoldUnpersisted = view.code !== null && !view.durable;
+    return view;
+  }
+
+  async #publishStatus(value) {
+    // Until the hold write succeeds, status may be the only recoverable
+    // evidence. Preserve it through both progress and outcome publication so
+    // reconstruction can retry promotion, even while the switch remains Off.
+    if (this.#watcherHoldUnpersisted) value = { ...value, state: "needs_attention", needsYou: true,
+      reason: UPDATER_RUN_REASON_V1.watcher_history_unproven, nextAction: null };
+    await this.stateFiles.writeStatus(value);
+  }
+
   async #tick() {
     if (this.#ticking) return { status: "busy" };
     this.#ticking = true;
@@ -248,14 +281,42 @@ export class UpdaterMainLoopV1 {
       let flag = "Off", switchUnreadable;
       try { flag = parseSelfUpdateFlagV1(await this.stateFiles.readSelfUpdate()); }
       catch (error) { switchUnreadable = cleanReason(error); }
+      if (this.stateFiles.observeWatcherHold) {
+        try { this.#applyWatcherHold(await this.stateFiles.observeWatcherHold()); }
+        catch {
+          this.#watcherHold = "watcher_history_unproven";
+          this.#watcherHoldUnpersisted = true;
+        }
+      }
       const requestsSettled = await this.#requests(flag);
       // R5iii: while Off, do not read approval rows, watch sources or invoke a
       // builder. Only timer work and risk-reducing owner requests run.
       if (requestsSettled && !this.#stopping && flag === "On" && this.watcher) {
         if (!this.#watching) {
-          const watching = Promise.resolve().then(() => this.watcher.tick());
+          // The clearance may complete after this tick gave up waiting. It
+          // carries the generation this recheck started against, so it can
+          // never clear a hold recorded after that (FIX-475 R7-01).
+          const startGeneration = this.#watcherHoldGeneration;
+          const watching = Promise.resolve().then(() => this.watcher.tick()).then(async outcome => {
+            // Busy/run-active answers skipped the source and are not rechecks.
+            if (!["no_candidate", "unchanged", "created", "existing"].includes(outcome?.status)) return outcome;
+            if (!this.stateFiles.clearWatcherHold) { this.#watcherHold = null; return outcome; }
+            const view = this.#applyWatcherHold(await this.stateFiles.clearWatcherHold(startGeneration));
+            if (view?.error) throw view.error;
+            return outcome;
+          }, async error => {
+            if (WATCHER_HOLD_CODES_V1.includes(error?.code)) {
+              if (!this.stateFiles.refuseWatcherHold) this.#watcherHold = error.code;
+              else {
+                const view = this.#applyWatcherHold(await this.stateFiles.refuseWatcherHold(error.code));
+                if (view?.error) try { this.onError(view.error); } catch { /* reporting cannot block the runner */ }
+              }
+            }
+            throw error;
+          });
           this.#watching = watching;
           watching.finally(() => { if (this.#watching === watching) this.#watching = undefined; }).catch(() => {});
+          // Persistence completes with the watcher answer before publication.
           let timer;
           try { await Promise.race([watching, new Promise((_, reject) => {
             timer = setTimeout(() => reject(updaterRefuseV1("updater_watcher_timeout")), this.watcherTimeoutMs);
@@ -277,7 +338,7 @@ export class UpdaterMainLoopV1 {
           ? `The self-update switch could not be read (${switchUnreadable}); self-update is being treated as Off.`
           : "Self-update is Off." }
         : await this.runner.runOnce({ onProgress: async () => {
-          await this.stateFiles.writeStatus({ ...publicFacts, state: "running", needsYou: false, selfUpdate: flag });
+          await this.#publishStatus({ ...publicFacts, state: "running", needsYou: false, selfUpdate: flag });
         } });
       // -------------------------------------------------------------------
       // R7U-01: THE OWNER-VISIBLE STATE IS A DURABLE DATABASE FACT.
@@ -362,11 +423,19 @@ export class UpdaterMainLoopV1 {
         : status === "rolled_back" ? "rolled_back"
         : status === "refused" ? "refused"
         : ["busy", "needs_attention", "error"].includes(status) ? "needs_attention"
+        : flag === "On" && this.#watcherHold !== null ? "needs_attention"
         : mode !== "running" ? mode
         : "idle";
+      // A held watcher is published only when nothing above it names the state,
+      // so an active run's own progress and outcome still reach the card; it
+      // always raises needsYou and carries its own sentence when no outstanding
+      // row's sentence is already shown.
+      const watcherHold = this.#watcherHold;
+      const holdNamesState = watcherHold !== null && publicState === "needs_attention" && !damagedSwitch && !outstanding
+        && !["busy", "needs_attention", "error"].includes(status);
       // A damaged switch is Off AND needs the owner: it is not a normal quiet Off, so `needsYou` must
       // be true for it regardless of the outcome status, or the damage is invisible.
-      const needsYou = damagedSwitch || switchUnreadable !== undefined || Boolean(outstanding)
+      const needsYou = damagedSwitch || switchUnreadable !== undefined || Boolean(outstanding) || watcherHold !== null
         || ["busy", "uncertain", "attended_upgrade_required", "needs_attention", "error", "rolled_back"]
           .includes(status);
       // `damagedSwitch` ALREADY ORS the refreshed read into the chain above, so
@@ -414,8 +483,12 @@ export class UpdaterMainLoopV1 {
       // The two fields describe different things and are allowed to disagree —
       // that is the merge's whole point — so there is no rule here that one must
       // imply the other.
-      await this.stateFiles.writeStatus({ ...refreshedFacts, state: finalState, needsYou: finalNeedsYou, selfUpdate: flag,
-        ...(nextAction === undefined ? {} : { nextAction }),
+      // The hold has no reviewed action key, so it publishes none rather than the
+      // derived "review_recovery", which would send the owner to a recovery
+      // that never happened.
+      await this.#publishStatus({ ...refreshedFacts, state: finalState, needsYou: finalNeedsYou, selfUpdate: flag,
+        ...(nextAction === undefined ? holdNamesState ? { nextAction: null } : {} : { nextAction }),
+        ...(watcherHold !== null ? { reason: UPDATER_RUN_REASON_V1[watcherHold] } : {}),
         ...(attention ? { reason: attention.reason } : {}) });
       if (resolved) await this.stateFiles.confirmRescueResolution?.();
       if (this.alerts) {

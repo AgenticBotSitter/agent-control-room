@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { abortAttendedV1, buildFixedBundleV1, buildReleaseV1, fetchVerifiedSourceV1 } from '../../src/updater/v1/attended-source.mjs';
 export const scratch = resolve('.test-tmp/r6u-fixtures');
@@ -14,6 +14,8 @@ export async function writableRemove(root) {
 }
 export async function newRoot(t, prefix='probe') {
   await mkdir(scratch,{recursive:true}); const root=await mkdtemp(join(scratch,prefix+'-')); t.after(()=>writableRemove(root));
+  // BSD inherits the parent directory's group; match the declared fixture identity.
+  await chown(root,process.getuid(),process.getgid());
   for(const name of ['updater-state/plans','updater-state/confirmations','build','releases','updater','runtime','pg']) await mkdir(join(root,name),{recursive:true});
   await writeFile(join(root,'updater-state/self-update'),'Off\n',{mode:0o600}); return root;
 }
@@ -45,6 +47,7 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
     calls.push({file,args});
     const result={stdout:'',stderr:'',code:0};
     if(args.includes('init')) await writeFile(join(args.at(-1),'HEAD'),'stand-in');
+    else if(args.includes('--is-shallow-repository')) result.stdout='false\n';
     else if(args.includes('rev-parse')) result.stdout='b'.repeat(40)+'\n';
     else if(args.includes('ls-tree')) result.stdout=[...files].map(([name,b])=>`100644 blob ${oid(b)}\t${name}\0`).join('');
     else if(args.includes('cat-file') && args.includes('-s')) result.stdout=String([...files.values()].find(b=>oid(b)===args.at(-1)).length);
@@ -71,7 +74,21 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
   async function build() { fetched=await fetchVerifiedSourceV1(input);const release=await buildReleaseV1({...input,...fetched});const bundle=await buildFixedBundleV1({...input,...fetched});return{fetched,release,bundle}; }
   return {root,input,calls,build};
 }
+// The installed pair in the one form a real install leaves: buildReleaseV1 names
+// the release `<version>-<first 12 of commit>`, and build-attended-release.mjs
+// writes the payload plus its six-field manifest (schema, commit, version,
+// fileCount, byteCount, files of {path, sha256, mode, bytes}). The payload is one
+// file whose bytes, mode and hash are written out here, independently of any
+// hashing code: sha256 measured with `shasum -a 256` over these 42 bytes.
+export const installedReleaseId = `2.0.0-${'c'.repeat(12)}`;
+export const installedPayloadV1 = Object.freeze({ path: 'package.json', body: '{"name":"control-room","version":"2.0.0"}\n',
+  sha256: 'sha256:e4577b7842dd1e2265350fe71dfd5b24f83d08090efa4ba4260591f5b552d70a', mode: 0o400, bytes: 42 });
 export async function initialPair(root) {
-  await mkdir(join(root,'releases/2.0.0-old'));await writeFile(join(root,'releases/2.0.0-old/RELEASE_MANIFEST.json'),JSON.stringify({version:'2.0.0',commit:'c'.repeat(40)}));await mkdir(join(root,'updater/2.0.0-old'));
-  await symlink('releases/2.0.0-old',join(root,'current'));await symlink('2.0.0-old',join(root,'updater/current'));
+  const release=join(root,'releases',installedReleaseId), p=installedPayloadV1;
+  await mkdir(release);
+  await writeFile(join(release,p.path),p.body,{mode:p.mode});await chmod(join(release,p.path),p.mode);
+  await writeFile(join(release,'RELEASE_MANIFEST.json'),`${JSON.stringify({schema:'control-room.attended-build-manifest/v1',commit:'c'.repeat(40),version:'2.0.0',
+    fileCount:1,byteCount:p.bytes,files:[{path:p.path,sha256:p.sha256,mode:p.mode,bytes:p.bytes}]},null,2)}\n`,{mode:0o400});
+  await mkdir(join(root,'updater',installedReleaseId));
+  await symlink(`releases/${installedReleaseId}`,join(root,'current'));await symlink(installedReleaseId,join(root,'updater/current'));
 }

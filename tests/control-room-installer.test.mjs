@@ -1454,6 +1454,18 @@ test("a repeat whose verified diff touches db is refused before confirmation or 
   }
 });
 
+test("a fresh install proceeds when the classifier reports a database change", async t => {
+  // With no installed release the classifier always reports a database change
+  // (the install creates the database), so the fresh path must not refuse it.
+  const f = await fixture(t, "fresh-db-change", { changesDatabase: true });
+  await installControlRoomV1(f.options);
+  const classified = f.ports.calls.find(call => call[0] === "classify-source");
+  assert.ok(classified, "the fresh install classified its source");
+  assert.ok(f.ports.calls.some(call => call[0] === "confirm"));
+  assert.ok(f.ports.calls.some(call => call[0] === "stage-release"));
+  assert.equal((await statusControlRoomV1({ root: f.root })).current, "releases/1.2.3-aaaaaaaaaaaa");
+});
+
 test("a refused database update retried never claims an unfinished update rolled back", async t => {
   const f = await fixture(t, "db-refusal-identical-retry");
   await assert.rejects(lstat(f.root), { code: "ENOENT" }, "setup leaves product state absent");
