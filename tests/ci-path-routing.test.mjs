@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +16,9 @@ import {
 } from "../scripts/ci-path-routing.mjs";
 
 const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+const require = createRequire(import.meta.resolve("eslint"));
+const { load } = require("js-yaml");
+const parsedWorkflow = load(workflow);
 const budgetSecurityReview = readFileSync(join(process.cwd(), "docs", "ci-budget-security-review.md"), "utf8");
 
 function decisionFor(...paths) {
@@ -346,7 +350,7 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.match(job("route"), /updater: \$\{\{ steps\.route\.outputs\.updater \}\}/u);
   assert.match(updater, /runs-on: macos-26/u);
   assert.match(updater, /node-version: 22/u);
-  assert.match(updater, /^    timeout-minutes: 60$/mu, "test-updater must have the owner-approved 60-minute budget");
+  assert.equal(parsedWorkflow.jobs["test-updater"]["timeout-minutes"], 60, "test-updater must have the owner-approved 60-minute budget");
   assert.match(updater, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
   assert.match(updater, /pnpm run test:updater/u);
   // The PostgreSQL updater tests boot the real updater and need macOS lockf, so
@@ -361,7 +365,9 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.doesNotMatch(scripts["test:updater"], /updater-journal-linux/u);
   assert.match(catchUp, /runs-on: \$\{\{ matrix\.runner \}\}/u);
   assert.match(catchUp, /- lane: updater\n\s+runner: macos-26/u);
-  assert.match(catchUp, /- lane: updater\n\s+runner: macos-26\n\s+timeout: 60\n/u, "full-gate updater must have the owner-approved 60-minute budget");
+  const updaterEntries = parsedWorkflow.jobs["full-gate"].strategy.matrix.include.filter(entry => entry.lane === "updater");
+  assert.equal(updaterEntries.length, 1, "full-gate must have exactly one updater matrix entry");
+  assert.equal(updaterEntries[0].timeout, 60, "full-gate updater must have the owner-approved 60-minute budget");
   const updaterStep = catchUp.slice(catchUp.indexOf("      - name: Updater lane (merge gate)"));
   assert.match(updaterStep, /matrix\.lane == 'updater'/u);
   assert.match(updaterStep, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
