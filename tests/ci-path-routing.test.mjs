@@ -346,7 +346,7 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.match(job("route"), /updater: \$\{\{ steps\.route\.outputs\.updater \}\}/u);
   assert.match(updater, /runs-on: macos-26/u);
   assert.match(updater, /node-version: 22/u);
-  assert.match(updater, /timeout-minutes: 45/u);
+  assert.match(updater, /timeout-minutes: 60/u, "test-updater must have the owner-approved 60-minute budget");
   assert.match(updater, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
   assert.match(updater, /pnpm run test:updater/u);
   // The PostgreSQL updater tests boot the real updater and need macOS lockf, so
@@ -361,6 +361,7 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.doesNotMatch(scripts["test:updater"], /updater-journal-linux/u);
   assert.match(catchUp, /runs-on: \$\{\{ matrix\.runner \}\}/u);
   assert.match(catchUp, /- lane: updater\n\s+runner: macos-26/u);
+  assert.match(catchUp, /- lane: updater\n\s+runner: macos-26\n\s+timeout: 60\n/u, "full-gate updater must have the owner-approved 60-minute budget");
   const updaterStep = catchUp.slice(catchUp.indexOf("      - name: Updater lane (merge gate)"));
   assert.match(updaterStep, /matrix\.lane == 'updater'/u);
   assert.match(updaterStep, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
