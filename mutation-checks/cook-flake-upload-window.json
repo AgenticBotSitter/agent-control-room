@@ -1,0 +1,9 @@
+[
+  {
+    "file": "tests/result-upload-cleanup-postgres.test.ts",
+    "find": "const hoursFromNow = (hours: number, now: number) => new Date(now + hours * 3_600_000).toISOString();",
+    "replace": "const hoursFromNow = (hours: number, now: number) => new Date(Date.now() + hours * 3_600_000).toISOString();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"^upload seed timestamps share one clock read even when the clock advances$\" tests/result-upload-cleanup-postgres.test.ts",
+    "why": "Restore separate Date.now reads for the created/expires/voided offsets. The named regression advances the synthetic clock by 1 ms per read and compares all four row shapes against hand-computed ISO literals; expired expiry exceeds its intended exact 24-hour window. No PostgreSQL is needed for this named assertion."
+  }
+]

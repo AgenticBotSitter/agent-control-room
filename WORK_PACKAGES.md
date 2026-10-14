@@ -1,5 +1,7 @@
 # Contributor work packages
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 These are substantial contribution outcomes, not automatic assignments or claims.
 Check the repository's ready issues for work currently available. A maintainer must add the exact public
 base commit, allowed files, reviewing maintainer and runnable acceptance commands before

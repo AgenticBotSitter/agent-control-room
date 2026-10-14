@@ -1,5 +1,7 @@
 # Start here: public work queue
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 > **MVP work is open:** the maintainer-wide pause ended on 2026-09-13. Work only from
 > a current `CLAIM ACCEPTED` assignment; only without one, request an automatic reservation on
 > an issue marked `status:ready`. Existing useful branches and evidence remain inputs, but contributors

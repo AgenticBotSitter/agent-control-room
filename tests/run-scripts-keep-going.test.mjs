@@ -10,6 +10,7 @@ import { reachableTests, workflowCommands } from "../scripts/check-test-lane-cov
 
 const runner = fileURLToPath(new URL("../scripts/ci/run-scripts-keep-going.mjs", import.meta.url));
 const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+const componentBaseline = JSON.parse(readFileSync(new URL("./fixtures/ci-component-steps-main.json", import.meta.url), "utf8"));
 const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 
 test("expansion preserves ordered units and duplicate invocations, while leaf prerequisites stay intact", () => {
@@ -185,7 +186,15 @@ test("the component and catch-up replacements expand to exactly the legacy order
     assert.deepEqual([...reachableTests(scripts, units.map(name => `pnpm run ${name}`))].sort(),
       [...reachableTests(scripts, legacy)].sort());
     const invocation = `node scripts/ci/run-scripts-keep-going.mjs ${expand ? "--expand " : ""}${names.join(" ")}`;
-    assert.ok(workflowCommands(workflow).some(command => command.includes(invocation)), invocation);
+    if (names.join(" ") === "test:components test:mac-upgrade") {
+      const componentJob = workflow.slice(workflow.indexOf("  test-components:"), workflow.indexOf("  test-updater:"));
+      const runner = "node scripts/ci/run-scripts-keep-going.mjs ";
+      const shardedUnits = workflowCommands(componentJob).filter(command => command.startsWith(runner))
+        .flatMap(command => parseArguments(command.slice(runner.length).split(/\s+/u)).names);
+      assert.deepEqual([...shardedUnits].sort(), componentBaseline.units.map(unit => unit.name).sort());
+    } else {
+      assert.ok(workflowCommands(workflow).some(command => command.includes(invocation)), invocation);
+    }
   }
 });
 
@@ -193,7 +202,7 @@ test("every independent component check and catch-up connector check still runs 
   const components = workflow.slice(workflow.indexOf("  test-components:"), workflow.indexOf("  test-updater:"));
   const steps = components.split("      - name: ").slice(1).filter(step => /\n        run: (?:pnpm run test:|node )/u.test(step));
   assert.ok(steps.length >= 9);
-  for (const step of steps) assert.match(step, /if: \$\{\{ !cancelled\(\) \}\}/u);
+  for (const step of steps) assert.match(step, /if: \$\{\{ !cancelled\(\) && matrix\.shard == '[1-5]' \}\}/u);
   const catchUp = workflow.slice(workflow.indexOf("      - name: Component lanes (merge gate)"), workflow.indexOf("      - name: Updater lane (merge gate)"));
   assert.match(catchUp, /run-scripts-keep-going\.mjs --expand test:components test:attack-kit \|\| status=\$\?/u);
   assert.match(catchUp, /resource-bound-local-start-contract-v2\.test\.ts \|\| status=\$\?/u);

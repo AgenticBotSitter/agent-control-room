@@ -1,5 +1,7 @@
 # Maintainer identity and worker watcher home setup
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 > **Public repository status (2026-09-15): activated.** The separately controlled
 > `AgentControlRoomMaintainer` identity is configured through the repository's
 > `HANDOFF_MAINTAINERS` variable with verified Triage access. The owner reports that

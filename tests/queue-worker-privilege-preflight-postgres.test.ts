@@ -76,6 +76,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { verifyNativeQueueWorkerDatabase } from "../src/web/v1/private-database-preflight";
 import { verifyPgBossNativeWorkerPermissions } from "../src/persistence/pg-boss-native-task-permissions";
@@ -356,8 +357,8 @@ test("the REAL native queue worker starts on a production install, and stops whe
     const start = async () => {
       const bootstrap = createNativeQueueWorkerBootstrap({ PgBoss,
         openDatabase: (given: PrivatePostgresConfiguration) => {
-          const pool = new Pool({ ...privatePgOptions(given), host: connection.host });
-          return Object.freeze({ client: bindPrivatePgPool(pool).client, close: () => pool.end(),
+          const drained = drainingPool({ ...privatePgOptions(given), host: connection.host });
+          return Object.freeze({ client: bindPrivatePgPool(drained.pool).client, close: () => drained.end(),
             isAvailable: () => true });
         } });
       return await bootstrap.start({ database: config,

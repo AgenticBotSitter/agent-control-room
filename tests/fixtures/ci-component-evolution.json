@@ -1,0 +1,18 @@
+{
+  "provenance": "Synthetic workflow evolution inputs; literal commands, not recorded runtime answers. The real lane command is exercised separately by hosted CI.",
+  "lane": "test:database",
+  "runner": "node scripts/ci/run-scripts-keep-going.mjs ",
+  "validCommands": {
+    "addition": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-pg-driver.test.ts tests/draining-pool.test.ts",
+    "removal": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-pg-driver.test.ts"
+  },
+  "invalidSteps": {
+    "dropped": "",
+    "duplicated": "test:database test:database",
+    "neutered": "true"
+  },
+  "invalidCommands": {
+    "missing": null,
+    "empty": "   "
+  }
+}

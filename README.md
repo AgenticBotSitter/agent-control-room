@@ -1,5 +1,7 @@
 # Agent Control Room
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Pre-alpha contributor source preview. Try the disposable local demo and help finish
 the live project-to-agent workflow. This is not a production-ready installation.
 

@@ -31,6 +31,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { Client, Pool } from "pg";
+import { drainingPool } from "./support/draining-pool";
 import { privilegeClassMarkerTables, revokeMarkerClassesSql } from "./support/privilege-class-markers";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import {
@@ -178,18 +179,18 @@ async function inTransaction<T>(pool: Pool, callback: (session: DatabaseSession)
   }
 }
 
-const readerOver = (pool: Pool): Reader => ({
+const readerOver = (drained: ReturnType<typeof drainingPool>): Reader => ({
   client: Object.freeze<DatabaseClient>({
     query: async <T>(statement: string, params: unknown[] = []) => {
-      const client = await pool.connect();
+      const client = await drained.pool.connect();
       try { return await client.query(statement, params) as unknown as { rows: T[] }; }
       finally { client.release(); }
     },
-    transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => inTransaction(pool, callback, () => {}),
+    transaction: <T>(callback: (session: DatabaseSession) => Promise<T>) => inTransaction(drained.pool, callback, () => {}),
     transactionWithPreCommitCheck: <T>(callback: (session: DatabaseSession) => Promise<T>,
-      check: () => void | Promise<void>) => inTransaction(pool, callback, check),
+      check: () => void | Promise<void>) => inTransaction(drained.pool, callback, check),
   }),
-  close: () => pool.end(),
+  close: () => drained.end(),
 });
 
 const identity = (label: string, tokenLabel: string): VerifiedWebIdentity => ({
@@ -309,8 +310,8 @@ before(async () => {
   await admin.query(revokeMarkerClassesSql("pa_writer", await privilegeClassMarkerTables(ROOT)));
   await purgePreviousRuns();
 
-  const writerPool = new Pool({ ...WRITER, max: 4, application_name: "control-room-activity-test-writer" });
-  const racePool = new Pool({ ...WRITER, max: 2, application_name: "control-room-activity-test-race" });
+  const writerPool = drainingPool({ ...WRITER, max: 4, application_name: "control-room-activity-test-writer" });
+  const racePool = drainingPool({ ...WRITER, max: 2, application_name: "control-room-activity-test-race" });
   writer = { client: readerOver(writerPool).client, close: () => writerPool.end() };
   raceReader = readerOver(racePool);
   writerStore = new ProjectEventStoreV1(writer.client, KEY, () => EVENT_NOW);
@@ -387,22 +388,22 @@ before(async () => {
 });
 
 after(async () => {
-  await web?.close().catch(() => {});
-  await raceReader?.close().catch(() => {});
-  await writer?.close().catch(() => {});
-  await admin?.end().catch(() => {});
-  // Always stop the cluster and remove its data directory, even after a failure:
-  // a leaked postmaster holds this Mac's scarce shared memory and its port.
-  // The stop happens before the removal, and a failed stop is reported rather
-  // than swallowed, so a leak can never pass unnoticed.
-  if (started && run) {
-    try {
-      await native("pg_ctl", ["-D", join(run, "data"), "-m", "immediate", "-w", "-t", "30", "stop"]);
-    } catch (error) {
-      process.stderr.write(`activity cluster stop failed, removing anyway: ${String(error)}\n`);
+  try { await Promise.all([web?.close(), raceReader?.close(), writer?.close()]); }
+  finally {
+    await admin?.end().catch(() => {});
+    // Always stop the cluster and remove its data directory, even after a failure:
+    // a leaked postmaster holds this Mac's scarce shared memory and its port.
+    // The stop happens before the removal, and a failed stop is reported rather
+    // than swallowed, so a leak can never pass unnoticed.
+    if (started && run) {
+      try {
+        await native("pg_ctl", ["-D", join(run, "data"), "-m", "immediate", "-w", "-t", "30", "stop"]);
+      } catch (error) {
+        process.stderr.write(`activity cluster stop failed, removing anyway: ${String(error)}\n`);
+      }
     }
+    if (run) await rm(run, { recursive: true, force: true });
   }
-  if (run) await rm(run, { recursive: true, force: true });
 });
 
 const request = (project: string, limit: number, cursor: { afterCursor?: string; beforeCursor?: string } = {}):

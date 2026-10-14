@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -269,8 +269,14 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   }
 
   async applyOwnerSignedBundle(bundle: OwnerSignedTrustBundleV1): Promise<void> {
-    const candidate = this.verifyTrustBundle(bundle, "candidate");
     const currentRow = this.trustRow();
+    let authenticated: OwnerSignedTrustBundleV1 | undefined;
+    // Only this update path can retain earlier identity bytes. The callback
+    // authenticates the pinned owner, binding, signed body, row and full history
+    // before any exception is used; normal high-water checks still gate writes.
+    const authenticatedCurrent = () => currentRow
+      ? (authenticated ??= this.verifyTrustRow(currentRow)) : undefined;
+    const candidate = this.verifyTrustBundle(bundle, "candidate", authenticatedCurrent);
     const water = this.trustHighWater();
     if (!water && !currentRow) throw new ProtectedStoreError("missing");
     if (!water) throw new ProtectedStoreError("rollback_detected");
@@ -279,12 +285,12 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
       if (water.sequence !== candidate.body.epoch || water.body_digest !== candidate.body.bodyDigest) throw new ProtectedStoreError("recovery_required");
       if (!currentRow) throw new ProtectedStoreError("recovery_required");
       if (currentRow && currentRow.epoch === water.sequence && currentRow.body_digest === water.body_digest) {
-        this.verifyTrustRow(currentRow);
+        authenticatedCurrent();
         this.commitTrustHighWater(water.sequence, water.body_digest);
         return;
       }
       if (currentRow && currentRow.epoch >= water.sequence) throw new ProtectedStoreError("rollback_detected");
-      if (currentRow) this.validateTrustTransition(this.verifyTrustRow(currentRow), candidate);
+      if (currentRow) this.validateTrustTransition(authenticatedCurrent()!, candidate);
       this.writeTrustBundle(candidate);
       this.faultInjector("trust_after_artifact");
       this.commitTrustHighWater(water.sequence, water.body_digest);
@@ -293,7 +299,7 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     }
     if (!currentRow) throw new ProtectedStoreError("rollback_detected");
 
-    const current = this.verifyTrustRow(currentRow);
+    const current = authenticatedCurrent()!;
     if (water.sequence !== current.body.epoch || water.body_digest !== current.body.bodyDigest) throw new ProtectedStoreError("rollback_detected");
     if (candidate.body.epoch < current.body.epoch) throw new ProtectedStoreError("rollback_detected");
     if (candidate.body.epoch === current.body.epoch) {
@@ -342,14 +348,23 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.ceilingProvisioningKey(ceiling.body.issuerKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
+      if (source === "candidate") {
+        if (Buffer.from(ceiling.signature, "base64url").toString("base64url") !== ceiling.signature) throw new Error("noncanonical signature");
+      }
       if (!verifyArtifactSignature(ceiling, pin.spki)) throw new Error("invalid signature");
+      const { signature: _signature, ...metadata } = ceiling;
+      assertNoSecretMaterial(metadata, "node ceiling");
     } catch {
       throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     }
     return ceiling;
   }
 
-  private verifyTrustBundle(bundle: OwnerSignedTrustBundleV1, source: "candidate" | "stored"): OwnerSignedTrustBundleV1 {
+  private verifyTrustBundle(
+    bundle: OwnerSignedTrustBundleV1,
+    source: "candidate" | "stored",
+    retainedBundle: () => OwnerSignedTrustBundleV1 | undefined = () => undefined,
+  ): OwnerSignedTrustBundleV1 {
     const parsed = ownerSignedTrustBundleSchema.safeParse(bundle);
     if (!parsed.success) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     const trust = parsed.data;
@@ -357,7 +372,45 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
     const pin = this.ownerPins.serverTrustRootKey(trust.body.ownerRootKeyId);
     if (!pin) throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     try {
+      // New key admission is stricter than the historical writer. Stored bytes retain
+      // their spelling and remain protected by owner signature/digest/history.
+      if (source === "candidate") {
+        for (const key of trust.body.keys) {
+          const der = Buffer.from(key.spki, "base64url");
+          const publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
+          if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("wrong public key algorithm");
+          if (publicKey.export({ format: "der", type: "spki" }).toString("base64url") !== key.spki
+            && !retainedBundle()?.body.keys.some(prior => prior.keyId === key.keyId && prior.spki === key.spki)) {
+            throw new Error("noncanonical public key");
+          }
+        }
+      }
+      if (source === "candidate") {
+        if (Buffer.from(trust.signature, "base64url").toString("base64url") !== trust.signature) throw new Error("noncanonical signature");
+      }
       if (!verifyArtifactSignature(trust, pin.spki)) throw new Error("invalid signature");
+      const authorization = trust.shrinkAuthorization;
+      // Shrink pins authorize a new transition; rotating them must not revoke
+      // already accepted state or invalidate artifacts the base writer accepted.
+      if (authorization && source === "candidate") {
+        const shrinkPin = this.ownerPins.trustShrinkKey(authorization.keyId);
+        if (!shrinkPin) throw new Error("unknown shrink pin");
+        if (Buffer.from(authorization.signature, "base64url").toString("base64url") !== authorization.signature) throw new Error("noncanonical shrink signature");
+        if (!verifyTrustBundleShrinkAuthorization(authorization, shrinkPin.spki)) throw new Error("invalid shrink signature");
+      }
+      // New SPKI bytes are canonical Ed25519 public DER; authenticated retained
+      // encodings preserve their exact historical identity. About 32 bytes
+      // of chosen data shaped as a valid key cannot be distinguished from a real
+      // key; the pinned owner signature is the authority for including that key.
+      // Stored optional shrink signatures are historical transition evidence,
+      // not authority under current shrink pins. Strict schemas refuse extras;
+      // every remaining metadata value stays screened.
+      const { signature: _signature, body, shrinkAuthorization, ...envelope } = trust;
+      const { signature: _shrinkSignature, ...shrinkMetadata } = shrinkAuthorization ?? {};
+      assertNoSecretMaterial({ ...envelope,
+        body: { ...body, keys: body.keys.map(({ spki: _spki, ...key }) => key) },
+        ...(shrinkAuthorization ? { shrinkAuthorization: shrinkMetadata } : {}),
+      }, "server trust bundle");
     } catch {
       throw new ProtectedStoreError(source === "stored" ? "corrupt" : "invalid_bundle");
     }
@@ -406,17 +459,9 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
 
     const priorActive = new Set(current.body.keys.filter((key) => key.state === "active").map((key) => key.keyId));
     const hasActiveOverlap = candidate.body.keys.some((key) => key.state === "active" && priorActive.has(key.keyId));
-    if (!hasActiveOverlap) {
-      const authorization = candidate.shrinkAuthorization;
-      if (!authorization) throw new ProtectedStoreError("invalid_bundle");
-      const pin = this.ownerPins.trustShrinkKey(authorization.keyId);
-      if (!pin || authorization.bundleBodyDigest !== candidate.body.bodyDigest) throw new ProtectedStoreError("invalid_bundle");
-      try {
-        if (!verifyTrustBundleShrinkAuthorization(authorization, pin.spki)) throw new Error("invalid signature");
-      } catch {
-        throw new ProtectedStoreError("invalid_bundle");
-      }
-    }
+    // Optional authorizations are authenticated by verifyTrustBundle before
+    // preparation, even when active keys overlap or this is first provision.
+    if (!hasActiveOverlap && !candidate.shrinkAuthorization) throw new ProtectedStoreError("invalid_bundle");
   }
 
   private validateTrustHistory(bundle: OwnerSignedTrustBundleV1): void {
@@ -432,7 +477,6 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   }
 
   private writeCeiling(ceiling: SignedNodeAuthorityCeilingV1): void {
-    try { assertNoSecretMaterial(ceiling, "node ceiling"); } catch { throw new ProtectedStoreError("invalid_bundle"); }
     this.transaction(this.artifacts, () => {
       this.artifacts.prepare(
         `INSERT INTO node_ceiling_current(tenant_id,node_id,version,body_digest,artifact_json,adopted_at)
@@ -443,7 +487,6 @@ export class SqliteNodeSecurityStateRepository implements ServerTrustStore {
   }
 
   private writeTrustBundle(bundle: OwnerSignedTrustBundleV1): void {
-    try { assertNoSecretMaterial(bundle, "server trust bundle"); } catch { throw new ProtectedStoreError("invalid_bundle"); }
     this.transaction(this.artifacts, () => {
       this.artifacts.prepare(
         `INSERT INTO server_trust_current(tenant_id,node_class,epoch,body_digest,bundle_json,adopted_at)

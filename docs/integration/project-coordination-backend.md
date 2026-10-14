@@ -1,5 +1,7 @@
 # Project coordination and safe parallel-work backend
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 This package is the reusable server-side engine behind issue #167: an owner appoints a bounded project coordinator, the trusted result boundary hands the engine exact retained-result evidence, approved proposals become ordinary canonical work, and no two workers unsafely write the same project resources. It implements `docs/PROJECT_COORDINATION_IMPLEMENTATION_CONTRACT.md` and the strict shared boundary module `src/contracts/v1/project-coordination-boundaries.ts` without redesigning either. It is additive: it introduces no scheduler, no agent login, no second authority system, and it wires none of the existing manual, scheduled, news, retained-result or dispatch/activation call sites.
 
 ## Authority
