@@ -78,7 +78,7 @@ const identity: VerifiedWebIdentity = { provider: PROVIDER, subject: "r7i-fix-ow
 // ATTN-JIT DIAGNOSTIC -- DO NOT MERGE. One-variable experiment on the diagnostic
 // PR only: "on" is today's behaviour; "off" runs ALTER ROLE <web login> SET jit = off
 // from the admin connection before any web-login query. Nothing else differs.
-const ATTN_JIT_ARM = "on" as "on" | "off";
+const ATTN_JIT_ARM = "off" as "on" | "off";
 const attnJitDiagnostic = (emit: (message: string) => void, kind: string, value: unknown, extra: Record<string, unknown> = {}) =>
   emit(JSON.stringify({ diagnostic: "ATTN10K", kind, value, ...extra }));
 
