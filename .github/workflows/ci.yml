@@ -420,13 +420,17 @@ jobs:
         run: pnpm run test:built-mac-local-navigation
 
   test-components:
-    name: Component lanes
+    name: Component lanes (${{ matrix.shard }})
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    # The full test:components chain now needs about 200-220 minutes on a hosted runner
-    # (2026-10-06: cancelled at 180 inside test:mac-upgrade, its last script).
-    timeout-minutes: 300
+    # Five shards balanced from the last ten successful hosted runs. Each has
+    # about 46 minutes of checks using each group's largest observed duration.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1', '2', '3', '4', '5']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -473,49 +477,61 @@ jobs:
       # shipped service worker against real IndexedDB and the real notification
       # API. Without it that file SKIPS visibly -- never silently -- and the
       # component lane would report the receiver half of R6C-05 as proved while
-      # having run nothing. One browser, one install step, no new job.
+      # having run nothing. Every shard retains the original browser setup.
       - name: Install Chromium for the owner-push receiver lane
         run: pnpm exec playwright install --with-deps chromium
-      - name: Runtime-assembly memory guard
-        if: ${{ !cancelled() }}
-        run: pnpm run test:private-local-runtime-assembly:memory-guard
-      - name: Mac-local real-page journey
-        if: ${{ !cancelled() }}
-        run: pnpm run test:mac-local-real-pages
-      - name: Phase 2B contracts
-        if: ${{ !cancelled() }}
-        run: pnpm run test:phase2b
-      - name: Component lanes
-        if: ${{ !cancelled() }}
+      - name: Component shard workflow guard
+        if: ${{ !cancelled() && matrix.shard == '1' }}
+        run: pnpm run test:ci-component-shards
+      - name: Component lanes shard 1
+        if: ${{ !cancelled() && matrix.shard == '1' }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
-        run: node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:mac-upgrade
-      # The shared attack-test kit and its own tests. This lane installs
-      # PostgreSQL 17 above, so the kit's real-cluster tests must run here
-      # rather than skip: tests/attack-kit.test.ts calls
-      # requiresRealPostgres() and FAILS when the binaries are present but the
-      # cluster tests did not run, so a lost PG install cannot pass silently.
-      #
-      # The search_path GATE runs here too, and before the kit's own tests, so
-      # a migration that introduces an unpinned privileged routine is reported
-      # as a gate failure in the job that already owns PostgreSQL 17. The gate
-      # builds its own disposable cluster from db/migrations/ plus the role
-      # files and reads pg_proc, so it adds seconds, not a second 10-minute job.
+        run: node scripts/ci/run-scripts-keep-going.mjs test:product-shell test:r6w-authorization-postgres test:queue test:codex-recovery test:offline-auth-conformance test:security-recovery test:skills:stress:postgres test:build-profile test:night-kit test:windows-preparation test:windows-line-endings test:fleet test:result-files test:result-upload-race test:install-first-owner:postgres
+      - name: Component lanes shard 2
+        if: ${{ !cancelled() && matrix.shard == '2' }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs test:contracts test:project-activity-postgres test:project-coordination-postgres test:r6proj-admission-postgres test:project-agent-visibility test:database test:owner-bootstrap test:ideas:postgres test:native-fences test:release-licenses test:release-signing test:nightly-backup:postgres test:supervisor test:result-upload-ingress-postgres test:install-first-owner-script:postgres test:pg-runtime-vendor
+      - name: Component lanes shard 3
+        if: ${{ !cancelled() && matrix.shard == '3' }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs test:supervisor:postgres test:polling-discipline test:recurring test:skills:postgres test:calendar test:worker-lifecycle test:product-browser test:task-attention:postgres test:mac-local-integration test:result-file-race test:result-file-catalog-postgres test:result-upload-staging test:result-upload-downgrade-postgres test:install-initial-passkey:postgres test:pg-clone test:pg-runtime-vendor-synthetic
+      - name: Component lanes shard 4
+        if: ${{ !cancelled() && matrix.shard == '4' }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs test:project-activity-lifecycle-postgres test:updater:linux test:checkpoints test:server-composition test:ideas test:results test:articles test:workspaces test:night-kit:postgres test:fleet:lapse-stress test:improve-control-room test:r7cfix-harness test:pg-runtime test:install-database-phase:postgres test:text-copy-derivation:postgres test:perf-read-indexes
+      - name: Component lanes shard 5
+        if: ${{ !cancelled() && matrix.shard == '5' }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs test:result-file-database-hardening-postgres test:project-activity test:recurring:postgres test:notices test:access test:owner-signing test:coordination test:voice test:observations test:backup-recovery test:owner-push:postgres test:postgres-production test:windows-launcher-modes test:improve-control-room-postgres test:result-file-download-postgres test:result-upload-store-postgres test:install-services-bringup:postgres test:fleet:lapse-terminal-race test:soak:analysis test:mac-upgrade
+      - name: Runtime-assembly memory guard
+        if: ${{ !cancelled() && matrix.shard == '3' }}
+        run: pnpm run test:private-local-runtime-assembly:memory-guard
+      - name: Mac-local real-page journey
+        if: ${{ !cancelled() && matrix.shard == '2' }}
+        run: pnpm run test:mac-local-real-pages
+      - name: Phase 2B contracts
+        if: ${{ !cancelled() && matrix.shard == '5' }}
+        run: pnpm run test:phase2b
       - name: Fail on a privileged routine without a pg_temp-pinned search_path
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '1' }}
         run: node --import tsx scripts/check-migration-search-path.mjs
       - name: Attack-test kit
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '4' }}
         run: pnpm run test:attack-kit
       - name: Installation operations mode
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '2' }}
         # The owner-facing Pause / Drain / Stop switch, its database guards, the
         # coordinator-backed stop, the Mac-local host composition and the
         # supervisor's machine-health port. It is its own lane because each file
         # builds its own disposable cluster on the reserved 58710-58719 range.
         run: pnpm run test:operations-mode
       - name: Bot dogfood journey
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '3' }}
         # Can a bot create and run work in Control Room, end to end? The
         # scripted-bot journey and its stress run, both on real PostgreSQL as
         # the production logins, with a scripted bot that never starts a real
@@ -523,7 +539,7 @@ jobs:
         # cluster on the reserved 59620-59629 range.
         run: pnpm run test:bot-dogfood
       - name: Resource-bound connector contracts
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '4' }}
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
         run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
@@ -1086,6 +1102,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Fail unless every lane passed or was caught up by the gate
+        env:
+          COMPONENTS_ROUTED: ${{ needs.route.outputs.components }}
         run: |
           set -euo pipefail
           status=0
@@ -1108,7 +1126,17 @@ jobs:
           check quick "${{ needs.quick.result }}"
           check demo "${{ needs.test-demo.result }}"
           check server "${{ needs.test-server.result }}"
-          check components "${{ needs.test-components.result }}"
+          echo "  components: ${{ needs.test-components.result }}"
+          if [ "${{ needs.test-components.result }}" != "success" ]; then
+            # Job routing runs before matrix expansion. Only an omitted whole
+            # matrix can use catch-up; a selected shard must never be skipped.
+            if [ "${{ needs.test-components.result }}" = "skipped" ] && [ "${{ needs.route.result }}" = "success" ] && [ "${COMPONENTS_ROUTED}" = "false" ] && [ "${{ needs.full-gate.result }}" = "success" ]; then
+              echo "  components: routed to successful catch-up before shards were created"
+            else
+              echo "::error::every selected component shard must succeed"
+              status=1
+            fi
+          fi
           check updater "${{ needs.test-updater.result }}"
           check articles "${{ needs.test-articles.result }}"
           check migration-lint "${{ needs.migration-lint.result }}"

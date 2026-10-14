@@ -1,0 +1,438 @@
+{
+  "source": "23fc87989feece081e9b4e8073e357d640998905",
+  "job": {
+    "name": "Component lanes",
+    "needs": "route",
+    "if": "${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}",
+    "runs-on": "ubuntu-latest",
+    "timeout-minutes": 300,
+    "steps": [
+      {
+        "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+        "with": {
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Install zsh for the install guide checks",
+        "run": "sudo apt-get update\nsudo apt-get install -y zsh\n"
+      },
+      {
+        "name": "Provide the macOS /private/tmp path on Linux",
+        "run": "test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }"
+      },
+      {
+        "uses": "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1"
+      },
+      {
+        "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+        "with": {
+          "node-version": 22,
+          "cache": "pnpm"
+        }
+      },
+      {
+        "run": "pnpm install --frozen-lockfile --ignore-scripts"
+      },
+      {
+        "name": "Install PostgreSQL 17 from PGDG",
+        "env": {
+          "DEBIAN_FRONTEND": "noninteractive"
+        },
+        "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y --no-install-recommends ca-certificates curl gnupg\nsudo install -d -m 0755 /etc/apt/keyrings\ncurl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc\ntest -s /tmp/pgdg.asc\nhead -1 /tmp/pgdg.asc | grep -q \"BEGIN PGP PUBLIC KEY BLOCK\"\nsudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc\necho \"deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main\" | sudo tee /etc/apt/sources.list.d/pgdg.list\nsudo apt-get update\nsudo apt-get install -y --no-install-recommends postgresql-17\n"
+      },
+      {
+        "name": "Install Chromium for the owner-push receiver lane",
+        "run": "pnpm exec playwright install --with-deps chromium"
+      },
+      {
+        "name": "Runtime-assembly memory guard",
+        "if": "${{ !cancelled() }}",
+        "run": "pnpm run test:private-local-runtime-assembly:memory-guard"
+      },
+      {
+        "name": "Mac-local real-page journey",
+        "if": "${{ !cancelled() }}",
+        "run": "pnpm run test:mac-local-real-pages"
+      },
+      {
+        "name": "Phase 2B contracts",
+        "if": "${{ !cancelled() }}",
+        "run": "pnpm run test:phase2b"
+      },
+      {
+        "name": "Component lanes",
+        "if": "${{ !cancelled() }}",
+        "env": {
+          "PG_BIN": "/usr/lib/postgresql/17/bin"
+        },
+        "run": "node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:mac-upgrade"
+      },
+      {
+        "name": "Fail on a privileged routine without a pg_temp-pinned search_path",
+        "if": "${{ !cancelled() }}",
+        "run": "node --import tsx scripts/check-migration-search-path.mjs"
+      },
+      {
+        "name": "Attack-test kit",
+        "if": "${{ !cancelled() }}",
+        "run": "pnpm run test:attack-kit"
+      },
+      {
+        "name": "Installation operations mode",
+        "if": "${{ !cancelled() }}",
+        "run": "pnpm run test:operations-mode"
+      },
+      {
+        "name": "Bot dogfood journey",
+        "if": "${{ !cancelled() }}",
+        "run": "pnpm run test:bot-dogfood"
+      },
+      {
+        "name": "Resource-bound connector contracts",
+        "if": "${{ !cancelled() }}",
+        "run": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts"
+      }
+    ]
+  },
+  "units": [
+    {
+      "name": "test:supervisor:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/supervisor-postgres.test.ts tests/supervisor-offline-attention-postgres.test.ts tests/supervisor-machine-attention-postgres.test.ts"
+    },
+    {
+      "name": "test:result-file-database-hardening-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59940}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/result-file-key-uniqueness-postgres.test.ts tests/result-file-growth-postgres.test.ts tests/result-upload-cleanup-postgres.test.ts tests/result-file-upload-race-postgres.test.ts"
+    },
+    {
+      "name": "test:polling-discipline",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts tests/task-workspace-auth-polling.test.tsx"
+    },
+    {
+      "name": "test:contracts",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connector-profile.test.ts tests/canonical-text-result.test.ts tests/native-canonical-result.test.ts tests/terminal-result-evidence.test.ts tests/codex-result-return-contract.test.ts tests/hermes-gpt-connector-profile.test.ts tests/hermes-gpt-connector.test.ts tests/hermes-gpt-session.test.ts tests/hermes-gpt-runtime.test.ts tests/claude-code-connector-profile.test.ts tests/claude-code-stream-json-decode.test.ts tests/claude-code-owned-process-session.test.ts tests/claude-code-private-installed-process-host.test.ts tests/claude-code-text-review-invocation-policy.test.ts tests/claude-code-qualification-evidence.test.ts tests/product-configuration.test.ts tests/product-configuration-binding.test.ts tests/project-template-storage.test.ts tests/project-template-http.test.ts tests/project-template-presentation.test.tsx tests/project-pack-schema.test.ts tests/project-pack-roundtrip.test.ts tests/project-pack-catalog-preview.test.tsx tests/module-contract.test.ts tests/module-permission-declaration.test.ts tests/project-pack-v2.test.ts tests/module-bundle.test.ts tests/module-project-pack-transfer.test.ts tests/module-transfer-http.test.ts tests/module-transfer-browser-client.test.ts tests/module-bundle-transfer-ui.test.tsx tests/r7l-contract-regressions.test.ts && pnpm test:fuzz:regressions && pnpm test:fuzz:quick && node scripts/run-tests-with-quarantine.mjs --test tests/owner-web-push-upsert-grants.test.mjs"
+    },
+    {
+      "name": "test:product-shell",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-project-pages.test.mjs tests/private-shell-navigation.test.tsx tests/owner-screen-regressions.test.mjs tests/page-registry.test.tsx tests/result-files-panel.test.tsx tests/product-configuration-summary.test.tsx tests/product-configuration-shell.test.mjs tests/configured-timestamp.test.tsx tests/task-state-guidance.test.tsx tests/settings-hydration.test.tsx tests/owner-guide-status-labels.test.tsx tests/task-display-state.test.ts tests/control-room-workboard.test.tsx tests/worker-board-read.test.tsx tests/workers-screen-truth.test.mjs tests/worker-scorecard-read.test.tsx tests/local-worker-route-status.test.tsx tests/project-pipelines-ui.test.tsx tests/task-command-retry.test.tsx tests/usage-cost.test.ts tests/usage-cost-ui.test.tsx tests/usage-cost-authorization.test.ts tests/usage-price-table-loader.test.ts tests/owner-ui.test.tsx tests/home-worker-read-failure.test.tsx tests/home-count-truth.test.tsx tests/use-visible-polling.test.tsx tests/action-inbox.test.tsx tests/action-inbox-regressions.test.tsx tests/owner-small-screen-regressions.test.tsx tests/morning-summary.test.tsx tests/operations-control.test.tsx tests/project-orchestration-ui.test.tsx tests/project-orchestration-owner.test.ts tests/website-owner-saves.test.tsx tests/website-round6.test.ts tests/website-round7.test.ts tests/setup-passkey-attempt-limit.test.tsx tests/owner-notify-settings.test.tsx tests/owner-notify-worker.test.mjs tests/r7-inbox-phone.test.tsx tests/r7-notification-session.test.ts tests/r7-phone.test.tsx tests/phone-resume-update.test.tsx"
+    },
+    {
+      "name": "test:project-activity",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/project-activity-store.test.ts tests/project-activity-http.test.ts tests/project-activity-ui.test.tsx tests/project-settings.test.ts tests/project-settings-signed-out.test.tsx tests/task-cancel.test.ts tests/task-lifecycle-project-activity.test.ts"
+    },
+    {
+      "name": "test:project-activity-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/project-activity-postgres.test.ts"
+    },
+    {
+      "name": "test:project-activity-lifecycle-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-58370}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/project-activity-lifecycle-postgres.test.ts"
+    },
+    {
+      "name": "test:project-coordination-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/project-coordination-postgres.test.ts tests/project-coordination-ui.test.tsx"
+    },
+    {
+      "name": "test:r6w-authorization-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/r6w-authorization-postgres.test.ts"
+    },
+    {
+      "name": "test:r6proj-admission-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/r6proj-project-admission-postgres.test.ts"
+    },
+    {
+      "name": "test:recurring",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/recurring-work.test.ts tests/recurring-owner-ui.test.tsx"
+    },
+    {
+      "name": "test:recurring:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59741}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/recurring-work-postgres.test.ts tests/recurring-scheduling-postgres.test.ts"
+    },
+    {
+      "name": "test:project-agent-visibility",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/project-agent-visibility.test.tsx"
+    },
+    {
+      "name": "test:notices",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/dependency-notices.test.mjs tests/license-evidence.test.mjs"
+    },
+    {
+      "name": "test:database",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1           tests/private-pg-driver.test.ts tests/private-pg-options.test.ts tests/completion-gate-lock-order-postgres.test.ts tests/worker-board-read-postgres.test.ts tests/worker-scorecard-read-postgres.test.ts tests/mac-local-worker-scorecard-postgres.test.ts tests/news-task-proposal-links-postgres.test.ts tests/module-install-approvals-postgres.test.ts tests/module-project-pack-transfer-postgres.test.ts tests/private-web-role-preflight-declaration.test.ts tests/attack-kit-role-acl-parity.test.ts tests/work-batch-intake-gate-postgres.test.ts tests/orchestrator-split-suggestions-postgres.test.ts tests/project-orchestration-postgres.test.ts tests/project-settings-first-row-race-postgres.test.ts tests/planner-down-migrations-postgres.test.ts tests/private-startup-preflight-postgres.test.ts tests/publication-grant-postgres.test.ts tests/queue-worker-privilege-preflight-postgres.test.ts tests/canonical-constraint-definition.test.mjs tests/schema-restore-digest-real-postgres.test.ts tests/down-migration-owner-real-postgres.test.ts tests/down-migration-sweep-real-postgres.test.ts tests/canonical-payload-guard-real-postgres.test.ts tests/session-watch.test.tsx"
+    },
+    {
+      "name": "test:updater:linux",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 --test-timeout=120000 tests/updater-journal-linux.test.mjs tests/passkey-ledger-lock.test.mjs"
+    },
+    {
+      "name": "test:queue",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/pg-boss-native-task-submission.test.ts tests/pg-boss-native-task-worker.test.ts tests/pg-boss-native-task-runtime.test.ts tests/queue-recovery-fence.test.ts tests/managed-session-readiness.test.ts tests/managed-queue-delivery.test.ts tests/native-connector-readiness.test.ts"
+    },
+    {
+      "name": "test:codex-recovery",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/codex-delivery-contract.test.ts tests/codex-activation-contract.test.ts tests/codex-node-intake.test.ts tests/codex-server-delivery.test.ts tests/codex-server-delivery-persistence.test.ts tests/codex-canonical-planning.test.ts tests/codex-owner-permit.test.ts tests/codex-admission-contract.test.ts tests/codex-start-journal.test.ts tests/codex-local-start-runtime.test.ts tests/codex-local-host.test.ts tests/private-codex-configuration.test.ts tests/private-linux-codex-installed-state-owner.test.ts tests/private-remote-controller-worker-composition.test.ts tests/codex-canonical-result-publication.test.ts tests/task-execution-planner-lock-order.test.ts tests/codex-app-server-process-session.test.ts tests/codex-native-process-acquisition.test.ts tests/codex-start-transport.test.ts tests/codex-read-recovery.test.ts tests/codex-read-jsonl.test.ts tests/codex-owned-read.test.ts tests/codex-completed-turn.test.ts tests/codex-result-publication-contract.test.ts tests/codex-result-sender.test.ts tests/codex-recovered-result-runtime.test.ts"
+    },
+    {
+      "name": "test:access",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/access-library.test.ts tests/owner-web-push.test.ts tests/owner-push-dispatch.test.ts tests/owner-notify-transports.test.ts tests/owner-notify-dispatch.test.ts"
+    },
+    {
+      "name": "test:offline-auth-conformance",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-owner-bootstrap-conformance.test.ts tests/private-ingress-conformance.test.ts"
+    },
+    {
+      "name": "test:owner-bootstrap",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/owner-bootstrap-ceremony-core.test.ts tests/owner-bootstrap-ceremony-request-faults.test.ts tests/owner-bootstrap-ceremony-recovery.test.ts tests/owner-bootstrap-ceremony-control-faults.test.ts tests/owner-bootstrap-ceremony-preflight-faults.test.ts tests/owner-bootstrap-ceremony-lifecycle-faults.test.ts tests/owner-bootstrap-ceremony-close-races.test.ts tests/owner-bootstrap-ceremony-close-bootstrap.test.ts tests/owner-bootstrap-ceremony-routing.test.ts"
+    },
+    {
+      "name": "test:owner-signing",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/bounded-owner-signature.test.ts tests/owned-owner-signature.test.ts tests/owner-signing-stream.test.ts tests/private-owner-agent-endpoint.test.ts tests/native-owner-agent-ports.test.ts"
+    },
+    {
+      "name": "test:checkpoints",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/completion-etcd-checkpoint-record.test.ts tests/completion-bounded-checkpoint-call.test.ts tests/completion-staged-checkpoint.test.ts tests/completion-checkpoint-split.test.ts"
+    },
+    {
+      "name": "test:security-recovery",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/security-recovery-fault-matrix.test.ts tests/owner-signing-recovery-faults.test.ts"
+    },
+    {
+      "name": "test:coordination",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/automatic-claim-controller.test.mjs tests/public-worker-inbox.test.mjs tests/worker-inbox-platform.test.mjs tests/review-handoff-controller.test.mjs tests/worker-inbox-watch.test.mjs tests/public-queue-health.test.mjs tests/public-model-outcomes.test.mjs tests/public-contribution-metrics.test.mjs tests/public-daily-activity.test.mjs tests/github-app-operator-package.test.mjs tests/self-hosting-database-hardening.test.mjs tests/github-app-worker-broker.test.ts tests/github-app-worker-broker-core.test.ts tests/github-app-postgres-replay.test.ts tests/github-app-durable-wake.test.ts tests/project-coordination-persistence.test.ts tests/project-coordination-backend.test.ts tests/project-resource-admission.test.ts tests/project-coordination-retirement.test.ts tests/project-coordination-http.test.ts tests/coordination-route.test.ts tests/r6w-authorization-guards.test.ts tests/project-coordination-web-role.test.ts tests/work-intake.test.ts tests/work-intake-cli.test.ts tests/work-intake-machine-api.test.ts tests/work-batch-owner-approval.test.ts tests/work-batch-agent-queue-db.test.ts tests/work-batch-assignment-gate.test.ts tests/linear-pipeline.test.ts tests/pipeline-build-publication-authority.test.ts tests/pipeline-sequential-advance.test.ts tests/agent-review-authority-static.test.ts tests/agent-review-authority.test.ts tests/protected-agent-principal.test.ts tests/owner-review-accepted-with-exceptions.test.ts tests/compare-combine-template.test.ts tests/work-intake-gate.test.ts tests/intake-coordinator.test.ts tests/database-sqlstate-regressions.test.ts tests/database-sqlstate-guard.test.mjs tests/node-security-public-artifacts.test.ts"
+    },
+    {
+      "name": "test:server-composition",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test           tests/private-agent-task-composition.test.ts tests/private-local-hermes-startup-configuration.test.ts tests/local-adapter-installation.test.ts tests/local-claude-post-install-admission.test.ts tests/private-local-installation-runtime-assembly.test.ts tests/private-local-startup-evidence-freshness.test.ts tests/hermes-claude-shared-lifecycle-conformance.test.ts tests/hermes-021-local-executor.test.ts tests/claude-code-local-executor.test.ts tests/task-http-prepared-worker.test.ts tests/task-local-route-observation.test.ts tests/native-https-service.test.ts"
+    },
+    {
+      "name": "test:ideas",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-timeout=60000 --test-concurrency=1 tests/idea-panel-workflow.test.ts tests/idea-panel-limits.test.ts tests/idea-lab-canonical-task-plan.test.ts tests/idea-round-proposal-operation.test.ts tests/idea-round-proposal-client.test.ts tests/idea-promotion-task-link.test.ts tests/idea-workspace.test.tsx"
+    },
+    {
+      "name": "test:ideas:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/idea-round-resume-postgres.test.ts"
+    },
+    {
+      "name": "test:skills:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/reusable-skill-postgres.test.ts"
+    },
+    {
+      "name": "test:skills:stress:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/reusable-skill-concurrency-postgres.test.ts"
+    },
+    {
+      "name": "test:results",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/result-text.test.tsx tests/task-results-lifecycle.test.mjs tests/review-memory.test.tsx tests/project-route-isolation.test.mjs tests/project-lifecycle-storage.test.ts tests/native-result-reservation.test.ts tests/native-result-store-reservation.test.ts tests/codex-canonical-result-publication.test.ts tests/project-result-review-attention.test.ts tests/task-read-query-budget.test.ts tests/artifact-backup-inventory.test.ts tests/persistent-local-storage.test.ts tests/persistent-local-storage-crash.test.ts tests/private-artifact-storage-integration.test.ts tests/private-artifact-storage-restart.test.ts tests/durable-result-publication.test.ts tests/durable-result-review-submission.test.ts tests/neutral-reservation-port.test.ts tests/candidate-acceptance-precheck.test.ts tests/task-result-reader.test.ts"
+    },
+    {
+      "name": "test:articles",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/article-extraction.test.mjs tests/article-detail.test.ts tests/article-store.test.ts tests/article-reader.test.mjs tests/article-collection.test.ts tests/news-module-gate.test.ts tests/news-research-form.test.mjs tests/news-page-binding.test.tsx tests/text-copy-converter.test.ts tests/text-copy-converter-sandbox.test.ts"
+    },
+    {
+      "name": "test:voice",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/voice-accessibility.test.tsx"
+    },
+    {
+      "name": "test:calendar",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/calendar-parity.test.ts tests/cron-calendar.test.ts tests/services-v1-recurrence.test.ts tests/schedule-store.test.ts tests/scheduled-task-admission.test.ts tests/scheduled-task-dispatch.test.ts tests/scheduled-task-recovery-integration.test.ts tests/scheduled-task-assignment.test.ts tests/scheduled-task-recovery.test.ts tests/schedule-planning.test.ts tests/schedule-presentation.test.tsx tests/schedule-read-service.test.ts"
+    },
+    {
+      "name": "test:observations",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/herdr-observations.test.ts tests/herdr-source.test.ts tests/herdr-collector.test.ts tests/herdr-pane-port.test.ts tests/session-observations.test.mjs"
+    },
+    {
+      "name": "test:workspaces",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/workspace-manager.test.ts tests/workspace-journal.test.ts tests/workspace-journal-port.test.ts tests/workspace-journal-crash.test.ts tests/workspace-journal-process.test.ts tests/workspace-restart-inventory.test.ts tests/git-worktree-change-inventory.test.ts tests/pull-request-publication.test.ts"
+    },
+    {
+      "name": "test:worker-lifecycle",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-worker-preparation.test.mjs tests/private-worker-lifecycle.test.ts"
+    },
+    {
+      "name": "test:backup-recovery",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/restic-retained-snapshot.test.ts tests/artifact-backup-inventory.test.ts tests/completion-etcd-checkpoint-record.test.ts tests/private-recovery-rehearsal-adapter.test.ts tests/private-recovery-tool-preflight.test.ts tests/private-recovery-native-execution-host.test.ts tests/nightly-backup-real-postgres.test.ts tests/verify-backup-grants-self.test.mjs tests/backup-round7.test.mjs tests/local-backup-restore-readiness.test.ts"
+    },
+    {
+      "name": "test:native-fences",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/native-start-fence.test.ts tests/native-recovery-fence.test.ts tests/claude-code-native-process.test.mjs tests/macos-claude-code-process-native-sidecar.test.mjs tests/claude-code-macos-process-host-ports.test.ts tests/macos-hermes-cli-release-sidecar-contract.test.ts tests/macos-hermes-runtime-image-manifest.test.ts tests/macos-hermes-runtime-import-policy.test.ts tests/macos-hermes-native-host-input-contract.test.ts tests/macos-hermes-native-launch-custodian.test.ts tests/macos-hermes-restricted-home-preflight.test.ts tests/macos-hermes-sealed-runtime-candidate-policy.test.ts tests/macos-hermes-runtime-candidate-inspector.test.ts tests/macos-hermes-macho-dependency-closure.test.ts tests/hermes-021-native-supervision-protocol.test.ts tests/updater-trusted-runtime.test.mjs"
+    },
+    {
+      "name": "test:release-licenses",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/runtime-license-report.test.mjs tests/runtime-license-assembly.test.mjs tests/runtime-license-text.test.mjs tests/license-exceptions.test.mjs tests/runtime-license-digest.test.mjs tests/runtime-license-repository-guard.test.mjs tests/runtime-license-bundled-collector.test.mjs tests/runtime-license-artifact-inventory.test.mjs tests/runtime-license-bundled-scan.test.mjs tests/runtime-license-inventory-prep.test.mjs tests/runtime-license-finalize.test.mjs"
+    },
+    {
+      "name": "test:release-signing",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/release-signing.test.mjs tests/release-signing-e2e.test.ts"
+    },
+    {
+      "name": "test:nightly-backup:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_NIGHTLY_BACKUP_PG_PORT=\"${CONTROL_ROOM_NIGHTLY_BACKUP_PG_PORT:-59980}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/nightly-backup-postgres.test.ts tests/nightly-backup-restore-recovery-postgres.test.ts tests/nightly-backup-round5b-restore-postgres.test.ts tests/r5b09-backup-lock-measurement.test.mjs"
+    },
+    {
+      "name": "test:build-profile",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/vps-build-profile.test.ts tests/private-vps-launcher.test.mjs"
+    },
+    {
+      "name": "test:product-browser",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/browser/workspace/product-browser-journeys.test.mjs"
+    },
+    {
+      "name": "test:supervisor",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/supervisor-machine-health.test.ts tests/supervisor-reconciliation.test.ts tests/operations-mode-auto-resume.test.ts"
+    },
+    {
+      "name": "test:owner-push:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/owner-push-dispatch-postgres.test.ts tests/owner-push-migrations-postgres.test.ts tests/owner-push-service-worker.test.mjs tests/owner-push-decision-deadlines-postgres.test.ts && node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/owner-web-push-subscribe-grant-postgres.test.ts"
+    },
+    {
+      "name": "test:task-attention:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/task-attention-settled-candidates-postgres.test.ts tests/r7i-unhappy-paths-postgres.test.ts"
+    },
+    {
+      "name": "test:night-kit",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/night-kit.test.ts"
+    },
+    {
+      "name": "test:night-kit:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/night-kit-postgres.test.ts"
+    },
+    {
+      "name": "test:postgres-production",
+      "command": "pnpm run test:postgres-migration-ledger:postgres && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/postgres-production-ledger.test.mjs tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs tests/postgres-shared-memory-teardown.test.mjs tests/mac-local-updater-grant-schema-pg17.test.mjs tests/github-app-wake-cursor-real-postgres.test.ts"
+    },
+    {
+      "name": "test:windows-preparation",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-preparation.test.mjs"
+    },
+    {
+      "name": "test:windows-line-endings",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-line-endings.test.mjs"
+    },
+    {
+      "name": "test:windows-launcher-modes",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-launcher-modes.test.mjs"
+    },
+    {
+      "name": "test:mac-local-integration",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/mac-local-fleet-postgres.test.ts tests/mac-local-task-model-selection.test.ts tests/model-identifier-grammar.test.ts tests/task-model-selection.test.ts tests/task-assignment-scopes.test.ts tests/check-mac-local-database.test.ts tests/check-mac-vps-database.test.ts tests/claude-owner-trusted-local-exec.test.ts tests/claude-owner-trusted-local-executor.test.ts tests/codex-current-admission-read-contract.test.ts tests/codex-delivery-bound-workspace-preparation.test.ts tests/agent-coding-worktrees.test.ts tests/codex-owner-trusted-local-exec.test.ts tests/codex-owner-trusted-local-executor.test.ts tests/codex-owner-trusted-local-queue.test.ts tests/codex-owner-trusted-local-task-planning.test.ts tests/coding-workspace-lifecycle-holder.test.ts tests/completion-gate-first-owner-genesis.test.ts tests/current-hermes-local-queue.test.ts tests/current-hermes-task-planning.test.ts tests/current-macos-hermes-build.test.ts tests/fleet-signal-store-pg-bigint.test.ts tests/hermes-021-owner-authorized-local-only-runner.test.ts tests/hermes-021-protected-worker-readiness.test.ts tests/hermes-021-reviewed-executable-identity.test.ts tests/hermes-local-executor.test.ts tests/hermes-local-queue-delivery.test.ts tests/hermes-owner-trusted-local-exec.test.ts tests/load-mac-local-protected-configuration.test.ts tests/local-owner-session.test.ts tests/local-owner-session-external-revoke-postgres.test.ts tests/local-owner-workflow-journey.test.tsx tests/mac-local-adapter-registry-seed.test.ts tests/mac-local-adapter-registry.test.ts tests/mac-local-browser-journeys.test.tsx tests/mac-local-journey-cluster-hygiene.test.ts tests/mac-local-complete-first-owner.test.mjs tests/mac-local-current-three-agent-task-composition.test.ts tests/mac-local-database-roles.test.ts tests/mac-local-default-task-provider.test.ts tests/mac-local-first-owner-manifest.test.mjs tests/mac-local-first-owner-readonly-checkpoint.test.ts tests/mac-local-first-owner-verify.test.mjs tests/mac-local-first-owner-vps-policy.test.mjs tests/mac-local-fleet-signal-guard.test.ts tests/mac-local-hermes-task-application.test.ts tests/mac-local-host.test.ts tests/mac-local-host-readiness-forwarding.test.ts tests/mac-local-live-projects.test.ts tests/mac-local-local-result-publisher-role.test.ts tests/mac-local-narrow-role-provision.test.mjs tests/mac-local-owner-bootstrap.test.ts tests/mac-local-owner-review-profile-guard.test.ts tests/mac-local-owner-accepted-review-state.test.ts tests/mac-local-owner-review-profile.test.ts tests/mac-local-pg17-rehearsal.test.mjs tests/mac-local-pin-node-keys.test.mjs tests/mac-local-protected-configuration.test.ts tests/mac-local-provision-database.test.mjs tests/mac-local-restricted-claude-task-composition.test.ts tests/mac-local-restricted-hermes-claude-task-composition.test.ts tests/mac-local-restricted-hermes-task-composition.test.ts tests/mac-local-restricted-task-composition.test.ts tests/mac-local-restricted-three-agent-task-composition.test.ts tests/mac-local-rollback-checkpoint-store.test.ts tests/mac-local-service.test.mjs tests/mac-local-serving.test.ts tests/mac-local-startup.test.ts tests/mac-local-storage-telemetry.test.ts tests/mac-local-submission-ui.test.tsx tests/mac-local-task-application.test.ts tests/mac-local-task-provider-templates.test.ts tests/mac-local-task-provider.test.ts tests/mac-local-task-runtime.test.ts tests/mac-local-usage-price-table-wiring.test.ts tests/mac-local-task-submission.test.ts tests/mac-local-web-host-launcher.test.mjs tests/mac-local-web-process.test.ts tests/website-input-refusals.test.ts tests/website-round2.test.mjs tests/mac-local-remote-access.test.ts tests/mac-local-remote-access-setup.test.ts tests/mac-local-worker-readiness.test.ts tests/owner-trusted-local-cli-assert-current.test.ts tests/owner-trusted-local-cli-composition.test.ts tests/owner-trusted-local-cli-delivery.test.ts tests/owner-trusted-local-cli-execution.test.ts tests/owner-trusted-local-cli-publish.test.ts tests/owner-trusted-local-cli-receipt-port.test.ts tests/owner-trusted-local-enablements.test.ts tests/owner-trusted-local-harness-version.test.ts tests/owner-trusted-local-run-registration.test.ts tests/private-macos-claude-code-installed-port-composer.test.ts tests/private-macos-claude-code-qualification-route.test.ts tests/private-macos-hermes-native-launch-host-custody.test.ts tests/private-postgres-route-owner-runner-composition.test.ts tests/private-postgres-route-readiness-aggregate.test.ts tests/private-recovery-installed-port-composer.test.ts tests/private-recovery-native-owner-host-boundary.test.ts tests/two-local-worker-activation-preflight.test.ts tests/mac-local-database-upgrade.test.mjs tests/mac-local-database-upgrade-pg17.test.mjs tests/mac-local-database-upgrade-roles-pg17.test.mjs tests/mac-local-database-upgrade-handoff-pg17.test.mjs tests/mac-local-database-upgrade-vps-pg17.test.mjs tests/mac-local-database-upgrade-ledger90-suite-pg17.test.mjs tests/mac-local-database-upgrade-concurrent-lock-pg17.test.mjs"
+    },
+    {
+      "name": "test:fleet",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-page.test.tsx tests/connect-bot-install-line.test.mjs tests/fleet-mcp-server.test.ts tests/fleet-connector-install.test.mjs tests/fleet-connector-portability.test.mjs tests/fleet-connector-update.test.mjs tests/fleet-connector-http.test.mjs tests/fleet-connector-lock-crash.test.mjs tests/fleet-connector-robustness.test.mjs tests/fleet-connector-round2.test.mjs tests/fleet-connector-round4.test.mjs tests/fleet-connector-round6.test.mjs tests/fleet-connector-round6c.test.mjs tests/fleet-connector-secret-encoding.test.mjs tests/fleet-connector-slow-body.test.mjs tests/fleet-connector-version.test.mjs tests/fleet-parsing-robustness.test.mjs tests/website-gateway-round2.test.mjs tests/fleet-connector.test.ts tests/fleet-connector-bundle.test.ts tests/fleet-owner-web-route.test.ts tests/fleet-harness-handoff.test.ts tests/fleet-tool-adapter.test.mjs tests/fleet-tool-capability-evidence.test.ts tests/fleet-connector-postgres.test.ts tests/fleet-proposal-authority-postgres.test.ts tests/fleet-offer-scope-postgres.test.ts tests/fleet-connector-refusal-codes-postgres.test.ts tests/fleet-credential-expiry-postgres.test.ts tests/fleet-progress-lease-renewal-postgres.test.ts tests/fleet-harness-handoff-postgres.test.ts tests/fleet-held-result.test.ts tests/fleet-intake-refusal-translation.test.ts tests/fleet-expired-offer-skip.test.mjs tests/mac-local-fleet-postgres.test.ts tests/fleet-offered-task-handoff-postgres.test.ts tests/task-handoff-instructions-bound-postgres.test.ts tests/fleet-release-lock-order-postgres.test.ts tests/fleet-claim-contention-postgres.test.ts tests/fleet-claim-refusal-mapping.test.ts tests/fleet-worker-capacity-postgres.test.ts tests/fleet-worker-capacity-down-postgres.test.ts tests/fleet-worker-isolation-postgres.test.ts tests/artifact-input-completeness-reads-postgres.test.ts tests/owner-rejected-task-wording-postgres.test.ts"
+    },
+    {
+      "name": "test:fleet:lapse-stress",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/lapse-stress-postgres.test.ts"
+    },
+    {
+      "name": "test:improve-control-room",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/improve-control-room-desk.test.ts tests/updater-referee.test.ts"
+    },
+    {
+      "name": "test:improve-control-room-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/improve-control-room-desk-postgres.test.ts"
+    },
+    {
+      "name": "test:r7cfix-harness",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test --test-timeout=30000 tests/r7cfix-mutation-classifier.test.mjs"
+    },
+    {
+      "name": "test:result-files",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/result-file-store.test.ts tests/result-file-service.test.ts tests/result-file-download-http.test.ts tests/result-files-panel.test.tsx"
+    },
+    {
+      "name": "test:result-file-race",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/result-file-store-race.test.ts"
+    },
+    {
+      "name": "test:result-file-catalog-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59310}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-catalog-postgres.test.ts"
+    },
+    {
+      "name": "test:result-file-download-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59520}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-file-download-postgres.test.ts"
+    },
+    {
+      "name": "test:result-upload-staging",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-upload-staging.test.ts tests/result-upload-r6-regressions.test.mjs"
+    },
+    {
+      "name": "test:result-upload-ingress-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59310}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts"
+    },
+    {
+      "name": "test:result-upload-store-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59310}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-upload-store-postgres.test.ts"
+    },
+    {
+      "name": "test:result-upload-downgrade-postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59310}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-upload-downgrade-postgres.test.ts"
+    },
+    {
+      "name": "test:result-upload-race",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/result-upload-race.test.ts"
+    },
+    {
+      "name": "test:pg-runtime",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/pg-runtime-copy.test.ts"
+    },
+    {
+      "name": "test:install-database-phase:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59600}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/install-database-phase-real-postgres.test.mjs"
+    },
+    {
+      "name": "test:install-first-owner:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/install-first-owner-real-postgres.test.mjs"
+    },
+    {
+      "name": "test:install-initial-passkey:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59930}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/install-initial-passkey-real-postgres.test.ts"
+    },
+    {
+      "name": "test:install-first-owner-script:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59960}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/install-first-owner-script-real-postgres.test.mjs"
+    },
+    {
+      "name": "test:install-services-bringup:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59880}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/install-services-bringup-real-postgres.test.mjs"
+    },
+    {
+      "name": "test:pg-clone",
+      "command": "TMPDIR=\"${CONTROL_ROOM_PGRT_SHORT_TMPDIR:-/tmp}\" CONTROL_ROOM_PGRT_TMPDIR=\"${CONTROL_ROOM_PGRT_TMPDIR:-/tmp}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/pg-clone-probe-sidecar.test.ts tests/pg-clone-probe.test.ts"
+    },
+    {
+      "name": "test:pg-runtime-vendor",
+      "command": "PG_RUNTIME_ARCHIVE=\"${PG_RUNTIME_ARCHIVE:-}\" TMPDIR=\"${CONTROL_ROOM_PGRT_TMPDIR:-/tmp}\" CONTROL_ROOM_PGRT_TMPDIR=\"${CONTROL_ROOM_PGRT_TMPDIR:-/tmp}\" CONTROL_ROOM_PGRT_PORT_BASE=\"${CONTROL_ROOM_PGRT_PORT_BASE:-59710}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/pg-runtime-vendor.test.ts"
+    },
+    {
+      "name": "test:pg-runtime-vendor-synthetic",
+      "command": "TMPDIR=\"${CONTROL_ROOM_PGRT_TMPDIR:-/tmp}\" CONTROL_ROOM_PGRT_TMPDIR=\"${CONTROL_ROOM_PGRT_TMPDIR:-/tmp}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/pg-runtime-vendor-synthetic.test.ts"
+    },
+    {
+      "name": "test:fleet:lapse-terminal-race",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59470}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/lapse-terminal-race-postgres.test.ts"
+    },
+    {
+      "name": "test:text-copy-derivation:postgres",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/text-copy-derivation-postgres.test.ts"
+    },
+    {
+      "name": "test:soak:analysis",
+      "command": "node scripts/run-tests-with-quarantine.mjs --test tests/soak-analysis.test.mjs tests/soak-harness.test.mjs"
+    },
+    {
+      "name": "test:perf-read-indexes",
+      "command": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" ATTENTION_SHAPE_PG_PORT=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59460}\" OWNER_READ_INDEX_PG_PORT=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59460}\" CONTROL_ROOM_PUBLICATION_GRANT_PG_PORT=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59460}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/attention-candidate-shape-postgres.test.ts tests/owner-read-indexes-postgres.test.ts tests/publication-grant-postgres.test.ts"
+    },
+    {
+      "name": "test:mac-upgrade",
+      "command": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs tests/mac-local-upgrade-recovery.test.mjs && pnpm run test:entry-guards && pnpm run test:mac-upgrade-default-path"
+    }
+  ],
+  "envelope": {
+    "workflowDefaults": null,
+    "jobDefaults": null,
+    "stepShell": null,
+    "stepWorkingDirectory": null
+  }
+}
