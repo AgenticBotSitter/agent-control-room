@@ -346,7 +346,7 @@ test("the updater lane runs on macOS in both paths and is required by the merge 
   assert.match(job("route"), /updater: \$\{\{ steps\.route\.outputs\.updater \}\}/u);
   assert.match(updater, /runs-on: macos-26/u);
   assert.match(updater, /node-version: 22/u);
-  assert.match(updater, /timeout-minutes: 60/u, "test-updater must have the owner-approved 60-minute budget");
+  assert.match(updater, /^    timeout-minutes: 60$/mu, "test-updater must have the owner-approved 60-minute budget");
   assert.match(updater, /CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'/u);
   assert.match(updater, /pnpm run test:updater/u);
   // The PostgreSQL updater tests boot the real updater and need macOS lockf, so
