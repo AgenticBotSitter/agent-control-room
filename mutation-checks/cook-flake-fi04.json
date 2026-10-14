@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "const lock = await acquireKernelFileLockV1(join(this.root, \"updater-state/selfupgrade.lock\"), { busyCode: \"updater_flip_busy\" });",
+    "replace": "const lock = { release: async () => {} };",
+    "test": "node --test --test-name-pattern='50 concurrent attended callers' tests/updater-flip-recovery.test.mjs",
+    "why": "attended flip callers exclude each other: while one attempt is staged every other caller is refused as busy"
+  }
+]
