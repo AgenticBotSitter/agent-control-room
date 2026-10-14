@@ -1,5 +1,7 @@
 # Independent audit: shortest path to an installable MVP
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 **Assignment:** issue [#224](https://github.com/AgenticBotSitter/agent-control-room/issues/224)
 **Reviewer worker ID:** `mvp-integration-auditor-01`
 **Exact source base:** `d8d8c12c89035dbc9a66bf5ed3d6c3e2c1ffee87` (public `main`, merge of PR #151)

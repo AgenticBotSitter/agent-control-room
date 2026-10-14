@@ -1,5 +1,7 @@
 # Agent Control Room contributor handbook
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 This is the single authoritative guide for contributing to Agent Control Room. It is
 written for people and automated workers. You do not need access to a maintainer's
 machines, private projects, credentials, or chat history.

@@ -1,5 +1,7 @@
 # Contributing to Agent Control Room
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Start with the [Contributor Handbook](CONTRIBUTOR_HANDBOOK.md), the sole authoritative
 contribution lifecycle. It covers choosing and claiming work, isolated checkouts,
 implementation, evidence, review, corrections, ownership, and integration. This file
