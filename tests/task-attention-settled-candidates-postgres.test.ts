@@ -75,6 +75,13 @@ const tokenDigest = sha256Digest({ session: "r7i-fix-owner" });
 const identity: VerifiedWebIdentity = { provider: PROVIDER, subject: "r7i-fix-owner", tokenDigest,
   issuedAt: ISSUED_AT, expiresAt: EXPIRES_AT, verificationExpiresAt: EXPIRES_AT };
 
+// ATTN-JIT DIAGNOSTIC -- DO NOT MERGE. One-variable experiment on the diagnostic
+// PR only: "on" is today's behaviour; "off" runs ALTER ROLE <web login> SET jit = off
+// from the admin connection before any web-login query. Nothing else differs.
+const ATTN_JIT_ARM = "on" as "on" | "off";
+const attnJitDiagnostic = (emit: (message: string) => void, kind: string, value: unknown, extra: Record<string, unknown> = {}) =>
+  emit(JSON.stringify({ diagnostic: "ATTN10K", kind, value, ...extra }));
+
 // Enough settled history to blow past the browser's 40-page x 25-row bound by a
 // wide margin. 10,000 finished jobs is the number in the brief.
 const FINISHED_JOBS = Number(process.env.R7_FIXED_FINISHED ?? 10_000);
@@ -457,6 +464,12 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
     let timing: Client | undefined;
     try {
       await admin.connect();
+      // ATTN-JIT diagnostic (do not merge): applied before any web-login session exists.
+      attnJitDiagnostic(message => t.diagnostic(message), "arm", ATTN_JIT_ARM);
+      if (ATTN_JIT_ARM === "off") {
+        const webUser = postgres.connection("web").user;
+        await admin.query(`ALTER ROLE "${webUser.replaceAll('"', '""')}" SET jit = off`);
+      }
       observer.mark("seed-scope");
       await seedScope(admin);
       const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
@@ -569,7 +582,29 @@ test(`real PostgreSQL: ${FINISHED_JOBS.toLocaleString("en-US")} finished jobs do
       // right for the product and wrong for a test, so this same read is made
       // directly first: a failure here names its own cause.
       observer.mark("first-attention");
-      const probePage = await tasks.attention(identity);
+      // ATTN-JIT diagnostic (do not merge): time this first call, always report.
+      const firstAttentionStart = performance.now();
+      let firstAttentionOutcome: "ok" | "error" = "error";
+      try {
+        await tasks.attention(identity);
+        firstAttentionOutcome = "ok";
+      } finally {
+        const firstAttentionMs = performance.now() - firstAttentionStart;
+        let jitEffective: string;
+        const jitClient = new Client({ ...postgres.connection("web"), port: postgres.port,
+          database: postgres.database, connectionTimeoutMillis: 5000 });
+        jitClient.on("error", () => {});
+        try {
+          await jitClient.connect();
+          jitEffective = String((await jitClient.query("SHOW jit")).rows[0]?.jit);
+        } catch (problem) {
+          jitEffective = `unavailable:${(problem as { code?: string }).code ?? "error"}`;
+        } finally { await jitClient.end().catch(() => {}); }
+        const emitAttn = (message: string) => t.diagnostic(message);
+        attnJitDiagnostic(emitAttn, "jit-effective", jitEffective);
+        attnJitDiagnostic(emitAttn, "first-attention-ms", Number(firstAttentionMs.toFixed(1)),
+          { outcome: firstAttentionOutcome });
+      }
       observer.mark("browser-traversal");
       const started = performance.now();
       const walked = await traverse(transport, 40);
