@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { open, mkdtemp, readFile, readdir, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const workers = Number(process.argv[2] ?? 50);
 const acquisitions = Number(process.argv[3] ?? 40);
@@ -24,9 +24,9 @@ const lockPath = join(root, "credential.rotate.lock"), criticalPath = join(root,
 const moduleUrl = pathToFileURL(resolve("scripts/fleet/connector.mjs")).href;
 const childSource = String.raw`
   import { open, readFile, unlink } from "node:fs/promises";
-  const { acquireRotationLock } = await import(process.argv[1]);
-  const lockPath = process.argv[2], markerPath = process.argv[3], loops = Number(process.argv[4]);
-  const killRate = Number(process.argv[5]);
+  const { acquireRotationLock } = await import(process.argv[2]);
+  const lockPath = process.argv[3], markerPath = process.argv[4], loops = Number(process.argv[5]);
+  const killRate = Number(process.argv[6]);
   let completed = 0, killed = false;
   try {
     while (completed < loops) {
@@ -74,7 +74,9 @@ const children = new Set();
 const runSlot = async slot => {
   let remaining = acquisitions;
   while (remaining > 0) {
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", childSource, moduleUrl,
+    // The imported CLI checks argv[1]: give eval a real, unrelated entry path,
+    // then pass its import URL separately so importing cannot invoke that CLI.
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", childSource, fileURLToPath(import.meta.url), moduleUrl,
       lockPath, criticalPath, String(remaining), String(killRate)], {
       cwd: resolve("."), env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
       stdio: ["ignore", "ignore", "pipe", "ipc"],
@@ -125,7 +127,8 @@ try {
     catch (error) { if (error?.code !== "ESRCH") markerLeft = true; }
     if (!markerLeft) await unlink(criticalPath);
   } catch (error) { if (error?.code !== "ENOENT") throw error; }
-  const leftovers = (await readdir(root)).filter(name => !name.includes(".reap-"));
+  // The kernel guard is a permanent inode until this isolated root is removed.
+  const leftovers = (await readdir(root)).filter(name => name !== "credential.rotate.lock.guard" && !name.includes(".reap-"));
   const summary = { workers, acquisitionsPerWorker: acquisitions, completed, kills, violations,
     failures: failures.length, markerLeft, leftovers };
   process.stdout.write(`${JSON.stringify(summary)}\n`);
