@@ -1,5 +1,7 @@
 # Contributor workflow implementation
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 This package implements the shared part of issues #197–199. The authoritative
 instructions are the root [Contributor Handbook](../CONTRIBUTOR_HANDBOOK.md).
 

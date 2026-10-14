@@ -50,9 +50,9 @@ test("install-night owner guide covers the owner prompts and recovery", () => {
   assert.match(guide, /The lead is not available from here until the installer prints Ready \(or rolls back\)/u);
   assert.match(guide, /do not retry, copy the last lines/u);
   const window = guide.split('## After install: connect your bots')[0];
-  assert.doesNotMatch(window, /same install line again|tell the lead/u);
+  assert.doesNotMatch(window, /same install line again/u);
   for (const line of window.split('\n').filter(line => /STOP:|^\|/.test(line))) {
-    if (/show.*lead/.test(line)) assert.match(line, /after reopening Claude/u);
+    if (/\bshow\b.*lead/.test(line)) assert.match(line, /after reopening Claude/u);
   }
   assert.match(guide, /system diff is empty/u);
   assert.match(guide, /Practice passkey registered\. No phone was used\./u);
@@ -152,7 +152,6 @@ test("post-install instructions match the existing connector and task controls",
   }
 });
 
-
 test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corrects legacy wording", () => {
   assert.match(guide, /phone does not sign in your Mac browser/u);
   assert.match(guide, /after `#code=` and before `&reg=`/u);
@@ -173,4 +172,41 @@ test("R5G guide uses actual sign-in, distinguishes health from Face ID, and corr
   assert.match(legacy, /Prints three lines/u);
   assert.match(legacy, /Accepting that result is a separate owner decision/u);
   assert.match(legacy, /six lines, one per role.*least privilege: ok/u);
+});
+
+test("V101 stopped Face ID recovery uses a QR and an owner code in any browser", () => {
+  const row = guide.split("\n").find(line => line.startsWith("| Face ID setup fails,"));
+  assert.ok(row, "the stopped Face ID journey has a recovery row");
+  assert.ok(row.includes("To finish Face ID setup: run sudo control-room passkey add, scan its QR code with your phone, and enter the owner code if the page asks. Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone."));
+  assert.doesNotMatch(row, /do not run.*passkey add/iu);
+  assert.ok(row.includes("Keep the Terminal message on screen."));
+  assert.ok(row.includes("Do not retry or reload the stopped phone page."));
+  assert.ok(row.includes("Finish within the time shown: scan, use Face ID, then type the 6-character code here.<br>There is nothing to delete."));
+  assert.match(guide.split("\n").find(line => line.startsWith("4. The health check")), /follow the Face ID row below/u);
+});
+
+// Owner-approved FIX-480 contract: literal expected wording, independent of the
+// implementation and of the guide that feeds the generated paste file.
+test("FIX480 lost-code guidance and deadline do not promise unavailable recovery", async () => {
+  const recovery = "Keep the install Terminal window open until your passkey is added. The 43-character owner code is shown only there. If the window is gone, a new code cannot be made yet. Stop and tell the lead that the owner code is lost. Do not send any code to anyone.";
+  const timing = "Finish within the time shown: scan, use Face ID, then type the 6-character code here.";
+  const cli = readFileSync(new URL("../src/updater/v1/cli.mjs", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../private-app/app/setup/passkey-registration.tsx", import.meta.url), "utf8");
+  const paste = await makeOwnerPasteFile({ releaseCommit: "a".repeat(40), stagingFolder: "/neutral/stage",
+    livePorts: [4100], liveLabelPrefixes: ["neutral.live."], rehearsalTailnetName: "practice.rehearsal.example",
+    repoSlug: "example/control-room" });
+  const row = guide.split("\n").find(line => line.startsWith("| Face ID setup fails,"));
+  const livePaste = paste.split(": '11.")[1].split(": '12.")[0];
+  for (const [name, text] of [["guide recovery", row], ["CLI", cli], ["setup page", page], ["generated paste", livePaste]]) {
+    assert.ok(text?.includes(recovery), `FIX480 ${name}: lost code has honest stop guidance`);
+    assert.doesNotMatch(text, /ask the lead/iu,
+      `FIX480 ${name}: no promise that the lead can supply a code`);
+    assert.doesNotMatch(text, /Finish within 5 minutes/iu, `FIX480 ${name}: no fixed five-minute promise`);
+  }
+  for (const [name, text] of [["guide", row], ["CLI", cli], ["generated paste", livePaste]])
+    assert.ok(text?.includes(timing), `FIX480 ${name}: use the printed effective time`);
+  assert.ok(guide.split("\n").find(line => line.startsWith("Paste each"))?.includes(recovery),
+    "FIX480 guide: keep the code window before installation starts");
+  assert.ok(guide.split("\n").find(line => line.startsWith("From the original Terminal"))?.includes(recovery),
+    "FIX480 guide: Mac sign-in uses the same lost-code guidance");
 });

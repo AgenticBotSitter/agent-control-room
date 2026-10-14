@@ -1,5 +1,7 @@
 # Agent Control Room: consolidated owner vision
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 **Status:** Product source of truth
 
 **Updated:** September 14, 2026

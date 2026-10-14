@@ -1,0 +1,226 @@
+[
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "        run: node scripts/ci/run-scripts-keep-going.mjs test:product-shell test:r6w-authorization-postgres test:queue test:codex-recovery test:offline-auth-conformance test:security-recovery test:skills:stress:postgres test:build-profile test:night-kit test:windows-preparation test:windows-line-endings test:fleet test:result-files test:result-upload-race test:install-first-owner:postgres",
+    "replace": "        run: node scripts/ci/run-scripts-keep-going.mjs test:product-shell test:r6w-authorization-postgres test:queue test:codex-recovery test:offline-auth-conformance test:security-recovery test:skills:stress:postgres test:build-profile test:night-kit test:windows-preparation test:windows-line-endings test:fleet test:result-files test:result-upload-race",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "drop a baseline command: component shards cover every baseline command and environment exactly once"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "        run: node scripts/ci/run-scripts-keep-going.mjs test:product-shell test:r6w-authorization-postgres test:queue test:codex-recovery test:offline-auth-conformance test:security-recovery test:skills:stress:postgres test:build-profile test:night-kit test:windows-preparation test:windows-line-endings test:fleet test:result-files test:result-upload-race test:install-first-owner:postgres",
+    "replace": "        run: node scripts/ci/run-scripts-keep-going.mjs test:product-shell test:r6w-authorization-postgres test:queue test:codex-recovery test:offline-auth-conformance test:security-recovery test:skills:stress:postgres test:build-profile test:night-kit test:windows-preparation test:windows-line-endings test:fleet test:result-files test:result-upload-race test:install-first-owner:postgres test:install-first-owner:postgres",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "duplicate a baseline command: component shard commands are not duplicated"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "test-server, test-components, test-updater",
+    "replace": "test-server, test-updater",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "remove the matrix job from needs: merge gate depends on all component shards"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "fail-fast: false\n      matrix:\n        shard: ['1', '2', '3', '4', '5']",
+    "replace": "fail-fast: true\n      matrix:\n        shard: ['1', '2', '3', '4', '5']",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "cancel peers on failure: five component shards run independently without cancelling their peers"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "if [ \"${{ needs.test-components.result }}\" != \"success\" ]; then",
+    "replace": "if false; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable skipped-shard refusal: merge gate refuses failed cancelled skipped and missing component results"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component shard workflow guard\n        if: ${{ !cancelled() && matrix.shard == '1' }}",
+    "replace": "      - name: Component shard workflow guard\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Component shard workflow guard: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 1\n        if: ${{ !cancelled() && matrix.shard == '1' }}",
+    "replace": "      - name: Component lanes shard 1\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Component lanes shard 1: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 2\n        if: ${{ !cancelled() && matrix.shard == '2' }}",
+    "replace": "      - name: Component lanes shard 2\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Component lanes shard 2: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 3\n        if: ${{ !cancelled() && matrix.shard == '3' }}",
+    "replace": "      - name: Component lanes shard 3\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Component lanes shard 3: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 4\n        if: ${{ !cancelled() && matrix.shard == '4' }}",
+    "replace": "      - name: Component lanes shard 4\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Component lanes shard 4: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 5\n        if: ${{ !cancelled() && matrix.shard == '5' }}",
+    "replace": "      - name: Component lanes shard 5\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Component lanes shard 5: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Runtime-assembly memory guard\n        if: ${{ !cancelled() && matrix.shard == '3' }}",
+    "replace": "      - name: Runtime-assembly memory guard\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Runtime-assembly memory guard: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Mac-local real-page journey\n        if: ${{ !cancelled() && matrix.shard == '2' }}",
+    "replace": "      - name: Mac-local real-page journey\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Mac-local real-page journey: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Phase 2B contracts\n        if: ${{ !cancelled() && matrix.shard == '5' }}",
+    "replace": "      - name: Phase 2B contracts\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Phase 2B contracts: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Fail on a privileged routine without a pg_temp-pinned search_path\n        if: ${{ !cancelled() && matrix.shard == '1' }}",
+    "replace": "      - name: Fail on a privileged routine without a pg_temp-pinned search_path\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Fail on a privileged routine without a pg_temp-pinned search_path: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Attack-test kit\n        if: ${{ !cancelled() && matrix.shard == '4' }}",
+    "replace": "      - name: Attack-test kit\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Attack-test kit: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Installation operations mode\n        if: ${{ !cancelled() && matrix.shard == '2' }}",
+    "replace": "      - name: Installation operations mode\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Installation operations mode: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Bot dogfood journey\n        if: ${{ !cancelled() && matrix.shard == '3' }}",
+    "replace": "      - name: Bot dogfood journey\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Bot dogfood journey: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Resource-bound connector contracts\n        if: ${{ !cancelled() && matrix.shard == '4' }}",
+    "replace": "      - name: Resource-bound connector contracts\n        if: ${{ false }}",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable shard selection for Resource-bound connector contracts: baseline coverage or selected-step keep-going must fail by name"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if true && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${{ needs.test-components.result }}\" = \"skipped\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && true && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${{ needs.route.result }}\" = \"success\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && true && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${COMPONENTS_ROUTED}\" = \"false\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && [ \"${{ needs.full-gate.result }}\" = \"success\" ]; then",
+    "replace": "            if [ \"${{ needs.test-components.result }}\" = \"skipped\" ] && [ \"${{ needs.route.result }}\" = \"success\" ] && [ \"${COMPONENTS_ROUTED}\" = \"false\" ] && true; then",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable [ \"${{ needs.full-gate.result }}\" = \"success\" ]: routing omits the whole matrix only when the component catch-up succeeds"
+  },
+  {
+    "file": "package.json",
+    "find": "pnpm test:soak:analysis && pnpm test:perf-read-indexes && pnpm test:ci-component-shards\"",
+    "replace": "pnpm test:soak:analysis && pnpm test:perf-read-indexes\"",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "remove catch-up registration: component catch-up reaches the new guard once and retains the frozen main units"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 1\n",
+    "replace": "      - name: Component lanes shard 1\n        shell: 'true {0}'\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change step-shell: component run steps preserve the baseline shell"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "      - name: Component lanes shard 1\n",
+    "replace": "      - name: Component lanes shard 1\n        working-directory: .github\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change step-directory: component run steps preserve the baseline working directory"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "  test-components:\n",
+    "replace": "  test-components:\n    defaults:\n      run:\n        shell: true {0}\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change job-defaults: component job defaults preserve the baseline execution envelope"
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "jobs:\n",
+    "replace": "defaults:\n  run:\n    shell: true {0}\njobs:\n",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "change workflow-defaults: workflow defaults preserve the baseline execution envelope"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "  assert.deepEqual(sort(selectedChecks(job, packageScripts)), sort(expected));",
+    "replace": "  selectedChecks(job, packageScripts);",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable coverage comparison: component coverage refuses a dropped lane step"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "      assert.equal(typeof packageScripts[name], \"string\", `${name}: package.json must define the selected lane`);",
+    "replace": "      if (packageScripts[name] == null) packageScripts[name] = \"node tests/synthetic.mjs\";",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable missing definition refusal: component coverage refuses a missing package lane"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "      assert.match(packageScripts[name], /\\S/u, `${name}: package.json lane must not be empty`);",
+    "replace": "      void packageScripts[name];",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "disable empty definition refusal: component coverage refuses a empty package lane"
+  },
+  {
+    "file": "tests/ci-component-shards.test.mjs",
+    "find": "command: `pnpm run ${unit.name}`",
+    "replace": "command: unit.command",
+    "test": "node --test tests/ci-component-shards.test.mjs",
+    "why": "restore frozen package command comparison: component lane addition needs no shard or baseline fixture edit"
+  }
+]

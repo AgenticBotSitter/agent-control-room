@@ -1,5 +1,7 @@
 # Reusable worker and reviewer session prompt
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Copy the prompt below into a worker or reviewer session. Replace `WORKER_ID` with that
 installation's stable role-based ID. Do not add private project names, credentials, or
 machine details.

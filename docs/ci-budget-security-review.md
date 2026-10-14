@@ -1,5 +1,7 @@
 # Public CI: reviewed settings
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Enabled September 12, 2026 with owner authorization; workflow introduced by PR #15.
 This supersedes earlier instructions to keep public Actions disabled.
 
@@ -124,9 +126,9 @@ judgement call. `gateLanes()` in `scripts/ci-path-routing.mjs` computes the comp
 and a test asserts the invariant across docs-only, frontend, release, server, database,
 workflow, unknown, empty-diff and uncertainty inputs.
 
-`merge-gate` deliberately reads no routing output. Routing can narrow what runs early; it
-cannot touch the check that decides merge-readiness. Its condition is `always()` and it
-fails unless every lane passed or was caught up.
+`merge-gate` has condition `always()` and fails unless every lane passed or was
+caught up. The component-sharding amendment below records its one routing input
+and the exact conditions for accepting an omitted whole component matrix.
 
 The lane and catch-up conditions each carry a status function, and that is load-bearing
 rather than decorative: a job-level `if:` that contains no status function inherits an
@@ -224,9 +226,10 @@ check at under a second each; the hosted figures above are the ones to trust.
 
 ### Intentionally unchanged
 
-- The `Component lanes`, `Server build tests`, `Contributor demo tests` and
-  `Article build lane` jobs keep their names, their commands, their steps and their
-  timeouts. Only their condition for running early was added.
+- In the original routing amendment, `Component lanes`, `Server build tests`,
+  `Contributor demo tests` and `Article build lane` retained their names, commands,
+  steps and timeouts; only their early-run conditions changed. Component sharding
+  subsequently changes the component job as recorded below.
 - The two type-check commands and the lane-drift test and script moved from the
   `Type check` and `Every test file is in a lane` jobs into `quick`, verbatim. That
   reduces the number of jobs and gives the lane-coverage verdict in seconds instead of
@@ -423,3 +426,93 @@ The default moved lane uses synthetic PostgreSQL artifacts and injected ports;
 live PostgreSQL updater schema and passkey lanes remain in components. The existing
 opt-in HARD7 production-login backup proof needs a supplied migrated disposable
 fixture and keeps its visible skip when that configuration is absent.
+
+
+## Amendment: five component shards (CI-SHARD)
+
+The early `test-components` job is now a fixed five-leg matrix named
+`Component lanes (${{ matrix.shard }})`, with `fail-fast: false` and a
+90-minute timeout for each leg (previously one 300-minute job). The 83 baseline
+package units and eight singleton checks keep their commands and environments,
+assigned exactly once across the five legs. Each leg runs its selected package
+units serially through the keep-going runner; selected steps use `!cancelled()`
+so a failed check does not hide later checks. A new workflow guard runs on shard 1
+and through the existing component catch-up path. The eight setup steps are repeated
+on every leg; the guard pins step shell and working directory plus job/workflow
+defaults to the independently captured main revision `23fc8798`.
+
+The guard pins package lane names and their environments rather than frozen
+package command bodies. Adding or removing a test file inside an existing lane
+therefore requires no shard or baseline-fixture edit: the keep-going runner uses
+the current `package.json` command. Dropped or duplicated lanes, disabled or
+replaced workflow steps, and missing or empty package definitions are refused.
+Singleton workflow commands remain pinned verbatim. Adding a new lane still
+requires assigning it to one shard and updating the independent lane inventory;
+this guard checks workflow coverage, not the semantics of every package command.
+
+### Timing basis and capacity
+
+The assignment used the largest measured duration of each group across ten
+successful baseline hosted runs, then balanced those maxima across five legs.
+The source runs are
+`38423648343`,
+`38423447503`,
+`38412305726`,
+`38399761050`,
+`38382210158`,
+`38372571007`,
+`38368251497`,
+`38365272688`,
+`38364993999` and
+`38364836126`.
+Recorded baseline setup had a median of 53 seconds and maximum of 61 seconds.
+
+| Shard | Sum of measured group maxima (seconds) | Checks (minutes) | Forecast with 61-second setup (minutes) |
+| --- | ---: | ---: | ---: |
+| 1 | 2748.783 | 45.81 | 46.83 |
+| 2 | 2748.140 | 45.80 | 46.82 |
+| 3 | 2748.344 | 45.81 | 46.82 |
+| 4 | 2748.138 | 45.80 | 46.82 |
+| 5 | 2748.691 | 45.81 | 46.83 |
+
+These sums forecast about 47 minutes per leg, plus the small new guard overhead;
+they are not observed durations of the new matrix. The 90-minute timeout leaves
+about 43 minutes beyond that forecast, and fails closed if exceeded. Queue time,
+cache misses, future workload growth and actual five-leg hosted timing remain
+unmeasured here. Other jobs can become the critical path. The routed component
+catch-up remains serial and is not accelerated by this change.
+
+Five legs hold up to five standard runner allocations instead of one and repeat
+PostgreSQL and Chromium setup five times. Total runner work adds four copies of
+setup (up to 244 measured seconds), plus guard overhead; parallelism reduces the
+projected critical path rather than the underlying test work. Standard runners
+are free for this public repository as described above; this is a concurrency
+and queue-capacity effect, with no larger or private runner introduced. Each leg
+has its own hosted VM, checkout, temporary paths and ports. Units within a leg
+remain serial. The pnpm cache is shared dependency storage, not shared test state.
+
+### Merge-gate routing input and refusal
+
+`Full suite (merge gate)` retains its name, `always()` condition and dependency
+on `test-components`, which waits for the whole matrix. It now receives
+`needs.route.outputs.components` through the environment as `COMPONENTS_ROUTED`.
+The route is PR-derived data, not trusted authority: it is never interpolated
+into the shell program, and is compared only as a quoted string literal.
+
+| Component matrix result | Additional required evidence | Gate decision for components |
+| --- | --- | --- |
+| `success` | Other lane and routing results must also satisfy the gate | Accept components |
+| `skipped` | Route result `success`, exact routing value `false`, and `full-gate` result `success` | Accept routed whole-matrix catch-up |
+| `skipped` without all three conditions | None can substitute for missing evidence | Refuse |
+| `failure`, `cancelled`, empty or missing | Catch-up success cannot replace a failed selected matrix | Refuse |
+
+This tightens the previous gate, which accepted a skipped component result
+unconditionally. A `false` route omits the whole matrix and selects the component
+catch-up under the same exact routing condition; acceptance additionally requires
+that catch-up matrix to succeed. An empty or unknown route runs components early
+and cannot authorize the skipped exception. A failed route also fails the gate.
+No individual leg has a skip selector; the routed exception concerns omission of
+the whole matrix. The component catch-up preserves the baseline exclusion of
+`test:mac-upgrade`; this amendment does not claim to close that existing gap.
+The guard executes the real gate Bash over literal result/output combinations;
+hosted scheduler behavior and timing still require the actual Actions run.

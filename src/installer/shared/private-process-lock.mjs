@@ -3,7 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { open, lstat } from "node:fs/promises";
-import { removeOwnedFileV1 } from "./file-custody.mjs";
+import { dirname } from "node:path";
 import { closeSync, constants, fstatSync, fsyncSync, ftruncateSync, lstatSync, openSync,
   readFileSync, readSync, renameSync, unlinkSync, writeSync } from "node:fs";
 
@@ -58,37 +58,104 @@ export function kernelFileLockPlatformV1(platform = process.platform, { run = sp
   if (platform !== "linux") throw new Error("kernel_file_lock_unsupported");
   return { openFlags: 0, tryLock: fd => {
     const result = run("/usr/bin/flock", ["--exclusive", "--nonblock", "--conflict-exit-code", "75", "3"],
-      { stdio: ["ignore", "ignore", "ignore", fd], env: {}, detached: true, timeout: 5000, killSignal: "SIGKILL" });
+      { stdio: ["ignore", "ignore", "ignore", fd], env: {}, detached: false, timeout: 5000, killSignal: "SIGKILL" });
     if (result.status === 0 && !result.error && !result.signal) return true;
     if (result.status === 75 && !result.error && !result.signal) return false;
     throw new Error("kernel_file_lock_unsupported");
   } };
 }
 
-/** Empty descriptor lock for short file transactions. The name must still refer
- * to our private inode, both on acquisition and release. Never unlink a replacement. */
-export async function acquireKernelFileLockV1(path, { expectedUid = process.getuid(), busyCode = "kernel_file_lock_busy" } = {}) {
+/** Fixed, attached macOS ACL probe. Xattrs and deny-only ACLs grant no rights; any allow ACL
+ * is refused by custody. Unknown output or tool failure proves no authority. */
+export function macLockPathHasAclV1(path, { run = spawnSync } = {}) {
+  const failed = () => { throw Object.assign(new Error("kernel_file_lock_acl_probe_failed"),
+    { code: "kernel_file_lock_acl_probe_failed" }); };
+  let result;
+  try { result = run("/bin/ls", ["-lde", path], { encoding: "utf8", env: { LC_ALL: "C" },
+    detached: false, timeout: 5000, killSignal: "SIGKILL" }); }
+  catch { failed(); }
+  if (!result || result.status !== 0 || result.error || result.signal || result.stderr) failed();
+  if (typeof result.stdout !== "string") failed();
+  const rows = result.stdout.replace(/\n$/u, "").split("\n");
+  const header = /^[bcdlps-][rwxStTs-]{9}([+@]?)\s+\d+\s+\S+\s+\S+\s+\d+\s+.+$/u.exec(rows[0]);
+  if (!header) failed();
+  const acl = rows.slice(1);
+  if (acl.some((row, index) => !new RegExp(`^\\s+${index}: (?:user|group):\\S+ (?:inherited )?(?:allow|deny) \\S.*$`, "u").test(row))) failed();
+  if (header[1] === "+" && acl.length === 0) failed();
+  return acl.some(row => / (?:inherited )?allow /u.test(row));
+}
+
+/** Every lexical ancestor must retain trusted ownership and deny group/other
+ * replacement. A sticky ancestor protects a trusted next component; the lock
+ * folder itself must stay non-writable. No symlinks or Mac allow ACLs are admitted.
+ * Product lock names are permanent. Replacement by root or the expected owner
+ * is outside this threat model. Recheck custody after kernel acquisition. */
+async function kernelLockDirectoryCustodyV1(path, expectedUid, refuse) {
+  const parent = dirname(path), entries = [];
+  for (let current = parent; ; current = dirname(current)) {
+    const entry = await lstat(current);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) refuse();
+    if (entry.uid !== 0 && entry.uid !== expectedUid) refuse();
+    const child = entries.at(-1)?.[1];
+    const protectedBySticky = current !== parent && (entry.mode & 0o1000) !== 0
+      && child !== undefined && (child.uid === 0 || child.uid === expectedUid);
+    if (entry.isDirectory() && (entry.mode & 0o022) !== 0 && !protectedBySticky) refuse();
+    if (process.platform === "darwin" && macLockPathHasAclV1(current)) refuse();
+    entries.push([current, entry]);
+    if (dirname(current) === current) break;
+  }
+  return async () => {
+    for (const [current, before] of entries) {
+      const after = await lstat(current);
+      if (!after.isDirectory() || after.isSymbolicLink() || !same(before, after)
+        || before.uid !== after.uid || before.gid !== after.gid || before.mode !== after.mode) refuse();
+      if (process.platform === "darwin" && macLockPathHasAclV1(current)) refuse();
+    }
+  };
+}
+
+/** Kernel exclusion on a permanent rendezvous inode. Closing releases authority;
+ * neither release nor a failed acquisition unlinks the name a waiter may use. */
+export async function acquireKernelFileLockV1(path, {
+  expectedUid = process.getuid(), busyCode = "kernel_file_lock_busy", refusedCode = "kernel_file_lock_owner_refused" } = {}) {
   const busy = () => { throw Object.assign(new Error(busyCode), { code: busyCode }); };
-  const platform = kernelFileLockPlatformV1(); let handle, owned, publishing = false;
+  const refuse = () => { throw Object.assign(new Error(refusedCode), { code: refusedCode }); };
+  // Preserve lexical ancestors: resolve() could hide a symlink before a /../.
+  path = path.startsWith("/") ? path : `${process.cwd()}/${path}`;
+  const checkDirectory = await kernelLockDirectoryCustodyV1(path, expectedUid, refuse);
+  const platform = kernelFileLockPlatformV1(); let handle;
   try {
+    const existing = await lstat(path).catch(error => { if (error.code === "ENOENT") return undefined; throw error; });
+    if (existing && !existing.isFile()) refuse();
+    if (existing && process.platform === "darwin" && macLockPathHasAclV1(path)) refuse();
     try { handle = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK | platform.openFlags, 0o600); }
-    catch (error) { if (error.code === "EAGAIN") busy(); throw error; }
+    catch (error) {
+      if (["EAGAIN", "EWOULDBLOCK"].includes(error.code)) busy();
+      if (BROKEN_ENTRY_ERRNO_V1.has(error.code)) refuse();
+      throw error;
+    }
     if (!platform.tryLock(handle.fd)) busy();
-    owned = await handle.stat();
-    const named = await lstat(path).catch(error => { if (error.code === "ENOENT") busy(); throw error; });
-    if (!privateFile(owned, expectedUid) || !same(owned, named)) busy();
-    publishing = true;
-    await handle.truncate(0); await handle.writeFile(""); await handle.sync();
+    const owned = await handle.stat();
+    const named = await lstat(path).catch(error => { if (error.code === "ENOENT") refuse(); throw error; });
+    if (!privateFile(owned, expectedUid) || !same(owned, named)) refuse();
+    if (process.platform === "darwin" && macLockPathHasAclV1(path)) refuse();
+    await handle.truncate(0); await handle.sync();
+    await checkDirectory();
+    if (!same(owned, await lstat(path))) refuse();
+    if (process.platform === "darwin" && macLockPathHasAclV1(path)) refuse();
+    let closed = false;
     const release = async () => {
+      if (closed) return;
+      closed = true;
       try {
         if (!same(owned, await lstat(path))) throw new Error("kernel_file_lock_owner_changed");
-        await removeOwnedFileV1(path, owned);
+        // Keep the rendezvous inode: closing alone releases the kernel lock.
       } finally { await handle.close(); }
     };
     return { release };
   } catch (error) {
-    try { if (publishing) await removeOwnedFileV1(path, owned); }
-    finally { await handle?.close(); }
+    // Keep even a freshly created name: another opener may already use it.
+    await handle?.close();
     throw error;
   }
 }

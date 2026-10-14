@@ -291,18 +291,25 @@ test("F03/J01/J02: the real flip binds each interrupted phase; completing and pr
   });
 });
 
-test("50 concurrent attended callers admit one attempt; a failure releases its lock for retry", async t => {
-  const f = await fixture(t), input = await flipInput(f); let entered, release;
+test("50 concurrent attended callers admit one attempt; a failure releases its lock for retry", { timeout: 120_000 }, async t => {
+  const f = await fixture(t), input = await flipInput(f); let entered, release, admitted = 0;
   const staged = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
-  const operations = { stage: async () => { entered(); await gate; throw new Error("stage interrupted"); },
-    restart: async () => {}, fullHealth: async () => true, waitForNextHeartbeat: async () => {} };
+  // The gate is the only synchronisation: it stays shut until all 49 contenders have settled. A second admitted
+  // caller fails at once with its own code instead of waiting on the gate, so a lock defect fails rather than hangs.
+  const operations = { stage: async () => {
+    if (++admitted > 1) throw Object.assign(new Error("second caller admitted while the first holds the lock"), { code: "second_caller_admitted" });
+    entered(); await gate; throw new Error("stage interrupted");
+  }, restart: async () => {}, fullHealth: async () => true, waitForNextHeartbeat: async () => {} };
   const first = new AttendedUpdaterFlipV1({ root: f.root, operations, bootClock }).run(input).catch(error => error);
   await staged;
-  const timer = setTimeout(release, 2000);
-  const other = await Promise.all(Array.from({ length: 49 }, () => new AttendedUpdaterFlipV1({ root: f.root, operations, bootClock })
-    .run(input).then(() => "unexpected", error => error.code))).finally(() => clearTimeout(timer));
-  release(); assert.match((await first).message, /stage interrupted/u);
-  assert.ok(other.every(code => code === "updater_flip_busy"));
+  let other;
+  try {
+    other = await Promise.all(Array.from({ length: 49 }, () => new AttendedUpdaterFlipV1({ root: f.root, operations, bootClock })
+      .run(input).then(() => "unexpected", error => error.code)));
+    assert.deepEqual(other, Array(49).fill("updater_flip_busy"));
+    assert.equal(admitted, 1);
+  } finally { release(); }
+  assert.match((await first).message, /stage interrupted/u);
   operations.stage = async () => {};
   await new AttendedUpdaterFlipV1({ root: f.root, operations, bootClock }).run(input);
   assert.equal((await read(join(f.root, "updater-state/selfupgrade.json"))).phase, "done");

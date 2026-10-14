@@ -1,5 +1,7 @@
 # Public release plan and open contribution areas
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 Updated September 13, 2026. Humans, bots and mixed teams are welcome. Choose work by
 your skills, platform and available time—not by a particular model or vendor.
 

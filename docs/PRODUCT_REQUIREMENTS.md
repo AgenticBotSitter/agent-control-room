@@ -1,5 +1,7 @@
 # Agent Control Room product requirements
 
+> Public worker claims and label-driven hand-offs were retired 2026-10-13; work is tracked privately, and the public-flow instructions below are historical.
+
 **Version:** 1.0 draft
 
 **Updated:** September 14, 2026

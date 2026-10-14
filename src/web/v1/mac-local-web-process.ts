@@ -420,7 +420,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     //     own notification and voice settings through their own endpoints.
     // The pages are also only meaningful when the feature behind them is
     // configured, and each says so in its own words when it is not.
-    if (["/workers/connect", "/settings", "/setup"].includes(url.pathname)) {
+    if (["/workers/connect", "/settings"].includes(url.pathname)) {
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
@@ -556,6 +556,16 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
           workers: connectorWorkers ?? options.workerReadiness!.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
+      }
+      // The installer fragment is consumed by the setup client before it signs
+      // in. Only this shell is public; all data and registration endpoints below
+      // still verify the live owner session and their own authority.
+      if (url.pathname === "/setup") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        sessions.assertLocalRequest(request);
+        const response = await render();
+        for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
+        return response;
       }
       const passkeyAttempt = request.method === "POST" && (url.pathname === "/api/v1/passkeys/registration/options"
         || url.pathname === "/api/v1/passkeys/registration");
