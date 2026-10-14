@@ -12,5 +12,12 @@
     "replace": "          - lane: updater\n            runner: macos-26\n            timeout: 45\n",
     "test": "node --test --test-name-pattern=\"the updater lane runs on macOS in both paths and is required by the merge gate\" tests/ci-path-routing.test.mjs",
     "why": "The full-gate updater matrix entry must keep its independent ticket-approved 60-minute budget."
+  },
+  {
+    "file": ".github/workflows/ci.yml",
+    "find": "          - lane: updater\n            runner: macos-26\n            timeout: 60\n",
+    "replace": "          - lane: updater\n            runner: macos-26\n            timeout: 60\n          - lane: updater\n            runner: macos-26\n            timeout: 60\n",
+    "test": "node --test --test-name-pattern=\"the updater lane runs on macOS in both paths and is required by the merge gate\" tests/ci-path-routing.test.mjs",
+    "why": "The full-gate matrix must contain exactly one updater entry; duplicate entries must fail the named assertion."
   }
 ]
