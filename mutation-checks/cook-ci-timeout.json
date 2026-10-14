@@ -1,8 +1,8 @@
 [
   {
     "file": ".github/workflows/ci.yml",
-    "find": "    timeout-minutes: 60\n",
-    "replace": "    timeout-minutes: 45\n",
+    "find": "  test-updater:\n    name: macOS updater tests\n    needs: route\n    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}\n    runs-on: macos-26\n    timeout-minutes: 60\n",
+    "replace": "  test-updater:\n    name: macOS updater tests\n    needs: route\n    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.updater != 'false') }}\n    runs-on: macos-26\n    timeout-minutes: 45\n",
     "test": "node --test --test-name-pattern=\"the updater lane runs on macOS in both paths and is required by the merge gate\" tests/ci-path-routing.test.mjs",
     "why": "The dedicated updater job must keep the ticket-approved exact job-level 60-minute budget."
   },
