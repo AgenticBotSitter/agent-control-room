@@ -39,13 +39,19 @@ const injectedLatencyMs = 50;
 // deadlock/runaway sanity check, so allow a full second for loaded CI runners
 // beyond the worst case where every allowed injected delay is sequential.
 const wallClockMarginMs = 1_000;
-// needs-me is 10, not 9, because R7I-01 split its read into the two-phase
+// needs-me is 11, not 9, because R7I-01 split its read into the two-phase
 // bounded candidate shape (perf2 MLOAD-01, c6d8c1178): one narrow candidate
 // query and one payload query for the at most 26 ids it returned. That is one
 // extra round trip and it is the price of the bound -- the single wide query it
 // replaced spent 3,256-3,627 ms at 5,000 settled rows and died on the 5s
 // statement_timeout at 10,000. The count is asserted EXACTLY rather than as a
 // ceiling, so the next extra round trip still fails here.
+//
+// The eleventh round trip is the awaited `SET LOCAL jit = off` that opens the
+// attention transaction (JIT is switched off for that read only). It is one
+// statement by prescription, not an observed count: the budget was raised from 10
+// to 11 (burst 30 to 33) because the policy adds exactly one statement, and the
+// project/list/Home budgets are unchanged.
 //
 // MEASURED, not assumed: cook/perf2's own tip carries this same +1 (its
 // two-phase shape measures 10 against a budget of 9, and 30 against a burst
@@ -124,7 +130,7 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   const attention = await measure(injectedLatencyMs, reads.attention);
   assert.equal(attention.queries, one.attention.queries,
     `needs-me query count grew: ${JSON.stringify({ one: one.attention, ten: attention })}`);
-  assertInjectedLatencyBudget("needs-me", attention, 10);
+  assertInjectedLatencyBudget("needs-me", attention, 11);
 
   await state(f.db, extra, "running", 5);
   const home = await measure(injectedLatencyMs, reads.home);
@@ -180,7 +186,7 @@ test("needs-me suppresses authentic saved plans in-session without hiding unplan
   assert.deepEqual(many.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"]);
   assert.equal(many.queries, one.queries,
     `saved-plan attention query count grew with proposal count: ${JSON.stringify({ one: one.queries, many: many.queries })}`);
-  assertInjectedLatencyBudget("saved-plan attention", many, 10);
+  assertInjectedLatencyBudget("saved-plan attention", many, 11);
   t.diagnostic(JSON.stringify({ injectedLatencyMs, oneSavedPlanQueries: one.queries,
     fiveSavedPlans: { queries: many.queries, elapsedMs: many.elapsedMs } }));
 });
@@ -229,8 +235,8 @@ test("three concurrent Home reads stay inside the injected remote-latency target
     projects: await measure((_tasks, projects) => projects.listPage(f.identity)),
   };
   // The burst is three concurrent reads, so it inherits the same +1 from needs-me:
-  // 3 x 10. `list`, `home` and `projects` are unchanged at 9 / 9 / 5 each.
-  const allowedBurstRoundTrips = { list: 27, attention: 30, home: 27, projects: 15 } as const;
+  // 3 x 11. `list`, `home` and `projects` are unchanged at 9 / 9 / 5 each.
+  const allowedBurstRoundTrips = { list: 27, attention: 33, home: 27, projects: 15 } as const;
   for (const [name, result] of Object.entries(burst))
     assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name as keyof typeof allowedBurstRoundTrips]);
   t.diagnostic(JSON.stringify({ injectedLatencyMs, concurrentReads: 3, burst }));

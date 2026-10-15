@@ -1,0 +1,30 @@
+[
+  {
+    "file": "src/web/v1/task-service.ts",
+    "find": "      await tx.query(\"SET LOCAL jit = off\");\n      const sources = this.attentionSources(actor);",
+    "replace": "      const sources = this.attentionSources(actor);",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-01' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "Without the policy statement the workspace attention transaction runs with the ambient JIT setting. ATTNJIT-01 samples current_setting('jit') on the same backend before every operation statement and fails where off is required. Needs PostgreSQL 17 (PG_BIN); the mutation CI job installs it."
+  },
+  {
+    "file": "src/web/v1/task-service.ts",
+    "find": "      await tx.query(\"SET LOCAL jit = off\");\n      actor.require(\"tasks.read\", projectId);",
+    "replace": "      actor.require(\"tasks.read\", projectId);",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-02' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "Without the policy statement the project inbox and reviews transactions run with the ambient JIT setting. ATTNJIT-02 observes jit=on inside both project modes. Needs PostgreSQL 17 (PG_BIN)."
+  },
+  {
+    "file": "src/web/v1/task-service.ts",
+    "find": "      await tx.query(\"SET LOCAL jit = off\");\n      const sources = this.attentionSources(actor);",
+    "replace": "      await tx.query(\"SET SESSION jit = off\");\n      const sources = this.attentionSources(actor);",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-01' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "A session-wide setting survives COMMIT on the pooled backend. Every statement inside the transaction still sees off, so only the same-backend read after COMMIT can tell: ATTNJIT-01 observes off after COMMIT where the ambient on is required. A rollback-only assertion would not catch this, because SESSION changes also roll back on failure."
+  },
+  {
+    "file": "src/web/v1/task-service.ts",
+    "find": "      await tx.query(\"SET LOCAL jit = off\");\n      actor.require(\"tasks.read\", projectId);",
+    "replace": "      await tx.query(\"SET SESSION jit = off\");\n      actor.require(\"tasks.read\", projectId);",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-02' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "Same leak in the project readers: ATTNJIT-02 observes jit off on the same backend after COMMIT where the ambient on is required, in both inbox and reviews modes."
+  }
+]
