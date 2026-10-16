@@ -162,7 +162,15 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   const attention = await measure(injectedLatencyMs, reads.attention);
   assert.equal(attention.queries, one.attention.queries,
     `needs-me query count grew: ${JSON.stringify({ one: one.attention, ten: attention })}`);
-  assertAttentionBudget("needs-me", attention, attentionBudget.needsMe);
+  // The caller is a closure so the measured read and the at-ceiling probes below go through one piece of wiring.
+  const checkNeedsMe = (measured: { queries: number; elapsedMs: number }) =>
+    assertAttentionBudget("needs-me", measured, attentionBudget.needsMe);
+  checkNeedsMe(attention);
+  // Hand-written literals (the pre-policy 50 ms x 10 + 1000), not read from attentionBudget: a caller that stops
+  // forwarding its ceiling falls back to the count-derived 1550 ms and would accept 1500.
+  checkNeedsMe({ queries: 11, elapsedMs: 1499 });
+  assert.throws(() => checkNeedsMe({ queries: 11, elapsedMs: 1500 }), /exceeded the 1500ms wall-clock sanity bound/u,
+    "the needs-me caller must refuse an at-ceiling 1500 ms read with the original 1500 ms ceiling, not the count-derived 1550 ms");
 
   await state(f.db, extra, "running", 5);
   const home = await measure(injectedLatencyMs, reads.home);
@@ -218,7 +226,13 @@ test("needs-me suppresses authentic saved plans in-session without hiding unplan
   assert.deepEqual(many.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"]);
   assert.equal(many.queries, one.queries,
     `saved-plan attention query count grew with proposal count: ${JSON.stringify({ one: one.queries, many: many.queries })}`);
-  assertAttentionBudget("saved-plan attention", many, attentionBudget.savedPlan);
+  const checkSavedPlan = (measured: { queries: number; elapsedMs: number }) =>
+    assertAttentionBudget("saved-plan attention", measured, attentionBudget.savedPlan);
+  checkSavedPlan(many);
+  // Hand-written literals, as for needs-me: the original saved-plan ceiling is 1500 ms, not the derived 1550 ms.
+  checkSavedPlan({ queries: 11, elapsedMs: 1499 });
+  assert.throws(() => checkSavedPlan({ queries: 11, elapsedMs: 1500 }), /exceeded the 1500ms wall-clock sanity bound/u,
+    "the saved-plan caller must refuse an at-ceiling 1500 ms read with the original 1500 ms ceiling, not the count-derived 1550 ms");
   t.diagnostic(JSON.stringify({ injectedLatencyMs, oneSavedPlanQueries: one.queries,
     fiveSavedPlans: { queries: many.queries, elapsedMs: many.elapsedMs } }));
 });
@@ -269,9 +283,19 @@ test("three concurrent Home reads stay inside the injected remote-latency target
   // The burst is three concurrent reads, so it inherits the same +1 from needs-me:
   // 3 x 11. `list`, `home` and `projects` are unchanged at 9 / 9 / 5 each.
   const allowedBurstRoundTrips = { list: 27, attention: attentionBudget.burst.queries, home: 27, projects: 15 } as const;
-  for (const [name, result] of Object.entries(burst))
-    assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name as keyof typeof allowedBurstRoundTrips],
+  const checkBurst = (name: keyof typeof allowedBurstRoundTrips, result: { queries: number; elapsedMs: number }) =>
+    assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name],
       name === "attention" ? attentionBudget.burst.ceilingMs : undefined);
+  for (const [name, result] of Object.entries(burst)) checkBurst(name as keyof typeof allowedBurstRoundTrips, result);
+  // Hand-written literals: the attention burst keeps its original 2500 ms ceiling (50 ms x 30 + 1000); a caller that
+  // passes undefined falls back to the derived 2650 ms and would accept 2500.
+  checkBurst("attention", { queries: 33, elapsedMs: 2499 });
+  assert.throws(() => checkBurst("attention", { queries: 33, elapsedMs: 2500 }), /exceeded the 2500ms wall-clock sanity bound/u,
+    "the attention burst caller must refuse an at-ceiling 2500 ms read with the original 2500 ms ceiling, not the derived 2650 ms");
+  // The other burst readers keep the count-derived ceiling (27 x 50 + 1000 = 2350 ms).
+  checkBurst("list", { queries: 27, elapsedMs: 2349 });
+  assert.throws(() => checkBurst("list", { queries: 27, elapsedMs: 2350 }), /exceeded the 2350ms wall-clock sanity bound/u,
+    "a non-attention burst reader keeps its count-derived 2350 ms ceiling");
   t.diagnostic(JSON.stringify({ injectedLatencyMs, concurrentReads: 3, burst }));
 });
 

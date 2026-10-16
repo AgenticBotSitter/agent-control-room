@@ -96,5 +96,26 @@
     "replace": "",
     "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-01' tests/task-attention-settled-candidates-postgres.test.ts",
     "why": "AJR-05: the authority's logout that revokes the produced session is removed. ATTNJIT-01 fails at assert.ok(logged[0]!.revoked_at instanceof Date, 'logout must stamp revoked_at through the authority'). Needs PostgreSQL 17 (PG_BIN)."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "assertAttentionBudget(\"needs-me\", measured, attentionBudget.needsMe)",
+    "replace": "assertInjectedLatencyBudget(\"needs-me\", measured, 11)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^task list, needs-me and Home keep a fixed query budget as the page grows$' tests/task-read-query-budget.test.ts",
+    "why": "ATJ3-01: the real needs-me caller stops forwarding its ceiling and calls the helper with the count only, so the ceiling silently becomes the count-derived 1550 ms. The at-ceiling probe in 'task list, needs-me and Home keep a fixed query budget as the page grows' (a hand-written 11 queries / 1500 ms read through the same closure) is accepted and assert.throws fails with 'Missing expected exception: the needs-me caller must refuse an at-ceiling 1500 ms read with the original 1500 ms ceiling, not the count-derived 1550 ms'. No PostgreSQL needed."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "assertAttentionBudget(\"saved-plan attention\", measured, attentionBudget.savedPlan)",
+    "replace": "assertInjectedLatencyBudget(\"saved-plan attention\", measured, 11)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^needs-me suppresses authentic saved plans in-session without hiding unplanned proposals or growing its query budget$' tests/task-read-query-budget.test.ts",
+    "why": "ATJ3-01: the real saved-plan caller stops forwarding its ceiling (count only, derived 1550 ms). The at-ceiling probe in 'needs-me suppresses authentic saved plans in-session ...' (hand-written 11 queries / 1500 ms) is accepted and assert.throws fails with 'Missing expected exception: the saved-plan caller must refuse an at-ceiling 1500 ms read with the original 1500 ms ceiling, not the count-derived 1550 ms'."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "name === \"attention\" ? attentionBudget.burst.ceilingMs : undefined",
+    "replace": "undefined",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^three concurrent Home reads stay inside the injected remote-latency target$' tests/task-read-query-budget.test.ts",
+    "why": "ATJ3-01: the real burst caller passes undefined as the attention ceiling, so it falls back to the derived 2650 ms. The at-ceiling probe in 'three concurrent Home reads stay inside the injected remote-latency target' (hand-written 33 queries / 2500 ms) is accepted and assert.throws fails with 'Missing expected exception: the attention burst caller must refuse an at-ceiling 2500 ms read with the original 2500 ms ceiling, not the derived 2650 ms'."
   }
 ]
