@@ -61,14 +61,46 @@ const wallClockMarginMs = 1_000;
 // the same three tests fail with the same counts and messages. That is why the
 // numbers are raised here, with the measurement recorded, rather than left to
 // fail as if this branch had introduced them.
+//
+// The attention pins moved from 10 to 11 (burst 30 to 33) for the one local-socket `SET LOCAL jit = off`
+// statement. That statement adds no remote latency of its own, so the wall-clock ceilings stay at the
+// pre-policy values: written out here as milliseconds, not derived from the moved counts.
+const attentionBudget = {
+  needsMe: { queries: 11, ceilingMs: 1_500 },
+  savedPlan: { queries: 11, ceilingMs: 1_500 },
+  burst: { queries: 33, ceilingMs: 2_500 },
+} as const;
+// `elapsedCeilingMs` defaults to the count-derived sanity ceiling used by every unchanged caller.
 const assertInjectedLatencyBudget = (label: string, measured: { queries: number; elapsedMs: number },
-  allowedRoundTrips: number) => {
+  allowedRoundTrips: number, elapsedCeilingMs: number = injectedLatencyMs * allowedRoundTrips + wallClockMarginMs) => {
   assert.equal(measured.queries, allowedRoundTrips,
     `${label} changed the injected-latency round-trip budget: ${JSON.stringify(measured)}`);
-  const sanityBoundMs = injectedLatencyMs * allowedRoundTrips + wallClockMarginMs;
-  assert.ok(measured.elapsedMs < sanityBoundMs,
-    `${label} exceeded the ${sanityBoundMs}ms wall-clock sanity bound: ${JSON.stringify(measured)}`);
+  assert.ok(measured.elapsedMs < elapsedCeilingMs,
+    `${label} exceeded the ${elapsedCeilingMs}ms wall-clock sanity bound: ${JSON.stringify(measured)}`);
 };
+
+// Every attention caller goes through this, so none can pass the moved count without its own ceiling.
+const assertAttentionBudget = (label: string, measured: { queries: number; elapsedMs: number },
+  pin: { queries: number; ceilingMs: number }) => assertInjectedLatencyBudget(label, measured, pin.queries, pin.ceilingMs);
+
+test("attention count pins do not relax the original elapsed ceilings", () => {
+  // Independent literals: the counts and the pre-policy ceilings (50 ms x 10 + 1000, 50 ms x 30 + 1000).
+  assert.deepEqual(attentionBudget, {
+    needsMe: { queries: 11, ceilingMs: 1500 }, savedPlan: { queries: 11, ceilingMs: 1500 }, burst: { queries: 33, ceilingMs: 2500 } });
+  for (const [label, pin] of Object.entries(attentionBudget)) {
+    const check = (elapsedMs: number) => assertAttentionBudget(label, { queries: pin.queries, elapsedMs }, pin);
+    check(pin.ceilingMs - 1);
+    for (const over of [0, 1, 25, 49, 50, 150])
+      assert.throws(() => check(pin.ceilingMs + over), /wall-clock sanity bound/u,
+        `${label}: ${pin.ceilingMs + over} ms must be refused by the original ${pin.ceilingMs} ms ceiling`);
+    // The count stays exact in both directions.
+    for (const queries of [pin.queries - 1, pin.queries + 1])
+      assert.throws(() => assertAttentionBudget(label, { queries, elapsedMs: 1 }, pin), /round-trip budget/u);
+  }
+  // Unchanged callers still derive the ceiling from their own count: 9 round trips -> 1450 ms.
+  assertInjectedLatencyBudget("list", { queries: 9, elapsedMs: 1449 }, 9);
+  assert.throws(() => assertInjectedLatencyBudget("list", { queries: 9, elapsedMs: 1450 }, 9), /wall-clock sanity bound/u);
+});
 
 async function state(db: DatabaseClient, jobIds: readonly string[], next: "succeeded" | "proposed" | "running", version: number) {
   for (const jobId of jobIds) {
@@ -130,7 +162,7 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   const attention = await measure(injectedLatencyMs, reads.attention);
   assert.equal(attention.queries, one.attention.queries,
     `needs-me query count grew: ${JSON.stringify({ one: one.attention, ten: attention })}`);
-  assertInjectedLatencyBudget("needs-me", attention, 11);
+  assertAttentionBudget("needs-me", attention, attentionBudget.needsMe);
 
   await state(f.db, extra, "running", 5);
   const home = await measure(injectedLatencyMs, reads.home);
@@ -186,7 +218,7 @@ test("needs-me suppresses authentic saved plans in-session without hiding unplan
   assert.deepEqual(many.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"]);
   assert.equal(many.queries, one.queries,
     `saved-plan attention query count grew with proposal count: ${JSON.stringify({ one: one.queries, many: many.queries })}`);
-  assertInjectedLatencyBudget("saved-plan attention", many, 11);
+  assertAttentionBudget("saved-plan attention", many, attentionBudget.savedPlan);
   t.diagnostic(JSON.stringify({ injectedLatencyMs, oneSavedPlanQueries: one.queries,
     fiveSavedPlans: { queries: many.queries, elapsedMs: many.elapsedMs } }));
 });
@@ -236,9 +268,10 @@ test("three concurrent Home reads stay inside the injected remote-latency target
   };
   // The burst is three concurrent reads, so it inherits the same +1 from needs-me:
   // 3 x 11. `list`, `home` and `projects` are unchanged at 9 / 9 / 5 each.
-  const allowedBurstRoundTrips = { list: 27, attention: 33, home: 27, projects: 15 } as const;
+  const allowedBurstRoundTrips = { list: 27, attention: attentionBudget.burst.queries, home: 27, projects: 15 } as const;
   for (const [name, result] of Object.entries(burst))
-    assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name as keyof typeof allowedBurstRoundTrips]);
+    assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name as keyof typeof allowedBurstRoundTrips],
+      name === "attention" ? attentionBudget.burst.ceilingMs : undefined);
   t.diagnostic(JSON.stringify({ injectedLatencyMs, concurrentReads: 3, burst }));
 });
 

@@ -42,6 +42,7 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { PrivateDatabaseError } from "../src/web/v1/bounded-database";
 import { WebAccessError } from "../src/web/v1/access-verifier";
+import { WebSessionAuthority } from "../src/web/v1/session-authority";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { readTaskAttention } from "../src/web/v1/queue-attention-browser-client";
 import { readAllTaskAttention } from "../src/web/v1/task-attention-source";
@@ -1579,11 +1580,24 @@ test("ATTNJIT-01: workspace attention disables JIT only in its transaction", nee
         assertJitUntouched(observer.transactions.slice(before).flat(), `ATTNJIT-01 refusal: ${label}`);
         assert.equal((await backendSetting(pool.client)).jit, "on", `ATTNJIT-01: jit changed by the refusal: ${label}`);
       }
+      // The revoked session is produced by the product, never seeded by the administrator: the first
+      // authenticated read creates the row through the authority's own INSERT, then the authority's own
+      // logout revokes it, both as the production login.
       const revoked = sha256Digest({ session: "attnjit-revoked" });
-      await admin.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at,revoked_at)
-        VALUES($1,$2,'identity:attn',$3,$4,$3)`, [TENANT, revoked, ISSUED_AT, EXPIRES_AT]);
+      const revokedIdentity = { ...identity, tokenDigest: revoked };
+      const revokedRows = async () => (await admin.query<{ revoked_at: Date | null }>(
+        "SELECT revoked_at FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2", [TENANT, revoked])).rows;
+      assert.deepEqual(await revokedRows(), [], "the secondary session must be absent before the real producer runs");
+      await tasks.attention(revokedIdentity);
+      const created = await revokedRows();
+      assert.equal(created.length, 1, "the first authenticated read must create the secondary session through the authority");
+      assert.equal(created[0]!.revoked_at, null, "a freshly produced session is not revoked");
+      await new WebSessionAuthority(pool.client as DatabaseClient, SCOPE, () => Date.now()).logout(revokedIdentity);
+      const logged = await revokedRows();
+      assert.equal(logged.length, 1, "logout must revoke the existing row, not add another");
+      assert.ok(logged[0]!.revoked_at instanceof Date, "logout must stamp revoked_at through the authority");
       const before = observer.transactions.length;
-      await assert.rejects(tasks.attention({ ...identity, tokenDigest: revoked }),
+      await assert.rejects(tasks.attention(revokedIdentity),
         (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required", "revoked session");
       assertJitUntouched(observer.transactions.slice(before).flat(), "ATTNJIT-01 refusal: revoked session");
       const expired = { ...identity, expiresAt: new Date(Date.now() - 1000).toISOString() };
