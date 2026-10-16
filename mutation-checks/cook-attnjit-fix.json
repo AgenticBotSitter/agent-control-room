@@ -26,5 +26,75 @@
     "replace": "      await tx.query(\"SET SESSION jit = off\");\n      actor.require(\"tasks.read\", projectId);",
     "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-02' tests/task-attention-settled-candidates-postgres.test.ts",
     "why": "Same leak in the project readers: ATTNJIT-02 observes jit off on the same backend after COMMIT where the ambient on is required, in both inbox and reviews modes."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "needsMe: { queries: 11, ceilingMs: 1_500 },",
+    "replace": "needsMe: { queries: 11, ceilingMs: 1_550 },",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: the needs-me elapsed ceiling re-derived from the moved count (11 x 50 + 1000 = 1550) instead of the original literal 1500. The first assertion of 'attention count pins do not relax the original elapsed ceilings', assert.deepEqual(attentionBudget, { needsMe: { queries: 11, ceilingMs: 1500 }, ... }), compares against independent literals and fails. No PostgreSQL needed."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "savedPlan: { queries: 11, ceilingMs: 1_500 },",
+    "replace": "savedPlan: { queries: 11, ceilingMs: 1_550 },",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: the saved-plan elapsed ceiling re-derived from the moved count (1550) instead of the original literal 1500. The same deepEqual against savedPlan: { queries: 11, ceilingMs: 1500 } in 'attention count pins do not relax the original elapsed ceilings' fails."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "burst: { queries: 33, ceilingMs: 2_500 },",
+    "replace": "burst: { queries: 33, ceilingMs: 2_650 },",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: the burst elapsed ceiling re-derived from the moved count (33 x 50 + 1000 = 2650) instead of the original literal 2500. The same deepEqual against burst: { queries: 33, ceilingMs: 2500 } fails."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "assert.ok(measured.elapsedMs < elapsedCeilingMs,",
+    "replace": "assert.ok(measured.elapsedMs < Number.POSITIVE_INFINITY,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: the shared helper stops enforcing its elapsed ceiling. The assert.throws(..., /wall-clock sanity bound/u) calls in 'attention count pins do not relax the original elapsed ceilings' stop throwing and fail with 'needsMe: 1500 ms must be refused by the original 1500 ms ceiling'."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "=> assertInjectedLatencyBudget(label, measured, pin.queries, pin.ceilingMs);",
+    "replace": "=> assertInjectedLatencyBudget(label, measured, pin.queries);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: assertAttentionBudget stops forwarding the literal ceiling, so the helper falls back to the count-derived 1550 ms. The 1500 ms probe in 'attention count pins do not relax the original elapsed ceilings' is accepted and its assert.throws fails with 'needsMe: 1500 ms must be refused by the original 1500 ms ceiling'."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "elapsedCeilingMs: number = injectedLatencyMs * allowedRoundTrips + wallClockMarginMs)",
+    "replace": "elapsedCeilingMs: number = injectedLatencyMs * allowedRoundTrips + wallClockMarginMs + 1)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: the default ceiling used by every unchanged caller drifts one millisecond upward. The closing assert.throws(() => assertInjectedLatencyBudget('list', { queries: 9, elapsedMs: 1450 }, 9), /wall-clock sanity bound/u) in 'attention count pins do not relax the original elapsed ceilings' no longer throws and fails."
+  },
+  {
+    "file": "tests/task-read-query-budget.test.ts",
+    "find": "assert.equal(measured.queries, allowedRoundTrips,",
+    "replace": "assert.ok(measured.queries >= 0,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^attention count pins do not relax the original elapsed ceilings$' tests/task-read-query-budget.test.ts",
+    "why": "AJR-04: the exact round-trip count is relaxed to a non-negative check. The 'The count stays exact in both directions' loop in 'attention count pins do not relax the original elapsed ceilings' expects assert.throws(..., /round-trip budget/u) for queries 10 and 12 and fails because nothing throws."
+  },
+  {
+    "file": "tests/task-attention-settled-candidates-postgres.test.ts",
+    "find": "      assert.deepEqual(await revokedRows(), [], \"the secondary session must be absent before the real producer runs\");",
+    "replace": "      await admin.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)\n        VALUES($1,$2,'identity:attn',$3,$4)`, [TENANT, revoked, ISSUED_AT, EXPIRES_AT]);\n      assert.deepEqual(await revokedRows(), [], \"the secondary session must be absent before the real producer runs\");",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-01' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "AJR-05: the administrator pre-seeds the secondary session row before the product creates it. ATTNJIT-01 fails at assert.deepEqual(await revokedRows(), [], 'the secondary session must be absent before the real producer runs'). Needs PostgreSQL 17 (PG_BIN); the mutation CI job installs it."
+  },
+  {
+    "file": "tests/task-attention-settled-candidates-postgres.test.ts",
+    "find": "      await tasks.attention(revokedIdentity);\n      const created = ",
+    "replace": "      const created = ",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-01' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "AJR-05: the real producer (the authority's first authenticated read) is removed, so no secondary session exists. ATTNJIT-01 fails at assert.equal(created.length, 1, 'the first authenticated read must create the secondary session through the authority'). Needs PostgreSQL 17 (PG_BIN)."
+  },
+  {
+    "file": "tests/task-attention-settled-candidates-postgres.test.ts",
+    "find": "      await new WebSessionAuthority(pool.client as DatabaseClient, SCOPE, () => Date.now()).logout(revokedIdentity);\n",
+    "replace": "",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^ATTNJIT-01' tests/task-attention-settled-candidates-postgres.test.ts",
+    "why": "AJR-05: the authority's logout that revokes the produced session is removed. ATTNJIT-01 fails at assert.ok(logged[0]!.revoked_at instanceof Date, 'logout must stamp revoked_at through the authority'). Needs PostgreSQL 17 (PG_BIN)."
   }
 ]
