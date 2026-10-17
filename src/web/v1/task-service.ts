@@ -1105,6 +1105,11 @@ export class WebTaskService {
   async attention(identity: VerifiedWebIdentity, after?: string) {
     if (after !== undefined) this.id(after);
     return this.authenticatedRead(identity, async (tx, actor) => {
+      // Transaction-local, so COMMIT or ROLLBACK hands the pooled backend back with
+      // its ambient setting. It governs every later statement in this transaction
+      // (candidates, payloads, project views, result evidence, saved plans). Home
+      // and the other readers keep their current setting.
+      await tx.query("SET LOCAL jit = off");
       const sources = this.attentionSources(actor);
       type AttentionRow = TaskRow & { has_artifacts: boolean; source_job_created_at: string | Date;
         source_job_updated_at: string | Date; plan_tenant_id: string | null; plan_project_id: string | null;
@@ -1308,6 +1313,8 @@ export class WebTaskService {
   async projectAttention(identity: VerifiedWebIdentity, projectId: string, mode: "inbox" | "reviews", after?: string) {
     this.id(projectId); if (after !== undefined) this.id(after);
     return this.authenticatedRead(identity, async (tx, actor) => {
+      // Same transaction-local policy as the workspace-wide reader, for both modes.
+      await tx.query("SET LOCAL jit = off");
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       const hasArtifact = hasArtifactReceipt("a");

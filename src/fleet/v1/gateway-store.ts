@@ -555,26 +555,35 @@ export class FleetGatewayStoreV1 {
     const digest = typeof input.newCredentialDigest === "string" && FLEET_DIGEST_PATTERN_V1.test(input.newCredentialDigest)
       ? input.newCredentialDigest : fleetFail("invalid");
     return this.db.transaction(async tx => {
-      // The locked read carries the validated database time. `issued_at` is
-      // this exact value, so the credential guard's
-      // `prior.expires_at > NEW.issued_at` check compares against the same
-      // clock reading that proved the predecessor unexpired, rather than
-      // against a second, possibly later, one.
-      const current = (await tx.query<{ credential_id: string; now: string }>(`SELECT credential_id,
-        statement_timestamp() AS now FROM fleet_worker_credentials
+      // The lock is its own statement and carries NO clock reading: a statement's
+      // `statement_timestamp()` is taken when it STARTS, before any wait for the
+      // row lock, and a target-list `clock_timestamp()` is also evaluated before
+      // that wait. Either would stamp the successor from a moment before the
+      // lock was granted.
+      const current = (await tx.query<{ credential_id: string }>(`SELECT credential_id FROM fleet_worker_credentials
         WHERE tenant_id=$1 AND credential_id=$2 AND worker_id=$3 AND state='active'
           FOR UPDATE`,
       [this.#tenantId, principal.credentialId, principal.workerId])).rows[0];
       if (!current) return fleetFail("unauthenticated");
-      const now = iso(current.now);
-      await tx.query(`UPDATE fleet_worker_credentials SET state='retired',ended_at=$3 WHERE tenant_id=$1 AND credential_id=$2`,
-        [this.#tenantId, current.credential_id, now]);
+      // The retiring UPDATE is the next statement, so its start is after the lock
+      // was granted. `ended_at` is that reading and the successor's `issued_at`
+      // reuses its exact text, so 0141's `prior.expires_at > NEW.issued_at` check
+      // compares the predecessor's expiry against the same post-lock reading, at
+      // microsecond precision. A JavaScript Date holds milliseconds only and would
+      // round a stamp down past a sub-millisecond expiry.
+      const retired = (await tx.query<{ stamp: string; stamp_at: Date }>(`UPDATE fleet_worker_credentials
+        SET state='retired',ended_at=statement_timestamp()
+        WHERE tenant_id=$1 AND credential_id=$2 AND state='active'
+        RETURNING ended_at::text AS stamp, ended_at AS stamp_at`,
+      [this.#tenantId, current.credential_id])).rows[0]!;
       const credentialId = `fleet-credential:${randomHexV1()}`;
-      const expiresAt = iso(new Date(Date.parse(now) + FLEET_CREDENTIAL_LIFETIME_MS_V1));
+      let expiresAt: string;
       try {
-        await tx.query(`INSERT INTO fleet_worker_credentials(tenant_id,credential_id,worker_id,secret_digest,state,issued_at,
-          expires_at,rotated_from_credential_id) VALUES($1,$2,$3,$4,'active',$5,$6,$7)`,
-        [this.#tenantId, credentialId, principal.workerId, digest, now, expiresAt, current.credential_id]);
+        expiresAt = iso((await tx.query<{ expires_at: Date }>(`INSERT INTO fleet_worker_credentials(tenant_id,credential_id,worker_id,
+          secret_digest,state,issued_at,expires_at,rotated_from_credential_id)
+          VALUES($1,$2,$3,$4,'active',$5::timestamptz,$5::timestamptz+$6::float8*interval '1 millisecond',$7) RETURNING expires_at`,
+        [this.#tenantId, credentialId, principal.workerId, digest, retired.stamp, FLEET_CREDENTIAL_LIFETIME_MS_V1,
+          current.credential_id])).rows[0]!.expires_at);
       } catch (error) {
         if (databaseSqlStateIsAnyV1(error, ["23505"])) return fleetFail("conflict");
         // 0141's `guard_fleet_credential_write` raises P0001 when the predecessor
@@ -590,7 +599,16 @@ export class FleetGatewayStoreV1 {
       }
       await appendAuditWith(tx, { id: `audit:fleet-rotate:${credentialId.slice(17)}`, tenantId: this.#tenantId,
         actorId: principal.identityId, actorType: "worker", action: "fleet.credential.rotated", targetType: "fleet_worker",
-        targetId: principal.workerId, occurredAt: now, safeMetadata: { from: current.credential_id, to: credentialId } });
+        targetId: principal.workerId, occurredAt: iso(retired.stamp_at), safeMetadata: { from: current.credential_id, to: credentialId } });
+      // The audit chain head lock and the INSERT's foreign-key check on
+      // fleet_workers can both wait after the stamp above was taken, so 0141's
+      // guard may have judged the predecessor against a reading from before that
+      // wait. This is the last statement before COMMIT: its own reading is taken
+      // after every wait, and a predecessor that has expired by then rolls the
+      // whole renewal back.
+      const stillLive = (await tx.query<{ ok: boolean }>(`SELECT expires_at>statement_timestamp() AS ok FROM fleet_worker_credentials
+        WHERE tenant_id=$1 AND credential_id=$2`, [this.#tenantId, current.credential_id])).rows[0];
+      if (stillLive?.ok !== true) return fleetFail("unauthenticated");
       return Object.freeze({ credentialExpiresAt: expiresAt });
     });
   }
