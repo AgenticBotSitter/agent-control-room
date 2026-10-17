@@ -33,15 +33,31 @@
 //   M9  drop the accepted-review COUNT         -> FAILS (two-review profile)
 //   M10 drop the required-scenario NOT EXISTS  -> FAILS
 import assert from "node:assert/strict";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
+import { PrivateDatabaseError } from "../src/web/v1/bounded-database";
+import { WebAccessError } from "../src/web/v1/access-verifier";
+import { WebSessionAuthority } from "../src/web/v1/session-authority";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { readTaskAttention } from "../src/web/v1/queue-attention-browser-client";
 import { readAllTaskAttention } from "../src/web/v1/task-attention-source";
 import { CompletionGateStoreV1 } from "../src/completion-gate/v1/store";
+import { CanonicalStore } from "../src/persistence/canonical-store";
+import { HarnessRunStoreV1 } from "../src/harness/v1/store";
+import { NativeResultStore, resultBytesHash } from "../src/artifacts/v1/native-results";
+import { InMemoryArtifactStorage } from "../src/node-executor/artifact-storage";
+import { HERMES_NATIVE_ADAPTER, HERMES_NATIVE_REVISION, bindNativeStart, type NativeEnrollment, type NativeSnapshot,
+  type NativeStart } from "../src/harness/hermes-native-v1/contracts";
+import { nativeTaskObservation, nativeTaskRegistration } from "../src/harness/hermes-native-v1/task-observation";
+import { DOMAIN_CONTRACT_VERSION, type NodeRecord } from "../src/domain/v1";
+import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
+import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1 } from "../src/harness/v1/remote-worker-delivery";
+import { NODE_PROTOCOL_V1 } from "../src/node-protocol/v1";
 import { sha256Digest, hmacSha256Tag, computeAuthorityDigest, InMemoryRollbackCheckpointStoreV1 } from "../src/security";
 import { taskDraftSchema } from "../src/web/v1/task-wire";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
@@ -94,7 +110,7 @@ const authorityFor = (projectId = PROJECT): AuthorityEnvelope => ({ projectId, a
   allowedNetworkDestinations: [], effectPolicy: "none", maxRisk: "low", maxDurationSeconds: 3600,
   maxConcurrentEffects: 0, expiresAt: EXPIRES_AT, digest: "" });
 
-async function seedScope(admin: Client) {
+async function seedScope(admin: Client, options: { session?: boolean } = {}) {
   await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,$1)", [TENANT]);
   await admin.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,$1)", [WORKSPACE, TENANT]);
   await admin.query(`INSERT INTO adapter_registry
@@ -115,49 +131,53 @@ async function seedScope(admin: Client) {
     (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,
      require_strong_factor,created_at,updated_at)
     VALUES('grant:attn',$1,'identity:attn','owner','["*"]','["*"]','critical',true,false,$2,$2)`, [TENANT, ISSUED_AT]);
-  await admin.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
-    VALUES($1,$2,'identity:attn',$3,$4)`, [TENANT, tokenDigest, ISSUED_AT, EXPIRES_AT]);
+  // The session row is product-owned state: the authority wrapper creates it on
+  // first use. The ATTNJIT fixtures leave it absent and let the product write it.
+  if (options.session !== false)
+    await admin.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
+      VALUES($1,$2,'identity:attn',$3,$4)`, [TENANT, tokenDigest, ISSUED_AT, EXPIRES_AT]);
 }
 
 /** One workflow with exactly one job, the shape both readers require. */
-async function seedJobChain(admin: Client, jobId: string, state: string, jobType: string, version: number) {
+async function seedJobChain(admin: Client, jobId: string, state: string, jobType: string, version: number, projectId = PROJECT) {
   const requestId = `request:${jobId}`, workflowId = `workflow:${jobId}`;
   const draft = taskDraftSchema.parse({ title: "Settled fixture", instructions: "Seed settled attention history." });
-  const authority = { ...authorityFor(), allowedExecutor: "executor:unassigned" };
+  const authority = { ...authorityFor(projectId), allowedExecutor: "executor:unassigned" };
   authority.digest = computeAuthorityDigest(authority);
   const request = { id: requestId, kind: "request" as const, contractVersion: CONTRACT, tenantId: TENANT,
-    projectId: PROJECT, title: "Settled fixture", objective: draft.instructions, state: "draft" as const,
+    projectId, title: "Settled fixture", objective: draft.instructions, state: "draft" as const,
     version: 0, priority: 50, requestedBy: { actorId: "identity:attn", actorType: "human" as const },
     idempotencyKey: `idem-${requestId}`.slice(0, 180), createdAt: ISSUED_AT, updatedAt: ISSUED_AT };
   const workflow = { id: workflowId, kind: "workflow" as const, contractVersion: CONTRACT, tenantId: TENANT,
-    requestId, projectId: PROJECT, definitionVersion: "1.0.0", definitionDigest: AUTHORITY_DIGEST,
+    requestId, projectId, definitionVersion: "1.0.0", definitionDigest: AUTHORITY_DIGEST,
     authorityMode: "control_room_native" as const, state: "proposed" as const, version: 0,
     jobIds: [jobId], createdAt: ISSUED_AT, updatedAt: ISSUED_AT };
   const job = { id: jobId, kind: "job" as const, contractVersion: CONTRACT, tenantId: TENANT, workflowId,
-    projectId: PROJECT, jobType, specVersion: "1.0.0", inputDigest: sha256Digest(draft),
+    projectId, jobType, specVersion: "1.0.0", inputDigest: sha256Digest(draft),
     state: state as never, version, createdAt: ISSUED_AT, updatedAt: ISSUED_AT, priority: 50,
     requiredCapability: "fixture", dependsOnJobIds: [] as string[], authority,
     retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
       retryAfterOrphan: false, ambiguousEffectPolicy: "attention" as const } };
   await admin.query(`INSERT INTO control_requests(id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
-    VALUES($1,$2,$3,'draft',0,$4,$5::jsonb,$6,$6)`, [requestId, TENANT, PROJECT, request.idempotencyKey,
+    VALUES($1,$2,$3,'draft',0,$4,$5::jsonb,$6,$6)`, [requestId, TENANT, projectId, request.idempotencyKey,
     JSON.stringify(request), ISSUED_AT]);
   await admin.query(`INSERT INTO control_workflows
     (id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,'proposed',0,$6::jsonb,$7,$7)`,
-  [workflowId, TENANT, requestId, PROJECT, AUTHORITY_DIGEST, JSON.stringify(workflow), ISSUED_AT]);
+  [workflowId, TENANT, requestId, projectId, AUTHORITY_DIGEST, JSON.stringify(workflow), ISSUED_AT]);
   await admin.query(`INSERT INTO control_jobs
     (id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,$6,50,'fixture',$7,$8::jsonb,$9,$9)`,
-  [jobId, TENANT, workflowId, PROJECT, state, version, authority.digest, JSON.stringify(job), ISSUED_AT]);
+  [jobId, TENANT, workflowId, projectId, state, version, authority.digest, JSON.stringify(job), ISSUED_AT]);
   return { draft, authority, workflow, request, job };
 }
 
-function webClient(postgres: { connection(role: string): { user: string; password: string; host: string }; port: number; database: string }) {
+function webClient(postgres: { connection(role: string): { user: string; password: string; host: string }; port: number; database: string },
+  options: { max?: number } = {}) {
   const login = postgres.connection("web");
   return bindPrivatePgPool(new Pool({ ...privatePgOptions({ host: "127.0.0.1", port: postgres.port,
     database: postgres.database, username: login.user, password: login.password, majorVersion: 17 as const }),
-    host: login.host }));
+    host: login.host, ...(options.max === undefined ? {} : { max: options.max }) }));
 }
 
 /** The browser's real bounded traversal, over a real transport. */
@@ -1118,4 +1138,923 @@ test("real PostgreSQL: a job matching two candidate arms appears exactly once", 
       t.diagnostic(JSON.stringify({ ids, overlapReasons: reasons }));
     } finally { await pool.close(); await admin.end(); }
   }, { port: PORT + 5, allowedPorts: PORTS, boundMs: 600_000 });
+});
+
+// ---------------------------------------------------------------------------
+// ATTNJIT: both attention readers switch JIT off for THEIR OWN transaction only.
+//
+// Supported hypothesis, not an established cause: on the hosted Component lane the
+// cold 10,000-job read intermittently exceeded the five-second statement bound
+// while PostgreSQL reported a JIT-compiled plan, and runs with JIT off did not
+// fail. `SET LOCAL jit = off` is the scoped mitigation. These bodies prove the
+// POLICY (literal off for every statement after it, literal on again on the same
+// backend after COMMIT and after ROLLBACK, nothing else touched); they do not
+// time JIT, because the local server is built without LLVM.
+//
+// Real PostgreSQL 17 as the production web login. The observer below forwards
+// every product statement unchanged and preserves its promise and its error; it
+// only asks the SAME backend for `current_setting('jit')` first. It is never used
+// by the cold 10,000-job read above, whose first read precedes any observer.
+//
+// The service is built with the CONFIGURED readers (signed result reader, review
+// reader, saved-plan verification): an unconfigured one takes an early fallback that
+// never issues those statements, so a pass there would say nothing about them. Each
+// body names the readers the page it asked for must have reached (`readersFor`).
+//
+// Expected values come from this fixture's own literal rows (ids and reasons), and
+// from the contract's literal setting names, never from the code under test.
+// ---------------------------------------------------------------------------
+const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const POLICY_IDS = Object.freeze({ approval: "job:attn-pol-a-approval", failed: "job:attn-pol-b-failed",
+  review: "job:attn-pol-c-review", proposal: "job:attn-pol-d-proposal" });
+// Per-mode reasons for the live rows. Project pages read PROJECT only. The two rows
+// below the line live in the second project and only the workspace page sees them:
+// the planned proposal whose own returned result has no review (its plan suppresses
+// "proposal"; the unreviewed result raises result_checks_unavailable) and the task
+// the real planner prepared from it (an unplanned non-proposal task: "assignment").
+const POLICY_LIVE: readonly (readonly [string, readonly string[]])[] = Object.freeze([
+  [POLICY_IDS.approval, ["approval", "delivery_check"]],
+  [POLICY_IDS.failed, ["failed", "delivery_check"]],
+  [POLICY_IDS.review, ["review"]],
+  [POLICY_IDS.proposal, ["proposal"]],
+] as const);
+type AttentionMode = "workspace" | "inbox" | "reviews";
+const GRANTS_STATEMENT = "FROM control_role_grants";
+
+// Markers for each reader the attention transaction is promised to run, so a body can
+// prove the statement was REACHED (and sampled with jit off) instead of trusting that
+// a configured reader happened to run. Matched on the full statement text.
+const READERS = Object.freeze({
+  workspaceCandidates: "attention_candidates", workspacePayloads: "AS plan_payload", projectCandidates: "LIMIT 21",
+  projectViews: "SELECT p.id,p.adapter_id,p.payload,p.title", resultReceipts: "LEFT JOIN control_native_review_plans",
+  gateIntegrity: "FROM control_completion_gate_integrity", gateRecords: "FROM control_completion_gate_records" });
+type ReaderName = keyof typeof READERS;
+const readersIn = (sql: string): ReaderName[] =>
+  (Object.entries(READERS) as [ReaderName, string][]).filter(([, marker]) => sql.includes(marker)).map(([name]) => name);
+interface JitSample { sql: string; jit: string; pid: number; readers?: ReaderName[] }
+/** The readers a page must have reached, derived from the page the fixture promises. */
+const readersFor = (mode: AttentionMode, ids: readonly string[]): ReaderName[] => [
+  ...(mode === "workspace" ? ["workspaceCandidates" as const, ...(ids.length ? ["workspacePayloads" as const] : [])] : ["projectCandidates" as const]),
+  ...(mode !== "workspace" || ids.length ? ["projectViews" as const] : []),
+  ...(ids.some(id => id === POLICY_IDS.review || id === PLANNED_ID) ? ["resultReceipts" as const, "gateIntegrity" as const, "gateRecords" as const] : []),
+];
+type JitHook = (event: { samples: readonly JitSample[]; tx: DatabaseSession }) => Promise<void>;
+
+/** Forwards every statement of every transaction, sampling the SAME backend first. */
+function observeJit(inner: DatabaseClient, hook?: JitHook) {
+  const transactions: JitSample[][] = [];
+  const wrap = (tx: DatabaseSession, samples: JitSample[]): DatabaseSession => ({
+    query: async <R>(sql: string, params?: unknown[]) => {
+      const probe = (await tx.query<{ jit: string; pid: number }>(
+        "SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid")).rows[0]!;
+      samples.push({ sql, jit: probe.jit, pid: probe.pid, readers: readersIn(sql) });
+      if (hook) await hook({ samples, tx });
+      return tx.query<R>(sql, params);
+    } });
+  const client: DatabaseClient = Object.freeze({
+    query: <R>(sql: string, params?: unknown[]) => inner.query<R>(sql, params),
+    transaction: <T>(work: (tx: DatabaseSession) => Promise<T>) => inner.transaction(tx => {
+      const samples: JitSample[] = []; transactions.push(samples); return work(wrap(tx, samples)); }),
+    transactionWithPreCommitCheck: <T>(work: (tx: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) =>
+      inner.transactionWithPreCommitCheck(tx => {
+        const samples: JitSample[] = []; transactions.push(samples); return work(wrap(tx, samples)); }, check),
+  });
+  return { client, transactions };
+}
+
+/** The product statements AFTER the authority wrapper's identity/session/grant reads. */
+function operationStatements(samples: readonly JitSample[], label: string) {
+  const grantsAt = samples.findIndex(sample => sample.sql.includes(GRANTS_STATEMENT));
+  assert.ok(grantsAt >= 0, `${label}: the authority statements were not observed`);
+  for (const sample of samples.slice(0, grantsAt + 1))
+    assert.equal(sample.jit, "on", `${label}: an authority statement ran with jit=${sample.jit}; the ambient setting is on: ${sample.sql.slice(0, 60)}`);
+  return samples.slice(grantsAt + 1);
+}
+
+/** Literal off for every operation statement after the first, all on ONE backend.
+ * `minimumStatements` only guards against a vacuous pass: the workspace read issues the
+ * policy statement, the candidate select, the payload select and the project-view read. */
+function assertJitOffInOperation(samples: readonly JitSample[], label: string, minimumStatements: number,
+  readers: readonly ReaderName[] = []) {
+  const operation = operationStatements(samples, label);
+  for (const reader of readers)
+    assert.ok(operation.some(sample => sample.readers?.includes(reader)),
+      `${label}: the ${reader} reader was never reached, so its statements were not sampled`);
+  assert.equal(operation[0]?.jit, "on", `${label}: the first operation statement must see the ambient setting`);
+  for (const sample of operation.slice(1))
+    assert.equal(sample.jit, "off", `${label} observed jit=${sample.jit} inside the attention transaction: ${sample.sql.slice(0, 80)}`);
+  // The policy statement plus one statement per reader the page is promised to have reached.
+  const expectedAtLeast = Math.max(minimumStatements, readers.length ? readers.length + 1 : 0);
+  assert.ok(operation.length >= expectedAtLeast,
+    `${label}: only ${operation.length} operation statements were observed, expected at least ${expectedAtLeast}`);
+  assert.equal(new Set(samples.map(sample => sample.pid)).size, 1, `${label}: one transaction must stay on one backend`);
+  return operation;
+}
+
+/** A refusal that happens before the operation never touches the setting. */
+function assertJitUntouched(samples: readonly JitSample[], label: string) {
+  for (const sample of samples) {
+    assert.equal(sample.jit, "on", `${label}: ran with jit=${sample.jit}: ${sample.sql.slice(0, 60)}`);
+    assert.equal(/\bjit\b/iu.test(sample.sql), false, `${label}: issued a JIT statement before refusing: ${sample.sql.slice(0, 60)}`);
+  }
+}
+
+/** The pool has ONE backend, so this reads the setting the attention transaction left behind. */
+async function backendSetting(client: { query<R>(sql: string, params?: unknown[]): Promise<{ rows: R[] }> }) {
+  return (await client.query<{ pid: number; jit: string }>("SELECT pg_backend_pid() AS pid, current_setting('jit') AS jit")).rows[0]!;
+}
+
+// The workspace page is presented most-urgent first (task-attention-wire.ts): the
+// failed task is `urgent`; the planned proposal's unreviewed result, the pending
+// result review and the approval are `soon`, and `soon` ties break by most recently
+// updated task first. The fixture's own timeline sets those times: the planned
+// source was put back to `proposed` five seconds after ISSUED_AT, the reviewed
+// result's job was claimed two seconds after it and the approval was written at
+// ISSUED_AT. The prepared task and the unplanned proposal are `normal`; the
+// prepared one was written by the planner just now, the proposal at ISSUED_AT.
+// Project pages keep id order.
+type PolicyFixtureIds = { artifactId: string; preparedJobId: string };
+const workspaceOrder = (fixture: PolicyFixtureIds) => [POLICY_IDS.failed, PLANNED_ID, POLICY_IDS.review, POLICY_IDS.approval,
+  fixture.preparedJobId, POLICY_IDS.proposal];
+/** `artifactId` is the receipt the REAL writer returned for the pending result. */
+const expectedPage = (mode: AttentionMode, after: string | null, fixture: PolicyFixtureIds) => {
+  const live: (readonly [string, readonly string[]])[] = [...POLICY_LIVE,
+    ...(mode === "workspace" ? [[PLANNED_ID, ["result_checks_unavailable"]] as const, [fixture.preparedJobId, ["assignment"]] as const] : [])];
+  const rows = (mode === "reviews" ? live.filter(([id]) => id === POLICY_IDS.review) : live)
+    .filter(([id]) => after === null || id > after);
+  const ids = mode === "workspace" ? workspaceOrder(fixture).filter(id => rows.some(([row]) => row === id))
+    : rows.map(([id]) => id).sort();
+  return { ids, reasons: Object.fromEntries(rows.map(([id, reasons]) => [id, reasons])), examined: rows.length,
+    artifacts: mode === "workspace" || rows.length === 0 ? undefined
+      : Object.fromEntries(rows.map(([id]) => [id, id === POLICY_IDS.review ? [fixture.artifactId] : []])) };
+};
+const seenPage = (page: { items: readonly { task: { jobId: string }; reasons: readonly string[]; resultArtifactIds?: readonly string[] }[];
+  examined: number }) =>
+  ({ ids: page.items.map(item => item.task.jobId),
+    reasons: Object.fromEntries(page.items.map(item => [item.task.jobId, item.reasons])), examined: page.examined,
+    artifacts: page.items.every(item => item.resultArtifactIds === undefined) ? undefined
+      : Object.fromEntries(page.items.map(item => [item.task.jobId, item.resultArtifactIds ?? []])) });
+const readAttention = (tasks: WebTaskService, mode: AttentionMode, after: string | null) => mode === "workspace"
+  ? tasks.attention(identity, after ?? undefined) : tasks.projectAttention(identity, PROJECT, mode, after ?? undefined);
+
+const HARNESS_KEY = new Uint8Array(32).fill(17);
+const RESULT_KEY = new Uint8Array(32).fill(33);
+const REAL_NODE = "node:attn-real";
+const REAL_RESULT_TEXT = "ATTNJIT fixture result: nothing needed changing.\n";
+const issuedPlus = (offsetMs: number) => new Date(Date.parse(ISSUED_AT) + offsetMs).toISOString();
+
+/**
+ * A returned result written by the REAL stores, so the configured reader can
+ * authenticate it: canonical claim (attempt + lease), the harness run registration
+ * and native snapshot, then `NativeResultStore.capture`, which signs the receipt
+ * and the manifest. Setup supplies only the prerequisite job/node/identity rows
+ * and the literal result text; every receipt, manifest, run and event row is
+ * produced and signed by the shipped writers.
+ */
+async function seedNativeResult(admin: Client, jobId: string, suffix: string,
+  options: { projectId?: string; existing?: boolean; jobType?: string; storage?: InMemoryArtifactStorage } = {}) {
+  const db = adminDatabaseClient(admin);
+  const projectId = options.projectId ?? PROJECT;
+  const inputDigest = options.existing
+    ? (await admin.query<{ digest: string }>("SELECT payload->>'inputDigest' AS digest FROM control_jobs WHERE tenant_id=$1 AND id=$2",
+      [TENANT, jobId])).rows[0]!.digest
+    : (await seedJobChain(admin, jobId, "proposed", options.jobType ?? "hermes-native-evidence-fixture", 0)).job.inputDigest;
+  const canonical = new CanonicalStore(db);
+  const actor = { actorId: "identity:attn", actorType: "human" as const };
+  const digestOf = (label: string) => sha256Digest({ purpose: `attnjit-${label}-${suffix}` });
+  const node: NodeRecord = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: TENANT, version: 0, createdAt: ISSUED_AT,
+    updatedAt: ISSUED_AT, kind: "node", id: REAL_NODE, displayName: "Policy fixture node", state: "pending_enrollment",
+    platform: "linux", architecture: "x64", identityKeyId: "key:attn-real", hardwareFingerprint: digestOf("hardware"),
+    softwareFingerprint: digestOf("software"), policyVersion: "1.0.0", minimumProtocolVersion: NODE_PROTOCOL_V1 };
+  if (!options.existing) {
+    await canonical.create(node);
+    await canonical.transition({ tenantId: TENANT, kind: "node", entityId: REAL_NODE, expectedVersion: 0, toState: "active",
+      transitionId: `transition:attn-node-${suffix}`, idempotencyKey: `attn-node-active-${suffix}`, actor,
+      occurredAt: issuedPlus(0), recordPatch: { enrolledAt: issuedPlus(0) } });
+  }
+  const ready = await canonical.transition({ tenantId: TENANT, kind: "job", entityId: jobId, expectedVersion: 0,
+    toState: "ready", transitionId: `transition:attn-ready-${suffix}`, idempotencyKey: `attn-ready-${suffix}`, actor,
+    occurredAt: issuedPlus(1000) });
+  const attemptId = `attempt:attn-real-${suffix}`, leaseId = `lease:attn-real-${suffix}`, runId = `run:attn-real-${suffix}`;
+  await canonical.claimReadyJob({ tenantId: TENANT, jobId, expectedJobVersion: ready.entity.version, nodeId: REAL_NODE,
+    workerId: "worker:attn-real", attemptId, leaseId, transitionId: `transition:attn-claim-${suffix}`,
+    idempotencyKey: `attn-claim-${suffix}`, actor, acquiredAt: issuedPlus(2000), expiresAt: issuedPlus(30 * 60_000) });
+  const enrollment: NativeEnrollment = { adapter: HERMES_NATIVE_ADAPTER, revision: HERMES_NATIVE_REVISION, tenantId: TENANT,
+    nodeId: REAL_NODE, connectionId: "connection:attn-real", canonicalDestination: "https://agent.example.test:443",
+    profile: "control_room", credentialRef: "credential:attn-real", profilePolicyDigest: digestOf("policy"),
+    qualificationDigest: digestOf("qualification"), validUntil: Date.parse(issuedPlus(30 * 60_000)),
+    model: "fixture-model", provider: "fixture" };
+  const start: NativeStart = { tenantId: TENANT, nodeId: REAL_NODE, projectId, jobId, attemptId, runId,
+    effectClaimKey: digestOf("effect"), operationDigest: digestOf("operation"), prompt: "Summarize the supplied synthetic text.",
+    instructions: "Return a short plain-text summary.", deadline: Date.parse(issuedPlus(20 * 60_000)) };
+  const { binding } = bindNativeStart(enrollment, start);
+  const registration = nativeTaskRegistration(binding, inputDigest, leaseId, 1, issuedPlus(3000));
+  const runs = new HarnessRunStoreV1(db, HARNESS_KEY);
+  await runs.create(registration);
+  const snapshot: NativeSnapshot = { binding, version: 3, state: "completed", nativeRunId: `run_${"1".repeat(32)}`,
+    observedAt: Date.parse(issuedPlus(10_000)), upstreamUpdatedAt: null, availability: "current", streamAttempted: false,
+    stopAttempted: false, resultText: REAL_RESULT_TEXT, usage: null, lastActivity: "none", safeReason: "none" };
+  const observation = nativeTaskObservation(snapshot, registration.nativeTask!);
+  await runs.recordNativeSnapshot(TENANT, REAL_NODE, observation);
+  const storage = options.storage ?? new InMemoryArtifactStorage();
+  const results = new NativeResultStore(db, HARNESS_KEY, { integrityKey: RESULT_KEY, storageClass: "local", storage });
+  const captured = await results.capture(TENANT, REAL_NODE, observation, new TextEncoder().encode(REAL_RESULT_TEXT), issuedPlus(20_000));
+  assert.equal(captured.replayed, false, "the real writer must have produced the receipt, not replayed one");
+  return { storage, contentHash: resultBytesHash(new TextEncoder().encode(REAL_RESULT_TEXT)), artifactId: captured.receipt.artifactId };
+}
+
+const PROJECT_PLANNED = "project:attn-planned";
+const PLANNED_ID = "job:attn-pol-e-planned";
+
+/**
+ * The only way a SAVED PLAN reaches the attention reader after R7I-01: a planned
+ * proposal is settled work and is excluded from the candidate arms, so it can be
+ * on the page again only while a returned result of its own is still unsettled.
+ * No shipped writer produces that state (a proposal is never claimed, and a plan
+ * is verified only against a `proposed` version-0 source), so the source job is
+ * built in four steps and two of them are SYNTHETIC DOMAIN SETUP, labelled so:
+ * (1) the proposal rows, the same synthetic shape the unplanned proposal below
+ * uses; (2) a real claim, run, native snapshot and `NativeResultStore.capture`
+ * give it a signed result; (3) the job row is put back to `proposed` version 0 by
+ * one hand edit, so that (4) the REAL planner will accept it and sign its plan.
+ * The plan, the prepared job and the profile read are the shipped planner's and
+ * gate's own; only (1) and (3) are hand-written.
+ */
+async function seedPlannedResultProposal(admin: Client, checkpoints: InMemoryRollbackCheckpointStoreV1,
+  gate: CompletionGateStoreV1, storage: InMemoryArtifactStorage) {
+  const db = adminDatabaseClient(admin);
+  await admin.query(`INSERT INTO projects
+    (id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,
+     health,authority_mode,observed_at,payload,updated_at)
+    VALUES($1,$2,$3,$4,$1,'1',$1,'running','fixture','healthy','control_room_native',$5,'{}',$5)`,
+  [PROJECT_PLANNED, TENANT, WORKSPACE, ADAPTER, ISSUED_AT]);
+  await admin.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    VALUES($1,$2,'active',1,$3,$3)`, [TENANT, PROJECT_PLANNED, ISSUED_AT]);
+  // A plan names an acceptance profile of its own project (the planner refuses another project's).
+  const registered = (await gate.registerProfile({ schemaVersion: "control-room-completion-gate/v1" as const,
+    id: "profile:attn-planned", tenantId: TENANT, projectId: PROJECT_PLANNED, name: "Attn planned review",
+    targetKind: "document" as const, requiredVerificationScenarioIds: ["scenario:human"], minimumIndependentReviews: 1,
+    reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false },
+    verificationRequiresProducerSeparation: true, minimumRisk: "low" as const, maximumRevisionRounds: 2,
+    automaticLowRiskDisposition: false, createdBy: { actorId: "identity:attn", actorType: "human" as const },
+    createdAt: ISSUED_AT })).profile;
+  const profile = { id: registered.id, digest: sha256Digest(registered) };
+  const source = await seedJobChain(admin, PLANNED_ID, "proposed", "task.proposal", 0, PROJECT_PLANNED);
+  const evidence = await seedNativeResult(admin, PLANNED_ID, "planned", { projectId: PROJECT_PLANNED, existing: true, storage });
+  const resetAt = issuedPlus(5000);
+  await admin.query(`UPDATE control_jobs SET state='proposed', version=0, updated_at=$3::timestamptz,
+    payload = payload || jsonb_build_object('state','proposed','version',0,'updatedAt',$4::text)
+    WHERE tenant_id=$1 AND id=$2`, [TENANT, PLANNED_ID, resetAt, resetAt]);
+  const authority: NativeTaskTemplate["authority"] = { projectId: PROJECT_PLANNED,
+    allowedExecutor: "executor:attn-remote", allowedOperations: [CONTROLLER_WORKER_REMOTE_START_OPERATION_V1],
+    credentialRefs: ["credential:attn-remote"], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [],
+    effectPolicy: "approval_required", maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1,
+    expiresAt: EXPIRES_AT, digest: "" };
+  authority.digest = computeAuthorityDigest(authority);
+  const template: NativeTaskTemplate = { id: "template:attn-planned", adapter: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, authority,
+    instructions: "Return a bounded plain-text review only.", connectorProfileDigest: sha256Digest("attn-planned-profile"),
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: profile.digest };
+  // A separate token, so the planner's own first-use session does not touch the
+  // product-owned session row the policy bodies assert absent.
+  const planner = { ...identity, tokenDigest: sha256Digest({ session: "attnjit-planner" }) };
+  const plan = await new TaskExecutionPlanner(db, SCOPE, { template, integrityKey: PLAN_KEY, reviewIntegrityKey: REVIEW_KEY,
+    checkpoints }, () => Date.now()).plan(planner, PROJECT_PLANNED, PLANNED_ID, source.job.inputDigest);
+  assert.equal(plan.replayed, false, "the real planner must have written the saved plan");
+  assert.ok(evidence.artifactId, "the planned proposal must carry a signed result of its own");
+  return { preparedJobId: plan.receipt.jobId };
+}
+
+/**
+ * Four live items in PROJECT and nothing else there: a waiting approval, a failed
+ * task, a result whose review is still pending (a REAL signed receipt and real
+ * completion-gate records) and an unplanned proposal. A second project holds the
+ * planned proposal with an unreviewed result and the task the real planner
+ * prepared from it, so only the workspace page sees those two. The web SESSION row
+ * is deliberately NOT written here: the product's own authority wrapper creates it
+ * on first use, and each body asserts it absent first.
+ */
+async function seedPolicyFixture(admin: Client) {
+  await seedScope(admin, { session: false });
+  const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+  const gate = new CompletionGateStoreV1(adminDatabaseClient(admin), REVIEW_KEY, checkpoints,
+    () => new Date().toISOString());
+  await seedJobChain(admin, POLICY_IDS.approval, "waiting_approval", "harness.hermes.native.task", 1);
+  await seedJobChain(admin, POLICY_IDS.failed, "failed", "harness.hermes.native.task", 3);
+  await seedJobChain(admin, POLICY_IDS.proposal, "proposed", "task.proposal", 0);
+  await gate.provisionTenant(TENANT);
+  const evidence = await seedNativeResult(admin, POLICY_IDS.review, "policy");
+  const profile = { schemaVersion: "control-room-completion-gate/v1" as const, id: "profile:attn",
+    tenantId: TENANT, projectId: PROJECT, name: "Attn result review", targetKind: "document" as const,
+    requiredVerificationScenarioIds: ["scenario:human", "scenario:text"], minimumIndependentReviews: 1,
+    reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false },
+    verificationRequiresProducerSeparation: true, minimumRisk: "low" as const, maximumRevisionRounds: 2,
+    automaticLowRiskDisposition: false, createdBy: { actorId: "identity:attn", actorType: "human" as const },
+    createdAt: ISSUED_AT };
+  const registered = (await gate.registerProfile(profile)).profile;
+  const profileDigest = sha256Digest(registered);
+  const subjectDigest = evidence.contentHash;
+  const target = { schemaVersion: "control-room-completion-gate/v1" as const, id: "target:attn-policy",
+    tenantId: TENANT, projectId: PROJECT, kind: "document" as const, subjectId: POLICY_IDS.review,
+    subjectDigest, acceptanceProfileId: registered.id, acceptanceProfileDigest: profileDigest,
+    producer: { actorId: REAL_NODE, actorType: "agent" as const }, rootTargetId: "target:attn-policy",
+    revisionNumber: 0, submittedAt: ISSUED_AT };
+  await gate.registerTarget(target);
+  // Accepted, but the human scenario never verified: the gate says pending, so the
+  // owner still has to look at it.
+  await gate.recordReview({ schemaVersion: "control-room-completion-gate/v1", id: "review:attn-policy",
+    tenantId: TENANT, projectId: PROJECT, targetId: target.id, targetDigest: sha256Digest(target),
+    acceptanceProfileId: registered.id, acceptanceProfileDigest: profileDigest,
+    reviewer: { actorId: "identity:attn", actorType: "human" }, authority: "completion_gate",
+    decision: "accepted", assessedRisk: "low", effectiveRisk: "low", evidenceDigests: [subjectDigest].sort(),
+    findingIds: [], reviewedAt: ISSUED_AT, grantsApproval: false, grantsExecutionAuthority: false });
+  const planned = await seedPlannedResultProposal(admin, checkpoints, gate, evidence.storage);
+  // One storage holds both signed results; the reader finds each by its own job.
+  return { checkpoints, storage: evidence.storage, artifactId: evidence.artifactId, ...planned };
+}
+
+/** The configured readers: plan integrity, the signed result reader and the review reader. */
+const policyKeys = (fixture: { checkpoints: InMemoryRollbackCheckpointStoreV1; storage: InMemoryArtifactStorage }) => ({
+  taskPlanIntegrityKey: PLAN_KEY, harnessIntegrityKey: HARNESS_KEY,
+  results: { integrityKey: RESULT_KEY, storageClass: "local" as const, storage: fixture.storage },
+  reviews: { integrityKey: REVIEW_KEY, checkpoints: fixture.checkpoints } });
+const webSessions = async (admin: Client) => Number((await admin.query<{ n: number }>(
+  "SELECT count(*)::int AS n FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2", [TENANT, tokenDigest])).rows[0]!.n);
+const webBackends = async (admin: Client) => Number((await admin.query<{ n: number }>(
+  `SELECT count(*)::int AS n FROM pg_stat_activity WHERE usename='control_room_web'
+   AND application_name='control-room-private-web'`)).rows[0]!.n);
+
+/** Production-login facts recorded before any trial. */
+async function recordLoginFacts(pool: ReturnType<typeof webClient>, t: { diagnostic(message: string): void }) {
+  const facts = (await pool.client.query<Record<string, string | boolean>>(`SELECT current_user AS who,
+    (SELECT rolsuper FROM pg_roles WHERE rolname=current_user) AS superuser,
+    current_setting('server_version_num') AS version, current_setting('jit') AS jit, pg_jit_available() AS jit_available,
+    current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout,
+    current_setting('transaction_timeout') AS transaction_timeout, current_setting('jit_above_cost') AS jit_above_cost,
+    current_setting('jit_inline_above_cost') AS jit_inline_above_cost,
+    current_setting('jit_optimize_above_cost') AS jit_optimize_above_cost`)).rows[0]!;
+  assert.equal(facts.who, "control_room_web", "the policy tests must run as the production web login");
+  assert.equal(facts.superuser, false, "the production web login must not be a superuser");
+  assert.equal(facts.jit, "on", "ambient JIT must start on, otherwise 'off' proves nothing");
+  assert.equal(facts.statement_timeout, "5s", "the five-second statement deadline must be unchanged");
+  assert.equal(facts.transaction_timeout, "10s", "the ten-second transaction bound must be unchanged");
+  assert.equal(facts.lock_timeout, "2s", "the two-second lock timeout must be unchanged");
+  t.diagnostic(JSON.stringify({ productionLogin: facts }));
+}
+
+test("ATTNJIT-01: workspace attention disables JIT only in its transaction", needsPg(), async t => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin());
+    await admin.connect();
+    const pool = webClient(postgres as never, { max: 1 });
+    const unrelated = new Client(postgres.connection("web"));
+    unrelated.on("error", () => {});
+    try {
+      const fixture = await seedPolicyFixture(admin);
+      assert.equal(await webSessions(admin), 0, "the product-owned web session must be absent before the first read");
+      await unrelated.connect();
+      await recordLoginFacts(pool, t);
+
+      // A second transaction on ANOTHER backend, opened while the attention
+      // transaction is mid-way: it must keep the ambient setting.
+      let simultaneous: { jit: string; pid: number } | undefined;
+      const observer = observeJit(pool.client as DatabaseClient, async ({ samples }) => {
+        const grantsAt = samples.findIndex(sample => sample.sql.includes(GRANTS_STATEMENT));
+        if (simultaneous || grantsAt < 0 || samples.length - 1 - (grantsAt + 1) !== 2) return;
+        await unrelated.query("BEGIN");
+        simultaneous = (await unrelated.query<{ jit: string; pid: number }>(
+          "SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid")).rows[0]!;
+        await unrelated.query("COMMIT");
+      });
+      const tasks = new WebTaskService(observer.client, SCOPE, () => Date.now(), policyKeys(fixture));
+
+      const first = await tasks.attention(identity);
+      assert.equal(await webSessions(admin), 1, "the first real read must create the session through the product's own INSERT");
+      const expectedFirst = expectedPage("workspace", null, fixture);
+      assert.deepEqual(seenPage(first), expectedFirst, "ATTNJIT-01 workspace first page: wrong answer through the configured readers");
+      // The planned proposal is on the page ONLY because its saved plan was authenticated (the plan
+      // suppresses "proposal"); the result-evidence and gate readers carried its unreviewed result.
+      assert.equal((await admin.query("SELECT 1 FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
+        [TENANT, PLANNED_ID])).rows.length, 1, "the real planner's saved plan must be on disk");
+      assert.equal(first.nextCursor, null);
+      const firstSamples = observer.transactions[0]!;
+      const operation = assertJitOffInOperation(firstSamples, "ATTNJIT-01 workspace first page", 4,
+        readersFor("workspace", expectedFirst.ids));
+      const afterCommit = await backendSetting(pool.client);
+      assert.equal(afterCommit.pid, firstSamples[0]!.pid, "the post-COMMIT read must be on the attention backend");
+      assert.equal(afterCommit.jit, "on", "ATTNJIT-01: JIT stayed off on the pooled backend after COMMIT");
+      assert.equal(await webBackends(admin), 1, "the one-connection pool must have exactly one backend");
+      assert.ok(simultaneous, "the simultaneous unrelated transaction must have run mid-operation");
+      assert.notEqual(simultaneous.pid, firstSamples[0]!.pid, "the unrelated transaction must be a different backend");
+      assert.equal(simultaneous.jit, "on", "ATTNJIT-01: an unrelated simultaneous transaction saw jit off");
+
+      // First page, non-empty cursors and the empty page past the last row.
+      for (const after of [POLICY_IDS.approval, POLICY_IDS.review, POLICY_IDS.proposal, PLANNED_ID]) {
+        const page = await tasks.attention(identity, after);
+        const expectedAfter = expectedPage("workspace", after, fixture);
+        assert.deepEqual(seenPage(page), expectedAfter, `page after ${after}`);
+        assert.equal(page.nextCursor, null);
+        assertJitOffInOperation(observer.transactions.at(-1)!, `ATTNJIT-01 workspace after ${after}`, 2,
+          readersFor("workspace", expectedAfter.ids));
+        assert.equal((await backendSetting(pool.client)).jit, "on", `ATTNJIT-01: jit stayed off after COMMIT (after ${after})`);
+      }
+      const empty = await tasks.attention(identity, fixture.preparedJobId);
+      assert.deepEqual({ items: empty.items, examined: empty.examined, nextCursor: empty.nextCursor },
+        { items: [], examined: 0, nextCursor: null }, "past the last row the page is empty");
+
+      // An unrelated Home read keeps the ambient setting on the very same backend.
+      const homeObserver = observeJit(pool.client as DatabaseClient);
+      await new WebTaskService(homeObserver.client, SCOPE, () => Date.now(), policyKeys(fixture)).home(identity);
+      const homeSamples = homeObserver.transactions[0]!;
+      assert.ok(homeSamples.length >= 6, `Home must have issued its own statements, saw ${homeSamples.length}`);
+      assertJitUntouched(homeSamples, "ATTNJIT-01 Home");
+
+      // Refusals that happen before the operation never issue the policy.
+      const refusals: [string, WebTaskService, VerifiedWebIdentity, string][] = [
+        ["unknown identity", tasks, { ...identity, subject: "nobody" }, "access_denied"],
+        ["wrong tenant", new WebTaskService(observer.client, { tenantId: "tenant:other", workspaceId: WORKSPACE }, () => Date.now()),
+          identity, "access_denied"],
+      ];
+      for (const [label, service, who, code] of refusals) {
+        const before = observer.transactions.length;
+        await assert.rejects(service.attention(who), (error: unknown) => error instanceof WebAccessError && error.code === code, label);
+        assertJitUntouched(observer.transactions.slice(before).flat(), `ATTNJIT-01 refusal: ${label}`);
+        assert.equal((await backendSetting(pool.client)).jit, "on", `ATTNJIT-01: jit changed by the refusal: ${label}`);
+      }
+      // The revoked session is produced by the product, never seeded by the administrator: the first
+      // authenticated read creates the row through the authority's own INSERT, then the authority's own
+      // logout revokes it, both as the production login.
+      const revoked = sha256Digest({ session: "attnjit-revoked" });
+      const revokedIdentity = { ...identity, tokenDigest: revoked };
+      const revokedRows = async () => (await admin.query<{ revoked_at: Date | null }>(
+        "SELECT revoked_at FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2", [TENANT, revoked])).rows;
+      assert.deepEqual(await revokedRows(), [], "the secondary session must be absent before the real producer runs");
+      await tasks.attention(revokedIdentity);
+      const created = await revokedRows();
+      assert.equal(created.length, 1, "the first authenticated read must create the secondary session through the authority");
+      assert.equal(created[0]!.revoked_at, null, "a freshly produced session is not revoked");
+      await new WebSessionAuthority(pool.client as DatabaseClient, SCOPE, () => Date.now()).logout(revokedIdentity);
+      const logged = await revokedRows();
+      assert.equal(logged.length, 1, "logout must revoke the existing row, not add another");
+      assert.ok(logged[0]!.revoked_at instanceof Date, "logout must stamp revoked_at through the authority");
+      const before = observer.transactions.length;
+      await assert.rejects(tasks.attention(revokedIdentity),
+        (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required", "revoked session");
+      assertJitUntouched(observer.transactions.slice(before).flat(), "ATTNJIT-01 refusal: revoked session");
+      const expired = { ...identity, expiresAt: new Date(Date.now() - 1000).toISOString() };
+      await assert.rejects(tasks.attention(expired),
+        (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required", "expired session");
+      const transactionsBeforeCursor = observer.transactions.length;
+      await assert.rejects(tasks.attention(identity, "not a valid cursor"),
+        (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request", "invalid cursor");
+      assert.equal(observer.transactions.length, transactionsBeforeCursor, "an invalid cursor must not open a transaction");
+      assert.equal((await backendSetting(pool.client)).jit, "on", "ATTNJIT-01: jit changed by a refusal");
+
+      t.diagnostic(JSON.stringify({ operationStatements: operation.length,
+        operationStatementKinds: operation.map(sample => sample.sql.replace(/\s+/gu, " ").slice(0, 48)) }));
+    } finally {
+      await unrelated.end().catch(() => {}); await pool.close(); await admin.end();
+    }
+  }, { port: PORT + 6, allowedPorts: PORTS, boundMs: 600_000 });
+});
+
+test("ATTNJIT-02: project inbox and reviews disable JIT only in their transaction", needsPg(), async t => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin());
+    await admin.connect();
+    const pool = webClient(postgres as never, { max: 1 });
+    const unrelated = new Client(postgres.connection("web"));
+    unrelated.on("error", () => {});
+    try {
+      const fixture = await seedPolicyFixture(admin);
+      assert.equal(await webSessions(admin), 0, "the product-owned web session must be absent before the first read");
+      await unrelated.connect();
+      await recordLoginFacts(pool, t);
+
+      let simultaneous: { jit: string; pid: number } | undefined;
+      const observer = observeJit(pool.client as DatabaseClient, async ({ samples }) => {
+        const grantsAt = samples.findIndex(sample => sample.sql.includes(GRANTS_STATEMENT));
+        if (simultaneous || grantsAt < 0 || samples.length - 1 - (grantsAt + 1) !== 2) return;
+        await unrelated.query("BEGIN");
+        simultaneous = (await unrelated.query<{ jit: string; pid: number }>(
+          "SELECT current_setting('jit') AS jit, pg_backend_pid() AS pid")).rows[0]!;
+        await unrelated.query("COMMIT");
+      });
+      const tasks = new WebTaskService(observer.client, SCOPE, () => Date.now(), policyKeys(fixture));
+      const kinds: Record<string, number> = {};
+
+      for (const mode of ["inbox", "reviews"] as const) {
+        for (const after of [null, POLICY_IDS.approval, POLICY_IDS.review, POLICY_IDS.proposal]) {
+          const label = `ATTNJIT-02 project ${mode} after ${after ?? "start"}`;
+          const page = await tasks.projectAttention(identity, PROJECT, mode, after ?? undefined);
+          const expected = expectedPage(mode, after, fixture);
+          assert.deepEqual(seenPage(page), expected, label);
+          assert.equal(page.nextCursor, null, label);
+          assert.equal(page.mode, mode, `${label}: wrong mode`);
+          const samples = observer.transactions.at(-1)!;
+          const operation = assertJitOffInOperation(samples, label, 2, readersFor(mode, expected.ids));
+          kinds[`${mode}:${operation.length}`] = (kinds[`${mode}:${operation.length}`] ?? 0) + 1;
+          const settled = await backendSetting(pool.client);
+          assert.equal(settled.pid, samples[0]!.pid, `${label}: post-COMMIT read must be on the attention backend`);
+          assert.equal(settled.jit, "on", `ATTNJIT-02: JIT stayed off on the pooled backend after COMMIT (${mode})`);
+          if (after === null && mode === "inbox")
+            assert.equal(await webSessions(admin), 1, "the first real read must create the session through the product's own INSERT");
+        }
+      }
+      assert.ok(simultaneous, "the simultaneous unrelated transaction must have run mid-operation");
+      assert.equal(simultaneous.jit, "on", "ATTNJIT-02: an unrelated simultaneous transaction saw jit off");
+      assert.equal(await webBackends(admin), 1, "the one-connection pool must have exactly one backend");
+
+      // A project the caller cannot see: the policy runs first, the operation then
+      // refuses and ROLLS BACK, and the backend must come back on.
+      for (const mode of ["inbox", "reviews"] as const) {
+        const before = observer.transactions.length;
+        await assert.rejects(tasks.projectAttention(identity, "project:other", mode),
+          (error: unknown) => error instanceof WebAccessError && error.code === "not_found", `unknown project (${mode})`);
+        const samples = observer.transactions[before]!;
+        assertJitOffInOperation(samples, `ATTNJIT-02 unknown project (${mode})`, 2);
+        const settled = await backendSetting(pool.client);
+        assert.equal(settled.pid, samples[0]!.pid);
+        assert.equal(settled.jit, "on", `ATTNJIT-02: JIT stayed off after the refused project read rolled back (${mode})`);
+      }
+      // Refusals before the operation, and a malformed project id, never touch it.
+      const before = observer.transactions.length;
+      await assert.rejects(tasks.projectAttention({ ...identity, subject: "nobody" }, PROJECT, "inbox"),
+        (error: unknown) => error instanceof WebAccessError && error.code === "access_denied", "unknown identity");
+      await assert.rejects(new WebTaskService(observer.client, { tenantId: "tenant:other", workspaceId: WORKSPACE }, () => Date.now())
+        .projectAttention(identity, PROJECT, "reviews"),
+      (error: unknown) => error instanceof WebAccessError && error.code === "access_denied", "wrong tenant");
+      assertJitUntouched(observer.transactions.slice(before).flat(), "ATTNJIT-02 refusals before the operation");
+      await assert.rejects(tasks.projectAttention(identity, "bad project id", "inbox"),
+        (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request", "malformed project id");
+      await assert.rejects(tasks.projectAttention(identity, PROJECT, "inbox", "bad cursor"),
+        (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request", "malformed cursor");
+      assert.equal((await backendSetting(pool.client)).jit, "on", "ATTNJIT-02: jit changed by a refusal");
+      t.diagnostic(JSON.stringify({ operationStatementsByModeAndLength: kinds }));
+    } finally {
+      await unrelated.end().catch(() => {}); await pool.close(); await admin.end();
+    }
+  }, { port: PORT + 7, allowedPorts: PORTS, boundMs: 600_000 });
+});
+
+test("ATTNJIT-03: failed attention restores JIT and permits retry", needsPg(), async t => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin());
+    await admin.connect();
+    const pools: ReturnType<typeof webClient>[] = [];
+    const open = () => { const created = webClient(postgres as never, { max: 1 }); pools.push(created); return created; };
+    try {
+      const fixture = await seedPolicyFixture(admin);
+      assert.equal(await webSessions(admin), 0, "the product-owned web session must be absent before the first read");
+      let pool = open();
+      await recordLoginFacts(pool, t);
+
+      type Fault = { at: number; run: (event: { sample: JitSample; samples: readonly JitSample[]; tx: DatabaseSession }) => Promise<void> };
+      let fault: Fault | undefined;
+      const faulty = (current: ReturnType<typeof webClient>) => observeJit(current.client as DatabaseClient, async ({ samples, tx }) => {
+        if (!fault) return;
+        const grantsAt = samples.findIndex(sample => sample.sql.includes(GRANTS_STATEMENT));
+        if (grantsAt < 0 || samples.length - 1 - (grantsAt + 1) !== fault.at) return;
+        const run = fault.run; fault = undefined;
+        await run({ sample: samples.at(-1)!, samples, tx });
+      });
+      // Every scenario below is a FIRST USE: the web session row is product-owned state, so the
+      // body puts the database back to "absent" (asserted) and lets the real authority wrapper
+      // write it inside the very transaction that then fails. The failed read must roll the
+      // INSERT back with it (0 rows, not 1), and the retry must write it again (1 row).
+      const startFirstUse = async (label: string) => {
+        await admin.query("DELETE FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2", [TENANT, tokenDigest]);
+        assert.equal(await webSessions(admin), 0, `${label}: the session must be absent before the first read`);
+      };
+      const retryExpectations = async (current: ReturnType<typeof webClient>, mode: AttentionMode, label: string) => {
+        const retried = faulty(current);
+        const page = await readAttention(new WebTaskService(retried.client, SCOPE, () => Date.now(), policyKeys(fixture)), mode, null);
+        const expected = expectedPage(mode, null, fixture);
+        assert.deepEqual(seenPage(page), expected, `${label}: retry answer`);
+        const samples = retried.transactions[0]!;
+        assertJitOffInOperation(samples, `ATTNJIT-03 ${label} retry`, 2, readersFor(mode, expected.ids));
+        const settled = await backendSetting(current.client);
+        assert.equal(settled.pid, samples[0]!.pid);
+        assert.equal(settled.jit, "on", `ATTNJIT-03: jit stayed off after the ${label} retry committed`);
+        assert.equal(await webSessions(admin), 1, `${label}: the retry must write the session through the product's own INSERT`);
+        return samples[0]!.pid;
+      };
+
+      // 1. A genuine SQL error (division_by_zero) AFTER the policy statement and AFTER the
+      //    first-use session INSERT, in each reader. PostgreSQL aborts the transaction, the
+      //    bounded wrapper rolls it back, the lease survives, the session row is gone again
+      //    and the backend must be back on.
+      for (const mode of ["workspace", "inbox", "reviews"] as const) {
+        await startFirstUse(`${mode} SQL error`);
+        const observer = faulty(pool);
+        const tasks = new WebTaskService(observer.client, SCOPE, () => Date.now(), policyKeys(fixture));
+        fault = { at: 2, run: async ({ tx }) => { await tx.query("SELECT 1/0"); } };
+        await assert.rejects(readAttention(tasks, mode, null), (error: unknown) => error instanceof PrivateDatabaseError
+          && error.code === "database_unavailable" && error.sqlState === "22012", `${mode}: the SQL error must surface, not be swallowed`);
+        assert.equal(fault, undefined, `${mode}: the fault must actually have fired`);
+        const samples = observer.transactions[0]!;
+        assertJitOffInOperation(samples, `ATTNJIT-03 ${mode} before the SQL error`, 3);
+        assert.equal(pool.isAvailable(), true, `${mode}: a definite SQL error must not quarantine the pool`);
+        const settled = await backendSetting(pool.client);
+        assert.equal(settled.pid, samples[0]!.pid, `${mode}: the lease must have been reused`);
+        assert.equal(settled.jit, "on", `ATTNJIT-03: jit stayed off after the failed ${mode} read rolled back`);
+        assert.equal(await webSessions(admin), 0, `ATTNJIT-03: the first-use session INSERT must roll back with the failed ${mode} read`);
+        await retryExpectations(pool, mode, `${mode} after SQL error`);
+      }
+
+      // 2. A slow statement after the policy statement outlives the five-second deadline,
+      //    on a first use. Whichever bound fires first (the server's 57014 or the wrapper's own
+      //    timer), no backend may be left with jit off and no session row may survive.
+      {
+        await startFirstUse("slow statement");
+        const observer = faulty(pool);
+        const tasks = new WebTaskService(observer.client, SCOPE, () => Date.now(), policyKeys(fixture));
+        fault = { at: 2, run: async ({ tx }) => { await tx.query("SELECT pg_sleep(8)"); } };
+        const started = performance.now();
+        await assert.rejects(tasks.attention(identity), (error: unknown) => error instanceof PrivateDatabaseError
+          && (error.code === "database_unavailable" || error.code === "database_outcome_uncertain"), "slow statement");
+        const elapsed = performance.now() - started;
+        assert.ok(elapsed < 8000, `the five-second statement deadline must fire before the 8 s sleep ends, took ${elapsed.toFixed(0)} ms`);
+        assert.equal(await webSessions(admin), 0, "ATTNJIT-03: the first-use session INSERT must not survive the cancelled read");
+        const quarantined = !pool.isAvailable();
+        if (quarantined) {
+          pool = open();
+        } else {
+          const settled = await backendSetting(pool.client);
+          assert.equal(settled.jit, "on", "ATTNJIT-03: jit stayed off after the slow statement was cancelled");
+        }
+        await retryExpectations(pool, "workspace", "slow-statement");
+        t.diagnostic(JSON.stringify({ slowStatement: { elapsedMs: Math.round(elapsed), poolQuarantined: quarantined } }));
+      }
+
+      // 3. The owned connection is dropped mid-operation, on a first use. The existing recovery
+      //    is to quarantine the pool and replace it; no retry is promised on the old one. The
+      //    dead backend's transaction (and its session INSERT) is gone, and the replacement must
+      //    come up with the ambient setting.
+      {
+        await startFirstUse("dropped connection");
+        const observer = faulty(pool);
+        const tasks = new WebTaskService(observer.client, SCOPE, () => Date.now(), policyKeys(fixture));
+        let terminated: number | undefined;
+        fault = { at: 2, run: async ({ sample }) => {
+          terminated = sample.pid;
+          assert.equal((await admin.query<{ ok: boolean }>("SELECT pg_terminate_backend($1) AS ok", [sample.pid])).rows[0]!.ok, true);
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            if ((await admin.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1", [sample.pid])).rows.length === 0) return;
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+          assert.fail("the terminated backend never disappeared");
+        } };
+        await assert.rejects(tasks.attention(identity), (error: unknown) => error instanceof PrivateDatabaseError
+          && error.code === "database_outcome_uncertain", "dropped connection");
+        assert.ok(terminated !== undefined);
+        assert.equal(pool.isAvailable(), false, "an outcome-uncertain failure quarantines the pool");
+        assert.equal(await webSessions(admin), 0, "ATTNJIT-03: the dropped backend's first-use session INSERT must be gone");
+        await assert.rejects(new WebTaskService(pool.client as DatabaseClient, SCOPE, () => Date.now(), policyKeys(fixture)).attention(identity),
+          (error: unknown) => error instanceof PrivateDatabaseError && error.code === "database_unavailable",
+          "the quarantined pool must refuse, not silently retry");
+        pool = open();
+        const replacement = await retryExpectations(pool, "workspace", "dropped-connection");
+        assert.notEqual(replacement, terminated, "the replacement must be a different backend");
+        assert.equal((await admin.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1", [terminated])).rows.length, 0,
+          "the dropped backend must stay gone");
+      }
+      assert.equal(await webSessions(admin), 1, "no failure may have duplicated or removed the retried session row");
+    } finally {
+      for (const created of pools) await created.close().catch(() => {});
+      await admin.end();
+    }
+  }, { port: PORT + 8, allowedPorts: PORTS, boundMs: 600_000 });
+});
+
+// Two separate Node processes, each with its OWN production pool, run the readers
+// at once. Each child reaches an observable barrier (eight transactions open per
+// pool, every one past the policy statement) and only then does the parent release
+// them, so the overlap is a fact the parent reads from pg_stat_activity, not a
+// timing assumption. The barrier is held with short statements, never an idle
+// transaction, so the server's idle-in-transaction timeout cannot fire.
+const ATTNJIT_CHILD_SOURCE = [
+  'import { Pool } from "pg";',
+  'import { bindPrivatePgPool } from "./src/web/v1/private-pg-database.ts";',
+  'import { privatePgOptions } from "./src/web/v1/private-pg-options.ts";',
+  'import { WebTaskService } from "./src/web/v1/task-service.ts";',
+  'const cfg = JSON.parse(process.env.ATTNJIT_CHILD);',
+  'const bytes = hex => Uint8Array.from(Buffer.from(hex, "hex"));',
+  '// The same configured readers as the parent: plan key, signed result reader, review reader. The review',
+  '// checkpoint is the parent\'s final value, served read-only (the readers never write one).',
+  'const keys = { taskPlanIntegrityKey: bytes(cfg.keys.plan), harnessIntegrityKey: bytes(cfg.keys.harness),',
+  '  results: { integrityKey: bytes(cfg.keys.result), storageClass: "local", storage: { read: async () => undefined } },',
+  '  reviews: { integrityKey: bytes(cfg.keys.review), checkpoints: { read: scope => scope === cfg.checkpoint.scope ? cfg.checkpoint : undefined,',
+  '    initialize: () => { throw new Error("read_only"); }, advance: () => { throw new Error("read_only"); } } } };',
+  'const emit = event => process.stdout.write(JSON.stringify(event) + "\\n");',
+  'const database = bindPrivatePgPool(new Pool({ ...privatePgOptions({ host: "127.0.0.1", port: cfg.port,',
+  '  database: cfg.database, username: cfg.user, password: cfg.password, majorVersion: 17 }), host: cfg.host }));',
+  'const state = { released: false, reached: 0, rejected: 0, announced: false, width: 0, expectRejected: 0 };',
+  'const announce = () => { if (!state.announced && state.reached >= state.width && state.rejected >= state.expectRejected) {',
+  '  state.announced = true; emit({ event: "at-barrier", reached: state.reached, rejected: state.rejected }); } };',
+  'const observe = (tx, samples) => ({ query: async (sql, params) => {',
+  '  const probe = (await tx.query("SELECT current_setting(\'jit\') AS jit, pg_backend_pid() AS pid")).rows[0];',
+  '  samples.push({ sql: sql.slice(0, 60), jit: probe.jit, pid: probe.pid,',
+  '    readers: Object.entries(cfg.readers).filter(([, marker]) => sql.includes(marker)).map(([name]) => name) });',
+  '  const grantsAt = samples.findIndex(sample => sample.sql.includes("FROM control_role_grants"));',
+  '  if (grantsAt >= 0 && samples.length - 1 - (grantsAt + 1) === 1 && !samples.gated) {',
+  '    samples.gated = true; state.reached += 1; announce();',
+  '    const deadline = Date.now() + 8000;',
+  '    while (!state.released) { if (Date.now() > deadline) throw new Error("barrier_timeout"); await tx.query("SELECT pg_sleep(0.02)"); }',
+  '  }',
+  '  return tx.query(sql, params);',
+  '} });',
+  'const clientFor = samples => Object.freeze({',
+  '  query: (sql, params) => database.client.query(sql, params),',
+  '  transaction: work => database.client.transaction(tx => work(observe(tx, samples))),',
+  '  transactionWithPreCommitCheck: (work, check) => database.client.transactionWithPreCommitCheck(tx => work(observe(tx, samples)), check) });',
+  'const call = async spec => {',
+  '  const samples = []; const began = performance.now();',
+  '  const tasks = new WebTaskService(clientFor(samples), cfg.scope, () => Date.now(), keys);',
+  '  try {',
+  '    const page = spec.mode === "workspace" ? await tasks.attention(cfg.identity, spec.after ?? undefined)',
+  '      : await tasks.projectAttention(cfg.identity, cfg.project, spec.mode, spec.after ?? undefined);',
+  '    return { spec, ok: true, ids: page.items.map(item => item.task.jobId),',
+  '      reasons: Object.fromEntries(page.items.map(item => [item.task.jobId, item.reasons])),',
+  '      artifacts: page.items.every(item => item.resultArtifactIds === undefined) ? undefined',
+  '        : Object.fromEntries(page.items.map(item => [item.task.jobId, item.resultArtifactIds ?? []])),',
+  '      examined: page.examined, nextCursor: page.nextCursor, samples, ms: performance.now() - began };',
+  '  } catch (error) {',
+  '    if (samples.length === 0) { state.rejected += 1; announce(); }',
+  '    return { spec, ok: false, error: { name: error?.constructor?.name, code: error?.code, sqlState: error?.sqlState },',
+  '      samples, ms: performance.now() - began };',
+  '  }',
+  '};',
+  'const handle = async command => {',
+  '  if (command.cmd === "release") { state.released = true; return; }',
+  '  if (command.cmd !== "run") throw new Error("unknown command");',
+  '  Object.assign(state, { released: false, reached: 0, rejected: 0, announced: false, width: command.width, expectRejected: command.expectRejected });',
+  '  const results = await Promise.all(command.callers.map(call));',
+  '  const post = await Promise.all(Array.from({ length: command.postProbes }, () => database.client.query(',
+  '    "SELECT pg_backend_pid() AS pid, current_setting(\'jit\') AS jit, pg_sleep(0.1)")));',
+  '  emit({ event: "done", phase: command.phase, results, post: post.map(result => ({ pid: result.rows[0].pid, jit: result.rows[0].jit })) });',
+  '};',
+  'let buffer = "";',
+  'process.stdin.setEncoding("utf8");',
+  'process.stdin.on("data", chunk => { buffer += chunk; let newline;',
+  '  while ((newline = buffer.indexOf("\\n")) >= 0) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);',
+  '    if (line) handle(JSON.parse(line)).catch(error => { emit({ event: "fatal", message: String(error && error.stack || error) }); process.exit(1); }); } });',
+  'process.stdin.on("end", () => { database.close().catch(() => {}).finally(() => process.exit(0)); });',
+  'emit({ event: "ready" });',
+].join("\n");
+
+interface ChildEvent { event: string; [key: string]: unknown }
+class AttentionChild {
+  readonly events: ChildEvent[] = [];
+  private readonly proc: ChildProcessWithoutNullStreams;
+  private buffer = "";
+  stderr = "";
+  readonly exited: Promise<number | null>;
+  constructor(readonly label: string, config: unknown) {
+    this.proc = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", ATTNJIT_CHILD_SOURCE],
+      { cwd: REPOSITORY_ROOT, env: { ...process.env, ATTNJIT_CHILD: JSON.stringify(config) }, stdio: ["pipe", "pipe", "pipe"] });
+    this.proc.stdout.setEncoding("utf8"); this.proc.stderr.setEncoding("utf8");
+    this.proc.stdout.on("data", (chunk: string) => {
+      this.buffer += chunk;
+      for (let newline = this.buffer.indexOf("\n"); newline >= 0; newline = this.buffer.indexOf("\n")) {
+        const line = this.buffer.slice(0, newline); this.buffer = this.buffer.slice(newline + 1);
+        if (line) this.events.push(JSON.parse(line) as ChildEvent);
+      }
+    });
+    this.proc.stderr.on("data", (chunk: string) => { this.stderr += chunk; });
+    this.exited = new Promise(resolve => this.proc.once("close", code => resolve(code)));
+  }
+  send(command: unknown) { this.proc.stdin.write(`${JSON.stringify(command)}\n`); }
+  async next(event: string, from = 0, timeoutMs = 90_000): Promise<ChildEvent> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const fatal = this.events.find(candidate => candidate.event === "fatal");
+      if (fatal) throw new Error(`${this.label} failed: ${String(fatal.message)}\n${this.stderr}`);
+      const found = this.events.slice(from).find(candidate => candidate.event === event);
+      if (found) return found;
+      if (Date.now() > deadline) throw new Error(`${this.label} never reported ${event}\n${this.stderr}`);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
+  async stop() {
+    this.proc.stdin.end();
+    const timer = setTimeout(() => this.proc.kill("SIGKILL"), 15_000);
+    try { return await this.exited; } finally { clearTimeout(timer); this.proc.kill("SIGKILL"); }
+  }
+  kill() { this.proc.kill("SIGKILL"); }
+}
+
+type ChildResult = { spec: { mode: AttentionMode; after: string | null }; ok: boolean; ids?: string[];
+  reasons?: Record<string, string[]>; artifacts?: Record<string, string[]>; examined?: number; nextCursor?: string | null;
+  samples: JitSample[]; ms: number;
+  error?: { name?: string; code?: string; sqlState?: string } };
+
+test("ATTNJIT-04: concurrent attention keeps JIT scoped and preserves answers", needsPg(), async t => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin());
+    await admin.connect();
+    const login = postgres.connection("web");
+    const own = webClient(postgres as never, { max: 1 });
+    const children: AttentionChild[] = [];
+    try {
+      const fixture = await seedPolicyFixture(admin);
+      assert.equal(await webSessions(admin), 0, "the product-owned web session must be absent before the first read");
+      await recordLoginFacts(own, t);
+      // The real producer writes the session once; the concurrent callers then
+      // contend on a committed row instead of on one uncommitted first-use insert.
+      const warm = await new WebTaskService(own.client as DatabaseClient, SCOPE, () => Date.now(), policyKeys(fixture)).attention(identity);
+      assert.deepEqual(seenPage(warm), expectedPage("workspace", null, fixture), "ATTNJIT-04 warm read: wrong answer through the configured readers");
+      assert.equal(await webSessions(admin), 1, "the first real read must create the session through the product's own INSERT");
+
+      const deadlocks = async () => Number((await admin.query<{ n: string }>(
+        "SELECT deadlocks::text AS n FROM pg_stat_database WHERE datname=current_database()")).rows[0]!.n);
+      const deadlocksBefore = await deadlocks();
+      const checkpoint = fixture.checkpoints.read(`completion-gate:${TENANT}`);
+      assert.ok(checkpoint, "the review checkpoint must exist after seeding");
+      const hex = (key: Uint8Array) => Buffer.from(key).toString("hex");
+      const config = { host: login.host, port: postgres.port, database: postgres.database, user: login.user, password: login.password,
+        scope: SCOPE, identity, project: PROJECT, readers: READERS, checkpoint,
+        keys: { plan: hex(PLAN_KEY), harness: hex(HARNESS_KEY), result: hex(RESULT_KEY), review: hex(REVIEW_KEY) } };
+      children.push(new AttentionChild("child A", config), new AttentionChild("child B", config));
+      await Promise.all(children.map(child => child.next("ready")));
+
+      const specs: { mode: AttentionMode; after: string | null }[] = [];
+      for (const mode of ["workspace", "inbox", "reviews"] as const)
+        for (const after of [null, POLICY_IDS.approval, POLICY_IDS.review, POLICY_IDS.proposal]) specs.push({ mode, after });
+      assert.equal(specs.length, 12);
+      const activeLeases = async () => Number((await admin.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE usename=$1 AND application_name='control-room-private-web'
+         AND xact_start IS NOT NULL`, [login.user])).rows[0]!.n);
+
+      const runPhase = async (phase: string, callers: typeof specs, expectRejected: number) => {
+        const marks = children.map(child => child.events.length);
+        for (const child of children) child.send({ cmd: "run", phase, callers, width: 8, expectRejected, postProbes: 8 });
+        await Promise.all(children.map((child, index) => child.next("at-barrier", marks[index]!)));
+        // Both pools are at the barrier: the server must show exactly the pool
+        // width of open transactions from each of the two processes.
+        const open = await activeLeases();
+        assert.equal(open, 16, `${phase}: two pools of eight must hold sixteen open transactions at the barrier, saw ${open}`);
+        for (const child of children) child.send({ cmd: "release" });
+        return Promise.all(children.map(async (child, index) => {
+          const done = await child.next("done", marks[index]!, 120_000);
+          return { results: done.results as ChildResult[], post: done.post as { pid: number; jit: string }[] };
+        }));
+      };
+
+      const assertAnswered = (result: ChildResult, label: string) => {
+        assert.equal(result.ok, true, `${label}: ${JSON.stringify(result.error)}`);
+        const expected = expectedPage(result.spec.mode, result.spec.after, fixture);
+        assert.deepEqual({ ids: result.ids, reasons: result.reasons, examined: result.examined, artifacts: result.artifacts },
+          expected, `${label}: wrong answer for ${JSON.stringify(result.spec)}`);
+        assert.equal(result.nextCursor, null, label);
+        assertJitOffInOperation(result.samples, `ATTNJIT-04 ${label} ${JSON.stringify(result.spec)}`, 2,
+          readersFor(result.spec.mode, expected.ids));
+      };
+      const timings: Record<string, unknown> = {};
+      const pidSets: Set<number>[] = [new Set(), new Set()];
+
+      // Phase 1: 12 callers per process (24 in all), eight active leases per pool, four queued.
+      const main = await runPhase("main", specs, 0);
+      main.forEach(({ results, post }, proc) => {
+        assert.equal(results.length, 12);
+        results.forEach((result, index) => { assertAnswered(result, `child ${proc} caller ${index}`); pidSets[proc]!.add(result.samples[0]!.pid); });
+        assert.equal(pidSets[proc]!.size, 8, `child ${proc}: eight backends must have served the callers`);
+        assert.equal(new Set(post.map(entry => entry.pid)).size, 8, `child ${proc}: the eight post-probes must cover every pooled backend`);
+        for (const entry of post) assert.equal(entry.jit, "on", `ATTNJIT-04: pooled backend ${entry.pid} kept jit off after COMMIT`);
+        for (const pid of pidSets[proc]!) assert.ok(post.some(entry => entry.pid === pid), `backend ${pid} was never re-read after COMMIT`);
+        const ms = results.map(result => result.ms).sort((a, b) => a - b);
+        timings[`main child ${proc}`] = { medianMs: Math.round(ms[6]!), maxMs: Math.round(ms[11]!) };
+      });
+      assert.equal([...pidSets[0]!].some(pid => pidSets[1]!.has(pid)), false, "the two processes must use distinct backends");
+
+      // Phase 2: 20 callers per process against a pool of eight. Eight are admitted,
+      // eight may wait for a lease, the remaining four are refused at once.
+      const saturation = specs.concat(specs).slice(0, 20);
+      const saturated = await runPhase("saturation", saturation, 4);
+      saturated.forEach(({ results, post }, proc) => {
+        assert.equal(results.length, 20);
+        const refused = results.map((result, index) => ({ result, index })).filter(({ result }) => !result.ok);
+        assert.deepEqual(refused.map(({ index }) => index), [16, 17, 18, 19],
+          `child ${proc}: only the callers beyond the pool and its queue are refused`);
+        for (const { result } of refused) {
+          assert.equal(result.error?.code, "database_unavailable", `child ${proc}: refusal code`);
+          assert.equal(result.samples.length, 0, `child ${proc}: a refused caller must not have run any statement`);
+        }
+        results.forEach((result, index) => { if (result.ok) assertAnswered(result, `saturation child ${proc} caller ${index}`); });
+        for (const entry of post) assert.equal(entry.jit, "on", `ATTNJIT-04: pooled backend ${entry.pid} kept jit off after the saturated burst`);
+        const ms = results.filter(result => result.ok).map(result => result.ms).sort((a, b) => a - b);
+        timings[`saturation child ${proc}`] = { admitted: ms.length, refused: refused.length, medianMs: Math.round(ms[7]!), maxMs: Math.round(ms.at(-1)!) };
+      });
+
+      for (const child of children) assert.equal(await child.stop(), 0, `${child.label} must exit cleanly: ${child.stderr}`);
+      for (let attempt = 0; attempt < 400 && await webBackends(admin) > 1; attempt += 1)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      assert.equal(await deadlocks() - deadlocksBefore, 0, "PostgreSQL must report no deadlocks across the run");
+      assert.equal((await backendSetting(own.client)).jit, "on", "the parent's own backend is untouched");
+      t.diagnostic(JSON.stringify({ callers: { main: 24, saturation: 40 }, openAtBarrier: 16, timings }));
+    } finally {
+      for (const child of children) child.kill();
+      await Promise.all(children.map(child => child.exited.catch(() => null)));
+      await own.close().catch(() => {}); await admin.end();
+    }
+  }, { port: PORT + 9, allowedPorts: PORTS, boundMs: 900_000 });
 });
