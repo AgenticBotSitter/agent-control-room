@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { catalogProjectIdSchema } from "./project-wire";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { attemptRecordSchema, jobRecordSchema, requestRecordSchema, workflowRecordSchema } from "../../domain/v1";
 import { verifyStoredHarnessRunV1, type StoredHarnessRunRowV1 } from "../../harness/v1/store";
@@ -5,10 +7,12 @@ import type { HarnessEventPayloadV1, HarnessRunState, HarnessRunV1 } from "../..
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1, SESSION_WATCH_PAGE_SIZE_V1,
-  sessionWatchIdSchema, sessionWatchItemSchemaV1, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "./session-watch-wire";
+  sessionWatchCursorSchemaV1, sessionWatchIdSchema, sessionWatchItemSchemaV1, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "./session-watch-wire";
 
 type SessionWatchRow = {
   session_id: string;
+  attempt_number: number;
+  worker_id: string | null;
   attempt_state: string;
   attempt_version: number | string;
   attempt_updated_at: string | Date;
@@ -69,17 +73,21 @@ export function projectSessionWatchStateV1(input: Readonly<{ runState: HarnessRu
 export function projectSessionWatchItemV1(input: Readonly<{ run: HarnessRunV1; event?: HarnessEventPayloadV1;
   eventAt?: string; jobState: string; taskTitle: string; attemptId: string; attemptNumber: number;
   worker: string | null; model: string | null; effort: string | null; observedAt: string }>): SessionWatchItemV1 {
+  return sessionWatchItemSchemaV1.parse(projectedItem(input));
+}
+
+function projectedItem(input: Parameters<typeof projectSessionWatchItemV1>[0]) {
   const started = input.run.startedAt ?? input.run.createdAt;
   const ended = input.run.finishedAt ?? input.observedAt;
   const durationSeconds = Math.max(0, Math.floor((Date.parse(ended) - Date.parse(started)) / 1000));
-  return sessionWatchItemSchemaV1.parse({ sessionId: input.attemptId, runId: input.run.id, projectId: input.run.projectId, jobId: input.run.jobId,
+  return { sessionId: input.attemptId, runId: input.run.id, projectId: input.run.projectId, jobId: input.run.jobId,
     taskTitle: input.taskTitle, attemptId: input.attemptId, attemptNumber: input.attemptNumber, worker: input.worker,
     harness: input.run.harness, model: input.run.modelSelection?.model ?? input.model,
     effort: input.run.modelSelection?.effort ?? input.effort, stage: progressLabel(input.event, input.run.state),
     state: projectSessionWatchStateV1({ runState: input.run.state, jobState: input.jobState,
       lastObservedAt: input.run.lastObservedAt, observedAt: input.observedAt }), durationSeconds,
     lastProgressAt: input.eventAt ?? input.run.lastObservedAt, lastProgress: progressLabel(input.event, input.run.state),
-    expectedHeartbeatSeconds: SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 / 1000 });
+    expectedHeartbeatSeconds: SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 / 1000 };
 }
 
 /**
@@ -88,8 +96,10 @@ export function projectSessionWatchItemV1(input: Readonly<{ run: HarnessRunV1; e
  * as if it were a healthy session) rather than failing the whole page — the caller is responsible for that.
  */
 function validateCanonical(row: SessionWatchRow, tenantId: string) {
-  const attempt = attemptRecordSchema.parse(row.attempt_payload), job = jobRecordSchema.parse(row.job_payload);
-  const workflow = workflowRecordSchema.parse(row.workflow_payload), request = requestRecordSchema.parse(row.request_payload);
+  const a = attemptRecordSchema.safeParse(row.attempt_payload), j = jobRecordSchema.safeParse(row.job_payload);
+  const w = workflowRecordSchema.safeParse(row.workflow_payload), q = requestRecordSchema.safeParse(row.request_payload);
+  if (!a.success || !j.success || !w.success || !q.success) return null;
+  const attempt = a.data, job = j.data, workflow = w.data, request = q.data;
   const lineageOk = attempt.id === row.session_id && attempt.jobId === row.job_id && attempt.state === row.attempt_state
     && attempt.version === Number(row.attempt_version) && job.id === row.job_id && job.state === row.job_state
     && job.version === Number(row.job_version) && job.projectId === row.project_id && job.workflowId === row.workflow_id
@@ -100,16 +110,42 @@ function validateCanonical(row: SessionWatchRow, tenantId: string) {
   return { attempt, request, lineageOk };
 }
 
-function unavailableItem(row: SessionWatchRow, attempt: ReturnType<typeof validateCanonical>["attempt"], request: ReturnType<typeof validateCanonical>["request"],
+function unavailableItem(row: SessionWatchRow, attempt: NonNullable<ReturnType<typeof validateCanonical>>["attempt"], request: NonNullable<ReturnType<typeof validateCanonical>>["request"],
   observedAt: string): SessionWatchItemV1 {
   const started = attempt.startedAt ?? attempt.offeredAt;
-  return sessionWatchItemSchemaV1.parse({ sessionId: attempt.id, runId: null, projectId: row.project_id,
+  const projected = sessionWatchItemSchemaV1.safeParse({ sessionId: attempt.id, runId: null, projectId: row.project_id,
     jobId: row.job_id, taskTitle: request.title, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
     worker: attempt.workerId ?? null, harness: null, model: row.selected_model, effort: row.selected_effort,
     stage: "run evidence unavailable", state: "stalled",
     durationSeconds: Math.max(0, Math.floor((Date.parse(observedAt) - Date.parse(started)) / 1000)),
-    lastProgressAt: new Date(row.attempt_updated_at).toISOString(), lastProgress: `canonical attempt ${attempt.state}`,
+    lastProgressAt: attemptTimestamp(row.attempt_updated_at), lastProgress: `canonical attempt ${attempt.state}`,
     expectedHeartbeatSeconds: SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 / 1000 });
+  return projected.success ? projected.data : unreadableItem(row);
+}
+
+function attemptTimestamp(value: string | Date): string | null {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const iso = date.toISOString();
+  return z.string().datetime().safeParse(iso).success ? iso : null;
+}
+
+function unreadableItem(row: SessionWatchRow): SessionWatchItemV1 {
+  const fields = sessionWatchItemSchemaV1.options[1].shape;
+  const validOrNull = <T,>(schema: z.ZodType<T>, value: unknown): T | null => {
+    const result = schema.safeParse(value);
+    return result.success ? result.data : null;
+  };
+  const title = `Session ${row.session_id}`;
+  let prefix = title.slice(0, 179);
+  if (/[\uD800-\uDBFF]$/.test(prefix)) prefix = prefix.slice(0, -1);
+  return { sessionId: row.session_id, taskTitle: title.length <= 180 ? title : `${prefix}…`,
+    projectId: validOrNull(catalogProjectIdSchema, row.project_id), jobId: validOrNull(sessionWatchIdSchema, row.job_id),
+    attemptId: validOrNull(sessionWatchIdSchema, row.session_id), attemptNumber: validOrNull(fields.attemptNumber, row.attempt_number),
+    worker: validOrNull(fields.worker, row.worker_id), model: validOrNull(fields.model, row.selected_model),
+    effort: validOrNull(fields.effort, row.selected_effort), runId: null, harness: null, durationSeconds: null,
+    state: "unreadable", stage: "Session details could not be read", lastProgress: "Saved row updated",
+    lastProgressAt: attemptTimestamp(row.attempt_updated_at), expectedHeartbeatSeconds: 120 };
 }
 
 /** Owner-only, workspace-wide projection over signed saved run evidence. It has no command port. */
@@ -137,7 +173,7 @@ export class SessionWatchServiceV1 {
   }
 
   async read(identity: VerifiedWebIdentity, after?: string) {
-    if (after !== undefined && !sessionWatchIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
+    if (after !== undefined && !sessionWatchCursorSchemaV1.safeParse(after).success) throw new WebAccessError("invalid_request");
     return this.authenticated(identity, async (tx, observedAt) => {
       if (!this.key) return sessionWatchPageSchemaV1.parse({ source: "not_configured", sessions: [], nextCursor: null,
         observedAt, startsWork: false });
@@ -155,7 +191,7 @@ export class SessionWatchServiceV1 {
           LEFT JOIN LATERAL (SELECT last_observed_at FROM control_harness_runs
             WHERE tenant_id=ca.tenant_id AND attempt_id=ca.id ORDER BY created_at DESC,id DESC LIMIT 1) cr ON true
           WHERE ca.tenant_id=$1 AND ca.id=$3
-        ) SELECT a.id AS session_id,a.state AS attempt_state,a.version AS attempt_version,a.updated_at AS attempt_updated_at,
+        ) SELECT a.id AS session_id,a.attempt_number,a.worker_id,a.state AS attempt_state,a.version AS attempt_version,a.updated_at AS attempt_updated_at,
           a.payload AS attempt_payload,j.id AS job_id,j.state AS job_state,j.version AS job_version,j.project_id,
           j.workflow_id,j.payload AS job_payload,w.payload AS workflow_payload,q.payload AS request_payload,
           r.id AS run_id,r.tenant_id AS run_tenant_id,r.project_id AS run_project_id,r.job_id AS run_job_id,
@@ -187,7 +223,9 @@ export class SessionWatchServiceV1 {
         SESSION_WATCH_PAGE_SIZE_V1 + 1])).rows;
       const sessions: SessionWatchItemV1[] = [];
       for (const row of rows.slice(0, SESSION_WATCH_PAGE_SIZE_V1)) {
-        const { attempt, request, lineageOk } = validateCanonical(row, this.scope.tenantId);
+        const canonical = validateCanonical(row, this.scope.tenantId);
+        if (!canonical) { sessions.push(unreadableItem(row)); continue; }
+        const { attempt, request, lineageOk } = canonical;
         const runLineageOk = row.run_attempt_id === attempt.id && row.run_job_id === row.job_id
           && row.run_project_id === row.project_id && row.run_node_id === attempt.nodeId;
         if (!lineageOk || !row.run_id || row.event_rows.length > 1024 || !runLineageOk) {
@@ -201,11 +239,21 @@ export class SessionWatchServiceV1 {
           last_sequence: row.run_last_sequence!, run_digest: row.run_digest!, run_auth_tag: row.run_auth_tag!, state: row.run_state!,
           created_at: row.run_created_at!, updated_at: row.run_updated_at!, last_observed_at: row.run_last_observed_at!,
           event_rows: row.event_rows };
-        const run = verifyStoredHarnessRunV1(stored, this.key);
+        let run: HarnessRunV1;
+        try { run = verifyStoredHarnessRunV1(stored, this.key); }
+        catch (error) {
+          if (error instanceof z.ZodError
+            || error instanceof Error && ["harness run integrity failure", "harness event integrity failure"].includes(error.message)
+            || error instanceof RangeError && error.message === "Invalid time value") {
+            sessions.push(unreadableItem(row)); continue;
+          }
+          throw error;
+        }
         const latest = row.event_rows.at(-1)?.payload;
-        sessions.push(projectSessionWatchItemV1({ run, event: latest?.payload, eventAt: latest?.occurredAt,
+        const projected = sessionWatchItemSchemaV1.safeParse(projectedItem({ run, event: latest?.payload, eventAt: latest?.occurredAt,
           jobState: row.job_state, taskTitle: request.title, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
           worker: attempt.workerId ?? null, model: row.selected_model, effort: row.selected_effort, observedAt }));
+        sessions.push(projected.success ? projected.data : unreadableItem(row));
       }
       return sessionWatchPageSchemaV1.parse({ source: "configured", sessions,
         nextCursor: rows.length > SESSION_WATCH_PAGE_SIZE_V1 ? rows[SESSION_WATCH_PAGE_SIZE_V1 - 1]!.session_id : null,

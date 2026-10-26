@@ -8,11 +8,14 @@ import { SecurityStore, sha256Digest } from "../src/security";
 import { createAccessVerifier, WebAccessError } from "../src/web/v1/access-verifier";
 import { readSessionWatchV1 } from "../src/web/v1/session-watch-browser-client";
 import { projectSessionWatchItemV1, projectSessionWatchStateV1, SessionWatchServiceV1 } from "../src/web/v1/session-watch-service";
-import { SESSION_WATCH_PAGE_SIZE_V1, sessionWatchIdSchema, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "../src/web/v1/session-watch-wire";
+import { SESSION_WATCH_PAGE_SIZE_V1, sessionWatchIdSchema, sessionWatchCursorSchemaV1, sessionWatchItemSchemaV1, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "../src/web/v1/session-watch-wire";
+import { createPrivateWebProcess } from "../src/web/v1/private-process";
+import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { SessionWatchView } from "../private-app/app/session-watch/workspace";
 import { webNativeResultFixture } from "./helpers/web-native-result";
 import { request, token } from "./helpers/web-foundation";
-import { at } from "./native-task-fixture";
+import { at, registration } from "./native-task-fixture";
 import { instant } from "./hermes-native-fixture";
 
 const observedAt = "2026-09-28T12:02:00.000Z";
@@ -25,7 +28,7 @@ const run = (patch: Partial<HarnessRunV1> = {}): HarnessRunV1 => ({
   lastObservedAt: "2026-09-28T12:00:00.000Z", ...patch,
 });
 
-const item = (index = 0, state: SessionWatchItemV1["state"] = "running"): SessionWatchItemV1 => ({
+const item = (index = 0, state: Exclude<SessionWatchItemV1["state"], "unreadable"> = "running"): SessionWatchItemV1 => ({
   sessionId: `attempt:watch:${index}`, runId: `run:watch:${index}`, projectId: "project:test", jobId: `job:watch:${index}`, taskTitle: `Session task ${index}`,
   attemptId: `attempt:watch:${index}`, attemptNumber: index + 1, worker: index % 2 ? null : "worker:local",
   harness: "codex", model: index % 2 ? null : "gpt-test", effort: "high", stage: "test progress", state,
@@ -264,4 +267,266 @@ test("a working canonical attempt without a persisted run is shown as stalled wi
   assert.deepEqual({ state: page.sessions[0]!.state, runId: page.sessions[0]!.runId,
     harness: page.sessions[0]!.harness, stage: page.sessions[0]!.stage },
   { state: "stalled", runId: null, harness: null, stage: "run evidence unavailable" });
+});
+
+// Additional healthy evidence is signed by the real store, never the provisioner's synthetic digest.
+async function signedWatchSession(f: Awaited<ReturnType<typeof webNativeResultFixture>>, suffix: string) {
+  const runId = `run:watch:${suffix}`, jobId = `job:watch:${suffix}`, attemptId = `attempt:watch:${suffix}`;
+  await f.provisionRun(runId, jobId, attemptId);
+  await f.db.query(`UPDATE control_workflows SET payload=jsonb_set(payload,'{jobIds}',payload->'jobIds' || $2::jsonb)
+    WHERE tenant_id=$1 AND id='workflow:test'`, [f.scope.tenantId, JSON.stringify([jobId])]);
+  await f.db.query("DELETE FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2", [f.scope.tenantId, runId]);
+  await f.db.query("DELETE FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, runId]);
+  const { nativeTask: _nativeTask, ...base } = registration;
+  await f.runs.create({ ...base, adapterId: "adapter:watch", id: runId, jobId, attemptId, nativeSessionKeyDigest: sha256Digest({ suffix }) });
+  return { runId, jobId, attemptId };
+}
+
+test("mixed unreadable session data keeps healthy sessions visible", async t => {
+  const f = await webNativeResultFixture(); t.after(f.close);
+  const second = await signedWatchSession(f, "healthy"), bad = await signedWatchSession(f, "bad");
+  const service = new SessionWatchServiceV1(f.db, f.scope, f.harnessKey, () => instant + 6000);
+  const before = await service.read(f.identity);
+  assert.equal(before.sessions.length, 3);
+  assert.ok(before.sessions.every(row => row.state === "running"));
+  const healthy = before.sessions.filter(row => row.sessionId !== bad.attemptId);
+  assert.deepEqual(new Set(healthy.map(row => row.sessionId)), new Set(["attempt:test", second.attemptId]));
+  await f.db.query("UPDATE control_attempts SET payload = payload - 'offeredAt' WHERE tenant_id=$1 AND id=$2",
+    [f.scope.tenantId, bad.attemptId]);
+  const saved = await f.db.query<{ payload: Record<string, unknown> }>(
+    "SELECT payload FROM control_attempts WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, bad.attemptId]);
+  assert.equal(Object.hasOwn(saved.rows[0]!.payload, "offeredAt"), false, "trigger-enabled corruption persisted");
+  const response = await service.read(f.identity);
+  const page = await readSessionWatchV1(undefined, (async () => Response.json(response)) as typeof fetch);
+  assert.equal(page.sessions.length, 3);
+  assert.deepEqual(page.sessions.filter(row => row.sessionId !== bad.attemptId), healthy);
+  const damaged = page.sessions.find(row => row.sessionId === bad.attemptId)!;
+  assert.equal(damaged.state, "unreadable");
+  assert.equal(damaged.taskTitle, "Session attempt:watch:bad");
+  assert.equal(damaged.stage, "Session details could not be read");
+  assert.equal(damaged.durationSeconds, null);
+  const html = renderToStaticMarkup(createElement(SessionWatchView, { page }));
+  assert.equal((html.match(/private-session-watch-heading/g) ?? []).length, 3);
+  const badHtml = html.split("<li>").find(value => value.includes("Session attempt:watch:bad"))!;
+  assert.match(badHtml, /unreadable/); assert.match(badHtml, /Session details could not be read/);
+  assert.match(badHtml, /<dt>Run time<\/dt><dd>Unavailable<\/dd>/);
+  assert.doesNotMatch(badHtml, /<dd>0s<\/dd>/);
+});
+
+function watchService(f: Awaited<ReturnType<typeof webNativeResultFixture>>, db = f.db) {
+  return new SessionWatchServiceV1(db, f.scope, f.harnessKey, () => instant + 6000);
+}
+
+function assertUnreadable(page: Awaited<ReturnType<SessionWatchServiceV1["read"]>>, id: string) {
+  const row = page.sessions.find(value => value.sessionId === id)!;
+  assert.ok(row, `retained ${JSON.stringify(id)}`);
+  assert.equal(row.state, "unreadable");
+  assert.equal(row.stage, "Session details could not be read");
+  assert.equal(row.runId, null); assert.equal(row.harness, null); assert.equal(row.durationSeconds, null);
+  assert.equal(row.lastProgress, "Saved row updated"); assert.equal(row.expectedHeartbeatSeconds, 120);
+  return row;
+}
+
+test("each stored payload failure stays within its session row", async t => {
+  const f = await webNativeResultFixture(); t.after(f.close);
+  const bad = await signedWatchSession(f, "bad");
+  // Isolate shared request/workflow payloads before corruption; the original lineage stays healthy.
+  await f.db.query(`INSERT INTO control_requests(id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
+    SELECT 'request:bad',tenant_id,project_id,state,version,'watch-bad-request',
+    payload || '{"id":"request:bad","idempotencyKey":"watch-bad-request"}'::jsonb,created_at,updated_at
+    FROM control_requests WHERE tenant_id=$1 AND id='request:test'`, [f.scope.tenantId]);
+  await f.db.query(`INSERT INTO control_workflows(id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
+    SELECT 'workflow:bad',tenant_id,'request:bad',project_id,definition_digest,state,version,
+    payload || jsonb_build_object('id','workflow:bad','requestId','request:bad','jobIds',$2::jsonb),created_at,updated_at
+    FROM control_workflows WHERE tenant_id=$1 AND id='workflow:test'`, [f.scope.tenantId, JSON.stringify([bad.jobId])]);
+  await f.db.query(`UPDATE control_jobs SET workflow_id='workflow:bad',payload=jsonb_set(payload,'{workflowId}','"workflow:bad"')
+    WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, bad.jobId]);
+  const before = await watchService(f).read(f.identity);
+  assert.ok(before.sessions.every(row => row.state === "running"));
+  const healthy = before.sessions.find(row => row.sessionId === "attempt:test")!;
+  for (const [table, id, field, remove] of [
+    ["control_attempts", bad.attemptId, "offeredAt", true], ["control_requests", "request:bad", "title", false],
+    ["control_workflows", "workflow:bad", "jobIds", false], ["control_jobs", bad.jobId, "dependsOnJobIds", false],
+  ] as const) {
+    const original = (await f.db.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM ${table} WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, id])).rows[0]!.payload;
+    try {
+      await f.db.query(`UPDATE ${table} SET payload=${remove ? "payload - $3::text" : "jsonb_set(payload,ARRAY[$3::text],'null'::jsonb)"} WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, id, field]);
+      const saved = (await f.db.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM ${table} WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, id])).rows[0]!.payload;
+      assert.equal(saved[field], remove ? undefined : null, `${table} persisted with triggers enabled`);
+      const page = await watchService(f).read(f.identity);
+      assert.equal(page.sessions.length, 2); assertUnreadable(page, bad.attemptId);
+      assert.deepEqual(page.sessions.find(row => row.sessionId === "attempt:test"), healthy);
+    } finally {
+      await f.db.query(`UPDATE ${table} SET payload=$3::jsonb WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, id, JSON.stringify(original)]);
+    }
+  }
+  await f.runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: f.scope.tenantId, runId: bad.runId,
+    sequence: 1, occurredAt: at(1000), source: "adapter", sourceEventKeyDigest: sha256Digest({ event: "watch" }),
+    payload: { category: "activity", activity: "test", phase: "progress", count: 1 } });
+  // Transformed-row unit fault injections, not persisted engine-error evidence.
+  for (const patch of [
+    (row: Record<string, unknown>) => ({ ...row, run_payload: {} }),
+    (row: Record<string, unknown>) => ({ ...row, run_digest: `sha256:${"0".repeat(64)}` }),
+    (row: Record<string, unknown>) => ({ ...row, run_auth_tag: `hmac-sha256:${"0".repeat(64)}` }),
+    ...["payload", "event_digest", "event_auth_tag"].map(field => (row: Record<string, unknown>) => ({ ...row,
+      event_rows: (row.event_rows as Record<string, unknown>[]).map(event => ({ ...event, [field]: field === "payload" ? {} : "invalid" })) })),
+  ]) {
+    const db = transformedDatabase(f.db, (sql, rows) => sql.includes("WITH cursor") ? rows.map(row => row.session_id === bad.attemptId ? patch(row) : row) : rows);
+    const page = await watchService(f, db).read(f.identity);
+    assert.equal(page.sessions.length, 2); assertUnreadable(page, bad.attemptId);
+    assert.deepEqual(page.sessions.find(row => row.sessionId === "attempt:test"), healthy);
+  }
+  for (const kind of ["query", "verifier"] as const) {
+    const sentinel = new Error(`session-watch-${kind}-sentinel`);
+    const db = transformedDatabase(f.db, (sql, rows) => {
+      if (!sql.includes("WITH cursor")) return rows;
+      if (kind === "query") throw sentinel;
+      return rows.map(row => row.session_id === bad.attemptId ? { ...row,
+        run_payload: new Proxy(row.run_payload as object, { get(target, key) { if (key === "schemaVersion") throw sentinel; return Reflect.get(target, key); } }) } : row);
+    });
+    await assert.rejects(watchService(f, db).read(f.identity), error => error === sentinel);
+  }
+});
+
+test("unreadable rows remain wire valid with hostile plain columns", async t => {
+  const f = await webNativeResultFixture(); t.after(f.close);
+  const bad = await signedWatchSession(f, "bad");
+  await f.runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: f.scope.tenantId, runId: bad.runId,
+    sequence: 1, occurredAt: at(1000), source: "adapter", sourceEventKeyDigest: sha256Digest({ event: "hostile" }),
+    payload: { category: "activity", activity: "test", phase: "progress", count: 1 } });
+  const readPatch = async (patch: Record<string, unknown>, malformed = true) => watchService(f, transformedDatabase(f.db, (sql, rows) =>
+    sql.includes("WITH cursor") ? rows.map(row => row.session_id === bad.attemptId ? { ...row,
+      ...(malformed ? { attempt_payload: {} } : {}), ...patch } : row) : rows)).read(f.identity);
+  for (const [key, title] of [["", "Session "], ["  ", "Session   "], ["<script>💫&%", "Session <script>💫&%"],
+    ["a".repeat(170) + "💫" + "z".repeat(30), "Session " + "a".repeat(170) + "…"]]) {
+    const page = await readPatch({ session_id: key, project_id: "bad/project", job_id: "bad/job", worker_id: " ",
+      selected_model: "bad model", selected_effort: "impossible", attempt_number: null, attempt_updated_at: "infinity" });
+    const row = assertUnreadable(page, key!);
+    assert.equal(row.taskTitle, title); assert.equal(row.projectId, null); assert.equal(row.jobId, null);
+    assert.equal(row.attemptId, null);
+    for (const field of ["worker", "model", "effort", "attemptNumber", "lastProgressAt"] as const) assert.equal(row[field], null);
+    const html = renderToStaticMarkup(createElement(SessionWatchView, { page }));
+    const badHtml = html.split("<li>").find(value => value.includes("unreadable"))!;
+    assert.doesNotMatch(badHtml, /<a |<script>|<dd>0s<\/dd>/);
+    assert.match(badHtml, /Attempt Unavailable/); assert.match(badHtml, /Saved row updated · Unavailable/);
+    if (key === "<script>💫&%") assert.match(badHtml, /Session &lt;script&gt;💫&amp;%/);
+  }
+  for (const attempt_number of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1", NaN]) {
+    assert.equal(assertUnreadable(await readPatch({ attempt_number }), bad.attemptId).attemptNumber, null);
+  }
+  const retained = assertUnreadable(await readPatch({ worker_id: "worker:plain", selected_model: "gpt-test", selected_effort: "high", attempt_number: 3 }), bad.attemptId);
+  assert.equal(retained.worker, "worker:plain"); assert.equal(retained.model, "gpt-test"); assert.equal(retained.effort, "high");
+  assert.equal(retained.attemptNumber, 3); assert.equal(retained.lastProgressAt, at(-60_000));
+  assert.equal(retained.attemptId, bad.attemptId); assert.equal(retained.projectId, "project:test"); assert.equal(retained.jobId, bad.jobId);
+  // Unit variant: migration 0091 prevents persisting this selected model.
+  assert.equal(assertUnreadable(await readPatch({ selected_model: "bad model" }, false), bad.attemptId).model, null);
+  for (const malformed of [false, true]) {
+    const row = assertUnreadable(await readPatch({ run_id: null, attempt_updated_at: "infinity" }, malformed), bad.attemptId);
+    assert.equal(row.lastProgressAt, null);
+  }
+  for (const patch of [{ run_created_at: "infinity" }, { run_updated_at: "infinity" }, { run_last_observed_at: "infinity" }])
+    assertUnreadable(await readPatch(patch, false), bad.attemptId);
+  let eventRows: Record<string, unknown>[] = [];
+  await watchService(f, transformedDatabase(f.db, (sql, rows) => {
+    if (sql.includes("WITH cursor")) eventRows = rows.find(row => row.session_id === bad.attemptId)!.event_rows as Record<string, unknown>[];
+    return rows;
+  })).read(f.identity);
+  for (const field of ["occurred_at", "recorded_at"]) assertUnreadable(await readPatch({
+    event_rows: eventRows.map(event => ({ ...event, [field]: "infinity" })) }, false), bad.attemptId);
+  assert.equal(sessionWatchItemSchemaV1.safeParse({ ...item(), durationSeconds: null }).success, false);
+  assert.equal(sessionWatchItemSchemaV1.safeParse({ ...retained, extra: true }).success, false);
+});
+
+test("session pagination crosses an unreadable boundary row", async t => {
+  const f = await webNativeResultFixture(); t.after(f.close);
+  for (const invalid of ["\0", "\ud800", "\udfff"]) {
+    assert.equal(sessionWatchCursorSchemaV1.safeParse(invalid).success, false);
+    let called = false;
+    await assert.rejects(readSessionWatchV1(invalid, (async () => { called = true; return Response.json({}); }) as typeof fetch), /invalid_request/);
+    assert.equal(called, false);
+    await assert.rejects(watchService(f).read(f.identity, invalid), /invalid_request/);
+  }
+  for (const key of ["", " ", "%💫<>"]) assert.equal(sessionWatchCursorSchemaV1.parse(key), key);
+  assert.equal(sessionWatchPageSchemaV1.safeParse({ source: "not_configured", sessions: [], nextCursor: "", observedAt, startsWork: false }).success, false);
+  await f.db.query("DELETE FROM control_harness_run_events WHERE tenant_id=$1", [f.scope.tenantId]);
+  await f.db.query("DELETE FROM control_harness_runs WHERE tenant_id=$1", [f.scope.tenantId]);
+  await f.db.query("UPDATE control_attempts SET state='succeeded',payload=jsonb_set(payload,'{state}','\"succeeded\"') WHERE tenant_id=$1", [f.scope.tenantId]);
+  assert.deepEqual((await watchService(f).read(f.identity)).sessions, []);
+  await f.db.query("UPDATE control_attempts SET state='running',payload=jsonb_set(payload,'{state}','\"running\"') WHERE tenant_id=$1", [f.scope.tenantId]);
+  const original = (await f.db.query<{ payload: Record<string, unknown> }>("SELECT payload FROM control_attempts WHERE id='attempt:test' AND tenant_id=$1", [f.scope.tenantId])).rows[0]!.payload;
+  await f.db.query("UPDATE control_attempts SET payload=payload - 'offeredAt' WHERE tenant_id=$1 AND id='attempt:test'", [f.scope.tenantId]);
+  assertUnreadable(await watchService(f).read(f.identity), "attempt:test");
+  await f.db.query("UPDATE control_attempts SET payload=$2::jsonb WHERE tenant_id=$1 AND id='attempt:test'", [f.scope.tenantId, JSON.stringify(original)]);
+  for (let index = 1; index < 26; index++) {
+    const suffix = String(index).padStart(2, "0");
+    await f.provisionRun(`run:page:${suffix}`, `job:page:${suffix}`, `attempt:page:${suffix}`);
+  }
+  await f.db.query("UPDATE control_workflows SET payload=jsonb_set(payload,'{jobIds}',(SELECT jsonb_agg(id) FROM control_jobs WHERE tenant_id=$1)) WHERE tenant_id=$1 AND id='workflow:test'", [f.scope.tenantId]);
+  await f.db.query("DELETE FROM control_harness_run_events WHERE tenant_id=$1", [f.scope.tenantId]);
+  await f.db.query("DELETE FROM control_harness_runs WHERE tenant_id=$1", [f.scope.tenantId]);
+  const ids = ["attempt:test", ...Array.from({ length: 25 }, (_, index) => `attempt:page:${String(index + 1).padStart(2, "0")}`)];
+  for (const [index, id] of ids.entries()) await f.db.query(`UPDATE control_attempts SET state='running',updated_at=$3::text::timestamptz,
+    payload=payload || jsonb_build_object('state','running','updatedAt',$3::text) WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, id, at(5000 - index)]);
+  for (const index of [0, 12, 24]) {
+    const id = ids[index]!;
+    const saved = (await f.db.query<{ payload: unknown }>("SELECT payload FROM control_attempts WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, id])).rows[0]!.payload;
+    await f.db.query("UPDATE control_attempts SET payload=payload - 'offeredAt' WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, id]);
+    const page = await watchService(f).read(f.identity);
+    assert.equal(page.sessions.length, 25); assert.equal(page.sessions[index]!.sessionId, id); assertUnreadable(page, id);
+    await f.db.query("UPDATE control_attempts SET payload=$3::jsonb WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, id, JSON.stringify(saved)]);
+  }
+  await f.db.query("UPDATE control_attempts SET state='succeeded',payload=jsonb_set(payload,'{state}','\"succeeded\"') WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, ids[25]]);
+  const fullPage = await watchService(f).read(f.identity);
+  assert.equal(fullPage.sessions.length, 25); assert.equal(fullPage.nextCursor, null, "exactly 25 rows need no lookahead cursor");
+  await f.db.query("UPDATE control_attempts SET state='running',payload=jsonb_set(payload,'{state}','\"running\"') WHERE tenant_id=$1 AND id=$2", [f.scope.tenantId, ids[25]]);
+  // Real process readers with injected disposable DB; no network listener or worker is started.
+  const hosted = createPrivateWebProcess({ origin: "https://private.example.invalid", issuer: f.accessTrust.issuer,
+    audience: f.accessTrust.audience, ...f.scope, maxSessionSeconds: 604800, loadKeys: async () => f.accessTrust.keys,
+    database: { client: f.db, close: async () => {} }, tasks: { ...f.taskKeys, harnessIntegrityKey: f.harnessKey }, clock: () => instant + 6000 });
+  t.after(() => hosted.close());
+  const origin = "http://127.0.0.1:3210", ownerCode = "watch-owner-code-long-enough";
+  const local = createMacLocalWebProcessV1({ origin, workspaceId: f.scope.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: f.scope.tenantId,
+      provider: f.accessTrust.issuer, subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
+    database: { client: f.db, close: async () => {}, isAvailable: () => true }, taskReadKeys: f.taskKeys, clock: () => instant + 6000 });
+  t.after(() => local.close());
+  const login = await local.handle(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST", headers: {
+    origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
+  assert.equal(login.status, 201); const cookie = login.headers.get("set-cookie")!; assert.ok(cookie);
+  const readers = [
+    (path: string, method = "GET") => hosted.handle(request(path, method, undefined, undefined, f.jwt), () => new Response("shell")),
+    (path: string, method = "GET") => local.handle(new Request(`${origin}${path}`, { method, headers: { cookie, origin } }), () => new Response("shell")),
+  ];
+  let priorKey = ids[24]!;
+  for (const key of [" %💫 boundary ", ""]) {
+    await f.db.query(`UPDATE control_attempts SET id=$3,payload=jsonb_set(payload - 'offeredAt','{id}',to_jsonb($3::text))
+      WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, priorKey, key]);
+    priorKey = key;
+    for (const read of readers) {
+      const transport = (async (input: RequestInfo | URL, init?: RequestInit) => read(String(input), init?.method)) as typeof fetch;
+      const first = await readSessionWatchV1(undefined, transport);
+      assert.equal(first.sessions.length, 25); assert.equal(first.nextCursor, key);
+      assertUnreadable(first, key);
+      const html = renderToStaticMarkup(createElement(SessionWatchView, { page: first }));
+      assert.ok(html.includes(`href="/session-watch?after=${encodeURIComponent(key)}"`));
+      const second = await readSessionWatchV1(first.nextCursor!, transport);
+      assert.deepEqual(second.sessions.map(row => row.sessionId), [ids[25]]); assert.equal(second.nextCursor, null);
+      assert.ok(!first.sessions.some(row => row.sessionId === ids[25]));
+      assert.match(renderToStaticMarkup(createElement(SessionWatchView, { page: second, after: key })), /First page/);
+      assert.equal((await read(`/session-watch?after=${encodeURIComponent(key)}`)).status, 200);
+      for (const query of ["?after=x&after=y", "?extra=x", "?after=%00"]) {
+        for (const path of ["/session-watch", "/api/v1/session-watch"]) assert.equal((await read(path + query)).status, 400);
+      }
+      assert.equal((await read("/api/v1/session-watch", "POST")).status, 400);
+      assert.equal((await read("/api/v1/session-watch?after=attempt%3Amissing")).status, 400);
+    }
+    await assert.rejects(new SessionWatchServiceV1(f.db, { ...f.scope, workspaceId: "workspace:missing" }, f.harnessKey,
+      () => instant + 6000).read(f.identity, key), /invalid_request/);
+    await assert.rejects(new SessionWatchServiceV1(f.db, { tenantId: "tenant:other", workspaceId: "workspace:other" }, f.harnessKey,
+      () => instant + 6000).read(f.identity, key), /access_denied/);
+  }
+  assert.equal((await hosted.handle(new Request("https://private.example.invalid/api/v1/session-watch"), () => new Response("unused"))).status, 401);
+  const expiredJwt = token({ iat: instant / 1000 - 60, exp: instant / 1000 + 1 });
+  assert.equal((await hosted.handle(request("/api/v1/session-watch", "GET", undefined, undefined, expiredJwt), () => new Response("unused"))).status, 401);
+  assert.equal((await local.handle(new Request(`${origin}/api/v1/session-watch`), () => new Response("unused"))).status, 401);
 });

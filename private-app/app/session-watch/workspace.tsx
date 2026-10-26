@@ -24,18 +24,18 @@ export function SessionWatchView({ page, after }: { page: SessionWatchPageV1; af
     {!page.sessions.length ? <section className="private-panel"><p>No current saved agent sessions were found. This does not prove that no agent process is running.</p></section>
       : <ul className="private-session-watch-list">{page.sessions.map(session => <li key={session.sessionId}>
         <div className="private-session-watch-heading"><span className={`private-state private-session-${session.state}`}>{session.state.replaceAll("_", " ")}</span>
-          <h2><a href={taskHref(session.projectId, session.jobId)}>{session.taskTitle}</a></h2></div>
+          <h2>{session.projectId !== null && session.jobId !== null ? <a href={taskHref(session.projectId, session.jobId)}>{session.taskTitle}</a> : session.taskTitle}</h2></div>
         <dl className="private-task-facts">
           <div><dt>Worker</dt><dd>{session.worker ?? "Unavailable"}</dd></div>
           <div><dt>Harness and model</dt><dd>{session.harness ?? "Harness unavailable"} · {session.model ?? "Model unavailable"}{session.effort ? ` · ${session.effort}` : ""}</dd></div>
-          <div><dt>Attempt and stage</dt><dd>Attempt {session.attemptNumber} · {session.stage}</dd></div>
-          <div><dt>Run time</dt><dd>{formatSessionDurationV1(session.durationSeconds)}</dd></div>
-          <div><dt>Last heartbeat or progress</dt><dd>{session.lastProgress} · <ConfiguredTimestamp value={session.lastProgressAt} /></dd></div>
+          <div><dt>Attempt and stage</dt><dd>Attempt {session.attemptNumber ?? "Unavailable"} · {session.stage}</dd></div>
+          <div><dt>Run time</dt><dd>{session.durationSeconds === null ? "Unavailable" : formatSessionDurationV1(session.durationSeconds)}</dd></div>
+          <div><dt>Last heartbeat or progress</dt><dd>{session.lastProgress} · {session.lastProgressAt === null ? "Unavailable" : <ConfiguredTimestamp value={session.lastProgressAt} />}</dd></div>
         </dl>
       </li>)}</ul>}
     <nav className="private-actions" aria-label="Session pages">
-      {after ? <a href="/session-watch">First page</a> : null}
-      {page.nextCursor ? <a href={`/session-watch?after=${encodeURIComponent(page.nextCursor)}`}>Next sessions</a> : null}
+      {after !== undefined ? <a href="/session-watch">First page</a> : null}
+      {page.nextCursor !== null ? <a href={`/session-watch?after=${encodeURIComponent(page.nextCursor)}`}>Next sessions</a> : null}
     </nav>
   </>;
 }

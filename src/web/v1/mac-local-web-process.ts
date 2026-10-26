@@ -35,7 +35,7 @@ import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEven
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
 import { catalogProjectIdSchema } from "./project-wire";
-import { sessionWatchIdSchema } from "./session-watch-wire";
+import { sessionWatchCursorSchemaV1 } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
@@ -435,7 +435,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     if (url.pathname === "/session-watch") {
       if ([...url.searchParams.keys()].some(name => name !== "after") || url.searchParams.getAll("after").length > 1)
         throw new WebAccessError("invalid_request");
-      if (url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+      if (url.searchParams.has("after") && !sessionWatchCursorSchemaV1.safeParse(url.searchParams.get("after")).success)
         throw new WebAccessError("invalid_request");
       await sessionWatch.authorize(identity);
       return render();

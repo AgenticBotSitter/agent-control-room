@@ -1,0 +1,191 @@
+[
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "attemptRecordSchema.safeParse(row.attempt_payload)",
+    "replace": "attemptRecordSchema.safeParse({ ...(row.attempt_payload as object), offeredAt: \"2026-09-28T12:00:00.000Z\" })",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^each stored payload failure stays within its session row$' tests/session-watch.test.tsx",
+    "why": "Mask this persisted canonical payload failure; its row must still be unreadable."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "jobRecordSchema.safeParse(row.job_payload)",
+    "replace": "jobRecordSchema.safeParse({ ...(row.job_payload as object), dependsOnJobIds: [] })",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^each stored payload failure stays within its session row$' tests/session-watch.test.tsx",
+    "why": "Mask this persisted canonical payload failure; its row must still be unreadable."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "workflowRecordSchema.safeParse(row.workflow_payload)",
+    "replace": "workflowRecordSchema.safeParse({ ...(row.workflow_payload as object), jobIds: [row.job_id] })",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^each stored payload failure stays within its session row$' tests/session-watch.test.tsx",
+    "why": "Mask this persisted canonical payload failure; its row must still be unreadable."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "requestRecordSchema.safeParse(row.request_payload)",
+    "replace": "requestRecordSchema.safeParse({ ...(row.request_payload as object), title: \"invented title\" })",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^each stored payload failure stays within its session row$' tests/session-watch.test.tsx",
+    "why": "Mask this persisted canonical payload failure; its row must still be unreadable."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "sessions.push(unreadableItem(row)); continue;\n          }",
+    "replace": "sessions.push(unavailableItem(row, attempt, request, observedAt)); continue;\n          }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^each stored payload failure stays within its session row$' tests/session-watch.test.tsx",
+    "why": "Verifier data failures must be unreadable, never a stalled canonical projection."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "          throw error;",
+    "replace": "          sessions.push(unreadableItem(row)); continue;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^each stored payload failure stays within its session row$' tests/session-watch.test.tsx",
+    "why": "Unknown verifier exceptions must propagate by identity."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "if (!Number.isFinite(date.getTime())) return null;",
+    "replace": "if (!Number.isFinite(date.getTime())) return \"2026-09-28T12:00:00.000Z\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Invalid attempt time must not invent a timestamp in either degraded builder."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "return projected.success ? projected.data : unreadableItem(row);",
+    "replace": "return projected.success ? projected.data : { ...unreadableItem(row), lastProgressAt: \"2026-09-28T12:00:00.000Z\" };",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "No-run projection failure must retain an honest unavailable timestamp."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "sessions.push(projected.success ? projected.data : unreadableItem(row));",
+    "replace": "if (projected.success) sessions.push(projected.data);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Final wire-invalid projection must retain its unreadable row."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "model: validOrNull(fields.model, row.selected_model)",
+    "replace": "model: \"invented-model\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Invalid plain model is null and valid model is retained."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "effort: validOrNull(fields.effort, row.selected_effort)",
+    "replace": "effort: \"default\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Invalid plain effort is null and valid effort is retained."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "attemptNumber: validOrNull(fields.attemptNumber, row.attempt_number)",
+    "replace": "attemptNumber: 1",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Attempt number comes only from a validated plain column."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "worker: validOrNull(fields.worker, row.worker_id)",
+    "replace": "worker: \"invented-worker\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Worker comes only from a validated plain column."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "projectId: validOrNull(catalogProjectIdSchema, row.project_id)",
+    "replace": "projectId: \"project:invented\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Invalid project IDs must suppress task links."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "jobId: validOrNull(sessionWatchIdSchema, row.job_id)",
+    "replace": "jobId: \"job:invented\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Invalid job IDs must suppress task links."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "if (!canonical) { sessions.push(unreadableItem(row)); continue; }",
+    "replace": "if (!canonical) { continue; }",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^mixed unreadable session data keeps healthy sessions visible$' tests/session-watch.test.tsx",
+    "why": "Unreadable canonical rows must not be hidden."
+  },
+  {
+    "file": "src/web/v1/session-watch-wire.ts",
+    "find": "  durationSeconds: count,",
+    "replace": "  durationSeconds: count.nullable(),",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^unreadable rows remain wire valid with hostile plain columns$' tests/session-watch.test.tsx",
+    "why": "Healthy duration contract must stay non-null."
+  },
+  {
+    "file": "private-app/app/session-watch/workspace.tsx",
+    "find": "session.durationSeconds === null ? \"Unavailable\"",
+    "replace": "session.durationSeconds === null ? \"0s\"",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^mixed unreadable session data keeps healthy sessions visible$' tests/session-watch.test.tsx",
+    "why": "Null duration must never render invented zero."
+  },
+  {
+    "file": "src/web/v1/session-watch-wire.ts",
+    "find": "z.string().refine(isPostgresTextV1);",
+    "replace": "z.string().min(3).refine(isPostgresTextV1);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Cursor accepts lossless empty PostgreSQL text."
+  },
+  {
+    "file": "src/web/v1/session-watch-wire.ts",
+    "find": "nextCursor: sessionWatchCursorSchemaV1.nullable()",
+    "replace": "nextCursor: sessionWatchCursorSchemaV1.min(3).nullable()",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Page boundary preserves empty cursor."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "sessionWatchCursorSchemaV1.safeParse(after)",
+    "replace": "sessionWatchCursorSchemaV1.min(3).safeParse(after)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Reader must accept empty/raw cursors."
+  },
+  {
+    "file": "src/web/v1/session-watch-browser-client.ts",
+    "find": "sessionWatchCursorSchemaV1.safeParse(after)",
+    "replace": "sessionWatchCursorSchemaV1.min(3).safeParse(after)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Reader must accept empty/raw cursors."
+  },
+  {
+    "file": "src/web/v1/private-process.ts",
+    "find": "sessionWatchCursorSchemaV1.safeParse(url.searchParams.get(\"after\"))",
+    "replace": "sessionWatchCursorSchemaV1.min(3).safeParse(url.searchParams.get(\"after\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Process shell must accept empty/raw cursors."
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "sessionWatchCursorSchemaV1.safeParse(url.searchParams.get(\"after\"))",
+    "replace": "sessionWatchCursorSchemaV1.min(3).safeParse(url.searchParams.get(\"after\"))",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Process shell must accept empty/raw cursors."
+  },
+  {
+    "file": "private-app/app/session-watch/workspace.tsx",
+    "find": "{after !== undefined ?",
+    "replace": "{after ? ",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Empty cursor still displays First page."
+  },
+  {
+    "file": "private-app/app/session-watch/workspace.tsx",
+    "find": "{page.nextCursor !== null ?",
+    "replace": "{page.nextCursor ? ",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Empty next cursor still displays Next sessions."
+  },
+  {
+    "file": "src/web/v1/session-watch-service.ts",
+    "find": "if (cursor.rows.length !== 1) throw new WebAccessError(\"invalid_request\");",
+    "replace": "if (false) throw new WebAccessError(\"invalid_request\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^session pagination crosses an unreadable boundary row$' tests/session-watch.test.tsx",
+    "why": "Unknown and wrong-workspace cursors cannot authorize a page."
+  }
+]
