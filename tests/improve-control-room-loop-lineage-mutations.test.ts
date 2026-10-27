@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "pg";
+import { getConstructionPlans, PgBoss } from "pg-boss";
 import { assertGuardBites, reapKitClusters, resolvePgBin, ROLE_LOGINS, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
@@ -168,11 +169,22 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
       await applyMigrations({ rootDir: copy, ledgerPath,
         bootstrapTarget: postgres.admin({ database: "b1a_fresh_prefix" }),
         migrateTarget: postgres.connection("migrator", { database: "b1a_fresh_prefix" }), env: { NODE_ENV: "test" } });
+      // Match the kit's independent queue setup too, so the comparison covers
+      // every schema rather than excluding a possible residue destination.
+      const fresh = new Client(postgres.admin({ database: "b1a_fresh_prefix" })); await fresh.connect();
+      try {
+        await fresh.query(getConstructionPlans("control_room_queue"));
+        const boss = new PgBoss({ db: { executeSql: (sql: string, values: unknown[]) => fresh.query(sql, values) },
+          schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
+          supervise: false, schedule: false, useListenNotify: false });
+        await boss.start();
+        try { for (const queue of ["native-task-delivery", "news-feed-collection"]) await boss.createQueue(queue, { retryLimit: 0 }); }
+        finally { await boss.stop({ graceful: false }); }
+      } finally { await fresh.end(); }
       const schema = (database: string) => {
         const config = postgres.admin({ database });
-        return execFileSync(join(resolvePgBin()!, "pg_dump"), ["--schema-only", "--no-owner", "--no-privileges",
-          // The kit creates its queue separately, outside the migration ledger.
-          "--exclude-schema=control_room_queue"], { encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024,
+        return execFileSync(join(resolvePgBin()!, "pg_dump"), ["--schema-only", "--no-owner", "--no-privileges"],
+          { encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024,
           env: { PATH: process.env.PATH, PGHOST: config.host, PGPORT: String(config.port), PGDATABASE: database,
             PGUSER: config.user, PGPASSWORD: config.password } })
           .replace(/^\\(?:un)?restrict .*$/gmu, "");
