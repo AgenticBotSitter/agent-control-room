@@ -582,6 +582,38 @@ test("B1a byte hashes, immutable history, exact replay and edit-away-and-back au
   assert.doesNotMatch(JSON.stringify(await f.desk.viewLoopDesk(f.identity, projectId)), /settingsText|settings_text|auth_tag|start_key|confirmation|SYNTHETIC:9/u);
 });
 
+test("B1a historical save and edit replays project the current authorized input", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
+  const edit = { requestId: f.start.requestId, expectedVersion: 1,
+    description: "Second saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 2 }\n' };
+  await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-0001");
+  const latest = { description: "Third saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 3 }\n' };
+  await f.desk.reviseLoopDraft(f.identity, projectId, { requestId: f.start.requestId, expectedVersion: 2, ...latest },
+    "loop-replay-edit-0002");
+  await f.desk.authorizeLoopStart(f.identity, projectId, { ...f.start, expectedVersion: 3,
+    requestSha256: syntheticRawHash(latest.description), settingsSha256: syntheticRawHash(latest.settingsText) },
+  "loop-replay-start-0001", syntheticObservation(latest.description, latest.settingsText));
+  const writes = f.writes();
+  const current = (await f.desk.viewLoopDesk(f.identity, projectId)).loopRequests[0]!;
+  assert.equal(current.currentVersion, 3); assert.equal(current.savedAuthorization, true);
+  for (const [replay, version, original] of [
+    [await f.desk.saveLoopDraft(f.identity, projectId, f.draft, "loop-fixture-save-0001"), 1, f.draft],
+    [await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-0001"), 2, edit],
+  ] as const) {
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.request, current, "B1a historical replay returns current version, bytes, hashes and authorization");
+    assert.deepEqual(replay.savedInput, { version, description: original.description,
+      requestSha256: syntheticRawHash(original.description), settingsSha256: syntheticRawHash(original.settingsText) });
+    assert.doesNotMatch(JSON.stringify(replay), /settingsText|settings_text|auth_tag|start_key|confirmation/u);
+  }
+  assert.equal(f.writes(), writes, "historical replay appends no records");
+  const next = await f.desk.reviseLoopDraft(f.identity, projectId, { requestId: current.requestId,
+    expectedVersion: current.currentVersion, description: "Fourth saved request.", settingsText: latest.settingsText },
+  "loop-replay-edit-0003");
+  assert.equal(next.request.currentVersion, 4); assert.equal(next.request.savedAuthorization, false);
+  assert.equal(f.dispatches(), 0);
+});
+
 test("B1a service owner guard refuses before persistence", async t => {
   const f = await loopFixture(); t.after(() => void f.db.close());
   await f.db.query("UPDATE control_role_grants SET role_key='operator'"); const before = f.writes();

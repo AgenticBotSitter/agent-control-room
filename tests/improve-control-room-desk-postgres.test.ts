@@ -556,6 +556,33 @@ async function fixtureAuthoritySnapshot(pg: Pg, database: string) {
     ORDER BY r.rolname COLLATE "C",c.relname COLLATE "C",p.privilege COLLATE "C"`, [], database)).rows;
   return JSON.stringify({ roles, members, grants });
 }
+test("B1a role-file failure rolls back companion grants with earlier grants", async () => b1aRun(async pg => {
+  const sql = (await readFile("db/roles/private_web_roles.sql", "utf8"))
+    .replace(/CREATE ROLE control_room_private_web[\s\S]*?;/u, "");
+  for (const table of LOOP_TABLES) await b1aSql(pg, `REVOKE ALL ON ${table} FROM control_room_private_web`);
+  const fault = "REVOKE CREATE ON SCHEMA public FROM PUBLIC;";
+  assert.equal(sql.split(fault).length, 2);
+  const admin = pg.admin();
+  // psql continues after an error by default. Grants must share the failed
+  // transaction even when the role-file client continues through COMMIT.
+  const output = execFileSync(join(process.env.PG_BIN ?? "/opt/homebrew/opt/postgresql@17/bin", "psql"),
+    ["-X", "--no-password", "--set", "ON_ERROR_STOP=off"], {
+      input: sql.replace(fault, "SELECT 1 / 0;"), encoding: "utf8", timeout: 30000,
+      env: { ...process.env, PGHOST: admin.host, PGPORT: String(admin.port), PGDATABASE: admin.database,
+        PGUSER: admin.user, PGPASSWORD: admin.password }, stdio: ["pipe", "pipe", "pipe"],
+    });
+  assert.match(output, /ROLLBACK/u);
+  for (const table of LOOP_TABLES) {
+    assert.equal((await b1aSql(pg, "SELECT has_table_privilege('control_room_web',$1,'SELECT,INSERT') AS yes", [table])).rows[0].yes,
+      false, `B1a failed role file leaves no companion grant on ${table}`);
+  }
+  await b1aSql(pg, sql);
+  for (const table of LOOP_TABLES) for (const right of ["SELECT", "INSERT"]) {
+    assert.equal((await b1aSql(pg, "SELECT has_table_privilege('control_room_web',$1,$2) AS yes", [table, right])).rows[0].yes, true);
+  }
+  console.log("B1a role-file failure_atomic=true companion_grants=0 restored_grants=SELECT,INSERT");
+}));
+
 async function prepareB1aFixture(pg: Pg, database: string) {
   const login = pg.connection("migrator", { database });
   const config = { host: "127.0.0.1", port: pg.port, database, username: login.user, password: login.password, majorVersion: 17 as const };
@@ -659,6 +686,7 @@ for (const mode of ["shipped ownership", "prepared", "wrong owner", "nonempty"] 
 const GROUNDING = "c38cb199c7fd845091ad5ff624e79ac5143170ac";
 const INSTALLED_RELEASE = "2e5c622aa240eb06787764b7b2f3a9129e17f9cf";
 async function extractBaseline(commit: string) {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
   const directory = await mkdtemp(resolve(".test-tmp/b1a-baseline-"));
   try {
     // Local objects only; no fetch and no reconstruction by deleting a migration.

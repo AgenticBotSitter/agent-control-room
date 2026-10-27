@@ -302,8 +302,8 @@ GRANT EXECUTE ON FUNCTION result_file_unaccepted_retention_days() TO control_roo
 -- a derivation is written by the publisher and is never rewritten.
 GRANT SELECT ON control_project_text_copy_derivations TO control_room_private_web;
 
-COMMIT;
-
 -- Inert loop lineage: no editing, deleting, truncating or launching.
 GRANT SELECT, INSERT ON control_loop_improvement_requests, control_loop_improvement_inputs,
   control_loop_improvement_run_links, control_loop_improvement_authorizations TO control_room_private_web;
+
+COMMIT;

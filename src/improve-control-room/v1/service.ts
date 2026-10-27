@@ -431,8 +431,13 @@ export class ImproveControlRoomDeskServiceV1 {
       loopRunId: link.loop_run_id, toolingRevision: link.tooling_revision, a2SchemaVersion: Number(link.a2_schema_version) as 1 };
   }
 
-  async #loopRequestView(tx: DatabaseSession, root: LoopRootRow, input?: LoopInputRow) {
-    const current = await this.#loopInput(tx, root), shown = input ?? current, link = await this.#loopLink(tx, root);
+  #loopInputView(input: LoopInputRow) {
+    return { version: Number(input.version), description: input.description,
+      requestSha256: input.request_sha256, settingsSha256: input.settings_sha256 };
+  }
+
+  async #loopRequestView(tx: DatabaseSession, root: LoopRootRow) {
+    const current = await this.#loopInput(tx, root), link = await this.#loopLink(tx, root);
     const authorization = (await tx.query<LoopAuthorizationRow>(`SELECT * FROM control_loop_improvement_authorizations
       WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3`, [root.tenant_id, root.id, Number(current.version)])).rows[0];
     if (authorization) {
@@ -443,9 +448,9 @@ export class ImproveControlRoomDeskServiceV1 {
         throw new Error("loop_improvement_integrity_failed");
     }
     return loopImprovementRequestViewSchemaV1.parse({ requestId: root.id, projectId: root.project_id,
-      currentVersion: Number(shown.version), description: shown.description, requestSha256: shown.request_sha256,
-      settingsSha256: shown.settings_sha256, runLink: link ? this.#loopRunView(link) : null,
-      savedAuthorization: Number(shown.version) === Number(current.version) && !!authorization,
+      currentVersion: Number(current.version), description: current.description, requestSha256: current.request_sha256,
+      settingsSha256: current.settings_sha256, runLink: link ? this.#loopRunView(link) : null,
+      savedAuthorization: !!authorization,
       createdAt: iso(root.created_at), startsWork: false, grantsDeployAuthority: false });
   }
 
@@ -466,7 +471,7 @@ export class ImproveControlRoomDeskServiceV1 {
           throw new WebAccessError("conflict");
         const root = await this.#loopRoot(tx, projectId, prior.request_id, actor.id);
         if (root.idempotency_key !== idempotencyKey) throw new WebAccessError("conflict");
-        return { request: await this.#loopRequestView(tx, root, prior), replayed: true };
+        return { request: await this.#loopRequestView(tx, root), savedInput: this.#loopInputView(prior), replayed: true };
       }
       const root = await this.#insertLoop(tx, "requests", { tenant_id: this.scope.tenantId,
         id: `loop-request:${randomUUID()}`, project_id: projectId, owner_identity_id: actor.id,
@@ -476,7 +481,7 @@ export class ImproveControlRoomDeskServiceV1 {
         settings_text: parsed.data.settingsText, request_sha256: rawLoopHash(parsed.data.description),
         settings_sha256: rawLoopHash(parsed.data.settingsText), idempotency_key: idempotencyKey,
         created_at: actor.now, record_digest: "", auth_tag: "" });
-      return { request: await this.#loopRequestView(tx, root, input), replayed: false };
+      return { request: await this.#loopRequestView(tx, root), savedInput: this.#loopInputView(input), replayed: false };
     });
   }
 
@@ -495,7 +500,7 @@ export class ImproveControlRoomDeskServiceV1 {
         this.#verifyLoop("inputs", prior);
         if (prior.request_id !== root.id || prior.project_id !== projectId || Number(prior.version) !== value.expectedVersion + 1
           || prior.description !== value.description || prior.settings_text !== value.settingsText) throw new WebAccessError("conflict");
-        return { request: await this.#loopRequestView(tx, root, prior), replayed: true };
+        return { request: await this.#loopRequestView(tx, root), savedInput: this.#loopInputView(prior), replayed: true };
       }
       const current = await this.#loopInput(tx, root);
       if (Number(current.version) !== value.expectedVersion || value.expectedVersion === Number.MAX_SAFE_INTEGER)
@@ -505,7 +510,7 @@ export class ImproveControlRoomDeskServiceV1 {
         description: value.description, settings_text: value.settingsText, request_sha256: rawLoopHash(value.description),
         settings_sha256: rawLoopHash(value.settingsText), idempotency_key: idempotencyKey,
         created_at: actor.now, record_digest: "", auth_tag: "" });
-      return { request: await this.#loopRequestView(tx, root, input), replayed: false };
+      return { request: await this.#loopRequestView(tx, root), savedInput: this.#loopInputView(input), replayed: false };
     });
   }
 
