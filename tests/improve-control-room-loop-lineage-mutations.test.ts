@@ -6,7 +6,9 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client } from "pg";
-import { assertGuardBites, reapKitClusters, ROLE_LOGINS, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
+import { assertGuardBites, reapKitClusters, resolvePgBin, ROLE_LOGINS, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
+import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+import { ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 
 const root = resolve("."), service = "src/improve-control-room/v1/service.ts";
 const migration = "db/migrations/0301_control_loop_improvement_lineage.sql";
@@ -90,13 +92,15 @@ import { resolve } from "node:path";
 import { Client } from "pg";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 const fixture = JSON.parse(await readFile(process.env.B1A_MUTATION_FIXTURE, "utf8"));
-export async function withRealPostgres(work, { database, port }, provision) {
+export async function withRealPostgres(work, { database, port, allowedPorts, boundMs }, provision) {
+  assert.ok(Array.isArray(allowedPorts) && allowedPorts.length > 0, "attack_kit_allowed_ports_required");
+  assert.ok(allowedPorts.includes(port), "attack_kit_port_outside_block");
   assert.equal(database, "b1a_lineage");
   assert.equal(port, fixture.admin.port);
   const started = Date.now();
   const admin = new Client({ ...fixture.admin, database: "postgres" });
   await admin.connect();
-  let value, preparedAt, bodyAt, leftovers;
+  let value, preparedAt, bodyAt, leftovers, timer;
   const connection = (role, options = {}) => {
     assert.ok(fixture.connections[role], "prepared fixture refuses unknown roles");
     return { ...fixture.connections[role], database: options.database ?? database,
@@ -119,8 +123,12 @@ export async function withRealPostgres(work, { database, port }, provision) {
       query: (role, sql, params = [], options = {}) => query(connection(role, options), sql, params) };
     await provision(pg);
     preparedAt = Date.now();
-    value = await work(pg);
+    value = boundMs === undefined ? await work(pg) : await Promise.race([
+      Promise.resolve().then(() => work(pg)),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("attack_kit_body_timed_out_after_" + boundMs + "ms")), boundMs); })
+    ]);
   } finally {
+    clearTimeout(timer);
     bodyAt = Date.now();
     try {
       await admin.query('DROP DATABASE IF EXISTS "b1a_lineage" WITH (FORCE)');
@@ -143,21 +151,63 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
   const first = executable.findIndex(entry => entry.file === migration);
   assert.ok(first >= 0, "prepared prefix ends immediately before the lineage migration");
   const suffix = executable.slice(first).map(entry => entry.file);
+  await mkdir(join(copy, ".test-tmp"), { recursive: true });
   const admin = new Client(postgres.admin()); await admin.connect();
   try {
     assert.equal((await admin.query("SELECT 1 FROM pg_roles WHERE rolname='control_room_agent_reviewer'")).rowCount, 0);
     for (const file of [...suffix].reverse()) await admin.query(await readFile(join(copy, file.replace("/migrations/", "/down/")), "utf8"));
     const removed = await admin.query("DELETE FROM control_room_schema_migrations WHERE filename=ANY($1::text[])", [suffix]);
     assert.equal(removed.rowCount, suffix.length);
+    // Independently migrate an empty database. Down-file runnability alone
+    // cannot prove that the rolled-back template is a faithful prefix.
+    await admin.query('CREATE DATABASE "b1a_fresh_prefix" TEMPLATE template0');
+    try {
+      const entries = ledger.entries.filter((entry: { file: string }) => !suffix.includes(entry.file));
+      const ledgerPath = join(copy, ".test-tmp/b1a-prefix-ledger.json");
+      await writeFile(ledgerPath, JSON.stringify({ ...ledger, entries, digest: ledgerDigest(entries) }));
+      await applyMigrations({ rootDir: copy, ledgerPath,
+        bootstrapTarget: postgres.admin({ database: "b1a_fresh_prefix" }),
+        migrateTarget: postgres.connection("migrator", { database: "b1a_fresh_prefix" }), env: { NODE_ENV: "test" } });
+      const schema = (database: string) => {
+        const config = postgres.admin({ database });
+        return execFileSync(join(resolvePgBin()!, "pg_dump"), ["--schema-only", "--no-owner", "--no-privileges",
+          // The kit creates its queue separately, outside the migration ledger.
+          "--exclude-schema=control_room_queue"], { encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024,
+          env: { PATH: process.env.PATH, PGHOST: config.host, PGPORT: String(config.port), PGDATABASE: database,
+            PGUSER: config.user, PGPASSWORD: config.password } })
+          .replace(/^\\(?:un)?restrict .*$/gmu, "");
+      };
+      const expected = schema("b1a_fresh_prefix");
+      const check = () => assert.equal(schema(postgres.database), expected, "B1a prepared schema equals independently migrated fresh prefix");
+      check();
+      // Exercise the refusal with actual catalog residue, then restore it.
+      await admin.query("CREATE TABLE public.b1a_down_residue_probe(id integer)");
+      try { assert.throws(check, /B1a prepared schema equals independently migrated fresh prefix/u); }
+      finally { await admin.query("DROP TABLE public.b1a_down_residue_probe"); }
+      check();
+      console.log("B1a prepared prefix schema_equal=true residue_refused=true");
+    } finally { await admin.query('DROP DATABASE "b1a_fresh_prefix" WITH (FORCE)'); }
   } finally { await admin.end(); }
   const connections = Object.fromEntries(Object.entries(ROLE_LOGINS).flatMap(([role, { login }]) =>
     [[role, postgres.connection(role)], [login, postgres.connection(role)]]));
-  await mkdir(join(copy, ".test-tmp"), { recursive: true });
   const fixture = join(copy, ".test-tmp/b1a-prepared.json");
   // These are freshly generated attack-kit credentials for this socket-only
   // disposable cluster; never environment or installation credentials.
   await writeFile(fixture, JSON.stringify({ admin: postgres.admin(), connections, suffix }), { mode: 0o600 });
   await writeFile(join(copy, "tests/.b1a-prepared-postgres.mjs"), preparedRunner);
+  execFileSync(process.execPath, ["--input-type=module", "--eval", `
+    import assert from "node:assert/strict";
+    import { setTimeout as delay } from "node:timers/promises";
+    import { withRealPostgres } from "./tests/.b1a-prepared-postgres.mjs";
+    const options = { database: "b1a_lineage", port: ${postgres.port} };
+    for (const allowedPorts of [undefined, [], [${postgres.port + 1}]])
+      await assert.rejects(withRealPostgres(() => assert.fail("unauthorized body"), { ...options, allowedPorts }, () => {}), /attack_kit_(allowed_ports_required|port_outside_block)/);
+    await assert.rejects(withRealPostgres(() => delay(50), { ...options, allowedPorts: [options.port], boundMs: 5 }, () => {}), /attack_kit_body_timed_out_after_5ms/);
+    await delay(50);
+    const result = await withRealPostgres(() => "within bound", { ...options, allowedPorts: [options.port], boundMs: 500000 }, () => {});
+    assert.equal(result.value, "within bound"); assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []);
+    console.log("B1a prepared allowedPorts_refused=true body_timeout=true timer_cleared=true cleanedUp=true leftovers=0");
+  `], { cwd: copy, timeout: 30000, stdio: "inherit", env: { ...process.env, NODE_TEST_CONTEXT: undefined, B1A_MUTATION_FIXTURE: fixture } });
   const original = await readFile(join(copy, "tests/improve-control-room-desk-postgres.test.ts"), "utf8");
   const factory = "realPostgresSkipMessage, requiresRealPostgres, withRealPostgres";
   assert.equal(original.split(factory).length, 2);
