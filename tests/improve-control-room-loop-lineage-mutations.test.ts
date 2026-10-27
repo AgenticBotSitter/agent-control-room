@@ -166,7 +166,7 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
       const entries = ledger.entries.filter((entry: { file: string }) => !suffix.includes(entry.file));
       const ledgerPath = join(copy, ".test-tmp/b1a-prefix-ledger.json");
       await writeFile(ledgerPath, JSON.stringify({ ...ledger, entries, digest: ledgerDigest(entries) }));
-      await applyMigrations({ rootDir: copy, ledgerPath,
+      await applyMigrations({ target: undefined, rootDir: copy, ledgerPath,
         bootstrapTarget: postgres.admin({ database: "b1a_fresh_prefix" }),
         migrateTarget: postgres.connection("migrator", { database: "b1a_fresh_prefix" }), env: { NODE_ENV: "test" } });
       // Match the kit's independent queue setup too, so the comparison covers
@@ -185,7 +185,7 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
         const config = postgres.admin({ database });
         return execFileSync(join(resolvePgBin()!, "pg_dump"), ["--schema-only", "--no-owner", "--no-privileges"],
           { encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024,
-          env: { PATH: process.env.PATH, PGHOST: config.host, PGPORT: String(config.port), PGDATABASE: database,
+          env: { NODE_ENV: "test", PATH: process.env.PATH, PGHOST: config.host, PGPORT: String(config.port), PGDATABASE: database,
             PGUSER: config.user, PGPASSWORD: config.password } })
           .replace(/^\\(?:un)?restrict .*$/gmu, "");
       };

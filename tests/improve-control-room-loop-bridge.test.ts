@@ -418,6 +418,8 @@ test("B1b bounded malformed/overflow commands, deadline and owned child reap",as
 
 test("B1b Stop still targets the original owned run after local draft/settings change",async t=>{
   const f=await fixture(t),id=await f.intake(),s=await f.confirm(id);
+  assert.equal((await f.post(`${encodeURIComponent(id)}/start`, { expectedVersion: s.request.currentVersion,
+    expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId })).status, 202);
   const desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,f.adapter.contract);
   await desk.reviseLoopDraft(f.identity,f.project.projectId,{requestId:id,expectedVersion:1,description:"Changed local draft.",settingsText:JSON.stringify({changed:true})},"b1b-changed-local-0001");
   const response=await f.post(`${encodeURIComponent(id)}/stop`,{runLinkId:s.request.runLink!.runLinkId});
@@ -503,7 +505,11 @@ for (const [operation, code, output = "envelope"] of [["approve", 2, "empty"], [
       if (operation === "approve") Object.assign(body, approval);
       if (operation === "answer") Object.assign(body, { questionId: question.questionId, inputVersion: 1, questionReportSha256: question.reportSha256, text: "Keep this scope." });
       if (operation === "start") body.runLinkId = s.request.runLink!.runLinkId;
-      if (operation === "stop") body = { runLinkId: s.request.runLink!.runLinkId };
+      if (operation === "stop") {
+        assert.equal((await f.post(`${encodeURIComponent(id)}/start`, { expectedVersion: s.request.currentVersion,
+          expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId })).status, 202);
+        body = { runLinkId: s.request.runLink!.runLinkId };
+      }
       if (operation === "confirm") Object.assign(body, { requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 });
     }
     await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: operation === "confirm" ? "confirm-request" : operation, code, output }));
