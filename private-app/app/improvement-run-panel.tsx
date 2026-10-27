@@ -42,6 +42,7 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (focus) { heading.current?.focus(); heading.current?.scrollIntoView?.({ block: "nearest" }); } }, [focus]);
   const [epoch, setEpoch] = useState(0), writeEpoch = useRef(0), revision = useRef(-1);
+  const verifiedRead = useRef(false);
   const [safe, setSafe] = useState<LoopImprovementStatusV1>();
   const safeRef = useRef<LoopImprovementStatusV1 | undefined>(undefined);
   const actions = useRef<{ start?: FrozenLoopAction; stop?: FrozenLoopAction }>({});
@@ -50,12 +51,13 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
   const [notices, setNotices] = useState<{ start?: string; stop?: string }>({});
   const [retry, setRetry] = useState({ start: false, stop: false });
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const identity = binding(row);
-  const clearProtected = () => { safeRef.current = undefined; setSafe(undefined); actions.current = {}; setRetry({ start: false, stop: false }); setNotices({}); };
+  const clearProtected = () => { verifiedRead.current = false; safeRef.current = undefined; setSafe(undefined); actions.current = {}; setRetry({ start: false, stop: false }); setNotices({}); };
   const read = usePolledRead({ key: `loop-status:${identity}:${epoch}`, shareKey: `loop-status:${identity}:${epoch}`,
     baseIntervalMs: 30_000, enabled: !!row.runLink, dropValueOnError: true,
     read: async signal => {
+      verifiedRead.current = false;
       const captured = writeEpoch.current;
       const status = await client.readStatus(row.projectId, row.requestId, signal);
       if (!matches(row, status)) throw new LoopReadError(0, true);
@@ -64,21 +66,23 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
       revision.current = status.engineRevision;
       return status;
     },
-    onAccept: status => { safeRef.current = status; setSafe(status); },
-    onFailure: error => { if (clearsLoopAuthority(error)) clearProtected(); },
+    onAccept: status => { verifiedRead.current = true; safeRef.current = status; setSafe(status); },
+    onFailure: error => { verifiedRead.current = false; if (clearsLoopAuthority(error)) clearProtected(); },
   });
   const current = read.value;
   const statusFresh = fresh && !!current && !read.loading && !read.checking && !read.error && matches(row, current);
   const canStart = statusFresh && current.canStart && current.confirmationCurrent && current.startState === "not_started"
     && !actions.current.start && !pending.start && !pending.stop;
+  const startGate = () => verifiedRead.current && canStart;
   const snapshot = current ?? safe;
   const stopTarget = snapshot?.canStop && snapshot.runLinkId && snapshot.state !== "stopped" && snapshot.state !== "candidate_ready";
   async function submit(operation: "start" | "stop", replay = false) {
     if (latch.current[operation] || !navigator.onLine || !row.runLink) return;
+    if (operation === "stop" && !safeRef.current?.canStop) return;
     if (replay) {
-      if (!actions.current[operation] || operation === "start" && !statusFresh || operation === "stop" && !stopTarget) return;
+      if (!actions.current[operation] || operation === "start" && (!statusFresh || !verifiedRead.current) || operation === "stop" && !stopTarget) return;
     } else {
-      if (operation === "start" ? !canStart : !stopTarget || !!actions.current.stop) return;
+      if (operation === "start" ? !startGate() : !stopTarget || !!actions.current.stop) return;
       actions.current[operation] = Object.freeze({ key: `loop-${operation}:${crypto.randomUUID()}`,
         body: JSON.stringify(operation === "start" ? { expectedVersion: row.currentVersion, runLinkId: row.runLink.runLinkId,
           expectedRevision: current!.engineRevision } : { runLinkId: row.runLink.runLinkId }) });
@@ -123,12 +127,12 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
       {snapshot && <p>Last checked <time dateTime={snapshot.observedAt}>{snapshot.observedAt}</time></p>}
       {(read.error || !fresh) && <p role="alert">Could not refresh saved progress.</p>}
       {read.checking && <p role="status">Checking saved progress…</p>}
-      <button type="button" disabled={!canStart} onClick={() => void submit("start")}>Start confirmed work</button>{" "}
+      <button type="button" disabled={!startGate()} onClick={() => void submit("start")}>Start confirmed work</button>{" "}
       <button type="button" disabled={!stopTarget || pending.stop || !!actions.current.stop} onClick={() => void submit("stop")}>Stop this run</button>{" "}
       <button type="button" onClick={read.refresh}>Refresh status</button>
       {notices.start && <p role={retry.start ? "alert" : "status"}>{notices.start}</p>}
       {notices.stop && snapshot?.state !== "stopped" && <p role={retry.stop ? "alert" : "status"}>{notices.stop}</p>}
-      {retry.start && <button type="button" disabled={!statusFresh || pending.start || snapshot?.state === "stopped"} onClick={() => void submit("start", true)}>Retry this exact Start</button>}
+      {retry.start && <button type="button" disabled={!statusFresh || !verifiedRead.current || pending.start || snapshot?.state === "stopped"} onClick={() => void submit("start", true)}>Retry this exact Start</button>}
       {retry.stop && <button type="button" disabled={!stopTarget || pending.stop} onClick={() => void submit("stop", true)}>Retry this exact Stop</button>}
     </>}
   </div>;

@@ -54,6 +54,7 @@ async function fixture() {
   const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
   const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, loopBridge: bridge, service: desk, clock: () => now });
   return { ...f, desk, bridge, handler, calls, requestId: draft.request.requestId, link: linked.runLink.runLinkId,
+    snapshot: () => structuredClone(saved),
     edit: (change: Partial<LoopEngineStatusV1>) => { saved = { ...saved, ...change }; },
     close: async () => { await bridge.close(); await f.db.close(); } };
 }
@@ -165,14 +166,21 @@ test("B2a display identity binding", async () => {
 });
 
 test("B2a stale response suppression", async () => {
-  const f = await fixture(), wire = transport(f); const m = await mount(f.project.projectId, wire.fetcher);
+  const f = await fixture(), wire = transport(f); let hold = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    const reply = await wire.fetcher(path, options);
+    if (hold && String(path).endsWith("/status")) await held;
+    return reply;
+  }) as typeof fetch);
   try {
     await settle(); await act(async () => m.button("Stop this run").click()); await settle(); assert.match(m.text(), /Stopped/);
-    f.edit({ state: "running", revision: 1 });
+    f.edit({ state: "running", revision: 1 }); hold = true;
     await act(async () => m.button("Refresh status").click()); await settle();
+    release(); await settle();
     assert.match(m.text(), /Stopped/, "B2a older running reply cannot erase known stopped");
     assert.equal(m.button("Start confirmed work").disabled, true);
-  } finally { await m.close(); await f.close(); }
+  } finally { release(); await m.close(); await f.close(); }
 });
 
 test("B2a transient refresh retains only Stop and protected failures clear the target", async () => {
@@ -214,8 +222,9 @@ test("B2a no automatic work on reopen focus fragment or terminal progress", asyn
 test("B2a missing confirmation and changed A2 scalar refuse Start with zero writes", async () => {
   const f = await fixture(), wire = transport(f);
   try {
+    const baseline = f.snapshot();
     for (const change of [{ confirmation: null }, { inputVersion: 1 }, { description: `${description}changed` }, { settingsSha256: "0".repeat(64) }]) {
-      f.edit(change);
+      f.edit({ ...baseline, ...change });
       const before = (await f.db.query("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0];
       const m = await mount(f.project.projectId, wire.fetcher);
       try { await settle(); await act(async () => m.button("Start confirmed work").click()); assert.equal(wire.posts.length, 0); }
@@ -256,7 +265,7 @@ test("B2a dropped-before-admission and uncertain Stop retain separate replay key
     if (options?.method === "POST") attempted.push({ path: String(path), key: new Headers(options.headers).get("idempotency-key")!, body: String(options.body) });
     if (String(path).endsWith("/start") && dropStart) { dropStart = false; throw new TypeError("SYNTHETIC drop before admission"); }
     const reply = await wire.fetcher(path, options);
-    if (String(path).endsWith("/stop") && dropStop) { dropStop = false; throw new TypeError("SYNTHETIC lost Stop reply"); }
+    if (String(path).endsWith("/stop") && dropStop) { dropStop = false; f.edit({ state: "running", revision: 6 }); throw new TypeError("SYNTHETIC lost Stop reply"); }
     return reply;
   }) as typeof fetch);
   try {
@@ -265,7 +274,11 @@ test("B2a dropped-before-admission and uncertain Stop retain separate replay key
     assert.equal(m.button("Stop this run").disabled, false, "uncertain Start never blocks Stop");
     await act(async () => m.button("Retry this exact Start").click()); await settle();
     assert.deepEqual(attempted[1], attempted[0]); assert.equal(f.calls.filter(x => x === "start").length, 1);
-    await act(async () => m.button("Stop this run").click()); await settle(); assert.match(m.text(), /Stopped/);
+    await act(async () => m.button("Stop this run").click()); await settle();
+    assert.doesNotMatch(m.text(), /Stopped/); assert.match(m.text(), /Stop could not be confirmed/);
+    await act(async () => m.button("Retry this exact Stop").click()); await settle();
+    assert.deepEqual(attempted[3], attempted[2]); assert.match(m.text(), /Stop requested/); assert.doesNotMatch(m.text(), /Stopped/);
+    f.edit({ state: "stopped", revision: 7 }); await act(async () => m.button("Refresh status").click()); await settle(); assert.match(m.text(), /Stopped/);
     assert.notEqual(attempted[2]!.key, attempted[0]!.key); assert.equal(f.calls.filter(x => x === "stop").length, 1);
   } finally { await m.close(); await f.close(); }
 });
@@ -278,6 +291,48 @@ test("B2a two independently frozen browser Starts contend on the one journal", a
       client.start(f.project.projectId, f.requestId, { body, key: "loop-start:browser-two-0001" })]);
     assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
     assert.equal(f.calls.filter(x => x === "start").length, 1);
-    assert.equal((await f.db.query("SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0]!.n, 1);
+    assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0]!.n, 1);
   } finally { globalThis.fetch = previous; await f.close(); }
+});
+
+test("B2a reviewed display evidence separates requested and observed identities", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    const response = await wire.fetcher(path, options);
+    if (!String(path).endsWith("/status")) return response;
+    const value = await response.json();
+    // Explicit product projection fixture, not guessed raw A2 keys.
+    value.display.progress = { stepId: "build", role: "builder", attempt: 3, requestedModel: "requested-model",
+      observedModel: "observed-model", identityVerified: true, repairCount: 2 };
+    return Response.json(value);
+  }) as typeof fetch);
+  try { await settle(); assert.match(m.text(), /Requested model: requested-model/); assert.match(m.text(), /Observed model: observed-model/);
+    assert.match(m.text(), /Attempt: 3 · Repairs: 2/); assert.match(m.text(), /Step: build · Role: builder/); }
+  finally { await m.close(); await f.close(); }
+});
+
+test("B2a request deadline aborts an unresponsive transport without a POST retry", async t => {
+  const previous = globalThis.fetch; let aborted = false, requests = 0;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  globalThis.fetch = async (_url, options) => { requests++; options?.signal?.addEventListener("abort", () => { aborted = true; }); return new Promise<Response>(() => {}); };
+  try {
+    const result = client.readStatus("project:synthetic", "request:synthetic", new AbortController().signal);
+    t.mock.timers.tick(10_000); await assert.rejects(result); assert.equal(aborted, true); assert.equal(requests, 1);
+  } finally { globalThis.fetch = previous; t.mock.timers.reset(); }
+});
+
+test("B2a status link version and hashes must match the server-listed request", async () => {
+  const f = await fixture(), wire = transport(f);
+  try {
+    for (const change of [{ runLinkId: "link:foreign" }, { localVersion: 2 }, { requestSha256: "0".repeat(64) }, { settingsSha256: "0".repeat(64) }]) {
+      const m = await mount(f.project.projectId, (async (path, options) => {
+        const reply = await wire.fetcher(path, options);
+        if (!String(path).endsWith("/status")) return reply;
+        const value = await reply.json(); Object.assign(value.display, change); return Response.json(value);
+      }) as typeof fetch);
+      try { await settle(); assert.equal(m.button("Start confirmed work").disabled, true); assert.equal(m.button("Stop this run").disabled, true); }
+      finally { await m.close(); }
+    }
+    assert.equal(wire.posts.length, 0); assert.equal(f.calls.filter(x => x !== "status").length, 0);
+  } finally { await f.close(); }
 });
