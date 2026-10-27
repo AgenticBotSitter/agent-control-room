@@ -72,6 +72,8 @@ for (const width of [360, 1280]) test(`B2a browser closes and reopens the saved 
   const savedLink = `https://product.invalid/projects/${encodeURIComponent(f.project.projectId)}/improvements#request=${encodeURIComponent(f.requestId)}`;
   async function open() {
     context = await browser.newContext({ viewport: { width, height: 850 }, isMobile: width < 500, hasTouch: width < 500 });
+    // All traffic is intercepted locally; connectivity must not depend on the runner's network namespace.
+    await context.addInitScript(() => { Object.defineProperty(navigator, "onLine", { get: () => true }); });
     await context.route("**/*", async route => {
       const req = route.request(), url = new URL(req.url());
       if (url.origin !== "https://product.invalid") { unexpected.push(req.url()); await route.abort(); return; }
@@ -89,6 +91,7 @@ for (const width of [360, 1280]) test(`B2a browser closes and reopens the saved 
       unexpected.push(req.url()); await route.abort();
     });
     const page = await context.newPage(); await page.goto(savedLink);
+    expect(await page.evaluate(() => navigator.onLine)).toBe(true);
     await expect(page.getByRole("heading", { name: "Saved request", exact: true })).toBeFocused();
     return page;
   }

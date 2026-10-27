@@ -271,6 +271,7 @@ jobs:
         timeout-minutes: 10
         run: pnpm run test:improve-control-room-loop-bridge-mutations
       - name: Prove saved loop website guards
+        timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-ui-mutations
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
@@ -17,7 +18,7 @@ import { loopImprovementBrowserClient as client } from "../src/web/v1/improve-co
 const KEY = new Uint8Array(32).fill(64);
 const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC"}';
 const description = "  Improve the saved request.\nKeep exact text.  ";
-async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missing" = "accepted", startError: "REFUSED" | "INELIGIBLE" | null = null) {
+async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missing" = "accepted", startError: "REFUSED" | "INELIGIBLE" | "LAUNCH_UNCERTAIN" | null = null) {
   const f = await taskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
@@ -38,7 +39,10 @@ async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missi
     beforeSpawn(); calls.push(op);
     saved = { ...saved, state: op === "stop" ? "stopped" : startOutcome === "accepted" ? "running" : "ready", revision: saved.revision + 1,
       receipts: op === "start" && startOutcome === "missing" ? saved.receipts : [...saved.receipts, { commandId, bindingDigest: sha256Digest(binding),
-        state: op === "start" && startOutcome !== "missing" ? startOutcome : "accepted", evidenceDigest: sha256Digest({ op, commandId }), error: op === "start" ? startError : null }] };
+        state: op === "start" && startOutcome !== "missing" ? startOutcome : "accepted", evidenceDigest: sha256Digest({ op, commandId }), error: op === "start" && startError !== "LAUNCH_UNCERTAIN" ? startError : null }] };
+    // Deliberately malformed SYNTHETIC adapter data must be rejected by the real result decoder.
+    if (op === "start" && startError === "LAUNCH_UNCERTAIN") return structuredClone({ ...saved,
+      receipts: saved.receipts.map(receipt => ({ ...receipt, error: "LAUNCH_UNCERTAIN" })) }) as unknown as LoopEngineStatusV1;
     return structuredClone(saved);
   };
   const adapter: LoopAdapterV1 = { adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
@@ -465,4 +469,112 @@ test("B2a F3 panel rejects canStop without a Start claim", async () => {
     await act(async () => m.button("Stop this run").click());
     assert.equal(wire.posts.length, 0); assert.equal(f.calls.filter(x => x === "stop").length, 0);
   } finally { await m.close(); await f.close(); }
+});
+
+
+test("B2a R3 website mutation step has its own timeout", async () => {
+  const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  const step = workflow.split("      - name: Prove saved loop website guards\n")[1]!.split("      - name:")[0]!;
+  assert.match(step, /^        timeout-minutes: 5$/m, "B2a website guards have a five-minute step budget");
+  assert.match(step, /^        run: pnpm run test:improve-control-room-loop-ui-mutations$/m);
+  assert.doesNotMatch(step, /^        if:/m);
+});
+
+test("B2a R3 forged started display cannot Stop a never-started run", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    const response = await wire.fetcher(path, options);
+    if (!String(path).endsWith("/status")) return response;
+    const body = await response.json(); body.display.canStop = true; body.display.startState = "started";
+    return Response.json(body);
+  }) as typeof fetch);
+  try {
+    const before = (await f.db.query("SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind")).rows;
+    await settle(); assert.equal(m.button("Stop this run").disabled, false);
+    await act(async () => m.button("Stop this run").click()); await settle();
+    assert.equal(wire.posts.length, 1, "forged display exercises the server Stop boundary");
+    assert.equal(f.calls.filter(x => x === "stop").length, 0, "B2a never-started run reaches zero adapter Stop calls");
+    assert.deepEqual((await f.db.query("SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind")).rows,
+      before, "refused Stop appends no command claim or result");
+    const response = await f.handler(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/stop`,
+      "POST", { runLinkId: f.link }, "loop-stop:forged-direct-0001"));
+    assert.equal(response.status, 409, "direct Stop also requires a signed admitted Start");
+  } finally { await m.close(); await f.close(); }
+});
+
+test("B2a R3 stopped run refuses fresh Start and confirm", async () => {
+  const f = await fixture();
+  try {
+    await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-0001");
+    await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "stop", { runLinkId: f.link }, "loop-stop:stopped-0001");
+    // Fresh local version has no prior authorization/confirmation claim that could mask the stopped guard.
+    const revised = await f.desk.reviseLoopDraft(f.identity, f.project.projectId, { requestId: f.requestId, expectedVersion: 1,
+      description, settingsText }, "b2a-stopped-revision-0001");
+    assert.equal(revised.request.currentVersion, 2);
+    const saved = f.snapshot();
+    const before = (await f.db.query("SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind")).rows;
+    const base = `/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}`;
+    const confirm = { expectedVersion: 2, expectedRevision: saved.revision,
+      requestSha256: loopByteHashV1(description), settingsSha256: loopByteHashV1(settingsText) };
+    assert.equal((await f.handler(request(`${base}/confirm`, "POST", confirm, "loop-confirm:stopped-0001"))).status,
+      409, "B2a stopped confirmation refuses before dispatch");
+    assert.equal((await f.handler(request(`${base}/start`, "POST", { expectedVersion: 2,
+      expectedRevision: saved.revision, runLinkId: f.link }, "loop-start:stopped-fresh-0001"))).status,
+      409, "B2a stopped Start refuses before dispatch");
+    assert.deepEqual(f.calls.filter(x => x !== "status"), ["start", "stop"]);
+    assert.deepEqual((await f.db.query("SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind")).rows, before);
+  } finally { await f.close(); }
+});
+
+test("B2a R3 LAUNCH_UNCERTAIN outcome never says refused", async () => {
+  const f = await fixture("refused", "LAUNCH_UNCERTAIN");
+  try {
+    const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:uncertain-wording-0001");
+    assert.equal(receipt.state, "uncertain"); assert.equal(receipt.error, "LAUNCH_UNCERTAIN");
+    const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+    assert.equal(display.startState, "uncertain");
+    assert.equal(display.attention?.code, "LAUNCH_UNCERTAIN");
+    assert.equal(display.attention?.message, "Start could not be confirmed.", "B2a uncertain outcome describes uncertainty");
+    assert.doesNotMatch(display.attention!.message, /refused/i);
+    assert.equal(display.canStart, false); assert.equal(display.canStop, true);
+    const stopped = await f.handler(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/stop`,
+      "POST", { runLinkId: f.link }, "loop-stop:uncertain-wording-0001"));
+    assert.equal(stopped.status, 202, "admitted uncertain Start still permits owned Stop");
+    assert.deepEqual(f.calls.filter(x => x !== "status"), ["start", "stop"]);
+    assert.equal((await f.bridge.status(f.identity, f.project.projectId, f.requestId)).display.state, "stopped");
+  } finally { await f.close(); }
+});
+
+test("B2a R3 offline panel sends zero mutations", async () => {
+  const f = await fixture(), wire = transport(f), m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    Object.defineProperty(m.dom.window.navigator, "onLine", { get: () => false });
+    await settle();
+    await act(async () => m.button("Start confirmed work").click());
+    assert.equal(wire.posts.length, 0, "B2a offline Start sends no POST");
+    await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:offline-0001");
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.equal(m.button("Stop this run").disabled, false);
+    await act(async () => m.button("Stop this run").click());
+    assert.equal(wire.posts.length, 0, "B2a offline Stop sends no POST");
+    assert.deepEqual(f.calls.filter(x => x !== "status"), ["start"]);
+  } finally { await m.close(); await f.close(); }
+});
+
+
+test("B2a R3 stopped engine cannot admit its first website Start", async () => {
+  const f = await fixture();
+  try {
+    f.edit({ state: "stopped" });
+    const status = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+    assert.equal(status.display.confirmationCurrent, true);
+    const response = await f.handler(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/start`,
+      "POST", { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-engine-0001"));
+    assert.equal(response.status, 409, "B2a stopped engine refuses Start despite current confirmation");
+    assert.deepEqual(f.calls.filter(x => x !== "status"), []);
+    assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);
+  } finally { await f.close(); }
 });

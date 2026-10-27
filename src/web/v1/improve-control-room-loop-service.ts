@@ -209,6 +209,13 @@ export class ImproveControlRoomLoopServiceV1 {
         if (!observed || observed.run.loopRunId !== run.loopRunId) throw conflict();
         if (operation === "stop") {
           if (body.runLinkId !== local.link!.id) throw new WebAccessError("not_found");
+          const rawStart = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+            WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim' LIMIT 1`,
+          [this.scope.tenantId, requestId])).rows[0];
+          if (!rawStart) throw conflict();
+          const start = this.#verify(rawStart);
+          if (start.project_id !== projectId || start.owner_identity_id !== actor.id
+            || start.binding.runLinkId !== local.link!.id || start.binding.loopRunId !== run.loopRunId) throw conflict();
         } else this.#current(observed, local, body, operation !== "confirm");
         if (operation === "confirm") {
           if (body.requestSha256 !== loopByteHashV1(observed.description) || body.settingsSha256 !== observed.settingsSha256

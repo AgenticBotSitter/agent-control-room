@@ -9,6 +9,16 @@ import { assertGuardBites } from "./support/attack-kit/index";
 const exec = promisify(execFile), root = resolve(".");
 const panel = "private-app/app/improvement-run-panel.tsx";
 const probes = [
+  { name: "server Stop requires admitted Start", file: "src/web/v1/improve-control-room-loop-service.ts",
+    find: `          const rawStart = (await tx.query<Row>(\`SELECT * FROM control_loop_improvement_commands
+            WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim' LIMIT 1\`,
+          [this.scope.tenantId, requestId])).rows[0];
+          if (!rawStart) throw conflict();
+          const start = this.#verify(rawStart);
+          if (start.project_id !== projectId || start.owner_identity_id !== actor.id
+            || start.binding.runLinkId !== local.link!.id || start.binding.loopRunId !== run.loopRunId) throw conflict();`,
+    replace: "          /* MUTANT: omit admitted Start guard for Stop. */",
+    pattern: "B2a R3 forged started display cannot Stop a never-started run", assertion: "B2a never-started run reaches zero adapter Stop calls" },
   { name: "display identity binding", file: "src/web/v1/improve-control-room-loop-browser-client.ts",
     find: "if (display.projectId !== projectId || display.requestId !== requestId) throw new LoopReadError(0, true);",
     replace: "/* MUTANT: display identity binding disabled. */", pattern: "B2a display identity binding", assertion: "B2a foreign display never reaches DOM" },
