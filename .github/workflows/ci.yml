@@ -270,6 +270,8 @@ jobs:
       - name: Prove authorized loop bridge guards
         timeout-minutes: 10
         run: pnpm run test:improve-control-room-loop-bridge-mutations
+      - name: Prove saved loop website guards
+        run: pnpm run test:improve-control-room-loop-ui-mutations
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations
@@ -895,6 +897,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Chromium for the CI journey only
         run: pnpm exec playwright install --with-deps chromium
+      - name: Prove saved loop website Start, reopen and Stop
+        run: pnpm run test:improve-control-room-loop-browser
       - name: Inbox phone target geometry
         run: pnpm test:inbox-browser
       - name: Install PostgreSQL 17 from PGDG

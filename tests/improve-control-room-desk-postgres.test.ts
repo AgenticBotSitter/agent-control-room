@@ -1033,3 +1033,51 @@ test("B1a loop desk returns only the authenticated creator in the same project",
     console.log("B1a creator isolation same_project=2 visible_per_creator=1 signed_bytes_unchanged=true production_login=control_room_web");
   } finally { await web.close(); }
 }));
+
+test("B2a desk owner isolation", async () => b1aRun(async pg => {
+  const { ImproveControlRoomLoopServiceV1 } = await import("../src/web/v1/improve-control-room-loop-service");
+  const { createImproveControlRoomHttpHandlerV1 } = await import("../src/web/v1/improve-control-room-http");
+  const f = await b1aLinked(pg), web = b1aWeb(pg);
+  let adapterCalls = 0;
+  const adapter = { contract: LOOP_CONTRACT, close: async () => {}, status: () => { adapterCalls++; throw new Error("unexpected_adapter_read"); } } as never;
+  const bridge = new ImproveControlRoomLoopServiceV1(web.client, scope, { integrityKey: KEY, adapter });
+  let caller = identity;
+  // Authentication fixture supplies a previously verified identity; the real
+  // session/grant/creator checks below run against production-role SQL.
+  const localOwnerSession = { assertLocalRequest: (request: Request) => assert.equal(new URL(request.url).origin, "https://product.invalid"),
+    verify: () => caller } as never;
+  const handler = createImproveControlRoomHttpHandlerV1({ origin: "https://product.invalid", loopBridge: bridge, localOwnerSession });
+  const get = (projectId = ids.project) => handler(new Request(`https://product.invalid/api/v1/projects/${encodeURIComponent(projectId)}/improvements/loop/desk`));
+  try {
+    assert.equal((await web.client.query("SELECT current_user")).rows[0].current_user, "control_room_web");
+    const pipelines = new LinearPipelineServiceV1(web.client, scope, KEY, { assertCurrent: () => true, isAcceptedResultCurrent: () => false });
+    const savedTemplate = await pipelines.createTemplate(identity, ids.project, template);
+    const legacyDesk = new ImproveControlRoomDeskServiceV1(web.client, scope, KEY, pipelines);
+    const old = await legacyDesk.create(identity, ids.project, { description: "Retained signed legacy request.", pipelineTemplateId: savedTemplate.templateId,
+      selectedWorkerIds: ["worker:build", "worker:check"], leadWorkerId: "worker:lead" }, "b2a-pg-legacy-0001");
+    await b1aSql(pg, "UPDATE control_role_grants SET role_key='owner' WHERE id=$1", [ids.operatorGrant]);
+    const foreign = await web.desk.saveLoopDraft(operator, ids.project, { ...LOOP_DRAFT, description: "Other creator's request." }, "b2a-pg-other-owner-0001");
+    await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b2a-pg-current-auth-0001", loopObservation());
+    const before = await b1aSnapshot(pg), digest = await readPrivateWebSchemaDigest(web.client);
+    const grants = JSON.stringify(await readMacGrantCatalogV1(web.client));
+    for (let i = 0; i < 3; i++) {
+      const response = await get(); assert.equal(response.status, 200); const value = await response.json();
+      assert.deepEqual(value.loopRequests.map((row: { requestId: string }) => row.requestId), [f.saved.request.requestId]);
+      assert.equal(value.loopRequests[0].runLink.initialInputVersion, 1);
+      assert.equal(value.loopRequests[0].savedAuthorization, true);
+      assert.equal(value.loopRequests[0].startsWork, false); assert.equal(value.loopRequests[0].grantsDeployAuthority, false);
+      assert.equal(value.legacy.requests[0].requestId, old.request.requestId);
+    }
+    caller = operator; const other = await get(); assert.equal(other.status, 200);
+    assert.deepEqual((await other.json()).loopRequests.map((row: { requestId: string }) => row.requestId), [foreign.request.requestId]);
+    caller = identity;
+    assert.equal((await get("project:foreign")).status, 404);
+    assert.equal(await b1aSnapshot(pg), before); assert.equal(await readPrivateWebSchemaDigest(web.client), digest);
+    assert.equal(JSON.stringify(await readMacGrantCatalogV1(web.client)), grants); assert.equal(adapterCalls, 0);
+    await b1aSql(pg, "ALTER TABLE control_loop_improvement_inputs DISABLE TRIGGER USER");
+    try { await b1aSql(pg, "UPDATE control_loop_improvement_inputs SET auth_tag=$1 WHERE request_id=$2", [TAG, f.saved.request.requestId]); }
+    finally { await b1aSql(pg, "ALTER TABLE control_loop_improvement_inputs ENABLE TRIGGER USER"); }
+    assert.equal((await get()).status, 503, "tampered signed inputs refuse at HTTP boundary");
+    console.log("B2a desk owner isolation production_login=control_room_web legacy_preserved=true signed_bytes_unchanged=true grants_unchanged=true adapter_calls=0");
+  } finally { await bridge.close(); await web.close(); }
+}));

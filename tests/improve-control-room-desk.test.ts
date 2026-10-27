@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
 import { createHash } from "node:crypto";
 import { sha256Digest } from "../src/security";
 import { readPrivateWebSchemaDigest, privateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
@@ -791,4 +792,35 @@ test("B1a service record digest guard refuses the whole projection", async t => 
   await f.db.exec("ALTER TABLE control_loop_improvement_requests ENABLE TRIGGER USER");
   await assert.rejects(f.desk.viewLoopDesk(f.identity, f.project.projectId), /loop_improvement_integrity_failed/u,
     "B1a record digest projection refusal");
+});
+
+
+test("B2a desk HTTP delegates one signed legacy/loop projection without adapter access", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  const legacyDesk = new ImproveControlRoomDeskServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, f.pipelines, () => now);
+  const legacy = (await legacyDesk.create(f.identity, f.project.projectId, { description: "Retained legacy pipeline.", pipelineTemplateId: (await f.desk.view(f.identity, f.project.projectId)).templates[0]!.templateId,
+    selectedWorkerIds: ["worker:builder", "worker:checker"], leadWorkerId: "worker:lead" }, "b2a-legacy-fixture-0001")).request;
+  let adapterCalls = 0;
+  const adapter = { contract: syntheticLoopContract, status: () => { adapterCalls++; throw new Error("unexpected_adapter_read"); } } as never;
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: key, adapter }, () => now);
+  const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, loopBridge: bridge, clock: () => now });
+  const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/desk`;
+  const before = f.writes();
+  const response = await handler(webRequest(path)); assert.equal(response.status, 200);
+  const value = await response.json(); assert.deepEqual(value, await f.desk.viewLoopDesk(f.identity, f.project.projectId));
+  assert.equal(value.legacy.requests[0].requestId, legacy.requestId);
+  assert.ok(value.loopRequests[0].runLink);
+  assert.equal(value.loopRequests[0].runLink.initialInputVersion, 1);
+  assert.equal(value.loopRequests[0].startsWork, false); assert.equal(value.loopRequests[0].grantsDeployAuthority, false);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  for (const suffix of ["?filter=all", "?owner=other"]) assert.equal((await handler(webRequest(path + suffix))).status, 400);
+  assert.equal((await handler(webRequest(path, "POST", {}))).status, 400);
+  const foreign = webRequest(path); foreign.headers.set("origin", "https://foreign.invalid"); foreign.headers.set("sec-fetch-site", "cross-site");
+  assert.equal((await handler(foreign)).status, 403);
+  const missing = webRequest(path); missing.headers.delete("cf-access-jwt-assertion"); assert.equal((await handler(missing)).status, 401);
+  await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'");
+  assert.equal((await handler(webRequest(path))).status, 403);
+  await f.db.query("UPDATE control_role_grants SET role_key='owner',revoked_at=$1 WHERE id='grant:web'", [new Date(now).toISOString()]);
+  assert.equal((await handler(webRequest(path))).status, 403);
+  assert.equal(f.writes(), before); assert.equal(adapterCalls, 0);
 });

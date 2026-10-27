@@ -4,7 +4,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { assertNoSecretMaterial, canonicalJson, hmacSha256Tag, sha256Digest } from "../../security";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1/service";
 import { loopBridgeBindingSchemaV1, loopBridgeBodiesV1, loopBridgeOperationSchemaV1, loopBridgeOutcomeSchemaV1,
-  loopBridgeReceiptSchemaV1, type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopBridgeOutcomeV1 } from "../../improve-control-room/v1/schemas";
+  loopBridgeReceiptSchemaV1, loopImprovementStatusSchemaV1, type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopBridgeOutcomeV1 } from "../../improve-control-room/v1/schemas";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "./improve-control-room-loop-adapter";
 
@@ -111,13 +111,43 @@ export class ImproveControlRoomLoopServiceV1 {
       localVersion: claim.binding.localVersion, commandId: claim.command_id, state: result?.result?.state ?? "uncertain",
       replayed, engineRevision: result?.result?.revision ?? null, error: result?.result?.error ?? (result ? null : "LAUNCH_UNCERTAIN") });
   }
+  viewDesk(identity: VerifiedWebIdentity, projectId: string) {
+    if (!id.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+    return this.#desk.viewLoopDesk(identity, projectId);
+  }
   async status(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
     if (!id.safeParse(projectId).success || !id.safeParse(requestId).success) throw new WebAccessError("invalid_request");
     // Authorization and signed lineage are checked before any external read. GET never adopts or reconciles.
-    const lineage = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage }) =>
-      lineage.loopBridgeLineage(tx, projectId, requestId, actor.id));
+    const { lineage, startClaim, startResult, mayWrite } = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
+      const lineage = await reader.loopBridgeLineage(tx, projectId, requestId, actor.id);
+      const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+        WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim'`, [this.scope.tenantId, requestId])).rows[0];
+      const startClaim = raw ? this.#verify(raw) : undefined;
+      const mayWrite = actor.can("tasks.propose", projectId, true, "high");
+      return { lineage, startClaim, startResult: startClaim ? await this.#result(tx, startClaim) : undefined, mayWrite };
+    });
     const current = await this.#adapter.status(this.#run(lineage).loopRunId);
-    return { schemaVersion: 1, request: lineage.view, engine: { revision: current.revision, state: current.state,
+    let confirmationCurrent = false;
+    try { this.#current(current, lineage, { expectedVersion: Number(lineage.input.version), expectedRevision: current.revision }, true); confirmationCurrent = true; }
+    catch (error) { if (!(error instanceof WebAccessError)) throw error; }
+    const startState = !startClaim ? "not_started" : !startResult ? "uncertain"
+      : startResult.result?.state === "accepted" ? "started" : "dispatched";
+    const state = current.state === "draft" ? null : current.state === "stopped" ? "stopped" : current.state === "finished" ? "candidate_ready"
+      : current.state === "refused" || current.progress.attention === "blocked" ? "blocked"
+      : current.state === "waiting" ? current.approval ? "waiting_approval" : current.question ? "waiting_question" : "waiting_owner" : current.state;
+    const attention = startState === "uncertain" ? { code: "LAUNCH_UNCERTAIN", message: "Start could not be confirmed.", nextAction: "Check status or Stop this owned run." }
+      : state === "blocked" ? { code: "BLOCKED", message: "The saved run is blocked.", nextAction: "Review the saved run before continuing." }
+      : state?.startsWith("waiting_") ? { code: state.toUpperCase(), message: "The saved run needs attention.", nextAction: "An owner decision is needed before work can continue." } : null;
+    const display = loopImprovementStatusSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
+      localVersion: lineage.view.currentVersion, description: lineage.view.description,
+      requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: lineage.view.runLink?.runLinkId ?? null,
+      engineRevision: current.revision, state, startState, confirmationCurrent,
+      canStart: mayWrite && confirmationCurrent && startState === "not_started" && state === "ready" && this.#adapter.available("start"),
+      canStop: mayWrite && !!lineage.link && !["stopped", "finished"].includes(current.state) && this.#adapter.available("stop"),
+      progress: current.progress.step === null ? null : { stepId: current.progress.step, role: null, attempt: null,
+        requestedModel: null, observedModel: null, identityVerified: false, repairCount: null },
+      attention, observedAt: new Date(this.clock()).toISOString() });
+    return { schemaVersion: 1, request: lineage.view, display, engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,

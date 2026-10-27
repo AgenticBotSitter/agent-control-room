@@ -206,3 +206,23 @@ export const loopBridgeReceiptSchemaV1 = z.object({ schemaVersion: z.literal(1),
   replayed: z.boolean(), engineRevision: engineRevision.nullable(),
   error: z.enum(["REFUSED", "INELIGIBLE", "LAUNCH_UNCERTAIN"]).nullable(),
 }).strict();
+
+
+// Product display only. Unknown engine evidence stays null, never guessed.
+export const loopImprovementStatusSchemaV1 = z.object({
+  schemaVersion: z.literal(1), projectId: id, requestId: id, localVersion: loopVersion,
+  description: loopDescription, requestSha256: rawHash, settingsSha256: rawHash, runLinkId: id.nullable(),
+  engineRevision: engineRevision.nullable(),
+  state: z.enum(["ready", "running", "waiting_approval", "waiting_question", "waiting_owner", "blocked", "stopped", "candidate_ready"]).nullable(),
+  startState: z.enum(["not_started", "dispatched", "started", "uncertain"]),
+  confirmationCurrent: z.boolean(), canStart: z.boolean(), canStop: z.boolean(),
+  progress: z.object({ stepId: z.string().min(1).max(180).nullable(), role: z.string().min(1).max(240).nullable(),
+    attempt: loopVersion.nullable(), requestedModel: z.string().min(1).max(240).nullable(),
+    observedModel: z.string().min(1).max(240).nullable(), identityVerified: z.boolean(),
+    repairCount: engineRevision.nullable() }).strict().nullable(),
+  attention: z.object({ code: z.string().min(1).max(100), message: z.string().min(1).max(1000),
+    nextAction: z.string().min(1).max(1000) }).strict().nullable(), observedAt: z.string().datetime(),
+}).strict();
+export type LoopImprovementStatusV1 = z.infer<typeof loopImprovementStatusSchemaV1>;
+export type LoopImprovementDeskViewV1 = z.infer<typeof loopImprovementDeskViewSchemaV1>;
+export type LoopImprovementRequestViewV1 = z.infer<typeof loopImprovementRequestViewSchemaV1>;
