@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "9215bd0d162a39eaab6a0a84d6c1d6f7774b299578435ad654cfe37788bea701",
-  "note": "Measured after the full release ledger on real PostgreSQL17 as control_room_web using readPrivateWebSchemaDigest. The0300 down restores the independently captured prior release digest; install-database-phase-real-postgres verifies this pin and the shipped query."
+  "digest": "fcde006466b6f0e6671c60dd6149928fe4d14a6c4103d4bdd104eb08c5f89e65",
+  "note": "Measured after the full release ledger on real PostgreSQL17 as control_room_web using readPrivateWebSchemaDigest. The empty 0301 down restores the independently captured grounding digest; install-database-phase-real-postgres verifies this pin and the shipped query."
 }

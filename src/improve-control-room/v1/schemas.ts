@@ -120,3 +120,53 @@ export type ImprovementRequestDraftV1 = z.infer<typeof improvementRequestDraftSc
 export type ImprovementDeskViewV1 = z.infer<typeof improvementDeskViewSchemaV1>;
 export type RecordUpdateCandidateV1 = z.infer<typeof recordUpdateCandidateSchemaV1>;
 export type UpdateCandidateViewV1 = z.infer<typeof updateCandidateViewSchemaV1>;
+
+// Loop records are independent of legacy pipeline requests. Preserve input bytes.
+const loopVersion = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const rawHash = z.string().regex(/^[a-f0-9]{64}$/);
+const loopDescription = z.string().min(1).max(8000).refine(value => value.trim().length > 0);
+const loopSettings = z.string().refine(value => {
+  if (Buffer.byteLength(value, "utf8") > 65536) return false;
+  try { const parsed: unknown = JSON.parse(value); return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed); }
+  catch { return false; }
+});
+export const loopImprovementDraftSchemaV1 = z.object({ description: loopDescription, settingsText: loopSettings }).strict();
+export const loopImprovementEditSchemaV1 = loopImprovementDraftSchemaV1.extend({ requestId: id, expectedVersion: loopVersion }).strict();
+export const loopImprovementRunIdentitySchemaV1 = z.object({ adapterId: id, loopRunId: id,
+  toolingRevision: digest, a2SchemaVersion: z.literal(1) }).strict();
+export const loopImprovementRunLinkSchemaV1 = z.object({ projectId: id, requestId: id,
+  initialInputVersion: loopVersion, run: loopImprovementRunIdentitySchemaV1 }).strict();
+export const loopImprovementStartSchemaV1 = z.object({ requestId: id, expectedVersion: loopVersion,
+  runLinkId: id, requestSha256: rawHash, settingsSha256: rawHash }).strict();
+export const loopImprovementConfirmationSchemaV1 = z.object({
+  path: z.string().min(1).max(512).regex(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*\\)[A-Za-z0-9._/-]+$/),
+  sha256: rawHash, at: z.string().datetime(), who: z.literal("owner"),
+  input_version: z.union([z.string().min(1).max(180), loopVersion]),
+}).strict();
+export const loopImprovementObservationSchemaV1 = z.object({
+  inputVersion: z.union([z.string().min(1).max(180), loopVersion]), settingsDigest: z.string().min(1).max(180),
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), confirmation: loopImprovementConfirmationSchemaV1,
+}).strict();
+export const loopImprovementRunViewSchemaV1 = loopImprovementRunIdentitySchemaV1.extend({
+  runLinkId: id, initialInputVersion: loopVersion,
+}).strict();
+export const loopImprovementRequestViewSchemaV1 = z.object({ requestId: id, projectId: id,
+  currentVersion: loopVersion, description: loopDescription, requestSha256: rawHash, settingsSha256: rawHash,
+  runLink: loopImprovementRunViewSchemaV1.nullable(), savedAuthorization: z.boolean(),
+  createdAt: z.string().datetime({ offset: true }), startsWork: z.literal(false), grantsDeployAuthority: z.literal(false),
+}).strict();
+export const loopImprovementDeskViewSchemaV1 = z.object({ legacy: improvementDeskViewSchemaV1,
+  loopRequests: z.array(loopImprovementRequestViewSchemaV1).max(100),
+}).strict();
+export type LoopImprovementRunIdentityV1 = z.infer<typeof loopImprovementRunIdentitySchemaV1>;
+export type LoopImprovementObservationV1 = z.infer<typeof loopImprovementObservationSchemaV1>;
+/** Reviewed server boundary only. It decodes actual A2 types and independently binds
+ * its observation to the effective bytes and the run's normalized current path.
+ * There is deliberately no dispatcher. Omission disables admission. */
+export type LoopImprovementContractV1 = {
+  toolingRevision: string;
+  decodeRunIdentity: (input: unknown) => LoopImprovementRunIdentityV1;
+  decodeObservation: (input: unknown) => LoopImprovementObservationV1;
+  matchesSavedInput: (run: LoopImprovementRunIdentityV1, observation: LoopImprovementObservationV1,
+    input: { description: string; settingsText: string; requestSha256: string; settingsSha256: string }) => boolean;
+};
