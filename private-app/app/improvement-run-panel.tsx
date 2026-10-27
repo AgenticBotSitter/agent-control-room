@@ -75,7 +75,7 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
     && !actions.current.start && !pending.start && !pending.stop;
   const startGate = () => verifiedRead.current && canStart;
   const snapshot = current ?? safe;
-  const stopTarget = snapshot?.canStop && snapshot.runLinkId && snapshot.state !== "stopped" && snapshot.state !== "candidate_ready";
+  const stopTarget = snapshot?.canStop && snapshot.startState !== "not_started" && snapshot.runLinkId && snapshot.state !== "stopped" && snapshot.state !== "candidate_ready";
   async function submit(operation: "start" | "stop", replay = false) {
     if (latch.current[operation] || !navigator.onLine || !row.runLink) return;
     if (operation === "stop" && !safeRef.current?.canStop) return;
@@ -118,7 +118,7 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
     {!row.runLink ? <p>Confirmation and a linked run are needed before Start.</p> : <>
       <p role="status" aria-live="polite">{snapshot?.state === "candidate_ready" ? "Finished candidate" : snapshot?.state === "stopped" ? "Stopped"
         : snapshot?.state?.replaceAll("_", " ") ?? "Status unavailable"}</p>
-      <p>{snapshot?.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
+      <p>{!snapshot ? "Confirmation: Unavailable" : snapshot.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
       <p>Step: {snapshot?.progress?.stepId ?? "Unavailable"} · Role: {snapshot?.progress?.role ?? "Unavailable"}</p>
       <p>Requested model: {snapshot?.progress?.requestedModel ?? "Unavailable"}</p>
       <p>Observed model: {snapshot?.progress?.identityVerified ? snapshot.progress.observedModel ?? "Unavailable" : "Unverified"}</p>

@@ -90,7 +90,7 @@ export class ImproveControlRoomLoopServiceV1 {
       || run.loopRunId !== lineage.link.loop_run_id) throw unavailable();
     return run;
   }
-  #current(status: LoopEngineStatusV1, lineage: Lineage, body: Record<string, unknown>, confirmed: boolean) {
+  #current(status: LoopEngineStatusV1, lineage: Lineage, body: Record<string, unknown>, confirmed: boolean, allowStopped = false) {
     if (body.expectedVersion !== Number(lineage.input.version) || body.expectedRevision !== status.revision
       || status.run.loopRunId !== this.#run(lineage).loopRunId || status.settingsSha256 !== lineage.input.settings_sha256
       || status.settingsSha256 !== loopByteHashV1(this.#adapter.settingsText)) throw conflict();
@@ -100,7 +100,7 @@ export class ImproveControlRoomLoopServiceV1 {
         || status.confirmation.sha256 !== lineage.input.request_sha256 || loopByteHashV1(status.description) !== lineage.input.request_sha256
         || !equal(status.inputVersion, status.confirmation.input_version)
         || !equal(authorization.a2_input_version, status.inputVersion) || !equal(authorization.confirmation, status.confirmation)
-        || authorization.a2_settings_digest !== status.settingsDigest || status.state === "stopped"
+        || authorization.a2_settings_digest !== status.settingsDigest || !allowStopped && status.state === "stopped"
         || !this.#adapter.contract.matchesSavedInput(status.run, { revision: status.revision, inputVersion: status.inputVersion,
           settingsDigest: status.settingsDigest, confirmation: status.confirmation }, { description: lineage.input.description,
           settingsText: lineage.input.settings_text, requestSha256: lineage.input.request_sha256, settingsSha256: lineage.input.settings_sha256 })) throw conflict();
@@ -128,22 +128,26 @@ export class ImproveControlRoomLoopServiceV1 {
     });
     const current = await this.#adapter.status(this.#run(lineage).loopRunId);
     let confirmationCurrent = false;
-    try { this.#current(current, lineage, { expectedVersion: Number(lineage.input.version), expectedRevision: current.revision }, true); confirmationCurrent = true; }
+    try { this.#current(current, lineage, { expectedVersion: Number(lineage.input.version), expectedRevision: current.revision }, true, true); confirmationCurrent = true; }
     catch (error) { if (!(error instanceof WebAccessError)) throw error; }
-    const startState = !startClaim ? "not_started" : !startResult ? "uncertain"
-      : startResult.result?.state === "accepted" ? "started" : "dispatched";
+    const startOutcome = startResult?.result;
+    const startState = !startClaim || startOutcome?.state === "refused" ? "not_started" : !startResult ? "uncertain"
+      : startOutcome?.state === "accepted" ? "started" : "dispatched";
     const state = current.state === "draft" ? null : current.state === "stopped" ? "stopped" : current.state === "finished" ? "candidate_ready"
-      : current.state === "refused" || current.progress.attention === "blocked" ? "blocked"
-      : current.state === "waiting" ? current.approval ? "waiting_approval" : current.question ? "waiting_question" : "waiting_owner" : current.state;
-    const attention = startState === "uncertain" ? { code: "LAUNCH_UNCERTAIN", message: "Start could not be confirmed.", nextAction: "Check status or Stop this owned run." }
+      : startOutcome?.state === "refused" || current.state === "refused" || current.progress.attention === "blocked" ? "blocked"
+      : current.state === "waiting" || startOutcome?.state === "waiting" && current.state === "ready" ? current.approval ? "waiting_approval" : current.question ? "waiting_question" : "waiting_owner" : current.state;
+    const attention = startOutcome?.state === "refused" ? { code: startOutcome.error ?? "REFUSED",
+      message: startOutcome.error === "INELIGIBLE" ? "Start was refused because the configured lineup is ineligible." : "The saved Start command was refused.",
+      nextAction: "Review the saved run and its configuration before requesting further work." }
+      : startState === "uncertain" ? { code: "LAUNCH_UNCERTAIN", message: "Start could not be confirmed.", nextAction: "Check status or Stop this owned run." }
       : state === "blocked" ? { code: "BLOCKED", message: "The saved run is blocked.", nextAction: "Review the saved run before continuing." }
       : state?.startsWith("waiting_") ? { code: state.toUpperCase(), message: "The saved run needs attention.", nextAction: "An owner decision is needed before work can continue." } : null;
     const display = loopImprovementStatusSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
       localVersion: lineage.view.currentVersion, description: lineage.view.description,
       requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: lineage.view.runLink?.runLinkId ?? null,
       engineRevision: current.revision, state, startState, confirmationCurrent,
-      canStart: mayWrite && confirmationCurrent && startState === "not_started" && state === "ready" && this.#adapter.available("start"),
-      canStop: mayWrite && !!lineage.link && !["stopped", "finished"].includes(current.state) && this.#adapter.available("stop"),
+      canStart: mayWrite && !startClaim && confirmationCurrent && startState === "not_started" && state === "ready" && this.#adapter.available("start"),
+      canStop: mayWrite && startState !== "not_started" && !!lineage.link && !["stopped", "finished"].includes(current.state) && this.#adapter.available("stop"),
       progress: current.progress.step === null ? null : { stepId: current.progress.step, role: null, attempt: null,
         requestedModel: null, observedModel: null, identityVerified: false, repairCount: null },
       attention, observedAt: new Date(this.clock()).toISOString() });

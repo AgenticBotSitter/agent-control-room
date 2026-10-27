@@ -17,7 +17,7 @@ import { loopImprovementBrowserClient as client } from "../src/web/v1/improve-co
 const KEY = new Uint8Array(32).fill(64);
 const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC"}';
 const description = "  Improve the saved request.\nKeep exact text.  ";
-async function fixture() {
+async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missing" = "accepted", startError: "REFUSED" | "INELIGIBLE" | null = null) {
   const f = await taskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
@@ -36,8 +36,9 @@ async function fixture() {
   const unexpected = async () => { throw new Error("unexpected SYNTHETIC operation"); };
   const apply = async (op: "start" | "stop", commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void) => {
     beforeSpawn(); calls.push(op);
-    saved = { ...saved, state: op === "start" ? "running" : "stopped", revision: saved.revision + 1,
-      receipts: [...saved.receipts, { commandId, bindingDigest: sha256Digest(binding), state: "accepted", evidenceDigest: sha256Digest({ op, commandId }), error: null }] };
+    saved = { ...saved, state: op === "stop" ? "stopped" : startOutcome === "accepted" ? "running" : "ready", revision: saved.revision + 1,
+      receipts: op === "start" && startOutcome === "missing" ? saved.receipts : [...saved.receipts, { commandId, bindingDigest: sha256Digest(binding),
+        state: op === "start" && startOutcome !== "missing" ? startOutcome : "accepted", evidenceDigest: sha256Digest({ op, commandId }), error: op === "start" ? startError : null }] };
     return structuredClone(saved);
   };
   const adapter: LoopAdapterV1 = { adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
@@ -176,7 +177,8 @@ test("B2a stale response suppression", async () => {
     return reply;
   }) as typeof fetch);
   try {
-    await settle(); await act(async () => m.button("Stop this run").click()); await settle(); assert.match(m.text(), /Stopped/);
+    await settle(); await act(async () => m.button("Start confirmed work").click()); await settle();
+    await act(async () => m.button("Stop this run").click()); await settle(); assert.match(m.text(), /Stopped/);
     f.edit({ state: "running", revision: 1 }); hold = true;
     await act(async () => m.button("Refresh status").click()); await settle();
     release(); await settle();
@@ -192,12 +194,13 @@ test("B2a transient refresh retains only Stop and protected failures clear the t
     return wire.fetcher(path, options);
   }) as typeof fetch);
   try {
-    await settle(); fail = 503; await act(async () => m.button("Refresh status").click()); await settle();
+    await settle(); await act(async () => m.button("Start confirmed work").click()); await settle();
+    fail = 503; await act(async () => m.button("Refresh status").click()); await settle();
     assert.equal(m.button("Start confirmed work").disabled, true); assert.equal(m.button("Stop this run").disabled, false);
     assert.match(m.text(), /Could not refresh/); fail = 403;
     await act(async () => m.button("Refresh status").click()); await settle();
     assert.equal(m.button("Stop this run").disabled, true); assert.doesNotMatch(m.text(), /Confirmation current/);
-    assert.equal(wire.posts.length, 0);
+    assert.equal(wire.posts.length, 1);
   } finally { await m.close(); await f.close(); }
 });
 
@@ -273,7 +276,7 @@ test("B2a dropped-before-admission and uncertain Stop retain separate replay key
   try {
     await settle(); await act(async () => m.button("Start confirmed work").click()); await settle();
     assert.equal(f.calls.filter(x => x === "start").length, 0);
-    assert.equal(m.button("Stop this run").disabled, false, "uncertain Start never blocks Stop");
+    assert.equal(m.button("Stop this run").disabled, true, "dropped-before-admission Start has no owned operation to Stop");
     await act(async () => m.button("Retry this exact Start").click()); await settle();
     assert.deepEqual(attempted[1], attempted[0]); assert.equal(f.calls.filter(x => x === "start").length, 1);
     await act(async () => m.button("Stop this run").click()); await settle();
@@ -351,5 +354,115 @@ test("B2a forged browser Start booleans cannot create service authority", async 
     assert.equal(wire.posts.length, 1, "forged browser flags reach the real reauthorization boundary");
     assert.equal(f.calls.filter(x => x === "start").length, 0);
     assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);
+  } finally { await m.close(); await f.close(); }
+});
+
+for (const error of ["REFUSED", "INELIGIBLE"] as const) test(`B2a F1 refused Start shows ${error} after reopen`, async () => {
+  const f = await fixture("refused", error), wire = transport(f);
+  try {
+    const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:refused-0001");
+    assert.equal(receipt.state, "refused");
+    const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+    assert.equal(display.startState, "not_started", "B2a refused Start is not dispatched");
+    assert.equal(display.state, "blocked"); assert.equal(display.canStart, false);
+    assert.equal(display.attention?.code, error, "B2a saved refusal reason is retained");
+    assert.match(display.attention!.message, error === "INELIGIBLE" ? /ineligible/i : /refused/i);
+    const m = await mount(f.project.projectId, wire.fetcher);
+    try {
+      await settle(); assert.match(m.text(), /blocked/);
+      assert.ok(m.text().includes(display.attention!.message), "B2a owner sees why Start is unavailable");
+      assert.equal(m.button("Start confirmed work").disabled, true);
+      assert.equal(wire.posts.length, 0);
+    } finally { await m.close(); }
+    await assert.rejects(f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 5, runLinkId: f.link }, "loop-start:refused-new-key"));
+    assert.equal(f.calls.filter(x => x === "start").length, 1, "B2a refusal never permits redispatch");
+  } finally { await f.close(); }
+});
+
+for (const outcome of ["waiting", "missing"] as const) test(`B2a F1 ${outcome} Start remains visible`, async () => {
+  const f = await fixture(outcome), wire = transport(f);
+  try {
+    const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:waiting-0001");
+    assert.equal(receipt.state, outcome === "waiting" ? "waiting" : "uncertain");
+    const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+    assert.equal(display.startState, outcome === "waiting" ? "dispatched" : "uncertain");
+    assert.equal(display.canStart, false); assert.equal(display.canStop, true);
+    assert.equal(display.attention?.code, outcome === "waiting" ? "WAITING_OWNER" : "LAUNCH_UNCERTAIN",
+      "B2a journal wait or missing result explains unavailable Start");
+    if (outcome === "waiting") assert.equal(display.state, "waiting_owner");
+    const m = await mount(f.project.projectId, wire.fetcher);
+    try {
+      await settle(); assert.ok(m.text().includes(display.attention!.message));
+      assert.equal(m.button("Start confirmed work").disabled, true);
+      assert.equal(m.button("Stop this run").disabled, false); assert.equal(wire.posts.length, 0);
+    } finally { await m.close(); }
+  } finally { await f.close(); }
+});
+
+test("B2a F2 stopped run retains exact saved confirmation", async () => {
+  const f = await fixture(), wire = transport(f);
+  try {
+    await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
+      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:confirmation-0001");
+    await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "stop", { runLinkId: f.link }, "loop-stop:confirmation-0001");
+    const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+    assert.equal(display.confirmationCurrent, true, "B2a stopped exact confirmation remains current");
+    assert.equal(display.canStart, false); assert.equal(display.canStop, false);
+    const m = await mount(f.project.projectId, wire.fetcher);
+    try {
+      await settle(); assert.match(m.text(), /Stopped/); assert.match(m.text(), /Confirmation current/);
+      assert.doesNotMatch(m.text(), /Confirmation needed/); assert.equal(wire.posts.length, 0);
+    } finally { await m.close(); }
+    f.edit({ confirmation: null });
+    assert.equal((await f.bridge.status(f.identity, f.project.projectId, f.requestId)).display.confirmationCurrent, false);
+  } finally { await f.close(); }
+});
+
+test("B2a F2 confirmation is unavailable before accepted status", async () => {
+  const f = await fixture(), wire = transport(f); let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (String(path).endsWith("/status")) await held;
+    return wire.fetcher(path, options);
+  }) as typeof fetch);
+  try {
+    await settle(); assert.ok(m.button("Start confirmed work"));
+    assert.doesNotMatch(m.text(), /Confirmation needed/, "B2a unread confirmation is not a missing confirmation");
+    assert.match(m.text(), /Confirmation: Unavailable/);
+    release(); await settle(); assert.match(m.text(), /Confirmation current/);
+  } finally { release(); await m.close(); await f.close(); }
+});
+
+test("B2a F3 Stop requires an admitted Start", async () => {
+  const f = await fixture(), wire = transport(f);
+  try {
+    const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+    assert.equal(display.startState, "not_started");
+    assert.equal(display.canStop, false, "B2a service offers no Stop before admitted Start");
+    const m = await mount(f.project.projectId, wire.fetcher);
+    try {
+      await settle(); assert.equal(m.button("Stop this run").disabled, true);
+      await act(async () => m.button("Stop this run").click()); assert.equal(wire.posts.length, 0);
+      await act(async () => m.button("Start confirmed work").click()); await settle();
+      assert.equal(m.button("Stop this run").disabled, false);
+    } finally { await m.close(); }
+  } finally { await f.close(); }
+});
+
+test("B2a F3 panel rejects canStop without a Start claim", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    const response = await wire.fetcher(path, options);
+    if (!String(path).endsWith("/status")) return response;
+    const body = await response.json(); body.display.canStop = true;
+    return Response.json(body);
+  }) as typeof fetch);
+  try {
+    await settle(); assert.equal(m.button("Stop this run").disabled, true, "B2a panel requires admitted Start even with canStop");
+    await act(async () => m.button("Stop this run").click());
+    assert.equal(wire.posts.length, 0); assert.equal(f.calls.filter(x => x === "stop").length, 0);
   } finally { await m.close(); await f.close(); }
 });
