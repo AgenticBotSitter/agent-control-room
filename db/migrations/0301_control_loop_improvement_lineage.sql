@@ -49,7 +49,7 @@ CREATE TABLE control_loop_improvement_run_links (
   adapter_id text NOT NULL CHECK (adapter_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'),
   loop_run_id text NOT NULL CHECK (loop_run_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'),
   tooling_revision text NOT NULL CHECK (tooling_revision ~ '^sha256:[a-f0-9]{64}$'),
-  a2_schema_version integer NOT NULL CHECK (a2_schema_version = 1),
+  a2_schema_version bigint NOT NULL CHECK (a2_schema_version = 1),
   record_digest text NOT NULL CHECK (record_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   created_at timestamptz NOT NULL,

@@ -392,6 +392,12 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
     const updaterSql = await readFile("src/updater/v1/pg/release-schema-digest.sql", "utf8");
     assert.equal(digestReleaseSchemaRowsV1((await web.client.query(updaterSql)).rows), digest, "shipped updater digest equality");
     assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json", "utf8")).digest, digest);
+    const schemaVersion = (await web.client.query("SELECT a2_schema_version, pg_typeof(a2_schema_version)::text AS type FROM control_loop_improvement_run_links")).rows[0];
+    assert.deepEqual(schemaVersion, { a2_schema_version: "1", type: "bigint" }, "native PostgreSQL bigint representation");
+    assert.equal((await web.desk.viewLoopDesk(identity, ids.project)).loopRequests[0]!.runLink!.a2SchemaVersion, 1,
+      "B1a bigint schema version projects as a number");
+    assert.deepEqual(await web.desk.recordLoopRunLink({ projectId: ids.project, requestId: f.saved.request.requestId,
+      initialInputVersion: 1, run: loopRun() }), { runLink: f.linked.runLink, replayed: true }, "bigint run link exact replay");
     assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 251);
     const observed = loopObservation();
     await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed);

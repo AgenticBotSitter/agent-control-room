@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "b82d2f276e75342a057281c1c38ca925216aa7df7fa12181471b84e835102e7b",
+  "digest": "f907cd53fd0adf66f2dc48e2764f853572b50ce5ace8e26235cd8ae5ccba89de",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -1013,7 +1013,7 @@
     {
       "file": "db/migrations/0301_control_loop_improvement_lineage.sql",
       "order": 169,
-      "sha256": "5e63587dbc88f9e79e705fa280bcd486afb5b4740f0ac902cd3e30b4b7df6052",
+      "sha256": "8610094260b0618c3eb81a877de659635db68380fe67adb6aefec88c37991eb4",
       "kind": "migrate"
     },
     {

@@ -38,7 +38,7 @@ type LoopRootRow = LoopSignedRow & { id: string; idempotency_key: string };
 type LoopInputRow = LoopSignedRow & { request_id: string; version: number | string; description: string;
   settings_text: string; request_sha256: string; settings_sha256: string; idempotency_key: string };
 type LoopLinkRow = LoopSignedRow & { id: string; request_id: string; initial_input_version: number | string;
-  adapter_id: string; loop_run_id: string; tooling_revision: string; a2_schema_version: number };
+  adapter_id: string; loop_run_id: string; tooling_revision: string; a2_schema_version: number | string };
 type LoopAuthorizationRow = LoopSignedRow & { id: string; request_id: string; input_version: number | string;
   run_link_id: string; start_key: string; request_sha256: string; settings_sha256: string;
   a2_input_version: unknown; a2_settings_digest: string; observed_revision: number | string; confirmation: unknown };
@@ -428,7 +428,7 @@ export class ImproveControlRoomDeskServiceV1 {
 
   #loopRunView(link: LoopLinkRow) {
     return { runLinkId: link.id, initialInputVersion: Number(link.initial_input_version), adapterId: link.adapter_id,
-      loopRunId: link.loop_run_id, toolingRevision: link.tooling_revision, a2SchemaVersion: link.a2_schema_version as 1 };
+      loopRunId: link.loop_run_id, toolingRevision: link.tooling_revision, a2SchemaVersion: Number(link.a2_schema_version) as 1 };
   }
 
   async #loopRequestView(tx: DatabaseSession, root: LoopRootRow, input?: LoopInputRow) {
@@ -529,7 +529,7 @@ export class ImproveControlRoomDeskServiceV1 {
       if (prior) {
         if (Number(prior.initial_input_version) !== value.initialInputVersion
           || canonicalJson({ adapterId: prior.adapter_id, loopRunId: prior.loop_run_id, toolingRevision: prior.tooling_revision,
-            a2SchemaVersion: prior.a2_schema_version }) !== canonicalJson(run)) throw new WebAccessError("conflict");
+            a2SchemaVersion: Number(prior.a2_schema_version) }) !== canonicalJson(run)) throw new WebAccessError("conflict");
         return { runLink: this.#loopRunView(prior), replayed: true };
       }
       const link = await this.#insertLoop(tx, "run_links", { tenant_id: root.tenant_id, id: `loop-link:${randomUUID()}`,
@@ -556,7 +556,7 @@ export class ImproveControlRoomDeskServiceV1 {
         || current.request_sha256 !== value.requestSha256 || current.settings_sha256 !== value.settingsSha256)
         throw new WebAccessError("conflict");
       const run = this.#decodeLoopRun({ adapterId: link.adapter_id, loopRunId: link.loop_run_id,
-        toolingRevision: link.tooling_revision, a2SchemaVersion: link.a2_schema_version });
+        toolingRevision: link.tooling_revision, a2SchemaVersion: Number(link.a2_schema_version) });
       if (observation.confirmation.sha256 !== current.request_sha256
         || canonicalJson(observation.confirmation.input_version) !== canonicalJson(observation.inputVersion)
         || !this.loopContract!.matchesSavedInput(run, observation, { description: current.description,
