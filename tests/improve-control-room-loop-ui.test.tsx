@@ -336,3 +336,18 @@ test("B2a status link version and hashes must match the server-listed request", 
     assert.equal(wire.posts.length, 0); assert.equal(f.calls.filter(x => x !== "status").length, 0);
   } finally { await f.close(); }
 });
+
+test("B2a forged browser Start booleans cannot create service authority", async () => {
+  const f = await fixture(), wire = transport(f); f.edit({ confirmation: null });
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    const reply = await wire.fetcher(path, options);
+    if (!String(path).endsWith("/status")) return reply;
+    const value = await reply.json(); value.display.canStart = true; value.display.confirmationCurrent = true; return Response.json(value);
+  }) as typeof fetch);
+  try {
+    await settle(); await act(async () => m.button("Start confirmed work").click()); await settle();
+    assert.equal(wire.posts.length, 1, "forged browser flags reach the real reauthorization boundary");
+    assert.equal(f.calls.filter(x => x === "start").length, 0);
+    assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);
+  } finally { await m.close(); await f.close(); }
+});

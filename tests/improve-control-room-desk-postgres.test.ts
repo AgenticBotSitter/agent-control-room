@@ -1074,8 +1074,20 @@ test("B2a desk owner isolation", async () => b1aRun(async pg => {
     assert.equal((await get("project:foreign")).status, 404);
     assert.equal(await b1aSnapshot(pg), before); assert.equal(await readPrivateWebSchemaDigest(web.client), digest);
     assert.equal(JSON.stringify(await readMacGrantCatalogV1(web.client)), grants); assert.equal(adapterCalls, 0);
+    // A populated list must prove the bound and tie-breaking order, rather than
+    // merely checking that a one-row desk happens to be below the limit.
+    for (let i = 0; i < 101; i++) await web.desk.saveLoopDraft(identity, ids.project,
+      { ...LOOP_DRAFT, description: `Bounded saved request ${i}.` }, `b2a-pg-bounded-${String(i).padStart(5, "0")}`);
+    const expected = (await b1aSql(pg, `SELECT id FROM control_loop_improvement_requests
+      WHERE tenant_id=$1 AND project_id=$2 AND owner_identity_id=$3 ORDER BY created_at DESC,id DESC LIMIT 100`,
+      [scope.tenantId, ids.project, ids.identity])).rows.map(row => row.id);
+    const populated = await b1aSnapshot(pg);
+    const bounded = await get(); assert.equal(bounded.status, 200);
+    const boundedView = await bounded.json(); assert.equal(boundedView.loopRequests.length, 100);
+    assert.deepEqual(boundedView.loopRequests.map((row: { requestId: string }) => row.requestId), expected);
+    assert.equal(await b1aSnapshot(pg), populated); assert.equal(adapterCalls, 0);
     await b1aSql(pg, "ALTER TABLE control_loop_improvement_inputs DISABLE TRIGGER USER");
-    try { await b1aSql(pg, "UPDATE control_loop_improvement_inputs SET auth_tag=$1 WHERE request_id=$2", [TAG, f.saved.request.requestId]); }
+    try { await b1aSql(pg, "UPDATE control_loop_improvement_inputs SET auth_tag=$1 WHERE request_id=$2", [TAG, expected[0]]); }
     finally { await b1aSql(pg, "ALTER TABLE control_loop_improvement_inputs ENABLE TRIGGER USER"); }
     assert.equal((await get()).status, 503, "tampered signed inputs refuse at HTTP boundary");
     console.log("B2a desk owner isolation production_login=control_room_web legacy_preserved=true signed_bytes_unchanged=true grants_unchanged=true adapter_calls=0");

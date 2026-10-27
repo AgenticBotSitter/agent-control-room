@@ -23,7 +23,7 @@ import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
 import { bindCandidatePublisherToPipelineAdvanceV1 } from "../src/web/v1/task-coordinator-lifecycle";
 import { taskFixture } from "./helpers/web-task";
-import { now, origin, request as webRequest, trust } from "./helpers/web-foundation";
+import { now, origin, request as webRequest, token as webToken, trust } from "./helpers/web-foundation";
 import { ImprovementRequestForm } from "../private-app/app/improve-control-room-workspace";
 import { UpdateCandidatesHome, UpdateCandidatesPanel } from "../private-app/app/update-candidates-home";
 
@@ -818,9 +818,12 @@ test("B2a desk HTTP delegates one signed legacy/loop projection without adapter 
   const foreign = webRequest(path); foreign.headers.set("origin", "https://foreign.invalid"); foreign.headers.set("sec-fetch-site", "cross-site");
   assert.equal((await handler(foreign)).status, 403);
   const missing = webRequest(path); missing.headers.delete("cf-access-jwt-assertion"); assert.equal((await handler(missing)).status, 401);
+  assert.equal((await handler(webRequest(path, "GET", undefined, "b2a-read-key-00001", webToken({ exp: now / 1000 - 1 })))).status, 401);
   await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'");
   assert.equal((await handler(webRequest(path))).status, 403);
   await f.db.query("UPDATE control_role_grants SET role_key='owner',revoked_at=$1 WHERE id='grant:web'", [new Date(now).toISOString()]);
   assert.equal((await handler(webRequest(path))).status, 403);
+  await f.db.query("UPDATE control_web_sessions SET revoked_at=$1 WHERE token_digest=$2", [new Date(now).toISOString(), f.identity.tokenDigest]);
+  assert.equal((await handler(webRequest(path))).status, 401);
   assert.equal(f.writes(), before); assert.equal(adapterCalls, 0);
 });
