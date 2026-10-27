@@ -5,12 +5,13 @@ import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process"
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
-import { canonicalJson, sha256Digest } from "../src/security";
+import { canonicalJson, hmacSha256Tag, sha256Digest } from "../src/security";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
 import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1 } from "../src/improve-control-room/v1/schemas";
@@ -21,11 +22,30 @@ import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-con
 import { createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
 import { privateRequestBodyLimit } from "../src/web/v1/private-request-budgets";
 import { taskFixture } from "./helpers/web-task";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
 
 const KEY = new Uint8Array(32).fill(64);
 const settingsText = JSON.stringify({ project: { host_adapter: "local-loop" }, fixture: "SYNTHETIC" });
 const description = "Show the exact saved improvement.";
+
+test("B1b mutation steps have separate budgets and retain lineage failures", async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  const job = workflow.slice(workflow.indexOf('  mutation-checks:'), workflow.indexOf('\n  pr-claims:'));
+  const lineage = job.slice(job.indexOf('      - name: Prove saved loop lineage guards'), job.indexOf('      - name: Prove authorized loop bridge guards'));
+  const bridge = job.slice(job.indexOf('      - name: Prove authorized loop bridge guards'), job.indexOf('      - name: Validate every declared mutation anchor'));
+  assert.match(lineage, /timeout-minutes: 12/u); assert.match(lineage, /continue-on-error: true/u);
+  assert.match(lineage, /id: lineage-guards/u); assert.doesNotMatch(lineage, /\n\s+if:/u);
+  assert.match(bridge, /timeout-minutes: 10/u); assert.doesNotMatch(bridge, /\n\s+(?:if:|continue-on-error:)/u);
+  const required = job.slice(job.indexOf('      - name: Require saved loop lineage guards to pass'));
+  assert.match(required, /if: always\(\)/u);
+  assert.ok(required.includes('LINEAGE_OUTCOME: ${{ steps.lineage-guards.outcome }}'));
+  const command = required.match(/run: (.+)/u)![1]!;
+  for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
+    const result = spawnSync('/bin/sh', ['-c', command], { env: { ...process.env, LINEAGE_OUTCOME: outcome } });
+    assert.equal(result.status, outcome === 'success' ? 0 : 1, `lineage ${outcome} remains a required verdict`);
+  }
+});
 // Explicit SYNTHETIC executable: no worker/agent/provider is invoked. It records
 // argv/env/cwd and persists only disposable run facts for the seven fixed calls.
 const executable = `import os,sys,json,hashlib
@@ -602,6 +622,60 @@ test("B1b first-use sweep removes only durable finished command directories", as
   assert.equal(await readFile(join(unresolved, 'source.txt'), 'utf8'), 'unresolved');
   assert.equal(await readFile(join(pendingDirectory, 'source.txt'), 'utf8'), description, 'signed claim without result is never swept');
   assert.equal(await readFile(join(unrelated, 'source.txt'), 'utf8'), 'unrelated');
+});
+
+test("B1b first-use sweep skips stale and invalid rows and finishes once", async t => {
+  const f = await fixture(t);
+  const retained: Awaited<ReturnType<ImproveControlRoomLoopServiceV1['mutate']>>[] = [];
+  for (let index = 0; index < 3; index++) {
+    const crashed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+      { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+    const receipt = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, `b1b-sweep-retain-${index}`);
+    assert.equal(receipt.state, 'accepted'); retained.push(receipt);
+  }
+  const crashed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+  const finished = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-valid-0001');
+  let sweeps = 0;
+  const trace = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    const result = await tx.query<T>(sql, params);
+    if (sql.includes('SELECT c.* FROM control_loop_improvement_commands')) {
+      sweeps++;
+      // Present the stale signed row first, then an invalid claim, then an invalid result.
+      const order = [...retained, finished].map(row => row.commandId);
+      result.rows.sort((a, b) => order.indexOf((a as { command_id: string }).command_id) - order.indexOf((b as { command_id: string }).command_id));
+      result.rows = result.rows.map(row => {
+        const raw = row as Record<string, unknown>;
+        if (raw.command_id !== retained[0]!.commandId) return row;
+        // Simulate a correctly signed claim from a previous configured schema.
+        const { record_digest: _digest, auth_tag: _tag, ...historical } = raw;
+        const material = { ...historical,
+          binding: { ...raw.binding as LoopBridgeBindingV1, schemaDigest: `sha256:${'d'.repeat(64)}` },
+          created_at: new Date(raw.created_at as string).toISOString() };
+        return { ...material, record_digest: sha256Digest(material),
+          auth_tag: hmacSha256Tag(KEY, { purpose: 'loop-improvement-command/v1', record: material }) } as T;
+      });
+      result.rows = result.rows.map(row => (row as { command_id: string }).command_id === retained[1]!.commandId
+        ? { ...row, record_digest: `sha256:${'f'.repeat(64)}` } : row);
+    }
+    if (sql.includes("entry_kind='result'") && params?.[1] === retained[2]!.commandId)
+      result.rows = result.rows.map(row => ({ ...row, auth_tag: `hmac-sha256:${'f'.repeat(64)}` }));
+    return result;
+  } });
+  const client: DatabaseClient = { query: (sql, params) => f.client.query(sql, params),
+    transaction: work => f.client.transaction(tx => work(trace(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(trace(tx)), check) };
+  const restarted = new ImproveControlRoomLoopServiceV1(client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: f.adapter }, () => now);
+  const before = (await f.db.query<Record<string, unknown>>('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
+  for (let i = 0; i < 2; i++) assert.equal((await restarted.mutate(f.identity, f.project.projectId, null, 'intake',
+    { description }, `b1b-sweep-once-${i}`)).state, 'accepted');
+  await assert.rejects(readFile(join(f.configuration.workRoot, finished.commandId.replace(':', '-'), 'source.txt')),
+    { code: 'ENOENT' }, 'sweep continues past stale and invalid rows to clean the verified finished command');
+  assert.equal(sweeps, 1, 'finished-claims SELECT runs once despite stale and invalid rows');
+  for (const receipt of retained) assert.equal(await readFile(join(f.configuration.workRoot, receipt.commandId.replace(':', '-'), 'source.txt'), 'utf8'), description);
+  const after = (await f.db.query<Record<string, unknown>>('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
+  assert.deepEqual(after.filter(row => before.some(prior => prior.command_id === row.command_id)), before, 'sweep never rewrites retained signed bytes');
 });
 
 test("B1b cleanup rechecks configured pins and uid before removing files", async t => {

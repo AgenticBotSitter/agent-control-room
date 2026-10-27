@@ -19,7 +19,8 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 
 type Pg = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
-const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59360);
+// Dedicated 60280..60289 range; no other component/attack-kit suite uses it.
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 60280);
 const scope={tenantId:"tenant:b1b",workspaceId:"workspace:b1b"}, project="project:b1b",owner="identity:b1b", KEY=new Uint8Array(32).fill(67);
 const at=new Date(Date.now()-60000).toISOString(),expires=new Date(Date.now()+3600000).toISOString();
 const identity:VerifiedWebIdentity={provider:"test",subject:owner,tokenDigest:sha256Digest({session:"b1b"}),issuedAt:at,expiresAt:expires,verificationExpiresAt:expires};
@@ -130,11 +131,18 @@ test("B1b PostgreSQL 24 connections contend on one Start and retry uncertainty",
     }finally{await blocker.end();}
     assert.equal(reached,24);assert.equal(e.calls.filter(c=>c.op==="start").length,1,"B1b PostgreSQL one-dispatch launch count");
     assert.ok(results.some(r=>r.status==="rejected"),"losing independent keys really ran");
-    assert.equal((await sql(pg,"SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0].n,1);
+    const claims=(await sql(pg,"SELECT command_id,idempotency_key FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows;
+    assert.equal(claims.length,1);
+    const winner=claims[0]!;
     await clients[0]!.bridge.mutate(identity,project,id,"stop",{runLinkId:s.request.runLink!.runLinkId},"b1b-pg-stop-0001");
-    const retry=await clients[0]!.bridge.mutate(identity,project,id,"start",body,"b1b-pg-contend-same-0001");assert.equal(retry.replayed,true);
+    // Only the admitted key is guaranteed an exact replay. A distinct key may
+    // beat all twelve shared-key callers to the sole Start claim.
+    const retry=await clients[0]!.bridge.mutate(identity,project,id,"start",body,winner.idempotency_key);
+    assert.equal(retry.replayed,true);assert.equal(retry.commandId,winner.command_id);assert.equal(retry.state,"accepted");
+    await assert.rejects(clients[0]!.bridge.mutate(identity,project,id,"start",body,"b1b-pg-contend-unused-0001"),{code:"conflict"});
     assert.equal(e.calls.filter(c=>c.op==="start").length,1);
-    console.log(`B1b barrier callers=24 reached=${reached} rejected=${results.filter(r=>r.status==='rejected').length} observed_waiters=${observedWaiters} starts=1`);
+    assert.equal(e.runs.get(s.request.runLink!.loopRunId)!.state,"stopped");
+    console.log(`B1b barrier callers=24 reached=${reached} rejected=${results.filter(r=>r.status==='rejected').length} observed_waiters=${observedWaiters} starts=1 winner=${winner.idempotency_key} replayed=true stopped=true`);
   }finally{await Promise.all(clients.map(c=>c.close()));}
 }));
 

@@ -5,9 +5,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { readDesiredMacGrantsV1, desiredMacGrantsV1, readMacGrantCatalogV1,
@@ -290,7 +291,7 @@ test("the desk real-PostgreSQL proof ran when PostgreSQL is available", () => {
 const LOOP_TABLES = ["control_loop_improvement_requests", "control_loop_improvement_inputs",
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations"] as const;
 const LOOP_PIN = `sha256:${"7".repeat(64)}`;
-const rawHash = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+const rawHash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 const LOOP_CONTRACT: LoopImprovementContractV1 = {
   toolingRevision: LOOP_PIN,
   decodeRunIdentity: input => { const run = loopImprovementRunIdentitySchemaV1.parse(input);
@@ -689,9 +690,20 @@ async function extractBaseline(commit: string) {
   await mkdir(resolve(".test-tmp"), { recursive: true });
   const directory = await mkdtemp(resolve(".test-tmp/b1a-baseline-"));
   try {
-    // Local objects only; no fetch and no reconstruction by deleting a migration.
-    const bytes = execFileSync("git", ["archive", commit, "db", "deploy/postgres/migration-ledger.json"], { maxBuffer: 32 * 1024 * 1024 });
-    execFileSync("tar", ["-x", "-C", directory], { input: bytes });
+    // Exact release bytes captured once from git archive, including the two
+    // pre-B1a baselines. Runtime tests also work in CI's depth-1 checkout.
+    const bytes = await readFile("tests/fixtures/improve-control-room-release-baselines.json.gz");
+    assert.equal(rawHash(bytes), "939b639c4f6d9f85923157b9ff3e4473f05b519d702a8e555fbaa65eca87f18d");
+    const fixture = JSON.parse(gunzipSync(bytes).toString("utf8")) as {
+      version: number; releases: Record<string, Record<string, string>>; blobs: Record<string, string> };
+    assert.equal(fixture.version, 1);
+    const files = fixture.releases[commit]; assert.ok(files, `committed release fixture for ${commit}`);
+    for (const [file, digest] of Object.entries(files)) {
+      const content = fixture.blobs[digest]!;
+      assert.equal(rawHash(content), digest, `exact baseline bytes: ${commit}:${file}`);
+      await mkdir(dirname(join(directory, file)), { recursive: true });
+      await writeFile(join(directory, file), content);
+    }
     const ledger = JSON.parse(await readFile(join(directory, "deploy/postgres/migration-ledger.json"), "utf8"));
     assert.equal(ledgerDigest(ledger.entries), ledger.digest);
     if (commit === INSTALLED_RELEASE) assert.equal(ledger.digest, "c5b27220129a5201f7baeadf48f00d3134726ebe056cb456095b7a88ad4cca03");

@@ -8,12 +8,16 @@ import { promisify } from "node:util";
 import { assertGuardBites, reapKitClusters } from "./support/attack-kit/index";
 const exec=promisify(execFile), root=resolve(".");
 const probes=[
+  {name:"sweep isolates invalid rows",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'} catch { /* Keep unverified or stale commands; continue with other finished rows. */ }',
+    replace:'} catch (error) { throw error; }',
+    pattern:"B1b first-use sweep skips",assertion:"sweep continues past stale and invalid rows to clean the verified finished command",postgres:false},
   {name:"approve refusal status fallback",file:"src/web/v1/improve-control-room-loop-adapter.ts",
     find:'observed = await status(run);',replace:'throw unavailable();',
     pattern:"^B1b exit 2 approve empty",assertion:"definite process refusal is recorded as refused",postgres:false},
   {name:"finished command startup sweep",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'await this.#sweepCommandFiles(identity, projectId);',replace:'/* MUTANT: omit finished command sweep. */',
-    pattern:"B1b first-use sweep",assertion:"first-use sweep reclaims durable finished command",postgres:false},
+    pattern:"^B1b first-use sweep removes only durable finished command directories$",assertion:"first-use sweep reclaims durable finished command",postgres:false},
   {name:"cleanup failure preserves receipt",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'try { await this.#adapter.releaseCommandFiles?.(claim.command_id); } catch { /* Retain for an authorized retry. */ }',
     replace:'await this.#adapter.releaseCommandFiles?.(claim.command_id);',

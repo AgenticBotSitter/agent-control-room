@@ -262,8 +262,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-17
       - name: Prove saved loop lineage guards
+        id: lineage-guards
+        timeout-minutes: 12
+        # Preserve the failure below, after the bridge has had its own budget.
+        continue-on-error: true
         run: pnpm run test:improve-control-room-loop-lineage-mutations
       - name: Prove authorized loop bridge guards
+        timeout-minutes: 10
         run: pnpm run test:improve-control-room-loop-bridge-mutations
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
@@ -283,6 +288,11 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: node scripts/ci/verify-mutation-checks.mjs --warn-only
+      - name: Require saved loop lineage guards to pass
+        if: always()
+        env:
+          LINEAGE_OUTCOME: ${{ steps.lineage-guards.outcome }}
+        run: test "$LINEAGE_OUTCOME" = success
 
   pr-claims:
     name: PR evidence claims

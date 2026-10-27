@@ -313,9 +313,11 @@ export class ImproveControlRoomLoopServiceV1 {
         [this.scope.tenantId, projectId, actor.id])).rows;
         const verified: Row[] = [];
         for (const raw of rows) {
-          const claim = this.#verify(raw);
-          this.#pins(claim.binding, claim.operation);
-          if (await this.#result(tx, claim)) verified.push(claim);
+          try {
+            const claim = this.#verify(raw);
+            this.#pins(claim.binding, claim.operation);
+            if (await this.#result(tx, claim)) verified.push(claim);
+          } catch { /* Keep unverified or stale commands; continue with other finished rows. */ }
         }
         return { key, verified };
       });
