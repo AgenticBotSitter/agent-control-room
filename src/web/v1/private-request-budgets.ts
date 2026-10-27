@@ -33,7 +33,7 @@ export function privateRequestBodyLimit(path: string, method: string, local: boo
   if (/^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(path)) return privateRequestBudgets.workBatch;
   if (/^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(path)) return privateRequestBudgets.pipeline;
   if (/^\/api\/v1\/fleet\//.test(path)) return privateRequestBudgets.fleet;
-  if (/^\/api\/v1\/projects\/[^/]+\/improvements$/.test(path)
+  if (/^\/api\/v1\/projects\/[^/]+\/improvements(?:\/loop\/(?:intake|[^/]+\/(?:confirm|start|stop|approve|answer)))?$/.test(path)
     || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(path)) return privateRequestBudgets.improvement;
   if (local && (path === "/api/v1/passkeys/registration" || path === "/api/v1/passkeys/registration/options"))
     return privateRequestBudgets.passkeyRegistration;

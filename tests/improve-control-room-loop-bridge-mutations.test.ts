@@ -1,0 +1,61 @@
+// Dedicated lane: guards are disabled only in owned clean disposable copies.
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import test from "node:test";
+import { promisify } from "node:util";
+import { assertGuardBites, reapKitClusters } from "./support/attack-kit/index";
+const exec=promisify(execFile), root=resolve(".");
+const probes=[
+  {name:"owner authority",file:"src/improve-control-room/v1/service.ts",
+    find:'actor.require(mutation ? "tasks.propose" : "projects.read", projectId, true, mutation ? "high" : "low");',
+    replace:'actor.require(mutation ? "tasks.propose" : "projects.read", projectId, false, mutation ? "high" : "low");',
+    pattern:"B1b strict bodies",assertion:"B1b denied caller attempts zero persistence",postgres:false},
+  {name:"exact owner confirmation",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'|| !equal(authorization.confirmation, status.confirmation)',replace:'|| false',
+    pattern:"B1b exact-current confirmation guard",assertion:"B1b changed owner confirmation refuses before claim",postgres:false},
+  {name:"one confirmation per version",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'if (local.authorization || priorConfirmation) throw conflict();',replace:'if (false) throw conflict();',
+    pattern:"B1b website intake confirm start status stop",assertion:"new keys cannot rewrite an already saved owner confirmation",postgres:false},
+  {name:"configured path fence",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'checkedPath(c.settingsFile, c.configRoot);',replace:'/* MUTANT: omit configured settings path fence. */',
+    pattern:"B1b configured execution/path fence",assertion:"B1b configured symlink refusal",postgres:false},
+  {name:"configured executable pin",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'|| loopByteHashV1(readFileSync(c.entrypoint)) !== c.entrypointSha256',replace:'|| false',
+    pattern:"B1b configured executable pin guard",assertion:"B1b changed executable refuses construction before any command",postgres:false},
+  {name:"freshness at actual spawn",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'if (elapsed < 0 || elapsed >= this.#freshness) throw unavailable();',replace:'if (false) throw unavailable();',
+    pattern:"B1b admission expiry after A2 lock wait",assertion:"B1b expired admission after lock wait spawns no Start",postgres:false},
+  {name:"pending claims never redispatch",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'if (admitted.replayed) {',replace:'if (admitted.replayed && false) {',
+    pattern:"B1b claim without result",assertion:"B1b pending claim never dispatches twice",postgres:false},
+  {name:"SQL sole Start claim",file:"db/migrations/0302_control_loop_improvement_commands.sql",
+    find:"CREATE UNIQUE INDEX control_loop_commands_start ON control_loop_improvement_commands(tenant_id,request_id)\n  WHERE entry_kind='claim' AND operation='start';",replace:'-- MUTANT: sole Start constraint absent.',
+    pattern:"B1b SQL claim uniqueness guard",assertion:"B1b SQL unique Start refusal",postgres:true},
+];
+test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=>{
+  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));
+  try{
+    execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
+    assert.equal(execFileSync("git",["-C",copy,"rev-parse","HEAD"],{encoding:"utf8"}).trim(),execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim());
+    await symlink(join(root,"node_modules"),join(copy,"node_modules"),"dir");
+    for(const probe of probes)await t.test(probe.name,async()=>{
+      const file=probe.postgres?"tests/improve-control-room-loop-bridge-postgres.test.ts":"tests/improve-control-room-loop-bridge.test.ts";
+      const command=probe.postgres?[process.execPath,"scripts/ci/run-mutation-postgres-test.mjs","--test-concurrency=1","--test-timeout=600000",`--test-name-pattern=${probe.pattern}`,file]
+        :[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=${probe.pattern}`,file];
+      const testCmd=["/usr/bin/env","CONTROL_ROOM_PG_TEST_PORT_BASE=58500","CONTROL_ROOM_PG_TEST_PORT_WIDTH=10",...command];
+      const original=await readFile(join(copy,probe.file),"utf8");
+      const result=await assertGuardBites({root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd,boundMs:180000,because:probe.assertion});
+      assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
+      assert.ok(result.output.includes(probe.assertion),`loaded mutation reached independent assertion: ${probe.assertion}`);
+      assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);
+      assert.doesNotMatch(result.output,/migration_altered:|private_database_preflight_failed|SyntaxError|# skipped [1-9]|# tests 0|timed out/iu);
+      assert.equal(await readFile(join(copy,probe.file),"utf8"),original);
+      const env: NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1",CONTROL_ROOM_PG_TEST_PORT_BASE:"58500",CONTROL_ROOM_PG_TEST_PORT_WIDTH:"10"};delete env.NODE_TEST_CONTEXT;
+      const restored=await exec(testCmd[0]!,testCmd.slice(1),{cwd:copy,env,timeout:180000,maxBuffer:4*1024*1024});
+      assert.match(restored.stdout,/# fail 0/u);assert.doesNotMatch(restored.stdout,/# skipped [1-9]|# tests 0/u);
+      console.log(`B1b mutation ${probe.name}: loaded=true intended_assertion=true restored=true green=true`);
+    });
+  }finally{await reapKitClusters(join(copy,".test-tmp"));await rm(copy,{recursive:true,force:true});}
+});

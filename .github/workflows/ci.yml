@@ -263,6 +263,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-17
       - name: Prove saved loop lineage guards
         run: pnpm run test:improve-control-room-loop-lineage-mutations
+      - name: Prove authorized loop bridge guards
+        run: pnpm run test:improve-control-room-loop-bridge-mutations
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations

@@ -718,7 +718,7 @@ for (const difference of [-1, 1]) test(`B1a injected fixture catalog count ${dif
     if (sql.includes("SELECT c.relname AS name")) { catalog = true;
       // These cases isolate only catalog cardinality; the real PG case never substitutes query results.
       const actual = await tx.query<{ name: string }>(sql, params), rows = actual.rows;
-      assert.equal(rows.length, 250);
+      assert.equal(rows.length, 251);
       return { rows: (difference < 0 ? rows.slice(1) : [...rows, { name: "synthetic_extra_table" }]) as T[] };
     }
     if (sql.startsWith("LOCK TABLE")) locked = true;

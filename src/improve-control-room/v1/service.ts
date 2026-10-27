@@ -50,6 +50,7 @@ const rawLoopHash = (text: string) => createHash("sha256").update(text, "utf8").
 export class ImproveControlRoomDeskServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
+  readonly #loopReadAuthority: WebSessionAuthority;
 
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey: Uint8Array, private readonly pipelines: Pick<LinearPipelineServiceV1, "instantiate"> | undefined,
@@ -57,6 +58,18 @@ export class ImproveControlRoomDeskServiceV1 {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("improvement_desk_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
     this.#authority = new WebSessionAuthority(db, scope, clock, "improvement_desk");
+    // Loop GETs require an already established session and never register one.
+    // The common authority's exact session-bootstrap INSERT is suppressed; its
+    // immediately following locked SELECT still verifies the existing session.
+    const readSession = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(statement: string, params?: unknown[]) => {
+      if (statement.startsWith("INSERT INTO control_web_sessions(")) return { rows: [] as T[] };
+      if (!statement.trimStart().startsWith("SELECT")) throw new Error("loop_read_write_refused");
+      return tx.query<T>(statement, params);
+    } });
+    const readDb: DatabaseClient = { query: (sql, params) => readSession(db).query(sql, params),
+      transaction: callback => db.transaction(tx => callback(readSession(tx))),
+      transactionWithPreCommitCheck: (callback, check) => db.transactionWithPreCommitCheck(tx => callback(readSession(tx)), check) };
+    this.#loopReadAuthority = new WebSessionAuthority(readDb, scope, clock, "improvement_desk");
   }
 
   #templateMaterial(row: TemplateRow) {
@@ -602,4 +615,36 @@ export class ImproveControlRoomDeskServiceV1 {
       return loopImprovementDeskViewSchemaV1.parse({ legacy: await this.#legacyDeskView(tx, projectId), loopRequests });
     }, { readOnly: true, repeatableReadSnapshot: true });
   }
+  /** Server-only transaction-local B1a composition. The outer authority owns identity
+   * serialization and the final freshness fence; nested B1a calls share this tx. */
+  async loopBridgeTransaction<T>(identity: VerifiedWebIdentity, projectId: string, mutation: boolean,
+    operation: (context: { tx: DatabaseSession; actor: import("../../web/v1/session-authority").WebActor;
+      lineage: ImproveControlRoomDeskServiceV1 }) => Promise<T>) {
+    return (mutation ? this.#authority : this.#loopReadAuthority).authenticated(identity, async (tx, actor) => {
+      actor.require(mutation ? "tasks.propose" : "projects.read", projectId, true, mutation ? "high" : "low");
+      await this.#requireSelfProject(tx, projectId);
+      const localDb: DatabaseClient = {
+        query: tx.query.bind(tx), transaction: callback => callback(tx),
+        transactionWithPreCommitCheck: async (callback, check) => { const result = await callback(tx); await check(); return result; },
+      };
+      const lineage = new ImproveControlRoomDeskServiceV1(localDb, this.scope, this.#key, undefined, this.clock, this.loopContract);
+      return operation({ tx, actor, lineage });
+    }, { readOnly: !mutation });
+  }
+
+  /** Verified complete lineage for the bridge; never exposes private settings to HTTP. */
+  async loopBridgeLineage(tx: DatabaseSession, projectId: string, requestId: string, ownerId: string) {
+    const root = await this.#loopRoot(tx, projectId, requestId, ownerId);
+    const input = await this.#loopInput(tx, root), link = await this.#loopLink(tx, root);
+    const authorization = (await tx.query<LoopAuthorizationRow>(`SELECT * FROM control_loop_improvement_authorizations
+      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3`, [root.tenant_id, root.id, Number(input.version)])).rows[0];
+    if (authorization) {
+      this.#verifyLoop("authorizations", authorization);
+      if (!link || authorization.run_link_id !== link.id || authorization.project_id !== root.project_id
+        || authorization.owner_identity_id !== ownerId || authorization.request_sha256 !== input.request_sha256
+        || authorization.settings_sha256 !== input.settings_sha256) throw new Error("loop_improvement_integrity_failed");
+    }
+    return { root, input, link, authorization, view: await this.#loopRequestView(tx, root) };
+  }
+
 }

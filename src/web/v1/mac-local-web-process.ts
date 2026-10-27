@@ -1,3 +1,4 @@
+import { ImproveControlRoomLoopServiceV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ownerPushLinkV1 } from "../../web-push/v1/policy";
 import { localOwnerSignInTargetV1 } from "./local-owner-session";
 import { randomUUID } from "node:crypto";
@@ -60,6 +61,7 @@ import { updaterOwnerAttentionRequestSchemaV1, updaterOwnerRequestSchemaV1,
   type UpdaterOwnerAttentionPortV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
+  loopBridge?: LoopBridgeConfigurationV1;
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
   /** The one remote origin behind Cloudflare Access, if configured. Its
@@ -307,10 +309,12 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // owns the run rows it reads.
   const pipelineHttp = pipelines && pipelineAdvance ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: pipelines, advance: pipelineAdvance, clock }) : undefined;
+  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
-  const improvementHttp = improvementDesk ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
-    localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
+  const improvementHttp = improvementDesk || loopBridge ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: improvementDesk, loopBridge, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
   // The Workers page's bot/model scorecard. Built here, from this installation's
@@ -840,7 +844,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         return pipelineHttp(request);
       if (improvementHttp && (url.pathname === "/api/v1/update-candidates"
         || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
-        || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname))) return improvementHttp(request);
+        || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)
+        || !!loopBridge && /^\/api\/v1\/projects\/[^/]+\/improvements\/loop\//.test(url.pathname))) return improvementHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
@@ -871,5 +876,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // is the failure this whole branch is about.
   return Object.freeze({ handle,
     isReady: () => closed === undefined && options.database.isAvailable(),
-    close: () => closed ??= options.database.close() });
+    close: () => closed ??= (async () => { await loopBridge?.close(); await options.database.close(); })() });
 }

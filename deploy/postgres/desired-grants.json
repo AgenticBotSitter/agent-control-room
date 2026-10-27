@@ -420,6 +420,8 @@
     "control_room_private_web|table|public.control_leases||SELECT|plain",
     "control_room_private_web|table|public.control_loop_improvement_authorizations||INSERT|plain",
     "control_room_private_web|table|public.control_loop_improvement_authorizations||SELECT|plain",
+    "control_room_private_web|table|public.control_loop_improvement_commands||INSERT|plain",
+    "control_room_private_web|table|public.control_loop_improvement_commands||SELECT|plain",
     "control_room_private_web|table|public.control_loop_improvement_inputs||INSERT|plain",
     "control_room_private_web|table|public.control_loop_improvement_inputs||SELECT|plain",
     "control_room_private_web|table|public.control_loop_improvement_requests||INSERT|plain",

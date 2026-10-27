@@ -1,3 +1,4 @@
+import { createImproveControlRoomLoopAdapterV1, type LoopAdapterConfigurationV1 } from "./improve-control-room-loop-adapter";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
@@ -93,6 +94,7 @@ function requireReadyLocalHermesInstallation(web: ReturnType<typeof validatePriv
 }
 
 export type PrivateTaskStartupConfiguration = {
+  loopBridge?: { integrityKey: Uint8Array; adapter: LoopAdapterConfigurationV1 };
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
   /** Explicit, existing local artifact directory for the agent-task composition. */
@@ -317,7 +319,9 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if ([web.database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV2(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
-    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
+    const loopBridge = input.loopBridge ? { integrityKey: key(input.loopBridge.integrityKey),
+      adapter: createImproveControlRoomLoopAdapterV1(input.loopBridge.adapter) } : undefined;
+    return { loopBridge, web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
       claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
@@ -600,6 +604,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(hermesDeliveryRecovery ? { hermesDeliveryRecovery } : {}),
         ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}) }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
+        ...(config.loopBridge ? { loopBridge: config.loopBridge } : {}),
         ...(config.pipelines?{workBatches:{integrityKey:config.pipelines.integrityKey}}:{}),
         coordination: { store: coordinationStore },
         ...(webTasks ? { tasks: webTasks } : {}),
@@ -731,6 +736,7 @@ export function createPrivateTaskBootstrap(dependencies: {
     } catch {
       abandoned = true;
       startupAbort.abort();
+      await capturedConfig.loopBridge?.adapter.close();
       const workerCleanup = await Promise.allSettled([worker, newsWorker].filter((value): value is OwnedQueueWorker => !!value).map(value => value.close()));
       const appCleanup = application ? await Promise.allSettled([application.close()]) : [];
       const producerCleanup = submission ? await Promise.allSettled([submission.close()]) : [];

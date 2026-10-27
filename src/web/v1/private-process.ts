@@ -1,3 +1,4 @@
+import { ImproveControlRoomLoopServiceV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins, cloudflareAccessGatewayAssertionProfileV1,
@@ -70,6 +71,7 @@ import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-ow
 import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 
 export interface PrivateWebProcessOptions {
+  loopBridge?: LoopBridgeConfigurationV1;
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
   /** Optional separately approved private address; same services, distinct Access audience. */
   secondaryAccess?: { origin: string; audience: string };
@@ -349,6 +351,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories, tasks) : undefined;
   const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
+  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
   const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
@@ -928,11 +932,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
-          if (improvementDesk && (url.pathname === "/api/v1/update-candidates"
+          if ((improvementDesk || loopBridge) && (url.pathname === "/api/v1/update-candidates"
             || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
-            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)))
+            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)
+            || !!loopBridge && /^\/api\/v1\/projects\/[^/]+\/improvements\/loop\//.test(url.pathname)))
             return createImproveControlRoomHttpHandlerV1({ origin: site.origin, trust,
-              gatewayAssertionProfile, service: improvementDesk, clock })(request);
+              gatewayAssertionProfile, service: improvementDesk, loopBridge, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -1066,6 +1071,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             new Promise<void>(resolve => { timer = setTimeout(() => { timedOut = true; force(); resolve(); }, drainMs); })]);
         } finally { clearTimeout(timer); keys.close(); }
         // The bounded production pool terminates all remaining work. Never retry an uncertain write.
+        await loopBridge?.close();
         await options.database.close();
         if (timedOut) throw new Error("private_app_drain_uncertain");
       })();

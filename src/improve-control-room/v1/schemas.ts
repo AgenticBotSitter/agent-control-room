@@ -170,3 +170,39 @@ export type LoopImprovementContractV1 = {
   matchesSavedInput: (run: LoopImprovementRunIdentityV1, observation: LoopImprovementObservationV1,
     input: { description: string; settingsText: string; requestSha256: string; settingsSha256: string }) => boolean;
 };
+
+// B1b: browser input is closed; configured engine identity never comes from it.
+const engineRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const loopExpected = { expectedVersion: loopVersion, expectedRevision: engineRevision };
+export const loopBridgeOperationSchemaV1 = z.enum(["intake", "confirm", "start", "stop", "approve", "answer"]);
+export type LoopBridgeOperationV1 = z.infer<typeof loopBridgeOperationSchemaV1>;
+export const loopBridgeBodiesV1 = {
+  intake: z.object({ description: loopDescription }).strict(),
+  confirm: z.object({ ...loopExpected, requestSha256: rawHash, settingsSha256: rawHash }).strict(),
+  start: z.object({ ...loopExpected, runLinkId: id }).strict(),
+  stop: z.object({ runLinkId: id }).strict(),
+  approve: z.object({ ...loopExpected, step: z.enum(["plan", "spec"]),
+    inputVersion: z.union([loopVersion, z.string().min(1).max(180)]), head: revision, reportSha256: rawHash }).strict(),
+  answer: z.object({ ...loopExpected, questionId: id, inputVersion: z.union([loopVersion, z.string().min(1).max(180)]),
+    questionReportSha256: rawHash, text: loopDescription }).strict(),
+} as const;
+export const loopBridgeOutcomeSchemaV1 = z.object({
+  state: z.enum(["accepted", "waiting", "refused"]), revision: engineRevision,
+  adapterId: id, loopRunId: id, toolingRevision: digest,
+  evidenceDigest: digest, error: z.enum(["REFUSED", "INELIGIBLE"]).nullable(),
+}).strict();
+export const loopBridgeBindingSchemaV1 = z.object({
+  schemaVersion: z.literal(1), body: z.record(z.string(), z.unknown()), localVersion: loopVersion,
+  adapterId: id, loopRunId: id, toolingRevision: digest, a2SchemaVersion: z.literal(1), schemaDigest: digest,
+  requestSha256: rawHash, settingsSha256: rawHash,
+  runLinkId: id.nullable(), authorizationId: id.nullable(),
+  inputVersion: z.union([loopVersion, z.string().min(1).max(180)]).nullable(),
+  expectedRevision: engineRevision.nullable(), evidence: digest.nullable(),
+}).strict().refine(value => Buffer.byteLength(JSON.stringify(value), "utf8") <= 65536);
+export type LoopBridgeBindingV1 = z.infer<typeof loopBridgeBindingSchemaV1>;
+export type LoopBridgeOutcomeV1 = z.infer<typeof loopBridgeOutcomeSchemaV1>;
+export const loopBridgeReceiptSchemaV1 = z.object({ schemaVersion: z.literal(1), requestId: id,
+  localVersion: loopVersion, commandId: id, state: z.enum(["accepted", "waiting", "refused", "uncertain"]),
+  replayed: z.boolean(), engineRevision: engineRevision.nullable(),
+  error: z.enum(["REFUSED", "INELIGIBLE", "LAUNCH_UNCERTAIN"]).nullable(),
+}).strict();

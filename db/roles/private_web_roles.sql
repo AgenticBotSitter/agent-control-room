@@ -306,4 +306,6 @@ GRANT SELECT ON control_project_text_copy_derivations TO control_room_private_we
 GRANT SELECT, INSERT ON control_loop_improvement_requests, control_loop_improvement_inputs,
   control_loop_improvement_run_links, control_loop_improvement_authorizations TO control_room_private_web;
 
+GRANT SELECT, INSERT ON control_loop_improvement_commands TO control_room_private_web;
+
 COMMIT;

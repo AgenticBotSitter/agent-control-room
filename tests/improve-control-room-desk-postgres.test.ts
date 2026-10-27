@@ -398,7 +398,7 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
       "B1a bigint schema version projects as a number");
     assert.deepEqual(await web.desk.recordLoopRunLink({ projectId: ids.project, requestId: f.saved.request.requestId,
       initialInputVersion: 1, run: loopRun() }), { runLink: f.linked.runLink, replayed: true }, "bigint run link exact replay");
-    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 251);
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 252);
     const observed = loopObservation();
     await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed);
     assert.equal((await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed)).replayed, true);
@@ -408,7 +408,7 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
     for (const table of ["pipeline_runs", "work_items", "control_native_task_queue"])
       assert.equal((await b1aSql(pg, `SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0);
     assert.deepEqual((await b1aSql(pg, "SELECT roleid,member,admin_option,inherit_option,set_option FROM pg_auth_members ORDER BY 1,2")).rows, roles.rows);
-    console.log(`B1a fresh web_digest=${digest} updater_equal=true public_count=251`);
+    console.log(`B1a fresh web_digest=${digest} updater_equal=true public_count=252`);
   } finally { await web.close(); }
 }));
 
@@ -486,9 +486,9 @@ for (const table of LOOP_TABLES) for (const operation of ["UPDATE", "DELETE", "T
     const before = await b1aSnapshot(pg);
     // TRUNCATE includes FK children; disable only the other tables' truncate
     // triggers, so no second trigger can mask the target's refusal.
-    const others = LOOP_TABLES.filter(name => name !== table);
+    const others = [...LOOP_TABLES.filter(name => name !== table), "control_loop_improvement_commands"];
     if (operation === "TRUNCATE") for (const name of others)
-      await b1aSql(pg, `ALTER TABLE ${name} DISABLE TRIGGER ${name}_no_truncate`);
+      await b1aSql(pg, `ALTER TABLE ${name} DISABLE TRIGGER ${name === "control_loop_improvement_commands" ? "control_loop_commands_append_only" : `${name}_no_truncate`}`);
     try {
       const sql = operation === "UPDATE" ? `UPDATE ${table} SET created_at=created_at+interval '1 second'`
         : operation === "DELETE" ? `DELETE FROM ${table}` : `TRUNCATE ${[table, ...others].join(",")}`;
@@ -497,7 +497,7 @@ for (const table of LOOP_TABLES) for (const operation of ["UPDATE", "DELETE", "T
       assert.equal(await b1aSnapshot(pg), before);
     } finally {
       if (operation === "TRUNCATE") for (const name of others)
-        await b1aSql(pg, `ALTER TABLE ${name} ENABLE TRIGGER ${name}_no_truncate`);
+        await b1aSql(pg, `ALTER TABLE ${name} ENABLE TRIGGER ${name === "control_loop_improvement_commands" ? "control_loop_commands_append_only" : `${name}_no_truncate`}`);
     }
   }));
 }
@@ -622,7 +622,7 @@ async function prepareB1aFixture(pg: Pg, database: string) {
 async function transformB1aFixture(pg: Pg, database: string) {
   assert.match(database, /^cr14b_rehearsal_[a-z0-9_]{1,40}$/u);
   const beforeCatalog = (await b1aSql(pg, catalogSql, [], database)).rows as Array<{ name: string }>;
-  assert.equal(beforeCatalog.length, 251);
+  assert.equal(beforeCatalog.length, 252);
   const beforeLedger = (await b1aSql(pg, "SELECT * FROM control_room_schema_migrations ORDER BY ledger_order", [], database)).rows;
   const ledgerOwner = (await b1aSql(pg, "SELECT pg_get_userbyid(relowner) AS owner,relacl::text AS acl FROM pg_class WHERE oid='public.control_room_schema_migrations'::regclass", [], database)).rows;
   const beforeAuthority = await fixtureAuthoritySnapshot(pg, database);
@@ -667,7 +667,7 @@ for (const mode of ["shipped ownership", "prepared", "wrong owner", "nonempty"] 
     if (mode === "nonempty") await b1aSql(pg, "INSERT INTO tenants(id,display_name) VALUES('tenant:retained','Fixture retained')", [], database);
     const f = await prepareB1aFixture(pg, database);
     if (mode === "prepared") {
-      assert.equal(f.metadata, true); assert.equal(f.catalogCount, 250);
+      assert.equal(f.metadata, true); assert.equal(f.catalogCount, 251);
       assert.equal(f.result.evidence.disposition, "fixture_prepared", "B1a fixture_prepared after measured catalog count");
       assert.equal(f.digestReads, 2); assert.equal(f.empty, true);
       assert.deepEqual(f.result.evidence.fixtureCounts, { tenant: 1, owner: 1, workspace: 1, idea: 1, enrollment: 1, signal: 1 });
@@ -833,6 +833,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     let baselineDigest: string, baselineGrants: string[];
     try { baselineDigest = await readPrivateWebSchemaDigest(reference); baselineGrants = [...await readMacGrantCatalogV1(reference)].sort(); }
     finally { await reference.end(); }
+    await b1aSql(pg, await readFile("db/down/0302_control_loop_improvement_commands.sql", "utf8"), [], pg.database, "migrator");
     const down = await readFile("db/down/0301_control_loop_improvement_lineage.sql", "utf8");
     await b1aSql(pg, down, [], pg.database, "migrator"); await applyB1aRoles(pg, baseline, pg.database);
     const downgraded = new Client(pg.connection("web")); await downgraded.connect();
@@ -841,6 +842,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     finally { await downgraded.end(); }
     const up = await readFile("db/migrations/0301_control_loop_improvement_lineage.sql", "utf8");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${up}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0302_control_loop_improvement_commands.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/roles/production_table_grants.sql", "utf8"), [], pg.database, "migrator");
     await applyB1aRoles(pg, resolve("."), pg.database);
     const f = await b1aLinked(pg), web = b1aWeb(pg);
@@ -954,4 +956,46 @@ test("B1a SQL structural bindings, active owner grants and append sequence", asy
     await assert.rejects(directLoopInsert(pg, LOOP_TABLES[1], { ...input, ...patch, idempotency_key: "b1a-bad-sequence-0001" }),
       /loop input version or binding rejected/u);
   assert.equal(await b1aSnapshot(pg), before);
+}));
+
+
+test("B1b upgrade from reviewed B1a preserves signed legacy and lineage bytes", async () => b1aRun(async pg => {
+  const base = "344bc3ab32601c76faa25ca977dc3eb335411a96", root = await extractBaseline(base), database = "b1b_from_base";
+  try {
+    await b1aSql(pg, `CREATE DATABASE ${database}`);
+    await applyB1aRelease(pg, root, database); await applyB1aRoles(pg, root, database, true);
+    const legacy = await seedB1aLegacy(pg, database), beforeWeb = b1aWeb(pg, database);
+    try {
+      const draft = await beforeWeb.desk.saveLoopDraft(identity, ids.project, LOOP_DRAFT, "b1b-retained-draft-0001");
+      const linked = await beforeWeb.desk.recordLoopRunLink({ projectId: ids.project, requestId: draft.request.requestId, initialInputVersion: 1, run: loopRun() });
+      await beforeWeb.desk.authorizeLoopStart(identity, ids.project, { requestId: draft.request.requestId, expectedVersion: 1,
+        runLinkId: linked.runLink.runLinkId, requestSha256: rawHash(LOOP_DRAFT.description), settingsSha256: rawHash(LOOP_DRAFT.settingsText) }, "b1b-retained-auth-0001", loopObservation());
+    } finally { await beforeWeb.close(); }
+    const retained: Record<string, unknown> = {};
+    for (const table of LOOP_TABLES) retained[table] = (await b1aSql(pg, `SELECT * FROM ${table} ORDER BY record_digest`, [], database)).rows;
+    const staged = await mkdtemp(resolve(".test-tmp/b1b-failed-upgrade-"));
+    try {
+      await cp(resolve("db"), join(staged, "db"), { recursive: true });
+      await mkdir(join(staged, "deploy/postgres"), { recursive: true });
+      const migration = join(staged, "db/migrations/0302_control_loop_improvement_commands.sql");
+      await writeFile(migration, (await readFile(migration, "utf8")) + "\nSELECT 1/0;\n");
+      const entries = await collectLedgerEntries(staged);
+      await writeFile(join(staged, "deploy/postgres/migration-ledger.json"), JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
+      const beforeLedger = JSON.stringify((await b1aSql(pg, "SELECT * FROM control_room_schema_migrations ORDER BY ledger_order", [], database)).rows);
+      await assert.rejects(applyB1aRelease(pg, staged, database), /migration_failed:db\/migrations\/0302_control_loop_improvement_commands.sql:division by zero/u);
+      assert.equal((await b1aSql(pg, "SELECT to_regclass('control_loop_improvement_commands') AS journal", [], database)).rows[0].journal, null);
+      assert.equal(JSON.stringify((await b1aSql(pg, "SELECT * FROM control_room_schema_migrations ORDER BY ledger_order", [], database)).rows), beforeLedger);
+      assert.equal(await legacySnapshot(pg, database), legacy.rows);
+    } finally { await rm(staged, { recursive: true, force: true }); }
+    const upgraded = await applyB1aRelease(pg, resolve("."), database); await applyB1aRoles(pg, resolve("."), database);
+    assert.ok(upgraded.applied!.some(entry => entry.file.endsWith("0302_control_loop_improvement_commands.sql")));
+    for (const table of LOOP_TABLES) assert.deepEqual((await b1aSql(pg, `SELECT * FROM ${table} ORDER BY record_digest`, [], database)).rows, retained[table]);
+    assert.equal(await legacySnapshot(pg, database), legacy.rows);
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int n FROM control_loop_improvement_commands", [], database)).rows[0].n, 0);
+    const after = b1aWeb(pg, database);
+    try { assert.equal(await readPrivateWebSchemaDigest(after.client), privateWebSchemaDigest); }
+    finally { await after.close(); }
+    assert.equal((await applyB1aRelease(pg, resolve("."), database)).applied!.length, 0);
+    console.log("B1b upgrade BASE retained_legacy=3 retained_lineage=4 bytes_equal=true journal=0 no_op=true");
+  } finally { await rm(root, { recursive: true, force: true }); }
 }));
