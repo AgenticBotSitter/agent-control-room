@@ -32,6 +32,7 @@ export class ImproveControlRoomLoopServiceV1 {
   readonly #key: Uint8Array;
   readonly #adapter: LoopAdapterV1;
   readonly #freshness: number;
+  readonly #swept = new Set<string>();
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     configuration: LoopBridgeConfigurationV1, private readonly clock: () => number = Date.now) {
     if (!(configuration.integrityKey instanceof Uint8Array) || configuration.integrityKey.length !== 32) throw unavailable();
@@ -223,6 +224,7 @@ export class ImproveControlRoomLoopServiceV1 {
         idempotency_key: idempotencyKey, binding, result: null, created_at: actor.now });
       return { claim, result: undefined, replayed: false };
     });
+    await this.#sweepCommandFiles(identity, projectId);
     if (admitted.result) {
       await this.#releaseCommandFiles(admitted.claim);
       return this.#receipt(admitted.claim, admitted.result, true);
@@ -296,6 +298,31 @@ export class ImproveControlRoomLoopServiceV1 {
     });
     await this.#releaseCommandFiles(claim);
     return this.#receipt(claim, result, replayed);
+  }
+  async #sweepCommandFiles(identity: VerifiedWebIdentity, projectId: string) {
+    // First authorized mutation per owner/project recovers the commit-to-cleanup
+    // crash window. No result is reconciled and no command is dispatched here.
+    try {
+      const finished = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor }) => {
+        const key = canonicalJson([projectId, actor.id]);
+        if (this.#swept.has(key)) return undefined;
+        const rows = (await tx.query<Row>(`SELECT c.* FROM control_loop_improvement_commands c
+          WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.owner_identity_id=$3 AND c.entry_kind='claim'
+            AND EXISTS (SELECT 1 FROM control_loop_improvement_commands r
+              WHERE r.tenant_id=c.tenant_id AND r.command_id=c.command_id AND r.entry_kind='result')`,
+        [this.scope.tenantId, projectId, actor.id])).rows;
+        const verified: Row[] = [];
+        for (const raw of rows) {
+          const claim = this.#verify(raw);
+          this.#pins(claim.binding, claim.operation);
+          if (await this.#result(tx, claim)) verified.push(claim);
+        }
+        return { key, verified };
+      });
+      if (!finished) return;
+      for (const claim of finished.verified) await this.#releaseCommandFiles(claim);
+      this.#swept.add(finished.key);
+    } catch { /* Best-effort cleanup cannot change the admitted command's result. */ }
   }
   async #releaseCommandFiles(claim: Row) {
     // Cleanup cannot undo the committed receipt; an exact replay retries a failed cleanup.

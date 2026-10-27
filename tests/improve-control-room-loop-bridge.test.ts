@@ -7,6 +7,8 @@ import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
 import { canonicalJson, sha256Digest } from "../src/security";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
@@ -43,7 +45,9 @@ refusal=os.path.join(root,'refusal.json')
 if os.path.exists(refusal):
     with open(refusal) as f: refused=json.load(f)
     if refused['op']==op:
-        print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error='refused')))
+        if refused.get('output','envelope')=='envelope': print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error='refused')))
+        elif refused['output']=='malformed': print('unreadable')
+        if refused.get('breakStatus'): os.remove(path)
         sys.exit(refused['code'])
 if op=='confirm-request':
     if flag('--sha256')!=h(s['description']): sys.exit(2)
@@ -463,8 +467,8 @@ test("B1b admission expiry after A2 lock wait cannot spawn",async t=>{
   assert.equal(result.state,'uncertain');
 });
 
-for (const [operation, code] of [["approve", 2], ["approve", 3], ["confirm", 2], ["start", 3], ["intake", 2], ["answer", 3], ["stop", 2]] as const) {
-  test(`B1b exit ${code} ${operation} records refusal despite unchanged engine state`, async t => {
+for (const [operation, code, output = "envelope"] of [["approve", 2, "empty"], ["approve", 3, "malformed"], ["approve", 2], ["approve", 3], ["confirm", 2], ["start", 3], ["intake", 2], ["answer", 3], ["stop", 2]] as const) {
+  test(`B1b exit ${code} ${operation} ${output} records refusal despite unchanged engine state`, async t => {
     const f = await fixture(t);
     let id: string | null = null, body: Record<string, unknown> = { description };
     if (operation !== "intake") {
@@ -482,7 +486,7 @@ for (const [operation, code] of [["approve", 2], ["approve", 3], ["confirm", 2],
       if (operation === "stop") body = { runLinkId: s.request.runLink!.runLinkId };
       if (operation === "confirm") Object.assign(body, { requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 });
     }
-    await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: operation === "confirm" ? "confirm-request" : operation, code }));
+    await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: operation === "confirm" ? "confirm-request" : operation, code, output }));
     const key = `b1b-exit-refusal-${operation}-${code}`;
     const result = await f.bridge.mutate(f.identity, f.project.projectId, id, operation, body, key);
     assert.equal(result.state, "refused", "definite process refusal is recorded as refused");
@@ -543,3 +547,92 @@ test("B1b cleanup refuses a command still in use and preserves unrelated directo
     assert.equal(await readFile(join(unrelated, 'source.txt'), 'utf8'), 'unresolved other command');
   } finally { release(); await pending; }
 });
+
+
+test("B1b cleanup failure keeps the committed receipt unchanged when rm throws", async t => {
+  const f = await fixture(t);
+  const originalRm = fsPromises.rm;
+  let failures = 0;
+  const mocked = t.mock.method(fsPromises, 'rm', async (path: Parameters<typeof rm>[0], options: Parameters<typeof rm>[1]) => {
+    if (String(path).startsWith(join(f.configuration.workRoot, 'loop-command-'))) {
+      failures++; throw new Error('SYNTHETIC rm failure');
+    }
+    return originalRm(path, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    const key = 'b1b-cleanup-throw-0001';
+    const receipt = await f.bridge.mutate(f.identity, f.project.projectId, null, 'intake', { description }, key);
+    assert.ok(failures > 0, 'rm actually threw during command cleanup');
+    assert.equal(receipt.state, 'accepted', 'cleanup failure preserves committed receipt');
+    assert.equal(receipt.error, null);
+    assert.equal((await readdir(f.configuration.workRoot)).length, 1);
+    const replay = await f.bridge.mutate(f.identity, f.project.projectId, null, 'intake', { description }, key);
+    assert.deepEqual(replay, { ...receipt, replayed: true }, 'cleanup failure preserves replayed receipt');
+    mocked.mock.restore(); syncBuiltinESMExports();
+    assert.deepEqual(await f.bridge.mutate(f.identity, f.project.projectId, null, 'intake', { description }, key), replay);
+    assert.deepEqual(await readdir(f.configuration.workRoot), []);
+    assert.equal((await f.traces()).filter(trace => trace.op === 'intake').length, 1);
+  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test("B1b first-use sweep removes only durable finished command directories", async t => {
+  const f = await fixture(t);
+  const crashed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+  const receipt = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-finished-0001');
+  assert.equal(receipt.state, 'accepted');
+  const failed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {}, intake: async (...args) => {
+      await f.adapter.intake(...args); throw new Error('SYNTHETIC crash before result');
+    } } }, () => now);
+  const pending = await failed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-pending-0001');
+  assert.equal(pending.state, 'uncertain');
+  const pendingDirectory = join(f.configuration.workRoot, pending.commandId.replace(':', '-'));
+  const finished = join(f.configuration.workRoot, receipt.commandId.replace(':', '-'));
+  const unresolved = join(f.configuration.workRoot, `loop-command-${'e'.repeat(32)}`);
+  const unrelated = join(f.configuration.workRoot, 'unrelated');
+  await mkdir(unresolved); await writeFile(join(unresolved, 'source.txt'), 'unresolved');
+  await mkdir(unrelated); await writeFile(join(unrelated, 'source.txt'), 'unrelated');
+  // A new service's first mutation uses a new key and root, not an exact replay.
+  const restarted = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: f.adapter }, () => now);
+  assert.equal((await restarted.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-trigger-0001')).state, 'accepted');
+  await assert.rejects(readFile(join(finished, 'source.txt')), { code: 'ENOENT' }, 'first-use sweep reclaims durable finished command');
+  assert.equal(await readFile(join(unresolved, 'source.txt'), 'utf8'), 'unresolved');
+  assert.equal(await readFile(join(pendingDirectory, 'source.txt'), 'utf8'), description, 'signed claim without result is never swept');
+  assert.equal(await readFile(join(unrelated, 'source.txt'), 'utf8'), 'unrelated');
+});
+
+test("B1b cleanup rechecks configured pins and uid before removing files", async t => {
+  const f = await fixture(t);
+  const commandId = `loop-command:${'d'.repeat(32)}`, directory = join(f.configuration.workRoot, commandId.replace(':', '-'));
+  await mkdir(directory); await writeFile(join(directory, 'source.txt'), 'retain');
+  await writeFile(f.configuration.entrypoint, executable + '\n# changed pin\n');
+  await assert.rejects(f.raw.releaseCommandFiles!(commandId), /unavailable/, 'cleanup refuses stale executable pin');
+  assert.equal(await readFile(join(directory, 'source.txt'), 'utf8'), 'retain');
+  await writeFile(f.configuration.entrypoint, executable);
+  const uid = process.getuid!();
+  const mocked = t.mock.method(process as NodeJS.Process & { getuid(): number }, 'getuid', () => uid + 1);
+  try {
+    await assert.rejects(f.raw.releaseCommandFiles!(commandId), /unavailable/, 'cleanup refuses changed uid');
+    assert.equal(await readFile(join(directory, 'source.txt'), 'utf8'), 'retain');
+  } finally { mocked.mock.restore(); }
+  await f.raw.releaseCommandFiles!(commandId);
+  await assert.rejects(readFile(join(directory, 'source.txt')), { code: 'ENOENT' });
+});
+
+for (const [code, breakStatus] of [[1, false], [4, false], [2, true], [3, true]] as const) {
+  test(`B1b approve empty output exit ${code} broken status ${breakStatus} stays uncertain`, async t => {
+    const f = await fixture(t), id = await f.intake(); let s = await f.confirm(id);
+    const approval = { step: 'plan' as const, inputVersion: 1, head: 'a'.repeat(40), reportSha256: 'b'.repeat(64) };
+    await f.edit(s.request.runLink!.loopRunId, { state: 'waiting', approval }); s = await f.get(id);
+    await writeFile(join(f.root, 'refusal.json'), JSON.stringify({ op: 'approve', code, output: 'empty', breakStatus }));
+    const body = { expectedVersion: 1, expectedRevision: s.engine.revision, ...approval };
+    const key = `b1b-approve-uncertain-${code}`;
+    const receipt = await f.bridge.mutate(f.identity, f.project.projectId, id, 'approve', body, key);
+    assert.equal(receipt.state, 'uncertain'); assert.equal(receipt.error, 'LAUNCH_UNCERTAIN');
+    assert.equal((await f.bridge.mutate(f.identity, f.project.projectId, id, 'approve', body, key)).state, 'uncertain');
+    assert.equal((await f.traces()).filter(trace => trace.op === 'approve').length, 1, 'uncertain approval never redispatches');
+  });
+}

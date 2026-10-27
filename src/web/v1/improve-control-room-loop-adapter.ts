@@ -146,21 +146,28 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); else output.push(Buffer.from(chunk)); });
       child.stderr.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); });
       child.on("error", () => { failed = true; });
-      child.on("close", code => {
+      child.on("close", async code => {
         clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
         if (failed || ![0, 2, 3].includes(code ?? -1)) { reject(unavailable()); return; }
         try {
           if (!json && code === 0) { fulfill(undefined); return; }
-          const status = decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), run);
+          let observed: LoopEngineStatusV1;
+          try { observed = decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), run); }
+          catch {
+            // Approve has no JSON flag. A definite refusal can still be bound to
+            // the exact run through its validated status observation.
+            if (json || (code !== 2 && code !== 3)) throw unavailable();
+            observed = await status(run);
+          }
           if (code === 2 || code === 3) {
             if (!command) throw unavailable();
             // Exit status describes this invocation, even when the run remains waiting/ready.
             const receipt: LoopEngineStatusV1["receipts"][number] = { commandId: command.id,
               bindingDigest: sha256Digest(command.binding), state: "refused",
-              evidenceDigest: sha256Digest({ exitCode: code, status }), error: code === 2 ? "REFUSED" : "INELIGIBLE" };
-            status.receipts = [receipt, ...status.receipts.filter(saved => saved.commandId !== command.id)].slice(0, 100);
+              evidenceDigest: sha256Digest({ exitCode: code, status: observed }), error: code === 2 ? "REFUSED" : "INELIGIBLE" };
+            observed.receipts = [receipt, ...observed.receipts.filter(saved => saved.commandId !== command.id)].slice(0, 100);
           }
-          fulfill(status);
+          fulfill(observed);
         } catch { reject(unavailable()); }
       });
     });
@@ -229,6 +236,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     approve: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("approve", id, b, fence),
     answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("answer", id, b, fence, text),
     releaseCommandFiles: async (commandId: string) => {
+      validate();
       if (!/^loop-command:[a-f0-9]{32}$/.test(commandId) || activeCommands.has(commandId)) throw unavailable();
       activeCommands.add(commandId);
       try {

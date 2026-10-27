@@ -8,6 +8,20 @@ import { promisify } from "node:util";
 import { assertGuardBites, reapKitClusters } from "./support/attack-kit/index";
 const exec=promisify(execFile), root=resolve(".");
 const probes=[
+  {name:"approve refusal status fallback",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'observed = await status(run);',replace:'throw unavailable();',
+    pattern:"^B1b exit 2 approve empty",assertion:"definite process refusal is recorded as refused",postgres:false},
+  {name:"finished command startup sweep",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'await this.#sweepCommandFiles(identity, projectId);',replace:'/* MUTANT: omit finished command sweep. */',
+    pattern:"B1b first-use sweep",assertion:"first-use sweep reclaims durable finished command",postgres:false},
+  {name:"cleanup failure preserves receipt",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'try { await this.#adapter.releaseCommandFiles?.(claim.command_id); } catch { /* Retain for an authorized retry. */ }',
+    replace:'await this.#adapter.releaseCommandFiles?.(claim.command_id);',
+    pattern:"B1b cleanup failure",assertion:"cleanup failure preserves committed receipt",postgres:false},
+  {name:"cleanup validates configuration",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'releaseCommandFiles: async (commandId: string) => {\n      validate();',
+    replace:'releaseCommandFiles: async (commandId: string) => {',
+    pattern:"B1b cleanup rechecks",assertion:"cleanup refuses stale executable pin",postgres:false},
   {name:"owner authority",file:"src/improve-control-room/v1/service.ts",
     find:'actor.require(mutation ? "tasks.propose" : "projects.read", projectId, true, mutation ? "high" : "low");',
     replace:'actor.require(mutation ? "tasks.propose" : "projects.read", projectId, false, mutation ? "high" : "low");',
@@ -42,7 +56,7 @@ const probes=[
     find:'|| activeCommands.has(commandId)) throw unavailable();',replace:'|| false) throw unavailable();',
     pattern:"B1b cleanup refuses a command",assertion:"active command cannot be reclaimed",postgres:false},
   {name:"completed command cleanup",file:"src/web/v1/improve-control-room-loop-service.ts",
-    find:'await this.#releaseCommandFiles(claim);',replace:'/* MUTANT: retain completed command files. */',
+    find:'\n    await this.#releaseCommandFiles(claim);',replace:'\n    /* MUTANT: retain completed command files. */',
     pattern:"B1b command files remain",assertion:"committed result releases only its command directory",postgres:false},
 ];
 test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=>{
