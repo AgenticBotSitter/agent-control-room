@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { isPostgresTextV1 } from "../../persistence/postgres-text";
 import { catalogProjectIdSchema } from "./project-wire";
 
 /** Canonical attempt/run ids share the domain safe-id grammar, not the project catalog type. */
 export const sessionWatchIdSchema = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+export const sessionWatchCursorSchemaV1 = z.string().refine(isPostgresTextV1);
 const id = sessionWatchIdSchema;
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
@@ -10,7 +12,7 @@ const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
 export const SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 = 120_000;
 export const SESSION_WATCH_PAGE_SIZE_V1 = 25;
 
-export const sessionWatchItemSchemaV1 = z.object({
+const healthyItem = z.object({
   sessionId: sessionWatchIdSchema,
   runId: id.nullable(),
   projectId: catalogProjectIdSchema,
@@ -30,14 +32,30 @@ export const sessionWatchItemSchemaV1 = z.object({
   expectedHeartbeatSeconds: z.literal(120),
 }).strict();
 
+const unreadableItem = healthyItem.extend({
+  state: z.literal("unreadable"),
+  sessionId: sessionWatchCursorSchemaV1,
+  projectId: catalogProjectIdSchema.nullable(),
+  jobId: sessionWatchIdSchema.nullable(),
+  attemptId: sessionWatchIdSchema.nullable(),
+  attemptNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  taskTitle: z.string().min(1).max(180),
+  runId: z.null(), harness: z.null(), durationSeconds: z.null(),
+  lastProgressAt: z.string().datetime().nullable(),
+  stage: z.literal("Session details could not be read"),
+  lastProgress: z.literal("Saved row updated"),
+}).strict();
+
+export const sessionWatchItemSchemaV1 = z.discriminatedUnion("state", [healthyItem, unreadableItem]);
+
 export const sessionWatchPageSchemaV1 = z.object({
   source: z.enum(["configured", "not_configured"]),
   sessions: z.array(sessionWatchItemSchemaV1).max(SESSION_WATCH_PAGE_SIZE_V1),
-  nextCursor: sessionWatchIdSchema.nullable(),
+  nextCursor: sessionWatchCursorSchemaV1.nullable(),
   observedAt: z.string().datetime(),
   startsWork: z.literal(false),
 }).strict().superRefine((value, context) => {
-  if (value.source === "not_configured" && (value.sessions.length || value.nextCursor)) {
+  if (value.source === "not_configured" && (value.sessions.length || value.nextCursor !== null)) {
     context.addIssue({ code: "custom", message: "unconfigured session watch cannot report sessions" });
   }
   if (new Set(value.sessions.map(session => session.sessionId)).size !== value.sessions.length) {
