@@ -39,6 +39,12 @@ if op=='intake':
     s=dict(run=run,revision=1,inputVersion=1,state='draft',description=text,settingsSha256=h(settings),settingsDigest=h(settings),confirmation=None,approval=None,question=None,progress=dict(step='intake',completed=0,attention='none'),receipts=[])
 else:
     with open(path) as f: s=json.load(f)
+refusal=os.path.join(root,'refusal.json')
+if os.path.exists(refusal):
+    with open(refusal) as f: refused=json.load(f)
+    if refused['op']==op:
+        print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error='refused')))
+        sys.exit(refused['code'])
 if op=='confirm-request':
     if flag('--sha256')!=h(s['description']): sys.exit(2)
     s['confirmation']=dict(path='request.md',sha256=h(s['description']),at='2026-10-01T00:00:00.000Z',who='owner',input_version=s['inputVersion'])
@@ -96,14 +102,15 @@ async function synthetic(t: TestContext) {
       } } };
   raw = createImproveControlRoomLoopAdapterV1(configuration);
   t.after(() => raw.close());
-  const decorate = (s: LoopEngineStatusV1) => ({ ...s, receipts: receipts.get(s.run.loopRunId) ?? [] });
+  const decorate = (s: LoopEngineStatusV1) => ({ ...s, receipts: [...(receipts.get(s.run.loopRunId) ?? []), ...s.receipts] });
   const apply = async (op: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, text?: string, fence: () => void = () => {}) => {
     const s = await (op === "intake" ? raw.intake(commandId, binding, text!, fence) : op === "confirm" ? raw.confirmRequest(commandId, binding, fence)
       : op === "answer" ? raw.answer(commandId, binding, text!, fence) : raw[op](commandId, binding, fence));
     // Test-only receipt translation from this fixture's exact completed transition.
     const all = receipts.get(binding.loopRunId) ?? [];
-    all.push({ commandId, bindingDigest: sha256Digest(binding), state: "accepted", evidenceDigest: sha256Digest(s), error: null });
-    receipts.set(binding.loopRunId, all); return decorate(s);
+    all.push(s.receipts.find(receipt => receipt.commandId === commandId)
+      ?? { commandId, bindingDigest: sha256Digest(binding), state: "accepted", evidenceDigest: sha256Digest(s), error: null });
+    receipts.set(binding.loopRunId, all); return decorate({ ...s, receipts: [] });
   };
   const adapter: LoopAdapterV1 = { ...raw, status: async run => decorate(await raw.status(run)),
     intake: (id, b, text, fence) => apply("intake", id, b, text, fence), confirmRequest: (id, b, fence) => apply("confirm", id, b, undefined, fence),
@@ -417,7 +424,9 @@ test("B1b malicious request bytes stay literal exclusive command-file contents",
   const f=await fixture(t),text='literal $(touch injected) ; "../outside" \\u2028';
   const response=await f.post("intake",{description:text});assert.equal(response.status,202);
   const trace=(await f.traces()).find(e=>e.op==="intake")!;
-  assert.equal(await readFile(trace.args[1]!,"utf8"),text);
+  const receipt=await response.json() as {requestId:string};
+  assert.equal((await f.get(receipt.requestId)).engine.draft,text,"engine consumed literal exclusive source-file bytes");
+  await assert.rejects(readFile(trace.args[1]!,"utf8"),{code:"ENOENT"},"completed source file reclaimed");
   assert.equal((await readdir(f.root)).includes("injected"),false);
   for(const bad of [{description:"a",workerId:"worker:other"},{description:"a",source:"../outside"},{description:"a",settings:"private"}])assert.equal((await f.post("intake",bad)).status,400);
 });
@@ -452,4 +461,85 @@ test("B1b admission expiry after A2 lock wait cannot spawn",async t=>{
   const result=await bridge.mutate(f.identity,f.project.projectId,id,'start',{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},'b1b-lock-expiry-0001');
   assert.equal((await f.traces()).filter(e=>e.op==='start').length,0,'B1b expired admission after lock wait spawns no Start');
   assert.equal(result.state,'uncertain');
+});
+
+for (const [operation, code] of [["approve", 2], ["approve", 3], ["confirm", 2], ["start", 3], ["intake", 2], ["answer", 3], ["stop", 2]] as const) {
+  test(`B1b exit ${code} ${operation} records refusal despite unchanged engine state`, async t => {
+    const f = await fixture(t);
+    let id: string | null = null, body: Record<string, unknown> = { description };
+    if (operation !== "intake") {
+      id = await f.intake();
+      let s = operation === "confirm" ? await f.get(id) : await f.confirm(id);
+      const approval = { step: "plan" as const, inputVersion: 1, head: "a".repeat(40), reportSha256: "b".repeat(64) };
+      const question = { questionId: "question:refusal", inputVersion: 1, reportSha256: "c".repeat(64), owner: true, changesInput: false };
+      if (operation === "approve" || operation === "answer") {
+        await f.edit(s.request.runLink!.loopRunId, { state: "waiting", approval, question }); s = await f.get(id);
+      }
+      body = { expectedVersion: 1, expectedRevision: s.engine.revision };
+      if (operation === "approve") Object.assign(body, approval);
+      if (operation === "answer") Object.assign(body, { questionId: question.questionId, inputVersion: 1, questionReportSha256: question.reportSha256, text: "Keep this scope." });
+      if (operation === "start") body.runLinkId = s.request.runLink!.runLinkId;
+      if (operation === "stop") body = { runLinkId: s.request.runLink!.runLinkId };
+      if (operation === "confirm") Object.assign(body, { requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 });
+    }
+    await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: operation === "confirm" ? "confirm-request" : operation, code }));
+    const key = `b1b-exit-refusal-${operation}-${code}`;
+    const result = await f.bridge.mutate(f.identity, f.project.projectId, id, operation, body, key);
+    assert.equal(result.state, "refused", "definite process refusal is recorded as refused");
+    assert.equal(result.error, code === 2 ? "REFUSED" : "INELIGIBLE");
+    const replay = await f.bridge.mutate(f.identity, f.project.projectId, id, operation, body, key);
+    assert.deepEqual(replay, { ...result, replayed: true });
+    assert.equal((await f.traces()).filter(trace => trace.op === (operation === "confirm" ? "confirm-request" : operation)).length, 1);
+    assert.deepEqual(await readdir(f.configuration.workRoot), [], "refused result releases command files too");
+  });
+}
+
+test("B1b command files remain until result append and are reclaimed after reconciliation", async t => {
+  const f = await fixture(t);
+  let failResult = true, beforeAppend = false;
+  const traced = (tx: import('../src/persistence/database').DatabaseSession) => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    if (sql.startsWith('INSERT INTO control_loop_improvement_commands') && params?.[2] === 'result') {
+      beforeAppend = true;
+      const directories = await readdir(f.configuration.workRoot);
+      assert.equal(directories.length, 1, "uncommitted result retains command directory");
+      assert.equal(await readFile(join(f.configuration.workRoot, directories[0]!, "source.txt"), "utf8"), description);
+      if (failResult) { failResult = false; throw new Error("SYNTHETIC result append failure"); }
+    }
+    return tx.query<T>(sql, params);
+  } });
+  const db: import('../src/persistence/database').DatabaseClient = { query: f.client.query,
+    transaction: callback => f.client.transaction(tx => callback(traced(tx))),
+    transactionWithPreCommitCheck: (callback, check) => f.client.transactionWithPreCommitCheck(tx => callback(traced(tx)), check) };
+  const bridge = new ImproveControlRoomLoopServiceV1(db, { tenantId: 'tenant:web', workspaceId: 'workspace:web' }, { integrityKey: KEY, adapter: f.adapter }, () => now);
+  const key = "b1b-cleanup-reconcile-0001";
+  const lost = await bridge.mutate(f.identity, f.project.projectId, null, 'intake', { description }, key);
+  assert.equal(beforeAppend, true); assert.equal(lost.state, 'uncertain');
+  assert.equal((await readdir(f.configuration.workRoot)).length, 1, "unresolved command files are retained");
+  const result = await bridge.mutate(f.identity, f.project.projectId, null, 'intake', { description }, key);
+  assert.equal(result.state, 'accepted'); assert.equal(result.replayed, true);
+  assert.deepEqual(await readdir(f.configuration.workRoot), [], "committed result releases only its command directory");
+  assert.equal((await f.traces()).filter(trace => trace.op === 'intake').length, 1);
+});
+
+test("B1b cleanup refuses a command still in use and preserves unrelated directories", async t => {
+  const f = await fixture(t), id = await f.intake(), s = await f.confirm(id);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.setBeforeAdmission(async () => { entered(); await gate; });
+  const pending = f.bridge.mutate(f.identity, f.project.projectId, id, 'start',
+    { expectedVersion: 1, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId }, 'b1b-cleanup-active-0001');
+  try {
+    await waiting;
+    const row = (await f.db.query<{ command_id: string }>("SELECT command_id FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0]!;
+    const directory = join(f.configuration.workRoot, row.command_id.replace(':', '-'));
+    const unrelated = join(f.configuration.workRoot, `loop-command-${'f'.repeat(32)}`);
+    await mkdir(directory, { mode: 0o700 }); await writeFile(join(directory, 'in-use.txt'), 'retain');
+    await mkdir(unrelated, { mode: 0o700 }); await writeFile(join(unrelated, 'source.txt'), 'unresolved other command');
+    await assert.rejects(f.raw.releaseCommandFiles!(row.command_id), /unavailable/, "active command cannot be reclaimed");
+    assert.equal(await readFile(join(directory, 'in-use.txt'), 'utf8'), 'retain');
+    release(); assert.equal((await pending).state, 'accepted');
+    await assert.rejects(readFile(join(directory, 'in-use.txt')), { code: 'ENOENT' });
+    assert.equal(await readFile(join(unrelated, 'source.txt'), 'utf8'), 'unresolved other command');
+  } finally { release(); await pending; }
 });

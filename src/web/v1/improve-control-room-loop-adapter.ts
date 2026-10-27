@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, open, readFile } from "node:fs/promises";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopImprovementContractV1 } from "../../improve-control-room/v1/schemas";
 import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
+import { sha256Digest } from "../../security";
 
 export const loopByteHashV1 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -64,6 +65,8 @@ export interface LoopAdapterV1 {
   stop(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   approve(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   answer(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
+  /** Called only after the command's durable result commits. */
+  releaseCommandFiles?(commandId: string): Promise<void>;
   close(): Promise<void>;
 }
 const unavailable = () => new Error("loop_adapter_unavailable");
@@ -112,6 +115,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   if (settings?.project?.host_adapter !== "local-loop") throw unavailable();
   let closing = false;
   const children = new Set<ChildProcess>(), pending = new Set<Promise<unknown>>();
+  const activeCommands = new Set<string>();
   const runId = (run: string) => {
     const identity = loopImprovementRunIdentitySchemaV1.parse(c.contract.lineage.decodeRunIdentity({ adapterId: c.adapterId, loopRunId: run,
       toolingRevision: c.toolingRevision, a2SchemaVersion: 1 }));
@@ -125,7 +129,8 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       throw unavailable();
     return status;
   };
-  function execute(args: string[], run: string, json = true, beforeSpawn?: () => void): Promise<LoopEngineStatusV1 | undefined> {
+  function execute(args: string[], run: string, json = true, beforeSpawn?: () => void,
+    command?: { id: string; binding: LoopBridgeBindingV1 }): Promise<LoopEngineStatusV1 | undefined> {
     if (closing) return Promise.reject(unavailable());
     validate(); runId(run);
     beforeSpawn?.();
@@ -145,9 +150,16 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
         if (failed || ![0, 2, 3].includes(code ?? -1)) { reject(unavailable()); return; }
         try {
-          if (!json) { if (code !== 0) throw unavailable(); fulfill(undefined); return; }
+          if (!json && code === 0) { fulfill(undefined); return; }
           const status = decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), run);
-          if ((code === 2 || code === 3) && status.state !== "refused") throw unavailable();
+          if (code === 2 || code === 3) {
+            if (!command) throw unavailable();
+            // Exit status describes this invocation, even when the run remains waiting/ready.
+            const receipt: LoopEngineStatusV1["receipts"][number] = { commandId: command.id,
+              bindingDigest: sha256Digest(command.binding), state: "refused",
+              evidenceDigest: sha256Digest({ exitCode: code, status }), error: code === 2 ? "REFUSED" : "INELIGIBLE" };
+            status.receipts = [receipt, ...status.receipts.filter(saved => saved.commandId !== command.id)].slice(0, 100);
+          }
           fulfill(status);
         } catch { reject(unavailable()); }
       });
@@ -193,14 +205,19 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         case "start": args = ["start", run, "--settings", c.settingsFile, "--availability", c.availabilityFile, "--json"]; break;
         case "stop": args = ["stop", run, "--json"]; break;
         case "approve":
-          await execute(["approve", run, binding.body.step as string], run, false, beforeSpawn); return status(run);
+          return await execute(["approve", run, binding.body.step as string], run, false, beforeSpawn, { id: commandId, binding }) ?? status(run);
         case "answer": args = ["answer", run, binding.body.questionId as string, "--input-version",
           String(binding.inputVersion), "--file", await commandFile(commandId, "answer.txt", text!), "--by", "owner", "--json"]; break;
       }
-      return (await execute(args, run, true, beforeSpawn))!;
+      return (await execute(args, run, true, beforeSpawn, { id: commandId, binding }))!;
     };
     // No invented CLI flags: only the reviewed A2 lock seam can enable these calls.
-    return ["start", "approve", "answer"].includes(operation) ? c.contract.atomicAdmission!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }), apply) : apply();
+    if (activeCommands.has(commandId)) throw unavailable();
+    activeCommands.add(commandId);
+    try {
+      return await (["start", "approve", "answer"].includes(operation)
+        ? c.contract.atomicAdmission!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }), apply) : apply());
+    } finally { activeCommands.delete(commandId); }
   }
   return Object.freeze({ adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
     settingsText, contract: c.contract.lineage,
@@ -211,6 +228,16 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     stop: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("stop", id, b, fence),
     approve: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("approve", id, b, fence),
     answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("answer", id, b, fence, text),
+    releaseCommandFiles: async (commandId: string) => {
+      if (!/^loop-command:[a-f0-9]{32}$/.test(commandId) || activeCommands.has(commandId)) throw unavailable();
+      activeCommands.add(commandId);
+      try {
+        const directory = join(c.workRoot, commandId.replace(":", "-"));
+        try { checkedPath(directory, c.workRoot, true); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+        await rm(directory, { recursive: true });
+      } finally { activeCommands.delete(commandId); }
+    },
     close: async () => {
       closing = true;
       for (const child of children) child.kill("SIGTERM");

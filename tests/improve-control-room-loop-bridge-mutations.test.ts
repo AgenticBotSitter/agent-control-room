@@ -33,6 +33,17 @@ const probes=[
   {name:"SQL sole Start claim",file:"db/migrations/0302_control_loop_improvement_commands.sql",
     find:"CREATE UNIQUE INDEX control_loop_commands_start ON control_loop_improvement_commands(tenant_id,request_id)\n  WHERE entry_kind='claim' AND operation='start';",replace:'-- MUTANT: sole Start constraint absent.',
     pattern:"B1b SQL claim uniqueness guard",assertion:"B1b SQL unique Start refusal",postgres:true},
+  {name:"desk creator scope",file:"src/improve-control-room/v1/service.ts",
+    find:'AND owner_identity_id=$3 ORDER BY created_at DESC,id DESC LIMIT 100',
+    replace:'AND $3::text IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 100',
+    pattern:"B1a loop desk returns only",assertion:"same-project requests from another creator are excluded",postgres:true,
+    testFile:"tests/improve-control-room-desk-postgres.test.ts"},
+  {name:"active command cleanup fence",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'|| activeCommands.has(commandId)) throw unavailable();',replace:'|| false) throw unavailable();',
+    pattern:"B1b cleanup refuses a command",assertion:"active command cannot be reclaimed",postgres:false},
+  {name:"completed command cleanup",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'await this.#releaseCommandFiles(claim);',replace:'/* MUTANT: retain completed command files. */',
+    pattern:"B1b command files remain",assertion:"committed result releases only its command directory",postgres:false},
 ];
 test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=>{
   await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));
@@ -41,7 +52,7 @@ test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=
     assert.equal(execFileSync("git",["-C",copy,"rev-parse","HEAD"],{encoding:"utf8"}).trim(),execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim());
     await symlink(join(root,"node_modules"),join(copy,"node_modules"),"dir");
     for(const probe of probes)await t.test(probe.name,async()=>{
-      const file=probe.postgres?"tests/improve-control-room-loop-bridge-postgres.test.ts":"tests/improve-control-room-loop-bridge.test.ts";
+      const file="testFile" in probe ? probe.testFile! : probe.postgres?"tests/improve-control-room-loop-bridge-postgres.test.ts":"tests/improve-control-room-loop-bridge.test.ts";
       const command=probe.postgres?[process.execPath,"scripts/ci/run-mutation-postgres-test.mjs","--test-concurrency=1","--test-timeout=600000",`--test-name-pattern=${probe.pattern}`,file]
         :[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=${probe.pattern}`,file];
       const testCmd=["/usr/bin/env","CONTROL_ROOM_PG_TEST_PORT_BASE=58500","CONTROL_ROOM_PG_TEST_PORT_WIDTH=10",...command];

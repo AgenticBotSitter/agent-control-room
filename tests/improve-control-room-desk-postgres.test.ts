@@ -999,3 +999,25 @@ test("B1b upgrade from reviewed B1a preserves signed legacy and lineage bytes", 
     console.log("B1b upgrade BASE retained_legacy=3 retained_lineage=4 bytes_equal=true journal=0 no_op=true");
   } finally { await rm(root, { recursive: true, force: true }); }
 }));
+
+test("B1a loop desk returns only the authenticated creator in the same project", async () => b1aRun(async pg => {
+  await b1aSeed(pg);
+  // Both active identities are owners of this project; authority alone does not confer creator visibility.
+  await b1aSql(pg, "UPDATE control_role_grants SET role_key='owner' WHERE id=$1", [ids.operatorGrant]);
+  const web = b1aWeb(pg);
+  try {
+    const own = await web.desk.saveLoopDraft(identity, ids.project, LOOP_DRAFT, "b1a-creator-own-0001");
+    const other = await web.desk.saveLoopDraft(operator, ids.project,
+      { ...LOOP_DRAFT, description: "Another creator's saved request." }, "b1a-creator-other-0001");
+    assert.equal((await web.client.query("SELECT current_user")).rows[0].current_user, "control_room_web");
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int n FROM control_loop_improvement_requests WHERE project_id=$1", [ids.project])).rows[0].n, 2);
+    const before = await b1aSnapshot(pg);
+    const ownView = await web.desk.viewLoopDesk(identity, ids.project);
+    assert.deepEqual(ownView.loopRequests.map(row => row.requestId), [own.request.requestId], "same-project requests from another creator are excluded");
+    const otherView = await web.desk.viewLoopDesk(operator, ids.project);
+    assert.deepEqual(otherView.loopRequests.map(row => row.requestId), [other.request.requestId]);
+    assert.deepEqual(ownView.legacy, await web.desk.view(identity, ids.project));
+    assert.equal(await b1aSnapshot(pg), before, "signed lineage bytes remain unchanged by creator-filtered reads");
+    console.log("B1a creator isolation same_project=2 visible_per_creator=1 signed_bytes_unchanged=true production_login=control_room_web");
+  } finally { await web.close(); }
+}));

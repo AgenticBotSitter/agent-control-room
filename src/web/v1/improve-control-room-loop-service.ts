@@ -223,7 +223,10 @@ export class ImproveControlRoomLoopServiceV1 {
         idempotency_key: idempotencyKey, binding, result: null, created_at: actor.now });
       return { claim, result: undefined, replayed: false };
     });
-    if (admitted.result) return this.#receipt(admitted.claim, admitted.result, true);
+    if (admitted.result) {
+      await this.#releaseCommandFiles(admitted.claim);
+      return this.#receipt(admitted.claim, admitted.result, true);
+    }
     if (admitted.replayed) {
       // A positive, exact command receipt can reconcile; run existence or a changed
       // revision cannot. Never execute a committed claim a second time.
@@ -291,7 +294,12 @@ export class ImproveControlRoomLoopServiceV1 {
       }
       return this.#insert(tx, { ...this.#material(claim), entry_kind: "result", result: outcome, created_at: actor.now });
     });
+    await this.#releaseCommandFiles(claim);
     return this.#receipt(claim, result, replayed);
+  }
+  async #releaseCommandFiles(claim: Row) {
+    // Cleanup cannot undo the committed receipt; an exact replay retries a failed cleanup.
+    try { await this.#adapter.releaseCommandFiles?.(claim.command_id); } catch { /* Retain for an authorized retry. */ }
   }
   close() { return this.#adapter.close(); }
 }

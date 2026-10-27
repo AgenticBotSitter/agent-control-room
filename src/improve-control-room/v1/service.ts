@@ -606,7 +606,8 @@ export class ImproveControlRoomDeskServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("projects.read", projectId, true); await this.#requireSelfProject(tx, projectId);
       const roots = (await tx.query<LoopRootRow>(`SELECT * FROM control_loop_improvement_requests
-        WHERE tenant_id=$1 AND project_id=$2 ORDER BY created_at DESC,id DESC LIMIT 100`, [this.scope.tenantId, projectId])).rows;
+        WHERE tenant_id=$1 AND project_id=$2 AND owner_identity_id=$3 ORDER BY created_at DESC,id DESC LIMIT 100`,
+      [this.scope.tenantId, projectId, actor.id])).rows;
       const loopRequests = [];
       for (const root of roots) {
         this.#verifyLoop("requests", root);
