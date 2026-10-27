@@ -112,6 +112,7 @@ for (const width of [360, 1280]) test(`B2a browser closes and reopens the saved 
     page = await open();
     await expect(page.getByText(/Step: final/)).toBeVisible(); expect(posts).toHaveLength(2);
     await page.reload(); await expect(page.getByText(/Step: final/)).toBeVisible();
+    await page.goto("about:blank"); await page.goBack(); await expect(page.getByText(/Step: final/)).toBeVisible(); expect(posts).toHaveLength(2);
     await page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
     await page.getByRole("button", { name: "Refresh status" }).click(); expect(posts).toHaveLength(2);
     const stop = page.getByRole("button", { name: "Stop this run", exact: true }); await stop.focus(); await page.keyboard.press("Enter");

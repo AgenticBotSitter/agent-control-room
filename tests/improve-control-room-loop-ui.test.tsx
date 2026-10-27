@@ -153,16 +153,18 @@ test("B2a Start freshness gate", async () => {
 
 test("B2a display identity binding", async () => {
   const f = await fixture(), wire = transport(f);
+  try { for (const field of ["projectId", "requestId"] as const) {
   const m = await mount(f.project.projectId, (async (path, options) => {
     const response = await wire.fetcher(path, options);
     if (!String(path).endsWith("/status")) return response;
-    const body = await response.json(); body.display.projectId = "project:foreign";
+    const body = await response.json(); body.display[field] = `${field}:foreign`;
     body.display.attention = { code: "FOREIGN", message: "FOREIGN SAVED PROGRESS", nextAction: "Wait." };
     return Response.json(body);
   }) as typeof fetch);
   try { await settle(); assert.ok(!m.text().includes("FOREIGN SAVED PROGRESS"), "B2a foreign display never reaches DOM");
     assert.equal(m.button("Start confirmed work").disabled, true); }
-  finally { await m.close(); await f.close(); }
+  finally { await m.close(); }
+  } } finally { await f.close(); }
 });
 
 test("B2a stale response suppression", async () => {
