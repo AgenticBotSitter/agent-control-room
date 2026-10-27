@@ -636,6 +636,7 @@ test("B1b first-use sweep skips stale and invalid rows and finishes once", async
   const crashed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
     { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
   const finished = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-valid-0001');
+  const diagnostic = t.mock.method(console, 'warn', () => {});
   let sweeps = 0;
   const trace = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
     const result = await tx.query<T>(sql, params);
@@ -673,9 +674,59 @@ test("B1b first-use sweep skips stale and invalid rows and finishes once", async
   await assert.rejects(readFile(join(f.configuration.workRoot, finished.commandId.replace(':', '-'), 'source.txt')),
     { code: 'ENOENT' }, 'sweep continues past stale and invalid rows to clean the verified finished command');
   assert.equal(sweeps, 1, 'finished-claims SELECT runs once despite stale and invalid rows');
+  assert.deepEqual(diagnostic.mock.calls.map(call => call.arguments), Array.from({ length: 3 },
+    () => ['loop_command_sweep_verification_failed']), 'one fixed diagnostic per skipped row, without row data');
   for (const receipt of retained) assert.equal(await readFile(join(f.configuration.workRoot, receipt.commandId.replace(':', '-'), 'source.txt'), 'utf8'), description);
   const after = (await f.db.query<Record<string, unknown>>('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
   assert.deepEqual(after.filter(row => before.some(prior => prior.command_id === row.command_id)), before, 'sweep never rewrites retained signed bytes');
+});
+
+test("B1b sweep database errors reach the transaction while verification failures retain files", async t => {
+  const f = await fixture(t);
+  const crashed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+  const retained = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-db-invalid');
+  const finished = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-db-finished');
+  const diagnostic = t.mock.method(console, 'warn', () => {});
+  const failures: unknown[] = [];
+  let databaseError: unknown, sweeps = 0;
+  const trace = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    if (sql.includes("entry_kind='result'") && params?.[1] === finished.commandId) {
+      try { await tx.query('SELECT missing_sweep_column FROM control_loop_improvement_commands'); }
+      catch (error) { databaseError = error; throw error; }
+      assert.fail('the injected query must fail');
+    }
+    const result = await tx.query<T>(sql, params);
+    if (sql.includes('SELECT c.* FROM control_loop_improvement_commands')) {
+      sweeps++;
+      result.rows = [retained, finished].map(receipt => {
+        const row = result.rows.find(raw => (raw as { command_id: string }).command_id === receipt.commandId)!;
+        return receipt === retained ? { ...row, record_digest: `sha256:${'f'.repeat(64)}` } : row;
+      });
+    }
+    return result;
+  } });
+  const client: DatabaseClient = { query: (sql, params) => f.client.query(sql, params),
+    transaction: work => f.client.transaction(tx => work(trace(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(async tx => {
+      try { return await work(trace(tx)); }
+      catch (error) { failures.push(error); throw error; }
+    }, check) };
+  const restarted = new ImproveControlRoomLoopServiceV1(client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
+    { integrityKey: KEY, adapter: f.adapter }, () => now);
+  for (let i = 0; i < 2; i++) {
+    const receipt = await restarted.mutate(f.identity, f.project.projectId, null, 'intake', { description }, `b1b-sweep-db-trigger-${i}`);
+    assert.equal(receipt.state, 'accepted', 'best-effort sweep cannot change the admitted command result');
+    assert.ok(databaseError instanceof Error);
+    assert.equal(failures.length, i + 1, 'database error escapes the row catch and aborts the sweep transaction');
+    assert.equal(failures[i], databaseError, 'the original database error reaches the transaction boundary');
+    for (const row of [retained, finished]) assert.equal(await readFile(join(f.configuration.workRoot,
+      row.commandId.replace(':', '-'), 'source.txt'), 'utf8'), description, 'failed sweep retains command files');
+  }
+  assert.equal(sweeps, 2, 'failed sweep remains eligible for retry');
+  assert.deepEqual(diagnostic.mock.calls.map(call => call.arguments), [
+    ['loop_command_sweep_verification_failed'], ['loop_command_sweep_verification_failed'],
+  ], 'only verification failures produce the fixed row diagnostic');
 });
 
 test("B1b cleanup rechecks configured pins and uid before removing files", async t => {

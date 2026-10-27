@@ -63,14 +63,19 @@ export class ImproveControlRoomLoopServiceV1 {
       row.idempotency_key, JSON.stringify(row.binding), row.result === null ? null : JSON.stringify(row.result), row.record_digest, row.auth_tag, row.created_at]);
     return row;
   }
-  async #result(tx: DatabaseSession, claim: Row) {
-    const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+  async #readResult(tx: DatabaseSession, claim: Row) {
+    return (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
       WHERE tenant_id=$1 AND command_id=$2 AND entry_kind='result'`, [claim.tenant_id, claim.command_id])).rows[0];
+  }
+  #verifyResult(raw: Row | undefined, claim: Row) {
     if (!raw) return undefined;
     const row = this.#verify(raw);
     for (const name of ["tenant_id", "command_id", "request_id", "project_id", "owner_identity_id", "operation", "idempotency_key", "binding"] as const)
       if (!equal(row[name], claim[name])) throw new Error("loop_command_integrity_failed");
     return row;
+  }
+  async #result(tx: DatabaseSession, claim: Row) {
+    return this.#verifyResult(await this.#readResult(tx, claim), claim);
   }
   #pins(binding: LoopBridgeBindingV1, operation: LoopBridgeOperationV1) {
     if (binding.adapterId !== this.#adapter.adapterId || binding.toolingRevision !== this.#adapter.toolingRevision
@@ -313,11 +318,23 @@ export class ImproveControlRoomLoopServiceV1 {
         [this.scope.tenantId, projectId, actor.id])).rows;
         const verified: Row[] = [];
         for (const raw of rows) {
+          let claim: Row | undefined;
           try {
-            const claim = this.#verify(raw);
-            this.#pins(claim.binding, claim.operation);
-            if (await this.#result(tx, claim)) verified.push(claim);
+            const candidate = this.#verify(raw);
+            this.#pins(candidate.binding, candidate.operation);
+            claim = candidate;
           } catch { /* Keep unverified or stale commands; continue with other finished rows. */ }
+          if (!claim) {
+            console.warn("loop_command_sweep_verification_failed");
+            continue;
+          }
+          // A database failure must abort this transaction, not become a skipped row.
+          const result = await this.#readResult(tx, claim);
+          try {
+            if (this.#verifyResult(result, claim)) verified.push(claim);
+          } catch {
+            console.warn("loop_command_sweep_verification_failed");
+          }
         }
         return { key, verified };
       });
