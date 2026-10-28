@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { ImprovementFinishCard } from "./improvement-finish-card";
 import { updateCandidateDecisionReceiptSchemaV1, updateCandidatePageSchemaV1,
   type UpdateCandidateViewV1 } from "../../src/improve-control-room/v1/schemas";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
@@ -48,8 +49,8 @@ export function UpdateCandidatesHome() {
     } catch (error) { setMessage(error instanceof TypeError ? "uncertain" : "failed"); }
     finally { setPending(undefined); }
   }
-  return <UpdateCandidatesPanel state={state} pending={pending} message={message}
-    onDecide={(candidate, decision) => { void decide(candidate, decision); }} onRetry={() => { void decide(); }} />;
+  return <><ImprovementFinishCard /><UpdateCandidatesPanel state={state} pending={pending} message={message}
+    onDecide={(candidate, decision) => { void decide(candidate, decision); }} onRetry={() => { void decide(); }} /></>;
 }
 
 /** Attention first: the panel exists only while a signed-off update waits for the

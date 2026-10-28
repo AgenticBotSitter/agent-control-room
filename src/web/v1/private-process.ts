@@ -1,3 +1,5 @@
+import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
 import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
@@ -71,7 +73,8 @@ import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-ow
 import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 
 export interface PrivateWebProcessOptions {
-  loopBridge?: LoopBridgeConfigurationV1;
+  loopBridge?: LoopBridgeConfigurationV1 & { loopCandidates?: LoopCandidateConfigurationV1 };
+  loopCandidates?: LoopCandidateConfigurationV1;
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
   /** Optional separately approved private address; same services, distinct Access audience. */
   secondaryAccess?: { origin: string; audience: string };
@@ -354,6 +357,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories, tasks) : undefined;
   const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
+  const candidateConfiguration = resolveLoopCandidateConfigurationV1(options.loopCandidates, options.loopBridge);
+  const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
+    candidateConfiguration.contract, candidateConfiguration) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
@@ -944,6 +951,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
+          if (isLoopCandidateRouteV1(url.pathname)) {
+            if (!loopCandidateDesk) throw new WebAccessError("not_found");
+            return createLoopCandidateHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: loopCandidateDesk, clock })(request);
+          }
           if ((improvementDesk || loopBridge) && (url.pathname === "/api/v1/update-candidates"
             || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
             || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)

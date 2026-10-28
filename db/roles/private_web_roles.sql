@@ -308,4 +308,6 @@ GRANT SELECT, INSERT ON control_loop_improvement_requests, control_loop_improvem
 
 GRANT SELECT, INSERT ON control_loop_improvement_commands TO control_room_private_web;
 
+GRANT SELECT, INSERT ON control_loop_update_candidates, control_loop_update_candidate_decisions TO control_room_private_web;
+
 COMMIT;

@@ -1,3 +1,5 @@
+import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
 import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ownerPushLinkV1 } from "../../web-push/v1/policy";
 import { localOwnerSignInTargetV1 } from "./local-owner-session";
@@ -61,7 +63,8 @@ import { updaterOwnerAttentionRequestSchemaV1, updaterOwnerRequestSchemaV1,
   type UpdaterOwnerAttentionPortV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
-  loopBridge?: LoopBridgeConfigurationV1;
+  loopBridge?: LoopBridgeConfigurationV1 & { loopCandidates?: LoopCandidateConfigurationV1 };
+  loopCandidates?: LoopCandidateConfigurationV1;
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
   /** The one remote origin behind Cloudflare Access, if configured. Its
@@ -312,10 +315,16 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // owns the run rows it reads.
   const pipelineHttp = pipelines && pipelineAdvance ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: pipelines, advance: pipelineAdvance, clock }) : undefined;
+  const candidateConfiguration = resolveLoopCandidateConfigurationV1(options.loopCandidates, options.loopBridge);
+  const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
+    candidateConfiguration.contract, candidateConfiguration) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
+  const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: loopCandidateDesk, clock }) : undefined;
   const improvementHttp = improvementDesk || loopBridge ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: improvementDesk, loopBridge, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
@@ -853,6 +862,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (isLoopCandidateRouteV1(url.pathname)) {
+        if (!loopCandidateHttp) throw new WebAccessError("not_found");
+        return loopCandidateHttp(request);
+      }
       if (improvementHttp && (url.pathname === "/api/v1/update-candidates"
         || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
         || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)
