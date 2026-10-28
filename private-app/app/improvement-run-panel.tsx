@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LoopImprovementRequestViewV1, LoopImprovementStatusV1 } from "../../src/improve-control-room/v1/schemas";
 import { clearsLoopAuthority, loopImprovementBrowserClient as client, LoopReadError,
   type FrozenLoopAction } from "../../src/web/v1/improve-control-room-loop-browser-client";
+import { ImprovementFinishCard } from "./improvement-finish-card";
 import { ImprovementDecisions } from "./improvement-decisions";
 import type { LoopDecisionStatusV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { usePolledRead } from "./use-polled-read";
@@ -35,7 +36,8 @@ export function ImprovementRunPanel({ projectId, requests, fresh, refreshDesk }:
       <a href={`/projects/${encodeURIComponent(projectId)}/improvements#request=${encodeURIComponent(row.requestId)}`}
         onClick={() => setSelection(row.requestId)}>{row.description}</a>
     </li>)}</ul> : <p>No saved loop requests.</p>}
-    {selection !== undefined && !selected ? <p role="alert">This saved request is unavailable.</p>
+    {selection !== undefined && !selected ? <><p role="alert">This saved request is unavailable.</p>
+      {/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/.test(selection) && <ImprovementFinishCard projectId={projectId} requestId={selection} enabled={fresh} />}</>
       : selected ? <SelectedRun key={binding(selected)} row={selected} fresh={fresh} focus={selection !== undefined} refreshDesk={refreshDesk} /> : null}
   </section>;
 }
@@ -118,7 +120,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
     <h3 ref={heading} tabIndex={-1}>Saved request</h3>
     <p style={{ whiteSpace: "pre-wrap" }}>{row.description}</p>
     {!row.runLink ? <p>Confirmation and a linked run are needed before Start.</p> : <>
-      <p role="status" aria-live="polite">{snapshot?.state === "candidate_ready" ? "Finished candidate" : snapshot?.state === "stopped" ? "Stopped"
+      <p role="status" aria-live="polite">{snapshot?.state === "candidate_ready" ? "Completion reported; candidate evidence unavailable" : snapshot?.state === "stopped" ? "Stopped"
         : snapshot?.state?.replaceAll("_", " ") ?? "Status unavailable"}</p>
       <p>{!snapshot ? "Confirmation: Unavailable" : snapshot.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
       <p>Step: {snapshot?.progress?.stepId ?? "Unavailable"} · Role: {snapshot?.progress?.role ?? "Unavailable"}</p>
@@ -141,5 +143,6 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       {retry.start && <button type="button" disabled={!statusFresh || !verifiedRead.current || pending.start || snapshot?.state === "stopped"} onClick={() => void submit("start", true)}>Retry this exact Start</button>}
       {retry.stop && <button type="button" disabled={!stopTarget || pending.stop} onClick={() => void submit("stop", true)}>Retry this exact Stop</button>}
     </>}
+    <ImprovementFinishCard projectId={row.projectId} requestId={row.requestId} binding={identity} enabled={fresh} />
   </div>;
 }

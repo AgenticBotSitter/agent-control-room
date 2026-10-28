@@ -276,6 +276,9 @@ jobs:
       - name: Prove saved loop owner decision guards
         timeout-minutes: 10
         run: pnpm run test:improve-control-room-loop-attention-mutations
+      - name: Prove retained loop candidate guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations
@@ -906,6 +909,9 @@ jobs:
       - name: Prove saved loop intake and owner decisions
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-attention-browser
+      - name: Prove retained loop candidate Home and saved request
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-browser
       - name: Inbox phone target geometry
         run: pnpm test:inbox-browser
       - name: Install PostgreSQL 17 from PGDG

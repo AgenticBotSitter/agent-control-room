@@ -1,3 +1,9 @@
+import { loopCandidateEvidenceSchemaV1, loopCandidateCardSchemaV1, loopCandidatePageSchemaV1, loopCandidateDetailSchemaV1,
+  loopCandidateDecisionBodySchemaV1, loopCandidateDecisionReceiptSchemaV1, loopCandidateCompletionReceiptSchemaV1,
+  type LoopCandidateEvidenceV1, type LoopCandidateCompletionReceiptV1 } from "./loop-candidate-wire";
+import { verifyLoopCandidateCompletionV1, LoopCandidateStaleCompletionV1, type LoopCandidateDependenciesV1 } from "./loop-candidate-publisher";
+import { loopBridgeBindingSchemaV1, loopBridgeOutcomeSchemaV1 } from "./schemas";
+import { databaseSqlStateV1 } from "../../persistence/database";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, canonicalJson, hmacSha256Tag, sha256Digest } from "../../security";
@@ -47,6 +53,13 @@ const loopPurposes = { requests: "loop-improvement-request/v1", inputs: "loop-im
 type LoopKind = keyof typeof loopPurposes;
 const rawLoopHash = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
+type LoopCandidateRow = { tenant_id: string; id: string; project_id: string; request_id: string; owner_identity_id: string;
+  run_link_id: string; local_version: number | string; a2_input_version: string | number; candidate_revision: string;
+  completion_digest: string; retention_digest: string; record_digest: string; auth_tag: string; payload: unknown; created_at: string | Date };
+type LoopCandidateDecisionRow = { tenant_id: string; id: string; candidate_id: string; project_id: string; owner_identity_id: string;
+  candidate_record_digest: string; candidate_revision: string; idempotency_key: string; decision: "accept" | "decline";
+  decision_digest: string; auth_tag: string; candidate_version: number | string; decided_at: string | Date };
+
 export class ImproveControlRoomDeskServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
@@ -54,8 +67,16 @@ export class ImproveControlRoomDeskServiceV1 {
 
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey: Uint8Array, private readonly pipelines: Pick<LinearPipelineServiceV1, "instantiate"> | undefined,
-    private readonly clock: () => number = Date.now, private readonly loopContract?: LoopImprovementContractV1) {
+    private readonly clock: () => number = Date.now, private readonly loopContract?: LoopImprovementContractV1, private readonly loopCandidates?: LoopCandidateDependenciesV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("improvement_desk_configuration_invalid");
+    if (loopCandidates && (!loopContract || loopCandidates.source.toolingRevision !== loopContract.toolingRevision
+      || !/^sha256:[a-f0-9]{64}$/.test(loopCandidates.source.schemaDigest))) throw new Error("loop_candidate_configuration_invalid");
+    if (loopCandidates) {
+      const source = loopCandidates.source, repository = loopCandidates.repository;
+      this.loopCandidates = Object.freeze({ source: Object.freeze({ toolingRevision: source.toolingRevision,
+        schemaDigest: source.schemaDigest, readVerifiedCompletion: source.readVerifiedCompletion.bind(source) }),
+        repository: Object.freeze({ observe: repository.observe.bind(repository) }) });
+    }
     this.#key = Uint8Array.from(integrityKey);
     this.#authority = new WebSessionAuthority(db, scope, clock, "improvement_desk");
     // Loop GETs require an already established session and never register one.
@@ -667,6 +688,255 @@ export class ImproveControlRoomDeskServiceV1 {
         || authorization.settings_sha256 !== input.settings_sha256) throw new Error("loop_improvement_integrity_failed");
     }
     return { root, input, link, authorization, view: await this.#loopRequestView(tx, root) };
+  }
+
+  #candidateDependencies() {
+    if (!this.loopCandidates || !this.loopContract || this.loopCandidates.source.toolingRevision !== this.loopContract.toolingRevision)
+      throw new Error("loop_candidate_unavailable");
+    return this.loopCandidates;
+  }
+
+  #loopCandidateMaterial(row: LoopCandidateRow) {
+    return { tenant_id: row.tenant_id, id: row.id, project_id: row.project_id, request_id: row.request_id,
+      owner_identity_id: row.owner_identity_id, run_link_id: row.run_link_id, local_version: Number(row.local_version),
+      a2_input_version: row.a2_input_version, candidate_revision: row.candidate_revision, completion_digest: row.completion_digest,
+      retention_digest: row.retention_digest, payload: row.payload, created_at: iso(row.created_at) };
+  }
+  #verifyCandidate(row: LoopCandidateRow) {
+    const material = this.#loopCandidateMaterial(row), evidence = loopCandidateEvidenceSchemaV1.parse(row.payload), b = evidence.binding;
+    if (row.tenant_id !== this.scope.tenantId || sha256Digest(material) !== row.record_digest
+      || !same(hmacSha256Tag(this.#key, { purpose: "loop-update-candidate/v1", record: material }), row.auth_tag)
+      || row.project_id !== b.projectId || row.request_id !== b.requestId || row.run_link_id !== b.runLinkId
+      || Number(row.local_version) !== b.localVersion || canonicalJson(row.a2_input_version) !== canonicalJson(b.a2InputVersion)
+      || row.candidate_revision !== b.candidateRevision || row.completion_digest !== evidence.completionDigest
+      || row.retention_digest !== evidence.retentionDigest) throw new Error("loop_candidate_integrity_failed");
+    return evidence;
+  }
+  #decisionMaterial(row: LoopCandidateDecisionRow) {
+    return { tenant_id: row.tenant_id, id: row.id, candidate_id: row.candidate_id, project_id: row.project_id,
+      owner_identity_id: row.owner_identity_id, candidate_record_digest: row.candidate_record_digest,
+      candidate_revision: row.candidate_revision, idempotency_key: row.idempotency_key, decision: row.decision,
+      candidate_version: Number(row.candidate_version), decided_at: iso(row.decided_at) };
+  }
+  #verifyCandidateDecision(row: LoopCandidateDecisionRow, candidate: LoopCandidateRow) {
+    const material = this.#decisionMaterial(row);
+    if (row.tenant_id !== candidate.tenant_id || row.candidate_id !== candidate.id || row.project_id !== candidate.project_id
+      || row.owner_identity_id !== candidate.owner_identity_id || row.candidate_record_digest !== candidate.record_digest
+      || row.candidate_revision !== candidate.candidate_revision || Number(row.candidate_version) !== 1
+      || !["accept", "decline"].includes(row.decision) || !/^[A-Za-z0-9:_-]{16,100}$/.test(row.idempotency_key)
+      || sha256Digest(material) !== row.decision_digest
+      || !same(hmacSha256Tag(this.#key, { purpose: "loop-update-candidate-decision/v1", record: material }), row.auth_tag))
+      throw new Error("loop_candidate_integrity_failed");
+    return row;
+  }
+
+  /** Verifies the original Start at its original input, which may precede a later
+   * confirmed input. Neither the Start result nor status=finished proves readiness. */
+  async #candidateLineage(tx: DatabaseSession, b: Pick<LoopCandidateEvidenceV1["binding"], "projectId" | "requestId" | "runLinkId" | "localVersion" | "adapterId" | "loopRunId" | "toolingRevision" | "requestSha256" | "settingsSha256">, ownerId?: string) {
+    const root = await this.#loopRoot(tx, b.projectId, b.requestId, ownerId);
+    await this.#requireSelfProject(tx, b.projectId);
+    const input = await this.#loopInput(tx, root), link = await this.#loopLink(tx, root);
+    if (!link || link.id !== b.runLinkId || link.adapter_id !== b.adapterId || link.loop_run_id !== b.loopRunId
+      || link.tooling_revision !== b.toolingRevision || Number(input.version) !== b.localVersion
+      || input.request_sha256 !== b.requestSha256 || input.settings_sha256 !== b.settingsSha256)
+      throw new WebAccessError("conflict");
+    const commands = (await tx.query<Record<string, unknown>>(`SELECT * FROM control_loop_improvement_commands
+      WHERE tenant_id=$1 AND request_id=$2 AND operation='start' ORDER BY entry_kind`, [root.tenant_id, root.id])).rows;
+    if (commands.length !== 2) throw new WebAccessError("conflict");
+    const verified = commands.map((raw): Record<string, unknown> & { binding: import("./schemas").LoopBridgeBindingV1 } => {
+      const row: Record<string, unknown> = { ...raw, created_at: iso(raw.created_at as string | Date) };
+      const { record_digest, auth_tag, ...record } = row;
+      const binding = loopBridgeBindingSchemaV1.parse(record.binding);
+      if (record.tenant_id !== root.tenant_id || record.owner_identity_id !== root.owner_identity_id
+        || record.project_id !== root.project_id || record.request_id !== root.id
+        || sha256Digest(record) !== record_digest
+        || !same(hmacSha256Tag(this.#key, { purpose: "loop-improvement-command/v1", record }), String(auth_tag)))
+        throw new Error("loop_candidate_integrity_failed");
+      return { ...record, binding };
+    });
+    const claim = verified.find(c => c.entry_kind === "claim"), result = verified.find(c => c.entry_kind === "result");
+    if (!claim || !result || claim.command_id !== result.command_id || claim.idempotency_key !== result.idempotency_key
+      || canonicalJson(claim.binding) !== canonicalJson(result.binding) || claim.result !== null
+      || loopBridgeOutcomeSchemaV1.parse(result.result).state !== "accepted" || claim.binding.runLinkId !== link.id
+      || claim.binding.schemaDigest !== this.#candidateDependencies().source.schemaDigest)
+      throw new WebAccessError("conflict");
+    const authorization = (await tx.query<LoopAuthorizationRow>(`SELECT * FROM control_loop_improvement_authorizations
+      WHERE tenant_id=$1 AND id=$2`, [root.tenant_id, claim.binding.authorizationId])).rows[0];
+    if (!authorization) throw new WebAccessError("conflict");
+    this.#verifyLoop("authorizations", authorization);
+    const initial = await this.#loopInput(tx, root, claim.binding.localVersion);
+    if (authorization.run_link_id !== link.id || authorization.request_id !== root.id || authorization.project_id !== root.project_id
+      || authorization.owner_identity_id !== root.owner_identity_id || authorization.start_key !== claim.idempotency_key
+      || Number(authorization.input_version) !== claim.binding.localVersion || authorization.request_sha256 !== initial.request_sha256
+      || authorization.settings_sha256 !== initial.settings_sha256) throw new Error("loop_candidate_integrity_failed");
+    return { root, input, link };
+  }
+
+  async prepareLoopCandidateCompletion(runLinkId: string): Promise<void> {
+    this.#candidateDependencies();
+    await this.db.transaction(async tx => {
+      const raw = (await tx.query<LoopLinkRow>(`SELECT * FROM control_loop_improvement_run_links
+        WHERE tenant_id=$1 AND id=$2`, [this.scope.tenantId,runLinkId])).rows[0];
+      if (!raw) throw new WebAccessError("not_found");
+      this.#verifyLoop("run_links",raw);
+      const root = await this.#loopRoot(tx,raw.project_id,raw.request_id), input = await this.#loopInput(tx,root);
+      await this.#candidateLineage(tx,{ projectId:root.project_id,requestId:root.id,runLinkId:raw.id,
+        localVersion:Number(input.version),adapterId:raw.adapter_id,loopRunId:raw.loop_run_id,toolingRevision:raw.tooling_revision,
+        requestSha256:input.request_sha256,settingsSha256:input.settings_sha256 });
+    });
+  }
+
+  #completionReceipt(row: LoopCandidateRow, state: "recorded" | "replayed"): LoopCandidateCompletionReceiptV1 {
+    const e = this.#verifyCandidate(row), b = e.binding;
+    return loopCandidateCompletionReceiptSchemaV1.parse({ schemaVersion: 1, state, projectId: row.project_id,
+      requestId: row.request_id, runLinkId: row.run_link_id, localVersion: Number(row.local_version), a2InputVersion: row.a2_input_version,
+      engineRevision: b.engineRevision, completionDigest: row.completion_digest, retentionDigest: row.retention_digest,
+      candidate: { candidateId: row.id, candidateRevision: row.candidate_revision, recordDigest: row.record_digest },
+      finishedAt: e.timing.finishedAt, href: `/projects/${encodeURIComponent(row.project_id)}/improvements#request=${encodeURIComponent(row.request_id)}` });
+  }
+  async recordLoopCandidate(input: LoopCandidateEvidenceV1): Promise<LoopCandidateCompletionReceiptV1> {
+    const deps = this.#candidateDependencies(), e = loopCandidateEvidenceSchemaV1.parse(input);
+    // Local signed lineage is checked before touching configured evidence files.
+    await this.db.transaction(tx => this.#candidateLineage(tx, e.binding));
+    const verified = await verifyLoopCandidateCompletionV1(deps, e.binding.runLinkId, e.completionDigest);
+    if (canonicalJson(e) !== canonicalJson(verified)) throw new WebAccessError("conflict");
+    return this.db.transaction(async tx => {
+      const root = await this.#loopRoot(tx, e.binding.projectId, e.binding.requestId);
+      await tx.query(`SELECT id FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [root.tenant_id, root.owner_identity_id]);
+      await this.#candidateLineage(tx, e.binding);
+      const prior = (await tx.query<LoopCandidateRow>(`SELECT * FROM control_loop_update_candidates
+        WHERE tenant_id=$1 AND run_link_id=$2 AND local_version=$3 AND a2_input_version=$4::jsonb`,
+      [root.tenant_id, e.binding.runLinkId, e.binding.localVersion, JSON.stringify(e.binding.a2InputVersion)])).rows[0];
+      if (prior) {
+        if (canonicalJson(this.#verifyCandidate(prior)) !== canonicalJson(e)) throw new WebAccessError("conflict");
+        return this.#completionReceipt(prior, "replayed");
+      }
+      const material = this.#loopCandidateMaterial({ tenant_id: root.tenant_id, id: `loop-candidate:${randomUUID()}`,
+        project_id: root.project_id, request_id: root.id, owner_identity_id: root.owner_identity_id, run_link_id: e.binding.runLinkId,
+        local_version: e.binding.localVersion, a2_input_version: e.binding.a2InputVersion, candidate_revision: e.binding.candidateRevision,
+        completion_digest: e.completionDigest, retention_digest: e.retentionDigest, payload: e, created_at: new Date(this.clock()).toISOString(),
+        record_digest: "", auth_tag: "" });
+      const row: LoopCandidateRow = { ...material, record_digest: sha256Digest(material),
+        auth_tag: hmacSha256Tag(this.#key, { purpose: "loop-update-candidate/v1", record: material }) };
+      await tx.query(`INSERT INTO control_loop_update_candidates(tenant_id,id,project_id,request_id,owner_identity_id,run_link_id,
+        local_version,a2_input_version,candidate_revision,completion_digest,retention_digest,payload,created_at,record_digest,auth_tag)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12::jsonb,$13,$14,$15)`,
+      [row.tenant_id,row.id,row.project_id,row.request_id,row.owner_identity_id,row.run_link_id,row.local_version,JSON.stringify(row.a2_input_version),
+        row.candidate_revision,row.completion_digest,row.retention_digest,JSON.stringify(row.payload),row.created_at,row.record_digest,row.auth_tag]);
+      return this.#completionReceipt(row, "recorded");
+    });
+  }
+
+  async #candidateSnapshot(identity: VerifiedWebIdentity, projectId?: string, requestId?: string) {
+    this.#candidateDependencies();
+    return this.#authority.authenticated(identity, async (tx, actor) => {
+      actor.require("projects.read", projectId, true);
+      if (projectId) { await this.#requireSelfProject(tx, projectId); await this.#loopRoot(tx, projectId, requestId!, actor.id); }
+      const rows = (await tx.query<LoopCandidateRow>(`SELECT * FROM control_loop_update_candidates WHERE tenant_id=$1 AND owner_identity_id=$2
+        ${projectId ? "AND project_id=$3 AND request_id=$4" : ""} ORDER BY created_at DESC,id DESC LIMIT ${projectId ? "1" : "11"}`,
+      projectId ? [this.scope.tenantId,actor.id,projectId,requestId] : [this.scope.tenantId,actor.id])).rows;
+      const values = [];
+      for (const row of rows.slice(0, projectId ? 1 : 10)) {
+        actor.require("projects.read", row.project_id, true); await this.#requireSelfProject(tx, row.project_id);
+        const e = this.#verifyCandidate(row), root = await this.#loopRoot(tx,row.project_id,row.request_id,actor.id);
+        const input = await this.#loopInput(tx,root); await this.#loopLink(tx,root);
+        const decision = (await tx.query<LoopCandidateDecisionRow>(`SELECT * FROM control_loop_update_candidate_decisions
+          WHERE tenant_id=$1 AND candidate_id=$2`, [row.tenant_id,row.id])).rows[0];
+        if (decision) this.#verifyCandidateDecision(decision,row);
+        const newer = (await tx.query(`SELECT id FROM control_loop_update_candidates WHERE tenant_id=$1 AND run_link_id=$2
+          AND local_version=$3 AND id<>$4 AND (payload->'binding'->>'engineRevision')::bigint >= $5 LIMIT 1`,
+        [row.tenant_id,row.run_link_id,row.local_version,row.id,e.binding.engineRevision])).rows.length > 0;
+        values.push({ row, e, decision, current: !newer && Number(input.version) === e.binding.localVersion
+          && input.request_sha256 === e.binding.requestSha256 && input.settings_sha256 === e.binding.settingsSha256,
+          mayDecide: actor.can("updates.decide", row.project_id, true, "high") });
+      }
+      return { values, truncated: rows.length > 10, observedAt: actor.now };
+    }, { readOnly: true });
+  }
+  async #freshCandidate(value: { row: LoopCandidateRow; e: LoopCandidateEvidenceV1; decision: LoopCandidateDecisionRow | undefined; current: boolean; mayDecide: boolean }) {
+    let current = value.current;
+    if (current) {
+      try {
+        const e = await verifyLoopCandidateCompletionV1(this.#candidateDependencies(), value.row.run_link_id);
+        current = canonicalJson(e) === canonicalJson(value.e);
+      } catch (error) {
+        if (!(error instanceof LoopCandidateStaleCompletionV1)) throw error;
+        current = false;
+      }
+    }
+    const d = value.decision;
+    return loopCandidateCardSchemaV1.parse({ candidateId: value.row.id, projectId: value.row.project_id, requestId: value.row.request_id,
+      localVersion: Number(value.row.local_version), a2InputVersion: value.row.a2_input_version, candidateRevision: value.row.candidate_revision,
+      recordDigest: value.row.record_digest, version: d ? 2 : 1, state: d ? d.decision === "accept" ? "accepted" : "declined" : "ready",
+      evidence: value.e, freshness: current ? "current" : "stale", createdAt: iso(value.row.created_at),
+      decidedAt: d ? iso(d.decided_at) : null, canDecide: current && !d && value.mayDecide });
+  }
+  async readLoopCandidates(identity: VerifiedWebIdentity) {
+    const snap = await this.#candidateSnapshot(identity), cards = [];
+    for (const value of snap.values) cards.push(await this.#freshCandidate(value));
+    return loopCandidatePageSchemaV1.parse({ schemaVersion: 1, candidates: cards, truncated: snap.truncated,
+      observedAt: snap.observedAt, startsDeploy: false, signedDeployApprovalCreated: false });
+  }
+  async readLoopCandidate(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
+    const snap = await this.#candidateSnapshot(identity, projectId, requestId);
+    return loopCandidateDetailSchemaV1.parse({ schemaVersion: 1, candidate: snap.values[0] ? await this.#freshCandidate(snap.values[0]) : null,
+      observedAt: snap.observedAt });
+  }
+  #candidateDecisionReceipt(row: LoopCandidateDecisionRow, replayed: boolean) {
+    return loopCandidateDecisionReceiptSchemaV1.parse({ schemaVersion: 1, decisionId: row.id, candidateId: row.candidate_id,
+      projectId: row.project_id, decision: row.decision, candidateVersion: 1, candidateRevision: row.candidate_revision,
+      candidateRecordDigest: row.candidate_record_digest, decidedAt: iso(row.decided_at), replayed,
+      startsDeploy: false, signedDeployApprovalCreated: false, grantsDeployAuthority: false });
+  }
+  async decideLoopCandidate(identity: VerifiedWebIdentity, body: unknown, key: string) {
+    const parsed = loopCandidateDecisionBodySchemaV1.safeParse(body); this.#loopKey(key);
+    if (!parsed.success) throw new WebAccessError("invalid_request");
+    this.#candidateDependencies();
+    const b = parsed.data;
+    // Reauthorization precedes replay and all source reads.
+    const prepare = async (tx: DatabaseSession, actor: import("../../web/v1/session-authority").WebActor) => {
+      const row = (await tx.query<LoopCandidateRow>(`SELECT * FROM control_loop_update_candidates
+        WHERE tenant_id=$1 AND id=$2 AND owner_identity_id=$3`, [this.scope.tenantId,b.candidateId,actor.id])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      actor.require("updates.decide",row.project_id,true,"high"); await this.#requireSelfProject(tx,row.project_id);
+      const e = this.#verifyCandidate(row);
+      await this.#loopRoot(tx,row.project_id,row.request_id,actor.id);
+      if (b.candidateRevision !== row.candidate_revision || b.candidateRecordDigest !== row.record_digest
+        || b.localVersion !== Number(row.local_version) || canonicalJson(b.a2InputVersion) !== canonicalJson(row.a2_input_version))
+        throw new WebAccessError("conflict");
+      const prior = (await tx.query<LoopCandidateDecisionRow>(`SELECT * FROM control_loop_update_candidate_decisions
+        WHERE tenant_id=$1 AND owner_identity_id=$2 AND (idempotency_key=$3 OR candidate_id=$4)`,
+      [row.tenant_id,actor.id,key,row.id])).rows;
+      if (prior.length) {
+        if (prior.length !== 1 || prior[0]!.candidate_id !== row.id) throw new WebAccessError("conflict");
+        const decision = this.#verifyCandidateDecision(prior[0]!,row);
+        if (decision.idempotency_key !== key || decision.decision !== b.decision) throw new WebAccessError("conflict");
+        return { row,e,receipt:this.#candidateDecisionReceipt(decision,true) };
+      }
+      await this.#candidateLineage(tx,e.binding,actor.id);
+      return { row,e,receipt:undefined };
+    };
+    const prepared = await this.#authority.authenticated(identity,prepare,{readOnly:true});
+    if (prepared.receipt) return prepared.receipt;
+    const verified = await verifyLoopCandidateCompletionV1(this.#candidateDependencies(),prepared.row.run_link_id);
+    if (canonicalJson(verified) !== canonicalJson(prepared.e)) throw new WebAccessError("conflict");
+    try {
+      return await this.#authority.authenticated(identity,async(tx,actor)=>{
+        const current = await prepare(tx,actor); if(current.receipt) return current.receipt;
+        const material = this.#decisionMaterial({ tenant_id: this.scope.tenantId,id:`loop-candidate-decision:${randomUUID()}`,
+          candidate_id: current.row.id,project_id: current.row.project_id,owner_identity_id:actor.id,candidate_record_digest:current.row.record_digest,
+          candidate_revision:current.row.candidate_revision,idempotency_key:key,decision:b.decision,candidate_version:1,decided_at:actor.now,decision_digest:"",auth_tag:"" });
+        const row: LoopCandidateDecisionRow = { ...material, decision_digest:sha256Digest(material),
+          auth_tag:hmacSha256Tag(this.#key,{purpose:"loop-update-candidate-decision/v1",record:material}) };
+        actor.require("updates.decide",row.project_id,true,"high");
+        await tx.query(`INSERT INTO control_loop_update_candidate_decisions(tenant_id,id,candidate_id,project_id,owner_identity_id,
+          candidate_record_digest,candidate_revision,idempotency_key,decision,candidate_version,decided_at,decision_digest,auth_tag)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [row.tenant_id,row.id,row.candidate_id,row.project_id,row.owner_identity_id,row.candidate_record_digest,row.candidate_revision,
+          row.idempotency_key,row.decision,row.candidate_version,row.decided_at,row.decision_digest,row.auth_tag]);
+        return this.#candidateDecisionReceipt(row,false);
+      });
+    } catch(error) { if (["23505","23514"].includes(databaseSqlStateV1(error) ?? "")) throw new WebAccessError("conflict"); throw error; }
   }
 
 }

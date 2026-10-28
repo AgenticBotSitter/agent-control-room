@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "ab7e6c70d67937faa39851b9358f06d051056b4e02375d1c42cb0d7a7515488f",
-  "note": "Measured after the full release ledger on real PostgreSQL17 as control_room_web using readPrivateWebSchemaDigest. Includes the additive 0302 command journal. The empty 0302 down restores the B1a schema; install-database-phase-real-postgres verifies this pin and the shipped query."
+  "digest": "2020964be1f3806cb3aa2cf5ee450817a03700d171dcf5c06504a9ae770a22ce",
+  "note": "Measured with the complete ledger in PGlite after additive 0303 loop candidate companions. Native PostgreSQL17 and updater digest equality remain required release qualification; this pin alone is not that proof."
 }

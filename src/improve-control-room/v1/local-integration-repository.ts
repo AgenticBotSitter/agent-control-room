@@ -99,3 +99,16 @@ export async function createLocalIntegrationRepositoryObserverV1(value: LocalInt
   };
   return Object.freeze({ observe });
 }
+
+/** Separate loop binding; the legacy observer and its pipeline API are unchanged. */
+export type LocalLoopIntegrationRepositoryConfigurationV1 = Omit<LocalIntegrationRepositoryConfigurationV1, "candidateRevisionForRun"> & {
+  candidateRevisionForLoopRun(runLinkId: string): Promise<string>;
+};
+export async function createLocalLoopIntegrationRepositoryObserverV1(value: LocalLoopIntegrationRepositoryConfigurationV1,
+  runtime: Readonly<{ canonical?: typeof realpath; identity?: typeof stat; git?: Git }> = {}):
+  Promise<import("./loop-candidate-publisher").LoopIntegrationRepositoryObserverV1> {
+  if (typeof value.candidateRevisionForLoopRun !== "function") throw new Error("loop_candidate_repository_configuration_invalid");
+  const observer = await createLocalIntegrationRepositoryObserverV1({ ...value,
+    candidateRevisionForRun: value.candidateRevisionForLoopRun.bind(value) }, runtime);
+  return Object.freeze({ observe: ({ runLinkId }: { runLinkId: string }) => observer.observe({ pipelineRunId: runLinkId }) });
+}

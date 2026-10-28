@@ -87,7 +87,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
-export const privateWebSchemaDigest = "ab7e6c70d67937faa39851b9358f06d051056b4e02375d1c42cb0d7a7515488f";
+export const privateWebSchemaDigest = "2020964be1f3806cb3aa2cf5ee450817a03700d171dcf5c06504a9ae770a22ce";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -131,6 +131,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "control_loop_improvement_requests", "control_loop_improvement_inputs",
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
+  "control_loop_update_candidates", "control_loop_update_candidate_decisions",
   // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
   // notice, claim and settle, and holds nothing else on it. Listed here because
   // 0226 grants SELECT on it, and the column audit compares the live grant
@@ -188,7 +189,8 @@ privateWebInsertTables.add("control_task_handoffs");
 privateWebInsertTables.add("control_job_dependencies");
 privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
 for (const table of ["control_loop_improvement_requests", "control_loop_improvement_inputs",
-  "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands"]) privateWebInsertTables.add(table);
+  "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
+  "control_loop_update_candidates", "control_loop_update_candidate_decisions"]) privateWebInsertTables.add(table);
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // MIG-I: the dispatcher writes the FIRST head for a newly noticed item and
