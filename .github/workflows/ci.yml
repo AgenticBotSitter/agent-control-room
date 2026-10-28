@@ -282,12 +282,27 @@ jobs:
       - name: Prove retained loop candidate UI guards
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-mutations:ui
-      - name: Prove retained loop candidate SQL bindings
+      - name: Prove retained loop candidate SQL candidate consumption
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-consumption
+      - name: Prove retained loop candidate SQL decision immutability
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-decision-immutability
+      - name: Prove retained loop candidate SQL current bindings
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-binding
-      - name: Prove retained loop candidate SQL authority
+      - name: Prove retained loop candidate SQL completed checks
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-checks
+      - name: Prove retained loop candidate SQL owner authority
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-authority
+      - name: Prove retained loop candidate SQL candidate immutability
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-candidate-immutability
+      - name: Prove retained loop candidate SQL application grants
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-grants
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations

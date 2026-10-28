@@ -670,7 +670,7 @@ test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
  const workflow=await readFile(".github/workflows/ci.yml","utf8"),manifest=JSON.parse(await readFile("package.json","utf8"));
  const job=workflow.split("  mutation-checks:")[1]!.split("\n  pr-claims:")[0]!;
  assert.match(job,/timeout-minutes: 45/u);
- for(const part of ["source","ui","sql-binding","sql-authority"]){
+ for(const part of ["source","ui","sql-consumption","sql-decision-immutability","sql-binding","sql-checks","sql-authority","sql-candidate-immutability","sql-grants"]){
   const script=`test:improve-control-room-loop-candidate-mutations:${part}`;
   assert.equal(typeof manifest.scripts[script],"string","B4 bounded CI partitions each invoke an executable lane");
   assert.match(manifest.scripts[script],/--test-name-pattern=/u);

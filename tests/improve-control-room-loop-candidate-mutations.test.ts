@@ -110,7 +110,8 @@ function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(na
   for(const probe of sqlProbes)await t.test(probe.name,async()=>{
    const args=[process.execPath,"scripts/ci/run-mutation-postgres-test.mjs","--test-concurrency=1","--test-timeout=600000",
     `--test-name-pattern=^${probe.pattern}$`,"tests/improve-control-room-loop-candidate-postgres.test.ts"];
-   const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:120000,maxBuffer:8*1024*1024});
+   // The preflight used this exact first command on the unchanged copy.
+   const baseline=probe===first?native:await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:120000,maxBuffer:8*1024*1024});
    assert.match(baseline.stdout,/# pass 1/u);assert.match(baseline.stdout,/# fail 0/u);
    const result=await assertGuardBites({skipBaseline:true,root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd:args,boundMs:120000,because:probe.assertion});
    assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
@@ -123,9 +124,13 @@ function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(na
   });
  }finally{await rm(copy,{recursive:true,force:true});}
 }); }
-sqlGuardPartition("B4 SQL binding guards require independently loaded native mutations",sqlProbesAll.slice(0,4));
-sqlGuardPartition("B4 SQL authority guards require independently loaded native mutations",sqlProbesAll.slice(4));
-
+sqlGuardPartition("B4 SQL consumption guards require independently loaded native mutations",[sqlProbesAll[0]!]);
+sqlGuardPartition("B4 SQL decision immutability guards require independently loaded native mutations",[sqlProbesAll[1]!]);
+sqlGuardPartition("B4 SQL binding guards require independently loaded native mutations",[sqlProbesAll[2]!]);
+sqlGuardPartition("B4 SQL completed checks guards require independently loaded native mutations",[sqlProbesAll[3]!]);
+sqlGuardPartition("B4 SQL authority guards require independently loaded native mutations",[sqlProbesAll[4]!]);
+sqlGuardPartition("B4 SQL candidate immutability guards require independently loaded native mutations",[sqlProbesAll[5]!]);
+sqlGuardPartition("B4 SQL grants guards require independently loaded native mutations",[sqlProbesAll[6]!]);
 
 test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{timeout:120000},async()=>{
  const copy=await mkdtemp(resolve(".test-tmp/b4-inert-mutation-"));
