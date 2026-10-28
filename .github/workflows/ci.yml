@@ -279,6 +279,9 @@ jobs:
       - name: Prove retained loop candidate guards
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-mutations:source
+      - name: Prove retained loop candidate UI guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:ui
       - name: Prove retained loop candidate SQL bindings
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-binding

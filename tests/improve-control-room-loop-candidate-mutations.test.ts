@@ -43,12 +43,12 @@ const probes=[
  {name:"decision source freshness",file:service,find:'if (canonicalJson(verified) !== canonicalJson(prepared.e)) throw new WebAccessError("conflict");',replace:"/* MUTANT: changed completion admitted. */",
   pattern:"B4 decision freshness refuses changed sealed completion",assertion:"B4 changed sealed completion attempts zero decision inserts"},
 ];
-test("B4 candidate guards fail independently and restore green",{timeout:600000},async t=>{
+function sourceGuardPartition(name:string, selected:typeof probes) { test(name,{timeout:600000},async t=>{
  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b4-mutations-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
   await symlink(join(root,"node_modules"),join(copy,"node_modules"),"dir");
-  for(const probe of probes)await t.test(probe.name,async()=>{
+  for(const probe of selected)await t.test(probe.name,async()=>{
    const args=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=^${probe.pattern}$`,"tests/improve-control-room-loop-candidate.test.tsx"];
    const original=await readFile(join(copy,probe.file),"utf8");
    const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1"};delete env.NODE_TEST_CONTEXT;
@@ -65,7 +65,9 @@ test("B4 candidate guards fail independently and restore green",{timeout:600000}
    console.log(`B4 mutation ${probe.name}: baseline=true loaded=true intended_assertion=true restored=true green=true`);
   });
  }finally{await rm(copy,{recursive:true,force:true});}
-});
+}); }
+sourceGuardPartition("B4 candidate service guards fail independently and restore green",probes.filter(p=>!p.name.startsWith("UI ")));
+sourceGuardPartition("B4 candidate UI guards fail independently and restore green",probes.filter(p=>p.name.startsWith("UI ")));
 
 const sqlProbesAll=[
  {name:"SQL decision uniqueness",file:"db/migrations/0303_control_loop_update_candidates.sql",
