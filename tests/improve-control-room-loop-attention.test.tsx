@@ -433,6 +433,36 @@ test("UI fix status refresh updates shared attention without focus or polling",a
   }finally{await m.close();await f.close();}
 });
 
+test("UI fix a status change on the panel's own poll updates shared attention with no button press",async()=>{
+  const f=await fixture(),id=await f.intake();await f.confirm(id);
+  const realSet=globalThis.setTimeout,realClear=globalThis.clearTimeout;
+  const live=new Map<unknown,{callback:()=>void;delay:number}>();
+  globalThis.setTimeout=((callback:()=>void,delay?:number,...rest:unknown[])=>{const handle=realSet(callback as never,delay,...rest);live.set(handle,{callback,delay:delay??0});return handle;}) as typeof setTimeout;
+  globalThis.clearTimeout=((handle:never)=>{live.delete(handle);realClear(handle);}) as typeof clearTimeout;
+  let attentionReads=0;
+  const transport:typeof fetch=async(p,o)=>{
+    if(String(p).includes("/needs-me/tasks"))return Response.json(emptyTaskPage);
+    if(String(p).includes("action-items"))attentionReads++;
+    return f.transport(p,o);
+  };
+  const m=await mount(f.project.projectId,transport,"",<><SharedSurfaces/><PrivateImproveControlRoomWorkspace projectId={f.project.projectId}/></>);
+  try{
+    await settle();assert.match(m.text(),/All clear/);
+    const reads=attentionReads;
+    f.edit({state:"waiting",revision:8,question});
+    // Only the panel's own 30 s poll fires: the shared attention reader's timer (onVisible) stays asleep, and nothing is pressed or focused.
+    const panelPolls=[...live.values()].filter(timer=>timer.delay>=30_000&&timer.callback.name!=="onVisible");
+    assert.ok(panelPolls.length>0,"the panel has its own pending poll");
+    await act(async()=>{for(const poll of panelPolls)poll.callback();});await settle();
+    assert.match(m.text(),/Your answer/,"the panel accepted the changed run status");
+    assert.ok(attentionReads>reads,"the accepted status change reads shared attention");
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1","header updates from the panel's own poll");
+    assert.equal(m.dom.window.document.querySelector('[aria-labelledby="home-attention"] .private-count')?.textContent,"1");
+    assert.doesNotMatch(m.text(),/All clear/);
+    assert.equal(f.posts.length,0,"reads never start work");
+  }finally{globalThis.setTimeout=realSet;globalThis.clearTimeout=realClear;await m.close();await f.close();}
+});
+
 for(const status of [401,403])test(`UI fix ${status} says sign in again on header and Home`,async()=>{
   let mode="ready";
   const fetcher:typeof fetch=async p=>String(p).includes("action-items")?mode==="ready"?Response.json({observedAt:new Date(now).toISOString(),items:[],truncated:false,
