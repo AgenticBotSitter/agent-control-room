@@ -8,6 +8,19 @@ import { promisify } from "node:util";
 import { assertGuardBites, reapKitClusters } from "./support/attack-kit/index";
 const exec=promisify(execFile), root=resolve(".");
 const probes=[
+  ...["intake","confirm","start","approve","answer"].map(operation=>({
+    name:`A2 ${operation} expect flag`,file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'if (expectation) args.push("--expect", expectation);',
+    replace:`if (expectation && operation !== "${operation}") args.push("--expect", expectation);`,
+    pattern:"^B1b A2 engine receipts [(]unwrapped adapter[)]$",
+    assertion:operation==="intake"?"A2 unwrapped intake saves a non-null runLink":`A2 ${operation} requires an engine record`,postgres:false})),
+  {name:"A2 saved admission survives refusal",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'if (!observed.receipts.some(saved => saved.commandId === command.id',
+    replace:'if (true || !observed.receipts.some(saved => saved.commandId === command.id',
+    pattern:"^B1b A2 engine receipts save then exit 2 envelope$",assertion:"saved engine receipt survives exit 2/3 without becoming refused",postgres:false},
+  {name:"A2 answer question version",file:"src/web/v1/improve-control-room-loop-adapter.ts",
+    find:'String(binding.body.inputVersion), "--file"',replace:'String(binding.inputVersion), "--file"',
+    pattern:"^B1b A2 answer uses question version below run version$",assertion:"A2 answer argv uses body.inputVersion, never run inputVersion",postgres:false},
   {name:"sweep isolates invalid rows",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'} catch { /* Keep unverified or stale commands; continue with other finished rows. */ }',
     replace:'} catch (error) { throw error; }',
