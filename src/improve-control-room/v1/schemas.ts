@@ -126,7 +126,7 @@ const loopVersion = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const rawHash = z.string().regex(/^[a-f0-9]{64}$/);
 const loopDescription = z.string().min(1).max(8000).refine(value => value.trim().length > 0);
 const loopSettings = z.string().refine(value => {
-  if (Buffer.byteLength(value, "utf8") > 65536) return false;
+  if (new TextEncoder().encode(value).byteLength > 65536) return false;
   try { const parsed: unknown = JSON.parse(value); return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed); }
   catch { return false; }
 });
@@ -198,7 +198,7 @@ export const loopBridgeBindingSchemaV1 = z.object({
   runLinkId: id.nullable(), authorizationId: id.nullable(),
   inputVersion: z.union([loopVersion, z.string().min(1).max(180)]).nullable(),
   expectedRevision: engineRevision.nullable(), evidence: digest.nullable(),
-}).strict().refine(value => Buffer.byteLength(JSON.stringify(value), "utf8") <= 65536);
+}).strict().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65536);
 export type LoopBridgeBindingV1 = z.infer<typeof loopBridgeBindingSchemaV1>;
 export type LoopBridgeOutcomeV1 = z.infer<typeof loopBridgeOutcomeSchemaV1>;
 export const loopBridgeReceiptSchemaV1 = z.object({ schemaVersion: z.literal(1), requestId: id,

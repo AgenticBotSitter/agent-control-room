@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer as NodeBuffer } from "node:buffer";
 import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -7,7 +8,7 @@ import { PrivateImproveControlRoomWorkspace } from "../private-app/app/improve-c
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
-import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1, type LoopBridgeBindingV1 } from "../src/improve-control-room/v1/schemas";
+import { loopImprovementDraftSchemaV1, loopBridgeBindingSchemaV1, loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1, type LoopBridgeBindingV1 } from "../src/improve-control-room/v1/schemas";
 import { loopByteHashV1, type LoopEngineStatusV1, type LoopAdapterV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { type LoopImprovementDecisionsV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopDecisionsBrowserClient as decisionClient } from "../src/web/v1/improve-control-room-loop-decisions-browser-client";
@@ -40,6 +41,35 @@ async function mount(projectId: string, fetcher: typeof fetch, fragment = "", co
 }
 
 const KEY = new Uint8Array(32).fill(64);
+test("B2b browser schemas preserve UTF-8 byte limits without Buffer", () => {
+  const binding: LoopBridgeBindingV1 = { schemaVersion:1, body:{text:""}, localVersion:1,
+    adapterId:"adapter:synthetic", loopRunId:"run:synthetic", toolingRevision:`sha256:${"a".repeat(64)}`,
+    a2SchemaVersion:1, schemaDigest:`sha256:${"b".repeat(64)}`, requestSha256:"c".repeat(64),
+    settingsSha256:"d".repeat(64), runLinkId:null, authorizationId:null, inputVersion:null,
+    expectedRevision:null, evidence:null };
+  for (const [label, unit, width] of [["ASCII","x",1],["multibyte","é",2],["three-byte","€",3],["astral","🧭",4]] as const) {
+    for (const bytes of [65536, 65537]) {
+      const fill = (overhead: number) => {
+        const available = bytes - overhead;
+        return unit.repeat(Math.floor(available / width)) + "x".repeat(available % width);
+      };
+      const settingsText = JSON.stringify({text:fill(NodeBuffer.byteLength(JSON.stringify({text:""}),"utf8"))});
+      const input = {...binding, body:{text:fill(NodeBuffer.byteLength(JSON.stringify(binding),"utf8"))}};
+      assert.equal(NodeBuffer.byteLength(settingsText,"utf8"),bytes,`${label} settings fixture`);
+      assert.equal(NodeBuffer.byteLength(JSON.stringify(input),"utf8"),bytes,`${label} binding fixture`);
+      const original = globalThis.Buffer;
+      try {
+        Reflect.deleteProperty(globalThis,"Buffer");
+        const draft = loopImprovementDraftSchemaV1.safeParse({description:"SYNTHETIC request",settingsText});
+        const command = loopBridgeBindingSchemaV1.safeParse(input);
+        assert.equal(draft.success,bytes === 65536,`${label} settings at ${bytes} UTF-8 bytes`);
+        assert.equal(command.success,bytes === 65536,`${label} binding at ${bytes} UTF-8 bytes`);
+        if (draft.success) assert.equal(draft.data.settingsText,settingsText);
+        if (command.success) assert.deepEqual(command.data,input);
+      } finally { globalThis.Buffer = original; }
+    }
+  }
+});
 const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC B2b"}';
 const exact = "  Draft with café 🧭\r\nKeep every byte.  ";
 async function fixture() {
