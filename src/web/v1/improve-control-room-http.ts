@@ -8,7 +8,7 @@ import type { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room
 import type { ImproveControlRoomLoopServiceV1 } from "./improve-control-room-loop-service";
 
 export function createImproveControlRoomHttpHandlerV1(options: { origin: string; service?: ImproveControlRoomDeskServiceV1;
-  loopBridge?: Pick<ImproveControlRoomLoopServiceV1, "mutate" | "status" | "viewDesk">;
+  loopBridge?: Pick<ImproveControlRoomLoopServiceV1, "mutate" | "status" | "viewDesk" | "readApprovalDocument">;
   trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
   localOwnerSession?: LocalOwnerSessionServiceV1 }) {
   if (!options.service && !options.loopBridge) throw new Error("improvement_service_required");
@@ -22,7 +22,7 @@ export function createImproveControlRoomHttpHandlerV1(options: { origin: string;
       const identity = local ? local.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
       if (url.search) throw new WebAccessError("invalid_request");
-      const loop = /^\/api\/v1\/projects\/([^/]+)\/improvements\/loop\/(desk|intake|([^/]+)\/(status|confirm|start|stop|approve|answer))$/.exec(url.pathname);
+      const loop = /^\/api\/v1\/projects\/([^/]+)\/improvements\/loop\/(desk|intake|([^/]+)\/(status|approval-document|confirm|start|stop|approve|answer))$/.exec(url.pathname);
       if (loop && options.loopBridge) {
         const decodeId = (encoded: string) => {
           let value: string; try { value = decodeURIComponent(encoded); } catch { throw new WebAccessError("invalid_request"); }
@@ -33,6 +33,10 @@ export function createImproveControlRoomHttpHandlerV1(options: { origin: string;
         if (loop[2] === "desk") {
           if (request.method !== "GET" || request.body) throw new WebAccessError("invalid_request");
           return Response.json(await options.loopBridge.viewDesk(identity, projectId), { headers: privateResponseHeaders });
+        }
+        if (loop[4] === "approval-document") {
+          if (request.method !== "GET" || request.body) throw new WebAccessError("invalid_request");
+          return Response.json(await options.loopBridge.readApprovalDocument(identity, projectId, requestId!), { headers: privateResponseHeaders });
         }
         if (loop[4] === "status") {
           if (request.method !== "GET" || request.body) throw new WebAccessError("invalid_request");

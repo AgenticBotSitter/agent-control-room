@@ -1,5 +1,6 @@
-import { improvementDeskViewSchemaV1, loopImprovementDeskViewSchemaV1, loopImprovementStatusSchemaV1,
+import { improvementDeskViewSchemaV1, loopImprovementDeskViewSchemaV1,
   loopBridgeReceiptSchemaV1 } from "../../improve-control-room/v1/schemas";
+import { loopDecisionStatusSchemaV1 } from "./improve-control-room-loop-attention-wire";
 import { readBrowserJson } from "./browser-json";
 
 export type FrozenLoopAction = Readonly<{ body: string; key: string }>;
@@ -44,9 +45,11 @@ export const loopImprovementBrowserClient = {
   },
   async readStatus(projectId: string, requestId: string, signal: AbortSignal) {
     const result = await exchange(`${path(projectId)}/loop/${encodeURIComponent(requestId)}/status`, signal);
-    const display = decode(() => loopImprovementStatusSchemaV1.parse((result as { display?: unknown } | null)?.display));
+    const snapshot = decode(() => loopDecisionStatusSchemaV1.parse(result));
+    const display = snapshot.display;
     if (display.projectId !== projectId || display.requestId !== requestId) throw new LoopReadError(0, true);
-    return display;
+    if (snapshot.request.projectId !== projectId || snapshot.request.requestId !== requestId) throw new LoopReadError(0, true);
+    return { ...display, snapshot };
   },
   async start(projectId: string, requestId: string, action: FrozenLoopAction) {
     return command(projectId, requestId, "start", action);

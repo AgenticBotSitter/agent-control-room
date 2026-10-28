@@ -6,6 +6,8 @@ import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1/s
 import { loopBridgeBindingSchemaV1, loopBridgeBodiesV1, loopBridgeOperationSchemaV1, loopBridgeOutcomeSchemaV1,
   loopBridgeReceiptSchemaV1, loopImprovementStatusSchemaV1, type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopBridgeOutcomeV1 } from "../../improve-control-room/v1/schemas";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { currentLoopGate, loopAttentionSourceSchemaV1, loopDecisionStatusSchemaV1, loopApprovalDocumentSchemaV1,
+  loopImprovementDecisionsSchemaV1, unavailableLoopGate, loopDocumentBinding, type LoopDecisionStatusV1, type LoopAttentionItemV1 } from "./improve-control-room-loop-attention-wire";
 import { loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "./improve-control-room-loop-adapter";
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/);
@@ -151,11 +153,72 @@ export class ImproveControlRoomLoopServiceV1 {
       progress: current.progress.step === null ? null : { stepId: current.progress.step, role: null, attempt: null,
         requestedModel: null, observedModel: null, identityVerified: false, repairCount: null },
       attention, observedAt: new Date(this.clock()).toISOString() });
-    return { schemaVersion: 1, request: lineage.view, display, engine: { revision: current.revision, state: current.state,
+    return loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
+      decisions: loopImprovementDecisionsSchemaV1.parse(current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,
-      progress: current.progress, approval: current.approval, question: current.question, identity: "unverified" } };
+      progress: current.progress, approval: current.approval, question: current.question, identity: "unverified" } });
+  }
+  async readAttention(identity: VerifiedWebIdentity) {
+    const scan = await this.#desk.viewLoopAttentionRequests(identity);
+    const items: (LoopAttentionItemV1 | null)[] = new Array(scan.requests.length).fill(null);
+    let next = 0;
+    const worker = async () => {
+      while (next < scan.requests.length) {
+        const index = next++, request = scan.requests[index]!;
+        const base = { projectId: request.projectId, requestId: request.requestId, runLinkId: request.runLink?.runLinkId ?? null,
+          localVersion: request.currentVersion, engineRevision: null, observedAt: scan.observedAt };
+        const blocked = (code: "UNAVAILABLE" | "QUESTION_LIMIT" | "INPUT_CHANGED", revision: number | null = null, latest?: LoopDecisionStatusV1): LoopAttentionItemV1 => ({ ...base,
+          ...(latest ? {localVersion:latest.request.currentVersion,runLinkId:latest.display.runLinkId,observedAt:latest.display.observedAt} : {}),
+          engineRevision: revision, kind: "blocked", identity: { kind: "blocked", code }, title: "Check saved request",
+          summary: code === "QUESTION_LIMIT" ? "The saved question limit requires owner attention."
+            : code === "INPUT_CHANGED" ? "Changed inputs require renewed confirmation and approvals through the lead."
+            : "The saved decision is unavailable. Open the request to check it." });
+        if (!request.runLink) { items[index] = blocked("UNAVAILABLE"); continue; }
+        try {
+          const status = await this.status(identity, request.projectId, request.requestId), gate = currentLoopGate(status);
+          if (!gate) continue;
+          if (gate.kind === "blocked") { items[index] = blocked(gate.code, status.engine.revision, status); continue; }
+          const bound = { ...base, localVersion: status.request.currentVersion, runLinkId: status.display.runLinkId, observedAt: status.display.observedAt, engineRevision: status.engine.revision };
+          if (gate.kind === "confirm") items[index] = { ...bound, kind: "confirmation", identity: { kind: "confirmation",
+            requestSha256: status.engine.requestSha256, settingsSha256: status.engine.settingsSha256 },
+            title: "Confirm saved request", summary: "Review the complete exact draft before confirming it." };
+          else if (status.display.confirmationCurrent && status.engine.state === "waiting") {
+            if (gate.kind === "approve" && status.engine.approval) items[index] = { ...bound, kind: "approval",
+              identity: { kind: "approval", ...status.engine.approval }, title: `Review saved ${status.engine.approval.step}`,
+              summary: "Read the complete sealed document before explicitly approving this version." };
+            else if (gate.kind === "question" && status.engine.question?.owner) items[index] = { ...bound, kind: "question", identity: { kind: "question",
+                questionId: status.engine.question.questionId, inputVersion: status.engine.question.inputVersion,
+                questionReportSha256: status.engine.question.reportSha256 }, title: status.engine.question.changesInput ? "Review input-changing question" : "Answer saved question",
+                summary: status.engine.question.changesInput ? "This question changes inputs. Ask the lead to renew affected confirmation and approvals."
+                  : "The saved run is waiting for an owner decision. Open the exact question." };
+          } else items[index] = blocked("UNAVAILABLE", status.engine.revision, status);
+        } catch (error) {
+          if (error instanceof WebAccessError && ["authentication_required", "access_denied"].includes(error.code)) throw error;
+          items[index] = blocked("UNAVAILABLE");
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, scan.requests.length) }, worker));
+    return loopAttentionSourceSchemaV1.parse({ schemaVersion: 1, state: "available", items: items.filter(item => item !== null), truncated: scan.truncated });
+  }
+  async readApprovalDocument(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
+    const before = await this.status(identity, projectId, requestId);
+    const approval = before.engine.approval, gate = currentLoopGate(before);
+    if (gate?.kind === "blocked" && gate.code === "UNAVAILABLE") throw unavailable();
+    if (before.engine.state !== "waiting" || currentLoopGate(before)?.kind !== "approve" || !before.display.confirmationCurrent || !approval) throw conflict();
+    if (!this.#adapter.readApprovalDocument || !before.request.runLink) throw unavailable();
+    const text = await this.#adapter.readApprovalDocument(before.request.runLink.loopRunId, approval);
+    // File reads and subprocess observations never hold a database transaction.
+    const after = await this.status(identity, projectId, requestId);
+    if (loopDocumentBinding(before) !== loopDocumentBinding(after) || currentLoopGate(after)?.kind !== "approve"
+      || after.engine.state !== "waiting" || !after.display.confirmationCurrent) throw conflict();
+    const document = loopApprovalDocumentSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
+      runLinkId: after.display.runLinkId, localVersion: after.request.currentVersion, engineRevision: after.engine.revision,
+      approval, text, observedAt: after.display.observedAt });
+    if (Buffer.byteLength(JSON.stringify(document), "utf8") > 1600000) throw unavailable();
+    return document;
   }
   async mutate(identity: VerifiedWebIdentity, projectId: string, requestId: string | null,
     operation: LoopBridgeOperationV1, input: unknown, idempotencyKey: string) {

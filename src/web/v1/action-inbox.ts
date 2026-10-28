@@ -1,4 +1,5 @@
 import type { ActionInboxItemV1 } from "../../operator-surfaces/v1/types";
+import { loopAttentionKey, type LoopAttentionItemV1 } from "./improve-control-room-loop-attention-wire";
 import type { TaskAttentionPage, TaskAttentionReason } from "./task-attention-wire";
 
 export const actionInboxKinds = ["failure", "blocked", "approval", "review", "notification", "preparation", "expired"] as const;
@@ -112,7 +113,7 @@ const kindRank: Record<ActionInboxKind, number> = {
 };
 
 /** Read-only presentation over the two existing owner-attention sources. */
-export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], actionItems: readonly ActionInboxItemV1[] = [], now = Date.now()): ActionInboxDisplayItem[] {
+export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], actionItems: readonly ActionInboxItemV1[] = [], now = Date.now(), loopItems: readonly LoopAttentionItemV1[] = []): ActionInboxDisplayItem[] {
   const tasks: ActionInboxDisplayItem[] = taskPages.flatMap(page => page.items).map(item => ({
     key: `task:${item.task.projectId}:${item.task.jobId}`,
     kind: taskKind(item.reasons),
@@ -142,7 +143,14 @@ export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], a
       if (row.expiresAt && (!matching.expiresAt || row.expiresAt < matching.expiresAt)) matching.expiresAt = row.expiresAt;
     } else canonical.push(row);
   }
-  return [...tasks, ...canonical].sort((left, right) => {
+  const loop = [...new Map(loopItems.map(item => [loopAttentionKey(item), item])).values()].map((item): ActionInboxDisplayItem => ({
+    key: `loop:${loopAttentionKey(item)}`, kind: item.kind === "blocked" ? "blocked" : "approval",
+    title: item.title, summary: item.summary, observedAt: item.observedAt, projectId: item.projectId,
+    href: `/projects/${encodeURIComponent(item.projectId)}/improvements#request=${encodeURIComponent(item.requestId)}`,
+    actionLabel: item.identity.kind === "approval" ? `Review ${item.identity.step}` : item.kind === "question" ? "Answer question"
+      : item.kind === "blocked" ? "Check request" : "Open request", blockedCount: 0, availableResponses: [], evidenceCount: 0,
+  }));
+  return [...tasks, ...canonical, ...loop].sort((left, right) => {
     const rank = kindRank[left.kind] - kindRank[right.kind];
     if (rank) return rank;
     const leftExpiry = left.expiresAt ? Date.parse(left.expiresAt) : Number.POSITIVE_INFINITY;

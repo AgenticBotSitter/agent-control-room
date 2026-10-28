@@ -11,6 +11,7 @@ import { realpathSync } from "node:fs";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
+import { loopApprovalDescriptorSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { canonicalJson, hmacSha256Tag, sha256Digest } from "../src/security";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
 import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1,
@@ -101,6 +102,7 @@ async function synthetic(t: TestContext) {
       && input.settingsSha256 === loopByteHashV1(input.settingsText) };
   const receipts = new Map<string, LoopEngineStatusV1["receipts"]>();
   let raw: LoopAdapterV1;
+  let documentNames = { report: "report.md", sidecar: "report.json" };
   let beforeAdmission: (() => Promise<void>) | undefined;
   const configuration: LoopAdapterConfigurationV1 = { adapterId: "adapter:synthetic", interpreter: realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"),
     interpreterSha256: loopByteHashV1(await readFile(realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"))),
@@ -110,10 +112,18 @@ async function synthetic(t: TestContext) {
     executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"b".repeat(64)}` }, timeoutMs: 1000,
     contract: { lineage, schemaDigest: `sha256:${"c".repeat(64)}`, generateRunId: () => `fixture-run-${randomBytes(16).toString("hex")}`,
       qualifiedOperations: ["intake", "confirm", "start", "stop", "approve", "answer"],
+      locateApprovalDocument: () => documentNames,
+      decodeApprovalSidecar: (output: unknown) => loopApprovalDescriptorSchemaV1.parse(output),
+      decisionProjection: { questionTextPath: ["counters", "fixture", "questionText"], decodeGate: (output, status) => {
+        const raw = (output as {counters:{fixture:{questionText: string|null; blockedCode?:"QUESTION_LIMIT"|"INPUT_CHANGED"}}}).counters.fixture;
+        return raw.blockedCode ? {kind:"blocked",code:raw.blockedCode,message:"The saved run requires owner attention."}
+          : status.question ? {kind:"question",text:raw.questionText} : status.approval ? {kind:"approve"} : !status.confirmation ? {kind:"confirm"} : null;
+      } },
       decodeStatus: (output: unknown) => {
         const e = output as { schema_version: number; run: string; counters: { fixture: Record<string, unknown> } };
         assert.equal(e.schema_version, 1); assert.match(e.run, /^fixture-run-[a-f0-9]{32}$/);
-        return loopEngineStatusSchemaV1.parse({ ...e.counters.fixture, run: { adapterId: "adapter:synthetic", loopRunId: e.run,
+        const { questionText: _text, blockedCode: _code, ...engine } = e.counters.fixture;
+        return loopEngineStatusSchemaV1.parse({ ...engine, run: { adapterId: "adapter:synthetic", loopRunId: e.run,
           toolingRevision, a2SchemaVersion: 1 } });
       }, atomicAdmission: async (binding, invoke) => {
         await beforeAdmission?.();
@@ -140,12 +150,12 @@ async function synthetic(t: TestContext) {
     intake: (id, b, text, fence) => apply("intake", id, b, text, fence), confirmRequest: (id, b, fence) => apply("confirm", id, b, undefined, fence),
     start: (id, b, fence) => apply("start", id, b, undefined, fence), stop: (id, b, fence) => apply("stop", id, b, undefined, fence), approve: (id, b, fence) => apply("approve", id, b, undefined, fence),
     answer: (id, b, text, fence) => apply("answer", id, b, text, fence) };
-  const edit = async (run: string, changes: Partial<LoopEngineStatusV1>) => {
+  const edit = async (run: string, changes: Partial<LoopEngineStatusV1> & {questionText?:unknown;blockedCode?:"QUESTION_LIMIT"|"INPUT_CHANGED"}) => {
     const path = join(root, "runs", `${run}.json`), saved = JSON.parse(await readFile(path, "utf8"));
     await writeFile(path, JSON.stringify({ ...saved, ...changes, run: saved.run }));
   };
   const traces = async () => (await readFile(join(root, "trace.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)) as {op: string; run: string; args: string[]; env: Record<string,string>; cwd: string}[];
-  return { root, adapter, raw, configuration, edit, traces, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
+  return { root, adapter, raw, configuration, edit, traces, setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
 }
 async function fixture(t: TestContext) {
   const f = await taskFixture(); t.after(() => f.db.close());
@@ -767,3 +777,149 @@ for (const [code, breakStatus] of [[1, false], [4, false], [2, true], [3, true]]
     assert.equal((await f.traces()).filter(trace => trace.op === 'approve').length, 1, 'uncertain approval never redispatches');
   });
 }
+
+test("B2b escaped question budget precedes the engine decoder", async t => {
+  const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
+  const question={questionId:"question:bounded",inputVersion:1,reportSha256:"d".repeat(64),owner:true,changesInput:false};
+  const prefix='"\\\n\t' + 'é🧭';
+  const exact=prefix+"x".repeat(12288-Buffer.byteLength(JSON.stringify(prefix)));
+  assert.equal(Buffer.byteLength(JSON.stringify(exact)),12288);
+  let seen: unknown;
+  const adapter=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,decodeStatus:output=>{
+    seen=(output as {counters:{fixture:{questionText:unknown}}}).counters.fixture.questionText;
+    return f.configuration.contract.decodeStatus(output);
+  }}});t.after(()=>adapter.close());
+  for(const [text,expected] of [[exact,exact],[exact+"x",null],[{invalid:true},null],[undefined,null]] as const){
+    await f.edit(run,{state:"waiting",question,questionText:text});
+    const saved=await adapter.status(run);
+    assert.equal(seen,expected,"raw text is budgeted before strict engine decoding");
+    assert.deepEqual(saved.decisions?.gate,{kind:"question",text:expected});
+    assert.deepEqual(saved.question,question);assert.deepEqual(saved.confirmation,(await f.adapter.status(run)).confirmation);
+    assert.equal(saved.revision,s.engine.revision);assert.equal(saved.description,description);
+  }
+  await f.edit(run,{questionText:"x".repeat(65536)});
+  await assert.rejects(adapter.status(run),/unavailable/,"aggregate stdout cap remains unchanged");
+});
+
+test("B2b approval document isolation", async t=>{
+  const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
+  const directory=join(f.configuration.runRoot,run);await mkdir(directory);
+  const path=`${f.base}/${encodeURIComponent(id)}/approval-document`;
+  const put=async(bytes:string|Buffer,sidecarChange:Record<string,unknown>={})=>{
+    const approval={step:"plan" as const,inputVersion:1,head:"a".repeat(40),reportSha256:loopByteHashV1(bytes)};
+    await writeFile(join(directory,"report.md"),bytes);await writeFile(join(directory,"report.json"),JSON.stringify({...approval,...sidecarChange}));
+    await f.edit(run,{state:"waiting",approval});return approval;
+  };
+  const journal=async()=>JSON.stringify((await f.db.query("SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind")).rows);
+  const before=await journal();
+  for(const text of ["Complete report.\r\n".repeat(5000),"\u0001".repeat(262144)]){
+    await put(text);const response=await f.handler(request(path));assert.equal(response.status,200);
+    const serialized=await response.text();assert.ok(Buffer.byteLength(serialized)<=1600000);
+    assert.equal(JSON.parse(serialized).text,text);assert.ok(Buffer.byteLength(text)>65536);
+    assert.equal((await f.get(id)).engine.approval?.reportSha256,loopByteHashV1(text));
+  }
+  assert.equal(await journal(),before,"document GET creates no claim/result");
+  const known="Known original complete sealed document.";
+  const seal=await put(known);
+  await writeFile(join(directory,"report.md"),"Known changed complete sealed document.");
+  const changed=await f.handler(request(path));
+  const changedBody=await changed.text();
+  assert.ok(!changedBody.includes("Known changed complete sealed document."),"B2b changed complete text is refused before approval");
+  assert.equal(changed.status,503);
+  await put("x".repeat(262145));assert.equal((await f.handler(request(path))).status,503);
+  await put(Buffer.from([0xff,0xfe]));assert.equal((await f.handler(request(path))).status,503);
+  await put(known,{head:"b".repeat(40)});assert.equal((await f.handler(request(path))).status,503);
+  await put(known);await writeFile(join(directory,"report.json"),"x".repeat(65537));assert.equal((await f.handler(request(path))).status,503);
+  await put(known);await rm(join(directory,"report.md"));await symlink(join(f.root,"settings.json"),join(directory,"report.md"));
+  assert.equal((await f.handler(request(path))).status,503);await rm(join(directory,"report.md"));await put(known);
+  for(const report of ["../settings.json","/absolute/report.md","../other-run/report.md",".codex/auth.json"]){
+    f.setDocumentNames({report,sidecar:"report.json"});assert.equal((await f.handler(request(path))).status,503);
+  }
+  f.setDocumentNames({report:"report.md",sidecar:"report.json"});
+  const reads=(await f.traces()).length;
+  assert.equal((await f.handler(request(path,"GET",undefined,undefined,token({exp:now/1000-1})))).status,401);
+  assert.equal((await f.handler(request(path.replace(encodeURIComponent(f.project.projectId),"project:foreign")))).status,404);
+  const wrongOrigin=request(path);wrongOrigin.headers.set("sec-fetch-site","cross-site");assert.equal((await f.handler(wrongOrigin)).status,403);
+  assert.equal((await f.handler(request(path+"?file=report.md"))).status,400);
+  assert.equal((await f.handler(request(path.replace("approval-document","unknown-document")))).status,404);
+  const hasBody=request(path);Object.defineProperty(hasBody,"body",{value:new ReadableStream()});assert.equal((await f.handler(hasBody)).status,400);
+  assert.equal((await f.traces()).length,reads,"invalid authority/routes perform no adapter access");
+  await f.db.query("UPDATE control_role_grants SET revoked_at='2026-09-04T12:00:00Z'");
+  assert.equal((await f.handler(request(path))).status,403);
+  await f.db.query("UPDATE control_role_grants SET revoked_at=NULL");
+  const unauthorizedReads=(await f.traces()).length;
+  for(const foreignScope of [{tenantId:"tenant:foreign",workspaceId:"workspace:web"},{tenantId:"tenant:web",workspaceId:"workspace:foreign"}]){
+    const foreignBridge=new ImproveControlRoomLoopServiceV1(f.client,foreignScope,{integrityKey:KEY,adapter:f.adapter},()=>now);
+    const foreignHandler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:foreignBridge,clock:()=>now});
+    assert.equal((await foreignHandler(request(path))).status,foreignScope.tenantId==="tenant:foreign"?403:404);
+  }
+  await f.db.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES('identity:b2b-other','tenant:web','human','Other fixture owner','test',$1,'active',$2,$2)`,[sha256Digest({provider:"test",subject:"b2b-other-fixture"}),new Date(now).toISOString()]);
+  const foreignRoot={tenant_id:"tenant:web",id:"request:b2b-foreign",project_id:f.project.projectId,owner_identity_id:"identity:b2b-other",idempotency_key:"b2b-foreign-document-0001",created_at:new Date(now).toISOString()};
+  await f.db.query(`INSERT INTO control_loop_improvement_requests(tenant_id,id,project_id,owner_identity_id,idempotency_key,created_at,record_digest,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [...Object.values(foreignRoot),sha256Digest(foreignRoot),hmacSha256Tag(KEY,{purpose:"loop-improvement-request/v1",record:foreignRoot})]);
+  assert.equal((await f.handler(request(`${f.base}/${encodeURIComponent(foreignRoot.id)}/approval-document`))).status,404);
+  const foreignLinkSession=(tx:DatabaseSession):DatabaseSession=>({query:async<T>(sql:string,params?:unknown[])=>{
+    const result=await tx.query<T>(sql,params);
+    if(sql.includes("FROM control_loop_improvement_run_links"))result.rows=result.rows.map(row=>({...row,id:"loop-link:foreign"}));
+    return result;
+  }});
+  const foreignLinkDb:DatabaseClient={query:f.client.query,
+    transaction:work=>f.client.transaction(tx=>work(foreignLinkSession(tx))),
+    transactionWithPreCommitCheck:(work,check)=>f.client.transactionWithPreCommitCheck(tx=>work(foreignLinkSession(tx)),check)};
+  const foreignLinkBridge=new ImproveControlRoomLoopServiceV1(foreignLinkDb,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter:f.adapter},()=>now);
+  const foreignLinkHandler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:foreignLinkBridge,clock:()=>now});
+  assert.equal((await foreignLinkHandler(request(path))).status,503,"unverified foreign link is refused before external access");
+  assert.equal((await f.traces()).length,unauthorizedReads,"foreign tenant/creator/link read no status or document");
+  const rotating={...f.adapter,readApprovalDocument:async(r:string,a:typeof seal)=>{
+    const text=await f.adapter.readApprovalDocument!(r,a);await f.edit(run,{revision:s.engine.revision+1});return text;
+  }};
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter:rotating},()=>now);
+  const handler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
+  assert.equal((await handler(request(path))).status,409,"changed gate/revision drops complete document");
+  assert.equal(await journal(),before);console.log("B2b document complete=262144 escaped_budget=1600000 invalid_utf8/hash/seal/path/race=refused writes=0");
+});
+
+for(const composition of ["hosted","local"] as const)test(`B2b ${composition} attention and document composition`,async t=>{
+  const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
+  const directory=join(f.configuration.runRoot,run);await mkdir(directory);
+  const text="SYNTHETIC complete sealed plan.";const approval={step:"plan" as const,inputVersion:1,head:"a".repeat(40),reportSha256:loopByteHashV1(text)};
+  await writeFile(join(directory,"report.md"),text);await writeFile(join(directory,"report.json"),JSON.stringify(approval));await f.edit(run,{state:"waiting",approval});
+  const canonical={observedAt:new Date(now).toISOString(),items:[],truncated:false};
+  for(const mode of ["loop","canonical","both","neither","failed-canonical"] as const){
+    let canonicalReads=0;
+    const options={clock:()=>now,database:{client:f.client,isAvailable:()=>true,close:async()=>{}},
+      ...(mode==="loop"||mode==="both"||mode==="failed-canonical"?{loopBridge:{integrityKey:KEY,adapter:f.adapter}}:{}),
+      ...(mode==="canonical"||mode==="both"||mode==="failed-canonical"?{actionInboxSource:{read:async()=>{canonicalReads++;if(mode==="failed-canonical")throw new Error("SYNTHETIC unavailable canonical source");return canonical;}}}:{})};
+    let call:(path:string)=>Promise<Response>,close:()=>Promise<void>;
+    if(composition==="hosted"){
+      const app=createPrivateWebProcess({...options,origin,...trust,tenantId:"tenant:web",workspaceId:"workspace:web",loadKeys:async()=>trust.keys});
+      call=path=>app.handle(request(path),()=>new Response("unused"));close=()=>app.close();
+    }else{
+      const localOrigin="http://127.0.0.1:59359",ownerCode="SYNTHETIC-b2b-composition-owner-code";
+      const app=createMacLocalWebProcessV1({...options,origin:localOrigin,workspaceId:"workspace:web",localOwnerSession:{schema:LOCAL_OWNER_SESSION_PROFILE_V1,
+        origin:localOrigin,tenantId:"tenant:web",provider:trust.issuer,subject:"test-owner",ownerCodeDigest:sha256Digest({ownerCode}),sessionSeconds:900}});
+      const response=await app.handle(new Request(localOrigin+"/api/v1/local-owner-session",{method:"POST",headers:{origin:localOrigin,"content-type":"application/json"},body:JSON.stringify({ownerCode})}),()=>new Response("unused"));
+      assert.equal(response.status,201);const cookie=response.headers.get("set-cookie")!;
+      call=path=>app.handle(new Request(localOrigin+path,{headers:{cookie}}),()=>new Response("unused"));close=()=>app.close();
+    }
+    try{
+      const attention=await call("/api/v1/needs-me/action-items");
+      assert.equal(attention.status,mode==="neither"?404:mode==="failed-canonical"?503:200);
+      if(attention.status===200){const body=await attention.json();assert.deepEqual(body.items,[]);
+        if(mode!=="canonical"){assert.equal(body.loop.state,"available");assert.equal(body.loop.items[0].kind,"approval");}
+        else assert.equal(body.loop,undefined);
+      }
+      if(mode==="loop"||mode==="both"){
+        const document=await call(`${f.base}/${encodeURIComponent(id)}/approval-document`);assert.equal(document.status,200);assert.equal((await document.json()).text,text);
+      }
+      assert.equal((await call("/api/v1/needs-me/action-items?extra=true")).status,400);
+      assert.equal(canonicalReads,mode==="canonical"||mode==="both"||mode==="failed-canonical"?1:0);
+    }finally{await close();}
+    // Each fixture composition owns an adapter lifecycle, so restore a fresh factory after close.
+    if(mode!=="failed-canonical"){
+      const replacement=createImproveControlRoomLoopAdapterV1(f.configuration);
+      Object.assign(f.adapter,{...replacement});t.after(()=>replacement.close());
+    }
+  }
+});

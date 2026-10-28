@@ -1,12 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopImprovementContractV1 } from "../../improve-control-room/v1/schemas";
 import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
+import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, unavailableLoopGate,
+  type LoopImprovementDecisionsV1 } from "./improve-control-room-loop-attention-wire";
 import { sha256Digest } from "../../security";
 
 export const loopByteHashV1 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -35,11 +37,17 @@ export const loopEngineStatusSchemaV1 = z.object({
     bindingDigest: digest, state: z.enum(["accepted", "waiting", "refused"]), evidenceDigest: digest,
     error: z.enum(["REFUSED", "INELIGIBLE"]).nullable() }).strict()).max(100),
 }).strict();
-export type LoopEngineStatusV1 = z.infer<typeof loopEngineStatusSchemaV1>;
+export type LoopEngineStatusV1 = z.infer<typeof loopEngineStatusSchemaV1> & { decisions?: LoopImprovementDecisionsV1 };
 export type LoopAdapterContractV1 = {
   lineage: LoopImprovementContractV1; schemaDigest: string;
   generateRunId(): string;
   decodeStatus(output: unknown): LoopEngineStatusV1;
+  /** Server-only reviewed A2 pins. Omission makes owner decisions unavailable.
+   * The engine decoder must accept null at this raw location and preserve other fields. */
+  decisionProjection?: { questionTextPath: readonly string[];
+    decodeGate(output: unknown, status: LoopEngineStatusV1): unknown };
+  locateApprovalDocument?: (run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>) => { report: string; sidecar: string };
+  decodeApprovalSidecar?: (output: unknown) => NonNullable<LoopEngineStatusV1["approval"]>;
   /** I2: supplied only by the reviewed A2 integration. It holds A2's mutation
    * lock, checks this exact binding, then invokes the fixed command under it. */
   atomicAdmission?: (binding: Readonly<LoopBridgeBindingV1>, invoke: () => Promise<LoopEngineStatusV1>) => Promise<LoopEngineStatusV1>;
@@ -62,6 +70,7 @@ export interface LoopAdapterV1 {
   confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   status(run: string): Promise<LoopEngineStatusV1>;
+  readApprovalDocument?(run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>): Promise<string>;
   stop(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   approve(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   answer(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
@@ -124,7 +133,23 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return run;
   };
   const decode = (output: string, run: string) => {
-    const status = loopEngineStatusSchemaV1.parse(c.contract.decodeStatus(envelopeSchema.parse(parseStrictJsonV1(output, { maxBytes: 65536 }))));
+    const envelope = envelopeSchema.parse(parseStrictJsonV1(output, { maxBytes: 65536 }));
+    const projection = c.contract.decisionProjection;
+    if (projection) {
+      const path = projection.questionTextPath;
+      if (!path.length || path.some(part => !part || ["__proto__", "prototype", "constructor"].includes(part))) throw unavailable();
+      let parent: unknown = envelope;
+      for (const part of path.slice(0, -1)) parent = parent && typeof parent === "object" ? (parent as Record<string, unknown>)[part] : undefined;
+      if (parent && typeof parent === "object") {
+        const key = path.at(-1)!, text = (parent as Record<string, unknown>)[key];
+        if (typeof text !== "string" || Buffer.byteLength(JSON.stringify(text), "utf8") > 12288)
+          (parent as Record<string, unknown>)[key] = null;
+      }
+    }
+    // The adapter closure owns this projection; decodeStatus still returns the unchanged engine schema.
+    const status: LoopEngineStatusV1 = loopEngineStatusSchemaV1.parse(c.contract.decodeStatus(envelope));
+    status.decisions = loopImprovementDecisionsSchemaV1.parse({ observedAt: new Date().toISOString(),
+      gate: ["stopped", "finished"].includes(status.state) ? null : projection ? projection.decodeGate(envelope, status) : unavailableLoopGate() });
     if (status.run.loopRunId !== run || status.run.adapterId !== c.adapterId || status.run.toolingRevision !== c.toolingRevision)
       throw unavailable();
     return status;
@@ -175,6 +200,46 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return operation;
   }
   const status = async (run: string) => (await execute(["status", runId(run), "--json"], run))!;
+  async function readApprovalDocument(run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>) {
+    if (closing || !c.contract.locateApprovalDocument || !c.contract.decodeApprovalSidecar) throw unavailable();
+    validate(); runId(run);
+    const expected = loopApprovalDescriptorSchemaV1.parse(descriptor);
+    // A run is one directory, never a locator-supplied path or another run's name.
+    if (run === "." || run === ".." || /[/\\]/u.test(run)) throw unavailable();
+    const directory = checkedPath(join(c.runRoot, run), c.runRoot, true);
+    const names = c.contract.locateApprovalDocument(run, expected);
+    async function bounded(name: string, cap: number) {
+      if (typeof name !== "string" || !name || isAbsolute(name) || name.split(/[/\\]/u).some(part => !part || part === "." || part === "..")
+        || credentialPath.test(name)) throw unavailable();
+      const path = checkedPath(resolve(directory, name), directory);
+      const before = lstatSync(path);
+      const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const opened = await handle.stat();
+        if (!opened.isFile() || before.dev !== opened.dev || before.ino !== opened.ino) throw unavailable();
+        const bytes = Buffer.alloc(cap + 1); let count = 0;
+        while (count < bytes.length) {
+          const read = await handle.read(bytes, count, bytes.length - count, null);
+          if (!read.bytesRead) break;
+          count += read.bytesRead;
+        }
+        const after = await handle.stat();
+        checkedPath(directory, c.runRoot, true); checkedPath(path, directory);
+        const final = lstatSync(path);
+        if (count > cap || opened.size !== count || after.dev !== final.dev || after.ino !== final.ino
+          || opened.size !== after.size || opened.mtimeMs !== after.mtimeMs || opened.ctimeMs !== after.ctimeMs) throw unavailable();
+        return bytes.subarray(0, count);
+      } finally { await handle.close(); }
+    }
+    const bytes = await bounded(names.report, 262144), sidecar = await bounded(names.sidecar, 65536);
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    const decoded = loopApprovalDescriptorSchemaV1.parse(c.contract.decodeApprovalSidecar(parseStrictJsonV1(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(sidecar), { maxBytes: 65536 })));
+    // B2b document binding: exact bytes and the complete current sealed descriptor.
+    if (loopByteHashV1(bytes) !== expected.reportSha256 || JSON.stringify(decoded) !== JSON.stringify(expected)) throw unavailable();
+    validate(); checkedPath(directory, c.runRoot, true);
+    return text;
+  }
   async function commandFile(commandId: string, name: string, text: string) {
     validate();
     if (!/^loop-command:[a-f0-9]{32}$/.test(commandId)) throw unavailable();
@@ -231,7 +296,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     reserveRun: () => runId(c.contract.generateRunId()), available,
     intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("intake", id, b, fence, text),
     confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("confirm", id, b, fence),
-    start: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("start", id, b, fence), status,
+    start: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("start", id, b, fence), status, readApprovalDocument,
     stop: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("stop", id, b, fence),
     approve: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("approve", id, b, fence),
     answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("answer", id, b, fence, text),

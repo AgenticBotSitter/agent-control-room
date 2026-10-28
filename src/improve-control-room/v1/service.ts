@@ -616,6 +616,27 @@ export class ImproveControlRoomDeskServiceV1 {
       return loopImprovementDeskViewSchemaV1.parse({ legacy: await this.#legacyDeskView(tx, projectId), loopRequests });
     }, { readOnly: true, repeatableReadSnapshot: true });
   }
+  /** Bounded, read-only owner discovery. Terminal exclusion requires the reviewed A2 evidence pin. */
+  async viewLoopAttentionRequests(identity: VerifiedWebIdentity) {
+    return this.#loopReadAuthority.authenticated(identity, async (tx, actor) => {
+      actor.require("projects.read", undefined, true);
+      const roots = (await tx.query<LoopRootRow>(`SELECT r.* FROM control_loop_improvement_requests r
+        JOIN projects p ON p.tenant_id=r.tenant_id AND p.id=r.project_id
+        JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+        WHERE r.tenant_id=$1 AND p.workspace_id=$2 AND r.owner_identity_id=$3
+          AND p.payload->'presentation'->>'templateId'=$4 AND h.lifecycle='active'
+        ORDER BY r.created_at DESC,r.id DESC LIMIT 11`,
+      [this.scope.tenantId, this.scope.workspaceId, actor.id, CONTROL_ROOM_SELF_PROJECT_TEMPLATE_V1.id])).rows;
+      const requests = [];
+      for (const root of roots.slice(0, 10)) {
+        actor.require("projects.read", root.project_id, true);
+        this.#verifyLoop("requests", root);
+        requests.push(await this.#loopRequestView(tx, root));
+      }
+      return { requests, truncated: roots.length > 10, observedAt: actor.now };
+    }, { readOnly: true });
+  }
+
   /** Server-only transaction-local B1a composition. The outer authority owns identity
    * serialization and the final freshness fence; nested B1a calls share this tx. */
   async loopBridgeTransaction<T>(identity: VerifiedWebIdentity, projectId: string, mutation: boolean,

@@ -502,14 +502,23 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(receipt, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me/action-items") {
-            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-            if (!actionInboxSource) throw new WebAccessError("not_found");
+            if (request.method !== "GET" || url.search || request.body) throw new WebAccessError("invalid_request");
+            if (!actionInboxSource && !loopBridge) throw new WebAccessError("not_found");
             const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
             });
-            const source = await actionInboxSource.read({ ...scope, state: "open" });
-            return Response.json(source, { headers: privateResponseHeaders });
+            const source = actionInboxSource ? await actionInboxSource.read({ ...scope, state: "open" })
+              : { observedAt: scope.now, items: [], truncated: false };
+            let loop;
+            if (loopBridge) {
+              try { loop = await loopBridge.readAttention(identity); }
+              catch (error) {
+                if (error instanceof WebAccessError && ["authentication_required", "access_denied"].includes(error.code)) throw error;
+                loop = { schemaVersion: 1, state: "unavailable", code: "unavailable" };
+              }
+            }
+            return Response.json({ ...source, ...(loop ? { loop } : {}) }, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/operator-surface") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

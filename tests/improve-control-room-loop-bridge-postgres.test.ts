@@ -10,12 +10,15 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
-import { canonicalJson, sha256Digest } from "../src/security";
+import { canonicalJson, sha256Digest, hmacSha256Tag } from "../src/security";
 import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1, type LoopBridgeBindingV1 } from "../src/improve-control-room/v1/schemas";
 import { loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { readPrivateWebSchemaDigest, privateWebSchemaDigest, verifyPrivateDatabase } from "../src/web/v1/private-database-preflight";
 import { digestReleaseSchemaRowsV1 } from "../src/updater/v1/pg/release-schema-digest.mjs";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
+import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 
 type Pg = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
@@ -61,7 +64,8 @@ function engine(){
   const adapter:LoopAdapterV1={adapterId:"adapter:synthetic",toolingRevision,schemaDigest:`sha256:${"b".repeat(64)}`,settingsText,contract,
     reserveRun:()=>`fixture-run-${randomBytes(16).toString("hex")}`,available:()=>true,
     intake:(id,b,text)=>apply("intake",id,b,text),confirmRequest:(id,b)=>apply("confirm",id,b),start:(id,b)=>apply("start",id,b),stop:(id,b)=>apply("stop",id,b),
-    approve:(id,b)=>apply("approve",id,b),answer:(id,b,text)=>apply("answer",id,b,text),status:async run=>{const s=runs.get(run);assert.ok(s);return structuredClone(s);},close:async()=>{}};
+    approve:(id,b)=>apply("approve",id,b),answer:(id,b,text)=>apply("answer",id,b,text),status:async run=>{const s=runs.get(run);assert.ok(s);return structuredClone({...s,decisions:{observedAt:new Date().toISOString(),gate:
+      ["stopped","finished"].includes(s.state)?null:s.question?{kind:"question",text:"SYNTHETIC saved owner question"}:s.approval?{kind:"approve"}:!s.confirmation?{kind:"confirm"}:null}});},close:async()=>{}};
   return {adapter,calls,runs};
 }
 function web(pg:Pg,adapter:LoopAdapterV1,database=pg.database){
@@ -202,5 +206,95 @@ test("B1b journal SQL types, body closure and schema-owner append-only refusals"
     for(const statement of ['UPDATE control_loop_improvement_commands SET created_at=created_at','DELETE FROM control_loop_improvement_commands','TRUNCATE control_loop_improvement_commands'])
       await assert.rejects(sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${statement};COMMIT;`,[],'migrator'),/append.only/iu);
     assert.equal((await sql(pg,"SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0].n,4);
+  }finally{await w.close();}
+}));
+
+test("B2b attention creator isolation", async()=>run(async pg=>{
+  await seed(pg);const e=engine(),w=web(pg,e.adapter);
+  try {
+    assert.deepEqual((await w.client.query("SELECT current_user,session_user")).rows,[{current_user:"control_room_web",session_user:"control_room_web"}]);
+    const ids:string[]=[];
+    for(let i=0;i<11;i++){
+      const receipt=await w.bridge.mutate(identity,project,null,"intake",{description:`SYNTHETIC saved request ${i}`},`b2b-pg-intake-${String(i).padStart(8,"0")}`);
+      assert.equal(receipt.state,"accepted");ids.push(receipt.requestId);
+    }
+    const foreign="identity:b2b-foreign";
+    await sql(pg,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+      VALUES($1,$2,'human','Other fixture owner','test',$3,'active',$4,$4)`,[foreign,scope.tenantId,sha256Digest({provider:"test",subject:foreign}),at]);
+    const addProject=async(id:string,workspace:string,lifecycle:string,self:boolean)=>{
+      await sql(pg,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at) SELECT $1,tenant_id,$2,adapter_id,$1,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,
+        jsonb_set(payload,'{presentation,templateId}',to_jsonb($3::text)),updated_at FROM projects WHERE id=$4`,[id,workspace,self?"control-room":"other",project]);
+      await sql(pg,"INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at) VALUES($1,$2,$3,1,now(),now())",[scope.tenantId,id,lifecycle]);
+    };
+    await sql(pg,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:b2b-other',$1,'Other fixture workspace')",[scope.tenantId]);
+    await addProject("project:b2b-other-workspace","workspace:b2b-other","active",true);
+    await addProject("project:b2b-inactive",scope.workspaceId,"archived",true);
+    await addProject("project:b2b-not-self",scope.workspaceId,"active",false);
+    const insertRoot=async(id:string,p:string,creator:string,tenant=scope.tenantId)=>{
+      const root={tenant_id:tenant,id,project_id:p,owner_identity_id:creator,idempotency_key:`b2b-root:${id}`,created_at:new Date().toISOString()};
+      const input={tenant_id:tenant,request_id:id,project_id:p,owner_identity_id:creator,version:1,description:"SYNTHETIC isolated request",settings_text:settingsText,
+        request_sha256:loopByteHashV1("SYNTHETIC isolated request"),settings_sha256:loopByteHashV1(settingsText),idempotency_key:`b2b-input:${id}`,created_at:root.created_at};
+      await sql(pg,`INSERT INTO control_loop_improvement_requests(tenant_id,id,project_id,owner_identity_id,idempotency_key,created_at,record_digest,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [tenant,id,p,creator,root.idempotency_key,root.created_at,sha256Digest(root),hmacSha256Tag(KEY,{purpose:"loop-improvement-request/v1",record:root})]);
+      await sql(pg,`INSERT INTO control_loop_improvement_inputs(tenant_id,request_id,project_id,owner_identity_id,version,description,settings_text,request_sha256,settings_sha256,idempotency_key,created_at,record_digest,auth_tag)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,Object.values(input).concat([sha256Digest(input),hmacSha256Tag(KEY,{purpose:"loop-improvement-input/v1",record:input})]));
+    };
+    await insertRoot("request:b2b-foreign",project,foreign);
+    await insertRoot("request:b2b-workspace","project:b2b-other-workspace",owner);
+    await insertRoot("request:b2b-inactive","project:b2b-inactive",owner);
+    await insertRoot("request:b2b-not-self","project:b2b-not-self",owner);
+    await sql(pg,"INSERT INTO tenants(id,display_name) VALUES('tenant:b2b-other','Other fixture tenant')");
+    await sql(pg,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:b2b-tenant','tenant:b2b-other','Other fixture tenant workspace')");
+    await sql(pg,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+      VALUES('adapter:b2b-other','tenant:b2b-other','control-room-manual','1.0.0','control_room_native','disabled','v1',30)`);
+    await sql(pg,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+      SELECT 'project:b2b-tenant','tenant:b2b-other','workspace:b2b-tenant','adapter:b2b-other','project:b2b-tenant',source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at FROM projects WHERE id=$1`,[project]);
+    await sql(pg,"INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at) VALUES('tenant:b2b-other','project:b2b-tenant','active',1,now(),now())");
+    await sql(pg,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+      VALUES('identity:b2b-tenant','tenant:b2b-other','human','Other tenant fixture owner','test',$1,'active',$2,$2)`,[sha256Digest({provider:"test",subject:"identity:b2b-tenant"}),at]);
+    await insertRoot("request:b2b-tenant","project:b2b-tenant","identity:b2b-tenant","tenant:b2b-other");
+    const rawExpected=(await sql(pg,"SELECT id FROM control_loop_improvement_requests WHERE tenant_id=$1 AND project_id=$2 AND owner_identity_id=$3 ORDER BY created_at DESC,id DESC LIMIT 11",[scope.tenantId,project,owner])).rows.map(r=>r.id);
+    const discovered=await w.desk.viewLoopAttentionRequests(identity);
+    assert.ok(!discovered.requests.some(r=>r.requestId==="request:b2b-foreign"),"B2b discovery excludes foreign creators before status");
+    assert.deepEqual(discovered.requests.map(r=>r.requestId),rawExpected.slice(0,10));assert.equal(discovered.truncated,true);
+    const originalStatus=e.adapter.status;let total=0,inflight=0,peak=0;
+    e.adapter.status=async run=>{total++;inflight++;peak=Math.max(peak,inflight);try{await new Promise(r=>setTimeout(r,15));return await originalStatus(run);}finally{inflight--;}};
+    const tables=["control_loop_improvement_requests","control_loop_improvement_inputs","control_loop_improvement_run_links","control_loop_improvement_authorizations","control_loop_improvement_commands","control_web_sessions"];
+    const snapshot=async()=>JSON.stringify(await Promise.all(tables.map(async table=>(await sql(pg,`SELECT * FROM ${table} ORDER BY 1,2`)).rows)));
+    let before=await snapshot();const schema=await readPrivateWebSchemaDigest(w.client);
+    // All newest ten can be terminal; the older question is uninspected until the terminal-evidence pin exists.
+    for(const run of e.runs.values())run.state="finished";
+    const older=(await sql(pg,"SELECT loop_run_id FROM control_loop_improvement_run_links WHERE request_id=$1",[rawExpected[10]])).rows[0]!.loop_run_id;
+    e.runs.get(older)!.state="waiting";e.runs.get(older)!.question={questionId:"question:older",inputVersion:1,reportSha256:"e".repeat(64),owner:true,changesInput:false};
+    const localOrigin="http://127.0.0.1:59369",ownerCode="SYNTHETIC-b2b-owner-code-long";
+    const app=createMacLocalWebProcessV1({origin:localOrigin,workspaceId:scope.workspaceId,database:{client:w.client,isAvailable:()=>true,close:async()=>{}},
+      localOwnerSession:{schema:LOCAL_OWNER_SESSION_PROFILE_V1,origin:localOrigin,tenantId:scope.tenantId,provider:"test",subject:owner,ownerCodeDigest:sha256Digest({ownerCode}),sessionSeconds:900},loopBridge:{integrityKey:KEY,adapter:e.adapter}});
+    const signIn=await app.handle(new Request(localOrigin+"/api/v1/local-owner-session",{method:"POST",headers:{origin:localOrigin,"content-type":"application/json"},body:JSON.stringify({ownerCode})}),()=>new Response("unused"));
+    assert.equal(signIn.status,201);const cookie=signIn.headers.get("set-cookie")!;
+    // Establish only this disposable local session before the read-only snapshot.
+    await app.handle(new Request(localOrigin+`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/desk`,{headers:{cookie}}),()=>new Response("unused"));
+    before=await snapshot();
+    let attention: Awaited<ReturnType<ImproveControlRoomLoopServiceV1["readAttention"]>>;
+    try{
+      const response=await app.handle(new Request(localOrigin+"/api/v1/needs-me/action-items",{headers:{cookie}}),()=>new Response("unused"));
+      assert.equal(response.status,200);attention=(await response.json()).loop;
+    }finally{await app.close();}
+    assert.equal(attention.state,"available");
+    if(attention.state==="available"){assert.equal(attention.items.length,0);assert.equal(attention.truncated,true);}
+    assert.equal(total,10);assert.ok(peak<=4&&peak>1);assert.equal(inflight,0);
+    assert.equal(await snapshot(),before);assert.equal(await readPrivateWebSchemaDigest(w.client),schema);
+    // An unlinked root counts once, without a status call, with both nullable bindings.
+    const pending=await w.desk.saveLoopDraft(identity,project,{description:"SYNTHETIC pending intake",settingsText},"b2b-pending-intake-0001");
+    total=0;const pendingAttention=await w.bridge.readAttention(identity);
+    assert.equal(pendingAttention.state,"available");if(pendingAttention.state==="available"){
+      const row=pendingAttention.items.find(i=>i.requestId===pending.request.requestId)!;assert.ok(row);assert.equal(row.kind,"blocked");
+      assert.equal(row.runLinkId,null);assert.equal(row.engineRevision,null);assert.deepEqual(row.identity,{kind:"blocked",code:"UNAVAILABLE"});
+    }
+    assert.equal(total,9);
+    // Current root signatures are verified; tampering cannot silently hide an eligible root.
+    await sql(pg,"ALTER TABLE control_loop_improvement_requests DISABLE TRIGGER USER");
+    await sql(pg,"UPDATE control_loop_improvement_requests SET auth_tag=$1 WHERE id=$2",[`hmac-sha256:${"f".repeat(64)}`,pending.request.requestId]);
+    await assert.rejects(w.desk.viewLoopAttentionRequests(identity),/integrity/);
+    console.log(`B2b PostgreSQL discovery newest=11 returned=10 status_calls=10 peak=${peak} lower_bound=0+ pending_status_calls=9 no_writes=true`);
   }finally{await w.close();}
 }));

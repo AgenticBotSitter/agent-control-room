@@ -5,6 +5,7 @@ import { improvementRequestDraftSchemaV1,
   type ImprovementDeskViewV1 } from "../../src/improve-control-room/v1/schemas";
 import { clearsLoopAuthority, loopImprovementBrowserClient } from "../../src/web/v1/improve-control-room-loop-browser-client";
 import { usePolledRead } from "./use-polled-read";
+import { ImprovementIntakeForm } from "./improvement-intake-form";
 import { ImprovementRunPanel } from "./improvement-run-panel";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
@@ -91,9 +92,12 @@ function BoundImproveWorkspace({ projectId }: { projectId: string }) {
     <ProjectNavigation projectId={projectId} current="improvements" presentation={{ schema: "control-room.project-presentation/v1",
       templateId: "control-room", templateDisplayName: "Control Room", displayName: "Control Room",
       enabledModules: [], availableModules: [], templateRemoved: false, source: "saved" }} />
-    {desk?.kind === "loop" && <ImprovementRunPanel projectId={projectId} requests={desk.desk.loopRequests} fresh={deskFresh} />}
+    {desk?.kind === "loop" && <ImprovementRunPanel projectId={projectId} requests={desk.desk.loopRequests} fresh={deskFresh} refreshDesk={() => setGeneration(value => value + 1)} />}
     {desk?.kind === "legacy" && <p className="private-notice">Loop work is not configured.</p>}
     {!!read.error && <p role="alert">Could not refresh the saved desk.</p>}
+    {desk?.kind === "loop" && <ImprovementIntakeForm key={projectId} projectId={projectId} enabled={!!read.value && !read.error} onSaved={requestId => {
+      window.location.hash = `request=${encodeURIComponent(requestId)}`; setGeneration(value => value + 1);
+    }} />}
     <h2>Legacy pipelines</h2>
     {data.state === "loading" ? <p role="status">Loading saved improvement desk…</p>
       : data.state === "unavailable" ? <section className="private-panel"><h2>Desk unavailable</h2>

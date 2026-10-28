@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { LoopImprovementRequestViewV1, LoopImprovementStatusV1 } from "../../src/improve-control-room/v1/schemas";
 import { clearsLoopAuthority, loopImprovementBrowserClient as client, LoopReadError,
   type FrozenLoopAction } from "../../src/web/v1/improve-control-room-loop-browser-client";
+import { ImprovementDecisions } from "./improvement-decisions";
+import type { LoopDecisionStatusV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { usePolledRead } from "./use-polled-read";
 
 const binding = (row: LoopImprovementRequestViewV1) => JSON.stringify([row.projectId, row.requestId,
@@ -13,8 +15,8 @@ const matches = (row: LoopImprovementRequestViewV1, status: LoopImprovementStatu
   && status.localVersion === row.currentVersion && status.description === row.description
   && status.requestSha256 === row.requestSha256 && status.settingsSha256 === row.settingsSha256;
 
-export function ImprovementRunPanel({ projectId, requests, fresh }: {
-  projectId: string; requests: LoopImprovementRequestViewV1[]; fresh: boolean;
+export function ImprovementRunPanel({ projectId, requests, fresh, refreshDesk }: {
+  projectId: string; requests: LoopImprovementRequestViewV1[]; fresh: boolean; refreshDesk?(): void;
 }) {
   const [selection, setSelection] = useState<string>();
   useEffect(() => {
@@ -34,16 +36,16 @@ export function ImprovementRunPanel({ projectId, requests, fresh }: {
         onClick={() => setSelection(row.requestId)}>{row.description}</a>
     </li>)}</ul> : <p>No saved loop requests.</p>}
     {selection !== undefined && !selected ? <p role="alert">This saved request is unavailable.</p>
-      : selected ? <SelectedRun key={binding(selected)} row={selected} fresh={fresh} focus={selection !== undefined} /> : null}
+      : selected ? <SelectedRun key={binding(selected)} row={selected} fresh={fresh} focus={selection !== undefined} refreshDesk={refreshDesk} /> : null}
   </section>;
 }
 
-function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1; fresh: boolean; focus: boolean }) {
+function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementRequestViewV1; fresh: boolean; focus: boolean; refreshDesk?(): void }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (focus) { heading.current?.focus(); heading.current?.scrollIntoView?.({ block: "nearest" }); } }, [focus]);
   const [epoch, setEpoch] = useState(0), writeEpoch = useRef(0), revision = useRef(-1);
   const verifiedRead = useRef(false);
-  const [safe, setSafe] = useState<LoopImprovementStatusV1>();
+  const [safe, setSafe] = useState<LoopImprovementStatusV1 & { snapshot: LoopDecisionStatusV1 }>();
   const safeRef = useRef<LoopImprovementStatusV1 | undefined>(undefined);
   const actions = useRef<{ start?: FrozenLoopAction; stop?: FrozenLoopAction }>({});
   const latch = useRef({ start: false, stop: false });
@@ -127,6 +129,10 @@ function SelectedRun({ row, fresh, focus }: { row: LoopImprovementRequestViewV1;
       {snapshot && <p>Last checked <time dateTime={snapshot.observedAt}>{snapshot.observedAt}</time></p>}
       {(read.error || !fresh) && <p role="alert">Could not refresh saved progress.</p>}
       {read.checking && <p role="status">Checking saved progress…</p>}
+      {snapshot?.snapshot && <ImprovementDecisions status={snapshot.snapshot} fresh={statusFresh && verifiedRead.current} isFresh={() => verifiedRead.current && writeEpoch.current === epoch && statusFresh} writeEpoch={epoch}
+        invalidate={() => { verifiedRead.current = false; writeEpoch.current += 1; setEpoch(writeEpoch.current); read.clear(); }}
+        clearAuthority={() => { clearProtected(); read.clear(); writeEpoch.current += 1; setEpoch(writeEpoch.current); }}
+        refresh={() => { read.refresh(); refreshDesk?.(); }} />}
       <button type="button" disabled={!startGate()} onClick={() => void submit("start")}>Start confirmed work</button>{" "}
       <button type="button" disabled={!stopTarget || pending.stop || !!actions.current.stop} onClick={() => void submit("stop")}>Stop this run</button>{" "}
       <button type="button" onClick={read.refresh}>Refresh status</button>

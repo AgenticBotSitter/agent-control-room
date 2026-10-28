@@ -45,8 +45,8 @@ export function PrivateHeader() {
         goes to /needs-me, where the whole list lives. */}
     <section className={`private-panel private-attention-box private-shared-attention${attention.state === "ready" && attention.value.items.length ? " has-items" : ""}`} aria-label="Needs attention">
       <a href="/needs-me"><strong>Needs attention</strong>{attention.state === "ready"
-        ? <span className="private-nav-badge">{attention.value.items.length}{!attention.value.complete ? "+" : ""}
-          <span className="private-sr-only"> needing you</span></span> : null}</a>
+        ? <span className="private-nav-badge">{attention.value.unknown ? "?" : `${attention.value.items.length}${!attention.value.complete ? "+" : ""}`}
+          <span className="private-sr-only"> needing you</span></span> : <span className="private-nav-badge">?</span>}</a>
       {attention.state === "loading" ? <p role="status">Checking saved attention…</p>
         : attention.state === "unavailable" ? <><p role="alert">Attention could not be checked. No all-clear is assumed.</p>
           <button type="button" onClick={() => void refreshSharedTaskAttention()}>Read attention again</button></>
@@ -55,7 +55,9 @@ export function PrivateHeader() {
             <strong>{item.title}</strong> <a href={item.href ?? "/needs-me"}>{item.href ? item.actionLabel : "Open Action Inbox"}</a>
           </li>)}</ul> : attention.value.complete ? <p>All clear.</p> : null}
       {attention.state === "ready" && attention.value.checking ? <p role="status">Checking saved attention…</p>
-        : attention.state === "ready" && !attention.value.complete ? <p role="alert">Some attention could not be checked completely. Open Action Inbox; no all-clear is assumed.</p> : null}
+        : attention.state === "ready" && !attention.value.complete ? <p role="alert">Attention could not be fully checked. Open Action Inbox; no all-clear is assumed.</p> : null}
+      {attention.state === "ready" && attention.value.unknown ? <p role="alert">Previously checked items are unconfirmed; the current count is unknown.</p> : null}
+      {attention.state === "ready" && attention.value.uninspected ? <p role="alert">Older saved requests were not checked.</p> : null}
       {runtime.mode === "local" ? <OwnerWebPushSettings attentionOnly /> : null}
     </section>
     <button type="button" ref={toggle} className="private-navigation-toggle" aria-expanded={menuOpen}
@@ -70,7 +72,8 @@ export function PrivateHeader() {
       })).map(item => {
         const href = item.headerHref ?? item.href;
         return <a key={item.key} href={href} aria-current={isCurrent(pathname, href) ? "page" : undefined}>
-        {item.headerTitle ?? item.title}{item.optional ? <span className="private-optional">Optional</span> : null}
+        {item.headerTitle ?? item.title}{href === "/needs-me" ? <span className="private-nav-badge" aria-label="Attention count">{attention.state === "ready"
+          ? attention.value.unknown ? "?" : `${attention.value.items.length}${attention.value.complete ? "" : "+"}` : "?"}</span> : null}{item.optional ? <span className="private-optional">Optional</span> : null}
       </a>;
       })}
       {/* Sign out is an account action, not the `/session` page. Keep the

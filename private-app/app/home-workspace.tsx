@@ -136,6 +136,7 @@ export function HomeDashboard({ data, operationsMode }:
   // operator items are announced too. A re-check in flight marks the snapshot
   // incomplete for a moment; that is not news, so it is not announced.
   const attentionChecking = data.attention.state === "ready" && "checking" in data.attention.value && !!data.attention.value.checking;
+  const attentionUnknown = data.attention.state === "ready" && "unknown" in data.attention.value && !!data.attention.value.unknown;
   const attentionSignature = data.attention.state === "ready" && !attentionChecking
     ? JSON.stringify(attentionItems.map(item => [item.key, item.kind]).sort())
     : undefined;
@@ -143,15 +144,20 @@ export function HomeDashboard({ data, operationsMode }:
   const attentionTruncated = !attentionComplete;
   useEffect(() => {
     if (attentionSignature === undefined) return;
-    const key = `${attentionSignature}:${attentionTruncated}`;
+    const key = `${attentionSignature}:${attentionTruncated}:${attentionUnknown}`;
     if (previousAttention.current === key) return;
+    if (attentionUnknown) {
+      previousAttention.current = key;
+      setAttentionAnnouncement({ key, text: "Attention could not be fully checked. The current count is unknown." });
+      return;
+    }
     const initialEmpty = previousAttention.current === undefined && attentionCount === 0;
     previousAttention.current = key;
     if (initialEmpty) return;
     setAttentionAnnouncement({ key, text: attentionCount
       ? `${attentionCount}${attentionTruncated ? " or more" : ""} ${attentionCount === 1 ? "item needs" : "items need"} your attention. Open Action Inbox to review.`
-      : "Nothing needs you on the checked attention page." });
-  }, [attentionSignature, attentionCount, attentionTruncated]);
+      : attentionTruncated ? "Attention could not be fully checked." : "Nothing needs you on the checked attention page." });
+  }, [attentionSignature, attentionCount, attentionTruncated, attentionUnknown]);
   // What the installation's mode adds to the box, or nothing. Four states, all
   // named, none of them silence (R4U-08):
   //   ready + running              -> nothing, so a healthy page stays healthy;
@@ -183,8 +189,8 @@ export function HomeDashboard({ data, operationsMode }:
       {/* "N+" whenever the snapshot is not complete (a next cursor on a page, a
           truncated or failed source, or a re-check in flight), the same rule as
           the header badge: never an exact number the owner could under-read. */}
-      {data.attention.state === "ready" && data.connections.state === "ready"
-        ? <PrivateCount value={pagedCount(attentionItems.length + workerWarnings, attentionComplete ? null : "incomplete")} /> : null}</PanelHeading>
+      {data.attention.state !== "loading" && data.connections.state === "ready"
+        ? <PrivateCount value={data.attention.state !== "ready" || attentionUnknown ? "?" : pagedCount(attentionItems.length + workerWarnings, attentionComplete ? null : "incomplete")} /> : null}</PanelHeading>
       <p className="private-sr-only" data-field="attention-announcement" aria-live="polite" aria-atomic="true">
         {attentionAnnouncement && <span key={attentionAnnouncement.key}>{attentionAnnouncement.text}</span>}
       </p>
@@ -196,7 +202,9 @@ export function HomeDashboard({ data, operationsMode }:
             <a className="private-action-link" href={item.href ?? "/needs-me"}>{item.href ? item.actionLabel : "Open Action Inbox"}</a></li>)}</ul>
             : attentionComplete && !hasWarning && data.connections.state === "ready" ? <EmptyState>{ownerStatusLabels.attention.clear}</EmptyState> : null}
       {data.attention.state === "ready" && "checking" in data.attention.value && data.attention.value.checking ? <LoadingState>Checking saved attention…</LoadingState>
-        : data.attention.state === "ready" && !attentionComplete ? <p role="alert">Attention could not be checked completely. No all-clear is assumed.</p> : null}
+        : data.attention.state === "ready" && !attentionComplete ? <p role="alert">Attention could not be fully checked. No all-clear is assumed.</p> : null}
+      {attentionUnknown ? <p role="alert">Previously checked items are unconfirmed; the current count is unknown.</p> : null}
+      {data.attention.state === "ready" && "uninspected" in data.attention.value && data.attention.value.uninspected ? <p role="alert">Older saved requests were not checked.</p> : null}
       {workerWarnings > 0 ? <p role="alert"><strong>Worker warning:</strong> {workerWarnings} worker{workerWarnings === 1 ? " is" : "s are"} offline or unavailable. <a href="/workers">Check workers</a></p> : null}
       {data.connections.state === "unavailable" && data.attention.state === "ready" ? <Unavailable>Worker warnings are unavailable.</Unavailable>
         : data.connections.state === "loading" && data.attention.state === "ready" ? <LoadingState>Checking worker warnings…</LoadingState> : null}

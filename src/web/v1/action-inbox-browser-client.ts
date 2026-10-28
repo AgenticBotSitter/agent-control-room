@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { actionInboxItemSchemaV1 } from "../../operator-surfaces/v1/validators";
 
+import { readBrowserJson } from "./browser-json";
+import { loopAttentionSourceSchemaV1 } from "./improve-control-room-loop-attention-wire";
+
 const actionInboxSourceSchema = z.object({
   observedAt: z.string().datetime(),
   items: z.array(actionInboxItemSchemaV1).max(500),
   truncated: z.boolean(),
+  loop: loopAttentionSourceSchemaV1.optional(),
 }).strict();
 
 export type ActionInboxSource = z.infer<typeof actionInboxSourceSchema>;
@@ -16,7 +20,7 @@ export type ActionInboxSourceState =
 export async function readActionInboxSource(fetcher: typeof fetch = fetch): Promise<ActionInboxSourceState> {
   try {
     const response = await fetcher("/api/v1/needs-me/action-items", {
-      method: "GET", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10_000),
+      method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10_000),
     });
     if (response.status === 401) return { state: "unavailable", code: "authentication_required" };
     if (response.status === 403) return { state: "unavailable", code: "access_denied" };
@@ -26,7 +30,7 @@ export async function readActionInboxSource(fetcher: typeof fetch = fetch): Prom
     // failed read, so callers must not turn it into a standing "could not check".
     if (response.status === 404) return { state: "unavailable", code: "not_configured" };
     if (!response.ok) return { state: "unavailable", code: "request_failed" };
-    const parsed = actionInboxSourceSchema.safeParse(await response.json());
+    const parsed = actionInboxSourceSchema.safeParse(await readBrowserJson(response));
     return parsed.success ? { state: "available", source: parsed.data }
       : { state: "unavailable", code: "invalid_response" };
   } catch {

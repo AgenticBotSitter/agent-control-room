@@ -767,13 +767,21 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/action-items") {
-        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-        if (!options.actionInboxSource) throw new WebAccessError("not_found");
+        if (request.method !== "GET" || url.search || request.body) throw new WebAccessError("invalid_request");
+        if (!options.actionInboxSource && !loopBridge) throw new WebAccessError("not_found");
         const owner = await tasks.authorizeActionInbox(identity);
         const now = new Date(clock()).toISOString();
-        const source = await options.actionInboxSource.read({ tenantId: profile.tenantId,
-          actorId: owner.actorId, grantedAt: owner.grantedAt, now });
-        return Response.json(source, { headers: privateResponseHeaders });
+        const source = options.actionInboxSource ? await options.actionInboxSource.read({ tenantId: profile.tenantId,
+          actorId: owner.actorId, grantedAt: owner.grantedAt, now }) : { observedAt: now, items: [], truncated: false };
+        let loop;
+        if (loopBridge) {
+          try { loop = await loopBridge.readAttention(identity); }
+          catch (error) {
+            if (error instanceof WebAccessError && ["authentication_required", "access_denied"].includes(error.code)) throw error;
+            loop = { schemaVersion: 1, state: "unavailable", code: "unavailable" };
+          }
+        }
+        return Response.json({ ...source, ...(loop ? { loop } : {}) }, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/pipelines") {
         if (request.method !== "GET" || url.search || !workBatches) throw new WebAccessError("not_found");
