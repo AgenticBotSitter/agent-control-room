@@ -49,11 +49,11 @@ export function PrivateHeader() {
         ? <span className="private-nav-badge">{attention.value.unknown ? "?" : `${attention.value.items.length}${!attention.value.complete ? "+" : ""}`}
           <span className="private-sr-only"> needing you</span></span> : <span className="private-nav-badge">?</span>}</a>
       {attention.state === "loading" ? <p role="status">Checking saved attention…</p>
-        : attention.state === "unavailable" ? <><p role="alert">Attention could not be checked. No all-clear is assumed.</p>
-          <button type="button" onClick={() => void refreshSharedTaskAttention()}>Read attention again</button></>
+        : attention.state === "unavailable" ? <><p role="alert">{attention.accessLost ? "Attention could not be checked. Please sign in again. No all-clear is assumed." : "Attention could not be checked. No all-clear is assumed."}</p>
+          <button type="button" style={{ minHeight: 44, minWidth: 44 }} onClick={() => void refreshSharedTaskAttention(true)}>Read attention again</button></>
           : attention.value.items.length ? <ul>{attention.value.items.slice(0, 3).map((item, index) => <li key={item.key}
               className={index === 0 ? "private-shared-attention-lead" : "private-shared-attention-extra"}>
-            <strong>{item.title}</strong> <a href={item.href ?? "/needs-me"}>{item.href ? item.actionLabel : "Open Action Inbox"}</a>
+            <strong>{item.title}</strong> <a href={item.href ?? "/needs-me"} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, minWidth: 44 }}>{item.href ? item.actionLabel : "Open Action Inbox"}</a>
           </li>)}</ul> : attention.value.complete ? <p>All clear.</p> : null}
       {attention.state === "ready" && attention.value.checking ? <p role="status">Checking saved attention…</p>
         : attention.state === "ready" && !attention.value.complete ? <p role="alert">Some attention could not be checked completely. Open Action Inbox; no all-clear is assumed.</p> : null}

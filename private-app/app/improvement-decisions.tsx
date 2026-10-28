@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { currentLoopGate, loopDocumentBinding, documentMatchesStatus, type LoopDecisionStatusV1,
   type LoopApprovalDocumentV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopDecisionsBrowserClient as client } from "../../src/web/v1/improve-control-room-loop-decisions-browser-client";
@@ -18,6 +18,7 @@ export function ImprovementDecisions({ status, fresh, isFresh, writeEpoch, inval
   status: LoopDecisionStatusV1; fresh: boolean; isFresh(): boolean; writeEpoch: number; invalidate(): void; refresh(): void; clearAuthority(): void;
 }) {
   const gate = currentLoopGate(status), identity = gateIdentity(status), documentKey = loopDocumentBinding(status);
+  const approvalId = useId(), approvalButton = useRef<HTMLButtonElement>(null);
   const [answer, setAnswer] = useState(""), [pending, setPending] = useState(false), [retry, setRetry] = useState(false), [notice, setNotice] = useState("");
   const [document, setDocument] = useState<LoopApprovalDocumentV1>(), [documentError, setDocumentError] = useState(false);
   const frozen = useRef<{ identity: string; operation: Operation; action: FrozenLoopAction } | undefined>(undefined);
@@ -77,7 +78,7 @@ export function ImprovementDecisions({ status, fresh, isFresh, writeEpoch, inval
       else { setRetry(true); setNotice("The decision could not be confirmed. Check saved status before retrying."); }
     } finally {
       latch.current = false;
-      if (mounted.current) { setPending(false); refresh(); void refreshSharedTaskAttention(); heading.current?.focus(); }
+      if (mounted.current) { setPending(false); refresh(); void refreshSharedTaskAttention(true); heading.current?.focus(); }
     }
   }
   if (!gate) return <p role="status">{status.display.confirmationCurrent ? "Saved confirmation is current." : "No current owner decision."}</p>;
@@ -88,14 +89,21 @@ export function ImprovementDecisions({ status, fresh, isFresh, writeEpoch, inval
     {gate.kind === "blocked" ? <p role="alert">{gate.message}</p> : gate.kind === "confirm" ? <>
       {status.request.description !== status.engine.draft && <><p>Saved input (draft adoption pending):</p><p style={textStyle}>{status.request.description}</p></>}
       <p>Exact draft · Version {status.request.currentVersion}</p><p style={textStyle}>{status.engine.draft}</p>
-      <p>Request SHA-256: {status.engine.requestSha256}</p><p>Settings SHA-256: {status.engine.settingsSha256}</p>
+      <details><summary>Request details</summary><p>Request SHA-256: {status.engine.requestSha256}</p><p>Settings SHA-256: {status.engine.settingsSha256}</p></details>
       <button style={{ minHeight: 44 }} disabled={!enabled || !!frozen.current} onClick={() => void submit("confirm")}>Confirm this exact request</button>
     </> : gate.kind === "approve" ? <>
-      <p>{status.engine.approval!.step} · Input {String(status.engine.approval!.inputVersion)}</p>
-      <p>Head: {status.engine.approval!.head}</p><p>Report SHA-256: {status.engine.approval!.reportSha256}</p>
+      <p>Review the complete saved {status.engine.approval!.step} before approving.</p>
+      <details><summary>Document details</summary>
+        <p>{status.engine.approval!.step} · Input {String(status.engine.approval!.inputVersion)}</p>
+        <p>Head: {status.engine.approval!.head}</p><p>Report SHA-256: {status.engine.approval!.reportSha256}</p>
+      </details>
+      <a className="private-action-link" href={`#${approvalId}`} onClick={event => {
+        event.preventDefault(); approvalButton.current?.focus({ preventScroll: true });
+        approvalButton.current?.scrollIntoView({ block: "center", behavior: "instant" });
+      }}>Jump to approval</a>
       {document && documentMatchesStatus(document, status) ? <pre style={textStyle}>{document.text}</pre>
         : <p role={documentError ? "alert" : "status"}>{documentError ? "The complete sealed document is unavailable. Refresh saved status." : "Loading the complete sealed document…"}</p>}
-      <button style={{ minHeight: 44 }} disabled={!enabled || !!frozen.current} onClick={() => void submit("approve")}>Approve this {status.engine.approval!.step}</button>
+      <button id={approvalId} ref={approvalButton} style={{ minHeight: 44 }} disabled={!enabled || !!frozen.current} onClick={() => void submit("approve")}>Approve this {status.engine.approval!.step}</button>
     </> : <>
       <p style={textStyle}>{gate.text}</p>
       {status.engine.question?.changesInput ? <p role="alert">This question changes inputs. Ask the lead to pause the run and renew the affected confirmation and plan/spec approvals.</p>

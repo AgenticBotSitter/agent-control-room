@@ -9,7 +9,7 @@ import { buildActionInbox, type ActionInboxDisplayItem } from "../../src/web/v1/
 
 export type SharedAttentionValue = { items: ActionInboxDisplayItem[]; complete: boolean; checking?: boolean; unknown?: boolean; uninspected?: boolean };
 export type SharedInboxData = { tasks: TaskAttentionSourceState; operator: ActionInboxSourceState };
-type Attention = { state: "loading" } | { state: "unavailable"; data?: SharedInboxData } | { state: "ready"; value: SharedAttentionValue; data: SharedInboxData };
+type Attention = { state: "loading" } | { state: "unavailable"; accessLost?: boolean; data?: SharedInboxData } | { state: "ready"; value: SharedAttentionValue; data: SharedInboxData };
 const loading: Attention = { state: "loading" };
 let snapshot: Attention = loading;
 let previousPages: TaskAttentionPage[] = [];
@@ -18,11 +18,14 @@ const operatorAccessLost = (code: string) => ["authentication_required", "access
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let request: AbortController | undefined;
+let refreshAgain = false;
 
 /** One visible-page read shared by Home and every header. Never carry a
  * previous installation's snapshot across the last subscriber's unmount. */
-export async function refreshSharedTaskAttention() {
-  if (!listeners.size || document.hidden || request) return;
+export async function refreshSharedTaskAttention(afterCurrent = false) {
+  if (!listeners.size || document.hidden) return;
+  // Keep one follow-up read when a status change arrives during a shared read.
+  if (request) { if (afterCurrent) refreshAgain = true; return; }
   clearTimeout(timer);
   const controller = new AbortController();
   request = controller;
@@ -36,7 +39,7 @@ export async function refreshSharedTaskAttention() {
     });
     const clearAccess = (code: "authentication_required" | "access_denied") => {
       if (controller.signal.aborted) return;
-      previousPages = []; previousSource = undefined; snapshot = { state: "unavailable", data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
+      previousPages = []; previousSource = undefined; snapshot = { state: "unavailable", accessLost: true, data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
       for (const notify of listeners) notify();
     };
     const taskRead = readAllTaskAttention(transport, controller.signal).then(tasks => {
@@ -54,7 +57,7 @@ export async function refreshSharedTaskAttention() {
       if (accessLost) {
         previousPages = []; previousSource = undefined;
         const code = tasks.state === "unavailable" && tasks.code === "access_denied" || operator.state === "unavailable" && operator.code === "access_denied" ? "access_denied" : "authentication_required";
-        snapshot = { state: "unavailable", data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
+        snapshot = { state: "unavailable", accessLost: true, data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
       } else {
         previousPages = tasks.state === "available" ? tasks.pages
           : tasks.state === "unavailable" ? retainTaskAttentionPages(previousPages, tasks.pages) : previousPages;
@@ -84,7 +87,8 @@ export async function refreshSharedTaskAttention() {
     if (request === controller) {
       request = undefined;
       for (const notify of listeners) notify();
-      if (listeners.size) timer = setTimeout(onVisible, 30_000);
+      if (listeners.size && refreshAgain) { refreshAgain = false; queueMicrotask(onVisible); }
+      else if (listeners.size) timer = setTimeout(onVisible, 30_000);
     }
   }
 }
@@ -100,7 +104,7 @@ function subscribe(notify: () => void) {
     listeners.delete(notify);
     if (!listeners.size) {
       clearTimeout(timer); request?.abort(); request = undefined; snapshot = loading;
-      previousPages = []; previousSource = undefined;
+      previousPages = []; previousSource = undefined; refreshAgain = false;
       window.removeEventListener("focus", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
     }

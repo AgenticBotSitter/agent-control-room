@@ -71,10 +71,10 @@ async function fixture() {
 }
 
 const emptyTaskPage={items:[],nextCursor:null,examined:0,observedAt:new Date(now).toISOString(),startsWork:false,planningSource:"configured",deliverySource:"configured",sources:{ordinary:"included",ideas:"not_configured"}};
-for(const width of [360,1280])test(`B2b phone owner returns to exact waiting decision at ${width}px`,async({browser})=>{
+for(const width of [360,1280])for(const colorScheme of ["light","dark"] as const)test(`B2b phone owner returns to exact waiting decision at ${width}px ${colorScheme}`,async({browser})=>{
   const f=await fixture();let context:BrowserContext|undefined,loseAnswer=true,releaseAnswer:()=>void=()=>{};
   const unexpected:string[]=[],description="  Improve café 🧭\nKeep exact pasted text.  ";
-  let failLoop=false,truncated=false;
+  let failLoop=false,truncated=false,accessStatus=0;
   try{
     const bundle=await build({write:false,bundle:true,platform:"browser",format:"iife",jsx:"automatic",stdin:{resolveDir:process.cwd(),loader:"tsx",contents:`
       import React from 'react'; import {createRoot} from 'react-dom/client';
@@ -86,14 +86,14 @@ for(const width of [360,1280])test(`B2b phone owner returns to exact waiting dec
       import {useSharedTaskAttention} from './private-app/app/shared-task-attention';
       function Home(){const attention=useSharedTaskAttention(true);return <><PrivateHeader/><main><HomeDashboard data={{activity:{state:'unavailable'},projects:{state:'unavailable'},
         connections:{state:'ready',value:{source:'local',value:{taskWorkersStarted:true,workers:[],projectSections:[]}}},
-        attention:attention.state==='ready'?{state:'ready',value:attention.value}:{state:attention.state}}}/></main></>}
+        attention}}/></main></>}
       const path=window.location.pathname;
       createRoot(document.getElementById('root')).render(<LocalRuntimeContextV1.Provider value={{mode:'hosted'}}>{path==='/'?<Home/>:path==='/needs-me'?<><PrivateHeader/><PrivateActionInbox/></>:<PrivateImproveControlRoomWorkspace projectId=${JSON.stringify(f.project.projectId)}/>}</LocalRuntimeContextV1.Provider>);
     `},plugins:[{name:"unexercised-legacy-crypto",setup(builder){builder.onResolve({filter:/^node:crypto$/},()=>({path:"node:crypto",namespace:"unexercised"}));builder.onLoad({filter:/.*/,namespace:"unexercised"},()=>({contents:'export function createHash(){throw new Error("unexercised_legacy_crypto")}',loader:"js"}));}}]});
     const css=(await Promise.all(["node_modules/tailwindcss/preflight.css","styles/control-room.css","private-app/app/private.css"].map(p=>readFile(p,"utf8")))).join("\n");
     const projectPath=`/projects/${encodeURIComponent(f.project.projectId)}/improvements`;
     async function open(path=projectPath){
-      context=await browser.newContext({viewport:{width,height:850},isMobile:width<500,hasTouch:width<500});
+      context=await browser.newContext({viewport:{width,height:850},colorScheme,isMobile:width<500,hasTouch:width<500});
       await context.addInitScript(()=>Object.defineProperty(navigator,"onLine",{get:()=>true}));
       await context.route("**/*",async route=>{
         const req=route.request(),url=new URL(req.url());
@@ -102,6 +102,7 @@ for(const width of [360,1280])test(`B2b phone owner returns to exact waiting dec
         if(req.isNavigationRequest()){await route.fulfill({contentType:"text/html",body:`<meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><div id="root"></div><script src="/bundle.js"></script>`});return;}
         if(url.pathname==="/api/v1/needs-me/tasks"){await route.fulfill({json:emptyTaskPage});return;}
         if(url.pathname==="/api/v1/needs-me/action-items"){
+          if(accessStatus){await route.fulfill({status:accessStatus,json:{}});return;}
           if(failLoop){await route.fulfill({status:503,json:{}});return;}
           const loop=await f.bridge.readAttention(f.identity);if(loop.state==="available"&&truncated)loop.truncated=true;
           await route.fulfill({json:{observedAt:new Date(now).toISOString(),items:[],truncated:false,loop}});return;
@@ -131,26 +132,45 @@ for(const width of [360,1280])test(`B2b phone owner returns to exact waiting dec
     let page=await open();await expect(page.getByRole("button",{name:"Prepare request",exact:true})).toBeVisible();expect(f.posts).toHaveLength(0);
     await page.getByLabel("What would you like improved?").fill(description);await page.getByRole("button",{name:"Prepare request",exact:true}).click();
     await expect(page.getByRole("button",{name:"Confirm this exact request"})).toBeEnabled();
+    const requestDetails=page.getByText("Request details",{exact:true});
+    await expect(page.locator('[aria-label="Saved owner decision"] details')).not.toHaveAttribute("open","");
+    await requestDetails.click();await expect(page.getByText(/^Request SHA-256:/)).toBeVisible();await requestDetails.click();
     expect(JSON.parse(f.posts[0]!.body)).toEqual({description});expect(f.calls).toEqual(["intake"]);
     const id=(await f.desk.viewLoopDesk(f.identity,f.project.projectId)).loopRequests[0]!.requestId,savedPath=projectPath+`#request=${encodeURIComponent(id)}`;
     await page.goto("https://product.invalid/");await expect(page.locator('[aria-labelledby="home-attention"]')).toContainText("Confirm saved request");await badge(page,"1");
+    const headerAction=page.locator('header [aria-label="Needs attention"]').getByRole("link",{name:"Open request",exact:true});
+    expect(await headerAction.evaluate(e=>e.getBoundingClientRect().height),"header attention action is a 44px target").toBeGreaterThanOrEqual(44);
     await page.locator('[aria-labelledby="home-attention"]').getByRole("link",{name:"Open request",exact:true}).click();
     await expect(page).toHaveURL("https://product.invalid"+savedPath);await expect(page.getByRole("heading",{name:"Saved owner decision",exact:true})).toBeFocused();
     expect(await page.locator('[aria-label="Saved owner decision"]').textContent()).toContain(description);
     const confirm=page.getByRole("button",{name:"Confirm this exact request"});expect(await confirm.evaluate(e=>e.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
     await confirm.focus();await page.keyboard.press("Enter");await expect(page.getByRole("button",{name:"Start confirmed work",exact:true})).toBeEnabled();
     expect(f.calls).toEqual(["intake","confirm"]);
-    await page.getByRole("button",{name:"Start confirmed work",exact:true}).click();await expect(page.getByText("running",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Start confirmed work",exact:true}).click();await expect(page.getByText("Work is running",{exact:true})).toBeVisible();
     for(const step of ["plan","spec"] as const){
       const text=`Complete sealed ${step}.\r\n`+"All saved evidence and constraints.\n".repeat(3000);f.document(text);
       f.edit({state:"waiting",revision:step==="plan"?6:8,approval:{step,inputVersion:"SYNTHETIC:1",head:"a".repeat(40),reportSha256:loopByteHashV1(text)}});
       await page.getByRole("button",{name:"Refresh status",exact:true}).click();await expect(page.locator('[aria-label="Saved owner decision"] pre')).toHaveText(text);
-      const approve=page.getByRole("button",{name:`Approve this ${step}`,exact:true});await expect(approve).toBeEnabled();await approve.click();
-      await expect(page.getByText("running",{exact:true})).toBeVisible();
+      await expect(page.locator('header [aria-label="Needs attention"]')).toContainText(`Review saved ${step}`);
+      await badge(page,"1");
+      await expect(page.getByText("Waiting for your approval",{exact:true})).toBeVisible();
+      const details=page.locator('[aria-label="Saved owner decision"] details');await expect(details).not.toHaveAttribute("open","");
+      await details.locator('summary').click();await expect(details).toContainText("a".repeat(40));await expect(details).toContainText(loopByteHashV1(text));await details.locator('summary').click();
+      await page.screenshot({path:test.info().outputPath(`waiting-${step}.png`)});
+      const approve=page.getByRole("button",{name:`Approve this ${step}`,exact:true});await expect(approve).toBeEnabled();
+      const before=f.posts.length,url=page.url();await page.getByRole("link",{name:"Jump to approval",exact:true}).click();
+      await expect(approve).toBeFocused();expect(page.url()).toBe(url);expect(f.posts).toHaveLength(before);
+      expect(await approve.evaluate(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})).toBe(true);
+      await approve.click();
+      await expect(page.getByText("Work is running",{exact:true})).toBeVisible();
     }
     const question={questionId:"question:owner",inputVersion:"SYNTHETIC:1",reportSha256:"e".repeat(64),owner:true,changesInput:false};
     f.edit({state:"waiting",revision:10,approval:null,question});await page.getByRole("button",{name:"Refresh status",exact:true}).click();
-    await expect(page.getByLabel("Your answer")).toBeVisible();await context!.close();context=undefined;
+    await expect(page.getByLabel("Your answer")).toBeVisible();
+    await expect(page.locator('header [aria-label="Needs attention"]')).toContainText("Answer saved question");await badge(page,"1");
+    const headerAnswer=page.locator('header [aria-label="Needs attention"]').getByRole("link",{name:"Answer question",exact:true});
+    expect(await headerAnswer.evaluate(e=>e.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await context!.close();context=undefined;
     page=await open("/needs-me");await expect(page.getByRole("link",{name:"Answer question",exact:true}).last()).toBeVisible();await badge(page,"1");
     await page.getByRole("link",{name:"Answer question",exact:true}).last().click();await expect(page).toHaveURL("https://product.invalid"+savedPath);
     expect(await page.locator('[aria-label="Saved owner decision"]').textContent()).toContain("Choose the saved scope.\r\nKeep café?");
@@ -174,6 +194,15 @@ for(const width of [360,1280])test(`B2b phone owner returns to exact waiting dec
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     truncated=true;await page.goto("https://product.invalid/");await expect(page.getByText("Older saved requests were not checked.").first()).toBeVisible();await badge(page,"0+");
     failLoop=true;await page.reload();await expect(page.getByText(/Attention could not be checked/).first()).toBeVisible();await badge(page,"?");
+    const reread=page.getByRole("button",{name:"Read attention again",exact:true});
+    expect(await reread.evaluate(e=>e.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    failLoop=false;
+    for(const code of [401,403]){
+      accessStatus=code;await page.reload();
+      await expect(page.locator('header [aria-label="Needs attention"]')).toContainText("sign in again");
+      await expect(page.locator('[aria-labelledby="home-attention"]')).toContainText("sign in again");await badge(page,"?");
+      await expect(page.getByText("All clear.",{exact:true})).toHaveCount(0);
+    }
     expect(unexpected).toEqual([]);expect(f.calls.filter(c=>c==="start")).toHaveLength(1);
   }finally{releaseAnswer();await context?.close();await f.close();}
 });

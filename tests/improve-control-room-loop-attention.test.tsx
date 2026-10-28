@@ -221,7 +221,7 @@ function SharedSurfaces(){
   const attention=useSharedTaskAttention(true);
   return <LocalRuntimeContextV1.Provider value={{mode:"hosted"}}><PrivateHeader />
     <HomeDashboard data={{activity:{state:"unavailable"},projects:{state:"unavailable"},connections:{state:"ready",value:{source:"local",value:{taskWorkersStarted:true,workers:[],projectSections:[]}}},
-      attention:attention.state==="ready"?{state:"ready",value:attention.value}:{state:attention.state}}}/>
+      attention}}/>
     {attention.state!=="loading"&&attention.data&&<ActionInboxPanel data={attention.data} items={attention.state==="ready"?attention.value.items:undefined}/>}
   </LocalRuntimeContextV1.Provider>;
 }
@@ -404,4 +404,109 @@ test("B2b unconfirmed sealed wait never becomes an empty attention scan",async()
       assert.equal(attention.items[0]!.localVersion,2,"attention binds the latest status input, not an earlier discovery snapshot");
     }
   }finally{await f.close();}
+});
+
+
+test("UI fix status refresh updates shared attention without focus or polling",async()=>{
+  const f=await fixture(),id=await f.intake();await f.confirm(id);
+  let attentionReads=0;
+  const transport:typeof fetch=async(p,o)=>{
+    if(String(p).includes("/needs-me/tasks"))return Response.json(emptyTaskPage);
+    if(String(p).includes("action-items"))attentionReads++;
+    return f.transport(p,o);
+  };
+  const m=await mount(f.project.projectId,transport,"",<><SharedSurfaces/><PrivateImproveControlRoomWorkspace projectId={f.project.projectId}/></>);
+  try{
+    await settle();assert.match(m.text(),/All clear/);
+    const reads=attentionReads;
+    f.edit({state:"waiting",revision:8,question});
+    await act(async()=>m.button("Refresh status").click());await settle();
+    assert.match(m.text(),/Your answer/);
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1","header updates with the saved waiting decision");
+    assert.equal(m.dom.window.document.querySelector('[aria-labelledby="home-attention"] .private-count')?.textContent,"1");
+    assert.doesNotMatch(m.text(),/All clear/);
+    assert.ok(attentionReads>reads,"explicit status refresh reads shared attention");
+    const before=attentionReads;
+    await act(async()=>m.button("Refresh status").click());await settle();
+    assert.ok(attentionReads>before,"unchanged explicit status refresh still checks attention");
+    assert.equal(f.posts.length,0,"reads never start work");
+  }finally{await m.close();await f.close();}
+});
+
+for(const status of [401,403])test(`UI fix ${status} says sign in again on header and Home`,async()=>{
+  let mode="ready";
+  const fetcher:typeof fetch=async p=>String(p).includes("action-items")?mode==="ready"?Response.json({observedAt:new Date(now).toISOString(),items:[],truncated:false,
+    loop:{schemaVersion:1,state:"available",items:[loopRow()],truncated:false}}):Response.json({}, {status:mode==="access"?status:503})
+    :String(p).includes("/needs-me/tasks")?Response.json(emptyTaskPage):Response.json({}, {status:404});
+  const m=await mount("project:alpha",fetcher,"",<SharedSurfaces/>);
+  try{
+    await settle();mode="access";await act(async()=>{await refreshSharedTaskAttention();});await settle();
+    for(const selector of ['header [aria-label="Needs attention"]','[aria-labelledby="home-attention"]'])
+      assert.match(m.dom.window.document.querySelector(selector)!.textContent!,/sign in again/i,"access loss gives the owner a next action");
+    assert.doesNotMatch(m.text(),/Saved protected request|All clear/);
+    mode="unknown";await act(async()=>{await refreshSharedTaskAttention();});await settle();
+    assert.doesNotMatch(m.text(),/sign in again/i,"ordinary unknown is distinct from access loss");
+  }finally{await m.close();}
+});
+
+test("UI fix plain status and exact technical details behind disclosures",async()=>{
+  const f=await fixture(),id=await f.intake();
+  const m=await mount(f.project.projectId,f.transport);
+  try{
+    await settle();
+    const confirm=m.dom.window.document.querySelector('[aria-label="Saved owner decision"]')!;
+    const hashes=confirm.querySelector('details');assert.ok(hashes,"confirmation hashes are collapsed");assert.equal(hashes.open,false);
+    assert.ok(hashes.textContent!.includes(f.snapshot().settingsSha256));
+    await act(async()=>m.button("Confirm this exact request").click());await settle();
+    const text="Complete sealed plan.\n".repeat(120);f.document(text);
+    f.edit({state:"waiting",revision:8,approval:{step:"plan",inputVersion:"SYNTHETIC:1",head:"a".repeat(40),reportSha256:loopByteHashV1(text)}});
+    await act(async()=>m.button("Refresh status").click());await settle();
+    assert.match(m.text(),/Waiting for your approval/);
+    assert.doesNotMatch(m.text(),/waiting approval|Unavailable|Last checked \d{4}-\d{2}-\d{2}T/);
+    const decision=m.dom.window.document.querySelector('[aria-label="Saved owner decision"]')!;
+    const details=decision.querySelector('details')!;assert.ok(details,"approval binding has a details toggle");assert.equal(details.open,false);
+    assert.ok(details.textContent!.includes("a".repeat(40)));assert.ok(details.textContent!.includes(loopByteHashV1(text)));
+    assert.equal(decision.querySelector('pre')!.textContent,text,"the entire sealed document stays before approval");
+    const jump=[...decision.querySelectorAll('a')].find(a=>a.textContent==="Jump to approval");assert.ok(jump,"long documents offer a jump to the action");
+    assert.equal(jump.getAttribute('href'),`#${m.button("Approve this plan").id}`);
+    assert.ok(decision.querySelector('pre')!.compareDocumentPosition(m.button("Approve this plan"))&m.dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+  }finally{await m.close();await f.close();}
+});
+
+
+test("UI fix long sealed document offers a jump to approval",async()=>{
+  const f=await fixture(),id=await f.intake();await f.confirm(id);
+  const text="Complete sealed document.\n".repeat(120);f.document(text);
+  f.edit({state:"waiting",approval:{step:"plan",inputVersion:"SYNTHETIC:1",head:"a".repeat(40),reportSha256:loopByteHashV1(text)}});
+  const m=await mount(f.project.projectId,f.transport);
+  try{
+    await settle();assert.equal(m.dom.window.document.querySelector('pre')!.textContent,text);
+    const jump=[...m.dom.window.document.querySelectorAll('a')].find(a=>a.textContent==="Jump to approval");
+    assert.ok(jump,"complete long documents have a jump to the approval control");
+    assert.equal(jump.getAttribute('href'),`#${m.button("Approve this plan").id}`);
+    assert.equal(f.posts.length,0,"jump availability never submits approval");
+  }finally{await m.close();await f.close();}
+});
+
+
+test("UI fix attention refresh during an in-flight read is coalesced and kept",async()=>{
+  let rows=false,hold=false,reads=0,release=()=>{};
+  const fetcher:typeof fetch=async p=>{
+    if(String(p).includes("/needs-me/tasks"))return Response.json(emptyTaskPage);
+    if(!String(p).includes("action-items"))return Response.json({}, {status:404});
+    reads++;const items=rows?[loopRow()]:[];
+    if(hold){hold=false;await new Promise<void>(r=>{release=r;});}
+    return Response.json({observedAt:new Date(now).toISOString(),items:[],truncated:false,loop:{schemaVersion:1,state:"available",items,truncated:false}});
+  };
+  const m=await mount("project:alpha",fetcher,"",<SharedSurfaces/>);
+  try{
+    await settle();hold=true;
+    let pending:Promise<void>;
+    await act(async()=>{pending=refreshSharedTaskAttention();});await settle();
+    rows=true;
+    await act(async()=>{await Promise.all([refreshSharedTaskAttention(true),refreshSharedTaskAttention(true),refreshSharedTaskAttention(true)]);});
+    await act(async()=>{release();await pending!;});await settle();
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1","a pending refresh cannot swallow the new decision");
+    assert.equal(reads,3,"one initial read, one held read and one coalesced fresh read");
+  }finally{release();await m.close();}
 });

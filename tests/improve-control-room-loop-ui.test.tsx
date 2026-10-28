@@ -97,8 +97,8 @@ test("B2a confirmed run Start progress Stop", async () => {
     assert.ok(m.button("Start confirmed work"), "B2a confirmed-run Start control exists");
     assert.equal(m.button("Start confirmed work").disabled, false);
     await act(async () => m.button("Start confirmed work").click()); await settle();
-    assert.match(m.text(), /running/); assert.match(m.text(), /Requested model: Unavailable/); assert.match(m.text(), /Observed model: Unverified/);
-    assert.match(m.text(), /Repairs: Unavailable/); assert.ok(m.text().includes(description));
+    assert.match(m.text(), /Work is running/); assert.match(m.text(), /Requested model: Not reported yet/); assert.match(m.text(), /Observed model: Not verified yet/);
+    assert.match(m.text(), /Repairs: Not reported yet/); assert.ok(m.text().includes(description));
     assert.deepEqual(JSON.parse(wire.posts[0]!.body), { expectedVersion: 1, runLinkId: f.link, expectedRevision: 4 });
     assert.match(wire.posts[0]!.key, /^loop-start:/);
     await act(async () => m.button("Stop this run").click()); await settle();
@@ -374,7 +374,7 @@ for (const error of ["REFUSED", "INELIGIBLE"] as const) test(`B2a F1 refused Sta
     assert.match(display.attention!.message, error === "INELIGIBLE" ? /ineligible/i : /refused/i);
     const m = await mount(f.project.projectId, wire.fetcher);
     try {
-      await settle(); assert.match(m.text(), /blocked/);
+      await settle(); assert.match(m.text(), /Work needs attention/);
       assert.ok(m.text().includes(display.attention!.message), "B2a owner sees why Start is unavailable");
       assert.equal(m.button("Start confirmed work").disabled, true);
       assert.equal(wire.posts.length, 0);
@@ -435,7 +435,7 @@ test("B2a F2 confirmation is unavailable before accepted status", async () => {
   try {
     await settle(); assert.ok(m.button("Start confirmed work"));
     assert.doesNotMatch(m.text(), /Confirmation needed/, "B2a unread confirmation is not a missing confirmation");
-    assert.match(m.text(), /Confirmation: Unavailable/);
+    assert.match(m.text(), /Confirmation could not be checked/);
     release(); await settle(); assert.match(m.text(), /Confirmation current/);
   } finally { release(); await m.close(); await f.close(); }
 });

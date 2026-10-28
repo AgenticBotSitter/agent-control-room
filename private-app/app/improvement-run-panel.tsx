@@ -6,6 +6,7 @@ import { clearsLoopAuthority, loopImprovementBrowserClient as client, LoopReadEr
   type FrozenLoopAction } from "../../src/web/v1/improve-control-room-loop-browser-client";
 import { ImprovementDecisions } from "./improvement-decisions";
 import type { LoopDecisionStatusV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
+import { refreshSharedTaskAttention } from "./shared-task-attention";
 import { usePolledRead } from "./use-polled-read";
 
 const binding = (row: LoopImprovementRequestViewV1) => JSON.stringify([row.projectId, row.requestId,
@@ -68,7 +69,12 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       revision.current = status.engineRevision;
       return status;
     },
-    onAccept: status => { verifiedRead.current = true; safeRef.current = status; setSafe(status); },
+    onAccept: status => {
+      const previous = safeRef.current;
+      verifiedRead.current = true; safeRef.current = status; setSafe(status);
+      if (!previous || previous.engineRevision !== status.engineRevision || previous.state !== status.state)
+        void refreshSharedTaskAttention(true);
+    },
     onFailure: error => { verifiedRead.current = false; if (clearsLoopAuthority(error)) clearProtected(); },
   });
   const current = read.value;
@@ -111,22 +117,27 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       }
     } finally {
       latch.current[operation] = false;
-      if (mounted.current) { setPending(value => ({ ...value, [operation]: false })); read.refresh(); }
+      if (mounted.current) { setPending(value => ({ ...value, [operation]: false })); read.refresh(); void refreshSharedTaskAttention(true); }
     }
   }
   return <div>
     <h3 ref={heading} tabIndex={-1}>Saved request</h3>
     <p style={{ whiteSpace: "pre-wrap" }}>{row.description}</p>
     {!row.runLink ? <p>Confirmation and a linked run are needed before Start.</p> : <>
-      <p role="status" aria-live="polite">{snapshot?.state === "candidate_ready" ? "Finished candidate" : snapshot?.state === "stopped" ? "Stopped"
-        : snapshot?.state?.replaceAll("_", " ") ?? "Status unavailable"}</p>
-      <p>{!snapshot ? "Confirmation: Unavailable" : snapshot.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
-      <p>Step: {snapshot?.progress?.stepId ?? "Unavailable"} · Role: {snapshot?.progress?.role ?? "Unavailable"}</p>
-      <p>Requested model: {snapshot?.progress?.requestedModel ?? "Unavailable"}</p>
-      <p>Observed model: {snapshot?.progress?.identityVerified ? snapshot.progress.observedModel ?? "Unavailable" : "Unverified"}</p>
-      <p>Attempt: {snapshot?.progress?.attempt ?? "Unavailable"} · Repairs: {snapshot?.progress?.repairCount ?? "Unavailable"}</p>
+      <p role="status" aria-live="polite">{snapshot?.state ? {
+        ready: "Ready to start", running: "Work is running", waiting_approval: "Waiting for your approval",
+        waiting_question: "Waiting for an answer", waiting_owner: "Waiting for your decision",
+        blocked: "Work needs attention", stopped: "Stopped", candidate_ready: "Finished candidate",
+      }[snapshot.state] : "Saved progress could not be checked"}</p>
+      <p>{!snapshot ? "Confirmation could not be checked" : snapshot.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
+      <details><summary>Run details</summary>
+        <p>Step: {snapshot?.progress?.stepId ?? "Not reported yet"} · Role: {snapshot?.progress?.role ?? "Not reported yet"}</p>
+        <p>Requested model: {snapshot?.progress?.requestedModel ?? "Not reported yet"}</p>
+        <p>Observed model: {snapshot?.progress?.identityVerified ? snapshot.progress.observedModel ?? "Not reported yet" : "Not verified yet"}</p>
+        <p>Attempt: {snapshot?.progress?.attempt ?? "Not reported yet"} · Repairs: {snapshot?.progress?.repairCount ?? "Not reported yet"}</p>
+      </details>
       {snapshot?.attention && <div className="private-notice"><p>{snapshot.attention.message}</p><p>{snapshot.attention.nextAction}</p></div>}
-      {snapshot && <p>Last checked <time dateTime={snapshot.observedAt}>{snapshot.observedAt}</time></p>}
+      {snapshot && <p>Last checked <time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></p>}
       {(read.error || !fresh) && <p role="alert">Could not refresh saved progress.</p>}
       {read.checking && <p role="status">Checking saved progress…</p>}
       {snapshot?.snapshot && <ImprovementDecisions status={snapshot.snapshot} fresh={statusFresh && verifiedRead.current} isFresh={() => verifiedRead.current && writeEpoch.current === epoch && statusFresh} writeEpoch={epoch}
@@ -135,7 +146,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
         refresh={() => { read.refresh(); refreshDesk?.(); }} />}
       <button type="button" disabled={!startGate()} onClick={() => void submit("start")}>Start confirmed work</button>{" "}
       <button type="button" disabled={!stopTarget || pending.stop || !!actions.current.stop} onClick={() => void submit("stop")}>Stop this run</button>{" "}
-      <button type="button" onClick={read.refresh}>Refresh status</button>
+      <button type="button" onClick={() => { read.refresh(); void refreshSharedTaskAttention(true); }}>Refresh status</button>
       {notices.start && <p role={retry.start ? "alert" : "status"}>{notices.start}</p>}
       {notices.stop && snapshot?.state !== "stopped" && <p role={retry.stop ? "alert" : "status"}>{notices.stop}</p>}
       {retry.start && <button type="button" disabled={!statusFresh || !verifiedRead.current || pending.start || snapshot?.state === "stopped"} onClick={() => void submit("start", true)}>Retry this exact Start</button>}

@@ -45,7 +45,7 @@ export function MacLocalWorkerEvidence({ status }: { status?: LocalStatus }) {
   </section>;
 }
 
-type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
+type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable"; accessLost?: boolean };
 
 /** The installation's operations mode as the attention box needs it (R4U-08).
  *
@@ -195,7 +195,7 @@ export function HomeDashboard({ data, operationsMode }:
         {attentionAnnouncement && <span key={attentionAnnouncement.key}>{attentionAnnouncement.text}</span>}
       </p>
       {data.attention.state === "loading" ? <LoadingState>Loading saved attention items…</LoadingState>
-        : data.attention.state === "unavailable" ? <Unavailable>Attention items are unavailable.</Unavailable>
+        : data.attention.state === "unavailable" ? <Unavailable>{data.attention.accessLost ? "Please sign in again to check attention." : "Attention items are unavailable."}</Unavailable>
           : attentionItems.length ? <ul className="private-dashboard-list private-attention-list">{attentionItems.slice(0, 5).map(item => <li key={item.key}>
             <StateChip label={item.kind} tone="bad" state="attention" />
             <p className="private-attention-what">{item.title}</p>
