@@ -337,7 +337,7 @@ test("R6 Home uses canonical rows, refuses incomplete all-clear and distinguishe
   }
 });
 
-test("R6 canonical access loss removes only that source; incomplete task traversal retains cached context", { timeout: 15000 }, async () => {
+test("R6 partial refresh retains context until access loss clears all protected sources", { timeout: 15000 }, async () => {
   let mode = "healthy";
   await mounted(() => h(LocalRuntimeContextV1.Provider, { value: { mode: "hosted" } }, h(PrivateHeader)), async (path: any) => {
     if (String(path).includes("action-items")) return mode === "denied" ? new Response(null, { status: 403 }) : Response.json(source([batch]));
@@ -350,8 +350,8 @@ test("R6 canonical access loss removes only that source; incomplete task travers
     assert.match(dom.window.document.body.textContent!, /Review proposed work batch/);
     mode = "denied";
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
-    assert.match(dom.window.document.body.textContent!, /Attention 0/);
-    assert.doesNotMatch(dom.window.document.body.textContent!, /Review proposed work batch|All clear/);
+    assert.doesNotMatch(dom.window.document.body.textContent!, /Attention 0|Review proposed work batch|All clear/);
+    assert.match(dom.window.document.body.textContent!, /could not be checked/);
   });
 });
 
