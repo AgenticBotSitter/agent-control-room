@@ -25,6 +25,9 @@ import { privateRequestBodyLimit } from "../src/web/v1/private-request-budgets";
 import { taskFixture } from "./helpers/web-task";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
+import { setTimeout as delay } from "node:timers/promises";
+import { validatePrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
 
 const KEY = new Uint8Array(32).fill(64);
 const settingsText = JSON.stringify({ project: { host_adapter: "local-loop" }, fixture: "SYNTHETIC" });
@@ -743,6 +746,99 @@ test("B1b sweep database errors reach the transaction while verification failure
   assert.deepEqual(diagnostic.mock.calls.map(call => call.arguments), [
     ['loop_command_sweep_verification_failed'], ['loop_command_sweep_verification_failed'],
   ], 'only verification failures produce the fixed row diagnostic');
+});
+
+test("B1b slow restart sweep stays outside the Start freshness window", async t => {
+  const f = await fixture(t), scope = { tenantId: 'tenant:web', workspaceId: 'workspace:web' };
+  // A previous process committed finished intakes but crashed before removing their folders.
+  const crashed = new ImproveControlRoomLoopServiceV1(f.client, scope,
+    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+  const retained = [];
+  for (let i = 0; i < 2; i++) retained.push(await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, `b1b-slow-sweep-retain-${i}`));
+  const id = await f.intake(), s = await f.confirm(id);
+  // Real advancing clock anchored at the fixture instant; each release is slow.
+  const started = Date.now(), clock = () => now + (Date.now() - started);
+  let releases = 0;
+  const restarted = new ImproveControlRoomLoopServiceV1(f.client, scope, { integrityKey: KEY, admissionFreshnessMs: 2000,
+    adapter: { ...f.adapter, releaseCommandFiles: async commandId => { releases++; await delay(800); return f.adapter.releaseCommandFiles!(commandId); } } }, clock);
+  const body = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId };
+  const result = await restarted.mutate(f.identity, f.project.projectId, id, 'start', body, 'b1b-slow-sweep-start-0001');
+  assert.equal((await f.traces()).filter(e => e.op === 'start').length, 1, 'Start dispatches exactly once despite a slow sweep');
+  assert.equal(result.state, 'accepted'); assert.equal(result.replayed, false);
+  assert.ok(releases >= 3, 'the slow sweep still ran after dispatch');
+  for (const receipt of retained) await assert.rejects(readFile(join(f.configuration.workRoot, receipt.commandId.replace(':', '-'), 'source.txt')), { code: 'ENOENT' });
+  assert.deepEqual(await restarted.mutate(f.identity, f.project.projectId, id, 'start', body, 'b1b-slow-sweep-start-0001'), { ...result, replayed: true });
+  assert.equal((await f.traces()).filter(e => e.op === 'start').length, 1);
+});
+
+test("B1b restart sweep releases one bounded page per call and resumes", async t => {
+  const f = await fixture(t), scope = { tenantId: 'tenant:web', workspaceId: 'workspace:web' };
+  const crashed = new ImproveControlRoomLoopServiceV1(f.client, scope,
+    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+  const retained = new Set<string>();
+  for (let i = 0; i < 17; i++) retained.add((await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, `b1b-sweep-page-${i}`)).commandId);
+  const released: string[] = [];
+  let sweeps = 0, calls = 0;
+  const trace = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    if (sql.includes('SELECT c.* FROM control_loop_improvement_commands')) sweeps++;
+    return tx.query<T>(sql, params);
+  } });
+  const client: DatabaseClient = { query: (sql, params) => f.client.query(sql, params),
+    transaction: work => f.client.transaction(tx => work(trace(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(trace(tx)), check) };
+  const restarted = new ImproveControlRoomLoopServiceV1(client, scope, { integrityKey: KEY,
+    adapter: { ...f.adapter, releaseCommandFiles: async commandId => { calls++; if (retained.has(commandId)) released.push(commandId); return f.adapter.releaseCommandFiles!(commandId); } } }, () => now);
+  const trigger = async (i: number) => assert.equal((await restarted.mutate(f.identity, f.project.projectId, null, 'intake', { description }, `b1b-sweep-page-trigger-${i}`)).state, 'accepted');
+  // Each trigger releases its own folder once; the first sweep page holds 16 of the 18 finished intakes.
+  await trigger(0);
+  assert.equal(calls, 1 + 16, 'sweep releases at most one bounded page per call');
+  assert.ok(released.length < retained.size);
+  await trigger(1);
+  assert.equal(released.length, retained.size);
+  assert.deepEqual(new Set(released), retained, 'the next call resumes after the previous page');
+  const resumed = calls;
+  await trigger(2);
+  assert.equal(calls, resumed + 1); assert.equal(sweeps, 2, 'an exhausted sweep is not repeated');
+  assert.deepEqual(await readdir(f.configuration.workRoot), []);
+});
+
+test("B1b canStop after a refused Start agrees with the Stop route", async t => {
+  const f = await fixture(t), id = await f.intake(), s = await f.confirm(id), suffix = encodeURIComponent(id);
+  await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: "start", code: 3 }));
+  const refused = await f.bridge.mutate(f.identity, f.project.projectId, id, 'start',
+    { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId }, 'b1b-refused-start-0001');
+  assert.equal(refused.state, 'refused');
+  await rm(join(f.root, "refusal.json"));
+  const after = await f.get(id);
+  assert.equal(after.display.startState, 'not_started'); assert.equal(after.display.canStart, false);
+  assert.equal(after.display.canStop, true, 'canStop agrees with Stop after a refused Start');
+  const stop = await f.post(`${suffix}/stop`, { runLinkId: s.request.runLink!.runLinkId });
+  assert.equal(stop.status, 202); assert.equal((await stop.json() as { state: string }).state, 'accepted');
+  assert.equal((await f.get(id)).display.canStop, false);
+});
+
+test("B1b split loop and legacy pipeline integrity keys refuse every composition", async t => {
+  const f = await fixture(t), other = new Uint8Array(32).fill(65);
+  const hosted = (workBatchKey: Uint8Array) => createPrivateWebProcess({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
+    loadKeys: async () => trust.keys, clock: () => now, database: { client: f.client, close: async () => {} },
+    loopBridge: { integrityKey: KEY, adapter: f.adapter }, workBatches: { integrityKey: workBatchKey } });
+  assert.throws(() => hosted(other), /invalid_private_app_config/, 'hosted composition refuses a split loop key');
+  const app = hosted(Uint8Array.from(KEY)); await app.close();
+  const localOrigin = "http://127.0.0.1:32124";
+  const mac = (workBatchIntegrityKey: Uint8Array) => createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:web", clock: () => now,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: localOrigin, tenantId: "tenant:web", provider: trust.issuer, subject: "test-owner",
+      ownerCodeDigest: sha256Digest({ ownerCode: "synthetic-local-owner-code-long" }), sessionSeconds: 900 },
+    database: { client: f.client, isAvailable: () => true, close: async () => {} }, loopBridge: { integrityKey: KEY, adapter: f.adapter }, workBatchIntegrityKey });
+  assert.throws(() => mac(other), /mac_local_web_process_config_invalid/, 'Mac composition refuses a split loop key');
+  await mac(Uint8Array.from(KEY)).close();
+  const composition = await privateAgentTaskCompositionFixture(); t.after(composition.close);
+  const scenario = composition.scenario();
+  const startup = (pipelineKey: Uint8Array) => validatePrivateTaskStartupConfiguration({ ...scenario.configuration,
+    loopBridge: { integrityKey: KEY, adapter: f.configuration },
+    coordinator: { ...scenario.configuration.coordinator, pipelines: { integrityKey: pipelineKey, selectionAuthority: { assertCurrent: () => true } } } } as never);
+  assert.throws(() => startup(other), /private_task_startup_config_invalid/, 'startup refuses a split loop key');
+  const captured = startup(Uint8Array.from(KEY)); t.after(() => captured.loopBridge!.adapter.close());
+  assert.deepEqual(captured.loopBridge!.integrityKey, KEY);
 });
 
 test("B1b cleanup rechecks configured pins and uid before removing files", async t => {

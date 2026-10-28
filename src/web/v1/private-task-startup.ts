@@ -319,7 +319,11 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if ([web.database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV2(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
-    const loopBridge = input.loopBridge ? { integrityKey: key(input.loopBridge.integrityKey),
+    // The loop desk verifies legacy pipeline templates and requests with the loop
+    // key, so a split key would fail every loop desk read. Refuse it at startup.
+    const loopKey = input.loopBridge ? key(input.loopBridge.integrityKey) : undefined;
+    if (loopKey && pipelines && !timingSafeEqual(loopKey, pipelines.integrityKey)) throw new Error();
+    const loopBridge = input.loopBridge ? { integrityKey: loopKey!,
       adapter: createImproveControlRoomLoopAdapterV1(input.loopBridge.adapter) } : undefined;
     return { loopBridge, web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,

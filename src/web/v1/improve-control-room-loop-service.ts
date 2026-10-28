@@ -20,6 +20,7 @@ const rowSchema = z.object({ tenant_id: id, command_id: z.string().regex(/^loop-
 }).strict();
 type Row = z.infer<typeof rowSchema>;
 const purpose = "loop-improvement-command/v1";
+const sweepLimit = 16;
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 const sameTag = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const conflict = () => new WebAccessError("conflict");
@@ -35,6 +36,7 @@ export class ImproveControlRoomLoopServiceV1 {
   readonly #adapter: LoopAdapterV1;
   readonly #freshness: number;
   readonly #swept = new Set<string>();
+  readonly #sweepCursor = new Map<string, string>();
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     configuration: LoopBridgeConfigurationV1, private readonly clock: () => number = Date.now) {
     if (!(configuration.integrityKey instanceof Uint8Array) || configuration.integrityKey.length !== 32) throw unavailable();
@@ -149,7 +151,8 @@ export class ImproveControlRoomLoopServiceV1 {
       requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: lineage.view.runLink?.runLinkId ?? null,
       engineRevision: current.revision, state, startState, confirmationCurrent,
       canStart: mayWrite && !startClaim && confirmationCurrent && startState === "not_started" && state === "ready" && this.#adapter.available("start"),
-      canStop: mayWrite && startState !== "not_started" && !!lineage.link && !["stopped", "finished"].includes(current.state) && this.#adapter.available("stop"),
+      // Stop accepts any signed Start claim, including a refused one (see mutate).
+      canStop: mayWrite && !!startClaim && !!lineage.link && !["stopped", "finished"].includes(current.state) && this.#adapter.available("stop"),
       progress: current.progress.step === null ? null : { stepId: current.progress.step, role: null, attempt: null,
         requestedModel: null, observedModel: null, identityVerified: false, repairCount: null },
       attention, observedAt: new Date(this.clock()).toISOString() });
@@ -333,7 +336,13 @@ export class ImproveControlRoomLoopServiceV1 {
         idempotency_key: idempotencyKey, binding, result: null, created_at: actor.now });
       return { claim, result: undefined, replayed: false };
     });
-    await this.#sweepCommandFiles(identity, projectId);
+    // The sweep runs only after this command's dispatch or result, never inside
+    // the claim-to-spawn freshness window that a slow cleanup could exhaust.
+    try { return await this.#dispatch(identity, projectId, operation, body, preflight, admitted); }
+    finally { await this.#sweepCommandFiles(identity, projectId); }
+  }
+  async #dispatch(identity: VerifiedWebIdentity, projectId: string, operation: LoopBridgeOperationV1,
+    body: Record<string, unknown>, preflight: LoopEngineStatusV1 | undefined, admitted: { claim: Row; result: Row | undefined; replayed: boolean }) {
     if (admitted.result) {
       await this.#releaseCommandFiles(admitted.claim);
       return this.#receipt(admitted.claim, admitted.result, true);
@@ -409,17 +418,21 @@ export class ImproveControlRoomLoopServiceV1 {
     return this.#receipt(claim, result, replayed);
   }
   async #sweepCommandFiles(identity: VerifiedWebIdentity, projectId: string) {
-    // First authorized mutation per owner/project recovers the commit-to-cleanup
-    // crash window. No result is reconciled and no command is dispatched here.
+    // Authorized mutations per owner/project recover the commit-to-cleanup crash
+    // window, a bounded page per call until history is exhausted. No result is
+    // reconciled and no command is dispatched here. Only intake and answer write
+    // command folders; other finished claims have nothing to release.
     try {
       const finished = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor }) => {
         const key = canonicalJson([projectId, actor.id]);
         if (this.#swept.has(key)) return undefined;
         const rows = (await tx.query<Row>(`SELECT c.* FROM control_loop_improvement_commands c
           WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.owner_identity_id=$3 AND c.entry_kind='claim'
+            AND c.operation IN ('intake','answer') AND c.command_id>$4
             AND EXISTS (SELECT 1 FROM control_loop_improvement_commands r
-              WHERE r.tenant_id=c.tenant_id AND r.command_id=c.command_id AND r.entry_kind='result')`,
-        [this.scope.tenantId, projectId, actor.id])).rows;
+              WHERE r.tenant_id=c.tenant_id AND r.command_id=c.command_id AND r.entry_kind='result')
+          ORDER BY c.command_id LIMIT ${sweepLimit}`,
+        [this.scope.tenantId, projectId, actor.id, this.#sweepCursor.get(key) ?? ""])).rows;
         const verified: Row[] = [];
         for (const raw of rows) {
           let claim: Row | undefined;
@@ -440,11 +453,12 @@ export class ImproveControlRoomLoopServiceV1 {
             console.warn("loop_command_sweep_verification_failed");
           }
         }
-        return { key, verified };
+        return { key, verified, last: rows.at(-1)?.command_id, done: rows.length < sweepLimit };
       });
       if (!finished) return;
       for (const claim of finished.verified) await this.#releaseCommandFiles(claim);
-      this.#swept.add(finished.key);
+      if (finished.done) this.#swept.add(finished.key);
+      else if (finished.last) this.#sweepCursor.set(finished.key, finished.last);
     } catch { /* Best-effort cleanup cannot change the admitted command's result. */ }
   }
   async #releaseCommandFiles(claim: Row) {
