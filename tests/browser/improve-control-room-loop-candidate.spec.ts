@@ -124,7 +124,7 @@ async function syntheticFixture() {
   const desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,confirmedContract,config);
   const publisher=new LoopCandidatePublisherV1(desk,config);
   const app=createPrivateWebProcess({origin,...trust,tenantId:"tenant:web",workspaceId:"workspace:web",loadKeys:async()=>trust.keys,clock:()=>now,
-    database:{client:f.client,close:async()=>{}},loopCandidates:config});
+    database:{client:f.client,close:async()=>{}},loopCandidates:config,loopBridge:{integrityKey:KEY,adapter}});
   const handle=(r:Request)=>app.handle(r,()=>new Response("unused",{status:404}));
   return {...f,config,adapter,desk,lineage,bridge,app,publisher,handle,forbidden,requestId:draft.request.requestId,runLinkId:link.runLink.runLinkId,
     evidence:()=>structuredClone(evidence),edit:(change:(e:typeof evidence)=>void)=>{change(evidence);writeRetained();},retained,calls:()=>calls,
@@ -133,12 +133,13 @@ async function syntheticFixture() {
     close:async()=>{await app.close();await bridge.close();await f.db.close();fs.rmSync(retained,{recursive:true,force:true});}};
 }
 
-for(const width of [360,1280])for(const decision of ["accept","decline"] as const)test(`B4 SYNTHETIC finished candidate Home saved request and inert ${decision} retry at ${width}px`,async({browser})=>{
- const f=await syntheticFixture();const decidedState=decision==="accept"?"accepted":"declined";let context:BrowserContext|undefined,release:()=>void=()=>{},lost=true,deny=false;
+for(const width of [360,1280])for(const colorScheme of ["light","dark"] as const)for(const decision of ["accept","decline"] as const)test(`B4 SYNTHETIC finished candidate Home saved request and inert ${decision} retry at ${width}px ${colorScheme}`,async({browser},testInfo)=>{
+ const f=await syntheticFixture();const decidedState=decision==="accept"?"Accepted":"Declined";let context:BrowserContext|undefined,release:()=>void=()=>{},lost=true,deny=false;
  const posts:{path:string;body:string;key:string}[]=[],unexpected:string[]=[];
  try{
   // Completion is recorded with no browser open. This is the agreed synthetic receipt link, not B3c attention proof.
-  const receipt=await f.publish(),rows=(await f.lineage.viewLoopDesk(f.identity,f.project.projectId)).loopRequests;
+  const rows=(await f.lineage.viewLoopDesk(f.identity,f.project.projectId)).loopRequests;
+  const href=`/projects/${encodeURIComponent(f.project.projectId)}/improvements#request=${encodeURIComponent(f.requestId)}`;
   const bundle=await build({write:false,bundle:true,platform:"browser",format:"iife",jsx:"automatic",stdin:{resolveDir:process.cwd(),loader:"tsx",contents:`
    import React from 'react';import {createRoot} from 'react-dom/client';
    import {HomeDashboard} from './private-app/app/home-workspace';
@@ -147,13 +148,13 @@ for(const width of [360,1280])for(const decision of ["accept","decline"] as cons
    root.render(window.location.pathname==='/'?<HomeDashboard data={{activity:{state:'unavailable'},projects:{state:'unavailable'},connections:{state:'ready',value:{source:'local',value:{taskWorkersStarted:true,workers:[],projectSections:[]}}},attention:{state:'unavailable'}}}/>:<ImprovementRunPanel projectId=${JSON.stringify(f.project.projectId)} requests={${JSON.stringify(rows)}} fresh={true}/>);
   `},plugins:[{name:"unexercised-legacy-crypto",setup(builder){builder.onResolve({filter:/^node:crypto$/},()=>({path:"node:crypto",namespace:"unused"}));builder.onLoad({filter:/.*/,namespace:"unused"},()=>({contents:'export function createHash(){throw new Error("unused_legacy_crypto")}',loader:"js"}));}}]});
   const css=(await Promise.all(["node_modules/tailwindcss/preflight.css","styles/control-room.css","private-app/app/private.css"].map(p=>readFile(p,"utf8")))).join("\n");
-  context=await browser.newContext({viewport:{width,height:850},isMobile:width<500,hasTouch:width<500});
+  context=await browser.newContext({viewport:{width,height:850},isMobile:width<500,hasTouch:width<500,colorScheme});
   await context.route("**/*",async route=>{
    const req=route.request(),url=new URL(req.url());
    if(url.origin!=="https://product.invalid"){unexpected.push(req.url());await route.abort();return;}
    if(url.pathname==="/bundle.js"){await route.fulfill({contentType:"application/javascript",body:bundle.outputFiles[0]!.text});return;}
    if(req.isNavigationRequest()){await route.fulfill({contentType:"text/html",body:`<meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><div id="root"></div><script src="/bundle.js"></script>`});return;}
-   if(url.pathname.includes("loop-update-candidates")||url.pathname.endsWith("/candidate")){
+   if(url.pathname.includes("loop-update-candidates")||url.pathname.endsWith("/candidate")||url.pathname.endsWith("/status")){
     if(deny){await route.fulfill({status:403,json:{error:"access_denied"}});return;}
     if(req.method()==="POST")posts.push({path:url.pathname,body:req.postData()!,key:req.headers()["idempotency-key"]!});
     const response=await f.handle(request(url.pathname,req.method(),req.postData()?JSON.parse(req.postData()!):undefined,req.headers()["idempotency-key"]??"b4-browser-read-0001"));
@@ -163,20 +164,38 @@ for(const width of [360,1280])for(const decision of ["accept","decline"] as cons
    if(url.pathname.startsWith("/api/")){await route.fulfill({status:404,json:{}});return;}
    unexpected.push(req.url());await route.abort();
   });
+  const emptyPage=await context.newPage();await emptyPage.goto("https://product.invalid"+href);
+  await expect(emptyPage.getByText("No verified candidate is recorded for this view.",{exact:true})).toBeVisible();
+  await expect(emptyPage.getByText("Completion reported; candidate evidence unavailable",{exact:true})).toBeVisible();
+  await expect(emptyPage.getByRole("article",{name:"Finished candidate",exact:true})).toHaveCount(0);
+  // Finish publication while the page is closed; reopen Home to find it.
+  await emptyPage.close();const receipt=await f.publish();
   const page=await context.newPage();await page.goto("https://product.invalid/");
   const card=page.getByRole("article",{name:"Finished candidate",exact:true});await expect(card).toContainText("b".repeat(40));
+  await expect(card).toContainText("Finished candidate — waiting for your decision");
+  await expect(card).toContainText("Evidence checked just now");
   expect(posts).toHaveLength(0);
   f.unavailable(true);await page.getByRole("button",{name:"Refresh candidate",exact:true}).click();
   await expect(page.getByText("Candidate evidence unavailable. Decisions are blocked.",{exact:true})).toBeVisible();
+  await expect(card).toContainText("Evidence retained; current status unverified");
+  await expect(card).not.toContainText("Evidence checked just now");
+  await page.screenshot({path:testInfo.outputPath("retained.png"),fullPage:true});
   await expect(card.getByRole("button",{name:decision==="accept"?"Accept this candidate — record only":"Decline this candidate — record only",exact:true})).toBeDisabled();
   f.unavailable(false);await page.getByRole("button",{name:"Refresh candidate",exact:true}).click();
   await expect(card.getByRole("button",{name:decision==="accept"?"Accept this candidate — record only":"Decline this candidate — record only",exact:true})).toBeEnabled();
   expect(posts).toHaveLength(0);await card.getByText("Show evidence",{exact:true}).click();
-  await expect(card).toContainText("3 completed");await expect(card).toContainText("Unverified");
+  await expect(card).toContainText("3 completed, 3 passed, 0 failed, 0 skipped · 1 second");
+  await expect(card.locator('span[title="1000 milliseconds"]')).toHaveCount(2);await expect(card).toContainText("Unverified");
   for(const label of ["Findings","Assumptions and validations","Recorded overrides"])await card.getByText(label,{exact:true}).click();
   await expect(card).toContainText("SYNTHETIC repair retained");await expect(card).toContainText("Same-family review override: Disabled");
   await card.getByRole("link",{name:"Open saved request",exact:true}).click();await expect(page).toHaveURL("https://product.invalid"+receipt.href);
-  await expect(card).toContainText("b".repeat(40));const accept=card.getByRole("button",{name:decision==="accept"?"Accept this candidate — record only":"Decline this candidate — record only",exact:true});
+  await expect(card).toContainText("b".repeat(40));
+  await expect(page.getByText("Finished",{exact:true})).toBeVisible();
+  await expect(page.getByText("Completion reported; candidate evidence unavailable",{exact:true})).toHaveCount(0);
+  await card.getByText("Show evidence",{exact:true}).click();
+  for(const label of ["Findings","Assumptions and validations","Recorded overrides"])await card.getByText(label,{exact:true}).click();
+  await page.screenshot({path:testInfo.outputPath("saved-request.png"),fullPage:true});
+  const accept=card.getByRole("button",{name:decision==="accept"?"Accept this candidate — record only":"Decline this candidate — record only",exact:true});
   await expect(accept).toBeEnabled();expect(await accept.evaluate(e=>e.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
   const stale=await context.newPage();await stale.goto("https://product.invalid"+receipt.href);
   const staleAction=stale.getByRole("button",{name:decision==="accept"?"Accept this candidate — record only":"Decline this candidate — record only",exact:true});
@@ -190,7 +209,9 @@ for(const width of [360,1280])for(const decision of ["accept","decline"] as cons
   expect(posts).toHaveLength(3);expect(posts[2]!.key).not.toBe(posts[0]!.key);await stale.close();
   expect((await f.db.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidate_decisions")).rows[0]!.n).toBe(1);
   const postCount=posts.length;await page.reload();await expect(card).toContainText(decidedState);await page.evaluate(()=>window.dispatchEvent(new Event("focus")));expect(posts).toHaveLength(postCount);
-  f.stop();await page.getByRole("button",{name:"Refresh candidate",exact:true}).click();await expect(card).toContainText("Freshness: stale");
+  f.stop();await page.getByRole("button",{name:"Refresh candidate",exact:true}).click();await expect(card).toContainText("Evidence is out of date; decisions are blocked.");
+  await expect(card).not.toContainText("Evidence checked just now");
+  await expect(page.getByText("Completion reported; candidate evidence unavailable",{exact:true})).toBeVisible();
   deny=true;await page.getByRole("button",{name:"Refresh candidate",exact:true}).click();await expect(page.getByText("Candidate evidence unavailable. Decisions are blocked.",{exact:true})).toBeVisible();
   await expect(card).toHaveCount(0);expect(unexpected).toEqual([]);expect(f.forbidden).toEqual([]);
  }finally{release();await context?.close();await f.close();}

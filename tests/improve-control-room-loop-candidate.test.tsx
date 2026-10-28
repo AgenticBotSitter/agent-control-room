@@ -145,7 +145,7 @@ async function syntheticFixture() {
   const desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,confirmedContract,config);
   const publisher=new LoopCandidatePublisherV1(desk,config);
   const app=createPrivateWebProcess({origin,...trust,tenantId:"tenant:web",workspaceId:"workspace:web",loadKeys:async()=>trust.keys,clock:()=>now,
-    database:{client:f.client,close:async()=>{}},loopCandidates:config});
+    database:{client:f.client,close:async()=>{}},loopCandidates:config,loopBridge:{integrityKey:KEY,adapter}});
   const handle=(r:Request)=>app.handle(r,()=>new Response("unused",{status:404}));
   return {...f,config,adapter,desk,lineage,bridge,app,publisher,handle,forbidden,requestId:draft.request.requestId,runLinkId:link.runLink.runLinkId,
     evidence:()=>structuredClone(evidence),edit:(change:(e:typeof evidence)=>void)=>{change(evidence);writeRetained();},retained,calls:()=>calls,
@@ -272,22 +272,38 @@ async function proveHomeSavedRequest() {
   const root=createRoot(dom.window.document.getElementById("root")!);
   const settle=async()=>{for(let i=0;i<12;i++)await act(async()=>{await new Promise(r=>setTimeout(r,10));});};
   try{
+    const view=await f.lineage.viewLoopDesk(f.identity,f.project.projectId);
+    await act(async()=>root.render(React.createElement(ImprovementRunPanel,{projectId:f.project.projectId,requests:view.loopRequests,fresh:true})));await settle();
+    assert.match(dom.window.document.body.textContent!,/Completion reported; candidate evidence unavailable/);
+    assert.equal(dom.window.document.querySelectorAll("article").length,0);
     const receipt=await f.publish();
     await act(async()=>root.render(React.createElement(UpdateCandidatesHome)));await settle();
     assert.match(dom.window.document.body.textContent!,/SYNTHETIC finished candidate/);
     assert.ok(dom.window.document.body.textContent!.includes("b".repeat(40)),"B4 Home exposes full candidate head");
     assert.ok(dom.window.document.querySelector(`a[href='${receipt.href}']`));
     assert.equal(posts.length,0,"B4 Home reads never publish or deliver");
-    const view=await f.lineage.viewLoopDesk(f.identity,f.project.projectId);
     dom.window.location.hash=receipt.href.split("#")[1]!;
     await act(async()=>root.render(React.createElement(ImprovementRunPanel,{projectId:f.project.projectId,requests:view.loopRequests,fresh:true})));await settle();
     assert.ok(dom.window.document.body.textContent!.includes("b".repeat(40)),"B4 saved request exposes same full head");
     assert.match(dom.window.document.body.textContent!,/Unverified/);
+    assert.equal([...dom.window.document.querySelectorAll('[role="status"]')].some(p=>p.textContent==="Finished"),true,
+      "B4 verified current child replaces the unavailable label with Finished");
+    assert.doesNotMatch(dom.window.document.body.textContent!,/Completion reported; candidate evidence unavailable/);
+    f.unavailable(true);
+    await act(async()=>[...dom.window.document.querySelectorAll("button")].find(b=>b.textContent==="Refresh candidate")!.click());await settle();
+    assert.match(dom.window.document.body.textContent!,/Completion reported; candidate evidence unavailable/);
+    assert.equal([...dom.window.document.querySelectorAll('[role="status"]')].some(p=>p.textContent==="Finished"),false);
+    f.unavailable(false);
+    await act(async()=>[...dom.window.document.querySelectorAll("button")].find(b=>b.textContent==="Refresh candidate")!.click());await settle();
+    assert.equal([...dom.window.document.querySelectorAll('[role="status"]')].some(p=>p.textContent==="Finished"),true);
     const button=[...dom.window.document.querySelectorAll("button")].find(b=>b.textContent==="Accept this candidate — record only")!;
     assert.equal(button.disabled,false,"B4 verified finish action enabled");
     await act(async()=>{button.click();button.click();});await settle();
     assert.equal(posts.length,1,"B4 synchronous clicks attempt one inert decision POST");
     assert.equal((await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate?.state,"accepted");
+    assert.equal([...dom.window.document.querySelectorAll('[role="status"]')].some(p=>p.textContent==="Finished"),true);
+    await act(async()=>root.render(React.createElement(ImprovementRunPanel,{projectId:f.project.projectId,requests:view.loopRequests,fresh:false})));await settle();
+    assert.match(dom.window.document.body.textContent!,/Completion reported; candidate evidence unavailable/);
   }finally{
     await act(async()=>root.unmount());dom.window.close();
     for(const [key,descriptor] of descriptors){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else Reflect.deleteProperty(globalThis,key);}
@@ -459,6 +475,15 @@ test("B4 UI freshness, late replies and access loss",async()=>{
  try{
   await f.publish();await act(async()=>root.render(React.createElement(ImprovementFinishCard)));await settle();
   const accept=button("Accept this candidate — record only");assert.equal(accept.disabled,false);
+  f.unavailable(true);await act(async()=>button("Refresh candidate").click());await settle();
+  assert.equal(dom.window.document.querySelectorAll("article").length,1,"B4 unavailable read retains evidence");
+  const retained=dom.window.document.querySelector("article")!;
+  assert.match(retained.textContent!,/Evidence retained; current status unverified/,
+    "B4 failed refresh never labels retained evidence current");
+  assert.doesNotMatch(retained.textContent!,/Freshness: current|Evidence checked just now/);
+  assert.equal(button("Accept this candidate — record only").disabled,true);
+  f.unavailable(false);await act(async()=>button("Refresh candidate").click());await settle();
+  assert.equal(button("Accept this candidate — record only").disabled,false);
   hold=true;await act(async()=>button("Refresh candidate").click());await settle();
   assert.equal(accept.disabled,true,"B4 checking read disables fresh decisions");
   // Exercise the callback boundary independently of the DOM disabled attribute.
@@ -677,4 +702,28 @@ test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
   const step=job.split(/      - /u).find(s=>s.includes(`run: pnpm run ${script}\n`));
   assert.ok(step,`B4 CI reaches mutation partition ${part}`);assert.match(step,/timeout-minutes: 5/u);assert.doesNotMatch(step,/\n        if:/u);
  }
+});
+
+
+test("B4 finish card uses human durations and plain decision labels",async()=>{
+ const f=await syntheticFixture();
+ try{
+  await f.publish();const card=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
+  const React=await import("react"),{renderToStaticMarkup}=await import("react-dom/server");
+  const {ImprovementFinishCandidate}=await import("../private-app/app/improvement-finish-card");
+  const noop=()=>{};
+  for(const [durationMs,expected] of [[0,"0 seconds"],[999,"0.999 seconds"],[1000,"1 second"],[183000,"3 minutes 3 seconds"],
+    [3661001,"1 hour 1 minute 1.001 seconds"],[86400000,"1 day"]] as const){
+   const evidence=structuredClone(card.evidence);evidence.checks[0]!.durationMs=durationMs;evidence.timing.durationMs=durationMs;
+   const html=renderToStaticMarkup(React.createElement(ImprovementFinishCandidate,{card:{...card,evidence},fresh:true,isFresh:()=>true,
+    invalidate:noop,refresh:noop,clearProtected:noop}));
+   assert.ok(html.includes(`title="${durationMs} milliseconds">${expected}</span>`),`B4 duration ${durationMs} reads ${expected}`);
+   assert.match(html,/Finished candidate — waiting for your decision/);assert.doesNotMatch(html,/Freshness:|Finished candidate · ready/);
+  }
+  for(const [state,label] of [["accepted","Accepted"],["declined","Declined"]] as const){
+   const html=renderToStaticMarkup(React.createElement(ImprovementFinishCandidate,{card:{...card,state},fresh:true,isFresh:()=>true,
+    invalidate:noop,refresh:noop,clearProtected:noop}));
+   assert.ok(html.includes(`Finished candidate — ${label}`));
+  }
+ }finally{await f.close();}
 });

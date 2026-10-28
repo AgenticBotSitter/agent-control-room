@@ -45,6 +45,7 @@ export function ImprovementRunPanel({ projectId, requests, fresh, refreshDesk }:
 function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementRequestViewV1; fresh: boolean; focus: boolean; refreshDesk?(): void }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (focus) { heading.current?.focus(); heading.current?.scrollIntoView?.({ block: "nearest" }); } }, [focus]);
+  const [currentCandidate, setCurrentCandidate] = useState(false);
   const [epoch, setEpoch] = useState(0), writeEpoch = useRef(0), revision = useRef(-1);
   const verifiedRead = useRef(false);
   const [safe, setSafe] = useState<LoopImprovementStatusV1 & { snapshot: LoopDecisionStatusV1 }>();
@@ -120,7 +121,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
     <h3 ref={heading} tabIndex={-1}>Saved request</h3>
     <p style={{ whiteSpace: "pre-wrap" }}>{row.description}</p>
     {!row.runLink ? <p>Confirmation and a linked run are needed before Start.</p> : <>
-      <p role="status" aria-live="polite">{snapshot?.state === "candidate_ready" ? "Completion reported; candidate evidence unavailable" : snapshot?.state === "stopped" ? "Stopped"
+      <p role="status" aria-live="polite">{snapshot?.state === "candidate_ready" ? fresh && currentCandidate ? "Finished" : "Completion reported; candidate evidence unavailable" : snapshot?.state === "stopped" ? "Stopped"
         : snapshot?.state?.replaceAll("_", " ") ?? "Status unavailable"}</p>
       <p>{!snapshot ? "Confirmation: Unavailable" : snapshot.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
       <p>Step: {snapshot?.progress?.stepId ?? "Unavailable"} · Role: {snapshot?.progress?.role ?? "Unavailable"}</p>
@@ -143,6 +144,6 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       {retry.start && <button type="button" disabled={!statusFresh || !verifiedRead.current || pending.start || snapshot?.state === "stopped"} onClick={() => void submit("start", true)}>Retry this exact Start</button>}
       {retry.stop && <button type="button" disabled={!stopTarget || pending.stop} onClick={() => void submit("stop", true)}>Retry this exact Stop</button>}
     </>}
-    <ImprovementFinishCard projectId={row.projectId} requestId={row.requestId} binding={identity} enabled={fresh} />
+    <ImprovementFinishCard projectId={row.projectId} requestId={row.requestId} binding={identity} enabled={fresh} onCurrentCandidateChange={setCurrentCandidate} />
   </div>;
 }

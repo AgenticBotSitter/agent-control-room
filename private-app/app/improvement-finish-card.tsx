@@ -11,13 +11,25 @@ type Read = Awaited<ReturnType<typeof client.read>>;
 const targetStyle = { minHeight: 44, minWidth: 44, whiteSpace: "normal" as const, maxWidth: "100%" };
 
 /** Both owner surfaces read the same retained, signed card. Polling has no writer. */
-type FinishProps = { projectId?: string; requestId?: string; binding?: string; enabled?: boolean };
+type FinishProps = { projectId?: string; requestId?: string; binding?: string; enabled?: boolean;
+  onCurrentCandidateChange?(current: boolean): void };
+
+function humanDuration(durationMs: number) {
+  let remaining = durationMs;
+  const parts: string[] = [];
+  for (const [unit, size] of [["day",86_400_000],["hour",3_600_000],["minute",60_000]] as const) {
+    const count = Math.floor(remaining / size);
+    if (count) parts.push(`${count} ${unit}${count === 1 ? "" : "s"}`);
+    remaining %= size;
+  }
+  const seconds = remaining / 1000;
+  if (seconds || !parts.length) parts.push(`${seconds} second${seconds === 1 ? "" : "s"}`);
+  return parts.join(" ");
+}
 export function ImprovementFinishCard(props: FinishProps) {
   return <FinishRead key={JSON.stringify([props.projectId,props.requestId,props.binding])} {...props} />;
 }
-function FinishRead({ projectId, requestId, binding = "", enabled = true }: {
-  projectId?: string; requestId?: string; binding?: string; enabled?: boolean;
-}) {
+function FinishRead({ projectId, requestId, binding = "", enabled = true, onCurrentCandidateChange }: FinishProps) {
   const [epoch,setEpoch] = useState(0), generation = useRef(0), verified = useRef(false);
   const [retained,setRetained] = useState<Read>();
   const key = JSON.stringify(["loop-candidates",projectId,requestId,binding,epoch]);
@@ -33,6 +45,10 @@ function FinishRead({ projectId, requestId, binding = "", enabled = true }: {
       if (error instanceof LoopCandidateReadErrorV1 && error.protectedFailure) { generation.current++; setRetained(undefined); } },
   });
   const value = read.value ?? retained, fresh = enabled && verified.current && !!read.value && !read.error && !read.loading && !read.checking;
+  const hasCurrentCandidate = fresh && !!value?.candidates.some(c => c.freshness === "current");
+  // Display feedback only: the decision guards continue to use their own verified read.
+  useEffect(() => { onCurrentCandidateChange?.(hasCurrentCandidate); }, [hasCurrentCandidate,onCurrentCandidateChange]);
+  useEffect(() => () => onCurrentCandidateChange?.(false), [onCurrentCandidateChange]);
   const invalidate = () => { verified.current = false; generation.current++; setEpoch(generation.current); read.clear(); };
   if (!projectId && !value && !read.error) return null;
   if (!projectId && read.error instanceof LoopCandidateReadErrorV1 && read.error.status === 404) return null;
@@ -40,7 +56,7 @@ function FinishRead({ projectId, requestId, binding = "", enabled = true }: {
     <h2>Finished candidates</h2>
     {!!read.error && <p role="alert">Candidate evidence unavailable. Decisions are blocked.</p>}
     {read.loading && !value && <p role="status">Reading candidate evidence…</p>}
-    {!fresh && value && <p role="status">Retained evidence is read only until freshness is verified.</p>}
+    {!fresh && value && <p role="status">Retained evidence is read only until its current status is verified.</p>}
     {value?.truncated && <p role="status">More saved candidates exist. Open a saved request for its evidence.</p>}
     {value?.candidates.length === 0 && <p>No verified candidate is recorded for this view.</p>}
     {value?.candidates.map(c => <ImprovementFinishCandidate key={identity(c)} card={c} fresh={fresh}
@@ -77,17 +93,18 @@ export function ImprovementFinishCandidate({ card:c,fresh,isFresh,invalidate,ref
     } finally { latch.current=false;if(mounted.current){setPending(false);refresh();} }
   }
   return <article aria-label="Finished candidate" style={{ minWidth:0,overflowWrap:"anywhere" }}>
-    <h3>Finished candidate · {c.state}</h3>
+    <h3>Finished candidate — {c.state === "ready" ? "waiting for your decision" : c.state === "accepted" ? "Accepted" : "Declined"}</h3>
     <p>{e.summary}</p><p>Changed areas: {e.changedAreas.join(" · ")}</p>
     <p>Base revision: <code style={{userSelect:"text"}}>{b.baseRevision}</code></p>
     <p>Candidate revision: <code style={{userSelect:"text"}}>{c.candidateRevision}</code></p>
-    <p>Freshness: {c.freshness}</p>
+    <p>{!fresh ? "Evidence retained; current status unverified" : c.freshness === "current"
+      ? "Evidence checked just now" : "Evidence is out of date; decisions are blocked."}</p>
     <p>Accept and Decline record an owner decision only. Acceptance creates no signed deploy or delivery approval.</p>
     <details><summary style={targetStyle}>Show evidence</summary>
       <p>Database: {e.databaseChanges.kind === "none" ? "No database changes declared" :
         `${e.databaseChanges.summary} Compatibility: ${e.databaseChanges.compatibilityNotes} Rollback: ${e.databaseChanges.rollbackNotes}`}</p>
       <h4>Completed checks</h4><ul>{e.checks.map(check => <li key={check.id}>{check.commandLabel}: {check.status} · {check.completed} completed,
-        {" "}{check.passed} passed, {check.failed} failed, {check.skipped} skipped · {check.durationMs} ms · Exit {check.exitCode ?? "unavailable"}
+        {" "}{check.passed} passed, {check.failed} failed, {check.skipped} skipped · <span title={`${check.durationMs} milliseconds`}>{humanDuration(check.durationMs)}</span> · Exit {check.exitCode ?? "unavailable"}
         <p>Receipt: {check.receiptDigest} · Output: {check.outputDigest}</p></li>)}</ul>
       <h4>Reviews</h4><ul>{e.reviews.map(r => <li key={`${r.stepId}:${r.attempt}`}>
         {r.current ? "Current" : "Historical"} · {r.role} · {r.verdict} · attempt {r.attempt}
@@ -96,7 +113,7 @@ export function ImprovementFinishCandidate({ card:c,fresh,isFresh,invalidate,ref
       <details><summary style={targetStyle}>Findings</summary><ul>{e.findings.map(f => <li key={`${f.origin}:${f.id}`}>
         {f.origin} / {f.id}: {f.severity} · {f.disposition} · {f.summary} · {f.evidenceDigest}</li>)}</ul></details>
       <p>Attempts: {e.rounds.attempts} · Review rejections: {e.rounds.reviewRejections} · Repairs: {e.rounds.repairs} · Redesigns: {e.rounds.redesigns}</p>
-      <p>Elapsed: {e.timing.durationMs} ms · {e.timing.startedAt} → {e.timing.finishedAt}</p>
+      <p>Elapsed: <span title={`${e.timing.durationMs} milliseconds`}>{humanDuration(e.timing.durationMs)}</span> · {e.timing.startedAt} → {e.timing.finishedAt}</p>
       <details><summary style={targetStyle}>Assumptions and validations</summary>
         <ul>{e.assumptions.map(a => <li key={a.id}>{a.text} · {a.status} · {a.evidenceDigest ?? "Evidence unavailable"}</li>)}</ul>
         <ul>{e.validations.map(v => <li key={v.id}>{v.text} · {v.status} · {v.evidenceDigest ?? "Evidence unavailable"}</li>)}</ul>
