@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { OwnerWebPushSettings } from "./owner-web-push";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
 import { useLocalRuntime } from "./local-runtime";
@@ -14,6 +14,7 @@ function isCurrent(pathname: string | undefined, href: string) {
 export function PrivateHeader() {
   const runtime = useLocalRuntime();
   const attention = useSharedTaskAttention(runtime.mode !== "checking");
+  const attentionCountId = useId();
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
   const [pathname, setPathname] = useState<string>();
@@ -55,7 +56,7 @@ export function PrivateHeader() {
             <strong>{item.title}</strong> <a href={item.href ?? "/needs-me"}>{item.href ? item.actionLabel : "Open Action Inbox"}</a>
           </li>)}</ul> : attention.value.complete ? <p>All clear.</p> : null}
       {attention.state === "ready" && attention.value.checking ? <p role="status">Checking saved attention…</p>
-        : attention.state === "ready" && !attention.value.complete ? <p role="alert">Attention could not be fully checked. Open Action Inbox; no all-clear is assumed.</p> : null}
+        : attention.state === "ready" && !attention.value.complete ? <p role="alert">Some attention could not be checked completely. Open Action Inbox; no all-clear is assumed.</p> : null}
       {attention.state === "ready" && attention.value.unknown ? <p role="alert">Previously checked items are unconfirmed; the current count is unknown.</p> : null}
       {attention.state === "ready" && attention.value.uninspected ? <p role="alert">Older saved requests were not checked.</p> : null}
       {runtime.mode === "local" ? <OwnerWebPushSettings attentionOnly /> : null}
@@ -71,10 +72,14 @@ export function PrivateHeader() {
         runtimeMode: runtime.mode, enabledProductModules: { ideaLab },
       })).map(item => {
         const href = item.headerHref ?? item.href;
-        return <a key={item.key} href={href} aria-current={isCurrent(pathname, href) ? "page" : undefined}>
-        {item.headerTitle ?? item.title}{href === "/needs-me" ? <span className="private-nav-badge" aria-label="Attention count">{attention.state === "ready"
-          ? attention.value.unknown ? "?" : `${attention.value.items.length}${attention.value.complete ? "" : "+"}` : "?"}</span> : null}{item.optional ? <span className="private-optional">Optional</span> : null}
-      </a>;
+        const link = <a href={href} aria-label={href === "/needs-me" ? "Action Inbox" : undefined}
+          aria-describedby={href === "/needs-me" ? attentionCountId : undefined} aria-current={isCurrent(pathname, href) ? "page" : undefined}>
+          {item.headerTitle ?? item.title}{item.optional ? <span className="private-optional">Optional</span> : null}
+        </a>;
+        return href === "/needs-me" ? <span key={item.key} style={{ display: "inline-flex", alignItems: "center" }}>
+          {link}<span id={attentionCountId} className="private-nav-badge" data-field="attention-count">{attention.state === "ready"
+            ? attention.value.unknown ? "?" : `${attention.value.items.length}${attention.value.complete ? "" : "+"}` : "?"}</span>
+        </span> : <Fragment key={item.key}>{link}</Fragment>;
       })}
       {/* Sign out is an account action, not the `/session` page. Keep the
           established Mac-local action without making that page navigable. */}

@@ -904,6 +904,7 @@ jobs:
       - name: Prove saved loop website Start, reopen and Stop
         run: pnpm run test:improve-control-room-loop-browser
       - name: Prove saved loop intake and owner decisions
+        timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-attention-browser
       - name: Inbox phone target geometry
         run: pnpm test:inbox-browser

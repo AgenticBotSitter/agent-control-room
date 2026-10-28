@@ -65,7 +65,10 @@ export async function refreshSharedTaskAttention() {
           : operator.state === "unavailable" && (operator.code === "access_denied" || operatorAbsent) ? undefined : previousSource;
         const loop = previousSource?.loop;
         const items = buildActionInbox(previousPages, previousSource?.items, Date.now(), loop?.state === "available" ? loop.items : []);
-        const unknown = tasks.state === "unavailable" || operator.state === "unavailable" && !operatorAbsent || loopAttentionUnknown(loop);
+        const freshTaskIds = new Set(tasks.state === "unavailable" ? tasks.pages.flatMap(page => page.items.map(item => item.task.jobId)) : []);
+        const taskCountUnknown = tasks.state === "unavailable" && (!tasks.pages.length
+          || previousPages.some(page => page.items.some(item => !freshTaskIds.has(item.task.jobId))));
+        const unknown = taskCountUnknown || operator.state === "unavailable" && !operatorAbsent || loopAttentionUnknown(loop);
         const uninspected = loop?.state === "available" && loop.truncated;
         const complete = tasks.state === "available" && !tasks.truncated
           && (operator.state === "available" && !operator.source.truncated && loopAttentionComplete(operator.source.loop) || operatorAbsent);

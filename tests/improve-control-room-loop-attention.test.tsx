@@ -17,7 +17,7 @@ import { PrivateHeader } from "../private-app/app/private-header";
 import { HomeDashboard } from "../private-app/app/home-workspace";
 import { ActionInboxPanel } from "../private-app/app/needs-me/action-inbox";
 import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
-import { loopAttentionItemSchemaV1, loopAttentionKey, loopDecisionStatusSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
+import { loopAttentionItemSchemaV1, loopAttentionKey, loopDecisionStatusSchemaV1, loopAttentionComplete, loopAttentionUnknown } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { buildActionInbox } from "../src/web/v1/action-inbox";
 import { readFile } from "node:fs/promises";
 import { reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
@@ -217,20 +217,72 @@ test("B2b lower bounds, unknown counts and loop item dedup",async()=>{
     loop:{schemaVersion:1,state:"available",items:mode==="rows"?[loopRow()]:[],truncated:mode==="truncated"}}):String(p).includes("/needs-me/tasks")?Response.json(emptyTaskPage):Response.json({}, {status:404});
   const m=await mount("project:alpha",fetcher,"",<SharedSurfaces/>);
   try{
-    await settle();assert.match(m.text(),/Older saved requests were not checked/);assert.match(m.text(),/Attention could not be fully checked/);
+    await settle();assert.match(m.text(),/Older saved requests were not checked/);assert.match(m.text(),/attention could not be checked completely/);
     assert.equal(m.dom.window.document.querySelector('[aria-labelledby="home-attention"] .private-count')?.textContent,"0+");
     assert.doesNotMatch(m.text(),/All clear\.|No actions are waiting/);
     mode="rows";await act(async()=>{await refreshSharedTaskAttention();});await settle();
-    assert.equal(m.dom.window.document.querySelector('[aria-label="Attention count"]')?.textContent,"1");
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1");
     assert.equal(m.dom.window.document.querySelector('[aria-labelledby="home-attention"] .private-count')?.textContent,"1");
     mode="failed";await act(async()=>{await refreshSharedTaskAttention();});await settle();
-    assert.equal(m.dom.window.document.querySelector('[aria-label="Attention count"]')?.textContent,"?");
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"?");
     assert.equal(m.dom.window.document.querySelector('[aria-labelledby="home-attention"] .private-count')?.textContent,"?");
     mode="empty";await act(async()=>{await refreshSharedTaskAttention();});await settle();
-    assert.match(m.text(),/All clear\./);assert.equal(m.dom.window.document.querySelector('[aria-label="Attention count"]')?.textContent,"0");
+    assert.match(m.text(),/All clear\./);assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"0");
     const a=loopRow(),b={...a,engineRevision:9};assert.equal(loopAttentionKey(a),loopAttentionKey(b));
     assert.equal(buildActionInbox([],[],now,[a,b]).length,1,"revision refresh never duplicates an attention identity");
     assert.equal(buildActionInbox([],[],now,[a])[0]!.href,"/projects/project%3Aalpha/improvements#request=request%3Aalpha");
+  }finally{await m.close();}
+});
+
+test("B2b per-root unavailable is incomplete rather than an unknown source",()=>{
+  const source={schemaVersion:1 as const,state:"available" as const,truncated:false,items:[loopAttentionItemSchemaV1.parse({
+    ...loopRow(),runLinkId:"link:alpha",engineRevision:null,kind:"blocked",identity:{kind:"blocked",code:"UNAVAILABLE"}})]};
+  assert.equal(loopAttentionComplete(source),false,"an unavailable linked decision cannot certify completeness");
+  assert.equal(loopAttentionUnknown(source),false,"B2b fresh root failure preserves a counted lower bound");
+  assert.equal(loopAttentionUnknown({schemaVersion:1,state:"unavailable",code:"unavailable"}),true);
+});
+
+test("B2b fresh partial task pages keep lower bounds until a stale refresh",async()=>{
+  let failed=false;
+  const fresh={...emptyTaskPage,nextCursor:"job:zzzz",examined:25,items:[{
+    task:{projectId:"project:alpha",jobId:"job:partial",requestId:"request:partial",title:"Fresh partial task",state:"failed",version:1,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()},
+    inputDigest:`sha256:${"a".repeat(64)}`,reasons:["failed"]}]};
+  const fetcher:typeof fetch=async p=>String(p).includes("action-items")?Response.json({observedAt:new Date(now).toISOString(),items:[],truncated:false})
+    :String(p).includes("/needs-me/tasks")?failed||String(p).includes("after=")?Response.json({}, {status:503}):Response.json(fresh):Response.json({}, {status:404});
+  const m=await mount("project:alpha",fetcher,"",<SharedSurfaces/>);
+  try{
+    await settle();
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1+","B2b fresh partial pages keep the known lower bound");
+    assert.match(m.text(),/Fresh partial task/);assert.doesNotMatch(m.text(),/All clear\.|No actions are waiting/);
+    failed=true;await act(async()=>{await refreshSharedTaskAttention();});await settle();
+    assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"?","a retained stale task is not a current lower bound");
+    assert.match(m.text(),/Fresh partial task/);assert.doesNotMatch(m.text(),/All clear\.|No actions are waiting/);
+  }finally{await m.close();}
+});
+
+test("B2b fresh unavailable roots keep lower bounds and navigation has a stable name",async()=>{
+  let failed=false;
+  const row=loopRow();
+  const blocked=loopAttentionItemSchemaV1.parse({...row,runLinkId:"link:alpha",engineRevision:null,kind:"blocked",identity:{kind:"blocked",code:"UNAVAILABLE"}});
+  const fetcher:typeof fetch=async p=>String(p).includes("action-items")?Response.json({observedAt:new Date(now).toISOString(),items:[],truncated:false,
+    loop:failed?{schemaVersion:1,state:"unavailable",code:"unavailable"}:{schemaVersion:1,state:"available",items:[blocked],truncated:true}})
+    :String(p).includes("/needs-me/tasks")?Response.json(emptyTaskPage):Response.json({}, {status:404});
+  const m=await mount("project:alpha",fetcher,"",<SharedSurfaces/>);
+  try{
+    await settle();
+    const nav=m.dom.window.document.querySelector('nav a[href="/needs-me"]')!;
+    assert.equal(nav.getAttribute("aria-label"),"Action Inbox","B2b navigation name excludes the changing badge count");
+    const description=nav.getAttribute("aria-describedby");
+    assert.ok(description,"B2b navigation describes its count separately");
+    assert.equal(m.dom.window.document.getElementById(description!)?.getAttribute("aria-label"),null,
+      "B2b count description exposes the number rather than replacing it with a label");
+    assert.equal(m.dom.window.document.getElementById(description!)?.textContent,"1+");
+    assert.equal(m.dom.window.document.querySelector('[aria-labelledby="home-attention"] .private-count')?.textContent,"1+",
+      "B2b fresh per-root failure keeps its observed lower bound");
+    assert.doesNotMatch(m.text(),/current count is unknown|All clear\.|No actions are waiting/);
+    failed=true;await act(async()=>{await refreshSharedTaskAttention();});await settle();
+    assert.equal(m.dom.window.document.getElementById(description!)?.textContent,"?","B2b failed whole source is unknown");
+    assert.doesNotMatch(m.text(),/All clear\.|No actions are waiting/);
   }finally{await m.close();}
 });
 
@@ -262,6 +314,7 @@ test("B2b CI registrations stay unconditional and separate",async()=>{
   assert.match(manifest.scripts["test:improve-control-room-loop-attention-browser"],/playwright test tests\/browser\/improve-control-room-loop-attention\.spec\.ts$/);
   const browserStep=browser.slice(browser.indexOf("      - name: Prove saved loop intake and owner decisions"),browser.indexOf("      - name: Inbox phone target geometry"));
   assert.doesNotMatch(browserStep,/\n\s+if:/);assert.match(browserStep,/pnpm run test:improve-control-room-loop-attention-browser/);
+  assert.match(browserStep,/timeout-minutes: 5/,"B2b browser step has its own five-minute budget");
   assert.ok(browser.indexOf("Install Chromium for the CI journey only")<browser.indexOf("test:improve-control-room-loop-attention-browser"));
 });
 

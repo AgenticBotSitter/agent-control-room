@@ -120,7 +120,12 @@ for(const width of [360,1280])test(`B2b phone owner returns to exact waiting dec
     }
     async function badge(page:Page,value:string){
       if(width<500){await page.getByRole("button",{name:"Menu",exact:true}).click();}
-      await expect(page.locator('nav a[href="/needs-me"] [aria-label="Attention count"]')).toHaveText(value);
+      const inbox=page.locator('nav a[href="/needs-me"]');
+      await expect(inbox).toHaveAccessibleName("Action Inbox");
+      await expect(inbox).toHaveAccessibleDescription(value);
+      const countId=await inbox.getAttribute("aria-describedby");
+      expect(countId).toBeTruthy();
+      await expect(page.locator(`[id="${countId}"]`)).toHaveText(value);
       if(width<500){await page.getByRole("button",{name:"Menu",exact:true}).click();}
     }
     let page=await open();await expect(page.getByRole("button",{name:"Prepare request",exact:true})).toBeVisible();expect(f.posts).toHaveLength(0);

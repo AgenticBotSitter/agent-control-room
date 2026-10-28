@@ -86,6 +86,7 @@ export function loopAttentionComplete(source?: z.infer<typeof loopAttentionSourc
     && !source.items.some(item => item.runLinkId !== null && item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE");
 }
 export function loopAttentionUnknown(source?: z.infer<typeof loopAttentionSourceSchemaV1>) {
-  return source?.state === "unavailable" || source?.state === "available" && source.items.some(item => item.runLinkId !== null
-    && item.engineRevision === null && item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE");
+  // A fresh per-root refusal is a counted unavailable item, so it makes the
+  // lower bound incomplete. Only a failed whole source makes its count unknown.
+  return source?.state === "unavailable";
 }

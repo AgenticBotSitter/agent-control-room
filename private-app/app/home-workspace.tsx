@@ -202,7 +202,7 @@ export function HomeDashboard({ data, operationsMode }:
             <a className="private-action-link" href={item.href ?? "/needs-me"}>{item.href ? item.actionLabel : "Open Action Inbox"}</a></li>)}</ul>
             : attentionComplete && !hasWarning && data.connections.state === "ready" ? <EmptyState>{ownerStatusLabels.attention.clear}</EmptyState> : null}
       {data.attention.state === "ready" && "checking" in data.attention.value && data.attention.value.checking ? <LoadingState>Checking saved attention…</LoadingState>
-        : data.attention.state === "ready" && !attentionComplete ? <p role="alert">Attention could not be fully checked. No all-clear is assumed.</p> : null}
+        : data.attention.state === "ready" && !attentionComplete ? <p role="alert">Some attention could not be checked completely. No all-clear is assumed.</p> : null}
       {attentionUnknown ? <p role="alert">Previously checked items are unconfirmed; the current count is unknown.</p> : null}
       {data.attention.state === "ready" && "uninspected" in data.attention.value && data.attention.value.uninspected ? <p role="alert">Older saved requests were not checked.</p> : null}
       {workerWarnings > 0 ? <p role="alert"><strong>Worker warning:</strong> {workerWarnings} worker{workerWarnings === 1 ? " is" : "s are"} offline or unavailable. <a href="/workers">Check workers</a></p> : null}
