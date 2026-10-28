@@ -609,8 +609,8 @@ test("B4 declined candidate keeps its decision after its evidence becomes unread
  }finally{await f.close();}
 });
 
-test("B4 one unreadable candidate never hides another request's current candidate",async()=>{
- const f=await syntheticFixture();try{
+// Two requests with published candidates; only the first request's source can be made unreadable.
+const twoRequestFixture=async(f:Awaited<ReturnType<typeof syntheticFixture>>)=>{
   await f.publish();
   const {ImproveControlRoomDeskServiceV1}=await import("../src/improve-control-room/v1/service");
   const {ImproveControlRoomLoopServiceV1}=await import("../src/web/v1/improve-control-room-loop-service");
@@ -639,17 +639,44 @@ test("B4 one unreadable candidate never hides another request's current candidat
   const config={...f.config,source},desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,f.config.contract,config);
   await new LoopCandidatePublisherV1(desk,config).publishCompletion({runLinkId:link.runLink.runLinkId,completionDigest:second.completionDigest});
   const byRequest=async()=>Object.fromEntries((await desk.readLoopCandidates(f.identity)).candidates.map(c=>[c.requestId,c]));
-  firstUnreadable=true;
+  return {desk,draft,settingsText,byRequest,setFirstUnreadable:(v:boolean)=>{firstUnreadable=v;}};
+};
+
+test("B4 one unreadable candidate never hides another request's current candidate",async()=>{
+ const f=await syntheticFixture();try{
+  const {desk,draft,byRequest,setFirstUnreadable}=await twoRequestFixture(f);
+  setFirstUnreadable(true);
   let cards=await byRequest();
   assert.equal(cards[f.requestId]!.freshness,"stale","B4 an unreadable undecided card is isolated without decision authority");assert.equal(cards[f.requestId]!.canDecide,false);
   assert.equal(cards[draft.request.requestId]!.canDecide,true,"B4 another request's current card stays decidable beside an unreadable card");
-  firstUnreadable=false;
+  setFirstUnreadable(false);
   const first=cards[f.requestId]!;await desk.decideLoopCandidate(f.identity,{candidateId:first.candidateId,expectedVersion:1,candidateRecordDigest:first.recordDigest,
    candidateRevision:first.candidateRevision,localVersion:first.localVersion,a2InputVersion:first.a2InputVersion,decision:"decline"},"b4-first-decline-0001");
-  firstUnreadable=true;cards=await byRequest();
+  setFirstUnreadable(true);cards=await byRequest();
   assert.equal(cards[f.requestId]!.state,"declined");assert.equal(cards[f.requestId]!.freshness,"stale");
   assert.equal(cards[draft.request.requestId]!.canDecide,true,"B4 a decided card with lost evidence never hides another current card");
   assert.equal((await desk.readLoopCandidate(f.identity,f.project.projectId,draft.request.requestId)).candidate?.canDecide,true);
+ }finally{await f.close();}
+});
+
+test("B4 one unreadable candidate never hides another request's accepted history",async()=>{
+ const f=await syntheticFixture();try{
+  const {desk,draft,settingsText,byRequest,setFirstUnreadable}=await twoRequestFixture(f);
+  const c=(await byRequest())[draft.request.requestId]!;
+  await desk.decideLoopCandidate(f.identity,{candidateId:c.candidateId,expectedVersion:1,candidateRecordDigest:c.recordDigest,
+   candidateRevision:c.candidateRevision,localVersion:c.localVersion,a2InputVersion:c.a2InputVersion,decision:"accept"},"b4-second-accept-0001");
+  await f.lineage.reviseLoopDraft(f.identity,f.project.projectId,{requestId:draft.request.requestId,expectedVersion:1,
+   description:"SYNTHETIC revised scope",settingsText},"b4-second-revise-0001");
+  setFirstUnreadable(true);
+  const history=(await desk.readLoopCandidate(f.identity,f.project.projectId,draft.request.requestId)).candidate!;
+  assert.equal(history.state,"accepted");assert.equal(history.freshness,"stale");assert.equal(history.canDecide,false);
+  const cards=await byRequest();
+  assert.equal(cards[draft.request.requestId]!.state,"accepted","B4 an unreadable card never hides another request's accepted history");
+  assert.equal(cards[draft.request.requestId]!.freshness,"stale");assert.equal(cards[draft.request.requestId]!.canDecide,false);
+  assert.equal(cards[f.requestId]!.state,"ready");assert.equal(cards[f.requestId]!.freshness,"stale","B4 the unreadable undecided card stays isolated");
+  assert.equal(cards[f.requestId]!.canDecide,false,"B4 an unreadable undecided card never gains decision authority");
+  await assert.rejects(desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId),/SYNTHETIC first unreadable/,
+   "B4 the unreadable card's own detail still fails closed");
  }finally{await f.close();}
 });
 
