@@ -571,8 +571,8 @@ export class ImproveControlRoomLoopServiceV1 {
       const prior = await this.#result(tx, claim); if (prior) return prior;
       if (outcome.state !== "refused") {
         if (claim.operation === "intake") {
-          if (status.settingsSha256 !== b.settingsSha256 || !["draft", "waiting"].includes(status.state)
-            || status.progress.step !== null && status.progress.step !== "intake") throw conflict();
+          // Admission comes from the exact durable receipt above; progress is display data.
+          if (status.settingsSha256 !== b.settingsSha256 || !["draft", "waiting"].includes(status.state)) throw conflict();
           await lineage.recordLoopRunLink({ projectId, requestId: claim.request_id, initialInputVersion: b.localVersion, run: status.run });
         }
         if (claim.operation === "confirm") {

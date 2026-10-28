@@ -6,7 +6,9 @@ import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process"
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { lstatSync, realpathSync } from "node:fs";
 import fsPromises from "node:fs/promises";
@@ -258,6 +260,99 @@ async function fixture(t: TestContext) {
     expectedRevision: s.engine.revision, requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 }); assert.equal(response.status, 202); assert.equal((await response.json() as {state:string}).state,"accepted","A2 confirm requires an engine record"); return get(id); };
   return { ...f, ...engine, bridge, service, handler, base, post, get, intake, confirm };
 }
+
+for (const step of ["1", "intake", "42", null]) test(`B1b intake completion ignores display step ${step}`, async t => {
+  const f = await fixture(t);
+  const adapter = { ...f.adapter, intake: async (...args: Parameters<LoopAdapterV1["intake"]>) => {
+    const status = await f.adapter.intake(...args);
+    return { ...status, progress: { ...status.progress, step } };
+  } };
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+    { integrityKey: KEY, adapter }, () => now);
+  const result = await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, "b1b-display-step-0001");
+  assert.equal(result.state, "accepted", "intake admission is independent of display step");
+  assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links")).rows.length, 1);
+});
+
+// Optional adjacent tooling checkout, supplied by the build/review lane. The
+// CLI uses its disposable Bridge fixture and dry launcher; no provider runs.
+if (process.env.CONTROL_ROOM_A2_TEST_LOOP) test("B1b real CLI intake completes with numbered progress and legacy control", async t => {
+  const loop = resolve(process.env.CONTROL_ROOM_A2_TEST_LOOP!);
+  const module = await import(pathToFileURL(join(loop, "bridge/a2-contract.mjs")).href);
+  const driver = String.raw`import json,sys
+sys.path.insert(0,sys.argv[1])
+from test_a2_bridge import Bridge
+d=Bridge(); d.setUp()
+try:
+    path,_=d.prepare_intake()
+    print(d.settings_path.read_text(),flush=True)
+    p=json.load(sys.stdin)
+    d.request.write_text(p['description'])
+    path.write_text(json.dumps(p['expectation']))
+    d.obj(d.cli(*d.intake_args(path)))
+    status=d.obj(d.cli('status','synth','--json'))
+    assert status['request']['admissions']==d.load()['chain']['admissions']
+    print(json.dumps(status),flush=True)
+finally:
+    d.doCleanups()
+`;
+  for (const legacy of [false, true]) await t.test(legacy ? "legacy-label control" : "real numbered progress", async t => {
+    const f = await fixture(t);
+    const child = spawn("/usr/bin/python3", ["-B", "-c", driver, loop], {
+      timeout: 60000, env: { PATH: "/usr/bin:/bin", TMPDIR: resolve(".test-tmp"), PYTHONDONTWRITEBYTECODE: "1",
+        CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", NODE_ENV: "test" },
+    });
+    let stderr = ""; child.stderr.on("data", data => { stderr += data; });
+    const exited = once(child, "close");
+    t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await exited; });
+    const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    const settingsLine = await lines.next();
+    assert.equal(settingsLine.done, false, "real CLI fixture supplies settings");
+    const realSettings = settingsLine.value!;
+    const lineage = { ...f.adapter.contract, decodeRunIdentity: (input: unknown) => loopImprovementRunIdentitySchemaV1.parse(input) };
+    const contract = module.a2BridgeContractV1(lineage) as LoopAdapterConfigurationV1["contract"];
+    let observed: LoopEngineStatusV1 | undefined;
+    let failure: unknown;
+    let record: { command_id: string; binding_digest: string; evidence: unknown } | undefined;
+    const adapter: LoopAdapterV1 = { ...f.adapter, adapterId: module.A2_BRIDGE_ADAPTER_ID,
+      schemaDigest: contract.schemaDigest, settingsText: realSettings, contract: lineage, reserveRun: () => "synth",
+      intake: async (commandId, binding, text, beforeSpawn) => {
+        try {
+          const expectation = await contract.admissionExpectation!(Object.freeze({ ...binding, body: Object.freeze(binding.body) }),
+            Object.freeze({ operation: "intake", commandId }));
+          beforeSpawn();
+          child.stdin.end(JSON.stringify({ expectation, description: text }));
+          const statusLine = await lines.next();
+          const [code] = await exited;
+          assert.equal(code, 0, stderr); assert.equal(statusLine.done, false);
+          const output = JSON.parse(statusLine.value!);
+          record = output.request.admissions[0];
+          observed = loopEngineStatusSchemaV1.parse(contract.decodeStatus(output));
+          // Only the control changes the display label. The candidate carries
+          // the real CLI status and decoder output unchanged into completion.
+          return legacy ? { ...observed, progress: { ...observed.progress, step: "intake" } } : observed;
+        } catch (error) { failure = error; throw error; }
+      } };
+    const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+      { integrityKey: KEY, adapter }, () => now);
+    const key = "b1b-real-intake-0001";
+    const result = await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, key);
+    assert.ifError(failure);
+    assert.ok(observed, "real CLI status decoded before completion");
+    assert.equal(observed.progress.step, "1"); assert.equal(observed.progress.role, "orchestrator");
+    const rows = (await f.db.query<{ entry_kind: string; command_id: string; binding: LoopBridgeBindingV1; result: { evidenceDigest: string } | null }>(
+      "SELECT entry_kind,command_id,binding,result FROM control_loop_improvement_commands WHERE request_id=$1 ORDER BY entry_kind", [result.requestId])).rows;
+    const claim = rows.find(row => row.entry_kind === "claim")!;
+    assert.equal(record!.command_id, claim.command_id); assert.equal(record!.binding_digest, sha256Digest(claim.binding));
+    assert.deepEqual(record!.evidence, { request_sha256: loopByteHashV1(description), settings_sha256: loopByteHashV1(realSettings), input_version: 1 });
+    assert.equal(result.state, "accepted", "real CLI intake completes with its exact durable admission");
+    assert.deepEqual(rows.map(row => row.entry_kind), ["claim", "result"]);
+    assert.equal(rows[1]!.result!.evidenceDigest, sha256Digest(record));
+    assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links WHERE request_id=$1", [result.requestId])).rows.length, 1);
+    assert.equal((await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, key)).commandId, result.commandId);
+    assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_commands WHERE request_id=$1", [result.requestId])).rows.length, 2);
+  });
+});
 
 // A2 chain_emit exposes steps[].n/role/model/identity; the reviewed decoder
 // supplies these display values. Role names match A2 ROLES, including reviews.
