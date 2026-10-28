@@ -224,6 +224,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // A split loop key would fail every loop desk read of legacy rows.
   if (options.loopBridge && options.workBatchIntegrityKey
     && !loopKeyMatchesLegacyKeyV1(options.loopBridge.integrityKey, options.workBatchIntegrityKey)) throw new Error("mac_local_web_process_config_invalid");
+  if (options.loopCandidates && options.workBatchIntegrityKey
+    && !loopKeyMatchesLegacyKeyV1(options.loopCandidates.integrityKey, options.workBatchIntegrityKey)) throw new Error("mac_local_web_process_config_invalid");
   if (options.hostProcessId !== undefined
     && (!Number.isSafeInteger(options.hostProcessId) || options.hostProcessId <= 1))
     throw new Error("mac_local_web_process_config_invalid");

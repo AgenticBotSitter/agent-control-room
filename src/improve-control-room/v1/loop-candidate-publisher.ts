@@ -59,9 +59,10 @@ export async function verifyLoopCandidateCompletionV1(deps: LoopCandidateDepende
   const evidence = loopCandidateEvidenceSchemaV1.parse(await deps.source.readVerifiedCompletion(runLinkId));
   assertNoSecretMaterial(evidence);
   if (evidence.binding.runLinkId !== runLinkId || evidence.binding.toolingRevision !== tooling
-    || expectedDigest !== undefined && evidence.completionDigest !== expectedDigest
-    || evidence.binding.baseRevision !== before.baseRevision || evidence.binding.candidateRevision !== before.candidateRevision)
-    throw new Error("loop_candidate_unavailable");
+    || expectedDigest !== undefined && evidence.completionDigest !== expectedDigest) throw new Error("loop_candidate_unavailable");
+  // A repository that moved past the verified base/head is positive evidence of supersession.
+  if (evidence.binding.baseRevision !== before.baseRevision || evidence.binding.candidateRevision !== before.candidateRevision)
+    throw new LoopCandidateStaleCompletionV1();
   const after = await deps.repository.observe({ runLinkId });
   const reread = loopCandidateEvidenceSchemaV1.parse(await deps.source.readVerifiedCompletion(runLinkId));
   if (deps.source.toolingRevision !== tooling || deps.source.schemaDigest !== schema || canonicalJson(before) !== canonicalJson(after)

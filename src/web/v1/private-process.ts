@@ -185,6 +185,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   // A split loop key would fail every loop desk read of legacy rows.
   if (options.loopBridge && options.workBatches
     && !loopKeyMatchesLegacyKeyV1(options.loopBridge.integrityKey, options.workBatches.integrityKey)) throw new Error("invalid_private_app_config");
+  if (options.loopCandidates && options.workBatches
+    && !loopKeyMatchesLegacyKeyV1(options.loopCandidates.integrityKey, options.workBatches.integrityKey)) throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
   const productConfiguration = options.productConfiguration === undefined ? undefined
     : parseProductConfigurationV1(options.productConfiguration);

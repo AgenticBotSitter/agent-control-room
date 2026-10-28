@@ -577,6 +577,101 @@ test("B4 repository head must agree with the verified completion",async()=>{
  }finally{await f.close();}
 });
 
+const decide=async(f:Awaited<ReturnType<typeof syntheticFixture>>,c:{candidateId:string;recordDigest:string;candidateRevision:string;localVersion:number;a2InputVersion:unknown},decision:"accept"|"decline",key:string)=>
+ f.handle(request(`/api/v1/loop-update-candidates/${c.candidateId}/decision`,"POST",{candidateId:c.candidateId,expectedVersion:1,candidateRecordDigest:c.recordDigest,
+  candidateRevision:c.candidateRevision,localVersion:c.localVersion,a2InputVersion:c.a2InputVersion,decision},key));
+const candidateReads=async(f:Awaited<ReturnType<typeof syntheticFixture>>)=>{
+ const list=await f.handle(request("/api/v1/loop-update-candidates")),detail=await f.handle(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/candidate`));
+ return {list:list.status,detail:detail.status,cards:list.status===200?(await list.json()).candidates:[],card:detail.status===200?(await detail.json()).candidate:null};
+};
+
+test("B4 accepted candidate keeps its decision after the integration head moves",async()=>{
+ const f=await syntheticFixture();try{
+  await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
+  assert.equal((await decide(f,c,"accept","b4-accept-then-move-0001")).status,201);
+  f.moveRepositoryHead("c".repeat(40));
+  const r=await candidateReads(f);
+  assert.equal(r.list,200,"B4 a moved head after acceptance keeps the candidate list readable");assert.equal(r.detail,200,"B4 a moved head after acceptance keeps the request detail readable");
+  for(const card of [r.cards[0],r.card]){assert.equal(card.state,"accepted");assert.equal(card.freshness,"stale");assert.equal(card.canDecide,false);}
+  const {verifyLoopCandidateCompletionV1,LoopCandidateStaleCompletionV1}=await import("../src/improve-control-room/v1/loop-candidate-publisher");
+  await assert.rejects(verifyLoopCandidateCompletionV1(f.config,f.runLinkId),(e:unknown)=>e instanceof LoopCandidateStaleCompletionV1,"B4 a moved head is superseded, not unreadable");
+ }finally{await f.close();}
+});
+
+test("B4 declined candidate keeps its decision after its evidence becomes unreadable",async()=>{
+ const f=await syntheticFixture();try{
+  await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
+  assert.equal((await decide(f,c,"decline","b4-decline-then-lost-0001")).status,201);
+  f.unavailable(true);
+  const r=await candidateReads(f);
+  assert.equal(r.list,200,"B4 lost evidence after a decision keeps the candidate list readable");assert.equal(r.detail,200,"B4 lost evidence after a decision keeps the request detail readable");
+  for(const card of [r.cards[0],r.card]){assert.equal(card.state,"declined");assert.equal(card.freshness,"stale");assert.equal(card.canDecide,false);}
+ }finally{await f.close();}
+});
+
+test("B4 one unreadable candidate never hides another request's current candidate",async()=>{
+ const f=await syntheticFixture();try{
+  await f.publish();
+  const {ImproveControlRoomDeskServiceV1}=await import("../src/improve-control-room/v1/service");
+  const {ImproveControlRoomLoopServiceV1}=await import("../src/web/v1/improve-control-room-loop-service");
+  const {LoopCandidatePublisherV1}=await import("../src/improve-control-room/v1/loop-candidate-publisher");
+  const {loopByteHashV1}=await import("../src/web/v1/improve-control-room-loop-adapter");
+  const description="SYNTHETIC finished improvement",settingsText='{"fixture":"SYNTHETIC B4"}';
+  const run={adapterId:f.adapter.adapterId,loopRunId:"synthetic-run:b4-second",toolingRevision,a2SchemaVersion:1 as const};
+  const draft=await f.lineage.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},"b4-second-draft-0001");
+  const link=await f.lineage.recordLoopRunLink({projectId:f.project.projectId,requestId:draft.request.requestId,initialInputVersion:1,run});
+  const confirmation={path:"request.md",sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:"owner" as const,input_version:"SYNTHETIC:1"};
+  let status:import("../src/web/v1/improve-control-room-loop-adapter").LoopEngineStatusV1={run,revision:4,inputVersion:"SYNTHETIC:1",state:"ready",description,
+   settingsSha256:loopByteHashV1(settingsText),settingsDigest:loopByteHashV1(settingsText),confirmation,
+   approval:null,question:null,progress:{step:"final",completed:1,attention:"none"},receipts:[]};
+  await f.lineage.authorizeLoopStart(f.identity,f.project.projectId,{requestId:draft.request.requestId,expectedVersion:1,runLinkId:link.runLink.runLinkId,
+   requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},"b4-second-start-0001",
+   {inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,revision:4,confirmation});
+  const adapter={...f.adapter,status:async()=>structuredClone(status),start:async(id:string,b:unknown,fence:()=>void)=>{fence();
+   status={...status,state:"running",revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC second Start"})}]};return structuredClone(status);}};
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+  try{await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-second-start-0001");}
+  finally{await bridge.close();}
+  const second=f.evidence();Object.assign(second.binding,{requestId:draft.request.requestId,runLinkId:link.runLink.runLinkId,loopRunId:run.loopRunId});
+  let firstUnreadable=false;
+  const source={toolingRevision,schemaDigest,readVerifiedCompletion:async(id:string)=>{
+   if(id===link.runLink.runLinkId)return structuredClone(second);if(firstUnreadable)throw new Error("SYNTHETIC first unreadable");return f.config.source.readVerifiedCompletion(id);}};
+  const config={...f.config,source},desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,f.config.contract,config);
+  await new LoopCandidatePublisherV1(desk,config).publishCompletion({runLinkId:link.runLink.runLinkId,completionDigest:second.completionDigest});
+  const byRequest=async()=>Object.fromEntries((await desk.readLoopCandidates(f.identity)).candidates.map(c=>[c.requestId,c]));
+  firstUnreadable=true;
+  let cards=await byRequest();
+  assert.equal(cards[f.requestId]!.freshness,"stale","B4 an unreadable undecided card is isolated without decision authority");assert.equal(cards[f.requestId]!.canDecide,false);
+  assert.equal(cards[draft.request.requestId]!.canDecide,true,"B4 another request's current card stays decidable beside an unreadable card");
+  firstUnreadable=false;
+  const first=cards[f.requestId]!;await desk.decideLoopCandidate(f.identity,{candidateId:first.candidateId,expectedVersion:1,candidateRecordDigest:first.recordDigest,
+   candidateRevision:first.candidateRevision,localVersion:first.localVersion,a2InputVersion:first.a2InputVersion,decision:"decline"},"b4-first-decline-0001");
+  firstUnreadable=true;cards=await byRequest();
+  assert.equal(cards[f.requestId]!.state,"declined");assert.equal(cards[f.requestId]!.freshness,"stale");
+  assert.equal(cards[draft.request.requestId]!.canDecide,true,"B4 a decided card with lost evidence never hides another current card");
+  assert.equal((await desk.readLoopCandidate(f.identity,f.project.projectId,draft.request.requestId)).candidate?.canDecide,true);
+ }finally{await f.close();}
+});
+
+test("B4 candidates-only split integrity key refuses both web compositions",async()=>{
+ const f=await syntheticFixture();const {createMacLocalWebProcessV1}=await import("../src/web/v1/mac-local-web-process");
+ const {LOCAL_OWNER_SESSION_PROFILE_V1}=await import("../src/web/v1/local-owner-session");
+ try{
+  const split={...f.config,integrityKey:new Uint8Array(32).fill(65)};
+  const hosted=(loopCandidates:typeof f.config)=>createPrivateWebProcess({origin,...trust,tenantId:"tenant:web",workspaceId:"workspace:web",loadKeys:async()=>trust.keys,clock:()=>now,
+   database:{client:f.client,close:async()=>{}},loopCandidates,workBatches:{integrityKey:KEY}});
+  assert.throws(()=>hosted(split),/invalid_private_app_config/,"B4 hosted composition refuses a candidates-only split key");
+  await hosted(f.config).close();
+  const localOrigin="http://127.0.0.1:60351";
+  const mac=(loopCandidates:typeof f.config)=>createMacLocalWebProcessV1({origin:localOrigin,workspaceId:"workspace:web",clock:()=>now,
+   localOwnerSession:{schema:LOCAL_OWNER_SESSION_PROFILE_V1,origin:localOrigin,tenantId:"tenant:web",provider:trust.issuer,subject:"test-owner",
+    ownerCodeDigest:sha256Digest({ownerCode:"SYNTHETIC-B4-owner-code-long"}),sessionSeconds:900},
+   database:{client:f.client,close:async()=>{},isAvailable:()=>true},loopCandidates,workBatchIntegrityKey:KEY});
+  assert.throws(()=>mac(split),/mac_local_web_process_config_invalid/,"B4 Mac composition refuses a candidates-only split key");
+  await mac(f.config).close();
+ }finally{await f.close();}
+});
+
 test("B4 per-card retry latch freezes one inert POST",async()=>{
  const f=await syntheticFixture();const React=await import("react"),{act}=React,{createRoot}=await import("react-dom/client"),{JSDOM}=await import("jsdom");
  const {ImprovementFinishCandidate}=await import("../private-app/app/improvement-finish-card");

@@ -854,33 +854,39 @@ export class ImproveControlRoomDeskServiceV1 {
     }, { readOnly: true });
   }
   async #freshCandidate(value: { row: LoopCandidateRow; e: LoopCandidateEvidenceV1; decision: LoopCandidateDecisionRow | undefined; current: boolean; mayDecide: boolean }) {
-    let current = value.current;
+    let current = value.current, answered = false, unreadable: { error: unknown } | undefined;
     if (current) {
       try {
         const e = await verifyLoopCandidateCompletionV1(this.#candidateDependencies(), value.row.run_link_id);
-        current = canonicalJson(e) === canonicalJson(value.e);
+        current = canonicalJson(e) === canonicalJson(value.e); answered = true;
       } catch (error) {
-        if (!(error instanceof LoopCandidateStaleCompletionV1)) throw error;
-        current = false;
+        current = false; answered = error instanceof LoopCandidateStaleCompletionV1;
+        // A decided card is retained history: lost or superseded evidence never hides its decision.
+        if (!answered && !value.decision) unreadable = { error };
       }
     }
     const d = value.decision;
-    return loopCandidateCardSchemaV1.parse({ candidateId: value.row.id, projectId: value.row.project_id, requestId: value.row.request_id,
+    return { answered, unreadable, card: loopCandidateCardSchemaV1.parse({ candidateId: value.row.id, projectId: value.row.project_id, requestId: value.row.request_id,
       localVersion: Number(value.row.local_version), a2InputVersion: value.row.a2_input_version, candidateRevision: value.row.candidate_revision,
       recordDigest: value.row.record_digest, version: d ? 2 : 1, state: d ? d.decision === "accept" ? "accepted" : "declined" : "ready",
       evidence: value.e, freshness: current ? "current" : "stale", createdAt: iso(value.row.created_at),
-      decidedAt: d ? iso(d.decided_at) : null, canDecide: current && !d && value.mayDecide });
+      decidedAt: d ? iso(d.decided_at) : null, canDecide: current && !d && value.mayDecide }) };
   }
   async readLoopCandidates(identity: VerifiedWebIdentity) {
-    const snap = await this.#candidateSnapshot(identity), cards = [];
-    for (const value of snap.values) cards.push(await this.#freshCandidate(value));
-    return loopCandidatePageSchemaV1.parse({ schemaVersion: 1, candidates: cards, truncated: snap.truncated,
+    const snap = await this.#candidateSnapshot(identity), results = [];
+    for (const value of snap.values) results.push(await this.#freshCandidate(value));
+    // One unreadable card is isolated without decision authority. A source that
+    // answers for no card is unknown and fails the page rather than looking clear.
+    const unreadable = results.find(r => r.unreadable)?.unreadable;
+    if (unreadable && !results.some(r => r.answered)) throw unreadable.error;
+    return loopCandidatePageSchemaV1.parse({ schemaVersion: 1, candidates: results.map(r => r.card), truncated: snap.truncated,
       observedAt: snap.observedAt, startsDeploy: false, signedDeployApprovalCreated: false });
   }
   async readLoopCandidate(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
     const snap = await this.#candidateSnapshot(identity, projectId, requestId);
-    return loopCandidateDetailSchemaV1.parse({ schemaVersion: 1, candidate: snap.values[0] ? await this.#freshCandidate(snap.values[0]) : null,
-      observedAt: snap.observedAt });
+    const result = snap.values[0] ? await this.#freshCandidate(snap.values[0]) : undefined;
+    if (result?.unreadable) throw result.unreadable.error;
+    return loopCandidateDetailSchemaV1.parse({ schemaVersion: 1, candidate: result?.card ?? null, observedAt: snap.observedAt });
   }
   #candidateDecisionReceipt(row: LoopCandidateDecisionRow, replayed: boolean) {
     return loopCandidateDecisionReceiptSchemaV1.parse({ schemaVersion: 1, decisionId: row.id, candidateId: row.candidate_id,
