@@ -1,4 +1,5 @@
 // Dedicated guard lane. Child commands cannot select this runner.
+// Each probe checks its baseline explicitly before asking the helper to mutate it.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile,execFileSync } from "node:child_process";
@@ -47,7 +48,7 @@ test("B4 candidate guards fail independently and restore green",{timeout:600000}
    const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1"};delete env.NODE_TEST_CONTEXT;
    const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:60000,maxBuffer:4*1024*1024});
    assert.match(baseline.stdout,/# pass 1/u);assert.match(baseline.stdout,/# fail 0/u);
-   const result=await assertGuardBites({root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd:args,boundMs:60000,because:probe.assertion});
+   const result=await assertGuardBites({skipBaseline:true,root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd:args,boundMs:60000,because:probe.assertion});
    assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
    assert.ok(result.output.includes(probe.assertion),`loaded mutation reaches intended assertion: ${probe.assertion}`);
    assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);
@@ -103,7 +104,7 @@ test("B4 SQL guards require independently loaded native mutations",{timeout:6000
     `--test-name-pattern=^${probe.pattern}$`,"tests/improve-control-room-loop-candidate-postgres.test.ts"];
    const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:120000,maxBuffer:8*1024*1024});
    assert.match(baseline.stdout,/# pass 1/u);assert.match(baseline.stdout,/# fail 0/u);
-   const result=await assertGuardBites({root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd:args,boundMs:120000,because:probe.assertion});
+   const result=await assertGuardBites({skipBaseline:true,root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd:args,boundMs:120000,because:probe.assertion});
    assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
    assert.ok(result.output.includes(probe.assertion),`loaded native mutation reaches intended assertion: ${probe.assertion}`);
    assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);
@@ -124,7 +125,7 @@ test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{ti
   const args=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",
    "--test-name-pattern=^B4 inert decision transport spy observes forbidden attempts before refusal$","tests/improve-control-room-loop-candidate.test.tsx"];
   const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:60000,maxBuffer:4*1024*1024});assert.match(baseline.stdout,/# pass 1/u);
-  const result=await assertGuardBites({root:copy,file:"private-app/app/improvement-finish-card.tsx",find:"      await client.decide(action);",
+  const result=await assertGuardBites({skipBaseline:true,root:copy,file:"private-app/app/improvement-finish-card.tsx",find:"      await client.decide(action);",
    replace:'      await fetch("/api/v1/install",{method:"POST"}); await client.decide(action);',testCmd:args,boundMs:60000,
    because:"B4 inert decision attempts zero delivery operations before any downstream refusal"});
   assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.match(result.output,/ERR_ASSERTION/u);
@@ -144,7 +145,7 @@ test("B4 decided-state response mutation reaches the invariant assertion",{timeo
   const args=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",
    "--test-name-pattern=^B4 wire decided state requires version two and a decision time$","tests/improve-control-room-loop-candidate.test.tsx"];
   const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:60000,maxBuffer:4*1024*1024});assert.match(baseline.stdout,/# pass 1/u);
-  const result=await assertGuardBites({root:copy,file:wire,
+  const result=await assertGuardBites({skipBaseline:true,root:copy,file:wire,
    find:'|| (c.state === "ready" ? c.version !== 1 || c.decidedAt !== null : c.version !== 2 || c.decidedAt === null)',
    replace:'|| (c.state === "ready") !== (c.version === 1 && c.decidedAt === null)',testCmd:args,boundMs:60000,
    because:"B4 accepted state cannot carry a ready candidate version"});
