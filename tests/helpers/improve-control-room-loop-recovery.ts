@@ -43,7 +43,7 @@ if op in ['wait','advance'] and os.path.exists(os.path.join(root,'recovery-behav
     if mode=='malformed': print('invalid status');sys.exit(0)
 if op=='wait':
     while True: time.sleep(1)
-elif op!='approve': print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error=None)))
+else: print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error=None)))
 `;
 export async function syntheticRecoveryEngine(t: TestContext) {
   await mkdir(resolve('.test-tmp'),{recursive:true});
@@ -69,10 +69,16 @@ export async function syntheticRecoveryEngine(t: TestContext) {
       qualifiedOperations:['intake','confirm','start','stop','approve','answer'],decodeStatus:(v:unknown)=>{
         const e=v as {run:string;counters:{fixture:object}};
         return loopEngineStatusSchemaV1.parse({...e.counters.fixture,run:{adapterId:'adapter:synthetic',loopRunId:e.run,toolingRevision,a2SchemaVersion:1}});
-      },atomicAdmission:async(_binding,invoke)=>invoke()}};
+      },
+      // This recovery-only fixture ignores expectation contents; the bridge suite
+      // separately proves engine compare-and-admit through its unwrapped adapter.
+      admissionExpectation:()=>({fixture:"SYNTHETIC recovery"})}};
   const raw=createImproveControlRoomLoopAdapterV1(configuration);t.after(()=>raw.close());
   const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string)=>{
     const s=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):raw[op](id,b,fence));
+    // These operations formerly created no fixture command files. Recovery
+    // tests seed retained files explicitly; discard only new pin-only scratch.
+    if(['confirm','start','approve'].includes(op))await raw.releaseCommandFiles!(id);
     s.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id,op})});
     await edit(b.loopRunId,s);return s;
   };

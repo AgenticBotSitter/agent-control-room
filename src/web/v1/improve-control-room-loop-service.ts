@@ -320,8 +320,8 @@ export class ImproveControlRoomLoopServiceV1 {
       canStart: mayWrite && !startClaim && confirmationCurrent && startState === "not_started" && state === "ready" && this.#adapter.available("start"),
       // Stop accepts any signed Start claim, including a refused one (see mutate).
       canStop: !recoveryTerminal && mayWrite && !!startClaim && !!lineage.link && !["stopped", "finished"].includes(current.state) && this.#adapter.available("stop"),
-      progress: current.progress.step === null ? null : { stepId: current.progress.step, role: null, attempt: null,
-        requestedModel: null, observedModel: null, identityVerified: false, repairCount: null },
+      progress: current.progress.step === null ? null : { stepId: current.progress.step, role: current.progress.role ?? null, attempt: current.progress.attempt ?? null,
+        requestedModel: current.progress.requestedModel ?? null, observedModel: current.progress.observedModel ?? null, identityVerified: false, repairCount: current.progress.repairCount ?? null },
       attention, observedAt: new Date(this.clock()).toISOString() });
     return loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
       decisions: loopImprovementDecisionsSchemaV1.parse(recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,

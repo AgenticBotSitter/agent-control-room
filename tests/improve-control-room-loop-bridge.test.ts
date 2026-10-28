@@ -259,6 +259,28 @@ async function fixture(t: TestContext) {
   return { ...f, ...engine, bridge, service, handler, base, post, get, intake, confirm };
 }
 
+// A2 chain_emit exposes steps[].n/role/model/identity; the reviewed decoder
+// supplies these display values. Role names match A2 ROLES, including reviews.
+test("B1b A2 live progress reaches the run panel", async t => {
+  const f=await fixture(t),id=await f.intake();
+  const initial=await f.get(id),run=initial.request.runLink!.loopRunId;
+  const roles=["orchestrator","plan","plan-review","spec","spec-review","build",
+    "code-review","attack-review","ui-review","ci-review","final"];
+  for(const [index,role] of roles.entries()){
+    const progress={step:String(index+1),role,attempt:2,requestedModel:"model:requested",
+      observedModel:index===0?null:"model:observed",repairCount:3,completed:index,attention:"none" as const};
+    await f.edit(run,{progress});
+    const status=await f.get(id);
+    assert.deepEqual(status.engine.progress,progress,"wire preserves decoded A2 progress");
+    assert.deepEqual(status.display.progress,{stepId:String(index+1),role,attempt:2,
+      requestedModel:"model:requested",observedModel:progress.observedModel,identityVerified:false,repairCount:3},
+      "run panel shows saved model, role, step, attempt and repair values");
+  }
+  await f.edit(run,{progress:{step:"plan",completed:0,attention:"none"}});
+  assert.deepEqual((await f.get(id)).display.progress,{stepId:"plan",role:null,attempt:null,
+    requestedModel:null,observedModel:null,identityVerified:false,repairCount:null},"missing evidence remains unavailable");
+});
+
 test("B1b A2 engine receipts (unwrapped adapter)", async t => {
   const f=await fixture(t);
   assert.equal(f.adapter,f.raw,"website uses the unwrapped adapter");

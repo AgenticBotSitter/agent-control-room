@@ -7,7 +7,7 @@ import { z } from "zod";
 import { loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopImprovementContractV1 } from "../../improve-control-room/v1/schemas";
 import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
-import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, unavailableLoopGate,
+import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, loopProgressSchemaV1, unavailableLoopGate,
   type LoopImprovementDecisionsV1 } from "./improve-control-room-loop-attention-wire";
 import { canonicalJson, sha256Digest } from "../../security";
 
@@ -29,8 +29,7 @@ export const loopEngineStatusSchemaV1 = z.object({
   description: z.string().min(1).max(8000), settingsSha256: z.string().regex(/^[a-f0-9]{64}$/),
   settingsDigest: z.string().min(1).max(180), confirmation: loopImprovementConfirmationSchemaV1.nullable(),
   approval: seal.nullable(), question: question.nullable(),
-  progress: z.object({ step: z.enum(["intake", "plan", "spec", "build", "review", "final"]).nullable(),
-    completed: z.number().int().nonnegative().max(100000), attention: z.enum(["none", "owner", "blocked"]) }).strict(),
+  progress: loopProgressSchemaV1,
   // Positive command-specific evidence, decoded from A2's saved receipts/ledger.
   receipts: z.array(z.object({ commandId: z.string().regex(/^loop-command:[a-f0-9]{32}$/),
     bindingDigest: digest, state: z.enum(["accepted", "waiting", "refused"]), evidenceDigest: digest,

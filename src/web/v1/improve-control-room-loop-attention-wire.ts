@@ -22,11 +22,17 @@ export const loopImprovementDecisionsSchemaV1 = z.object({ gate: loopDecisionGat
 export type LoopImprovementDecisionsV1 = z.infer<typeof loopImprovementDecisionsSchemaV1>;
 export const unavailableLoopGate = () => ({ kind: "blocked" as const, code: "UNAVAILABLE" as const,
   message: "The saved decision could not be verified. Check the request again." });
+// Step identifiers and roles come from the reviewed A2 decoder (including
+// numbered steps and review roles); they are not a product-owned workflow enum.
+export const loopProgressSchemaV1 = z.object({ step: z.string().min(1).max(180).nullable(),
+  completed: z.number().int().nonnegative().max(100000), attention: z.enum(["none", "owner", "blocked"]),
+  role: z.string().min(1).max(240).nullish(), attempt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullish(),
+  requestedModel: z.string().min(1).max(240).nullish(), observedModel: z.string().min(1).max(240).nullish(),
+  repairCount: revision.nullish() }).strict();
 const engineSchema = z.object({ revision, state: z.enum(["draft", "ready", "running", "waiting", "stopped", "finished", "refused"]),
   draft: z.string().min(1).max(8000), requestSha256: hash, settingsSha256: hash, inputVersion: scalar,
   confirmation: z.object({ sha256: hash, at: z.string().datetime(), who: z.literal("owner"), inputVersion: scalar }).strict().nullable(),
-  progress: z.object({ step: z.enum(["intake", "plan", "spec", "build", "review", "final"]).nullable(),
-    completed: revision, attention: z.enum(["none", "owner", "blocked"]) }).strict(),
+  progress: loopProgressSchemaV1,
   approval: loopApprovalDescriptorSchemaV1.nullable(),
   question: z.object({ questionId: id, inputVersion: scalar, reportSha256: hash, owner: z.boolean(), changesInput: z.boolean() }).strict().nullable(),
   identity: z.literal("unverified") }).strict();
