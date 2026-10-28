@@ -1,4 +1,5 @@
 import { createImproveControlRoomLoopAdapterV1, type LoopAdapterConfigurationV1 } from "./improve-control-room-loop-adapter";
+import { loopKeyMatchesLegacyKeyV1 } from "./improve-control-room-loop-service";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
@@ -319,10 +320,9 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if ([web.database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV2(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
-    // The loop desk verifies legacy pipeline templates and requests with the loop
-    // key, so a split key would fail every loop desk read. Refuse it at startup.
+    // A split loop key would fail every loop desk read of legacy rows.
     const loopKey = input.loopBridge ? key(input.loopBridge.integrityKey) : undefined;
-    if (loopKey && pipelines && !timingSafeEqual(loopKey, pipelines.integrityKey)) throw new Error();
+    if (loopKey && pipelines && !loopKeyMatchesLegacyKeyV1(loopKey, pipelines.integrityKey)) throw new Error();
     const loopBridge = input.loopBridge ? { integrityKey: loopKey!,
       adapter: createImproveControlRoomLoopAdapterV1(input.loopBridge.adapter) } : undefined;
     return { loopBridge, web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,

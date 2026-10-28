@@ -1,7 +1,7 @@
-import { ImproveControlRoomLoopServiceV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
+import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ownerPushLinkV1 } from "../../web-push/v1/policy";
 import { localOwnerSignInTargetV1 } from "./local-owner-session";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { DatabaseClient } from "../../persistence/database";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
@@ -218,10 +218,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // same in-session proposal service. Refuse a partial composition instead of
   // mounting a review that succeeds for ordinary accepts but cannot follow up.
   if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
-  // The loop desk verifies legacy pipeline templates and requests with the loop
-  // key, so a split key would fail every loop desk read. Refuse it at startup.
-  if (options.loopBridge && options.workBatchIntegrityKey && (options.loopBridge.integrityKey.length !== options.workBatchIntegrityKey.length
-    || !timingSafeEqual(options.loopBridge.integrityKey, options.workBatchIntegrityKey))) throw new Error("mac_local_web_process_config_invalid");
+  // A split loop key would fail every loop desk read of legacy rows.
+  if (options.loopBridge && options.workBatchIntegrityKey
+    && !loopKeyMatchesLegacyKeyV1(options.loopBridge.integrityKey, options.workBatchIntegrityKey)) throw new Error("mac_local_web_process_config_invalid");
   if (options.hostProcessId !== undefined
     && (!Number.isSafeInteger(options.hostProcessId) || options.hostProcessId <= 1))
     throw new Error("mac_local_web_process_config_invalid");

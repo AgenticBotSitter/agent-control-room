@@ -1,5 +1,4 @@
-import { ImproveControlRoomLoopServiceV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
-import { timingSafeEqual } from "node:crypto";
+import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins, cloudflareAccessGatewayAssertionProfileV1,
@@ -180,10 +179,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const origin = new URL(options.origin);
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
-  // The loop desk verifies legacy pipeline templates and requests with the loop
-  // key, so a split key would fail every loop desk read. Refuse it at startup.
-  if (options.loopBridge && options.workBatches && (options.loopBridge.integrityKey.length !== options.workBatches.integrityKey.length
-    || !timingSafeEqual(options.loopBridge.integrityKey, options.workBatches.integrityKey))) throw new Error("invalid_private_app_config");
+  // A split loop key would fail every loop desk read of legacy rows.
+  if (options.loopBridge && options.workBatches
+    && !loopKeyMatchesLegacyKeyV1(options.loopBridge.integrityKey, options.workBatches.integrityKey)) throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
   const productConfiguration = options.productConfiguration === undefined ? undefined
     : parseProductConfigurationV1(options.productConfiguration);

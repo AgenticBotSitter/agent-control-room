@@ -817,24 +817,31 @@ test("B1b canStop after a refused Start agrees with the Stop route", async t => 
   assert.equal((await f.get(id)).display.canStop, false);
 });
 
-test("B1b split loop and legacy pipeline integrity keys refuse every composition", async t => {
-  const f = await fixture(t), other = new Uint8Array(32).fill(65);
+test("B1b split loop and legacy pipeline integrity keys refuse both web compositions", async t => {
+  const engine = await synthetic(t), other = new Uint8Array(32).fill(65);
+  // Construction never queries; any database use here is a test failure.
+  const client: DatabaseClient = { query: async () => assert.fail("unexpected query"), transaction: async () => assert.fail("unexpected transaction"),
+    transactionWithPreCommitCheck: async () => assert.fail("unexpected transaction") };
   const hosted = (workBatchKey: Uint8Array) => createPrivateWebProcess({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
-    loadKeys: async () => trust.keys, clock: () => now, database: { client: f.client, close: async () => {} },
-    loopBridge: { integrityKey: KEY, adapter: f.adapter }, workBatches: { integrityKey: workBatchKey } });
+    loadKeys: async () => trust.keys, clock: () => now, database: { client, close: async () => {} },
+    loopBridge: { integrityKey: KEY, adapter: engine.adapter }, workBatches: { integrityKey: workBatchKey } });
   assert.throws(() => hosted(other), /invalid_private_app_config/, 'hosted composition refuses a split loop key');
-  const app = hosted(Uint8Array.from(KEY)); await app.close();
+  await hosted(Uint8Array.from(KEY)).close();
   const localOrigin = "http://127.0.0.1:32124";
   const mac = (workBatchIntegrityKey: Uint8Array) => createMacLocalWebProcessV1({ origin: localOrigin, workspaceId: "workspace:web", clock: () => now,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: localOrigin, tenantId: "tenant:web", provider: trust.issuer, subject: "test-owner",
       ownerCodeDigest: sha256Digest({ ownerCode: "synthetic-local-owner-code-long" }), sessionSeconds: 900 },
-    database: { client: f.client, isAvailable: () => true, close: async () => {} }, loopBridge: { integrityKey: KEY, adapter: f.adapter }, workBatchIntegrityKey });
+    database: { client, isAvailable: () => true, close: async () => {} }, loopBridge: { integrityKey: KEY, adapter: engine.adapter }, workBatchIntegrityKey });
   assert.throws(() => mac(other), /mac_local_web_process_config_invalid/, 'Mac composition refuses a split loop key');
   await mac(Uint8Array.from(KEY)).close();
+});
+
+test("B1b startup capture refuses a split loop and pipelines integrity key", async t => {
+  const engine = await synthetic(t), other = new Uint8Array(32).fill(65);
   const composition = await privateAgentTaskCompositionFixture(); t.after(composition.close);
   const scenario = composition.scenario();
   const startup = (pipelineKey: Uint8Array) => validatePrivateTaskStartupConfiguration({ ...scenario.configuration,
-    loopBridge: { integrityKey: KEY, adapter: f.configuration },
+    loopBridge: { integrityKey: KEY, adapter: engine.configuration },
     coordinator: { ...scenario.configuration.coordinator, pipelines: { integrityKey: pipelineKey, selectionAuthority: { assertCurrent: () => true } } } } as never);
   assert.throws(() => startup(other), /private_task_startup_config_invalid/, 'startup refuses a split loop key');
   const captured = startup(Uint8Array.from(KEY)); t.after(() => captured.loopBridge!.adapter.close());

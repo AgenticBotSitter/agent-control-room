@@ -25,6 +25,10 @@ const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 const sameTag = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const conflict = () => new WebAccessError("conflict");
 const unavailable = () => new Error("loop_bridge_contract_unavailable");
+/** The loop desk verifies legacy pipeline templates and requests with the loop
+ * key, so a composition with pipelines must use one key for both. */
+export const loopKeyMatchesLegacyKeyV1 = (loopKey: Uint8Array, legacyKey: Uint8Array) =>
+  loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);
 export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; admissionFreshnessMs?: number };
 type Lineage = Awaited<ReturnType<ImproveControlRoomDeskServiceV1["loopBridgeLineage"]>>;
 

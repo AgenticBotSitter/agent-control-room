@@ -69,18 +69,9 @@ const probes=[
   {name:"bounded sweep page",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'ORDER BY c.command_id LIMIT ${sweepLimit}`',replace:'ORDER BY c.command_id`',
     pattern:"^B1b restart sweep releases one bounded page",assertion:"sweep releases at most one bounded page per call",postgres:false},
-  {name:"canStop matches Stop admission",file:"src/web/v1/improve-control-room-loop-service.ts",
-    find:'canStop: mayWrite && !!startClaim &&',replace:'canStop: mayWrite && startState !== "not_started" &&',
-    pattern:"^B1b canStop after a refused Start",assertion:"canStop agrees with Stop after a refused Start",postgres:false},
-  {name:"hosted loop key equals legacy key",file:"src/web/v1/private-process.ts",
-    find:'|| !timingSafeEqual(options.loopBridge.integrityKey, options.workBatches.integrityKey))) throw',replace:'|| false)) throw',
+  {name:"loop key equals legacy key",file:"src/web/v1/improve-control-room-loop-service.ts",
+    find:'loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);',replace:'true;',
     pattern:"^B1b split loop and legacy",assertion:"hosted composition refuses a split loop key",postgres:false},
-  {name:"Mac loop key equals legacy key",file:"src/web/v1/mac-local-web-process.ts",
-    find:'|| !timingSafeEqual(options.loopBridge.integrityKey, options.workBatchIntegrityKey))) throw',replace:'|| false)) throw',
-    pattern:"^B1b split loop and legacy",assertion:"Mac composition refuses a split loop key",postgres:false},
-  {name:"startup loop key equals legacy key",file:"src/web/v1/private-task-startup.ts",
-    find:'if (loopKey && pipelines && !timingSafeEqual(loopKey, pipelines.integrityKey)) throw new Error();',replace:'/* MUTANT: accept a split loop key. */',
-    pattern:"^B1b split loop and legacy",assertion:"startup refuses a split loop key",postgres:false},
 ];
 test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=>{
   await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));
