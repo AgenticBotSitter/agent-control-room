@@ -15,6 +15,7 @@ import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1 
 import { sha256Digest } from "../src/security";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import type { DatabaseClient } from "../src/persistence/database";
+import type { LoopCandidateCompletionReceiptV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
 const KEY=new Uint8Array(32).fill(64),now=Date.now(),origin="https://private.example.invalid";
 const toolingRevision=sha256Digest({fixture:"SYNTHETIC B4 tooling"}),schemaDigest=sha256Digest({fixture:"SYNTHETIC B4 schema"});
 const contract={toolingRevision,decodeRunIdentity:(v:unknown)=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:(v:unknown)=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:()=>true};
@@ -215,17 +216,22 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
   const desks=clients.map(w=>new ImproveControlRoomDeskServiceV1(w.client,scope,KEY,undefined,()=>now,f.config.contract,f.config));
   const blocker=new Client(pg.admin());await blocker.connect();
   let waiting=0;
+  let pending:Promise<PromiseSettledResult<LoopCandidateCompletionReceiptV1>[]>|undefined;
   try{
    await blocker.query("BEGIN");await blocker.query("SELECT id FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR UPDATE",[scope.tenantId,owner]);
-   const pending=desks.map(d=>d.recordLoopCandidate(f.evidence()));
+   pending=Promise.allSettled(desks.map(d=>d.recordLoopCandidate(f.evidence())));
+   // PostgreSQL caches statistics for this transaction; refresh before each sample.
    for(let attempt=0;attempt<200;attempt++){
+    await blocker.query("SELECT pg_stat_clear_snapshot()");
     waiting=Number((await blocker.query("SELECT count(*) n FROM pg_stat_activity WHERE usename='control_room_web' AND wait_event_type='Lock'")).rows[0].n);
     if(waiting>=24)break;await new Promise(r=>setTimeout(r,10));
    }
    assert.equal(waiting,24,"B4 24 production connections really contend");await blocker.query("COMMIT");
-   const receipts=await Promise.all(pending);assert.equal(new Set(receipts.map(r=>r.candidate.candidateId)).size,1);
+   const outcomes=await pending;
+   const receipts=outcomes.map(r=>{assert.equal(r.status,"fulfilled");return (r as PromiseFulfilledResult<LoopCandidateCompletionReceiptV1>).value;});
+   assert.equal(new Set(receipts.map(r=>r.candidate.candidateId)).size,1);
    assert.equal(receipts.filter(r=>r.state==="recorded").length,1);assert.equal(receipts.filter(r=>r.state==="replayed").length,23);
-  }finally{await blocker.query("ROLLBACK").catch(()=>{});await blocker.end();}
+  }finally{await blocker.query("ROLLBACK").catch(()=>{});await pending;await blocker.end();}
   const c=(await f.desk.readLoopCandidate(identity,project,f.requestId)).candidate!;
   const results=await Promise.allSettled(desks.map((d,i)=>d.decideLoopCandidate(identity,{candidateId:c.candidateId,expectedVersion:1,
     candidateRecordDigest:c.recordDigest,candidateRevision:c.candidateRevision,localVersion:1,a2InputVersion:c.a2InputVersion,decision:i%2?"accept":"decline"},`b4-racing-decision-${String(i).padStart(4,"0")}`)));
