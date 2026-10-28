@@ -88,7 +88,8 @@ function BoundImproveWorkspace({ projectId }: { projectId: string }) {
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a className="private-back" href={`/projects/${encodeURIComponent(projectId)}`}>← Project overview</a>
     <div className="private-heading"><p className="private-eyebrow">Built-in self project</p><h1>Improve Control Room</h1>
-      <p>Start confirmed saved work and follow its progress. Legacy pipelines remain available below.</p></div>
+      <p>{desk?.kind === "loop" ? "Start confirmed saved work and follow its progress. Legacy pipelines remain available below."
+        : "Ask for an improvement, choose the existing worker pipeline, and keep final evaluation with its sign-off lead."}</p></div>
     <ProjectNavigation projectId={projectId} current="improvements" presentation={{ schema: "control-room.project-presentation/v1",
       templateId: "control-room", templateDisplayName: "Control Room", displayName: "Control Room",
       enabledModules: [], availableModules: [], templateRemoved: false, source: "saved" }} />

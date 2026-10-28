@@ -77,6 +77,7 @@ export class WebSessionAuthority {
       const row = await readIdentity(tx);
       if (!row) throw new WebAccessError("access_denied");
       if (!options?.repeatableReadSnapshot) {
+        // The loop read authority suppresses this statement by its exact prefix; the loop GET tests catch a change.
         await tx.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
           VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
         [this.scope.tenantId, identity.tokenDigest, row.id, identity.issuedAt, identity.expiresAt]);

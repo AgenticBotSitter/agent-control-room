@@ -88,6 +88,18 @@ function transport(f: Awaited<ReturnType<typeof fixture>>) {
   return { posts, gets, fetcher: fetcher as typeof fetch };
 }
 
+test("B2a unconfigured loop desk keeps the original legacy intro", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, ((input, options) => String(input).endsWith("/loop/desk")
+    ? Promise.resolve(Response.json({}, { status: 404 })) : wire.fetcher(input, options)) as typeof fetch);
+  try {
+    await settle();
+    assert.match(m.text(), /Loop work is not configured\./); assert.match(m.text(), /No improvement requests have been recorded/);
+    assert.match(m.text(), /Ask for an improvement, choose the existing worker pipeline/);
+    assert.doesNotMatch(m.text(), /Start confirmed saved work and follow its progress/);
+  } finally { await m.close(); await f.close(); }
+});
+
 test("B2a confirmed run Start progress Stop", async () => {
   const f = await fixture(), wire = transport(f);
   const m = await mount(f.project.projectId, wire.fetcher);

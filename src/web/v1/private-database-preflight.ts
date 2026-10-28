@@ -87,6 +87,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
+// Current value: the 0301/0302 control_room_web login measurement (B1a/B1b), previously `9215bd0d...`.
 export const privateWebSchemaDigest = "ab7e6c70d67937faa39851b9358f06d051056b4e02375d1c42cb0d7a7515488f";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
