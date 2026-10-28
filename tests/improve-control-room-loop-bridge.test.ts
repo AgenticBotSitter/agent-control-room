@@ -143,11 +143,12 @@ if control: sys.exit(control['code'])
 // Same operation-specific admission grammar and canonical whole-record mapping
 // as the reviewed A2 contract. Invalid records fail the entire observation.
 const rawHash = z.string().regex(/^[a-f0-9]{64}$/), version = z.number().int().positive();
+const admissionTime = z.string().datetime({offset:true});
 const recordBase = {command_id:z.string().regex(/^loop-command:[a-f0-9]{32}$/),
-  binding_digest:z.string().regex(/^sha256:[a-f0-9]{64}$/),at:z.string().datetime()};
+  binding_digest:z.string().regex(/^sha256:[a-f0-9]{64}$/),at:admissionTime};
 const admissionRecords = z.array(z.discriminatedUnion("operation", [
   z.object({...recordBase,operation:z.literal("intake"),evidence:z.object({request_sha256:rawHash,settings_sha256:rawHash,input_version:z.literal(1)}).strict()}).strict(),
-  z.object({...recordBase,operation:z.literal("confirm"),evidence:z.object({sha256:rawHash,input_version:version,at:z.string().datetime(),who:z.literal("owner")}).strict()}).strict(),
+  z.object({...recordBase,operation:z.literal("confirm"),evidence:z.object({sha256:rawHash,input_version:version,at:admissionTime,who:z.literal("owner")}).strict()}).strict(),
   z.object({...recordBase,operation:z.literal("start"),evidence:z.object({launch_key:z.string().regex(/^[a-f0-9]{32}$/),step:version,role:z.string().min(1),input_version:version,settings_sha256:rawHash}).strict()}).strict(),
   z.object({...recordBase,operation:z.literal("approve"),evidence:z.object({piece:z.enum(["plan","spec"]),report_sha256:rawHash,head:z.string().regex(/^[a-f0-9]{40}$/),input_version:version}).strict()}).strict(),
   z.object({...recordBase,operation:z.literal("answer"),evidence:z.object({question_id:z.string().min(1),input_version:version,report_sha256:rawHash,answer_sha256:rawHash}).strict()}).strict(),
@@ -420,13 +421,16 @@ test("B1b A2 expect path and byte collisions refuse before engine effects",async
 test("B1b A2 malformed admission records fail the whole decode",async t=>{
   const f=await fixture(t),id=await f.intake(),s=await f.get(id),run=s.request.runLink!.loopRunId;
   const file=join(f.root,"runs",run+".json"),original=JSON.parse(await readFile(file,"utf8")),record=original.admissions[0];
-  for(const admissions of [[{...record,operation:"stop"}],[{...record,evidence:{...record.evidence,extra:true}}],
+  for(const admissions of [[{...record,at:"yesterday"}],[{...record,operation:"stop"}],[{...record,evidence:{...record.evidence,extra:true}}],
     [record,record],Array.from({length:21},(_,i)=>({...record,command_id:`loop-command:${i.toString(16).padStart(32,"0")}`}))]){
     await writeFile(file,JSON.stringify({...original,admissions}));
     // Too many stored records is legal; the wire is only the newest twenty.
     if(admissions.length===21)assert.equal((await f.raw.status(run)).receipts.length,20);
     else await assert.rejects(f.raw.status(run),/unavailable/,"invalid engine records cannot yield a partial receipt list");
   }
+  const offsetRecord={...record,at:"2026-10-01T00:00:00.123456-06:00"};
+  await writeFile(file,JSON.stringify({...original,admissions:[offsetRecord]}));
+  assert.equal((await f.raw.status(run)).receipts[0]!.evidenceDigest,sha256Digest(offsetRecord),"A2 offset timestamp stays byte-exact in the immutable record digest");
   await writeFile(file,JSON.stringify(original));assert.equal((await f.raw.status(run)).receipts.length,1);
 });
 
@@ -663,7 +667,12 @@ async function loadA2Carrier(path:string){
   assert.equal(typeof module.a2BridgeContractV1,"function","reviewed A2 carrier exports the contract factory");
   const contract=module.a2BridgeContractV1(lineage) as LoopAdapterConfigurationV1["contract"];
   assert.equal(contract.lineage,lineage,"desk and service share the reviewed B1a lineage instance");
-  assert.equal(typeof contract.admissionExpectation,"function");
+  assert.match(contract.schemaDigest,/^sha256:[a-f0-9]{64}$/);
+  for(const name of ["generateRunId","decodeStatus","admissionExpectation","locateApprovalDocument","decodeApprovalSidecar"] as const)
+    assert.equal(typeof contract[name],"function",`reviewed A2 export supplies ${name} before any spawn`);
+  assert.equal(typeof contract.decisionProjection?.decodeGate,"function");
+  assert.ok(contract.decisionProjection?.questionTextPath.length);
+  assert.ok(contract.decisionProjection.questionTextPath.every(part=>typeof part==="string" && part && !["__proto__","prototype","constructor"].includes(part)));
   return {carrier,configuration:{...c,contract:{...contract,lineage,qualifiedOperations:carrier.qualifiedOperations}}};
 }
 
@@ -673,7 +682,9 @@ test("B1b A2 carrier validates every pin before import or spawn",async t=>{
   const modulePath=join(root,"tools/loop/bridge/a2-contract.mjs"),marker=join(root,"tools/loop/bridge/imported");
   const source=`import {writeFileSync} from "node:fs";writeFileSync(new URL("./imported",import.meta.url),"loaded");
 export const a2BridgeContractV1=lineage=>({lineage,schemaDigest:"sha256:${"c".repeat(64)}",qualifiedOperations:[],
-generateRunId:()=>"web-${"a".repeat(32)}",decodeStatus:()=>{throw new Error("no synthetic observations")},admissionExpectation:()=>({})});`;
+generateRunId:()=>"web-${"a".repeat(32)}",decodeStatus:()=>{throw new Error("no synthetic observations")},admissionExpectation:()=>({}),
+locateApprovalDocument:()=>({report:"gate.md",sidecar:"gate.json"}),decodeApprovalSidecar:value=>value,
+decisionProjection:{questionTextPath:["attention","text"],decodeGate:()=>null}});`;
   await writeFile(modulePath,source);await writeFile(join(root,"cr-entry.py"),"# carrier loader fixture");
   await writeFile(join(root,"race-entry.py"),"# carrier race fixture");await writeFile(join(root,"config/manifest.sha256"),"synthetic manifest");
   await writeFile(join(root,"config/settings.json"),settingsText);await writeFile(join(root,"config/availability.json"),"{}");
@@ -738,6 +749,12 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
       const row=(await web.client.query<{binding:LoopBridgeBindingV1;result:{evidenceDigest:string}}>(
         "SELECT binding,result FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='result'",[result.commandId])).rows[0]!;
       assert.equal(receipt.bindingDigest,sha256Digest(row.binding));assert.equal(row.result.evidenceDigest,receipt.evidenceDigest);
+      const saved=parseStrictJsonV1(await readFile(join(configuration.runRoot,run,"run.json"),"utf8")) as {chain:{admissions:{command_id:string}[]}};
+      const record=admissionRecords.parse([saved.chain.admissions.find(record=>record.command_id===result.commandId)])[0]!;
+      assert.equal(record.binding_digest,sha256Digest(row.binding));
+      assert.equal(receipt.evidenceDigest,sha256Digest(record),"real receipt hashes the canonical immutable engine record");
+      assert.doesNotMatch(canonicalJson(record),/[/\\]/u,"admission evidence contains no host paths");
+      console.log("A2 admission "+canonicalJson(record));
     };
     const adoptGate=async(run:string)=>{
       const status=await adapter.status(run);assert.ok(status.confirmation,"prepared gate has exact confirmed request evidence");ownedRuns.add(run);
