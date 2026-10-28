@@ -73,13 +73,17 @@ const probes=[
     find:'loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);',replace:'true;',
     pattern:"^B1b split loop and legacy",assertion:"hosted composition refuses a split loop key",postgres:false},
 ];
-test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=>{
-  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));
+test("B1b guard-off proofs with restored green checks",{timeout:550000,concurrency:2},async t=>{
+  await mkdir(resolve(".test-tmp"),{recursive:true});const copies:string[]=[];
   try{
+    // PostgreSQL setup dominates this lane. Each group owns an independent
+    // clean copy; every baseline, mutation and restored check is preserved.
+    const groups=await Promise.allSettled([false,true].map(async postgres=>{
+    const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));copies.push(copy);
     execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
     assert.equal(execFileSync("git",["-C",copy,"rev-parse","HEAD"],{encoding:"utf8"}).trim(),execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim());
     await symlink(join(root,"node_modules"),join(copy,"node_modules"),"dir");
-    for(const probe of probes)await t.test(probe.name,async()=>{
+    for(const probe of probes.filter(probe=>probe.postgres===postgres))await t.test(probe.name,async()=>{
       const file="testFile" in probe ? probe.testFile! : probe.postgres?"tests/improve-control-room-loop-bridge-postgres.test.ts":"tests/improve-control-room-loop-bridge.test.ts";
       const command=probe.postgres?[process.execPath,"scripts/ci/run-mutation-postgres-test.mjs","--test-concurrency=1","--test-timeout=600000",`--test-name-pattern=${probe.pattern}`,file]
         :[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=${probe.pattern}`,file];
@@ -96,5 +100,10 @@ test("B1b guard-off proofs with restored green checks",{timeout:550000},async t=
       assert.match(restored.stdout,/# fail 0/u);assert.doesNotMatch(restored.stdout,/# skipped [1-9]|# tests 0/u);
       console.log(`B1b mutation ${probe.name}: loaded=true intended_assertion=true restored=true green=true`);
     });
-  }finally{await reapKitClusters(join(copy,".test-tmp"));await rm(copy,{recursive:true,force:true});}
+    }));
+    for(const group of groups)if(group.status==='rejected')throw group.reason;
+  }finally{
+    const cleanup=await Promise.allSettled(copies.map(async copy=>{await reapKitClusters(join(copy,".test-tmp"));await rm(copy,{recursive:true,force:true});}));
+    if(cleanup.some(result=>result.status==='rejected'))throw new Error('bridge_mutation_cleanup_uncertain');
+  }
 });
