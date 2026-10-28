@@ -163,7 +163,9 @@ test('B3a PostgreSQL 24 separate processes contend one retained result and drive
     }
     // Stop remains responsive while the foreground wait holds driver ownership.
     const start=Date.now();assert.equal((await owner.bridge.mutate(identity,pgRecoveryProject,saved.id,'stop',{runLinkId:saved.link},'b3a-pg-stop-halfway')).state,'accepted');
-    assert.ok(Date.now()-start<2000,'B3a Stop remains responsive within two seconds');
+    const stopMs=Date.now()-start;
+    console.log(`RESULT stop-response elapsed_ms=${stopMs} bound_ms=2000 margin_ms=${2000-stopMs}`);
+    assert.ok(stopMs<2000,'B3a Stop remains responsive within two seconds');
     assert.equal((await owner.bridge.status(identity,pgRecoveryProject,saved.id)).display.state,'stopped');
     const winnerResult=results.find(r=>r.state==='started')!,winner=children.find(child=>child.pid===winnerResult.pid)!;
     const winnerExit=once(winner,'exit');winner.kill('SIGKILL');await winnerExit;

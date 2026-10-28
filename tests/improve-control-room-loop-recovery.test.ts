@@ -499,3 +499,18 @@ test('B3a R2 ordinary A2 gate reports its missing qualification',async()=>{
   assert.match(stdout,/# skipped 1/);
   assert.match(stdout,/# pass 0/);
 });
+
+test('B3a Stop uses its verified result without a status preflight',async t=>{
+  const f=await recoveryFixture(t);let reads=0,stops=0;
+  const bridge=f.service({...f.seedAdapter,status:async()=>{reads++;throw Error('SYNTHETIC status connection unavailable');},
+    stop:async(...args)=>{stops++;return f.seedAdapter.stop(...args);}});
+  const body={runLinkId:f.link},key='b3a-stop-no-preflight';
+  const result=await bridge.mutate(f.identity,f.projectId,f.id,'stop',body,key);
+  assert.equal(result.state,'accepted','Stop accepts its own verified result without an observational status connection');
+  assert.equal(reads,0);assert.equal(stops,1);
+  assert.deepEqual(await bridge.mutate(f.identity,f.projectId,f.id,'stop',body,key),{...result,replayed:true});
+  assert.equal(stops,1,'exact Stop replay never redispatches');
+  assert.equal((await f.raw.status(f.run)).state,'stopped');
+  assert.equal((await bridge.mutate(f.identity,f.projectId,f.id,'stop',body,'b3a-stop-already-stopped')).state,'accepted');
+  assert.equal(reads,0,'already stopped runs also use the verified Stop result');
+});

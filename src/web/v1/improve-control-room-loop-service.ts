@@ -399,7 +399,10 @@ export class ImproveControlRoomLoopServiceV1 {
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
     const body = parsed.data as Record<string, unknown>;
     let preflight: LoopEngineStatusV1 | undefined;
-    if (requestId !== null) {
+    // Stop needs no observational preflight: its own decoded result verifies
+    // the run and receipt. Admission below still locks current authority and
+    // verifies the signed lineage, owned Start and exact run link.
+    if (requestId !== null && operation !== "stop") {
       const snapshot = await this.#desk.loopBridgeTransaction(identity, projectId, true, async ({ tx, actor, lineage }) => {
         const local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
         const prior = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
@@ -407,8 +410,8 @@ export class ImproveControlRoomLoopServiceV1 {
         [this.scope.tenantId, actor.id, idempotencyKey])).rows[0];
         if (prior) { this.#verify(prior); return { local, replay: true }; }
         if (!this.#adapter.available(operation)) throw unavailable();
-        if (operation !== "stop" && body.expectedVersion !== Number(local.input.version)) throw conflict();
-        if ((operation === "stop" || operation === "start") && body.runLinkId !== local.link?.id) throw new WebAccessError("not_found");
+        if (body.expectedVersion !== Number(local.input.version)) throw conflict();
+        if (operation === "start" && body.runLinkId !== local.link?.id) throw new WebAccessError("not_found");
         if (["start", "approve", "answer"].includes(operation) && !local.authorization) throw conflict();
         return { local, replay: false };
       });
@@ -439,7 +442,6 @@ export class ImproveControlRoomLoopServiceV1 {
         const run = this.#run(local);
         // Preflight ran outside every transaction; admission rechecks the saved lineage.
         observed = preflight;
-        if (!observed || observed.run.loopRunId !== run.loopRunId) throw conflict();
         if (operation === "stop") {
           if (body.runLinkId !== local.link!.id) throw new WebAccessError("not_found");
           const rawStart = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
@@ -449,44 +451,47 @@ export class ImproveControlRoomLoopServiceV1 {
           const start = this.#verify(rawStart);
           if (start.project_id !== projectId || start.owner_identity_id !== actor.id
             || start.binding.runLinkId !== local.link!.id || start.binding.loopRunId !== run.loopRunId) throw conflict();
-        } else this.#current(observed, local, body, operation !== "confirm");
-        if (operation === "confirm") {
-          if (body.requestSha256 !== loopByteHashV1(observed.description) || body.settingsSha256 !== observed.settingsSha256
-            || observed.state === "stopped") throw conflict();
-          if (local.input.description !== observed.description) {
-            await lineage.reviseLoopDraft(identity, projectId, { requestId, expectedVersion: Number(local.input.version),
-              description: observed.description, settingsText: this.#adapter.settingsText }, idempotencyKey);
-            local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
+        } else {
+          if (!observed || observed.run.loopRunId !== run.loopRunId) throw conflict();
+          this.#current(observed, local, body, operation !== "confirm");
+          if (operation === "confirm") {
+            if (body.requestSha256 !== loopByteHashV1(observed.description) || body.settingsSha256 !== observed.settingsSha256
+              || observed.state === "stopped") throw conflict();
+            if (local.input.description !== observed.description) {
+              await lineage.reviseLoopDraft(identity, projectId, { requestId, expectedVersion: Number(local.input.version),
+                description: observed.description, settingsText: this.#adapter.settingsText }, idempotencyKey);
+              local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
+            }
+            const priorConfirmation = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+              WHERE tenant_id=$1 AND request_id=$2 AND operation='confirm' AND entry_kind='claim'
+                AND binding->>'localVersion'=$3 LIMIT 1`, [this.scope.tenantId, requestId, String(local.input.version)])).rows[0];
+            if (priorConfirmation) this.#verify(priorConfirmation);
+            if (local.authorization || priorConfirmation) throw conflict();
           }
-          const priorConfirmation = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
-            WHERE tenant_id=$1 AND request_id=$2 AND operation='confirm' AND entry_kind='claim'
-              AND binding->>'localVersion'=$3 LIMIT 1`, [this.scope.tenantId, requestId, String(local.input.version)])).rows[0];
-          if (priorConfirmation) this.#verify(priorConfirmation);
-          if (local.authorization || priorConfirmation) throw conflict();
-        }
-        if (operation === "start" && (body.runLinkId !== local.link!.id || observed.state !== "ready")) throw conflict();
-        if (operation === "approve") {
-          const a = observed.approval;
-          if (!a || observed.state !== "waiting" || body.step !== a.step || body.head !== a.head
-            || body.reportSha256 !== a.reportSha256 || !equal(body.inputVersion, a.inputVersion)) throw conflict();
-        }
-        if (operation === "answer") {
-          const q = observed.question;
-          if (!q || observed.state !== "waiting" || !q.owner || q.changesInput || body.questionId !== q.questionId
-            || body.questionReportSha256 !== q.reportSha256 || !equal(body.inputVersion, q.inputVersion)) throw conflict();
-        }
-        if (operation === "answer" || operation === "approve") {
-          const evidence = sha256Digest(operation === "answer" ? observed.question : observed.approval);
-          const existing = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
-            WHERE tenant_id=$1 AND request_id=$2 AND operation=$3 AND entry_kind='claim'
-              AND binding->>'evidence'=$4 LIMIT 1`, [this.scope.tenantId, requestId, operation, evidence])).rows[0];
-          if (existing) { this.#verify(existing); throw conflict(); }
-        }
-        // No key, version or stale confirmation can bypass an earlier Start/intake claim.
-        if (operation === "start") {
-          const existing = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
-            WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim'`, [this.scope.tenantId, requestId])).rows[0];
-          if (existing) { this.#verify(existing); throw conflict(); }
+          if (operation === "start" && (body.runLinkId !== local.link!.id || observed.state !== "ready")) throw conflict();
+          if (operation === "approve") {
+            const a = observed.approval;
+            if (!a || observed.state !== "waiting" || body.step !== a.step || body.head !== a.head
+              || body.reportSha256 !== a.reportSha256 || !equal(body.inputVersion, a.inputVersion)) throw conflict();
+          }
+          if (operation === "answer") {
+            const q = observed.question;
+            if (!q || observed.state !== "waiting" || !q.owner || q.changesInput || body.questionId !== q.questionId
+              || body.questionReportSha256 !== q.reportSha256 || !equal(body.inputVersion, q.inputVersion)) throw conflict();
+          }
+          if (operation === "answer" || operation === "approve") {
+            const evidence = sha256Digest(operation === "answer" ? observed.question : observed.approval);
+            const existing = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+              WHERE tenant_id=$1 AND request_id=$2 AND operation=$3 AND entry_kind='claim'
+                AND binding->>'evidence'=$4 LIMIT 1`, [this.scope.tenantId, requestId, operation, evidence])).rows[0];
+            if (existing) { this.#verify(existing); throw conflict(); }
+          }
+          // No key, version or stale confirmation can bypass an earlier Start/intake claim.
+          if (operation === "start") {
+            const existing = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+              WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim'`, [this.scope.tenantId, requestId])).rows[0];
+            if (existing) { this.#verify(existing); throw conflict(); }
+          }
         }
       }
       const binding = loopBridgeBindingSchemaV1.parse({ schemaVersion: 1, body,
