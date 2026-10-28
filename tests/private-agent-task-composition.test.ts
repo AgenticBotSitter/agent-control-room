@@ -1323,3 +1323,14 @@ test("mutable nested child under a non-plain shallow-frozen web tasks object is 
   assert.notEqual(originalKey[0], capturedKey[0],
     "sanity: caller mutation took effect on the trusted buffer; captured key is detached");
 });
+
+import { composePrivateTaskWorkerApplication } from "../src/web/v1/private-task-worker-application";
+import { createImproveControlRoomLoopRecoveryV1 } from "../src/web/v1/improve-control-room-loop-recovery";
+test("B3a composed recovery drains before shared adapter and pools even after cleanup failure",async()=>{
+  const order:string[]=[];
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,createCycle:()=>({tick(){},close:async()=>{order.push('cycle');throw Error('synthetic cleanup');}}),port:{scan:async()=>({targets:[],nextCursor:null}),reconcile:async()=>({state:'idle'})}});
+  worker.start();
+  const app=composePrivateTaskWorkerApplication({isReady:()=>true,handle:async()=>new Response('ok'),close:async()=>{order.push('adapter/pools');}},worker);
+  assert.equal(app.isReady(),true);await assert.rejects(app.close(),{message:'private_task_worker_cleanup_uncertain'});await assert.rejects(app.close(),{message:'private_task_worker_cleanup_uncertain'});
+  assert.deepEqual(order,['cycle','adapter/pools']);assert.equal(app.isReady(),false);
+});

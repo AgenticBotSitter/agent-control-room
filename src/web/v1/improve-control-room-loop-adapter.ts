@@ -38,8 +38,43 @@ export const loopEngineStatusSchemaV1 = z.object({
     error: z.enum(["REFUSED", "INELIGIBLE"]).nullable() }).strict()).max(100),
 }).strict();
 export type LoopEngineStatusV1 = z.infer<typeof loopEngineStatusSchemaV1> & { decisions?: LoopImprovementDecisionsV1 };
+const recoveryId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/);
+const commandIdentity = z.object({ commandId: z.string().regex(/^loop-command:[a-f0-9]{32}$/), bindingDigest: digest }).strict();
+export const loopRecoveryBindingSchemaV1 = z.object({ schemaVersion: z.literal(1), tenantId: recoveryId, workspaceId: recoveryId,
+  projectId: recoveryId, ownerIdentityId: recoveryId, requestId: recoveryId, runLinkId: recoveryId,
+  localVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), authorizationId: recoveryId,
+  startCommandId: commandIdentity.shape.commandId, startBindingDigest: digest, run: loopImprovementRunIdentitySchemaV1,
+  inputVersion: scalar, requestSha256: z.string().regex(/^[a-f0-9]{64}$/), settingsSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  settingsDigest: z.string().min(1).max(180), expectedRevision: revision, schemaDigest: digest, action: z.enum(["advance", "wait"]),
+}).strict();
+export type LoopRecoveryBindingV1 = z.infer<typeof loopRecoveryBindingSchemaV1>;
+export const loopRecoveryObservationSchemaV1 = z.object({ schemaVersion: z.literal(1), run: loopImprovementRunIdentitySchemaV1,
+  revision, mode: z.enum(["runnable", "waiting", "stopped", "terminal", "uncertain", "input_changed", "unavailable"]),
+  action: z.enum(["advance", "wait"]).nullable(), driver: z.object({ state: z.enum(["none", "live", "ended", "uncertain"]),
+    generation: z.string().regex(/^[a-f0-9]{32}$/).nullable(), evidenceDigest: digest }).strict(),
+  receipt: loopEngineStatusSchemaV1.shape.receipts.element.nullable(), evidenceDigest: digest,
+}).strict().refine(value => value.action === null || value.mode === "runnable" && ["none", "ended"].includes(value.driver.state));
+export type LoopRecoveryObservationV1 = z.infer<typeof loopRecoveryObservationSchemaV1>;
+export type LoopRecoveryChildV1 = { readonly pid: number;
+  readonly done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; close(): Promise<void> };
+export type LoopRecoveryClaimV1 = { kind: "started"; generation: string; child: LoopRecoveryChildV1 }
+  | { kind: "busy" | "uncertain"; evidenceDigest: string };
+export type LoopRecoveryCapabilityV1 = {
+  enabled(): boolean;
+  inspect(run: string, command?: { commandId: string; bindingDigest: string }): Promise<LoopRecoveryObservationV1>;
+  /** Reviewed installation capability owns the cross-process fence and atomic A2
+   * Stop/input/authority admission. The product never replaces that fence. */
+  claimDriver(binding: Readonly<LoopRecoveryBindingV1>, spawn: () => Promise<LoopRecoveryChildV1>): Promise<LoopRecoveryClaimV1>;
+};
+export function captureLoopRecoveryCapabilityV1(value: LoopRecoveryCapabilityV1 | undefined) {
+  if (!value) return undefined;
+  if (typeof value.enabled !== "function" || typeof value.inspect !== "function" || typeof value.claimDriver !== "function"
+    || Object.keys(value).some(key => !["enabled", "inspect", "claimDriver"].includes(key))) throw unavailable();
+  return Object.freeze({ enabled: value.enabled.bind(value), inspect: value.inspect.bind(value), claimDriver: value.claimDriver.bind(value) });
+}
 export type LoopAdapterContractV1 = {
   lineage: LoopImprovementContractV1; schemaDigest: string;
+  recovery?: LoopRecoveryCapabilityV1;
   generateRunId(): string;
   decodeStatus(output: unknown): LoopEngineStatusV1;
   /** Server-only reviewed A2 pins. Omission makes owner decisions unavailable.
@@ -65,6 +100,8 @@ export type LoopAdapterConfigurationV1 = {
 export interface LoopAdapterV1 {
   readonly adapterId: string; readonly toolingRevision: string; readonly schemaDigest: string;
   readonly settingsText: string; readonly contract: LoopImprovementContractV1;
+  inspectRecovery?(run: string, command?: { commandId: string; bindingDigest: string }): Promise<LoopRecoveryObservationV1>;
+  recover?(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1>;
   reserveRun(): string; available(operation: LoopBridgeOperationV1): boolean;
   intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
@@ -99,6 +136,7 @@ function checkedPath(path: string, root?: string, directory = false) {
 export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigurationV1): LoopAdapterV1 {
   const c = { ...input, executionIdentity: { ...input.executionIdentity }, contract: Object.freeze({ ...input.contract,
     lineage: Object.freeze({ ...input.contract.lineage }), qualifiedOperations: Object.freeze([...input.contract.qualifiedOperations]) }) };
+  const recovery = captureLoopRecoveryCapabilityV1(c.contract.recovery);
   const timeoutMs = c.timeoutMs ?? 30000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000
     || !digest.safeParse(c.toolingRevision).success || !digest.safeParse(c.contract.schemaDigest).success
@@ -291,9 +329,99 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         ? c.contract.atomicAdmission!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }), apply) : apply());
     } finally { activeCommands.delete(commandId); }
   }
+  const recoveryChildren = new Map<string, LoopRecoveryChildV1>();
+  const acquisitions = new Set<string>();
+  const recoveryEnabled = () => { try { return !closing && recovery?.enabled() === true; } catch { return false; } };
+  async function inspectRecovery(run: string, command?: { commandId: string; bindingDigest: string }) {
+    // Opt-in gates mutation; authorized status reads remain observational when disabled.
+    if (closing || !recovery) throw unavailable();
+    validate(); runId(run);
+    const lookup = command === undefined ? undefined : commandIdentity.parse(command);
+    const raw = await recovery!.inspect(run, lookup);
+    if (Buffer.byteLength(JSON.stringify(raw), "utf8") > 65536) throw unavailable();
+    const observation = loopRecoveryObservationSchemaV1.parse(raw);
+    if (observation.run.loopRunId !== run || observation.run.adapterId !== c.adapterId || observation.run.toolingRevision !== c.toolingRevision
+      || observation.receipt && (!lookup || observation.receipt.commandId !== lookup.commandId || observation.receipt.bindingDigest !== lookup.bindingDigest)) throw unavailable();
+    return observation;
+  }
+  async function spawnRecovery(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryChildV1> {
+    if (!recoveryEnabled()) throw unavailable();
+    validate(); runId(binding.run.loopRunId);
+    const args = binding.action === "wait" ? ["wait", binding.run.loopRunId, "--chain", "--hours", "1"]
+      : ["advance", binding.run.loopRunId, "--json"];
+    const child = spawn(c.interpreter, [c.entrypoint, ...args], { cwd: c.cwd, shell: false,
+      env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
+    children.add(child);
+    let failed = false, bytes = 0, killTimer: ReturnType<typeof setTimeout> | undefined;
+    const output: Buffer[] = [];
+    const stop = () => { failed = true; child.kill("SIGTERM"); killTimer ??= setTimeout(() => child.kill("SIGKILL"), 1000); };
+    const timer = setTimeout(stop, 3660000);
+    child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); else if (binding.action === "advance") output.push(Buffer.from(chunk)); });
+    child.stderr.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); });
+    child.on("error", () => { failed = true; });
+    const done = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((fulfill, reject) => {
+      child.once("close", (code, signal) => {
+        clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
+        if (failed || signal || !(binding.action === "wait" ? [0, 4] : [0]).includes(code ?? -1)) { reject(unavailable()); return; }
+        try {
+          if (binding.action === "advance") decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), binding.run.loopRunId);
+        } catch { reject(unavailable()); return; }
+        // Driver exit is never a receipt. Saved state is read independently.
+        void status(binding.run.loopRunId).then(() => fulfill({ code, signal }), () => reject(unavailable()));
+      });
+    });
+    // A closed driver is reaped even when its exit is uncertain. Never signal a model worker.
+    const reaped = new Promise<void>(resolve => child.once("close", () => resolve()));
+    let closePromise: Promise<void> | undefined;
+    const tracked = Object.freeze({ pid: child.pid ?? 0, done,
+      close: () => closePromise ??= (async () => { if (children.has(child)) stop(); await reaped; })() });
+    pending.add(done); void done.finally(() => pending.delete(done)).catch(() => {});
+    return tracked;
+  }
+  async function recover(raw: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1> {
+    if (!recoveryEnabled() || Buffer.byteLength(JSON.stringify(raw), "utf8") > 65536) throw unavailable();
+    const binding = loopRecoveryBindingSchemaV1.parse(raw), run = binding.run.loopRunId;
+    Object.freeze(binding.run); Object.freeze(binding);
+    if (binding.run.adapterId !== c.adapterId || binding.run.toolingRevision !== c.toolingRevision
+      || binding.schemaDigest !== c.contract.schemaDigest || binding.settingsSha256 !== c.settingsSha256) throw unavailable();
+    if (acquisitions.has(run) || recoveryChildren.has(run)) return { kind: "busy", evidenceDigest: sha256Digest({ run, owned: true }) };
+    acquisitions.add(run);
+    let spawned: LoopRecoveryChildV1 | undefined, spawnPending: Promise<LoopRecoveryChildV1> | undefined, invoked = false, duplicate = false, claimOpen = true;
+    const operation = (async () => {
+      try {
+        const observation = await inspectRecovery(run);
+        if (observation.mode !== "runnable" || observation.action !== binding.action || observation.revision !== binding.expectedRevision
+          || !["none", "ended"].includes(observation.driver.state)) return { kind: "uncertain" as const, evidenceDigest: observation.evidenceDigest };
+        const outcome = await recovery!.claimDriver(Object.freeze(binding), async () => {
+          if (invoked || !claimOpen) { duplicate = true; throw unavailable(); }
+          invoked = true; spawnPending = spawnRecovery(binding); spawned = await spawnPending; return spawned;
+        });
+        claimOpen = false;
+        if (spawnPending) spawned = await spawnPending;
+        if (outcome.kind === "started") {
+          if (duplicate || !spawned || outcome.child !== spawned || !Number.isSafeInteger(spawned.pid) || spawned.pid <= 0 || !/^[a-f0-9]{32}$/.test(outcome.generation)
+            || Object.keys(outcome).some(key => !["kind", "generation", "child"].includes(key)) || !recoveryEnabled()) throw unavailable();
+          recoveryChildren.set(run, spawned);
+          void spawned.done.finally(() => { if (recoveryChildren.get(run) === spawned) recoveryChildren.delete(run); }).catch(() => {});
+          return outcome;
+        }
+        if (spawned || !["busy", "uncertain"].includes(outcome.kind) || !digest.safeParse(outcome.evidenceDigest).success
+          || Object.keys(outcome).some(key => !["kind", "evidenceDigest"].includes(key))) throw unavailable();
+        return outcome;
+      } catch {
+        claimOpen = false;
+        if (spawnPending) { try { spawned = await spawnPending; } catch { /* Spawn failed without an acquired handle. */ } }
+        await spawned?.close(); throw unavailable();
+      } finally { claimOpen = false; acquisitions.delete(run); }
+    })();
+    pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});
+    return operation;
+  }
+  let closePromise: Promise<void> | undefined;
   return Object.freeze({ adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
     settingsText, contract: c.contract.lineage,
     reserveRun: () => runId(c.contract.generateRunId()), available,
+    ...(recovery ? { inspectRecovery, recover } : {}),
     intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("intake", id, b, fence, text),
     confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("confirm", id, b, fence),
     start: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("start", id, b, fence), status, readApprovalDocument,
@@ -311,11 +439,11 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         await rm(directory, { recursive: true });
       } finally { activeCommands.delete(commandId); }
     },
-    close: async () => {
+    close: () => closePromise ??= (async () => {
       closing = true;
       for (const child of children) child.kill("SIGTERM");
       const timer = setTimeout(() => { for (const child of children) child.kill("SIGKILL"); }, 1000);
-      try { await Promise.allSettled([...pending]); } finally { clearTimeout(timer); }
-    },
+      try { while (pending.size) await Promise.allSettled([...pending]); } finally { clearTimeout(timer); }
+    })(),
   });
 }
