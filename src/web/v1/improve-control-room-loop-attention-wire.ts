@@ -28,7 +28,7 @@ export const loopProgressSchemaV1 = z.object({ step: z.string().min(1).max(180).
   completed: z.number().int().nonnegative().max(100000), attention: z.enum(["none", "owner", "blocked"]),
   role: z.string().min(1).max(240).nullish(), attempt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullish(),
   requestedModel: z.string().min(1).max(240).nullish(), observedModel: z.string().min(1).max(240).nullish(),
-  repairCount: revision.nullish() }).strict();
+  identityVerified: z.boolean().nullish(), repairCount: revision.nullish() }).strict();
 const engineSchema = z.object({ revision, state: z.enum(["draft", "ready", "running", "waiting", "stopped", "finished", "refused"]),
   draft: z.string().min(1).max(8000), requestSha256: hash, settingsSha256: hash, inputVersion: scalar,
   confirmation: z.object({ sha256: hash, at: z.string().datetime(), who: z.literal("owner"), inputVersion: scalar }).strict().nullable(),

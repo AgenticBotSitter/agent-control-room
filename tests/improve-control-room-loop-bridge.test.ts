@@ -276,6 +276,14 @@ test("B1b A2 live progress reaches the run panel", async t => {
       requestedModel:"model:requested",observedModel:progress.observedModel,identityVerified:false,repairCount:3},
       "run panel shows saved model, role, step, attempt and repair values");
   }
+  // The decoder reports A2's observed identity (cr.py chain_model_identity status "observed").
+  const verified={step:"4",role:"plan-review",attempt:2,requestedModel:"model:requested",observedModel:"model:observed",
+    identityVerified:true,repairCount:1,completed:3,attention:"owner" as const};
+  await f.edit(run,{progress:verified});
+  assert.deepEqual((await f.get(id)).display.progress,{stepId:"4",role:"plan-review",attempt:2,requestedModel:"model:requested",
+    observedModel:"model:observed",identityVerified:true,repairCount:1},"verified identity reaches the run panel");
+  await f.edit(run,{progress:{...verified,observedModel:null}});
+  assert.equal((await f.get(id)).display.progress?.identityVerified,false,"verified needs an observed model");
   await f.edit(run,{progress:{step:"plan",completed:0,attention:"none"}});
   assert.deepEqual((await f.get(id)).display.progress,{stepId:"plan",role:null,attempt:null,
     requestedModel:null,observedModel:null,identityVerified:false,repairCount:null},"missing evidence remains unavailable");
