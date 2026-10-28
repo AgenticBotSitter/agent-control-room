@@ -97,8 +97,7 @@ test('B3a closed worker refuses another tick',async()=>{
   await worker.close();await worker.tick();assert.equal(admissions,0,'B3a no child admitted after close');assert.equal(live,0);
 });
 
-test('B3a reviewed A2 recovery contract',async()=>{
-  if(process.env.CONTROL_ROOM_B3A_REQUIRE_A2!=='1')return;
+test('B3a reviewed A2 recovery contract',{skip:process.env.CONTROL_ROOM_B3A_REQUIRE_A2!=='1' ? 'Requires reviewed A2 pins, B0 and production ownership capability; integration unproven.' : false},async()=>{
   assert.ok(process.env.CONTROL_ROOM_B3A_A2_CONTRACT,'B3a requires lead-supplied reviewed A2 pins, B0 and ownership capability');
   const {pathToFileURL}=await import('node:url'),{isAbsolute}=await import('node:path');
   const capture=process.env.CONTROL_ROOM_B3A_A2_CONTRACT!;
@@ -436,4 +435,67 @@ test('B3a current read-only owner grant shows recovery unavailable',async t=>{
   const s=await f.bridge.status(f.identity,f.projectId,f.id);assert.equal(s.display.attention?.code,'UNAVAILABLE');assert.equal(s.decisions?.gate?.kind,'blocked');assert.equal(s.display.canStart,false);assert.equal(s.display.canStop,false);
   let callbacks=0;const port=f.service({...f.adapter,recover:async()=>{callbacks++;return{kind:'busy',evidenceDigest:sha256Digest('authority probe')};}}).recoveryPort();
   await Promise.allSettled([port.reconcile(f.target,signal())]);assert.equal(callbacks,0,'B3a forbidden current-authority callback count is zero');
+});
+
+
+test('B3a R2 readiness failure never starts recovery discovery',async t=>{
+  const f=await taskStartupFixture();t.after(f.close);
+  const e=await syntheticRecoveryEngine(t),c=syntheticRecoveryCapability(e);
+  let scans=0,installed=false;
+  const query=f.web.client.query.bind(f.web.client);
+  f.web.client.query=(sql,params)=>{if(sql.includes('recovery_has_more'))scans++;return query(sql,params);};
+  const bootstrap=createPrivateTaskBootstrap({openDatabase:f.openDatabase,clock:()=>instant+7000,
+    install:()=>{installed=true;throw Error('SYNTHETIC install failure');}});
+  await assert.rejects(bootstrap.start({...f.config,loopBridge:{integrityKey:recoveryKey,
+    adapter:{...e.configuration,contract:{...e.configuration.contract,recovery:c.capability}}}}));
+  assert.equal(installed,true);
+  assert.equal(scans,0,'B3a no recovery discovery before every readiness gate succeeds');
+});
+
+test('B3a R2 recovered result releases only its command files after commit',async t=>{
+  const f=await recoveryFixture(t,true);
+  const claim=(await f.db.query<{command_id:string}>("SELECT command_id FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0]!;
+  const directory=join(f.configuration.workRoot,claim.command_id.replace(':','-'));
+  const {access,mkdir}=await import('node:fs/promises');
+  await mkdir(directory,{mode:0o700});
+  await writeFile(join(directory,'answer.txt'),'SYNTHETIC retained command text',{mode:0o600});
+  await access(directory);
+  const sibling=join(f.configuration.workRoot,'unrelated');await mkdir(sibling);
+  let committed=false;
+  const port=f.service({...f.adapter,recover:async()=>({kind:'busy',evidenceDigest:sha256Digest('probe')}),
+    releaseCommandFiles:async id=>{
+      committed=(await f.db.query<{n:number}>("SELECT count(*)::int n FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='result'",[id])).rows[0]!.n===1;
+      await f.adapter.releaseCommandFiles!(id);
+    }}).recoveryPort();
+  await port.reconcile(f.target,signal());
+  assert.equal(committed,true,'B3a recovered result commits before releasing command files');
+  await assert.rejects(access(directory),{code:'ENOENT'},'B3a recovery reclaims its completed command directory');
+  await access(sibling);
+});
+
+test('B3a R2 verified terminal status needs no recovery inspection',async t=>{
+  const f=await recoveryFixture(t);await f.edit(f.run,{state:'finished'});
+  let inspections=0,dispatches=0;
+  const port=f.service({...f.adapter,inspectRecovery:async(...args)=>{inspections++;return f.adapter.inspectRecovery!(...args);},
+    recover:async()=>{dispatches++;return{kind:'busy',evidenceDigest:sha256Digest('probe')};}}).recoveryPort();
+  for(let tick=0;tick<3;tick++)await port.reconcile(f.target,signal());
+  assert.equal(inspections,0,'B3a terminal status avoids redundant recovery inspection without a terminal cache');
+  assert.equal(dispatches,0);
+});
+
+test('B3a R2 verified changed input is shown explicitly',async t=>{
+  const f=await recoveryFixture(t);f.setMode('input_changed');
+  const status=await f.bridge.status(f.identity,f.projectId,f.id);
+  assert.equal(status.display.attention?.code,'INPUT_CHANGED','B3a verified changed input retains its reason');
+  assert.equal(status.decisions?.gate?.kind,'blocked');
+});
+
+test('B3a R2 ordinary A2 gate reports its missing qualification',async()=>{
+  const {execFile}=await import('node:child_process'),{promisify}=await import('node:util');
+  const env={...process.env};delete env.NODE_TEST_CONTEXT;delete env.CONTROL_ROOM_B3A_REQUIRE_A2;delete env.CONTROL_ROOM_B3A_A2_CONTRACT;
+  const {stdout}=await promisify(execFile)(process.execPath,['scripts/run-tests-with-quarantine.mjs','--import','tsx','--test',
+    '--test-name-pattern=^B3a reviewed A2 recovery contract$','tests/improve-control-room-loop-recovery.test.ts'],{env,timeout:45000});
+  assert.match(stdout,/# SKIP .*reviewed A2/i,'B3a ordinary lane explicitly reports A2 qualification absent');
+  assert.match(stdout,/# skipped 1/);
+  assert.match(stdout,/# pass 0/);
 });

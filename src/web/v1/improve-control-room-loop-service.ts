@@ -216,6 +216,7 @@ export class ImproveControlRoomLoopServiceV1 {
         if (!current.authorized()) throw unavailable();
         return this.#insert(tx,{...this.#material(saved),entry_kind:'result',result:outcome,created_at:new Date(this.clock()).toISOString()});
       });
+      await this.#releaseCommandFiles(claim);
     }
     snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));
     const starts=snapshot.claims.filter(row=>row.operation==='start'),start=starts[0];
@@ -228,10 +229,12 @@ export class ImproveControlRoomLoopServiceV1 {
       || b.loopRunId!==this.#run(local).loopRunId) return blocked;
     const status=await this.#adapter.status(b.loopRunId);
     this.#current(status,local,{expectedVersion:Number(local.input.version),expectedRevision:status.revision},true);
+    // A fresh verified status is enough to refuse terminal work. No terminal
+    // cache: later owner activity is still discovered through the same scan.
+    if (['stopped','finished','refused'].includes(status.state)) return blocked;
     const observation=await this.#adapter.inspectRecovery(b.loopRunId);
     if (observation.mode!=='runnable' || observation.action===null || observation.revision!==status.revision
       || !equal(observation.run,status.run) || !['none','ended'].includes(observation.driver.state)) return {state:observation.driver.state==='live'?'busy':'idle'};
-    if (['stopped','finished','refused'].includes(status.state)) return blocked;
     const binding=loopRecoveryBindingSchemaV1.parse({schemaVersion:1,...this.scope,projectId:target.projectId,ownerIdentityId:target.ownerIdentityId,
       requestId:target.requestId,runLinkId:local.link.id,localVersion:b.localVersion,authorizationId:local.authorization.id,
       startCommandId:start.command_id,startBindingDigest:sha256Digest(b),run:status.run,inputVersion:status.inputVersion,
@@ -290,18 +293,23 @@ export class ImproveControlRoomLoopServiceV1 {
       : startState === "uncertain" ? { code: "LAUNCH_UNCERTAIN", message: "Start could not be confirmed.", nextAction: "Check status or Stop this owned run." }
       : state === "blocked" ? { code: "BLOCKED", message: "The saved run is blocked.", nextAction: "Review the saved run before continuing." }
       : state?.startsWith("waiting_") ? { code: state.toUpperCase(), message: "The saved run needs attention.", nextAction: "An owner decision is needed before work can continue." } : null;
+    let recoveryInputChanged = false;
     let recoveryTerminal = ["stopped", "finished"].includes(current.state);
     let recoveryUnavailable = !!pending || !!this.#adapter.inspectRecovery && !!startClaim && !recoveryTerminal
       && (startState === "uncertain" || !mayWrite || !confirmationCurrent);
     if (startClaim && this.#adapter.inspectRecovery && !['stopped','finished'].includes(current.state)) {
       try {
         const recovery = await this.#adapter.inspectRecovery(current.run.loopRunId);
-        recoveryTerminal = recovery.revision === current.revision && ['stopped','terminal'].includes(recovery.mode);
+        const recoveryCurrent = recovery.revision === current.revision && equal(recovery.run,current.run);
+        recoveryInputChanged = recoveryCurrent && recovery.mode === 'input_changed';
+        recoveryTerminal = recoveryCurrent && ['stopped','terminal'].includes(recovery.mode);
         recoveryUnavailable ||= recovery.revision !== current.revision || !equal(recovery.run,current.run) || ['uncertain','input_changed','unavailable'].includes(recovery.mode) || recoveryTerminal;
       } catch { recoveryUnavailable = true; }
     }
     if (pending?.operation === 'stop') attention = { code: 'LAUNCH_UNCERTAIN',
       message: current.state === 'stopped' ? 'Stop is saved; termination could not be verified.' : 'Stop could not be confirmed.',
+      nextAction: 'Ask the lead to check this saved run before continuing.' };
+    else if (recoveryInputChanged) attention = { code: 'INPUT_CHANGED', message: 'The saved run inputs have changed.',
       nextAction: 'Ask the lead to check this saved run before continuing.' };
     else if (recoveryUnavailable) attention = { code: 'UNAVAILABLE', message: 'Recovery could not be verified.',
       nextAction: 'Ask the lead to check this saved run before continuing.' };
@@ -316,7 +324,7 @@ export class ImproveControlRoomLoopServiceV1 {
         requestedModel: null, observedModel: null, identityVerified: false, repairCount: null },
       attention, observedAt: new Date(this.clock()).toISOString() });
     return loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
-      decisions: loopImprovementDecisionsSchemaV1.parse(recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
+      decisions: loopImprovementDecisionsSchemaV1.parse(recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,

@@ -703,7 +703,6 @@ export function createPrivateTaskBootstrap(dependencies: {
           { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, config.loopBridge, clock);
         recoveryWorker = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
           enabled: config.loopRecovery!.enabled, createCycle: createPipelineAdvanceCycleV1 });
-        recoveryWorker.start();
       }
       const readyApplication = application;
       let pipelineCycle:ReturnType<typeof createPipelineAdvanceCycleV1>|undefined;
@@ -733,6 +732,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (!installed.isReady()) throw new Error();
       dependencies.install(installed);
       requireActive();
+      recoveryWorker?.start();
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: installed.isReady, close: installed.close,
         ...(artifactStorage && artifactInventory ? { artifactStorage: Object.freeze({
