@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
   "digest": "2020964be1f3806cb3aa2cf5ee450817a03700d171dcf5c06504a9ae770a22ce",
-  "note": "Measured with the complete ledger in PGlite after additive 0303 loop candidate companions. Native PostgreSQL17 and updater digest equality remain required release qualification; this pin alone is not that proof."
+  "note": "Measured with the complete ledger after additive 0303 loop candidate companions on native PostgreSQL 17; the native web and updater digest measurements equal this pin."
 }

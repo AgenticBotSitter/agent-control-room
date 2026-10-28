@@ -487,9 +487,12 @@ for (const table of LOOP_TABLES) for (const operation of ["UPDATE", "DELETE", "T
     const before = await b1aSnapshot(pg);
     // TRUNCATE includes FK children; disable only the other tables' truncate
     // triggers, so no second trigger can mask the target's refusal.
-    const others = [...LOOP_TABLES.filter(name => name !== table), "control_loop_improvement_commands"];
+    const companions = ["control_loop_update_candidates", "control_loop_update_candidate_decisions"];
+    const others = [...LOOP_TABLES.filter(name => name !== table), "control_loop_improvement_commands", ...companions];
+    const truncateTrigger = (name: string) => name === "control_loop_improvement_commands" ? "control_loop_commands_append_only"
+      : companions.includes(name) ? `${name}_append_only` : `${name}_no_truncate`;
     if (operation === "TRUNCATE") for (const name of others)
-      await b1aSql(pg, `ALTER TABLE ${name} DISABLE TRIGGER ${name === "control_loop_improvement_commands" ? "control_loop_commands_append_only" : `${name}_no_truncate`}`);
+      await b1aSql(pg, `ALTER TABLE ${name} DISABLE TRIGGER ${truncateTrigger(name)}`);
     try {
       const sql = operation === "UPDATE" ? `UPDATE ${table} SET created_at=created_at+interval '1 second'`
         : operation === "DELETE" ? `DELETE FROM ${table}` : `TRUNCATE ${[table, ...others].join(",")}`;
@@ -498,7 +501,7 @@ for (const table of LOOP_TABLES) for (const operation of ["UPDATE", "DELETE", "T
       assert.equal(await b1aSnapshot(pg), before);
     } finally {
       if (operation === "TRUNCATE") for (const name of others)
-        await b1aSql(pg, `ALTER TABLE ${name} ENABLE TRIGGER ${name === "control_loop_improvement_commands" ? "control_loop_commands_append_only" : `${name}_no_truncate`}`);
+        await b1aSql(pg, `ALTER TABLE ${name} ENABLE TRIGGER ${truncateTrigger(name)}`);
     }
   }));
 }
@@ -845,6 +848,8 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     let baselineDigest: string, baselineGrants: string[];
     try { baselineDigest = await readPrivateWebSchemaDigest(reference); baselineGrants = [...await readMacGrantCatalogV1(reference)].sort(); }
     finally { await reference.end(); }
+    // Remove empty dependents in reverse ledger order before proving the older down.
+    await b1aSql(pg, await readFile("db/down/0303_control_loop_update_candidates.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0302_control_loop_improvement_commands.sql", "utf8"), [], pg.database, "migrator");
     const down = await readFile("db/down/0301_control_loop_improvement_lineage.sql", "utf8");
     await b1aSql(pg, down, [], pg.database, "migrator"); await applyB1aRoles(pg, baseline, pg.database);
@@ -855,6 +860,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     const up = await readFile("db/migrations/0301_control_loop_improvement_lineage.sql", "utf8");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${up}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0302_control_loop_improvement_commands.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0303_control_loop_update_candidates.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/roles/production_table_grants.sql", "utf8"), [], pg.database, "migrator");
     await applyB1aRoles(pg, resolve("."), pg.database);
     const f = await b1aLinked(pg), web = b1aWeb(pg);

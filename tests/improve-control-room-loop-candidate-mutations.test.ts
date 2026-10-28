@@ -10,6 +10,12 @@ import { assertGuardBites } from "./support/attack-kit/index";
 const exec=promisify(execFile),root=resolve(".");
 const wire="src/improve-control-room/v1/loop-candidate-wire.ts",service="src/improve-control-room/v1/service.ts";
 const probes=[
+ {name:"direct evidence equality",file:service,find:'if (canonicalJson(e) !== canonicalJson(verified)) throw new WebAccessError("conflict");',replace:"/* MUTANT: caller evidence trusted. */",
+  pattern:"B4 direct recording refuses altered evidence with the real digest",assertion:"B4 direct evidence must equal the verified source before signing"},
+ {name:"same-key decision equality",file:service,find:" || decision.decision !== b.decision",replace:"",
+  pattern:"B4 same-key replay refuses the opposite decision",assertion:"B4 same-key opposite decision conflicts"},
+ {name:"URL body candidate binding",file:"src/web/v1/improve-control-room-loop-candidate-http.ts",find:" || body.data.candidateId !== candidateId",replace:"",
+  pattern:"B4 decision URL and body candidate IDs must agree",assertion:"B4 mismatched URL ID is refused before the service"},
  {name:"current local input",file:service,find:" || Number(input.version) !== b.localVersion",replace:" || false",
   pattern:"B4 edited then restored inputs keep the old candidate historical",assertion:"B4 stale local input is refused before source verification"},
  {name:"UI synchronous retry latch",file:"private-app/app/improvement-finish-card.tsx",find:"if (latch.current || !isFresh() || !navigator.onLine) return;",replace:"if (!isFresh() || !navigator.onLine) return;",
@@ -61,7 +67,7 @@ test("B4 candidate guards fail independently and restore green",{timeout:600000}
  }finally{await rm(copy,{recursive:true,force:true});}
 });
 
-const sqlProbes=[
+const sqlProbesAll=[
  {name:"SQL decision uniqueness",file:"db/migrations/0303_control_loop_update_candidates.sql",
   find:"  UNIQUE (tenant_id,candidate_id),\n",replace:"",
   pattern:"B4 SQL unique decision floor refuses a second consumption",assertion:"B4 SQL unique candidate consumption floor refuses a second decision"},
@@ -85,7 +91,7 @@ const sqlProbes=[
   replace:"REVOKE ALL ON control_loop_update_candidates, control_loop_update_candidate_decisions FROM",
   pattern:"B4 SQL broad application role denial is independent",assertion:"B4 application login has no candidate SELECT"},
 ];
-test("B4 SQL guards require independently loaded native mutations",{timeout:600000},async t=>{
+function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(name,{timeout:600000},async t=>{
  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b4-sql-mutations-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -114,7 +120,10 @@ test("B4 SQL guards require independently loaded native mutations",{timeout:6000
    console.log(`B4 mutation ${probe.name}: baseline=true loaded=true intended_assertion=true restored=true green=true`);
   });
  }finally{await rm(copy,{recursive:true,force:true});}
-});
+}); }
+sqlGuardPartition("B4 SQL binding guards require independently loaded native mutations",sqlProbesAll.slice(0,4));
+sqlGuardPartition("B4 SQL authority guards require independently loaded native mutations",sqlProbesAll.slice(4));
+
 
 test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{timeout:120000},async()=>{
  const copy=await mkdtemp(resolve(".test-tmp/b4-inert-mutation-"));

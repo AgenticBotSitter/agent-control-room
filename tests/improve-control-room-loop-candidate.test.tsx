@@ -627,3 +627,54 @@ test("B4 wire decided state requires version two and a decision time",async()=>{
    "B4 declined state requires its immutable decision time");
  }finally{await f.close();}
 });
+
+
+test("B4 direct recording refuses altered evidence with the real digest",async()=>{
+ const f=await syntheticFixture();try{
+  const original=f.evidence(),forged=structuredClone(original);forged.summary="Forged finish summary";
+  assert.equal(forged.completionDigest,original.completionDigest);
+  await assert.rejects(f.desk.recordLoopCandidate(forged),{code:"conflict"},"B4 direct evidence must equal the verified source before signing");
+  assert.equal((await f.db.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,0);
+ }finally{await f.close();}
+});
+
+test("B4 same-key replay refuses the opposite decision",async()=>{
+ const f=await syntheticFixture();try{
+  await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
+  const body={candidateId:c.candidateId,expectedVersion:1,candidateRecordDigest:c.recordDigest,candidateRevision:c.candidateRevision,
+   localVersion:c.localVersion,a2InputVersion:c.a2InputVersion,decision:"accept"};
+  const path=`/api/v1/loop-update-candidates/${c.candidateId}/decision`,key="b4-opposite-replay-0001";
+  assert.equal((await f.handle(request(path,"POST",body,key))).status,201);
+  assert.equal((await f.handle(request(path,"POST",{...body,decision:"decline"},key))).status,409,"B4 same-key opposite decision conflicts");
+  const rows=(await f.db.query<{decision:string}>("SELECT decision FROM control_loop_update_candidate_decisions")).rows;
+  assert.deepEqual(rows.map(row=>row.decision),["accept"]);
+  assert.equal((await f.handle(request(path,"POST",body,key))).status,200);
+ }finally{await f.close();}
+});
+
+test("B4 decision URL and body candidate IDs must agree",async()=>{
+ const f=await syntheticFixture();try{
+  await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
+  const body={candidateId:c.candidateId,expectedVersion:1,candidateRecordDigest:c.recordDigest,candidateRevision:c.candidateRevision,
+   localVersion:c.localVersion,a2InputVersion:c.a2InputVersion,decision:"accept"};
+  const calls=f.calls();
+  const response=await f.handle(request("/api/v1/loop-update-candidates/loop-candidate:different/decision","POST",body,"b4-route-binding-0001"));
+  assert.equal(response.status,400,"B4 mismatched URL ID is refused before the service");
+  assert.equal(f.calls(),calls);
+  assert.equal((await f.db.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidate_decisions")).rows[0]!.n,0);
+ }finally{await f.close();}
+});
+
+test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
+ const {readFile}=await import("node:fs/promises");
+ const workflow=await readFile(".github/workflows/ci.yml","utf8"),manifest=JSON.parse(await readFile("package.json","utf8"));
+ const job=workflow.split("  mutation-checks:")[1]!.split("\n  pr-claims:")[0]!;
+ assert.match(job,/timeout-minutes: 45/u);
+ for(const part of ["source","sql-binding","sql-authority"]){
+  const script=`test:improve-control-room-loop-candidate-mutations:${part}`;
+  assert.equal(typeof manifest.scripts[script],"string","B4 bounded CI partitions each invoke an executable lane");
+  assert.match(manifest.scripts[script],/--test-name-pattern=/u);
+  const step=job.split(/      - /u).find(s=>s.includes(`run: pnpm run ${script}\n`));
+  assert.ok(step,`B4 CI reaches mutation partition ${part}`);assert.match(step,/timeout-minutes: 5/u);assert.doesNotMatch(step,/\n        if:/u);
+ }
+});

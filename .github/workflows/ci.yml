@@ -278,7 +278,13 @@ jobs:
         run: pnpm run test:improve-control-room-loop-attention-mutations
       - name: Prove retained loop candidate guards
         timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:source
+      - name: Prove retained loop candidate SQL bindings
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-binding
+      - name: Prove retained loop candidate SQL authority
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-authority
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations
