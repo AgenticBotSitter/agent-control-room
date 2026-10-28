@@ -246,9 +246,9 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE '0303%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE '0303%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -334,7 +334,7 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE '0303%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
@@ -345,7 +345,9 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   const {readMacGrantCatalogV1,desiredMacGrantsV1,diffMacGrantsV1,applyMacGrantDiffV1}=await import("../scripts/mac-local/database-upgrade-grants.mjs");
   const roleFiles=["private_web_roles.sql","task_coordinator_roles.sql","native_queue_producer_roles.sql","native_results_roles.sql","local_result_publisher_roles.sql","native_queue_worker_roles.sql","agent_reviewer_roles.sql","fleet_gateway_roles.sql"];
   const sources=Object.fromEntries(await Promise.all(roleFiles.map(async name=>[name,await readFile(join("db/roles",name),"utf8")])));
-  const roles=new Client(pg.admin());await roles.connect();try{await roles.query("BEGIN");await applyMacGrantDiffV1(roles,diffMacGrantsV1(await readMacGrantCatalogV1(roles),desiredMacGrantsV1(sources)));await roles.query("COMMIT");}finally{await roles.end();}
+  const roles=new Client(pg.admin());await roles.connect();try{
+   await roles.query(await readFile("db/roles/agent_reviewer_roles.sql","utf8"));
+   await roles.query("BEGIN");await applyMacGrantDiffV1(roles,diffMacGrantsV1(await readMacGrantCatalogV1(roles),desiredMacGrantsV1(sources)));await roles.query("COMMIT");}finally{await roles.end();}
   assert.equal((await migrateRoot(pg,resolve("."))).applied!.length,0);
   assert.equal(await snapshot(),before,"B4 BASE signed history remains byte-identical");
   for(const table of ["control_loop_update_candidates","control_loop_update_candidate_decisions"])assert.equal((await sql(pg,`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
