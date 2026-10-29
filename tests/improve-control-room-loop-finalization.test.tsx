@@ -243,7 +243,7 @@ if(ordinary){
   });
   test("B3c forged publisher receipt never creates finish",async t=>{
     const f=await using(t);
-    await direct(f,f.capability,async()=>({...await f.publish(),requestId:"request:foreign"})).catch(()=>{});
+    await direct(f,f.capability,async()=>({...await f.publish(),engineRevision:f.target.expectedRevision+1})).catch(()=>{});
     const record=await f.capability.readRecord(f.target);
     assert.equal(record?.publication,null,"B3c forged publisher finish count is zero");
   });
