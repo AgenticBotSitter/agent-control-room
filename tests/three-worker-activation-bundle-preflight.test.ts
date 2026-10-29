@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,6 +30,7 @@ import { PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
   "../src/installer/v1/private-installed-local-hermes-runtime-composer";
 import { createHermesOwnerQualificationHostFixture, hermesOwnerQualificationConfigurationFixture } from
   "./helpers/hermes-owner-qualification-host";
+import { releaseFixtureTemp } from "./helpers/release-fixture-temp";
 
 const d = (value: string) => sha256Digest(value);
 const route = Object.freeze({ kind: "local" as const, workerId: "worker:hermes-worker",
@@ -42,10 +42,10 @@ const binding = Object.freeze({ installationId: "control-room-one", releaseDiges
   topologyPlanDigest: topologyPlan.planDigest });
 
 async function releaseSource() {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "acr-activation-release-")));
+  const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const root = await releaseFixtureTemp(repository, "acr-activation-release-");
   const releaseDirectory = join(root, "release"), installRoot = join(root, "install");
   await mkdir(installRoot, { mode: 0o700 });
-  const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: releaseDirectory });
   const placement = await stageLocalReleaseV1({ ownerAttended: true, releaseDirectory, installRoot });
   const releaseRoot = join(installRoot, "versions", placement.version);

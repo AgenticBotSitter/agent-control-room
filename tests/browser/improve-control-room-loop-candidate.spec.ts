@@ -165,6 +165,8 @@ for(const width of [360,1280])for(const colorScheme of ["light","dark"] as const
    unexpected.push(req.url());await route.abort();
   });
   const emptyPage=await context.newPage();await emptyPage.goto("https://product.invalid"+href);
+  // Decisions are refused offline by design; Chromium reports offline when the host has only loopback (docker --network=none).
+  expect(await emptyPage.evaluate(()=>navigator.onLine),"browser host must report online; give it a non-loopback interface").toBe(true);
   await expect(emptyPage.getByText("No verified candidate is recorded for this view.",{exact:true})).toBeVisible();
   await expect(emptyPage.getByText("Completion reported; candidate evidence unavailable",{exact:true})).toBeVisible();
   await expect(emptyPage.getByRole("article",{name:"Finished candidate",exact:true})).toHaveCount(0);

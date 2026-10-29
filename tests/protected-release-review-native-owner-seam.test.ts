@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,14 +14,15 @@ import { prepareProtectedReleaseReviewOwnerAttestationV1 } from
 import { prepareProtectedReleaseReviewNativeOwnerSeamV1,
   verifyProtectedReleaseReviewNativeOwnerSeamV1 } from
   "../src/installer/v1/protected-release-review-native-owner-seam";
+import { releaseFixtureTemp } from "./helpers/release-fixture-temp";
 
 const d = (value: string) => sha256Digest(value);
 
 async function releaseSource() {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "acr-owner-review-seam-")));
+  const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const root = await releaseFixtureTemp(repository, "acr-owner-review-seam-");
   const releaseDirectory = join(root, "release"), installRoot = join(root, "install");
   await mkdir(installRoot, { mode: 0o700 });
-  const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: releaseDirectory });
   const placement = await stageLocalReleaseV1({ ownerAttended: true, releaseDirectory, installRoot });
   const releaseRoot = join(installRoot, "versions", placement.version);
