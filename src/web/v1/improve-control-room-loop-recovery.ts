@@ -13,6 +13,7 @@ type Cycle = {tick():void;close():Promise<void>};
 /** One bounded journal scan, sharing the startup cycle primitive. The journal is
  * the queue; occupied wait slots are the only retained work besides the cursor. */
 export function createImproveControlRoomLoopRecoveryV1(input:{port:LoopRecoveryPortV1;enabled:()=>boolean;
+  observe?:(target:LoopRecoveryTargetV1,signal:AbortSignal)=>Promise<void>;
   createCycle:(input:{enabled:()=>boolean;sweep:(limit:number)=>Promise<unknown>;intervalMs:number})=>Cycle}){
   let closing=false,started=false,cycle:Cycle|undefined,pending:Promise<void>|undefined,closePromise:Promise<void>|undefined;
   let cursor:LoopRecoveryCursorV1=null,cleanupUncertain=false;
@@ -30,6 +31,10 @@ export function createImproveControlRoomLoopRecoveryV1(input:{port:LoopRecoveryP
       while(next<targets.length){
         const [key,target]=targets[next++]!;
         if(!enabled())break;
+        // Terminal observation shares this scan and its four asynchronous slots,
+        // even when all four driver slots are occupied.
+        if(input.observe)try{await input.observe(target,abort.signal);}catch{/* Unavailable evidence is retried by the next scan. */}
+        if(!enabled()||abort.signal.aborted)break;
         if(children.has(key)||children.size+reserved>=4)continue;
         reserved++;
         try{
