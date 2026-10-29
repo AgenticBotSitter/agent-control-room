@@ -199,6 +199,7 @@ export function HomeDashboard({ data, operationsMode }:
           : attentionItems.length ? <ul className="private-dashboard-list private-attention-list">{attentionItems.slice(0, 5).map(item => <li key={item.key}>
             <StateChip label={item.kind} tone="bad" state="attention" />
             <p className="private-attention-what">{item.title}</p>
+            <p>{item.summary}</p>
             <a className="private-action-link" href={item.href ?? "/needs-me"}>{item.href ? item.actionLabel : "Open Action Inbox"}</a></li>)}</ul>
             : attentionComplete && !hasWarning && data.connections.state === "ready" ? <EmptyState>{ownerStatusLabels.attention.clear}</EmptyState> : null}
       {data.attention.state === "ready" && "checking" in data.attention.value && data.attention.value.checking ? <LoadingState>Checking saved attention…</LoadingState>

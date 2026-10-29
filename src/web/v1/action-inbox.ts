@@ -144,10 +144,10 @@ export function buildActionInbox(taskPages: readonly TaskAttentionPage[] = [], a
     } else canonical.push(row);
   }
   const loop = [...new Map(loopItems.map(item => [loopAttentionKey(item), item])).values()].map((item): ActionInboxDisplayItem => ({
-    key: `loop:${loopAttentionKey(item)}`, kind: item.kind === "blocked" ? "blocked" : "approval",
+    key: `loop:${loopAttentionKey(item)}`, kind: item.kind === "failed" ? "failure" : item.kind === "stall" || item.kind === "blocked" ? "blocked" : item.kind === "finish" || item.kind === "stopped" ? "notification" : "approval",
     title: item.title, summary: item.summary, observedAt: item.observedAt, projectId: item.projectId,
     href: `/projects/${encodeURIComponent(item.projectId)}/improvements#request=${encodeURIComponent(item.requestId)}`,
-    actionLabel: item.identity.kind === "approval" ? `Review ${item.identity.step}` : item.kind === "question" ? "Answer question"
+    actionLabel: "nextAction" in item ? item.nextAction : item.identity.kind === "approval" ? `Review ${item.identity.step}` : item.kind === "question" ? "Answer question"
       : item.kind === "blocked" ? "Check request" : "Open request", blockedCount: 0, availableResponses: [], evidenceCount: 0,
   }));
   return [...tasks, ...canonical, ...loop].sort((left, right) => {

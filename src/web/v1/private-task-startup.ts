@@ -1,3 +1,5 @@
+import { finalizationEnabledV1 } from "./improve-control-room-loop-finalization";
+import { type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1 } from "./improve-control-room-loop-service";
 import { createImproveControlRoomLoopRecoveryV1 } from "./improve-control-room-loop-recovery";
 import { captureLoopRecoveryCapabilityV1, createImproveControlRoomLoopAdapterV1, type LoopAdapterConfigurationV1 } from "./improve-control-room-loop-adapter";
@@ -326,8 +328,13 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if (loopKey && pipelines && !loopKeyMatchesLegacyKeyV1(loopKey, pipelines.integrityKey)) throw new Error();
     const recoveryCapability = captureLoopRecoveryCapabilityV1(input.loopBridge?.adapter.contract.recovery);
     const loopRecovery = recoveryCapability ? { enabled: recoveryCapability.enabled } : undefined;
-    const loopBridge = input.loopBridge ? { integrityKey: loopKey!,
+    const loopBridge:LoopBridgeConfigurationV1|undefined = input.loopBridge ? { integrityKey: loopKey!,
       adapter: createImproveControlRoomLoopAdapterV1(input.loopBridge.adapter) } : undefined;
+    if(loopBridge?.adapter.finalization && finalizationEnabledV1(loopBridge.adapter.finalization)) {
+      const capability=loopBridge.adapter.finalization;
+      loopBridge.loopCandidates=Object.freeze({integrityKey:loopBridge.integrityKey,contract:loopBridge.adapter.contract,
+        schemaDigest:loopBridge.adapter.schemaDigest,source:capability.source,repository:capability.repository});
+    }
     return { loopBridge, loopRecovery, web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
@@ -698,11 +705,13 @@ export function createPrivateTaskBootstrap(dependencies: {
       // instance owns no pool or adapter lifecycle and never closes either.
       let recoveryEnabled = false;
       try { recoveryEnabled = config.loopRecovery?.enabled() === true; } catch { /* Default off. */ }
-      if (config.loopBridge && recoveryEnabled) {
+      if (config.loopBridge && (recoveryEnabled || finalizationEnabledV1(config.loopBridge.adapter.finalization))) {
         const recoveryService = new ImproveControlRoomLoopServiceV1(web.client,
           { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, config.loopBridge, clock);
         recoveryWorker = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
-          enabled: config.loopRecovery!.enabled, createCycle: createPipelineAdvanceCycleV1 });
+          enabled: ()=>{let recovery=false;try{recovery=config.loopRecovery?.enabled()===true;}catch{/* Default off. */}
+            return recovery||finalizationEnabledV1(config.loopBridge!.adapter.finalization);},
+          observe:recoveryService.finalizationPort().observe, createCycle: createPipelineAdvanceCycleV1 });
       }
       const readyApplication = application;
       let pipelineCycle:ReturnType<typeof createPipelineAdvanceCycleV1>|undefined;

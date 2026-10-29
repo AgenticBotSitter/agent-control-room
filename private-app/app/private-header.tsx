@@ -53,7 +53,7 @@ export function PrivateHeader() {
           <button type="button" style={{ minHeight: 44, minWidth: 44 }} onClick={() => void refreshSharedTaskAttention(true)}>Read attention again</button></>
           : attention.value.items.length ? <ul>{attention.value.items.slice(0, 3).map((item, index) => <li key={item.key}
               className={index === 0 ? "private-shared-attention-lead" : "private-shared-attention-extra"}>
-            <strong>{item.title}</strong> <a href={item.href ?? "/needs-me"} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, minWidth: 44 }}>{item.href ? item.actionLabel : "Open Action Inbox"}</a>
+            <strong>{item.title}</strong><p>{item.summary}</p> <a href={item.href ?? "/needs-me"} style={{ display: "inline-flex", alignItems: "center", minHeight: 44, minWidth: 44 }}>{item.href ? item.actionLabel : "Open Action Inbox"}</a>
           </li>)}</ul> : attention.value.complete ? <p>All clear.</p> : null}
       {attention.state === "ready" && attention.value.checking ? <p role="status">Checking saved attention…</p>
         : attention.state === "ready" && !attention.value.complete ? <p role="alert">Some attention could not be checked completely. Open Action Inbox; no all-clear is assumed.</p> : null}

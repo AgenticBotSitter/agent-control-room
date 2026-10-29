@@ -1,3 +1,6 @@
+import { LoopCandidatePublisherV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import { createImproveControlRoomLoopFinalizerV1, finalizationEnabledV1, loopFinalizationTargetSchemaV1,
+  verifyFinalizationInspectionV1, verifyFinalizationRecordV1, type LoopFinalizationPortV1, type LoopFinalizationTargetV1 } from "./improve-control-room-loop-finalization";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
@@ -31,7 +34,7 @@ const unavailable = () => new Error("loop_bridge_contract_unavailable");
  * key, so a composition with pipelines must use one key for both. */
 export const loopKeyMatchesLegacyKeyV1 = (loopKey: Uint8Array, legacyKey: Uint8Array) =>
   loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);
-export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; admissionFreshnessMs?: number };
+export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; admissionFreshnessMs?: number; loopCandidates?: LoopCandidateConfigurationV1 };
 type Lineage = Awaited<ReturnType<ImproveControlRoomDeskServiceV1["loopBridgeLineage"]>>;
 
 /** Owner authority and an append-only, signed one-attempt journal. A committed
@@ -41,6 +44,7 @@ export class ImproveControlRoomLoopServiceV1 {
   readonly #key: Uint8Array;
   readonly #adapter: LoopAdapterV1;
   readonly #freshness: number;
+  readonly #publisher: LoopCandidatePublisherV1;
   readonly #swept = new Set<string>();
   readonly #sweepCursor = new Map<string, string>();
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
@@ -49,7 +53,10 @@ export class ImproveControlRoomLoopServiceV1 {
     this.#key = Uint8Array.from(configuration.integrityKey); this.#adapter = configuration.adapter;
     this.#freshness = configuration.admissionFreshnessMs ?? 5000;
     if (!Number.isSafeInteger(this.#freshness) || this.#freshness < 1 || this.#freshness > 5000) throw unavailable();
-    this.#desk = new ImproveControlRoomDeskServiceV1(db, scope, this.#key, undefined, clock, this.#adapter.contract);
+    this.#desk = new ImproveControlRoomDeskServiceV1(db, scope, this.#key, undefined, clock, this.#adapter.contract, configuration.loopCandidates);
+    this.#publisher = new LoopCandidatePublisherV1(this.#desk, configuration.loopCandidates ?? {
+      source: {toolingRevision:this.#adapter.toolingRevision,schemaDigest:this.#adapter.schemaDigest,readVerifiedCompletion:async()=>{throw unavailable();}},
+      repository:{observe:async()=>{throw unavailable();}} });
   }
   #material(row: Row) { const { record_digest: _digest, auth_tag: _tag, ...material } = row; return material; }
   #verify(raw: Row) {
@@ -256,6 +263,9 @@ export class ImproveControlRoomLoopServiceV1 {
     return this.#desk.viewLoopDesk(identity, projectId);
   }
   async status(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
+    return (await this.#statusWithEngine(identity,projectId,requestId)).view;
+  }
+  async #statusWithEngine(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
     if (!id.safeParse(projectId).success || !id.safeParse(requestId).success) throw new WebAccessError("invalid_request");
     // Authorization and signed lineage are checked before any external read. GET never adopts or reconciles.
     const { lineage, startClaim, startResult, mayWrite, pending } = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
@@ -324,12 +334,92 @@ export class ImproveControlRoomLoopServiceV1 {
         requestedModel: current.progress.requestedModel ?? null, observedModel: current.progress.observedModel ?? null,
         identityVerified: current.progress.identityVerified === true && !!current.progress.observedModel, repairCount: current.progress.repairCount ?? null },
       attention, observedAt: new Date(this.clock()).toISOString() });
-    return loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
+    return { engine:current, view:loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
       decisions: loopImprovementDecisionsSchemaV1.parse(recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,
-      progress: current.progress, approval: current.approval, question: current.question, identity: "unverified" } });
+      progress: current.progress, approval: current.approval, question: current.question, identity: "unverified" } }) };
+  }
+  async #finalizationTarget(target: LoopRecoveryTargetV1, supplied?: LoopEngineStatusV1): Promise<LoopFinalizationTargetV1> {
+    const snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));
+    const starts=snapshot.claims.filter(c=>c.operation==="start"),start=starts[0],local=snapshot.lineage;
+    if(starts.length!==1||!start||snapshot.results.get(start.command_id)?.result?.state!=="accepted"||!local.link||!local.authorization)throw unavailable();
+    const b=start.binding;
+    if(b.authorizationId!==local.authorization.id||b.runLinkId!==local.link.id||b.localVersion!==Number(local.input.version)
+      ||b.requestSha256!==local.input.request_sha256||b.settingsSha256!==local.input.settings_sha256
+      ||!equal(b.inputVersion,local.authorization.a2_input_version)||b.loopRunId!==this.#run(local).loopRunId)throw unavailable();
+    const current=supplied??await this.#adapter.status(b.loopRunId);
+    this.#current(current,local,{expectedVersion:Number(local.input.version),expectedRevision:current.revision},true,true);
+    if(snapshot.claims.some(c=>!snapshot.results.get(c.command_id)&&(c.operation!=="stop"||current.state!=="stopped")))throw unavailable();
+    return loopFinalizationTargetSchemaV1.parse({schemaVersion:1,...this.scope,...target,runLinkId:local.link.id,localVersion:Number(local.input.version),
+      authorizationId:local.authorization.id,startCommandId:start.command_id,startBindingDigest:sha256Digest(b),run:current.run,
+      inputVersion:current.inputVersion,requestSha256:local.input.request_sha256,settingsSha256:local.input.settings_sha256,settingsDigest:current.settingsDigest,
+      expectedRevision:current.revision,schemaDigest:this.#adapter.schemaDigest});
+  }
+  finalizationPort(): LoopFinalizationPortV1 {
+    return Object.freeze({observe:async(raw,signal)=>{
+      const target=loopRecoveryTargetSchemaV1.parse(raw),capability=this.#adapter.finalization;
+      if(signal.aborted||!finalizationEnabledV1(capability)||!capability)return;
+      const operationSignal=AbortSignal.any([signal,AbortSignal.timeout(60000)]);
+      const authorize=()=>this.#finalizationTarget(target);
+      const binding=await authorize();
+      await createImproveControlRoomLoopFinalizerV1({capability,authorize,signal:operationSignal,
+        publishCompletion:input=>this.#publisher.publishCompletion(input)}).finalize(binding);
+    }});
+  }
+  async #lifecycleAttention(identity:VerifiedWebIdentity,projectId:string,requestId:string,current:LoopEngineStatusV1):Promise<LoopAttentionItemV1|null>{
+    const c=this.#adapter.finalization;if(!c||!finalizationEnabledV1(c))return null;
+    const authorize=async()=>{
+      const target=await this.#desk.loopBridgeTransaction(identity,projectId,false,async({actor,lineage,tx})=>{
+        await lineage.loopBridgeLineage(tx,projectId,requestId,actor.id);
+        return {projectId,requestId,ownerIdentityId:actor.id};
+      });
+      return this.#finalizationTarget(target,current);
+    };
+    const binding=await authorize();
+    const inspected=verifyFinalizationInspectionV1(await c.inspect(binding),binding);
+    // Reauthorize signed creator/input/grants after both asynchronous ports. No
+    // second status CLI or finalization mutation belongs to a browser read.
+    if(!equal(binding,await authorize()))throw unavailable();
+    const raw=await c.readRecord(binding);
+    if(!equal(binding,await authorize()))throw unavailable();
+    const record=raw===null?null:verifyFinalizationRecordV1(raw,binding),o=inspected.observation;
+    if(o.outcome==="candidate_ready"&&current.state!=="finished"||o.outcome==="stopped"&&current.state!=="stopped")throw unavailable();
+    if(record&&!equal(record.observation,o))throw unavailable();
+    if(["running","owner_gate"].includes(o.outcome))return null;
+    let kind:"finish"|"stall"|"failed"|"stopped"=o.outcome==="failed"?"failed":o.outcome==="stopped"?"stopped":"stall";
+    let reasonCode=o.reasonCode;
+    if(o.outcome==="uncertain"||["candidate_ready","failed"].includes(o.outcome)&&inspected.termination?.state!=="already-ended")reasonCode="TERMINATION_UNCERTAIN";
+    else if(record?.cleanup&&o.outcome==="candidate_ready")reasonCode="CLEANUP_REFUSED";
+    else if(o.outcome==="candidate_ready"&&o.reasonCode==="FINISHED"){
+      if(record?.publication&&["announced","cleanup"].includes(record.phase)){kind="finish";reasonCode="FINISHED";}
+      else reasonCode=record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
+    }
+    if(["CLEANUP_REFUSED","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"].includes(reasonCode))kind="stall";
+    const labels:Record<typeof reasonCode,[string,string,string]>={
+      FINISHED:["Finished candidate","A finished candidate and its retained evidence are available.","Review finished candidate"],
+      FAILED:["Saved run failed","The saved run failed.","Inspect saved run"],
+      STOPPED:["Saved run stopped","The saved run is stopped. Scratch is retained; cleanup is not complete.","Review stopped run"],
+      CLEANUP_REFUSED:["Run cleanup refused","Evidence is retained. Scratch is retained because cleanup is refused in this phase.","Ask the lead to check retained evidence"],
+      RETENTION_FAILED:["Evidence retention failed","Complete retained evidence could not be verified. Originals remain in place.","Ask the lead to check retained evidence"],
+      PUBLICATION_UNAVAILABLE:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      TERMINATION_UNCERTAIN:["Run termination uncertain","Already-ended writers could not be verified. Originals remain in place.","Ask the lead to reconcile this run"],
+      LAUNCH_UNCERTAIN:["Run launch uncertain","The saved run launch could not be verified.","Ask the lead to reconcile this run"],
+      INPUT_CHANGED:["Saved inputs changed","Changed inputs require renewed confirmation and approvals through the lead.","Ask the lead to reconcile this run"],
+      QUESTION_LIMIT:["Saved question limit reached","The saved question limit requires owner attention.","Ask the lead to reconcile this run"],
+      LOGIN_REQUIRED:["Saved run needs login","The verified run reports that login is required.","Check saved run with the lead"],
+      PROVIDER_UNAVAILABLE:["Saved provider unavailable","The verified run reports that its provider is unavailable.","Check saved run with the lead"],
+      TOOL_MISSING:["Saved tool missing","The verified run reports that a required tool is missing.","Check saved run with the lead"],
+      DEADLINE_EXCEEDED:["Saved deadline exceeded","The verified run reports that its deadline was exceeded.","Check saved run with the lead"],
+      UNAVAILABLE:["Run evidence unavailable","The saved run evidence could not be verified.","Ask the lead to reconcile this run"],
+    };
+    const [title,message,nextAction]=labels[reasonCode];
+    const summary=message+(record?.cleanup&&["failed","stopped"].includes(o.outcome)?" Evidence is retained; scratch cleanup is refused.":"");
+    return {projectId:binding.projectId,requestId:binding.requestId,runLinkId:binding.runLinkId,
+      localVersion:binding.localVersion,engineRevision:binding.expectedRevision,observedAt:o.observedAt,kind,
+      identity:kind==="finish"?{kind,completionDigest:o.completionDigest!}:{kind,evidenceDigest:o.evidenceDigest},
+      title,summary,nextAction,reasonCode,retentionDigest:record?.custody?.retentionDigest??null,candidate:kind==="finish"?record!.publication!.candidate:null} as LoopAttentionItemV1;
   }
   async readAttention(identity: VerifiedWebIdentity) {
     const scan = await this.#desk.viewLoopAttentionRequests(identity);
@@ -348,8 +438,11 @@ export class ImproveControlRoomLoopServiceV1 {
             : "The saved decision is unavailable. Open the request to check it." });
         if (!request.runLink) { items[index] = blocked("UNAVAILABLE"); continue; }
         try {
-          const status = await this.status(identity, request.projectId, request.requestId), gate = currentLoopGate(status);
-          if (!gate) continue;
+          const observed = await this.#statusWithEngine(identity, request.projectId, request.requestId),status=observed.view, gate = currentLoopGate(status);
+          if (!gate || gate.kind==="blocked"&&gate.code==="UNAVAILABLE") {
+            const lifecycle=await this.#lifecycleAttention(identity,request.projectId,request.requestId,observed.engine);
+            if(lifecycle||!gate){items[index]=lifecycle;continue;}
+          }
           if (gate.kind === "blocked") { items[index] = blocked(gate.code, status.engine.revision, status); continue; }
           const bound = { ...base, localVersion: status.request.currentVersion, runLinkId: status.display.runLinkId, observedAt: status.display.observedAt, engineRevision: status.engine.revision };
           if (gate.kind === "confirm") items[index] = { ...bound, kind: "confirmation", identity: { kind: "confirmation",

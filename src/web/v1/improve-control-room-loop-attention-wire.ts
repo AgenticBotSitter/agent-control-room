@@ -73,23 +73,40 @@ const identity = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("question"), questionId: id, inputVersion: scalar, questionReportSha256: hash }).strict(),
   z.object({ kind: z.literal("blocked"), code: blockedCode }).strict(),
 ]);
-export const loopAttentionItemSchemaV1 = z.object({ projectId: id, requestId: id, runLinkId: id.nullable(),
+const legacyLoopAttentionItemSchemaV1 = z.object({ projectId: id, requestId: id, runLinkId: id.nullable(),
   localVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), engineRevision: revision.nullable(),
   kind: z.enum(["confirmation", "approval", "question", "blocked"]), identity,
   title: z.string().min(1).max(180), summary: z.string().min(1).max(1000), observedAt: z.string().datetime() }).strict().refine(item =>
     item.kind === item.identity.kind && (item.runLinkId !== null && item.engineRevision !== null
       || item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE"));
+export const loopFinalizationReasonSchemaV1 = z.enum(["FINISHED","FAILED","STOPPED","LAUNCH_UNCERTAIN","INPUT_CHANGED","QUESTION_LIMIT",
+  "LOGIN_REQUIRED","PROVIDER_UNAVAILABLE","TOOL_MISSING","DEADLINE_EXCEEDED","RETENTION_FAILED","TERMINATION_UNCERTAIN","CLEANUP_REFUSED","PUBLICATION_UNAVAILABLE","UNAVAILABLE"]);
+const productDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const lifecycleIdentity = z.discriminatedUnion("kind", [
+  z.object({kind:z.literal("finish"),completionDigest:productDigest}).strict(),
+  ...(["stall","failed","stopped"] as const).map(kind=>z.object({kind:z.literal(kind),evidenceDigest:productDigest}).strict()),
+]);
+const lifecycleItem = z.object({projectId:id,requestId:id,runLinkId:id,localVersion:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  engineRevision:revision,kind:z.enum(["finish","stall","failed","stopped"]),identity:lifecycleIdentity,
+  title:z.string().min(1).max(180),summary:z.string().min(1).max(1000),observedAt:z.string().datetime(),
+  reasonCode:loopFinalizationReasonSchemaV1,nextAction:z.string().min(1).max(240),retentionDigest:productDigest.nullable(),
+  candidate:z.object({candidateId:id,candidateRevision:z.string().regex(/^[a-f0-9]{40}$/),recordDigest:productDigest}).strict().nullable(),
+}).strict().refine(v=>v.kind===v.identity.kind&&(v.kind==="finish" ? v.candidate!==null&&v.retentionDigest!==null : v.candidate===null));
+export const loopAttentionItemSchemaV1 = z.union([legacyLoopAttentionItemSchemaV1,lifecycleItem]);
 export type LoopAttentionItemV1 = z.infer<typeof loopAttentionItemSchemaV1>;
 export const loopAttentionSourceSchemaV1 = z.discriminatedUnion("state", [
   z.object({ schemaVersion: z.literal(1), state: z.literal("available"), items: z.array(loopAttentionItemSchemaV1).max(10), truncated: z.boolean() }).strict(),
   z.object({ schemaVersion: z.literal(1), state: z.literal("unavailable"), code: z.literal("unavailable") }).strict(),
 ]);
-export const loopAttentionKey = (item: LoopAttentionItemV1) => JSON.stringify([item.projectId, item.requestId,
-  item.runLinkId, item.localVersion, item.identity]);
+export const loopAttentionKey = (item: LoopAttentionItemV1) => "reasonCode" in item
+  ? JSON.stringify([item.kind,item.projectId,item.requestId,item.runLinkId,
+    item.identity.kind === "finish" ? item.identity.completionDigest : item.identity.evidenceDigest])
+  : JSON.stringify([item.projectId, item.requestId,item.runLinkId, item.localVersion,item.identity]);
 
 export function loopAttentionComplete(source?: z.infer<typeof loopAttentionSourceSchemaV1>) {
   return !source || source.state === "available" && !source.truncated
-    && !source.items.some(item => item.runLinkId !== null && item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE");
+    && !source.items.some(item => item.runLinkId !== null && item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE"
+      || "reasonCode" in item && ["UNAVAILABLE","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE"].includes(item.reasonCode));
 }
 export function loopAttentionUnknown(source?: z.infer<typeof loopAttentionSourceSchemaV1>) {
   // A fresh per-root refusal is a counted unavailable item, so it makes the

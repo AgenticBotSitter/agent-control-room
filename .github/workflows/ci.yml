@@ -306,6 +306,12 @@ jobs:
       - name: Prove retained loop candidate SQL application grants
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-grants
+      - name: Prove retained finalization guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-finalization-mutations
+      - name: Prove retained finalization contention
+        timeout-minutes: 3
+        run: pnpm run test:improve-control-room-loop-finalization-load
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations
@@ -939,6 +945,9 @@ jobs:
       - name: Prove retained loop candidate Home and saved request
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-candidate-browser
+      - name: Prove retained finalization attention and saved request
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-finalization-browser
       - name: Inbox phone target geometry
         run: pnpm test:inbox-browser
       - name: Install PostgreSQL 17 from PGDG

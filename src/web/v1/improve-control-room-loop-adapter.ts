@@ -1,3 +1,4 @@
+import { captureLoopFinalizationCapabilityV1, type LoopFinalizationCapabilityV1 } from "./improve-control-room-loop-finalization";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -73,6 +74,7 @@ export function captureLoopRecoveryCapabilityV1(value: LoopRecoveryCapabilityV1 
 export type LoopAdapterContractV1 = {
   lineage: LoopImprovementContractV1; schemaDigest: string;
   recovery?: LoopRecoveryCapabilityV1;
+  finalization?: LoopFinalizationCapabilityV1;
   generateRunId(): string;
   decodeStatus(output: unknown): LoopEngineStatusV1;
   /** Server-only reviewed A2 pins. Omission makes owner decisions unavailable.
@@ -100,6 +102,7 @@ export type LoopAdapterConfigurationV1 = {
 export interface LoopAdapterV1 {
   readonly adapterId: string; readonly toolingRevision: string; readonly schemaDigest: string;
   readonly settingsText: string; readonly contract: LoopImprovementContractV1;
+  readonly finalization?: LoopFinalizationCapabilityV1;
   inspectRecovery?(run: string, command?: { commandId: string; bindingDigest: string }): Promise<LoopRecoveryObservationV1>;
   recover?(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1>;
   reserveRun(): string; available(operation: LoopBridgeOperationV1): boolean;
@@ -137,6 +140,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   const c = { ...input, executionIdentity: { ...input.executionIdentity }, contract: Object.freeze({ ...input.contract,
     lineage: Object.freeze({ ...input.contract.lineage }), qualifiedOperations: Object.freeze([...input.contract.qualifiedOperations]) }) };
   const recovery = captureLoopRecoveryCapabilityV1(c.contract.recovery);
+  const finalization = captureLoopFinalizationCapabilityV1(c.contract.finalization);
   const timeoutMs = c.timeoutMs ?? 30000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000
     || !digest.safeParse(c.toolingRevision).success || !digest.safeParse(c.contract.schemaDigest).success
@@ -430,6 +434,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     settingsText, contract: c.contract.lineage,
     reserveRun: () => runId(c.contract.generateRunId()), available,
     ...(recovery ? { inspectRecovery, recover } : {}),
+    ...(finalization ? { finalization } : {}),
     intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("intake", id, b, fence, text),
     confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("confirm", id, b, fence),
     start: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("start", id, b, fence), status, readApprovalDocument,
