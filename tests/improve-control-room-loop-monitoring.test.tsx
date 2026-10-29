@@ -339,3 +339,123 @@ if(ordinary)test('B3b status and Stop stay responsive during collection and disa
   const pid=(await e.healthTraces())[0]!.pid;assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
   assert.equal(existsSync(e.configuration.availabilityFile+'.monitor.lock'),false);
 });
+
+// Byte-for-byte cr status --json captures from current native tools (synthetic dry
+// launcher fixture only). No installed tooling or provider is needed in this lane.
+const nativeStatusCaptures = [
+  "{\"schema_version\": 1, \"run\": \"synth\", \"state\": \"ready\", \"revision\": 0, \"next\": null, \"attention\": null, \"steps\": [], \"counters\": {}, \"error\": null, \"request\": {\"input_version\": 1, \"sha256\": \"aa713bf668f62358c1931409e87daab4ab3671c14c7153dd4c2c1b08d25ebadf\", \"text\": \"SYNTHETIC exact owner request for saved chaining.\\n\", \"settings_sha256\": null, \"confirmation\": {\"sha256\": \"aa713bf668f62358c1931409e87daab4ab3671c14c7153dd4c2c1b08d25ebadf\", \"at\": \"2026-10-29T23:21:00.946578+00:00\", \"who\": \"owner\", \"input_version\": 1, \"path\": \"docs/request-source.md\"}, \"approval\": null, \"question\": null, \"admissions\": []}, \"clock\": \"ok\", \"deadline\": null}\n",
+  "{\"schema_version\": 1, \"run\": \"synth\", \"state\": \"running\", \"revision\": 2, \"next\": {\"role\": \"plan\"}, \"attention\": null, \"steps\": [{\"n\": 1, \"role\": \"plan\", \"model\": \"writer\", \"state\": \"running\", \"detail\": \"0 min (stop: cr stop <run>)\", \"stale\": null, \"attempt\": 1, \"identity\": {\"requested\": \"writer\", \"observed\": null, \"status\": \"unverified\"}}], \"counters\": {\"sendbacks\": 0, \"escalations\": 0, \"provider_retries\": 0, \"limits\": {\"configured\": 3, \"effective\": 3}, \"approaches\": {\"plan\": {\"approach\": 1, \"rejections\": {}}}}, \"error\": null, \"request\": {\"input_version\": 1, \"sha256\": \"aa713bf668f62358c1931409e87daab4ab3671c14c7153dd4c2c1b08d25ebadf\", \"text\": \"SYNTHETIC exact owner request for saved chaining.\\n\", \"settings_sha256\": \"cd5420d1da89620690d8315c213fa00dd14167c256ed8fb3b9d267b8fc5d2dde\", \"confirmation\": {\"sha256\": \"aa713bf668f62358c1931409e87daab4ab3671c14c7153dd4c2c1b08d25ebadf\", \"at\": \"2026-10-29T23:18:52.594084+00:00\", \"who\": \"owner\", \"input_version\": 1, \"path\": \"docs/request-source.md\"}, \"approval\": null, \"question\": null, \"admissions\": []}, \"clock\": \"ok\", \"deadline\": {\"attempt\": \"c662c7a7c5a04f2694ca641d758dcc30\", \"started_at\": \"2026-10-29T23:18:53.060638+00:00\", \"due_at\": \"2026-10-29T23:19:53.060638+00:00\", \"state\": \"pending\", \"worker\": \"live\"}}\n",
+  "{\"schema_version\": 1, \"run\": \"synth\", \"state\": \"running\", \"revision\": 2, \"next\": {\"role\": \"plan\"}, \"attention\": null, \"steps\": [{\"n\": 1, \"role\": \"plan\", \"model\": \"writer\", \"state\": \"running\", \"detail\": \"0 min (stop: cr stop <run>)\", \"stale\": null, \"attempt\": 1, \"identity\": {\"requested\": \"writer\", \"observed\": null, \"status\": \"unverified\"}}], \"counters\": {\"sendbacks\": 0, \"escalations\": 0, \"provider_retries\": 0, \"limits\": {\"configured\": 3, \"effective\": 3}, \"approaches\": {\"plan\": {\"approach\": 1, \"rejections\": {}}}}, \"error\": null, \"request\": {\"input_version\": 1, \"sha256\": \"aa713bf668f62358c1931409e87daab4ab3671c14c7153dd4c2c1b08d25ebadf\", \"text\": \"SYNTHETIC exact owner request for saved chaining.\\n\", \"settings_sha256\": \"cd5420d1da89620690d8315c213fa00dd14167c256ed8fb3b9d267b8fc5d2dde\", \"confirmation\": {\"sha256\": \"aa713bf668f62358c1931409e87daab4ab3671c14c7153dd4c2c1b08d25ebadf\", \"at\": \"2026-10-29T23:18:52.594084+00:00\", \"who\": \"owner\", \"input_version\": 1, \"path\": \"docs/request-source.md\"}, \"approval\": null, \"question\": null, \"admissions\": []}, \"clock\": \"uncertain\", \"deadline\": {\"attempt\": \"c662c7a7c5a04f2694ca641d758dcc30\", \"started_at\": \"2026-10-29T23:18:53.060638+00:00\", \"due_at\": \"2026-10-29T23:19:53.060638+00:00\", \"state\": \"pending\", \"worker\": \"uncertain\"}}\n"
+];
+// Frozen reviewed a2MonitoringV1 + utcInstant and their exact wire helpers.
+const reviewedMonitoringSource = [
+  "const RUN = /^[a-z0-9][a-z0-9-]{2,40}$/;  // A2 NAME and the product identity length",
+  "const HEX64 = /^[a-f0-9]{64}$/, HEX40 = /^[a-f0-9]{40}$/, HEX32 = /^[a-f0-9]{32}$/;",
+  "const unavailable = () => new Error(\"loop_adapter_unavailable\");",
+  "const need = condition => { if (!condition) throw unavailable(); };",
+  "const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);",
+  "const plain = value => value !== null && typeof value === \"object\" && !Array.isArray(value)",
+  "  && [Object.prototype, null].includes(Object.getPrototypeOf(value));",
+  "const exact = (value, keys) => plain(value) && Object.keys(value).length === keys.length && keys.every(key => own(value, key));",
+  "const match = (pattern, value) => typeof value === \"string\" && pattern.test(value);",
+  "export function utcInstant(value) {",
+  "  const m = typeof value === \"string\"",
+  "    && /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(\\.\\d{1,9})?(Z|([+-])(\\d{2}):(\\d{2}))$/.exec(value);",
+  "  need(m);",
+  "  const [, y, mo, d, h, mi, s, fraction = \"\", zone, sign, oh, om] = m;",
+  "  const local = Date.UTC(+y, +mo - 1, +d, +h, +mi, +s);",
+  "  const at = new Date(local - (zone === \"Z\" ? 0 : (sign === \"-\" ? -1 : 1) * (+oh * 60 + +om) * 60000));",
+  "  need(!Number.isNaN(at.getTime()) && new Date(local).toISOString().slice(0, 19) === `${y}-${mo}-${d}T${h}:${mi}:${s}`",
+  "    && (zone === \"Z\" || +oh <= 23 && +om <= 59));",
+  "  return `${at.toISOString().slice(0, 19)}${fraction}Z`;",
+  "}",
+  "export function a2MonitoringV1(flag) {",
+  "  need(flag === true);",
+  "  return Object.freeze({ enabled: () => flag, decodeStatus(raw, status) {",
+  "    need(plain(raw) && raw.schema_version === 1 && plain(status) && plain(status.run)",
+  "      && match(RUN, raw.run) && raw.run === status.run.loopRunId",
+  "      && Number.isSafeInteger(raw.revision) && raw.revision >= 0 && raw.revision === status.revision",
+  "      && [\"ok\", \"uncertain\"].includes(raw.clock) && own(raw, \"deadline\"));",
+  "    const d = raw.deadline;",
+  "    let deadline = null, workerState = \"none\";",
+  "    if (d !== null) {",
+  "      need(exact(d, [\"attempt\", \"started_at\", \"due_at\", \"state\", \"worker\"]) && match(HEX32, d.attempt)",
+  "        && [\"pending\", \"exceeded\"].includes(d.state) && [\"live\", \"ended\", \"uncertain\"].includes(d.worker));",
+  "      // A2 stores offset ISO instants with microseconds; the product requires canonical millisecond UTC.",
+  "      const startedAt = new Date(utcInstant(d.started_at)).toISOString(), dueAt = new Date(utcInstant(d.due_at)).toISOString();",
+  "      need(Date.parse(dueAt) > Date.parse(startedAt));",
+  "      deadline = { attemptId: d.attempt, startedAt, dueAt, state: d.state };",
+  "      workerState = d.worker;",
+  "    }",
+  "    return { reasonCode: raw.clock === \"uncertain\" ? \"CLOCK_UNCERTAIN\"",
+  "      : deadline?.state === \"exceeded\" ? \"DEADLINE_EXCEEDED\" : null, deadline, workerState };",
+  "  } });",
+  "}"
+].join('\n');
+if(ordinary)test('adapter decodes the current native envelope',async t=>{
+  const e=await monitoringEngine(t);
+  const reviewed=await import('data:text/javascript;base64,'+Buffer.from(reviewedMonitoringSource).toString('base64'));
+  const monitoring=reviewed.a2MonitoringV1(true);
+  const status={run:{adapterId:e.configuration.adapterId,loopRunId:'synth',toolingRevision:e.configuration.toolingRevision,a2SchemaVersion:1 as const},
+    revision:0,inputVersion:1,state:'running' as const,description:'SYNTHETIC native envelope',settingsSha256:e.configuration.settingsSha256,
+    settingsDigest:e.configuration.settingsSha256,confirmation:null,approval:null,question:null,
+    progress:{step:null,completed:0,attention:'none' as const},receipts:[]};
+  async function decode(bytes:string,monitored=true){
+    // Replay the captured stdout through an actual isolated adapter child.
+    const source='import sys\nsys.stdout.write('+JSON.stringify(bytes)+')\n';
+    await writeFile(e.configuration.entrypoint,source);
+    const adapter=createImproveControlRoomLoopAdapterV1({...e.configuration,entrypointSha256:loopByteHashV1(source),
+      contract:{...e.configuration.contract,decodeStatus:(raw:unknown)=>({...status,revision:(raw as {revision:number}).revision}),
+        monitoring:monitored?monitoring:undefined}});
+    try{return await adapter.status('synth');}finally{await adapter.close();}
+  }
+  const empty=await decode(nativeStatusCaptures[0]!);assert.equal(empty.monitoring?.deadline,null);
+  const live=await decode(nativeStatusCaptures[1]!);assert.equal(live.monitoring?.workerState,'live');assert.equal(live.monitoring?.deadline?.state,'pending');
+  assert.equal((await decode(nativeStatusCaptures[2]!)).monitoring?.reasonCode,'CLOCK_UNCERTAIN');
+  // Non-monitoring carriers receive the same native fields.
+  assert.equal((await decode(nativeStatusCaptures[1]!,false)).monitoring,undefined);
+  const raw=JSON.parse(nativeStatusCaptures[1]!);
+  assert.equal(live.monitoring?.deadline?.attemptId,raw.deadline.attempt);
+  assert.equal(live.monitoring?.deadline?.dueAt,new Date(raw.deadline.due_at).toISOString());
+  const {clock:_clock,deadline:_deadline,...legacy}=raw;
+  assert.equal((await decode(JSON.stringify(legacy),false)).monitoring,undefined,'legacy envelopes remain admitted');
+  const {worker:_worker,...missing}=raw.deadline;
+  for(const bad of [{...raw,extra:true},{...raw,clock:'bad'},{...raw,deadline:{...raw.deadline,extra:true}},
+    {...raw,deadline:missing},{...raw,deadline:{...raw.deadline,state:'late'}},
+    {...raw,deadline:{...raw.deadline,attempt:'x'.repeat(181)}}]){
+    await assert.rejects(decode(JSON.stringify(bad)),/loop_adapter_unavailable/);
+  }
+  // The outer admission must still defer content/timestamp validation to A2.
+  assert.equal((await decode(JSON.stringify({...raw,deadline:{...raw.deadline,due_at:'bad'}}))).monitoring?.reasonCode,'UNAVAILABLE');
+});
+
+import { dirname,isAbsolute } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { lstatSync,realpathSync } from 'node:fs';
+if(ordinary)test('B3b reviewed A2 monitoring contract',{
+  skip:process.env.CONTROL_ROOM_B3B_REQUIRE_A2!=='1'?'Requires reviewed A2 monitoring pins in R; integration unproven.':false,
+},async()=>{
+  const path=process.env.CONTROL_ROOM_B3B_A2_CONTRACT;
+  assert.ok(path&&isAbsolute(path),'B3b requires R: absolute CONTROL_ROOM_B3B_A2_CONTRACT');
+  assert.equal(resolve(path),path);
+  assert.doesNotMatch(path,/(?:^|[/\\])(?:\.env(?:\.[^/]*)?|\.aws|\.codex|\.hermes|auth\.json|credentials|tokens?)(?:[/\\]|$)/iu);
+  for(let part=path;;part=dirname(part)){
+    assert.equal(lstatSync(part).isSymbolicLink(),false,'B3b refuses symlinked module paths');
+    if(part===dirname(part))break;
+  }
+  assert.equal(realpathSync(path),path);assert.equal(lstatSync(path).isFile(),true);
+  const phase=process.env.CONTROL_ROOM_B3B_A2_PHASE;
+  assert.ok(phase==='denied'||phase==='active','B3b requires an explicit denied or active phase');
+  const module=await import(pathToFileURL(path).href);
+  assert.equal(typeof module.qualifyB3bMonitoring,'function');
+  const proof=await module.qualifyB3bMonitoring({createPrivateTaskBootstrap,createImproveControlRoomLoopAdapterV1,
+    decodeLoopHealthV1,loopMonitoringStatusSchemaV1},{phase});
+  assert.equal(proof.reviewed,true);
+  for(const key of ['toolingRevision','schemaDigest'])assert.match(proof[key],/^sha256:[a-f0-9]{64}$/);
+  for(const key of ['entrypointSha256','moduleSha256'])assert.match(proof[key],/^[a-f0-9]{64}$/);
+  assert.equal(proof.paidAttempts,0);
+  if(phase==='active'){
+    assert.equal(proof.serviceRestarts,2);assert.equal(proof.staleRefusals,0);
+    assert.equal(proof.dispatchesThroughRefreshed,1);assert.equal(proof.overdueFacts,1);assert.equal(proof.countersChanged,false);
+  }
+});

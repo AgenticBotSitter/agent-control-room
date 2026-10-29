@@ -20,7 +20,11 @@ const scalar = z.union([z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const envelopeSchema = z.object({ schema_version: z.literal(1), run: z.unknown(), state: z.string().min(1).max(64), revision,
   next: z.unknown(), attention: z.unknown(), steps: z.array(z.unknown()).max(1000),
-  counters: z.record(z.string(), z.unknown()), error: z.unknown(), request: z.unknown().optional() }).strict()
+  counters: z.record(z.string(), z.unknown()), error: z.unknown(), request: z.unknown().optional(),
+  clock: z.enum(["ok", "uncertain"]).optional(),
+  deadline: z.object({ attempt: z.string().min(1).max(180), started_at: z.string().min(1).max(180),
+    due_at: z.string().min(1).max(180), state: z.enum(["pending", "exceeded"]),
+    worker: z.enum(["live", "ended", "uncertain"]) }).strict().nullable().optional() }).strict()
   .refine(value => ["run", "next", "error"].every(key => Object.hasOwn(value, key)));
 const seal = loopApprovalDescriptorSchemaV1;
 const question = z.object({ questionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/), inputVersion: scalar,

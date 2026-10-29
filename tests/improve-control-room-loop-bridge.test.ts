@@ -5,8 +5,10 @@ import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process"
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { randomBytes } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
+import { promisify } from "node:util";
+import { loopMonitoringAttentionV1 } from "../src/web/v1/improve-control-room-loop-monitoring";
 import { createInterface } from "node:readline";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { lstatSync, realpathSync } from "node:fs";
@@ -532,6 +534,7 @@ const carrierConfiguration = z.object({
 const carrierSchema=z.object({modulePath:z.string(),moduleSha256:rawHash,configuration:carrierConfiguration,
   qualifiedOperations:z.array(z.enum(["intake","confirm","start","stop","approve","answer"])).max(6)
     .refine(ops=>new Set(ops).size===ops.length),
+  recovery:z.boolean().optional(),monitoring:z.literal(true).optional(),finalization:z.enum(["retain","cleanup"]).optional(),
   race:z.object({run:z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/),entrypoint:z.string(),entrypointSha256:rawHash}).strict().optional(),
 }).strict().refine(c=>!c.race || c.qualifiedOperations.length===0,"race carrier cannot qualify production operations");
 function checkedCarrierPath(path:string,directory=false){
@@ -548,18 +551,20 @@ function checkedCarrierPath(path:string,directory=false){
 async function loadA2Carrier(path:string){
   checkedCarrierPath(path);assert.ok(lstatSync(path).size<=65536,"carrier byte cap");
   const carrier=carrierSchema.parse(parseStrictJsonV1(await readFile(path,"utf8"),{maxBytes:65536}));
+  assert.equal(carrier.recovery,true,"check 6 requires recovery");
+  assert.equal(carrier.monitoring,true,"check 6 requires monitoring");
+  assert.equal(Object.hasOwn(carrier,"finalization"),false,"F13: check 6 never owns finalization");
   const c=carrier.configuration,root=c.configRoot;
   for(const path of [root,c.runRoot,c.workRoot,c.cwd])checkedCarrierPath(path,true);
   assert.equal(c.runRoot,join(root,"runs"));assert.equal(c.workRoot,join(root,"work"));assert.equal(c.cwd,join(root,"product"));
-  assert.equal(c.entrypoint,join(root,"cr-entry.py"));assert.equal(c.toolingManifest,join(root,"config","manifest.sha256"));
+  assert.equal(c.entrypoint,join(root,"tools/loop/bridge/cr-entry.py"));assert.equal(c.toolingManifest,join(root,"config","manifest.sha256"));
   assert.equal(carrier.modulePath,join(root,"tools","loop","bridge","a2-contract.mjs"));
-  for(const path of [c.settingsFile,c.availabilityFile]){
-    const name=relative(join(root,"config"),path);
-    assert.ok(name && !isAbsolute(name) && name!==".." && !name.startsWith("../"),"carrier settings remain under config");
-  }
+  assert.equal(c.settingsFile,join(root,"config/settings.json"));
+  assert.equal(c.availabilityFile,join(root,"config/availability.json"));
+  checkedCarrierPath(c.availabilityFile); // monitored bytes refresh; the module admits their pinned path/hash shape
   const hashes:[[string,string],...[string,string][]]=[[carrier.modulePath,carrier.moduleSha256],[c.interpreter,c.interpreterSha256],
-    [c.entrypoint,c.entrypointSha256],[c.toolingManifest,c.toolingRevision.slice(7)],[c.settingsFile,c.settingsSha256],[c.availabilityFile,c.availabilitySha256]];
-  if(carrier.race){assert.equal(carrier.race.entrypoint,join(root,"race-entry.py"));hashes.push([carrier.race.entrypoint,carrier.race.entrypointSha256]);}
+    [c.entrypoint,c.entrypointSha256],[c.toolingManifest,c.toolingRevision.slice(7)],[c.settingsFile,c.settingsSha256]];
+  if(carrier.race){assert.equal(carrier.race.entrypoint,join(root,"tools/loop/bridge/race-entry.py"));hashes.push([carrier.race.entrypoint,carrier.race.entrypointSha256]);}
   for(const [path,hash] of hashes){checkedCarrierPath(path);assert.equal(loopByteHashV1(await readFile(path)),hash,"carrier digest checked before import or spawn");}
   const lineage={toolingRevision:c.toolingRevision,decodeRunIdentity:(value:unknown)=>{
     const run=loopImprovementRunIdentitySchemaV1.parse(value);
@@ -574,7 +579,9 @@ async function loadA2Carrier(path:string){
     && input.requestSha256===loopByteHashV1(input.description) && input.settingsSha256===loopByteHashV1(input.settingsText)};
   const module=await import(pathToFileURL(carrier.modulePath).href);
   assert.equal(typeof module.a2BridgeContractV1,"function","reviewed A2 carrier exports the contract factory");
-  const contract=module.a2BridgeContractV1(lineage) as LoopAdapterConfigurationV1["contract"];
+  assert.equal(typeof module.loadA2Carrier,"function","reviewed module owns carrier construction");
+  const loaded=await module.loadA2Carrier(path,{root,lineage});
+  const contract=loaded.configuration.contract as LoopAdapterConfigurationV1["contract"];
   assert.equal(contract.lineage,lineage,"desk and service share the reviewed B1a lineage instance");
   assert.match(contract.schemaDigest,/^sha256:[a-f0-9]{64}$/);
   for(const name of ["generateRunId","decodeStatus","admissionExpectation","locateApprovalDocument","decodeApprovalSidecar"] as const)
@@ -582,7 +589,7 @@ async function loadA2Carrier(path:string){
   assert.equal(typeof contract.decisionProjection?.decodeGate,"function");
   assert.ok(contract.decisionProjection?.questionTextPath.length);
   assert.ok(contract.decisionProjection.questionTextPath.every(part=>typeof part==="string" && part && !["__proto__","prototype","constructor"].includes(part)));
-  return {carrier,configuration:{...c,contract:{...contract,lineage,qualifiedOperations:carrier.qualifiedOperations}}};
+  return {carrier,configuration:loaded.configuration as LoopAdapterConfigurationV1};
 }
 
 test("B1b A2 carrier validates every pin before import or spawn",async t=>{
@@ -593,31 +600,48 @@ test("B1b A2 carrier validates every pin before import or spawn",async t=>{
 export const a2BridgeContractV1=lineage=>({lineage,schemaDigest:"sha256:${"c".repeat(64)}",qualifiedOperations:[],
 generateRunId:()=>"web-${"a".repeat(32)}",decodeStatus:()=>{throw new Error("no synthetic observations")},admissionExpectation:()=>({}),
 locateApprovalDocument:()=>({report:"gate.md",sidecar:"gate.json"}),decodeApprovalSidecar:value=>value,
-decisionProjection:{questionTextPath:["attention","text"],decodeGate:()=>null}});`;
-  await writeFile(modulePath,source);await writeFile(join(root,"cr-entry.py"),"# carrier loader fixture");
-  await writeFile(join(root,"race-entry.py"),"# carrier race fixture");await writeFile(join(root,"config/manifest.sha256"),"synthetic manifest");
+decisionProjection:{questionTextPath:["attention","text"],decodeGate:()=>null}});
+export async function loadA2Carrier(file,{lineage}){const {readFile}=await import('node:fs/promises');const c=JSON.parse(await readFile(file,'utf8'));
+return {configuration:{...c.configuration,contract:{...a2BridgeContractV1(lineage),recovery:{enabled:()=>true},monitoring:{enabled:()=>true},qualifiedOperations:c.qualifiedOperations}}};}`;
+  await writeFile(modulePath,source);await writeFile(join(root,"tools/loop/bridge/cr-entry.py"),"# carrier loader fixture");
+  await writeFile(join(root,"tools/loop/bridge/race-entry.py"),"# carrier race fixture");await writeFile(join(root,"config/manifest.sha256"),"synthetic manifest");
   await writeFile(join(root,"config/settings.json"),settingsText);await writeFile(join(root,"config/availability.json"),"{}");
   const configuration={...f.configuration,configRoot:root,runRoot:join(root,"runs"),workRoot:join(root,"work"),cwd:join(root,"product"),
-    entrypoint:join(root,"cr-entry.py"),entrypointSha256:loopByteHashV1("# carrier loader fixture"),
+    entrypoint:join(root,"tools/loop/bridge/cr-entry.py"),entrypointSha256:loopByteHashV1("# carrier loader fixture"),
     toolingManifest:join(root,"config/manifest.sha256"),toolingRevision:`sha256:${loopByteHashV1("synthetic manifest")}`,
     settingsFile:join(root,"config/settings.json"),availabilityFile:join(root,"config/availability.json")};
   const {contract:_contract,...data}=configuration;
-  const carrier={modulePath,moduleSha256:loopByteHashV1(source),configuration:data,qualifiedOperations:[]};
+  const carrier={modulePath,moduleSha256:loopByteHashV1(source),configuration:data,qualifiedOperations:[],recovery:true,monitoring:true};
   const file=join(root,"config/contract.json");
-  const invalid=[{...carrier,moduleSha256:"0".repeat(64)},{...carrier,extra:true},
+  const invalid=[{...carrier,recovery:false},{...carrier,recovery:undefined},{...carrier,monitoring:undefined},
+    {...carrier,monitoring:false},{...carrier,finalization:"retain"},{...carrier,finalization:"cleanup"},
+    {...carrier,configuration:{...data,entrypoint:join(root,"cr-entry.py")}},
+    {...carrier,configuration:{...data,settingsFile:join(root,"config/other.json")}},
+    {...carrier,configuration:{...data,availabilityFile:join(root,"config/other.json")}},{...carrier,moduleSha256:"0".repeat(64)},{...carrier,extra:true},
     {...carrier,configuration:{...data,executionIdentity:{...data.executionIdentity,uid:null}}},
-    {...carrier,race:{run:"race-run",entrypoint:join(root,"race-entry.py"),entrypointSha256:loopByteHashV1("# carrier race fixture")},qualifiedOperations:["approve"]},
+    {...carrier,race:{run:"race-run",entrypoint:join(root,"tools/loop/bridge/race-entry.py"),entrypointSha256:loopByteHashV1("# carrier race fixture")},qualifiedOperations:["approve"]},
     {...carrier,configuration:{...data,cwd:f.root}},{...carrier,modulePath:f.configuration.entrypoint}];
+  for(const key of ["interpreterSha256","entrypointSha256","settingsSha256"] as const)
+    invalid.push({...carrier,configuration:{...data,[key]:"0".repeat(64)}});
+  invalid.push({...carrier,configuration:{...data,toolingRevision:`sha256:${"0".repeat(64)}`}});
+  invalid.push({...carrier,race:{run:"race-run",entrypoint:join(root,"tools/loop/bridge/race-entry.py"),entrypointSha256:"0".repeat(64)}});
+  invalid.push({...carrier,configuration:{...data,availabilitySha256:"bad"}});
   for(const bad of invalid){await writeFile(file,JSON.stringify(bad));await assert.rejects(loadA2Carrier(file));
     await assert.rejects(readFile(marker),{code:"ENOENT"},"invalid carrier cannot import or spawn");}
   await writeFile(file,JSON.stringify(carrier));
   const loaded=await loadA2Carrier(file);assert.equal(await readFile(marker,"utf8"),"loaded");
   assert.equal(loaded.configuration.contract.generateRunId(),`web-${"a".repeat(32)}`);
-  const race={run:"race-run",entrypoint:join(root,"race-entry.py"),entrypointSha256:loopByteHashV1("# carrier race fixture")};
+  assert.equal(loaded.configuration.contract.recovery?.enabled(),true);
+  assert.equal(loaded.configuration.contract.monitoring?.enabled(),true);
+  // Fresh monitoring bytes do not invalidate an immutable carrier's bootstrap hash.
+  await writeFile(configuration.availabilityFile,JSON.stringify({schema_version:1,checked_at:new Date().toISOString(),
+    entries:[{model:"SYNTHETIC",route:"synthetic",available:true}]}));
+  for(let restart=0;restart<2;restart++)assert.equal((await loadA2Carrier(file)).configuration.contract.monitoring?.enabled(),true);
+  const race={run:"race-run",entrypoint:join(root,"tools/loop/bridge/race-entry.py"),entrypointSha256:loopByteHashV1("# carrier race fixture")};
   await writeFile(file,JSON.stringify({...carrier,race}));assert.deepEqual((await loadA2Carrier(file)).carrier.race,race);
 });
 
-if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contract",{timeout:600000},async t=>{
+if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contract",{timeout:1800000},async t=>{
   const path=process.env.CONTROL_ROOM_B1B_A2_CONTRACT;
   assert.ok(path,"I1–I3 NOT SUPPLIED: reviewed tooling/captures, atomic A2 admission and B0-qualified disposable proof required");
   const {carrier,configuration}=await loadA2Carrier(path);
@@ -641,6 +665,14 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
     const qualified={...configuration,contract:{...configuration.contract,qualifiedOperations:["intake","confirm","start","stop","approve","answer"] as const}};
     const adapter=createImproveControlRoomLoopAdapterV1(qualified);
     const ownedRuns=new Set<string>();
+    const native=async(op:"status"|"advance",run:string)=>{
+      for(const [file,hash] of [[configuration.interpreter,configuration.interpreterSha256],[configuration.entrypoint,configuration.entrypointSha256]])
+        assert.equal(loopByteHashV1(await readFile(checkedCarrierPath(file!))),hash,"native command uses the pinned executable bytes");
+      const {stdout}=await promisify(execFile)(configuration.interpreter,[configuration.entrypoint,op,run,"--json"],
+        {cwd:configuration.cwd,env:{NODE_ENV:"production",LANG:"C.UTF-8",LC_ALL:"C.UTF-8"},timeout:60000,maxBuffer:65536});
+      return parseStrictJsonV1(stdout,{maxBytes:65536}) as {steps:{role:string;state:string}[];error:unknown};
+    };
+    const savedRun=async(run:string)=>JSON.parse(await readFile(checkedCarrierPath(join(configuration.runRoot,run,"run.json")),"utf8"));
     const desk=new ImproveControlRoomDeskServiceV1(web.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,configuration.contract.lineage);
     const makeBridge=(adapter:LoopAdapterV1)=>new ImproveControlRoomLoopServiceV1(web.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
     const bridge=makeBridge(adapter);
@@ -681,12 +713,51 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
       assert.ok(s.request.runLink);const run=s.request.runLink.loopRunId;ownedRuns.add(run);
       await evidence(intake,run);assert.equal(s.request.savedAuthorization,false);
       assert.equal((await handler(request(`${base}/${encodeURIComponent(intake.requestId)}/status`))).status,200);
+      // Intake's real orchestrator must end, then advance consumes its proposal.
+      const intakeBound=Date.now()+600000;
+      for(;;){
+        const observed=await native("status",run);assert.equal(observed.error,null);
+        const attempt=observed.steps.at(-1);assert.equal(attempt?.role,"orchestrator");
+        if(attempt.state==="done")break;
+        assert.ok(["starting","running"].includes(attempt.state),"intake must finish with a real usable proposal");
+        assert.ok(Date.now()<intakeBound,"intake attempt ends within its bound");await delay(1000);
+      }
+      assert.equal((await native("advance",run)).error,null,"native advance consumes the real intake proposal");
+      s=await bridge.status(identity,project.projectId,intake.requestId);
       const confirmed=await post(intake.requestId,"confirm",{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,
         requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256});await evidence(confirmed,run);
       s=await bridge.status(identity,project.projectId,intake.requestId);assert.equal(s.request.savedAuthorization,true);
       const start=await post(intake.requestId,"start",{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId});
       await evidence(start,run);
+      const started=await savedRun(run),last=started.steps.at(-1);
+      assert.equal(last.role,"plan");assert.equal(last.deadline.budget_seconds,60,"reviewed one-minute attempt budget");
+      const beforeCounters=structuredClone(started.chain.counters),beforeSteps=started.steps.length;
+      const deadlineBound=Date.now()+120000;
+      for(;;){
+        const observed=(await adapter.status(run)).monitoring;assert.ok(observed?.deadline,"real plan attempt has a saved deadline");
+        assert.equal(observed.deadline.attemptId,last.deadline.attempt);
+        assert.notEqual(observed.workerState,"ended","a plan attempt ending before the live deadline proof fails");
+        assert.notEqual(observed.reasonCode,"CLOCK_UNCERTAIN");
+        if(Date.now()>=Date.parse(observed.deadline.dueAt)+5000){assert.equal(observed.workerState,"live");break;}
+        assert.ok(Date.now()<deadlineBound,"live deadline observation stays bounded");await delay(1000);
+      }
+      assert.equal((await native("advance",run)).error,null,"native advance saves the overdue fact");
+      // One observation proves deadline exceeded and worker live together.
+      const monitoring=(await adapter.status(run)).monitoring;assert.ok(monitoring);
+      assert.equal(monitoring.reasonCode,"DEADLINE_EXCEEDED");assert.equal(monitoring.deadline?.state,"exceeded");
+      assert.equal(monitoring.workerState,"live");
+      const overdue=await savedRun(run);assert.ok(overdue.steps.at(-1).overdue);
+      assert.equal(overdue.steps.at(-1).overdue.worker,"live");
+      assert.equal(overdue.steps.length,beforeSteps);assert.deepEqual(overdue.chain.counters,beforeCounters);
+      const summary=loopMonitoringAttentionV1(monitoring);assert.ok(summary);assert.equal(summary.code,"DEADLINE_EXCEEDED");
+      const attention=await bridge.readAttention(identity);assert.equal(attention.state,"available");
+      if(attention.state!=="available")assert.fail("website attention must be available");
+      const item=attention.items.find(item=>item.projectId===project.projectId&&item.requestId===intake.requestId&&item.runLinkId===s.request.runLink!.runLinkId);
+      assert.ok(item,"website attention includes this request");assert.equal(item.summary,`${summary.message} ${summary.nextAction}`);
       const stop=await post(intake.requestId,"stop",{runLinkId:s.request.runLink!.runLinkId});assert.equal(stop.state,"accepted");
+      const stopped=await savedRun(run);assert.ok(stopped.chain.stopped_at,"native Stop is saved");
+      assert.deepEqual(stopped.steps.at(-1).overdue,overdue.steps.at(-1).overdue,"Stop retains the overdue fact");
+      console.log("B1b deadline=exceeded worker=live saved_overdue=true counters_unchanged=true website_attention=true stopped=true");
       assert.equal((await bridge.status(identity,project.projectId,intake.requestId)).engine.state,"stopped");
       // Discover only lead-prepared harness runs. Never fabricate engine state or receipts.
       const gates=new Map<string,string>();
@@ -727,7 +798,7 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
       finally{await adapter.close();}
     }
     }finally{await web.close();await admin.end();}
-  },{port,allowedPorts:Array.from({length:10},(_,i)=>59420+i),database:"a2_bridge_proof",boundMs:550000});
+  },{port,allowedPorts:Array.from({length:10},(_,i)=>59420+i),database:"a2_bridge_proof",boundMs:1800000});
   assert.equal(proof.cleanedUp,true);assert.deepEqual(proof.leftovers,[]);
 
 });
