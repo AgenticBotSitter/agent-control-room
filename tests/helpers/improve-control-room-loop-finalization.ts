@@ -264,3 +264,187 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href&&proce
   await host(process.argv[3]!,process.argv[4]!);
   process.disconnect?.();
 }
+
+// I-1's private setup supplies connections and the already-created signed Start
+// lineage, never a qualification verdict or completion JSON. R is created by the
+// lead, not by these tests. Opens must reuse the same persistent database and
+// signed target, and close must close connections only. Cold GET child processes
+// reopen this setup. The test owns every finalizer/publisher assertion.
+import assert from "node:assert/strict";
+import type { TestContext } from "node:test";
+import type { DatabaseClient } from "../../src/persistence/database";
+import type { LoopAdapterConfigurationV1 } from "../../src/web/v1/improve-control-room-loop-adapter";
+import { createImproveControlRoomLoopAdapterV1 } from "../../src/web/v1/improve-control-room-loop-adapter";
+import type { VerifiedWebIdentity } from "../../src/web/v1/access-verifier";
+import { ImproveControlRoomDeskServiceV1 } from "../../src/improve-control-room/v1/service";
+import { LoopCandidatePublisherV1 } from "../../src/improve-control-room/v1/loop-candidate-publisher";
+import { ImproveControlRoomLoopServiceV1 } from "../../src/web/v1/improve-control-room-loop-service";
+import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
+
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { isAbsolute, relative, sep } from "node:path";
+import { lstat, realpath } from "node:fs/promises";
+const execI1 = promisify(execFile);
+export type I1Gate = "B3a" | "B3c-refused" | "B3c-owned" | "B4";
+export type I1Setup = {
+  client:DatabaseClient; identity:VerifiedWebIdentity; integrityKey:Uint8Array;
+  scope:{tenantId:string;workspaceId:string}; target:LoopFinalizationTargetV1;
+  clock:()=>number; close:()=>Promise<void>;
+  monitorMutations:{toolingRevision:string;argv:string[];outputFile:string};
+  // Preparation installs transport stubs and arranges each refusal. The gate
+  // executes cr deliver itself and reads the resulting transport trace.
+  delivery?: (scenario:string,input:{run:string;head:string})=>Promise<{
+    bodyFile:string;readyFile:string;transportBin:string;traceFile:string;restore:()=>Promise<void>;
+  }>;
+  modelLaunchDenials?:()=>Promise<{argv:string[];traceFile:string}[]>;
+};
+export const i1ByteHash = (bytes:Uint8Array|string)=>createHash("sha256").update(bytes).digest("hex");
+export async function i1Regular(file:string,root?:string){
+  assert.ok(isAbsolute(file)&&!/(?:^|[/\\])(?:\.env|\.codex|\.hermes|\.aws|auth\.json|tokens?)(?:[/\\]|$)/i.test(file),"I-1 requires R: noncredential absolute path");
+  assert.equal(await realpath(file),file,"I-1 refuses symlink paths");
+  assert.equal((await lstat(file)).isFile(),true);
+  if(root)assert.ok(relative(root,file)!==""&&relative(root,file)!==".."&&!relative(root,file).startsWith(`..${sep}`)&&!isAbsolute(relative(root,file)),"I-1 path must be inside R");
+  return file;
+}
+export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
+  const root=process.env.CONTROL_ROOM_I1_R;
+  assert.ok(root&&isAbsolute(root),`${gate} requires R: CONTROL_ROOM_I1_R and a reviewed private setup module`);
+  assert.equal(await realpath(root),root);
+  const prefix=gate==="B4"?"B4":gate==="B3a"?"B3A":"B3C";
+  const setupFile=process.env[`CONTROL_ROOM_${prefix}_A2_CONTRACT`];
+  assert.ok(setupFile,`${gate} requires R: CONTROL_ROOM_${prefix}_A2_CONTRACT must export openI1ProductGate`);
+  await i1Regular(setupFile,root);
+  const carrierFile=await i1Regular(join(root,"config/contract.json"),root);
+  const carrier=JSON.parse(await readFile(carrierFile,"utf8"));
+  await i1Regular(carrier.modulePath,root);
+  assert.equal(carrier.modulePath,join(root,"tools/loop/bridge/a2-contract.mjs"));
+  assert.equal(i1ByteHash(await readFile(carrier.modulePath)),carrier.moduleSha256,"I-1 checks module bytes before import");
+  const module=await import(pathToFileURL(carrier.modulePath).href);
+  const lineage={toolingRevision:carrier.configuration.toolingRevision,
+    decodeRunIdentity:(v:unknown)=>loopImprovementRunIdentitySchemaV1.parse(v),
+    decodeObservation:(v:unknown)=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:(run:{toolingRevision:string},observation:{settingsDigest:string;confirmation:{path:string;sha256:string}},input:{description:string;settingsText:string;requestSha256:string;settingsSha256:string})=>
+      run.toolingRevision===carrier.configuration.toolingRevision&&observation.confirmation.path==="docs/request-source.md"
+      &&observation.confirmation.sha256===i1ByteHash(input.description)&&input.requestSha256===i1ByteHash(input.description)
+      &&observation.settingsDigest===i1ByteHash(input.settingsText)&&input.settingsSha256===i1ByteHash(input.settingsText)};
+  const loaded=await module.loadA2Carrier(carrierFile,{root,lineage});
+  const configuration=loaded.configuration as LoopAdapterConfigurationV1;
+  assert.match(configuration.toolingRevision,/^sha256:[a-f0-9]{64}$/);
+  assert.equal(configuration.executionIdentity.uid,process.getuid!());
+  assert.equal(configuration.executionIdentity.isolationEvidenceDigest,sha256Digest("R272: no worker account"));
+  assert.equal(carrier.recovery,true,"I-1 requires A2F-6 recovery in R");
+  assert.equal(carrier.monitoring,true,"I-1/R6 requires A2M-4 monitoring in R");
+  const settings=JSON.parse(await readFile(configuration.settingsFile,"utf8"));
+  assert.equal(settings.limits.attempt_minutes,1,"I-1/R6 requires the saved one-minute budget");
+  const setupModule=await import(pathToFileURL(setupFile).href);
+  assert.equal(typeof setupModule.openI1ProductGate,"function",`${gate} requires R: executable setup, not proof booleans`);
+  const f=await setupModule.openI1ProductGate({gate,configuration}) as I1Setup;
+  let cleanupProduct=async()=>{};t.after(async()=>{try{await cleanupProduct();}finally{await f.close();}});
+  assert.equal(f.monitorMutations?.toolingRevision,configuration.toolingRevision,"R6 requires monitor mutation evidence at R's pinned tooling revision");
+  assert.deepEqual(f.monitorMutations.argv,["/usr/bin/python3","-B","loop/mutate_a2.py","all"]);
+  const mutations=await readFile(await i1Regular(f.monitorMutations.outputFile,root),"utf8");
+  assert.match(mutations,/(?:^|\n)RESULT: PASS \(all slices\)\s*$/,"R6 requires A2M-3 mutate_a2.py all PASS output");
+  const target=loopFinalizationTargetSchemaV1.parse(f.target);
+  assert.equal(target.run.toolingRevision,configuration.toolingRevision);
+  assert.equal(target.tenantId,f.scope.tenantId);assert.equal(target.workspaceId,f.scope.workspaceId);
+  const stateFile=join(configuration.runRoot,target.run.loopRunId,"run.json");
+  const state=async()=>JSON.parse(await readFile(await i1Regular(stateFile,root),"utf8"));
+  let adapter=createImproveControlRoomLoopAdapterV1(configuration);
+  assert.equal(target.schemaDigest,adapter.schemaDigest);
+  let web:ReturnType<typeof createPrivateWebProcess>|undefined;
+  let bridge:ImproveControlRoomLoopServiceV1|undefined;
+  const candidateConfig=()=>({integrityKey:f.integrityKey,contract:adapter.contract,schemaDigest:adapter.schemaDigest,
+    source:adapter.finalization!.source,repository:adapter.finalization!.repository});
+  const desk=()=>new ImproveControlRoomDeskServiceV1(f.client,f.scope,f.integrityKey,undefined,f.clock,adapter.contract,candidateConfig());
+  const publisher=()=>new LoopCandidatePublisherV1(desk(),candidateConfig());
+  const closeProduct=async()=>{await web?.close();web=undefined;await bridge?.close();bridge=undefined;await adapter.close();};
+  cleanupProduct=closeProduct;
+  let coldCard=false;
+  const reopen=async()=>{await closeProduct();coldCard=true;
+    const again=await module.loadA2Carrier(carrierFile,{root,lineage});adapter=createImproveControlRoomLoopAdapterV1(again.configuration);
+  };
+  const card=async()=>{
+    if(coldCard){
+      // A fresh Node process reopens the private setup's persistent database.
+      // Neither this process's module cache nor a run-link map can serve it.
+      const child=await execI1(process.execPath,["--import","tsx",resolve("tests/helpers/improve-control-room-loop-finalization.ts"),"--i1-card-host",gate],{
+        cwd:process.cwd(),encoding:"utf8",timeout:60000,maxBuffer:1<<20,env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1",CONTROL_ROOM_I1_R:root,
+          [`CONTROL_ROOM_${prefix}_A2_CONTRACT`]:setupFile}});
+      const line=child.stdout.split("\n").find(value=>value.startsWith("I1_CARD_JSON "));
+      assert.ok(line,"I-1 cold card process must report its completed GET");
+      const result=JSON.parse(line.slice("I1_CARD_JSON ".length));assert.deepEqual(result.target,target);coldCard=false;return result.card;
+    }
+    // The first operation after reopen is this card GET, before status/finalize.
+    web??=createPrivateWebProcess({origin,...trust,...f.scope,loadKeys:async()=>trust.keys,clock:f.clock,
+      database:{client:f.client,close:async()=>{}},loopCandidates:candidateConfig()});
+    const response=await web.handle(request(`/api/v1/projects/${target.projectId}/improvements/loop/${target.requestId}/candidate`),()=>new Response("missing",{status:404}));
+    assert.equal(response.status,200,"I-1 saved-request card GET");return response.json();
+  };
+  const cr=async(args:string[])=>{
+    const result=await execI1(configuration.interpreter,[configuration.entrypoint,...args],{cwd:configuration.cwd,
+      encoding:"utf8",env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",LC_ALL:"C.UTF-8"},timeout:60000,maxBuffer:1<<20}).catch(error=>{
+      throw new Error(`I-1 cr ${args.join(" ")} exit=${error.code} stdout=${String(error.stdout)} stderr=${String(error.stderr)}`);
+    });
+    return JSON.parse(result.stdout);
+  };
+  const nativeRead=()=>cr(["finalize",target.run.loopRunId,"read","--json"]);
+  const count=async()=>Number((await f.client.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates WHERE run_link_id=$1",[target.runLinkId])).rows[0]!.n);
+  const snapshot=async()=>{const saved=await state();await i1Regular(join(saved.clone,".git","HEAD")).catch(async()=>{
+      // An adopted worktree has a regular .git pointer rather than a directory.
+      await i1Regular(join(saved.clone,".git"));
+    });
+    const git=async(args:string[])=>(await execI1("/usr/bin/git",["-C",saved.clone,"-c","core.fsmonitor=false",...args],{timeout:30000,maxBuffer:1<<20,encoding:"utf8",env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",GIT_CONFIG_NOSYSTEM:"1",GIT_CONFIG_GLOBAL:"/dev/null"}})).stdout;
+    return {head:await git(["rev-parse","HEAD"]),status:await git(["status","--porcelain=v1","--untracked-files=all"])};
+  };
+  const finalize=async(capability=adapter.finalization!,publish=(input:{runLinkId:string;completionDigest:string})=>publisher().publishCompletion(input))=>{
+    assert.ok(capability,"I-1 requires installed A2 finalization");
+    return createImproveControlRoomLoopFinalizerV1({capability,publishCompletion:publish,authorize:async()=>{
+      const view=await desk().viewLoopDesk(f.identity,target.projectId);
+      const saved=view.loopRequests.find(r=>r.requestId===target.requestId);
+      assert.ok(saved?.savedAuthorization,"I-1 rechecks current owner authority and saved Start authorization");
+      assert.equal(saved.currentVersion,target.localVersion);assert.equal(saved.runLink?.runLinkId,target.runLinkId);
+      assert.equal(saved.runLink?.loopRunId,target.run.loopRunId);assert.equal(saved.runLink?.toolingRevision,target.run.toolingRevision);
+      assert.equal(saved.requestSha256,target.requestSha256);assert.equal(saved.settingsSha256,target.settingsSha256);
+      return target;
+    },signal:new AbortController().signal}).finalize(target);
+  };
+  const rehash=async(record:LoopFinalizationRecordV1)=>{
+    const retained=join(configuration.runRoot,target.run.loopRunId,"finalization/retained",record.observation.inventoryDigest.slice(7));
+    const bytes=await readFile(await i1Regular(join(retained,"SEALED.json"),root)),seal=JSON.parse(bytes.toString());
+    assert.equal(`sha256:${i1ByteHash(bytes)}`,record.custody?.retentionDigest);
+    assert.equal(seal.run,target.run.loopRunId);assert.equal(seal.inventory_sha256,record.observation.inventoryDigest.slice(7));
+    assert.ok(seal.files.length>0,"I-1 retained corpus is nonempty");
+    for(const entry of seal.files){const data=await readFile(await i1Regular(join(retained,"files",entry.name),retained));
+      assert.equal(data.length,entry.size);assert.equal(i1ByteHash(data),entry.sha256);}
+    const archiveBytes=await readFile(await i1Regular(join(retained,"archive/manifest.json"),retained));
+    assert.equal(i1ByteHash(archiveBytes),seal.archive_manifest_sha256);
+    const archive=JSON.parse(archiveBytes.toString());assert.equal(archive.complete,true);assert.equal(archive.restored,true);
+    for(const [name,hash] of Object.entries(archive.artifacts))assert.equal(i1ByteHash(await readFile(await i1Regular(join(retained,"archive",name),retained))),hash);
+  };
+  console.log(`I-1 gate=${gate} run=${target.run.loopRunId} tooling=${configuration.toolingRevision} isolation=R272`);
+  return {f,root,carrier,configuration,target,state,stateFile,adapter:()=>adapter,reopen,card,cr,nativeRead,count,snapshot,finalize,publisher,rehash,
+    bridge:()=>bridge??=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:f.integrityKey,adapter},f.clock)};
+}
+
+export async function i1IsolatedCommand(configuration:LoopAdapterConfigurationV1,argv:string[],path="/usr/bin:/bin"){
+  // Transport denial is enforced outside the child, not by a caller's boolean.
+  return execI1("/usr/bin/sandbox-exec",["-p","(version 1)(allow default)(deny network*)",...argv],{
+    cwd:configuration.cwd,encoding:"utf8",env:{NODE_ENV:"test",PATH:path,LANG:"C.UTF-8",LC_ALL:"C.UTF-8"},timeout:60000,maxBuffer:1<<20})
+    .then(value=>({exitCode:0,stdout:value.stdout,stderr:value.stderr}),error=>{
+      assert.equal(typeof error.code,"number",`I-1 isolated child failed to execute: ${String(error)}`);
+      return {exitCode:error.code as number,stdout:String(error.stdout),stderr:String(error.stderr)};
+    });
+}
+
+if(process.argv[2]==="--i1-card-host"){
+  const hooks:Array<()=>Promise<void>>=[];
+  let result;
+  try{
+    const gate=process.argv[3] as I1Gate;
+    assert.ok(["B4","B3c-owned"].includes(gate));
+    const g=await installedI1Gate({after(fn){if(fn)hooks.push(async()=>{await Reflect.apply(fn,undefined,[]);});}},gate);
+    result={target:g.target,card:await g.card()};
+  }finally{for(const hook of hooks)await hook();}
+  console.log(`I1_CARD_JSON ${JSON.stringify(result)}`);
+}

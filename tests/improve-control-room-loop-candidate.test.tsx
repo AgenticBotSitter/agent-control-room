@@ -250,8 +250,71 @@ test("B4 tampered retained candidate fails every read",async()=>{
   }finally{await f.close();}
 });
 
-if(process.env.CONTROL_ROOM_B4_REQUIRE_A2 === "1")test("B4 reviewed A2 completion and exact delivery head",async()=>{
-  assert.fail("B4 production integration is unqualified: reviewed A2 completion/custody pins, B0/I1-I3 captures, B3c producer and isolated delivery harness must be supplied and reviewed. CONTROL_ROOM_B4_A2_CONTRACT is not a production verifier by itself.");
+import { installedI1Gate, i1Regular, i1IsolatedCommand } from "./helpers/improve-control-room-loop-finalization";
+if(process.env.CONTROL_ROOM_B4_REQUIRE_A2 === "1")test("B4 reviewed A2 completion and exact delivery head",async t=>{
+  const g=await installedI1Gate(t,"B4");
+  assert.equal(g.carrier.finalization,"retain","H-C1 must end with cleanup/refused");
+  assert.equal((await g.state()).chain.state,"candidate_ready","B4 requires harness H-C1");
+  assert.equal(await g.nativeRead(),null,"H-C1 has not been finalized by another gate");
+  assert.equal(await g.count(),0);
+  const before=await g.snapshot();let probes=0,publications=0;
+  const record=await g.finalize(g.adapter().finalization!,async input=>{
+    // F14: the real finalizer has appended retained + terminated; completion
+    // is deliberately NOT probed before those custody records exist.
+    assert.equal((await g.nativeRead()).phase,"terminated");
+    let probe;
+    try{probe=await g.cr(["finalize","completion","--run-link",input.runLinkId,"--json"]);}
+    catch(error){assert.fail(`B4 completion probe must exit 0: ${String(error)}`);}
+    assert.equal(probe.completionDigest,input.completionDigest,"B4 probe output must match finalizer completion digest");
+    probes++;publications++;return g.publisher().publishCompletion(input);
+  });
+  assert.ok(record);assert.equal(record.cleanup?.state,"refused");assert.equal(probes,1);assert.equal(publications,1);
+  await g.rehash(record);assert.equal(await g.count(),1);
+  const evidence=await g.adapter().finalization!.source.readVerifiedCompletion(g.target.runLinkId);
+  assert.notEqual(evidence.binding.baseRevision,evidence.binding.candidateRevision);
+  assert.ok(evidence.checks.some(c=>c.required&&c.completed!>0&&c.status==="PASS"&&c.exitCode===0&&c.failed===0&&c.skipped===0));
+  assert.ok(evidence.reviews.some(r=>r.current&&r.role==="final"));
+  for(const review of evidence.reviews.filter(r=>r.current)){
+    assert.equal(review.verdict,"CLEAN");assert.equal(review.identityVerified,true);assert.ok(review.observedModel);assert.ok(review.family);
+    assert.equal(review.candidateRevision,evidence.binding.candidateRevision);assert.equal(review.inputVersion,g.target.inputVersion);
+  }
+  assert.equal(evidence.findings.some(f=>f.disposition==="OPEN"&&f.severity!=="LOW"),false);
+  for(let restart=0;restart<2;restart++){
+    await g.reopen();const card=await g.card(); // first action after restart (F5)
+    assert.equal(card.candidate.evidence.binding.candidateRevision,evidence.binding.candidateRevision);
+    assert.equal(card.candidate.evidence.completionDigest,record.observation.completionDigest);
+    await g.rehash(record);assert.equal(await g.count(),1);
+  }
+  assert.deepEqual(await g.snapshot(),before);
+  assert.equal(typeof g.f.delivery,"function","B4 requires R: reviewed isolated delivery harness with transport stubs");
+  const head=evidence.binding.candidateRevision;
+  for(const scenario of ["exact-head","head-changed","approved-bytes-restored-mtime","superseded-approval","stale-check","stale-base","consumed-approval"]){
+    const capture=await g.f.delivery!(scenario,{run:g.target.run.loopRunId,head});
+    try{
+      const {readFile}=await import("node:fs/promises"),{join}=await import("node:path");
+      await i1Regular(capture.bodyFile,g.root);await i1Regular(capture.readyFile,g.root);
+      await i1Regular(join(capture.transportBin,"git"),g.root);await i1Regular(join(capture.transportBin,"gh"),g.root);
+      const ready=JSON.parse(await readFile(capture.readyFile,"utf8"));assert.equal(ready.head,head);
+      const argv=[g.configuration.interpreter,g.configuration.entrypoint,"deliver",g.target.run.loopRunId,
+        "--body-file",capture.bodyFile,"--ready-file",capture.readyFile,"--wait-seconds","0"];
+      await assert.rejects(readFile(capture.traceFile),{code:"ENOENT"},"isolated delivery requires a fresh transport trace");
+      const result=await i1IsolatedCommand(g.configuration,argv,`${capture.transportBin}:/usr/bin:/bin`);
+      const trace=JSON.parse(await readFile(await i1Regular(capture.traceFile,g.root),"utf8"));
+      assert.ok(Array.isArray(trace.outbound));
+      if(scenario==="exact-head"){
+        assert.equal(result.exitCode,0,`isolated cr deliver: ${result.stdout} ${result.stderr}`);
+        assert.ok(trace.outbound.length>0,"happy isolated delivery really reached transport stubs");
+        for(const operation of trace.outbound)if(["push","merge"].includes(operation.operation))assert.equal(operation.head,head);
+        assert.ok(trace.outbound.some((operation:{operation:string;head:string})=>operation.operation==="push"&&operation.head===head));
+      }else{
+        assert.equal(result.exitCode,2,`${scenario}: ${result.stdout} ${result.stderr}`);
+        assert.equal(trace.outbound.length,0,`${scenario} refuses before outbound operations`);
+      }
+    }finally{await capture.restore();}
+  }
+  assert.deepEqual(await g.snapshot(),before);
+
+  console.log(`B4 run=${g.target.run.loopRunId} completion_probe=1 committed_candidates=1 service_restarts=2 isolated_delivery_cases=7`);
 });
 
 async function proveHomeSavedRequest() {

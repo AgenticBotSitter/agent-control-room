@@ -10,7 +10,7 @@ import { buildActionInbox } from "../src/web/v1/action-inbox";
 import { ActionInboxPanel } from "../private-app/app/needs-me/action-inbox";
 import { sha256Digest } from "../src/security";
 
-const ordinary = process.env.CONTROL_ROOM_B3C_LOAD !== "1" && process.env.CONTROL_ROOM_B3C_REQUIRE_A2 !== "1";
+const ordinary = process.env.CONTROL_ROOM_B3C_LOAD !== "1" && process.env.CONTROL_ROOM_B3C_REQUIRE_A2 !== "1" && process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE !== "1";
 if (ordinary) test("B3c terminal run reaches shared attention without a browser driver", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
   const e = await syntheticRecoveryEngine(t), scope = {tenantId:"tenant:web",workspaceId:"workspace:web"};
@@ -416,16 +416,182 @@ if(ordinary){
   });
 }
 
-if(process.env.CONTROL_ROOM_B3C_REQUIRE_A2==="1")test("B3c reviewed retention and refused cleanup contract",async()=>{
-  const modulePath=process.env.CONTROL_ROOM_B3C_A2_CONTRACT;
-  assert.ok(modulePath&&isAbsolute(modulePath)&&!/(?:^|[/\\])(?:\.env|\.codex|\.hermes|\.aws|auth\.json|tokens?)(?:[/\\]|$)/i.test(modulePath),"B3c requires a lead-supplied nonsecret reviewed A2 contract");
-  const contract=await import(pathToFileURL(modulePath).href);
-  assert.equal(typeof contract.qualifyB3cRetention,"function");
-  const proof=await contract.qualifyB3cRetention({createImproveControlRoomLoopFinalizerV1,ImproveControlRoomLoopServiceV1});
-  for(const field of ["reviewed","productionCapability","retainedBytesVerified","outwardRoutesDenied","scratchRetained","cleanupRefused"])assert.equal(proof[field],true);
-  assert.equal(proof.serviceRestarts,2);assert.equal(proof.signals,0);assert.equal(proof.removals,0);
-  for(const field of ["toolingRevision","schemaDigest","implementationDigest"])assert.match(proof[field],/^sha256:[a-f0-9]{64}$/);
-  assert.ok(Array.isArray(proof.entrypoints)&&proof.entrypoints.length>0);
+import { installedI1Gate, i1ByteHash, i1Regular } from "./helpers/improve-control-room-loop-finalization";
+if(process.env.CONTROL_ROOM_B3C_REQUIRE_A2==="1")test("B3c reviewed retention and refused cleanup contract",async t=>{
+  const g=await installedI1Gate(t,"B3c-refused");
+  assert.equal(g.carrier.finalization,"retain");assert.equal(g.adapter().finalization?.cleanup,undefined);
+  const saved=await g.state();assert.equal(saved.chain.state,"stopped","S is the real Start→Stop run");
+  assert.ok(saved.chain.stopped_at);assert.ok(saved.steps.some((s:{overdue?:unknown})=>s.overdue),"R6 Phase B overdue fact survives Stop");
+  assert.equal(await g.nativeRead(),null,"S feeds only this refused gate");
+  const before=await g.snapshot(),kill=t.mock.method(process,"kill");let publications=0;
+  const record=await g.finalize(g.adapter().finalization!,async()=>{publications++;throw Error("stopped S must never publish");});
+  assert.ok(record);assert.equal(record.observation.outcome,"stopped");assert.equal(record.termination?.state,"already-ended");
+  assert.equal(record.cleanup?.state,"refused");assert.equal(record.cleanup.reasonCode,"CLEANUP_REFUSED");
+  assert.equal(record.cleanup.removedDigest,sha256Digest([]));assert.equal(publications,0);assert.equal(await g.count(),0);
+  await g.rehash(record);assert.equal((await g.state()).close,undefined,"retain mode never creates a close journal");
+  for(let restart=0;restart<2;restart++){
+    await g.reopen();const native=await g.nativeRead();assert.equal(native.phase,"cleanup");
+    assert.deepEqual(await g.finalize(),record);await g.rehash(record);
+  }
+  assert.deepEqual(await g.snapshot(),before);assert.equal(kill.mock.calls.length,0);kill.mock.restore();
+  console.log(`B3c refused run=${g.target.run.loopRunId} retained_bytes_verified=true service_restarts=2 signals=0 committed_candidates=0`);
+});
+
+// Instrument execution, never installed bytes. sys.settrace exits the real
+// pinned entrypoint on either side of its journal save / log rename. A missing
+// trace point exits normally and therefore fails the required crash assertion.
+const closeCrashPython=String.raw`
+import linecache, os, runpy, sys
+entry, point, side, *argv = sys.argv[1:]
+armed = False
+def trace(frame, event, arg):
+    global armed
+    name = frame.f_code.co_name
+    if ((point == 'retain' and name == 'finalize_retain') or
+        (point == 'append' and name == 'cmd_finalize' and getattr(frame.f_locals.get('a'), 'operation', None) == 'append')):
+        if (side == 'before' and event == 'call') or (side == 'after' and event == 'return'):
+            os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)
+    if point == 'journal' and name == 'save_run' and frame.f_back.f_code.co_name == 'close_run':
+        close = frame.f_locals.get('st', {}).get('close', {})
+        if close.get('state') == 'closing' and all(m['state'] == 'intent' for m in close['moves']):
+            if (side == 'before' and event == 'call') or (side == 'after' and event == 'return'):
+                os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)
+    if point == 'log-rename' and name == 'move_to_trash' and event == 'line':
+        line = linecache.getline(frame.f_code.co_filename, frame.f_lineno).strip()
+        if armed or (side == 'before' and line == 'os.rename(p, dest)'):
+            os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)
+        if line == 'os.rename(p, dest)': armed = True
+    return trace
+sys.argv = [entry] + argv
+sys.settrace(trace)
+runpy.run_path(entry, run_name='__main__')
+`;
+if(process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE==="1")test("B3c reviewed retention and owned cleanup contract",async t=>{
+  const g=await installedI1Gate(t,"B3c-owned");
+  assert.equal(g.carrier.finalization,"cleanup");assert.equal(typeof g.adapter().finalization?.cleanup,"function");
+  assert.equal(await g.nativeRead(),null,"F13: H-S/H-C2 requires an independent, unfinalized run");
+  assert.equal(await g.count(),0);
+  const initial=await g.state(),outcome=initial.chain.state;
+  assert.ok(outcome==="stopped"||outcome==="candidate_ready","owned cleanup requires H-S or H-C2");
+  if(outcome==="stopped")assert.ok(initial.chain.stopped_at,"H-S was stopped through real cr stop");
+  const candidate=outcome==="candidate_ready",before=await g.snapshot(),kill=t.mock.method(process,"kill");
+  // One event, advancing through each interruption in order; never reset a
+  // record or reuse S/H-C1's final refused receipt (F13).
+  const points=["retain:before","retain:after","append-retained:before","append-retained:after",
+    "append-terminated:before","append-terminated:after",
+    ...(candidate?["publish:before","publish:after","append-published:before","append-published:after"]:[]),
+    "append-announced:before","append-announced:after","journal:before","journal:after"];
+  let logCrash:boolean|undefined,publications=0,crashes=0,restarts=0;
+  const trip=(point:string)=>{if(points[0]===point){points.shift();crashes++;throw Error(`I1_CRASH ${point}`);}};
+  const {execFile}=await import("node:child_process"),{promisify}=await import("node:util");
+  const crashCommand=async(name:string,side:string,argv:string[])=>{
+    const result=await promisify(execFile)(g.configuration.interpreter,["-I","-c",closeCrashPython,g.configuration.entrypoint,name,side,...argv],
+      {cwd:g.configuration.cwd,encoding:"utf8",env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",LC_ALL:"C.UTF-8"},timeout:60000,maxBuffer:1<<20})
+      .then(v=>({code:0,stderr:v.stderr}),error=>({code:error.code,stderr:String(error.stderr)}));
+    assert.equal(result.code,86,`required ${name}:${side} process crash: ${result.stderr}`);
+    assert.ok(result.stderr.includes(`I1_CRASH ${name} ${side}`));
+  };
+  const crashWrite=async(name:"retain"|"append",side:string,r?:Readonly<LoopFinalizationRecordV1>)=>{
+    const {mkdtemp}=await import("node:fs/promises");
+    const scratch=await mkdtemp(join(g.configuration.workRoot,"i1-crash-"));
+    try{
+      const o=await g.cr(["finalize",g.target.run.loopRunId,"inspect","--json"]);
+      const expect=join(scratch,"expect.json");
+      await writeFile(expect,JSON.stringify({revision:o.revision,input_version:o.input_version,inventory_sha256:o.inventory_sha256}),{mode:0o600});
+      const argv=["finalize",g.target.run.loopRunId,name,"--expect",expect,"--json"];
+      const prior=await g.nativeRead();
+      const envelope=r?{...r,binding:{...r.binding,...r.binding.run},
+        previousDigest:prior===null?null:sha256Digest(prior),productPreviousDigest:r.previousDigest}:undefined;
+      if(envelope){
+        const file=join(scratch,"record.json");
+        await writeFile(file,canonicalJson(envelope),{mode:0o600});
+        argv.push("--record",file);
+      }
+      await crashCommand(name,side,argv);
+      if(name==="append")assert.deepEqual(await g.nativeRead(),side==="after"?envelope:prior,"append crash is on the required side of durable commit");
+      if(name==="retain"&&side==="after"){
+        const seal=JSON.parse(await readFile(await i1Regular(join(g.configuration.runRoot,g.target.run.loopRunId,"finalization/retained",o.inventory_sha256,"SEALED.json"),g.root),"utf8"));
+        assert.equal(seal.run,g.target.run.loopRunId);assert.equal(seal.inventory_sha256,o.inventory_sha256);
+      }
+    }finally{await rm(scratch,{recursive:true,force:true});}
+  };
+  let record:LoopFinalizationRecordV1|undefined;
+  for(let attempt=0;attempt<40;attempt++){
+    const real=g.adapter().finalization!;
+    const capability:LoopFinalizationCapabilityV1={...real,
+      retain:async(...args)=>{
+        if(points[0]?.startsWith("retain:")){const point=points[0]!;await crashWrite("retain",point.split(":")[1]!);trip(point);}
+        return real.retain(...args);
+      },
+      appendRecord:async(binding,r)=>{
+        if(points[0]?.startsWith(`append-${r.phase}:`)){const point=points[0]!;await crashWrite("append",point.split(":")[1]!,r);trip(point);}
+        return real.appendRecord(binding,r);
+      },
+      cleanup:async(...args)=>{
+        if(logCrash===undefined){
+          const plan=await g.cr(["close",g.target.run.loopRunId,"--local","--json"]);
+          assert.equal(plan.local,true);
+          assert.ok(Array.isArray(plan.moves));
+          assert.equal(plan.moves.some((m:{source:string})=>m.source===initial.clone),false);
+          logCrash=plan.moves.length>0;
+          if(candidate)assert.equal(logCrash,true,"H-C2 requires at least one eligible log");
+          points.push(...(logCrash?["log-rename:before","log-rename:after"]:[]),"append-cleanup:before","append-cleanup:after");
+        }
+        if(points[0]?.startsWith("journal:")||points[0]?.startsWith("log-rename:")){
+          const point=points[0]!,[name,side]=point.split(":");
+          await crashCommand(name!,side!,["close",g.target.run.loopRunId,"--local","--apply","--json"]);
+          const held=await g.state();
+          if(name==="journal"){
+            if(side==="before")assert.equal(held.close,undefined);
+            else{assert.equal(held.close.state,"closing");assert.ok(held.close.moves.every((m:{state:string})=>m.state==="intent"));}
+          }else{
+            const {access}=await import("node:fs/promises");
+            const moved=await Promise.all(held.close.moves.map(async(m:{source:string;destination:string})=>{
+              const source=await access(m.source).then(()=>true,()=>false),destination=await access(m.destination).then(()=>true,()=>false);
+              assert.notEqual(source,destination,"rename preserves exactly one copy");return destination;
+            }));
+            assert.equal(moved.filter(Boolean).length,side==="after"?1:0,"required side of the first log rename");
+          }
+          trip(point);
+        }
+        return real.cleanup!(...args);
+      }};
+    try{const result=await g.finalize(capability,async input=>{
+      publications++;assert.equal(candidate,true,"H-S has no publication or B4 commit crash point");
+      trip("publish:before");const receipt=await g.publisher().publishCompletion(input);trip("publish:after");return receipt;
+    });assert.ok(result);record=result;break;}
+    catch(error){
+      assert.match(String(error),/I1_CRASH/);
+      for(let restart=0;restart<2;restart++){
+        await g.reopen();restarts++;
+        if(candidate){const card=await g.card();if(await g.count())assert.ok(card.candidate,"H-C2 card GET first after restart");}
+        else{const native=await g.nativeRead();if(native)assert.equal(native.observation.outcome,"stopped","H-S read first after restart");}
+        const retained=await g.adapter().finalization!.readRecord(g.target);if(retained?.custody)await g.rehash(retained);
+      }
+    }
+  }
+  assert.ok(record,"all crash boundaries must converge");assert.deepEqual(points,[],"every required crash ran");
+  assert.equal(crashes,candidate?18:logCrash?14:12);assert.equal(restarts,crashes*2);
+  assert.equal(record.observation.outcome,candidate?"candidate_ready":"stopped");
+  assert.equal(record.phase,"cleanup");assert.equal(record.cleanup?.state,"complete");assert.equal(record.cleanup.reasonCode,"CLEANUP_COMPLETE");
+  assert.equal(await g.count(),candidate?1:0);if(!candidate)assert.equal(publications,0);
+  const journal=(await g.state()).close;assert.equal(journal.local,true);assert.equal(journal.clone_kept,initial.clone);assert.equal(journal.state,"closed");
+  const expected:string[]=[],actual:string[]=[];
+  for(const move of journal.moves){
+    assert.equal(move.state,"done");assert.notEqual(move.source,initial.clone);
+    await assert.rejects(readFile(move.source),{code:"ENOENT"});
+    assert.equal(i1ByteHash(await readFile(await i1Regular(move.destination,g.root))),move.sha256);
+    expected.push(`${move.source}\t${move.destination}`);
+  }
+  const manifests=[...new Set<string>(journal.moves.map((m:{destination:string})=>join(m.destination,"..","MANIFEST.tsv")))];
+  for(const file of manifests)for(const row of (await readFile(await i1Regular(file,g.root),"utf8")).trim().split("\n")){
+    const columns=row.split("\t");if(columns[3]===`close ${g.target.run.loopRunId}`)actual.push(`${columns[1]}\t${join(file,"..",columns[2]!)}`);
+  }
+  assert.deepEqual(actual.sort(),expected.sort(),"trash MANIFEST rows equal journal moves exactly");
+  assert.equal(record.cleanup.removedDigest,sha256Digest(journal.moves.map((m:{source:string;destination:string;sha256?:string;state:string})=>({source:m.source,destination:m.destination,sha256:m.sha256??null,state:m.state}))));
+  await g.rehash(record);const native=await g.nativeRead();assert.deepEqual(await g.finalize(),record);assert.deepEqual(await g.nativeRead(),native);
+  assert.equal(await g.count(),candidate?1:0);assert.deepEqual(await g.snapshot(),before);assert.equal(kill.mock.calls.length,0);kill.mock.restore();
+  console.log(`B3c owned run=${g.target.run.loopRunId} outcome=${outcome} crash_boundaries=${crashes} service_restarts=${restarts} publication_calls=${publications} committed_candidates=${await g.count()} signals=0`);
 });
 
 import { spawn, type ChildProcess } from "node:child_process";

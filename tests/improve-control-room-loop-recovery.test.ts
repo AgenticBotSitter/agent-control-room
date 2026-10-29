@@ -97,19 +97,62 @@ test('B3a closed worker refuses another tick',async()=>{
   await worker.close();await worker.tick();assert.equal(admissions,0,'B3a no child admitted after close');assert.equal(live,0);
 });
 
-test('B3a reviewed A2 recovery contract',{skip:process.env.CONTROL_ROOM_B3A_REQUIRE_A2!=='1' ? 'Requires reviewed A2 pins, B0 and production ownership capability; integration unproven.' : false},async()=>{
-  assert.ok(process.env.CONTROL_ROOM_B3A_A2_CONTRACT,'B3a requires lead-supplied reviewed A2 pins, B0 and ownership capability');
-  const {pathToFileURL}=await import('node:url'),{isAbsolute}=await import('node:path');
-  const capture=process.env.CONTROL_ROOM_B3A_A2_CONTRACT!;
-  assert.ok(isAbsolute(capture)&&!/(?:^|[/\\])(?:\.env|\.codex|\.hermes|\.aws|auth\.json|tokens?)(?:[/\\]|$)/i.test(capture),'B3a qualification uses a noncredential lead-supplied module');
-  const qualification=await import(pathToFileURL(capture).href);
-  assert.equal(typeof qualification.qualifyB3aRecovery,'function','B3a requires an executable reviewed A2 qualification');
-  const proof=await qualification.qualifyB3aRecovery({createPrivateTaskBootstrap,createImproveControlRoomLoopAdapterV1,ImproveControlRoomLoopServiceV1,createImproveControlRoomLoopRecoveryV1});
-  assert.equal(proof.reviewed,true);assert.equal(proof.b0Qualified,true);assert.equal(proof.productionCapability,true);
-  assert.equal(proof.serviceRestarts,2);assert.equal(proof.paidAttemptsRerun,0);assert.equal(proof.modelLaunchRoutesDenied,true);
-  for(const check of ['orphan','staleLock','stop','answer','consumedResult','limits'])assert.equal(proof[check],true,`B3a reviewed A2 ${check} survival`);
-  assert.match(proof.toolingRevision,/^sha256:[a-f0-9]{64}$/);assert.match(proof.schemaDigest,/^sha256:[a-f0-9]{64}$/);
-  console.log('B3a reviewed A2 recovery qualification verified restarts=2 paid_attempts_rerun=0');
+import { installedI1Gate, i1Regular, i1IsolatedCommand } from './helpers/improve-control-room-loop-finalization';
+test('B3a reviewed A2 recovery contract',{skip:process.env.CONTROL_ROOM_B3A_REQUIRE_A2!=='1' ? 'Requires reviewed A2 pins in R and production ownership capability; integration unproven.' : false},async t=>{
+  const g=await installedI1Gate(t,'B3a');
+  const initial=await g.state();assert.equal(initial.run,g.target.run.loopRunId);
+  assert.equal(await g.nativeRead(),null,'B3a owns its run; it never borrows a finalization run');
+  const beforeCounters=structuredClone(initial.chain.counters),beforeSteps=initial.steps.length;
+  // The private setup must deny the real installed model launch routes, not
+  // merely set the product test guard (the entrypoint sanitizes that env).
+  assert.equal(typeof g.f.modelLaunchDenials,'function','B3a requires R: executable installed launcher denial probes');
+  const denied=await g.f.modelLaunchDenials!();
+  assert.ok(Array.isArray(denied)&&denied.length>0,'B3a requires attempted installed model routes');
+  for(const probe of denied){
+    assert.ok(Array.isArray(probe.argv)&&probe.argv.length>0);
+    await i1Regular(probe.argv[0]!,g.root);
+    await assert.rejects(readFile(probe.traceFile),{code:'ENOENT'},'model denial probe requires a fresh execution trace');
+    const result=await i1IsolatedCommand(g.configuration,probe.argv);
+    assert.notEqual(result.exitCode,0,'installed model launch route is denied');
+    const trace=JSON.parse(await readFile(await i1Regular(probe.traceFile,g.root),'utf8'));
+    assert.ok(trace.attemptedRoutes.length>0);assert.equal(trace.spawnedModelProcesses,0);
+  }
+
+  let admissions=0;const driverFailures:unknown[]=[];
+  for(let restart=0;restart<3;restart++){
+    if(restart)await g.reopen();
+    const observation=await g.adapter().inspectRecovery!(g.target.run.loopRunId);
+    const bridge=g.bridge(),port=bridge.recoveryPort();
+    const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,port:{...port,reconcile:async(target,signal)=>{
+      const result=await port.reconcile(target,signal);
+      if(result.state==='started'){
+        try{
+        const deadline=Date.now()+10000;let saved=await g.state();
+        while(Date.now()<deadline&&saved.chain.driver?.pid!==result.child.pid){await new Promise(resolve=>setTimeout(resolve,20));saved=await g.state();}
+        assert.match(saved.chain.driver?.generation??'',/^[a-f0-9]{32}$/);
+        assert.equal(saved.chain.driver.pid,result.child.pid,'B3a real recovery child registers chain.driver');assert.ok(saved.chain.driver.identity);
+        assert.equal(saved.run,g.target.run.loopRunId);admissions++;
+        }catch(error){driverFailures.push(error);await result.child.close();throw error;}
+      }
+      return result;
+    }},createCycle:()=>({tick(){},close:async()=>{}})});
+    try{
+      await worker.tick();
+      assert.deepEqual(driverFailures,[],"B3a worker must not swallow failed driver assertions");
+      assert.equal((await bridge.status(g.f.identity,g.target.projectId,g.target.requestId)).display.runLinkId,g.target.runLinkId);
+      const saved=await g.state();assert.deepEqual(saved.chain.counters,beforeCounters,'recovery does not reset limits');
+      assert.equal(saved.steps.length,beforeSteps,'denied recovery launches no paid attempt');
+      assert.ok(['runnable','waiting','stopped','terminal','uncertain','input_changed','unavailable'].includes(observation.mode));
+    }finally{await worker.close();}
+    const after=await g.cr(['recovery',g.target.run.loopRunId,'inspect','--json']);
+    if(after.driver.record){assert.equal(after.driver.state,'ended');assert.match(after.driver.record.generation,/^[a-f0-9]{32}$/);}
+  }
+  assert.ok(admissions>0,'B3a must actually start the real recovery worker, never pass with idle scans');
+  // R272 uses the owner account. This is honest isolation evidence, not B0
+  // worker-account qualification. R6 Phase A is ordered after this gate.
+  const r272={noWorkerAccount:true,isolationEvidenceDigest:g.configuration.executionIdentity.isolationEvidenceDigest};
+  assert.equal(r272.noWorkerAccount,true);assert.equal(r272.isolationEvidenceDigest,sha256Digest('R272: no worker account'));
+  console.log(`B3a run=${g.target.run.loopRunId} service_restarts=2 real_driver_admissions=${admissions} model_launch_routes_denied=true isolation=R272`);
 });
 
 import { resultCrashDatabase, exclusiveSyntheticRecoveryCapability } from './helpers/improve-control-room-loop-recovery';
