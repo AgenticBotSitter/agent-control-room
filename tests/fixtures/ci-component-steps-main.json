@@ -298,7 +298,7 @@
     },
     {
       "name": "test:postgres-production",
-      "command": "pnpm run test:postgres-migration-ledger:postgres && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/postgres-production-ledger.test.mjs tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs tests/postgres-shared-memory-teardown.test.mjs tests/mac-local-updater-grant-schema-pg17.test.mjs tests/github-app-wake-cursor-real-postgres.test.ts"
+      "command": "pnpm run test:postgres-migration-ledger:postgres && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/postgres-production-ledger.test.mjs tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs tests/postgres-shared-memory-teardown.test.mjs tests/disposable-cluster-quit-before-kill.test.mjs tests/mac-local-updater-grant-schema-pg17.test.mjs tests/github-app-wake-cursor-real-postgres.test.ts"
     },
     {
       "name": "test:windows-preparation",
