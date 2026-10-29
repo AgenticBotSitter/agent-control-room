@@ -70,6 +70,8 @@ test("R7P: real worker update, retained offline draft, resume at 320px, and reac
     try {
       const page = await context.newPage();
       await page.goto(`${origin}/pwa`);
+      // Chromium reports offline when the host has only loopback (for example docker --network=none).
+      assert.equal(await page.evaluate(() => navigator.onLine), true, "browser host must report online; give it a non-loopback interface");
       await page.evaluate(() => navigator.serviceWorker.ready);
       assert.equal(await page.getByRole("button", { name: "Reload for update", exact: true }).count(), 0, "first install is not an update");
       await page.reload();
