@@ -241,8 +241,10 @@ export function stopClusterSync(target: Cluster): void {
     if (isLivePostmaster(pid)) {
       // Refuse to delete a live cluster's data directory: that is the failure
       // mode that leaves a postmaster running against files that no longer
-      // exist. Kill the recorded postmaster, then wait for it to actually go.
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      // exist. Ask the recorded postmaster to leave first (SIGQUIT is the
+      // immediate shutdown, and it releases the SysV segment a SIGKILL would
+      // orphan), then wait for it to actually go.
+      quitThenKillSync(pid, QUIT_GRACE_MS, isLivePostmaster);
     }
     for (let attempt = 0; attempt < 20 && isLivePostmaster(pid); attempt += 1) sleepSync(250);
     if (isLivePostmaster(pid)) return;
@@ -264,6 +266,39 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** How long a PostgreSQL process gets to leave after SIGQUIT before SIGKILL. */
+export const QUIT_GRACE_MS = 5_000;
+
+/** True while `pid` exists (a process we may not signal still exists). */
+export function isPidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException)?.code === "EPERM"; }
+}
+
+/** Stop a PostgreSQL process the way that releases its shared memory.
+ *
+ * SIGQUIT is the postmaster's immediate shutdown: it runs the exit path that
+ * removes the SysV segment, which a SIGKILL never can. SIGKILL stays as the
+ * fallback for a process that ignores SIGQUIT for the whole grace period. */
+export function quitThenKillSync(pid: number, graceMs = QUIT_GRACE_MS, alive: (pid: number) => boolean = isPidAlive): void {
+  quitThenKillAllSync([pid], graceMs, alive);
+}
+
+/** The same for several processes at once: every SIGQUIT goes out first and the
+ * grace period is shared, so a sweep of many stragglers waits once, not per pid. */
+export function quitThenKillAllSync(pids: Iterable<number>, graceMs = QUIT_GRACE_MS, alive: (pid: number) => boolean = isPidAlive): void {
+  const sent: number[] = [];
+  for (const pid of pids) { try { process.kill(pid, "SIGQUIT"); sent.push(pid); } catch { /* already gone */ } }
+  for (let waited = 0; waited < graceMs && sent.some(alive); waited += 50) sleepSync(50);
+  for (const pid of sent.filter(alive)) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+}
+
+/** `quitThenKillSync` for callers that can wait without blocking the event loop. */
+export async function quitThenKill(pid: number, graceMs = QUIT_GRACE_MS, alive: (pid: number) => boolean = isPidAlive): Promise<void> {
+  try { process.kill(pid, "SIGQUIT"); } catch { return; /* already gone */ }
+  for (let waited = 0; waited < graceMs && alive(pid); waited += 50) await new Promise(resolve => setTimeout(resolve, 50));
+  if (alive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+}
+
 /** Stop the cluster and prove it is gone before the data directory is removed.
  *
  * A swallowed stop failure used to be followed by `rm` anyway, which could
@@ -272,24 +307,28 @@ function sleepSync(ms: number): void {
  * next run fail with an unrelated-looking EADDRINUSE. Teardown now fails loudly
  * instead: it falls back to the recorded postmaster pid, verifies the process is
  * gone, and only then removes the directory. */
-export async function stopCluster(target: Cluster): Promise<void> {
+export async function stopCluster(target: Cluster,
+  options: { quitGraceMs?: number; isAlive?: (pid: number | undefined) => boolean } = {}): Promise<void> {
   const pid = await readPostmasterPid(target);
+  const isAlive = options.isAlive ?? isPostmasterAlive;
   const stopped = await exec(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
     { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" }).then(() => true,
       (error: Error) => { stopFailure = error; return false; });
   if (!stopped) {
-    if (pid !== undefined) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    if (pid !== undefined && isAlive(pid)) {
+      // SIGQUIT first: the postmaster's immediate shutdown releases its SysV
+      // segment, which the SIGKILL fallback inside would orphan.
+      await quitThenKill(pid, options.quitGraceMs ?? QUIT_GRACE_MS, isAlive);
     }
     // Give the kernel a moment to release the listening socket.
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (!isPostmasterAlive(pid)) break;
+      if (!isAlive(pid)) break;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    if (isPostmasterAlive(pid))
+    if (isAlive(pid))
       throw new Error(`disposable_cluster_stop_failed: ${stopFailure?.message ?? "postmaster still alive"}`);
   }
-  if (isPostmasterAlive(pid))
+  if (isAlive(pid))
     throw new Error("disposable_cluster_survived_teardown");
   // The socket dir lives outside the run dir, so it is removed explicitly.
   await rm(target.socket, { recursive: true, force: true });
