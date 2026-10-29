@@ -80,7 +80,7 @@ const legacyLoopAttentionItemSchemaV1 = z.object({ projectId: id, requestId: id,
     item.kind === item.identity.kind && (item.runLinkId !== null && item.engineRevision !== null
       || item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE"));
 export const loopFinalizationReasonSchemaV1 = z.enum(["FINISHED","FAILED","STOPPED","LAUNCH_UNCERTAIN","INPUT_CHANGED","QUESTION_LIMIT",
-  "LOGIN_REQUIRED","PROVIDER_UNAVAILABLE","TOOL_MISSING","DEADLINE_EXCEEDED","RETENTION_FAILED","TERMINATION_UNCERTAIN","CLEANUP_REFUSED","PUBLICATION_UNAVAILABLE","UNAVAILABLE"]);
+  "LOGIN_REQUIRED","PROVIDER_UNAVAILABLE","TOOL_MISSING","DEADLINE_EXCEEDED","RETENTION_FAILED","TERMINATION_UNCERTAIN","CLEANUP_REFUSED","CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"]);
 const productDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const lifecycleIdentity = z.discriminatedUnion("kind", [
   z.object({kind:z.literal("finish"),completionDigest:productDigest}).strict(),

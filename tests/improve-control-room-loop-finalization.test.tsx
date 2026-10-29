@@ -55,6 +55,48 @@ async function direct(f:Awaited<ReturnType<typeof finalizationFixture>>,capabili
   return createImproveControlRoomLoopFinalizerV1({capability,publishCompletion:publish,authorize,signal:signal()}).finalize(f.target);
 }
 if(ordinary){
+  async function cleanupAttention(f:Awaited<ReturnType<typeof finalizationFixture>>,state:"complete"|"uncertain"){
+    const capability=ownedCleanupCapability(f.capability,f.retained,{state});
+    await direct(f,capability);
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    try{
+      const source=await bridge.readAttention(f.identity);assert.equal(source.state,"available");
+      if(source.state!=="available")throw new Error("attention missing");
+      assert.equal(source.items.length,1);
+      return loopAttentionItemSchemaV1.parse(source.items[0]);
+    }finally{await bridge.close();}
+  }
+  test("B3c complete cleanup keeps candidate attention finished",async t=>{
+    const f=await using(t),item=await cleanupAttention(f,"complete");
+    assert.equal(item.kind,"finish","B3c complete cleanup preserves finish");
+    assert.equal("reasonCode" in item&&item.reasonCode,"FINISHED");
+    assert.doesNotMatch(JSON.stringify(item),/refused|not complete/i);
+    assert.ok("candidate" in item&&item.candidate);
+  });
+  test("B3c complete cleanup describes stopped and failed scratch truthfully",async t=>{
+    for(const outcome of ["stopped","failed"] as const){
+      const f=await using(t);f.editStatus({state:outcome==="stopped"?"stopped":"refused"});
+      f.state.observation={...f.state.observation,outcome,reasonCode:outcome==="stopped"?"STOPPED":"FAILED",completionDigest:null};await f.save();
+      const item=await cleanupAttention(f,"complete");assert.equal(item.kind,outcome);
+      assert.match(item.summary,/scratch was moved to the seven-day trash/i,"B3c complete cleanup reports trash move");
+      assert.match(item.summary,/evidence is retained/i);assert.doesNotMatch(JSON.stringify(item),/refused|not complete|scratch is retained/i);
+    }
+  });
+  test("B3c uncertain cleanup asks attention to check trash without claiming refusal",async t=>{
+    for(const outcome of ["candidate_ready","stopped","failed"] as const){
+      const f=await using(t);
+      if(outcome!=="candidate_ready"){
+        f.editStatus({state:outcome==="stopped"?"stopped":"refused"});
+        f.state.observation={...f.state.observation,outcome,reasonCode:outcome==="stopped"?"STOPPED":"FAILED",completionDigest:null};await f.save();
+      }
+      const item=await cleanupAttention(f,"uncertain");
+      assert.equal("reasonCode" in item&&item.reasonCode,"CLEANUP_UNCERTAIN","B3c uncertain cleanup reason reaches attention wire");
+      assert.equal(item.kind,"stall");assert.match(item.title,/cleanup could not be confirmed/i);
+      assert.match(item.summary,/evidence is retained/i);assert.match(item.summary,/check the trash/i);
+      assert.doesNotMatch(JSON.stringify(item),/refused|was moved|scratch is retained/i);
+    }
+  });
   test("B3c owned cleanup closes through A2 local close",async t=>{
     const f=await using(t);let cleanups=0;
     const c=ownedCleanupCapability(f.capability,f.retained,{called:async()=>{

@@ -396,17 +396,19 @@ export class ImproveControlRoomLoopServiceV1 {
     let kind:"finish"|"stall"|"failed"|"stopped"=o.outcome==="failed"?"failed":o.outcome==="stopped"?"stopped":"stall";
     let reasonCode=o.reasonCode;
     if(o.outcome==="uncertain"||["candidate_ready","failed"].includes(o.outcome)&&inspected.termination?.state!=="already-ended")reasonCode="TERMINATION_UNCERTAIN";
-    else if(record?.cleanup&&o.outcome==="candidate_ready")reasonCode="CLEANUP_REFUSED";
+    else if(record?.cleanup?.state==="uncertain")reasonCode="CLEANUP_UNCERTAIN";
+    else if(record?.cleanup?.state==="refused"&&o.outcome==="candidate_ready")reasonCode="CLEANUP_REFUSED";
     else if(o.outcome==="candidate_ready"&&o.reasonCode==="FINISHED"){
       if(record?.publication&&["announced","cleanup"].includes(record.phase)){kind="finish";reasonCode="FINISHED";}
       else reasonCode=record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
     }
-    if(["CLEANUP_REFUSED","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"].includes(reasonCode))kind="stall";
+    if(["CLEANUP_REFUSED","CLEANUP_UNCERTAIN","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"].includes(reasonCode))kind="stall";
     const labels:Record<typeof reasonCode,[string,string,string]>={
       FINISHED:["Finished candidate","A finished candidate and its retained evidence are available.","Review finished candidate"],
       FAILED:["Saved run failed","The saved run failed.","Inspect saved run"],
       STOPPED:["Saved run stopped","The saved run is stopped. Scratch is retained; cleanup is not complete.","Review stopped run"],
       CLEANUP_REFUSED:["Run cleanup refused","Evidence is retained. Scratch is retained because cleanup is refused in this phase.","Ask the lead to check retained evidence"],
+      CLEANUP_UNCERTAIN:["Run cleanup could not be confirmed","Evidence is retained; check the trash.","Check the trash with the lead"],
       RETENTION_FAILED:["Evidence retention failed","Complete retained evidence could not be verified. Originals remain in place.","Ask the lead to check retained evidence"],
       PUBLICATION_UNAVAILABLE:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
       TERMINATION_UNCERTAIN:["Run termination uncertain","Already-ended writers could not be verified. Originals remain in place.","Ask the lead to reconcile this run"],
@@ -420,7 +422,10 @@ export class ImproveControlRoomLoopServiceV1 {
       UNAVAILABLE:["Run evidence unavailable","The saved run evidence could not be verified.","Ask the lead to reconcile this run"],
     };
     const [title,message,nextAction]=labels[reasonCode];
-    const summary=message+(record?.cleanup&&["failed","stopped"].includes(o.outcome)?" Evidence is retained; scratch cleanup is refused.":"");
+    const terminalCleanup=record?.cleanup&&["failed","stopped"].includes(o.outcome)?record.cleanup.state:null;
+    const summary=terminalCleanup==="complete"
+      ? (o.outcome==="stopped"?"The saved run is stopped.":message)+" Scratch was moved to the seven-day trash; evidence is retained."
+      : message+(terminalCleanup==="refused"?" Evidence is retained; scratch cleanup is refused.":"");
     return {projectId:binding.projectId,requestId:binding.requestId,runLinkId:binding.runLinkId,
       localVersion:binding.localVersion,engineRevision:binding.expectedRevision,observedAt:o.observedAt,kind,
       identity:kind==="finish"?{kind,completionDigest:o.completionDigest!}:{kind,evidenceDigest:o.evidenceDigest},
