@@ -13,6 +13,7 @@ type Cycle = {tick():void;close():Promise<void>};
 /** One bounded journal scan, sharing the startup cycle primitive. The journal is
  * the queue; occupied wait slots are the only retained work besides the cursor. */
 export function createImproveControlRoomLoopRecoveryV1(input:{port:LoopRecoveryPortV1;enabled:()=>boolean;
+  onTick?:()=>void;
   createCycle:(input:{enabled:()=>boolean;sweep:(limit:number)=>Promise<unknown>;intervalMs:number})=>Cycle}){
   let closing=false,started=false,cycle:Cycle|undefined,pending:Promise<void>|undefined,closePromise:Promise<void>|undefined;
   let cursor:LoopRecoveryCursorV1=null,cleanupUncertain=false;
@@ -48,13 +49,16 @@ export function createImproveControlRoomLoopRecoveryV1(input:{port:LoopRecoveryP
   }
   function tick(limit=8){
     if(closing)return Promise.resolve();
+    try{input.onTick?.();}catch{/* Monitoring cannot interrupt recovery or Stop. */}
     if(pending)return pending;
     pending=sweep(limit).finally(()=>{pending=undefined;});return pending;
   }
   return Object.freeze({
     start(){if(started||closing||!enabled())return;started=true;
       // The cycle must also enter the worker when opt-in is withdrawn, to drain.
-      cycle=input.createCycle({enabled:()=>!closing,sweep:tick,intervalMs:5000});cycle.tick();},
+      // This worker owns/drains the nonoverlapping scan promise. Let the outer
+      // short clock finish each pulse so monitoring still ticks during a scan.
+      cycle=input.createCycle({enabled:()=>!closing,sweep:limit=>{void tick(limit).catch(()=>{});return Promise.resolve();},intervalMs:5000});cycle.tick();},
     tick,status:()=>({accepting:!closing}),
     close:()=>closePromise??=(async()=>{
       closing=true;abort.abort();

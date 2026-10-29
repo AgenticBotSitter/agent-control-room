@@ -701,8 +701,16 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (config.loopBridge && recoveryEnabled) {
         const recoveryService = new ImproveControlRoomLoopServiceV1(web.client,
           { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, config.loopBridge, clock);
-        recoveryWorker = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
-          enabled: config.loopRecovery!.enabled, createCycle: createPipelineAdvanceCycleV1 });
+        const recovery = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
+          enabled: config.loopRecovery!.enabled, onTick: config.loopBridge.adapter.monitoringTick, createCycle: createPipelineAdvanceCycleV1 });
+        let recoveryClose: Promise<void> | undefined;
+        recoveryWorker = Object.freeze({ ...recovery, close: () => recoveryClose ??= (async () => {
+          // The same adapter owns collection. Drain it before application/pools,
+          // including when recovery itself could not confirm cleanup.
+          const driver = await Promise.allSettled([recovery.close()]);
+          const adapter = await Promise.allSettled([config.loopBridge!.adapter.close()]);
+          if ([...driver, ...adapter].some(result => result.status === "rejected")) throw new Error("loop_recovery_cleanup_uncertain");
+        })() });
       }
       const readyApplication = application;
       let pipelineCycle:ReturnType<typeof createPipelineAdvanceCycleV1>|undefined;
