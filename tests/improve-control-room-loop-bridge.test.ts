@@ -1,16 +1,26 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { z } from "zod";
 import { nodeExchange } from "./helpers/web-node";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import fsPromises from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { Pool } from "pg";
+import { withRealPostgres } from "./support/attack-kit/index";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
+import { createAccessVerifier } from "../src/web/v1/access-verifier";
+import { WebProjectService } from "../src/web/v1/project-service";
+import { parseStrictJsonV1 } from "../src/installer/shared/strict-json.mjs";
 import { syncBuiltinESMExports } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { loopApprovalDescriptorSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { canonicalJson, hmacSha256Tag, sha256Digest } from "../src/security";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
@@ -52,39 +62,99 @@ test("B1b mutation steps have separate budgets and retain lineage failures", asy
 });
 // Explicit SYNTHETIC executable: no worker/agent/provider is invoked. It records
 // argv/env/cwd and persists only disposable run facts for the seven fixed calls.
-const executable = `import os,sys,json,hashlib
+const executable = String.raw`import os,sys,json,hashlib,fcntl
 root=os.path.dirname(os.path.abspath(__file__))
 op,run=sys.argv[1:3]; args=sys.argv[3:]
 path=os.path.join(root,'runs',run+'.json')
-with open(os.path.join(root,'trace.jsonl'),'a') as f: f.write(json.dumps(dict(op=op,run=run,args=args,env=dict(os.environ),cwd=os.getcwd()))+'\\n')
+lock=open(path+'.lock','a'); fcntl.flock(lock,fcntl.LOCK_EX)
 def h(s): return hashlib.sha256(s.encode()).hexdigest()
 def flag(k): return args[args.index(k)+1]
+expected=None
+if '--expect' in args:
+    with open(flag('--expect')) as f: expected=json.load(f)
+with open(os.path.join(root,'trace.jsonl'),'a') as f:
+    f.write(json.dumps(dict(op=op,run=run,args=args,env=dict(os.environ),cwd=os.getcwd(),expectation=expected,
+        expectationText=open(flag('--expect')).read() if expected else None,
+        fileMode=os.stat(flag('--expect')).st_mode & 0o777 if expected else None,
+        directoryMode=os.stat(os.path.dirname(flag('--expect'))).st_mode & 0o777 if expected else None))+'\n')
 if op=='intake':
     with open(flag('--source')) as f: text=f.read()
     with open(flag('--settings')) as f: settings=f.read()
-    s=dict(run=run,revision=1,inputVersion=1,state='draft',description=text,settingsSha256=h(settings),settingsDigest=h(settings),confirmation=None,approval=None,question=None,progress=dict(step='intake',completed=0,attention='none'),receipts=[])
+    s=dict(run=run,revision=1,inputVersion=1,state='draft',description=text,settingsSha256=h(settings),settingsDigest=h(settings),confirmation=None,approval=None,question=None,progress=dict(step='intake',completed=0,attention='none'),admissions=[])
 else:
     with open(path) as f: s=json.load(f)
+def emit(error=None, output='envelope'):
+    if output=='malformed': print('unreadable'); return
+    if output=='empty': return
+    request=dict(input_version=s['inputVersion'],sha256=h(s['description']),text=s['description'],settings_sha256=s['settingsSha256'],confirmation=s['confirmation'],approval=s['approval'],question=s['question'],admissions=s['admissions'][-20:])
+    print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=dict(code='OWNER_REQUIRED') if s['state']=='waiting' else None,steps=[],counters=dict(fixture=s),error=dict(code=error) if error else None,request=None if output=='null-request' else request)))
+def refuse(code): emit(code); sys.exit(2)
+control={}
 refusal=os.path.join(root,'refusal.json')
 if os.path.exists(refusal):
-    with open(refusal) as f: refused=json.load(f)
-    if refused['op']==op:
-        if refused.get('output','envelope')=='envelope': print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error='refused')))
-        elif refused['output']=='malformed': print('unreadable')
-        if refused.get('breakStatus'): os.remove(path)
-        sys.exit(refused['code'])
+    with open(refusal) as f: control=json.load(f)
+    if control['op']!=op: control={}
+if control and not control.get('afterSave'):
+    emit('REFUSED',control.get('output','envelope'))
+    if control.get('breakStatus'): os.remove(path)
+    sys.exit(control['code'])
+operation='confirm' if op=='confirm-request' else op
+if expected is not None:
+    approval=s['approval']; question=s['question']
+    approval_pin=dict(piece=approval['step'],report_sha256=approval['reportSha256'],head=approval['head'],input_version=approval['inputVersion']) if operation=='approve' and approval else None
+    question_pin=dict(id=question['questionId'],input_version=question['inputVersion'],report_sha256=question['reportSha256']) if operation=='answer' and question else None
+    pins=dict(schema_version=1,command_id=expected['command_id'],binding_digest=expected['binding_digest'],operation=operation,run=run,
+        revision=None if op=='intake' else s['revision'],input_version=None if op=='intake' else s['inputVersion'],
+        request_sha256=h(s['description']),settings_sha256=s['settingsSha256'],approval=approval_pin,question=question_pin)
+    if expected!=pins: refuse('EXPECT_CHANGED')
+    if any(r['command_id']==expected['command_id'] for r in s['admissions']): refuse('COMMAND_REPLAYED')
+    if op=='confirm-request' and s['confirmation']: refuse('EXPECT_CHANGED')
+# The guarded fixture never substitutes a JS status comparison for its lock.
+# Missing --expect deliberately creates no admission; the product stays uncertain.
+at='2026-10-01T00:00:00.000Z'
+evidence=None
+if op=='intake': evidence=dict(request_sha256=h(text),settings_sha256=h(settings),input_version=1)
 if op=='confirm-request':
-    if flag('--sha256')!=h(s['description']): sys.exit(2)
-    s['confirmation']=dict(path='request.md',sha256=h(s['description']),at='2026-10-01T00:00:00.000Z',who='owner',input_version=s['inputVersion'])
+    if flag('--sha256')!=h(s['description']): refuse('EXPECT_CHANGED')
+    s['confirmation']=dict(path='request.md',sha256=h(s['description']),at=at,who='owner',input_version=s['inputVersion'])
     s['state']='ready';s['revision']+=1
-if op=='start': s['state']='running';s['revision']+=1;s['progress']['step']='plan'
+    evidence={k:v for k,v in s['confirmation'].items() if k!='path'}
+if op=='start':
+    s['state']='running';s['revision']+=1;s['progress']['step']='plan'
+    evidence=dict(launch_key='a'*32,step=2,role='plan',input_version=s['inputVersion'],settings_sha256=s['settingsSha256'])
 if op=='stop': s['state']='stopped';s['revision']+=1
-if op=='approve': s['approval']=None;s['state']='running';s['revision']+=1
-if op=='answer': s['question']=None;s['state']='running';s['revision']+=1
+if op=='approve':
+    a=s['approval'];evidence=dict(piece=a['step'],report_sha256=a['reportSha256'],head=a['head'],input_version=a['inputVersion'])
+    s['approval']=None;s['state']='running'
+if op=='answer':
+    q=s['question']
+    if int(flag('--input-version'))!=q['inputVersion'] or q['inputVersion']!=s['inputVersion']: refuse('QUESTION_STALE')
+    with open(flag('--file')) as f: answer=f.read()
+    evidence=dict(question_id=q['questionId'],input_version=q['inputVersion'],report_sha256=q['reportSha256'],answer_sha256=h(answer))
+    s['question']=None;s['state']='running';s['revision']+=1
+if expected is not None:
+    record=dict(command_id=expected['command_id'],operation=operation,binding_digest=control.get('bindingDigest',expected['binding_digest']),at=at,evidence=evidence)
+    s['admissions'].append(record)
 if op!='status':
-    with open(path,'w') as f: json.dump(s,f)
-if op!='approve': print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=[],steps=[],counters=dict(fixture=s),error=None)))
+    with open(path+'.tmp','w') as f: json.dump(s,f)
+    os.replace(path+'.tmp',path)
+emit(None,control.get('output','envelope'))
+if control: sys.exit(control['code'])
 `;
+
+// Same operation-specific admission grammar and canonical whole-record mapping
+// as the reviewed A2 contract. Invalid records fail the entire observation.
+const rawHash = z.string().regex(/^[a-f0-9]{64}$/), version = z.number().int().positive();
+const admissionTime = z.string().datetime({offset:true});
+const recordBase = {command_id:z.string().regex(/^loop-command:[a-f0-9]{32}$/),
+  binding_digest:z.string().regex(/^sha256:[a-f0-9]{64}$/),at:admissionTime};
+const admissionRecords = z.array(z.discriminatedUnion("operation", [
+  z.object({...recordBase,operation:z.literal("intake"),evidence:z.object({request_sha256:rawHash,settings_sha256:rawHash,input_version:z.literal(1)}).strict()}).strict(),
+  z.object({...recordBase,operation:z.literal("confirm"),evidence:z.object({sha256:rawHash,input_version:version,at:admissionTime,who:z.literal("owner")}).strict()}).strict(),
+  z.object({...recordBase,operation:z.literal("start"),evidence:z.object({launch_key:z.string().regex(/^[a-f0-9]{32}$/),step:version,role:z.string().min(1),input_version:version,settings_sha256:rawHash}).strict()}).strict(),
+  z.object({...recordBase,operation:z.literal("approve"),evidence:z.object({piece:z.enum(["plan","spec"]),report_sha256:rawHash,head:z.string().regex(/^[a-f0-9]{40}$/),input_version:version}).strict()}).strict(),
+  z.object({...recordBase,operation:z.literal("answer"),evidence:z.object({question_id:z.string().min(1),input_version:version,report_sha256:rawHash,answer_sha256:rawHash}).strict()}).strict(),
+])).max(20).refine(records=>new Set(records.map(r=>r.command_id)).size===records.length);
 
 async function synthetic(t: TestContext) {
   await mkdir(resolve(".test-tmp"), { recursive: true });
@@ -103,7 +173,7 @@ async function synthetic(t: TestContext) {
     observation.settingsDigest === loopByteHashV1(input.settingsText) && observation.confirmation.path === "request.md"
       && observation.confirmation.sha256 === loopByteHashV1(input.description) && input.requestSha256 === loopByteHashV1(input.description)
       && input.settingsSha256 === loopByteHashV1(input.settingsText) };
-  const receipts = new Map<string, LoopEngineStatusV1["receipts"]>();
+  const observations = new Map<string, LoopEngineStatusV1>();
   let raw: LoopAdapterV1;
   let documentNames = { report: "report.md", sidecar: "report.json" };
   let beforeAdmission: (() => Promise<void>) | undefined;
@@ -123,42 +193,55 @@ async function synthetic(t: TestContext) {
           : status.question ? {kind:"question",text:raw.questionText} : status.approval ? {kind:"approve"} : !status.confirmation ? {kind:"confirm"} : null;
       } },
       decodeStatus: (output: unknown) => {
-        const e = output as { schema_version: number; run: string; counters: { fixture: Record<string, unknown> } };
-        assert.equal(e.schema_version, 1); assert.match(e.run, /^fixture-run-[a-f0-9]{32}$/);
-        const { questionText: _text, blockedCode: _code, ...engine } = e.counters.fixture;
-        return loopEngineStatusSchemaV1.parse({ ...engine, run: { adapterId: "adapter:synthetic", loopRunId: e.run,
-          toolingRevision, a2SchemaVersion: 1 } });
-      }, atomicAdmission: async (binding, invoke) => {
-        await beforeAdmission?.();
-        const current = await raw.status(binding.loopRunId);
-        if (current.revision !== binding.expectedRevision || current.inputVersion !== binding.inputVersion
-          || loopByteHashV1(current.description) !== binding.requestSha256 || current.settingsSha256 !== binding.settingsSha256
-          || (binding.evidence && sha256Digest(binding.body.step ? current.approval : current.question) !== binding.evidence))
-          throw new Error("SYNTHETIC atomic admission refusal");
-        return invoke();
+        const e = output as {schema_version:number;run:string;request:{admissions:unknown}|null;counters:{fixture:Record<string,unknown>}};
+        assert.equal(e.schema_version,1);assert.match(e.run,/^fixture-run-[a-f0-9]{32}$/);
+        assert.ok(e.request,"A2 request channel is required");
+        const records=admissionRecords.parse(e.request.admissions);
+        const {questionText:_text,blockedCode:_code,admissions:_admissions,...engine}=e.counters.fixture;
+        const status=loopEngineStatusSchemaV1.parse({...engine,run:{adapterId:"adapter:synthetic",loopRunId:e.run,toolingRevision,a2SchemaVersion:1},
+          receipts:records.map(record=>({commandId:record.command_id,bindingDigest:record.binding_digest,
+            state:"accepted",evidenceDigest:sha256Digest(record),error:null}))});
+        observations.set(e.run,structuredClone(status));return status;
+      }, admissionExpectation: async (binding, context) => {
+        if (!Object.isFrozen(binding) || !Object.isFrozen(binding.body) || !Object.isFrozen(context)
+          || !context || !/^loop-command:[a-f0-9]{32}$/.test(context.commandId)
+          || !["intake","confirm","start","approve","answer"].includes(context.operation)) throw new Error("loop_adapter_unavailable");
+        const op=context.operation,current=observations.get(binding.loopRunId),body=binding.body;
+        let approval=null,question=null;
+        if(op==="intake") {
+          if(current || binding.runLinkId!==null || binding.inputVersion!==null || binding.expectedRevision!==null || binding.evidence!==null
+            || typeof body.description!=="string") throw new Error("loop_adapter_unavailable");
+        } else {
+          if(!current || current.run.adapterId!==binding.adapterId || current.run.toolingRevision!==binding.toolingRevision
+            || current.revision!==binding.expectedRevision || current.inputVersion!==binding.inputVersion
+            || loopByteHashV1(current.description)!==binding.requestSha256 || current.settingsSha256!==binding.settingsSha256) throw new Error("loop_adapter_unavailable");
+          if(op==="approve") {
+            const a=current.approval;
+            if(!a || sha256Digest(a)!==binding.evidence || a.step!==body.step || a.inputVersion!==body.inputVersion
+              || a.head!==body.head || a.reportSha256!==body.reportSha256) throw new Error("loop_adapter_unavailable");
+            approval={piece:a.step,report_sha256:a.reportSha256,head:a.head,input_version:a.inputVersion};
+          } else if(op==="answer") {
+            const q=current.question;
+            if(!q || sha256Digest(q)!==binding.evidence || !q.owner || q.changesInput || q.questionId!==body.questionId
+              || q.inputVersion!==body.inputVersion || q.reportSha256!==body.questionReportSha256) throw new Error("loop_adapter_unavailable");
+            question={id:q.questionId,input_version:q.inputVersion,report_sha256:q.reportSha256};
+          } else if(binding.evidence!==null || (op==="confirm" ? typeof body.requestSha256!=="string" : typeof body.runLinkId!=="string")) throw new Error("loop_adapter_unavailable");
+        }
+        const expected={schema_version:1,command_id:context.commandId,binding_digest:sha256Digest(binding),operation:op,
+          run:binding.loopRunId,revision:op==="intake"?null:binding.expectedRevision,input_version:op==="intake"?null:binding.inputVersion,
+          request_sha256:binding.requestSha256,settings_sha256:binding.settingsSha256,approval,question};
+        await beforeAdmission?.();return expected;
       } } };
   raw = createImproveControlRoomLoopAdapterV1(configuration);
   t.after(() => raw.close());
-  const decorate = (s: LoopEngineStatusV1) => ({ ...s, receipts: [...(receipts.get(s.run.loopRunId) ?? []), ...s.receipts] });
-  const apply = async (op: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, text?: string, fence: () => void = () => {}) => {
-    const s = await (op === "intake" ? raw.intake(commandId, binding, text!, fence) : op === "confirm" ? raw.confirmRequest(commandId, binding, fence)
-      : op === "answer" ? raw.answer(commandId, binding, text!, fence) : raw[op](commandId, binding, fence));
-    // Test-only receipt translation from this fixture's exact completed transition.
-    const all = receipts.get(binding.loopRunId) ?? [];
-    all.push(s.receipts.find(receipt => receipt.commandId === commandId)
-      ?? { commandId, bindingDigest: sha256Digest(binding), state: "accepted", evidenceDigest: sha256Digest(s), error: null });
-    receipts.set(binding.loopRunId, all); return decorate({ ...s, receipts: [] });
-  };
-  const adapter: LoopAdapterV1 = { ...raw, status: async run => decorate(await raw.status(run)),
-    intake: (id, b, text, fence) => apply("intake", id, b, text, fence), confirmRequest: (id, b, fence) => apply("confirm", id, b, undefined, fence),
-    start: (id, b, fence) => apply("start", id, b, undefined, fence), stop: (id, b, fence) => apply("stop", id, b, undefined, fence), approve: (id, b, fence) => apply("approve", id, b, undefined, fence),
-    answer: (id, b, text, fence) => apply("answer", id, b, text, fence) };
+  const adapter = raw;
   const edit = async (run: string, changes: Partial<LoopEngineStatusV1> & {questionText?:unknown;blockedCode?:"QUESTION_LIMIT"|"INPUT_CHANGED"}) => {
     const path = join(root, "runs", `${run}.json`), saved = JSON.parse(await readFile(path, "utf8"));
     await writeFile(path, JSON.stringify({ ...saved, ...changes, run: saved.run }));
   };
-  const traces = async () => (await readFile(join(root, "trace.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)) as {op: string; run: string; args: string[]; env: Record<string,string>; cwd: string}[];
-  return { root, adapter, raw, configuration, edit, traces, setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
+  const traces = async () => (await readFile(join(root, "trace.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)) as
+    {op:string;run:string;args:string[];env:Record<string,string>;cwd:string;expectation:Record<string,unknown>|null;expectationText:string|null;fileMode:number|null;directoryMode:number|null}[];
+  return { root, adapter, raw, configuration, edit, traces, clearObservations:()=>observations.clear(), setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
 }
 async function fixture(t: TestContext) {
   const f = await taskFixture(); t.after(() => f.db.close());
@@ -174,9 +257,307 @@ async function fixture(t: TestContext) {
   const get = (id: string) => bridge.status(f.identity, f.project.projectId, id);
   const intake = async () => { const response = await post("intake", { description }); assert.equal(response.status, 202); const receipt = await response.json() as { requestId: string; state: string }; assert.equal(receipt.state, "accepted"); return receipt.requestId; };
   const confirm = async (id: string) => { const s = await get(id); const response = await post(`${encodeURIComponent(id)}/confirm`, { expectedVersion: s.request.currentVersion,
-    expectedRevision: s.engine.revision, requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 }); assert.equal(response.status, 202); assert.equal((await response.json() as {state:string}).state,"accepted"); return get(id); };
+    expectedRevision: s.engine.revision, requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 }); assert.equal(response.status, 202); assert.equal((await response.json() as {state:string}).state,"accepted","A2 confirm requires an engine record"); return get(id); };
   return { ...f, ...engine, bridge, service, handler, base, post, get, intake, confirm };
 }
+
+for (const step of ["1", "intake", "42", null]) test(`B1b intake completion ignores display step ${step}`, async t => {
+  const f = await fixture(t);
+  const adapter = { ...f.adapter, intake: async (...args: Parameters<LoopAdapterV1["intake"]>) => {
+    const status = await f.adapter.intake(...args);
+    return { ...status, progress: { ...status.progress, step } };
+  } };
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+    { integrityKey: KEY, adapter }, () => now);
+  const result = await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, "b1b-display-step-0001");
+  assert.equal(result.state, "accepted", "intake admission is independent of display step");
+  assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links")).rows.length, 1);
+});
+
+// Optional adjacent tooling checkout, supplied by the build/review lane. The
+// CLI uses its disposable Bridge fixture and dry launcher; no provider runs.
+if (process.env.CONTROL_ROOM_A2_TEST_LOOP) test("B1b real CLI intake completes with numbered progress and legacy control", async t => {
+  const loop = resolve(process.env.CONTROL_ROOM_A2_TEST_LOOP!);
+  const module = await import(pathToFileURL(join(loop, "bridge/a2-contract.mjs")).href);
+  const driver = String.raw`import json,sys
+sys.path.insert(0,sys.argv[1])
+from test_a2_bridge import Bridge
+d=Bridge(); d.setUp()
+try:
+    path,_=d.prepare_intake()
+    print(d.settings_path.read_text(),flush=True)
+    p=json.load(sys.stdin)
+    d.request.write_text(p['description'])
+    path.write_text(json.dumps(p['expectation']))
+    d.obj(d.cli(*d.intake_args(path)))
+    status=d.obj(d.cli('status','synth','--json'))
+    assert status['request']['admissions']==d.load()['chain']['admissions']
+    print(json.dumps(status),flush=True)
+finally:
+    d.doCleanups()
+`;
+  for (const legacy of [false, true]) await t.test(legacy ? "legacy-label control" : "real numbered progress", async t => {
+    const f = await fixture(t);
+    const child = spawn("/usr/bin/python3", ["-B", "-c", driver, loop], {
+      timeout: 60000, env: { PATH: "/usr/bin:/bin", TMPDIR: resolve(".test-tmp"), PYTHONDONTWRITEBYTECODE: "1",
+        CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", NODE_ENV: "test" },
+    });
+    let stderr = ""; child.stderr.on("data", data => { stderr += data; });
+    const exited = once(child, "close");
+    t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await exited; });
+    const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    const settingsLine = await lines.next();
+    assert.equal(settingsLine.done, false, "real CLI fixture supplies settings");
+    const realSettings = settingsLine.value!;
+    const lineage = { ...f.adapter.contract, decodeRunIdentity: (input: unknown) => loopImprovementRunIdentitySchemaV1.parse(input) };
+    const contract = module.a2BridgeContractV1(lineage) as LoopAdapterConfigurationV1["contract"];
+    let observed: LoopEngineStatusV1 | undefined;
+    let failure: unknown;
+    let record: { command_id: string; binding_digest: string; evidence: unknown } | undefined;
+    const adapter: LoopAdapterV1 = { ...f.adapter, adapterId: module.A2_BRIDGE_ADAPTER_ID,
+      schemaDigest: contract.schemaDigest, settingsText: realSettings, contract: lineage, reserveRun: () => "synth",
+      intake: async (commandId, binding, text, beforeSpawn) => {
+        try {
+          const expectation = await contract.admissionExpectation!(Object.freeze({ ...binding, body: Object.freeze(binding.body) }),
+            Object.freeze({ operation: "intake", commandId }));
+          beforeSpawn();
+          child.stdin.end(JSON.stringify({ expectation, description: text }));
+          const statusLine = await lines.next();
+          const [code] = await exited;
+          assert.equal(code, 0, stderr); assert.equal(statusLine.done, false);
+          const output = JSON.parse(statusLine.value!);
+          record = output.request.admissions[0];
+          observed = loopEngineStatusSchemaV1.parse(contract.decodeStatus(output));
+          // Only the control changes the display label. The candidate carries
+          // the real CLI status and decoder output unchanged into completion.
+          return legacy ? { ...observed, progress: { ...observed.progress, step: "intake" } } : observed;
+        } catch (error) { failure = error; throw error; }
+      } };
+    const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+      { integrityKey: KEY, adapter }, () => now);
+    const key = "b1b-real-intake-0001";
+    const result = await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, key);
+    assert.ifError(failure);
+    assert.ok(observed, "real CLI status decoded before completion");
+    assert.equal(observed.progress.step, "1"); assert.equal(observed.progress.role, "orchestrator");
+    const rows = (await f.db.query<{ entry_kind: string; command_id: string; binding: LoopBridgeBindingV1; result: { evidenceDigest: string } | null }>(
+      "SELECT entry_kind,command_id,binding,result FROM control_loop_improvement_commands WHERE request_id=$1 ORDER BY entry_kind", [result.requestId])).rows;
+    const claim = rows.find(row => row.entry_kind === "claim")!;
+    assert.equal(record!.command_id, claim.command_id); assert.equal(record!.binding_digest, sha256Digest(claim.binding));
+    assert.deepEqual(record!.evidence, { request_sha256: loopByteHashV1(description), settings_sha256: loopByteHashV1(realSettings), input_version: 1 });
+    assert.equal(result.state, "accepted", "real CLI intake completes with its exact durable admission");
+    assert.deepEqual(rows.map(row => row.entry_kind), ["claim", "result"]);
+    assert.equal(rows[1]!.result!.evidenceDigest, sha256Digest(record));
+    assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links WHERE request_id=$1", [result.requestId])).rows.length, 1);
+    assert.equal((await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, key)).commandId, result.commandId);
+    assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_commands WHERE request_id=$1", [result.requestId])).rows.length, 2);
+  });
+});
+
+// A2 chain_emit exposes steps[].n/role/model/identity; the reviewed decoder
+// supplies these display values. Role names match A2 ROLES, including reviews.
+test("B1b A2 live progress reaches the run panel", async t => {
+  const f=await fixture(t),id=await f.intake();
+  const initial=await f.get(id),run=initial.request.runLink!.loopRunId;
+  const roles=["orchestrator","plan","plan-review","spec","spec-review","build",
+    "code-review","attack-review","ui-review","ci-review","final"];
+  for(const [index,role] of roles.entries()){
+    const progress={step:String(index+1),role,attempt:2,requestedModel:"model:requested",
+      observedModel:index===0?null:"model:observed",repairCount:3,completed:index,attention:"none" as const};
+    await f.edit(run,{progress});
+    const status=await f.get(id);
+    assert.deepEqual(status.engine.progress,progress,"wire preserves decoded A2 progress");
+    assert.deepEqual(status.display.progress,{stepId:String(index+1),role,attempt:2,
+      requestedModel:"model:requested",observedModel:progress.observedModel,identityVerified:false,repairCount:3},
+      "run panel shows saved model, role, step, attempt and repair values");
+  }
+  // The decoder reports A2's observed identity (cr.py chain_model_identity status "observed").
+  const verified={step:"4",role:"plan-review",attempt:2,requestedModel:"model:requested",observedModel:"model:observed",
+    identityVerified:true,repairCount:1,completed:3,attention:"owner" as const};
+  await f.edit(run,{progress:verified});
+  assert.deepEqual((await f.get(id)).display.progress,{stepId:"4",role:"plan-review",attempt:2,requestedModel:"model:requested",
+    observedModel:"model:observed",identityVerified:true,repairCount:1},"verified identity reaches the run panel");
+  await f.edit(run,{progress:{...verified,observedModel:null}});
+  assert.equal((await f.get(id)).display.progress?.identityVerified,false,"verified needs an observed model");
+  await f.edit(run,{progress:{step:"plan",completed:0,attention:"none"}});
+  assert.deepEqual((await f.get(id)).display.progress,{stepId:"plan",role:null,attempt:null,
+    requestedModel:null,observedModel:null,identityVerified:false,repairCount:null},"missing evidence remains unavailable");
+});
+
+test("B1b A2 engine receipts (unwrapped adapter)", async t => {
+  const f=await fixture(t);
+  assert.equal(f.adapter,f.raw,"website uses the unwrapped adapter");
+  const result=await f.bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},"b1b-a2-raw-intake-0001");
+  const desk=await f.service.viewLoopDesk(f.identity,f.project.projectId);
+  assert.ok(desk.loopRequests.find(r=>r.requestId===result.requestId)?.runLink,"A2 unwrapped intake saves a non-null runLink");
+  assert.equal(result.state,"accepted");
+  const id=result.requestId;
+  assert.equal((await f.handler(request(`${f.base}/${encodeURIComponent(id)}/status`))).status,200);
+  let s=await f.confirm(id);const run=s.request.runLink!.loopRunId;
+  assert.equal(s.request.savedAuthorization,true,"engine confirm receipt saves B1a authorization");
+  assert.equal((await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{expectedVersion:1,expectedRevision:s.engine.revision,
+    runLinkId:s.request.runLink!.runLinkId},"b1b-a2-raw-start-0001")).state,"accepted","A2 start requires an engine record");
+  for(const step of ["plan","spec"] as const){
+    const approval={step,inputVersion:1,head:"a".repeat(40),reportSha256:"b".repeat(64)};
+    await f.edit(run,{state:"waiting",approval});s=await f.get(id);
+    assert.equal((await f.bridge.mutate(f.identity,f.project.projectId,id,"approve",{expectedVersion:1,expectedRevision:s.engine.revision,...approval},
+      `b1b-a2-raw-approve-${step}`)).state,"accepted","A2 approve requires an engine record");
+  }
+  const question={questionId:"question:receipt",inputVersion:1,reportSha256:"d".repeat(64),owner:true,changesInput:false};
+  await f.edit(run,{state:"waiting",question});s=await f.get(id);
+  assert.equal((await f.bridge.mutate(f.identity,f.project.projectId,id,"answer",{expectedVersion:1,expectedRevision:s.engine.revision,
+    questionId:question.questionId,inputVersion:1,questionReportSha256:question.reportSha256,text:"Keep the same scope."},"b1b-a2-raw-answer-0001")).state,"accepted","A2 answer requires an engine record");
+  assert.equal((await f.bridge.mutate(f.identity,f.project.projectId,id,"stop",{runLinkId:s.request.runLink!.runLinkId},"b1b-a2-raw-stop-0001")).state,"accepted");
+  const saved=JSON.parse(await readFile(join(f.root,"runs",run+".json"),"utf8"));
+  assert.equal(Object.hasOwn(saved,"receipts"),false,"fixture persists only engine admission records");
+  const records=admissionRecords.parse(saved.admissions);
+  const rows=(await f.db.query<{command_id:string;operation:string;result:{evidenceDigest:string}}>(
+    "SELECT command_id,operation,result FROM control_loop_improvement_commands WHERE entry_kind='result' AND operation<>'stop'")).rows;
+  assert.equal(rows.length,6);
+  for(const row of rows){
+    const record=records.find(r=>r.command_id===row.command_id)!;
+    assert.ok(record,"every accepted website effect has a saved engine record");
+    assert.equal(row.result.evidenceDigest,sha256Digest(record),"stored evidenceDigest is the canonical whole engine record digest");
+  }
+  for(const op of ["intake","confirm-request","start","approve","answer"]){
+    const trace=(await f.traces()).find(row=>row.op===op)!;
+    assert.ok(trace.args.includes("--expect"),`A2 ${op} includes --expect`);
+    assert.equal(trace.expectationText,canonicalJson(trace.expectation));
+    assert.equal(trace.fileMode,0o600);assert.equal(trace.directoryMode,0o700);
+    const expectation=trace.expectation!;
+    const claim=(await f.db.query<{binding:LoopBridgeBindingV1}>("SELECT binding FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='claim'",[expectation.command_id])).rows[0]!.binding;
+    assert.equal(expectation.binding_digest,sha256Digest(claim));
+    assert.equal(expectation.operation,op==="confirm-request"?"confirm":op);
+    if(op==="approve")assert.deepEqual(expectation.approval,{piece:"plan",report_sha256:"b".repeat(64),head:"a".repeat(40),input_version:1},"approve carries the complete cached seal");
+    if(op==="answer")assert.deepEqual(expectation.question,{id:"question:receipt",input_version:1,report_sha256:"d".repeat(64)},"answer carries the complete cached question descriptor");
+  }
+});
+
+test("B1b A2 expect pins", async t => {
+  const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
+  const before=await f.raw.status(run);let savedBefore="",statusReadsAtHook=0;
+  f.setBeforeAdmission(async()=>{statusReadsAtHook=(await f.traces()).filter(r=>r.op==="status").length;await f.edit(run,{revision:before.revision+1});savedBefore=await readFile(join(f.root,"runs",run+".json"),"utf8");});
+  const result=await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{expectedVersion:1,expectedRevision:s.engine.revision,
+    runLinkId:s.request.runLink!.runLinkId},"b1b-a2-expect-start-0001");
+  const trace=(await f.traces()).find(row=>row.op==="start")!;
+  assert.ok(trace.args.includes("--expect"),"A2 Start includes exact --expect bytes");
+  const claim=(await f.db.query<{command_id:string;binding:LoopBridgeBindingV1}>("SELECT command_id,binding FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0]!;
+  assert.deepEqual(trace.expectation,{schema_version:1,command_id:claim.command_id,binding_digest:sha256Digest(claim.binding),operation:"start",run,
+    revision:before.revision,input_version:before.inputVersion,request_sha256:loopByteHashV1(description),settings_sha256:loopByteHashV1(settingsText),approval:null,question:null},
+    "A2 engine receives the original cached pins, explicit operation and claim id");
+  assert.equal(result.state,"refused");
+  assert.equal(await readFile(join(f.root,"runs",run+".json"),"utf8"),savedBefore,"EXPECT_CHANGED leaves run bytes identical with zero launch effects");
+  assert.equal((await f.traces()).filter(r=>r.op==="status").length,statusReadsAtHook,"expectation construction performs no post-hook status reread");
+  const after=await f.raw.status(run);assert.equal(after.state,"ready");assert.equal(after.receipts.length,before.receipts.length);
+});
+
+for(const code of [1,2,3]) for(const output of code===1?["envelope"]:["envelope","null-request"]){
+  test(`B1b A2 engine receipts save then exit ${code} ${output}`,async t=>{
+    const f=await fixture(t),key=`b1b-a2-saved-exit-${code}-${output}`;
+    await writeFile(join(f.root,"refusal.json"),JSON.stringify({op:"intake",code,afterSave:true,output}));
+    const result=await f.bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},key);
+    assert.equal(result.state,code===1?"uncertain":"accepted","saved engine receipt survives exit 2/3 without becoming refused");
+    const spawns=(await f.traces()).length;
+    const replay=await f.bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},key);
+    assert.equal(replay.state,"accepted");assert.equal(replay.replayed,true);
+    const traces=await f.traces();assert.equal(traces.filter(row=>row.op==="intake").length,1,"same-key replay never redispatches an effect");
+    assert.equal(traces.length,spawns+(code===1?1:0),"replay reads status only when result was uncertain");
+    const s=await f.get(result.requestId),record=(await f.raw.status(s.request.runLink!.loopRunId)).receipts.find(r=>r.commandId===result.commandId)!;
+    const row=(await f.db.query<{result:{evidenceDigest:string}}>("SELECT result FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='result'",[result.commandId])).rows[0]!;
+    assert.equal(row.result.evidenceDigest,record.evidenceDigest);
+  });
+}
+
+test("B1b A2 engine receipts refuse lead confirmation and mismatched record",async t=>{
+  const f=await fixture(t),id=await f.intake(),s=await f.get(id),run=s.request.runLink!.loopRunId;
+  const lead=spawnSync(f.configuration.interpreter,[f.configuration.entrypoint,"confirm-request",run,"--sha256",s.engine.requestSha256,"--json"],
+    {cwd:f.root,env:{NODE_ENV:"production",LANG:"C.UTF-8"},encoding:"utf8"});assert.equal(lead.status,0);
+  const current=await f.get(id);
+  const refused=await f.bridge.mutate(f.identity,f.project.projectId,id,"confirm",{expectedVersion:1,expectedRevision:current.engine.revision,
+    requestSha256:current.engine.requestSha256,settingsSha256:current.engine.settingsSha256},"b1b-a2-lead-confirm-0001");
+  assert.equal(refused.state,"refused");assert.equal((await f.get(id)).request.savedAuthorization,false);
+  assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_authorizations")).rows.length,0);
+  await writeFile(join(f.root,"refusal.json"),JSON.stringify({op:"intake",code:0,afterSave:true,bindingDigest:`sha256:${"f".repeat(64)}`}));
+  const mismatch=await f.bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},"b1b-a2-foreign-receipt-0001");
+  assert.equal(mismatch.state,"uncertain","an engine record with another binding never satisfies this claim");
+});
+
+test("B1b A2 answer uses question version below run version",async t=>{
+  const f=await fixture(t),id=await f.intake(),draft=await f.get(id),run=draft.request.runLink!.loopRunId;
+  await f.edit(run,{inputVersion:2,revision:2});const s=await f.confirm(id);
+  const question={questionId:"question:stale-version",inputVersion:1,reportSha256:"d".repeat(64),owner:true,changesInput:false};
+  await f.edit(run,{state:"waiting",question});
+  const before=await readFile(join(f.root,"runs",run+".json"),"utf8");
+  const result=await f.bridge.mutate(f.identity,f.project.projectId,id,"answer",{expectedVersion:1,expectedRevision:s.engine.revision,
+    questionId:question.questionId,inputVersion:1,questionReportSha256:question.reportSha256,text:"Keep scope."},"b1b-a2-question-version-0001");
+  const trace=(await f.traces()).find(r=>r.op==="answer")!;
+  assert.equal(trace.args[trace.args.indexOf("--input-version")+1],"1","A2 answer argv uses body.inputVersion, never run inputVersion");
+  assert.equal(result.state,"refused");
+  assert.equal(await readFile(join(f.root,"runs",run+".json"),"utf8"),before,"QUESTION_STALE preserves the run bytes");
+});
+
+test("B1b A2 expect pins cache and context refuse before files or spawn",async t=>{
+  const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
+  const binding:LoopBridgeBindingV1={schemaVersion:1,body:{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},
+    localVersion:1,adapterId:f.raw.adapterId,loopRunId:run,toolingRevision:f.raw.toolingRevision,a2SchemaVersion:1,schemaDigest:f.raw.schemaDigest,
+    requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText),runLinkId:s.request.runLink!.runLinkId,
+    authorizationId:"authorization:fixture",inputVersion:1,expectedRevision:s.engine.revision,evidence:null};
+  const commandId=`loop-command:${"e".repeat(32)}`,context=Object.freeze({operation:"start" as const,commandId});
+  const freeze=(b:LoopBridgeBindingV1)=>Object.freeze({...b,body:Object.freeze({...b.body})});
+  const callback=f.configuration.contract.admissionExpectation!;
+  const traces=(await f.traces()).length;
+  await assert.rejects(async()=>callback(freeze(binding),undefined as never),/unavailable/);
+  await assert.rejects(async()=>callback(freeze(binding),Object.freeze({...context,operation:"confirm"})),/unavailable/);
+  await assert.rejects(async()=>callback(freeze(binding),Object.freeze({...context,commandId:"wrong-context"})),/unavailable/);
+  await assert.rejects(async()=>callback(freeze({...binding,evidence:`sha256:${"a".repeat(64)}`}),context),/unavailable/);
+  f.clearObservations();await assert.rejects(f.raw.start(commandId,binding,()=>{}),/unavailable/,"missing cache refuses before expect file or process");
+  assert.equal((await f.traces()).length,traces);assert.deepEqual(await readdir(f.configuration.workRoot),[]);
+  await f.edit(run,{revision:s.engine.revision+1});await f.raw.status(run);
+  const displaced=(await f.traces()).length;
+  await assert.rejects(f.raw.start(commandId,binding,()=>{}),/unavailable/,"displaced cache cannot refresh an old binding");
+  assert.equal((await f.traces()).length,displaced);assert.deepEqual(await readdir(f.configuration.workRoot),[]);
+  const absent=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,admissionExpectation:undefined}});
+  try{for(const operation of ["intake","confirm","start","approve","answer"] as const)assert.equal(absent.available(operation),false);
+    assert.equal(absent.available("stop"),true);
+  }finally{await absent.close();}
+});
+
+test("B1b A2 expect path and byte collisions refuse before engine effects",async t=>{
+  for(const collision of ["bytes","symlink","directory-mode"]){
+    const f=await fixture(t),target=join(f.root,"outside.txt");await writeFile(target,"retain exact bytes");
+    const original=f.configuration.contract.admissionExpectation!;
+    const adapter=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,admissionExpectation:async(b,c)=>{
+      const expected=await original(b,c),directory=join(f.configuration.workRoot,c.commandId.replace(":","-"));
+      await mkdir(directory,{mode:collision==="directory-mode"?0o755:0o700});
+      if(collision==="bytes")await writeFile(join(directory,"expect.json"),"mismatching bytes",{mode:0o600});
+      if(collision==="symlink")await symlink(target,join(directory,"expect.json"));
+      return expected;
+    }}});
+    try{
+      const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+      const result=await bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},`b1b-a2-collision-${collision}`);
+      assert.equal(result.state,"uncertain");assert.deepEqual(await readdir(f.configuration.runRoot),[],"invalid expectation path/bytes spawn no engine and write no run");
+      assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links")).rows.length,0);
+      assert.equal(await readFile(target,"utf8"),"retain exact bytes");
+    }finally{await adapter.close();}
+  }
+});
+
+test("B1b A2 malformed admission records fail the whole decode",async t=>{
+  const f=await fixture(t),id=await f.intake(),s=await f.get(id),run=s.request.runLink!.loopRunId;
+  const file=join(f.root,"runs",run+".json"),original=JSON.parse(await readFile(file,"utf8")),record=original.admissions[0];
+  for(const admissions of [[{...record,at:"yesterday"}],[{...record,operation:"stop"}],[{...record,evidence:{...record.evidence,extra:true}}],
+    [record,record],Array.from({length:21},(_,i)=>({...record,command_id:`loop-command:${i.toString(16).padStart(32,"0")}`}))]){
+    await writeFile(file,JSON.stringify({...original,admissions}));
+    // Too many stored records is legal; the wire is only the newest twenty.
+    if(admissions.length===21)assert.equal((await f.raw.status(run)).receipts.length,20);
+    else await assert.rejects(f.raw.status(run),/unavailable/,"invalid engine records cannot yield a partial receipt list");
+  }
+  const offsetRecord={...record,at:"2026-10-01T00:00:00.123456-06:00"};
+  await writeFile(file,JSON.stringify({...original,admissions:[offsetRecord]}));
+  assert.equal((await f.raw.status(run)).receipts[0]!.evidenceDigest,sha256Digest(offsetRecord),"A2 offset timestamp stays byte-exact in the immutable record digest");
+  await writeFile(file,JSON.stringify(original));assert.equal((await f.raw.status(run)).receipts.length,1);
+});
 
 test("B1b website intake confirm start status stop", async t => {
   const f = await fixture(t), id = await f.intake();
@@ -208,8 +589,8 @@ test("B1b website intake confirm start status stop", async t => {
     const { __CF_USER_TEXT_ENCODING: _systemLocale, ...configuredEnv } = trace.env;
     assert.deepEqual(configuredEnv,{LANG:"C.UTF-8",LC_ALL:"C.UTF-8",NODE_ENV:"production"}); }
   const first=traces.find(e=>e.op==="intake")!;
-  assert.deepEqual(first.args.slice(0,1),["--source"]); assert.deepEqual(first.args.slice(2),["--settings",join(f.root,"settings.json"),"--json"]);
-  assert.deepEqual(traces.find(e=>e.op==="start")!.args,["--settings",join(f.root,"settings.json"),"--availability",join(f.root,"availability.json"),"--json"]);
+  assert.deepEqual(first.args.slice(0,1),["--source"]); assert.deepEqual(first.args.slice(2),["--settings",join(f.root,"settings.json"),"--availability",join(f.root,"availability.json"),"--json","--expect",first.args.at(-1)!]);
+  assert.deepEqual(traces.find(e=>e.op==="start")!.args,["--settings",join(f.root,"settings.json"),"--availability",join(f.root,"availability.json"),"--json","--expect",traces.find(e=>e.op==="start")!.args.at(-1)!]);
   for(const table of ["pipeline_runs","control_jobs","control_native_task_queue","control_improvement_requests","control_update_candidates"])
     assert.equal((await f.db.query<{n:number}>(`SELECT count(*)::int n FROM ${table}`)).rows[0]!.n,0);
   console.log("B1b SYNTHETIC journey adoption=2 initial=1 starts=1 pipeline_tasks_publication=0 argv_env_cwd=exact");
@@ -267,8 +648,9 @@ test("B1b sealed SYNTHETIC approval, owner answer and atomic race refusal",async
   await f.edit(run,{state:"ready"});s=await f.get(id);
   f.setBeforeAdmission(()=>f.edit(run,{revision:s.engine.revision+1}));
   const race=await f.post(`${suffix}/start`,{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId});
-  assert.equal((await race.json() as {state:string}).state,"uncertain");
-  assert.equal((await f.traces()).filter(e=>e.op==="start").length,0,"B1b atomic seam refuses revision race before launch");
+  assert.equal(race.status,202);assert.equal((await race.json() as {state:string}).state,"refused");
+  assert.equal((await f.traces()).filter(e=>e.op==="start").length,1,"B1b engine lock observes exactly one refused Start invocation");
+  assert.equal((await f.raw.status(run)).state,"ready","B1b engine lock refuses revision race before launch");
 });
 
 test("B1b claim without result never redispatches and signed tampering refuses",async t=>{
@@ -291,7 +673,7 @@ test("B1b configured execution/path fence, missing qualification and pin drift",
   assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,settingsFile:link}),/unavailable/,"B1b configured symlink refusal");
   assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,entrypoint:join(f.root,"..","engine.py")}),/unavailable/);
   assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,executionIdentity:{...f.configuration.executionIdentity,uid:-1}}),/unavailable/);
-  const unqualified=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,qualifiedOperations:[],atomicAdmission:undefined}});t.after(()=>unqualified.close());
+  const unqualified=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,qualifiedOperations:[],admissionExpectation:undefined}});t.after(()=>unqualified.close());
   const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter:unqualified},()=>now);
   await assert.rejects(bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},"b1b-unqualified-0001"),/unavailable/);
   assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_commands")).rows.length,0);
@@ -355,9 +737,215 @@ test("B1b exact-current confirmation guard",async t=>{
   assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_commands")).rows.length,before);
 });
 
-if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contract",()=>{
-  assert.ok(process.env.CONTROL_ROOM_B1B_A2_CONTRACT,"I1–I3 NOT SUPPLIED: reviewed tooling/captures, atomic A2 admission and B0-qualified disposable proof required");
-  assert.fail("I1–I3 real proof is unavailable until the reviewed upstream contract and harness are supplied; fixtures never establish integration");
+const carrierConfiguration = z.object({
+  adapterId:z.string().min(1),interpreter:z.string(),entrypoint:z.string(),toolingManifest:z.string(),
+  interpreterSha256:rawHash,entrypointSha256:rawHash,runRoot:z.string(),workRoot:z.string(),configRoot:z.string(),cwd:z.string(),
+  settingsFile:z.string(),availabilityFile:z.string(),toolingRevision:z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  settingsSha256:rawHash,availabilitySha256:rawHash,
+  executionIdentity:z.object({uid:z.number().int().nonnegative(),isolationEvidenceDigest:z.string().regex(/^sha256:[a-f0-9]{64}$/)}).strict(),
+  timeoutMs:z.number().int().min(100).max(60000).optional(),
+}).strict();
+const carrierSchema=z.object({modulePath:z.string(),moduleSha256:rawHash,configuration:carrierConfiguration,
+  qualifiedOperations:z.array(z.enum(["intake","confirm","start","stop","approve","answer"])).max(6)
+    .refine(ops=>new Set(ops).size===ops.length),
+  race:z.object({run:z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/),entrypoint:z.string(),entrypointSha256:rawHash}).strict().optional(),
+}).strict().refine(c=>!c.race || c.qualifiedOperations.length===0,"race carrier cannot qualify production operations");
+function checkedCarrierPath(path:string,directory=false){
+  assert.ok(isAbsolute(path) && resolve(path)===path,"carrier paths are absolute and canonical");
+  assert.doesNotMatch(path,/(?:^|[/\\])(?:\.env(?:\.[^/]*)?|\.aws|\.codex|\.hermes|auth\.json|credentials|tokens?)(?:[/\\]|$)/iu);
+  for(let part=path;;part=dirname(part)){
+    assert.equal(lstatSync(part).isSymbolicLink(),false,"carrier paths cannot follow symlinks");
+    if(part===dirname(part))break;
+  }
+  assert.equal(realpathSync(path),path);
+  assert.ok(directory?lstatSync(path).isDirectory():lstatSync(path).isFile(),"carrier path has the required file type");
+  return path;
+}
+async function loadA2Carrier(path:string){
+  checkedCarrierPath(path);assert.ok(lstatSync(path).size<=65536,"carrier byte cap");
+  const carrier=carrierSchema.parse(parseStrictJsonV1(await readFile(path,"utf8"),{maxBytes:65536}));
+  const c=carrier.configuration,root=c.configRoot;
+  for(const path of [root,c.runRoot,c.workRoot,c.cwd])checkedCarrierPath(path,true);
+  assert.equal(c.runRoot,join(root,"runs"));assert.equal(c.workRoot,join(root,"work"));assert.equal(c.cwd,join(root,"product"));
+  assert.equal(c.entrypoint,join(root,"cr-entry.py"));assert.equal(c.toolingManifest,join(root,"config","manifest.sha256"));
+  assert.equal(carrier.modulePath,join(root,"tools","loop","bridge","a2-contract.mjs"));
+  for(const path of [c.settingsFile,c.availabilityFile]){
+    const name=relative(join(root,"config"),path);
+    assert.ok(name && !isAbsolute(name) && name!==".." && !name.startsWith("../"),"carrier settings remain under config");
+  }
+  const hashes:[[string,string],...[string,string][]]=[[carrier.modulePath,carrier.moduleSha256],[c.interpreter,c.interpreterSha256],
+    [c.entrypoint,c.entrypointSha256],[c.toolingManifest,c.toolingRevision.slice(7)],[c.settingsFile,c.settingsSha256],[c.availabilityFile,c.availabilitySha256]];
+  if(carrier.race){assert.equal(carrier.race.entrypoint,join(root,"race-entry.py"));hashes.push([carrier.race.entrypoint,carrier.race.entrypointSha256]);}
+  for(const [path,hash] of hashes){checkedCarrierPath(path);assert.equal(loopByteHashV1(await readFile(path)),hash,"carrier digest checked before import or spawn");}
+  const lineage={toolingRevision:c.toolingRevision,decodeRunIdentity:(value:unknown)=>{
+    const run=loopImprovementRunIdentitySchemaV1.parse(value);
+    assert.equal(run.adapterId,c.adapterId);assert.equal(run.toolingRevision,c.toolingRevision);
+    assert.match(run.loopRunId,/^[a-z0-9][a-z0-9-]{0,40}$/);return run;
+  },decodeObservation:(value:unknown)=>{
+    const observation=loopImprovementObservationSchemaV1.parse(value);
+    assert.equal(observation.confirmation.path,"docs/request-source.md");return observation;
+  },matchesSavedInput:(_run:unknown,observation:{settingsDigest:string;confirmation:{path:string;sha256:string}},input:{description:string;settingsText:string;requestSha256:string;settingsSha256:string})=>
+    observation.settingsDigest===loopByteHashV1(canonicalJson(parseStrictJsonV1(input.settingsText,{maxBytes:65536})))
+    && observation.confirmation.path==="docs/request-source.md" && observation.confirmation.sha256===loopByteHashV1(input.description)
+    && input.requestSha256===loopByteHashV1(input.description) && input.settingsSha256===loopByteHashV1(input.settingsText)};
+  const module=await import(pathToFileURL(carrier.modulePath).href);
+  assert.equal(typeof module.a2BridgeContractV1,"function","reviewed A2 carrier exports the contract factory");
+  const contract=module.a2BridgeContractV1(lineage) as LoopAdapterConfigurationV1["contract"];
+  assert.equal(contract.lineage,lineage,"desk and service share the reviewed B1a lineage instance");
+  assert.match(contract.schemaDigest,/^sha256:[a-f0-9]{64}$/);
+  for(const name of ["generateRunId","decodeStatus","admissionExpectation","locateApprovalDocument","decodeApprovalSidecar"] as const)
+    assert.equal(typeof contract[name],"function",`reviewed A2 export supplies ${name} before any spawn`);
+  assert.equal(typeof contract.decisionProjection?.decodeGate,"function");
+  assert.ok(contract.decisionProjection?.questionTextPath.length);
+  assert.ok(contract.decisionProjection.questionTextPath.every(part=>typeof part==="string" && part && !["__proto__","prototype","constructor"].includes(part)));
+  return {carrier,configuration:{...c,contract:{...contract,lineage,qualifiedOperations:carrier.qualifiedOperations}}};
+}
+
+test("B1b A2 carrier validates every pin before import or spawn",async t=>{
+  const f=await synthetic(t),root=join(f.root,"carrier");
+  for(const part of ["runs","work","product","config","tools/loop/bridge"])await mkdir(join(root,part),{recursive:true});
+  const modulePath=join(root,"tools/loop/bridge/a2-contract.mjs"),marker=join(root,"tools/loop/bridge/imported");
+  const source=`import {writeFileSync} from "node:fs";writeFileSync(new URL("./imported",import.meta.url),"loaded");
+export const a2BridgeContractV1=lineage=>({lineage,schemaDigest:"sha256:${"c".repeat(64)}",qualifiedOperations:[],
+generateRunId:()=>"web-${"a".repeat(32)}",decodeStatus:()=>{throw new Error("no synthetic observations")},admissionExpectation:()=>({}),
+locateApprovalDocument:()=>({report:"gate.md",sidecar:"gate.json"}),decodeApprovalSidecar:value=>value,
+decisionProjection:{questionTextPath:["attention","text"],decodeGate:()=>null}});`;
+  await writeFile(modulePath,source);await writeFile(join(root,"cr-entry.py"),"# carrier loader fixture");
+  await writeFile(join(root,"race-entry.py"),"# carrier race fixture");await writeFile(join(root,"config/manifest.sha256"),"synthetic manifest");
+  await writeFile(join(root,"config/settings.json"),settingsText);await writeFile(join(root,"config/availability.json"),"{}");
+  const configuration={...f.configuration,configRoot:root,runRoot:join(root,"runs"),workRoot:join(root,"work"),cwd:join(root,"product"),
+    entrypoint:join(root,"cr-entry.py"),entrypointSha256:loopByteHashV1("# carrier loader fixture"),
+    toolingManifest:join(root,"config/manifest.sha256"),toolingRevision:`sha256:${loopByteHashV1("synthetic manifest")}`,
+    settingsFile:join(root,"config/settings.json"),availabilityFile:join(root,"config/availability.json")};
+  const {contract:_contract,...data}=configuration;
+  const carrier={modulePath,moduleSha256:loopByteHashV1(source),configuration:data,qualifiedOperations:[]};
+  const file=join(root,"config/contract.json");
+  const invalid=[{...carrier,moduleSha256:"0".repeat(64)},{...carrier,extra:true},
+    {...carrier,configuration:{...data,executionIdentity:{...data.executionIdentity,uid:null}}},
+    {...carrier,race:{run:"race-run",entrypoint:join(root,"race-entry.py"),entrypointSha256:loopByteHashV1("# carrier race fixture")},qualifiedOperations:["approve"]},
+    {...carrier,configuration:{...data,cwd:f.root}},{...carrier,modulePath:f.configuration.entrypoint}];
+  for(const bad of invalid){await writeFile(file,JSON.stringify(bad));await assert.rejects(loadA2Carrier(file));
+    await assert.rejects(readFile(marker),{code:"ENOENT"},"invalid carrier cannot import or spawn");}
+  await writeFile(file,JSON.stringify(carrier));
+  const loaded=await loadA2Carrier(file);assert.equal(await readFile(marker,"utf8"),"loaded");
+  assert.equal(loaded.configuration.contract.generateRunId(),`web-${"a".repeat(32)}`);
+  const race={run:"race-run",entrypoint:join(root,"race-entry.py"),entrypointSha256:loopByteHashV1("# carrier race fixture")};
+  await writeFile(file,JSON.stringify({...carrier,race}));assert.deepEqual((await loadA2Carrier(file)).carrier.race,race);
+});
+
+if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contract",{timeout:600000},async t=>{
+  const path=process.env.CONTROL_ROOM_B1B_A2_CONTRACT;
+  assert.ok(path,"I1–I3 NOT SUPPLIED: reviewed tooling/captures, atomic A2 admission and B0-qualified disposable proof required");
+  const {carrier,configuration}=await loadA2Carrier(path);
+  const port=Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE??59420);
+  assert.ok(port>=59420 && port<=59429,"real proof uses its reserved PostgreSQL ports");
+  const proof=await withRealPostgres(async pg=>{
+    const admin=new Pool(pg.connection("admin")),web=bindPrivatePgPool(new Pool(pg.connection("web")));
+    try{
+    await admin.query("INSERT INTO tenants(id,display_name) VALUES('tenant:web','Bridge proof')");
+    await admin.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Bridge proof')");
+    await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+      VALUES('identity:web','tenant:web','human','Proof owner',$1,$2,'active',$3,$3)`,[trust.issuer,sha256Digest({provider:trust.issuer,subject:"test-owner"}),new Date(now-60000).toISOString()]);
+    await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+      VALUES('grant:web','tenant:web','identity:web','owner','["*"]','["*"]','critical',true,false,$1,$1)`,[new Date(now-60000).toISOString()]);
+    const identity=createAccessVerifier(trust)(request(),now);
+    const projects=new WebProjectService(web.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now);
+    const {project}=await projects.create(identity,{title:"Bridge proof",summary:"Disposable reviewed A2 proof"},"a2-proof-project-0001");
+    await admin.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
+      '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`,[project.projectId]);
+    // Qualification exists only in this proof's memory. Never rewrite the carrier.
+    const qualified={...configuration,contract:{...configuration.contract,qualifiedOperations:["intake","confirm","start","stop","approve","answer"] as const}};
+    const adapter=createImproveControlRoomLoopAdapterV1(qualified);
+    const ownedRuns=new Set<string>();
+    const desk=new ImproveControlRoomDeskServiceV1(web.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,configuration.contract.lineage);
+    const makeBridge=(adapter:LoopAdapterV1)=>new ImproveControlRoomLoopServiceV1(web.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+    const bridge=makeBridge(adapter);
+    const handler=createImproveControlRoomHttpHandlerV1({origin,trust,service:desk,clock:()=>now,loopBridge:bridge});
+    const base=`/api/v1/projects/${encodeURIComponent(project.projectId)}/improvements/loop`;
+    let sequence=0;
+    const post=async(id:string|null,op:string,body:unknown,target=handler)=>{
+      const response=await target(request(`${base}/${id?encodeURIComponent(id)+"/":""}${op}`,"POST",body,`a2-proof-command-${++sequence}`));
+      assert.equal(response.status,202);return await response.json() as {requestId:string;commandId:string;state:string;engineRevision:number};
+    };
+    const evidence=async(result:{commandId:string;state:string;engineRevision:number},run:string)=>{
+      assert.equal(result.state,"accepted","real A2 command has positive saved evidence");
+      const status=await adapter.status(run);assert.equal(result.engineRevision,status.revision);
+      const receipt=status.receipts.find(r=>r.commandId===result.commandId)!;assert.ok(receipt);
+      const row=(await web.client.query<{binding:LoopBridgeBindingV1;result:{evidenceDigest:string}}>(
+        "SELECT binding,result FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='result'",[result.commandId])).rows[0]!;
+      assert.equal(receipt.bindingDigest,sha256Digest(row.binding));assert.equal(row.result.evidenceDigest,receipt.evidenceDigest);
+      const saved=parseStrictJsonV1(await readFile(join(configuration.runRoot,run,"run.json"),"utf8")) as {chain:{admissions:{command_id:string}[]}};
+      const record=admissionRecords.parse([saved.chain.admissions.find(record=>record.command_id===result.commandId)])[0]!;
+      assert.equal(record.binding_digest,sha256Digest(row.binding));
+      assert.equal(receipt.evidenceDigest,sha256Digest(record),"real receipt hashes the canonical immutable engine record");
+      assert.doesNotMatch(canonicalJson(record),/[/\\]/u,"admission evidence contains no host paths");
+      console.log("A2 admission "+canonicalJson(record));
+    };
+    const adoptGate=async(run:string)=>{
+      const status=await adapter.status(run);assert.ok(status.confirmation,"prepared gate has exact confirmed request evidence");ownedRuns.add(run);
+      const saved=await desk.saveLoopDraft(identity,project.projectId,{description:status.description,settingsText:adapter.settingsText},`a2-gate-draft-${++sequence}`);
+      const id=saved.request.requestId;
+      const link=await desk.recordLoopRunLink({projectId:project.projectId,requestId:id,initialInputVersion:1,run:status.run});
+      await desk.authorizeLoopStart(identity,project.projectId,{requestId:id,expectedVersion:1,runLinkId:link.runLink.runLinkId,
+        requestSha256:loopByteHashV1(status.description),settingsSha256:status.settingsSha256},`a2-gate-authorize-${++sequence}`,
+        {revision:status.revision,inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,confirmation:status.confirmation});
+      return {id,status};
+    };
+    try{
+      const intake=await post(null,"intake",{description:"Confirm this disposable bridge proof before starting work."});
+      let s=await bridge.status(identity,project.projectId,intake.requestId);
+      assert.ok(s.request.runLink);const run=s.request.runLink.loopRunId;ownedRuns.add(run);
+      await evidence(intake,run);assert.equal(s.request.savedAuthorization,false);
+      assert.equal((await handler(request(`${base}/${encodeURIComponent(intake.requestId)}/status`))).status,200);
+      const confirmed=await post(intake.requestId,"confirm",{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,
+        requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256});await evidence(confirmed,run);
+      s=await bridge.status(identity,project.projectId,intake.requestId);assert.equal(s.request.savedAuthorization,true);
+      const start=await post(intake.requestId,"start",{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId});
+      await evidence(start,run);
+      const stop=await post(intake.requestId,"stop",{runLinkId:s.request.runLink!.runLinkId});assert.equal(stop.state,"accepted");
+      assert.equal((await bridge.status(identity,project.projectId,intake.requestId)).engine.state,"stopped");
+      // Discover only lead-prepared harness runs. Never fabricate engine state or receipts.
+      const gates=new Map<string,string>();
+      for(const entry of await readdir(configuration.runRoot,{withFileTypes:true})){
+        if(!entry.isDirectory() || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(entry.name) || entry.name===carrier.race?.run)continue;
+        const status=await adapter.status(entry.name);
+        if(status.approval)gates.set(status.approval.step,entry.name);
+        if(status.question?.owner && !status.question.changesInput)gates.set("question",entry.name);
+      }
+      for(const step of ["plan","spec","question"]){
+        const gate=gates.get(step);assert.ok(gate,`lead supplied real ${step} gate`);
+        const {id,status}=await adoptGate(gate);
+        const result=step==="question"?await post(id,"answer",{expectedVersion:1,expectedRevision:status.revision,questionId:status.question!.questionId,
+          inputVersion:status.question!.inputVersion,questionReportSha256:status.question!.reportSha256,text:"Keep the approved scope."})
+          :await post(id,"approve",{expectedVersion:1,expectedRevision:status.revision,...status.approval!});
+        await evidence(result,gate);
+      }
+      assert.ok(carrier.race,"lead supplied the deterministic G3 race carrier");
+      const raced=createImproveControlRoomLoopAdapterV1({...qualified,entrypoint:carrier.race.entrypoint,entrypointSha256:carrier.race.entrypointSha256});
+      try{
+        const {id,status}=await adoptGate(carrier.race.run);assert.equal(status.approval?.step,"plan");
+        const racedBridge=makeBridge(raced),racedHandler=createImproveControlRoomHttpHandlerV1({origin,trust,service:desk,clock:()=>now,loopBridge:racedBridge});
+        const result=await post(id,"approve",{expectedVersion:1,expectedRevision:status.revision,...status.approval!},racedHandler);
+        assert.equal(result.state,"refused","real A2 race refuses old approval pins");
+        checkedCarrierPath(join(configuration.configRoot,"evidence","race.fired"));
+        const stop=JSON.parse(await readFile(join(configuration.configRoot,"evidence","race-stop.json"),"utf8"));
+        assert.equal(stop.state,"stopped");assert.equal(stop.revision,status.revision+1);
+        const afterStop=await readFile(join(configuration.runRoot,carrier.race.run,"run.json"),"utf8");
+        assert.equal(JSON.parse(afterStop).chain.revision,stop.revision);
+        assert.equal(JSON.parse(afterStop).chain.admissions.some((r:{command_id:string})=>r.command_id===result.commandId),false);
+        assert.equal((await raced.status(carrier.race.run)).state,"stopped");
+        assert.equal(await readFile(join(configuration.runRoot,carrier.race.run,"run.json"),"utf8"),afterStop);
+      }finally{await raced.close();}
+    }finally{
+      // Stop every proof run before closing the adapter or database, even on failure.
+      try{for(const run of ownedRuns){const stop=spawnSync(configuration.interpreter,[configuration.entrypoint,"stop",run,"--json"],
+        {cwd:configuration.cwd,env:{NODE_ENV:"production",LANG:"C.UTF-8",LC_ALL:"C.UTF-8"},encoding:"utf8",timeout:60000});assert.equal(stop.status,0,"proof run cleanup Stop succeeds");}}
+      finally{await adapter.close();}
+    }
+    }finally{await web.close();await admin.end();}
+  },{port,allowedPorts:Array.from({length:10},(_,i)=>59420+i),database:"a2_bridge_proof",boundMs:550000});
+  assert.equal(proof.cleanedUp,true);assert.deepEqual(proof.leftovers,[]);
+
 });
 
 test("B1b all seven routes recheck expiry, revocation, project and replay authority",async t=>{
@@ -984,12 +1572,12 @@ test("B2b approval document isolation", async t=>{
 });
 
 for(const composition of ["hosted","local"] as const)test(`B2b ${composition} attention and document composition`,async t=>{
+  const canonical={observedAt:new Date(now).toISOString(),items:[],truncated:false};
+  for(const mode of ["loop","canonical","both","neither","failed-canonical"] as const){
   const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
   const directory=join(f.configuration.runRoot,run);await mkdir(directory);
   const text="SYNTHETIC complete sealed plan.";const approval={step:"plan" as const,inputVersion:1,head:"a".repeat(40),reportSha256:loopByteHashV1(text)};
   await writeFile(join(directory,"report.md"),text);await writeFile(join(directory,"report.json"),JSON.stringify(approval));await f.edit(run,{state:"waiting",approval});
-  const canonical={observedAt:new Date(now).toISOString(),items:[],truncated:false};
-  for(const mode of ["loop","canonical","both","neither","failed-canonical"] as const){
     let canonicalReads=0;
     const options={clock:()=>now,database:{client:f.client,isAvailable:()=>true,close:async()=>{}},
       ...(mode==="loop"||mode==="both"||mode==="failed-canonical"?{loopBridge:{integrityKey:KEY,adapter:f.adapter}}:{}),
@@ -1019,10 +1607,6 @@ for(const composition of ["hosted","local"] as const)test(`B2b ${composition} at
       assert.equal((await call("/api/v1/needs-me/action-items?extra=true")).status,400);
       assert.equal(canonicalReads,mode==="canonical"||mode==="both"||mode==="failed-canonical"?1:0);
     }finally{await close();}
-    // Each fixture composition owns an adapter lifecycle, so restore a fresh factory after close.
-    if(mode!=="failed-canonical"){
-      const replacement=createImproveControlRoomLoopAdapterV1(f.configuration);
-      Object.assign(f.adapter,{...replacement});t.after(()=>replacement.close());
-    }
+
   }
 });

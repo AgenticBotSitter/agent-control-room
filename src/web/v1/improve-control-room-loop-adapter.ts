@@ -7,20 +7,19 @@ import { z } from "zod";
 import { loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopImprovementContractV1 } from "../../improve-control-room/v1/schemas";
 import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
-import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, unavailableLoopGate,
+import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, loopProgressSchemaV1, unavailableLoopGate,
   type LoopImprovementDecisionsV1 } from "./improve-control-room-loop-attention-wire";
-import { sha256Digest } from "../../security";
+import { canonicalJson, sha256Digest } from "../../security";
 
 export const loopByteHashV1 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const scalar = z.union([z.number().int().positive().max(Number.MAX_SAFE_INTEGER), z.string().min(1).max(180)]);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const envelopeSchema = z.object({ schema_version: z.literal(1), run: z.unknown(), state: z.string().min(1).max(64), revision,
-  next: z.unknown(), attention: z.array(z.unknown()).max(100), steps: z.array(z.unknown()).max(1000),
-  counters: z.record(z.string(), z.unknown()), error: z.unknown() }).strict()
+  next: z.unknown(), attention: z.unknown(), steps: z.array(z.unknown()).max(1000),
+  counters: z.record(z.string(), z.unknown()), error: z.unknown(), request: z.unknown().optional() }).strict()
   .refine(value => ["run", "next", "error"].every(key => Object.hasOwn(value, key)));
-const seal = z.object({ step: z.enum(["plan", "spec"]), inputVersion: scalar,
-  head: z.string().regex(/^[a-f0-9]{40}$/), reportSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const seal = loopApprovalDescriptorSchemaV1;
 const question = z.object({ questionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/), inputVersion: scalar,
   reportSha256: z.string().regex(/^[a-f0-9]{64}$/), owner: z.boolean(), changesInput: z.boolean() }).strict();
 /** Normalized by a reviewed decoder; no raw engine output crosses HTTP. */
@@ -30,8 +29,7 @@ export const loopEngineStatusSchemaV1 = z.object({
   description: z.string().min(1).max(8000), settingsSha256: z.string().regex(/^[a-f0-9]{64}$/),
   settingsDigest: z.string().min(1).max(180), confirmation: loopImprovementConfirmationSchemaV1.nullable(),
   approval: seal.nullable(), question: question.nullable(),
-  progress: z.object({ step: z.enum(["intake", "plan", "spec", "build", "review", "final"]).nullable(),
-    completed: z.number().int().nonnegative().max(100000), attention: z.enum(["none", "owner", "blocked"]) }).strict(),
+  progress: loopProgressSchemaV1,
   // Positive command-specific evidence, decoded from A2's saved receipts/ledger.
   receipts: z.array(z.object({ commandId: z.string().regex(/^loop-command:[a-f0-9]{32}$/),
     bindingDigest: digest, state: z.enum(["accepted", "waiting", "refused"]), evidenceDigest: digest,
@@ -83,9 +81,11 @@ export type LoopAdapterContractV1 = {
     decodeGate(output: unknown, status: LoopEngineStatusV1): unknown };
   locateApprovalDocument?: (run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>) => { report: string; sidecar: string };
   decodeApprovalSidecar?: (output: unknown) => NonNullable<LoopEngineStatusV1["approval"]>;
-  /** I2: supplied only by the reviewed A2 integration. It holds A2's mutation
-   * lock, checks this exact binding, then invokes the fixed command under it. */
-  atomicAdmission?: (binding: Readonly<LoopBridgeBindingV1>, invoke: () => Promise<LoopEngineStatusV1>) => Promise<LoopEngineStatusV1>;
+  /** Builds A2's lock-checked expectation from the exact cached observation.
+   * No refresh or invocation belongs in this installation-owned callback. */
+  admissionExpectation?: (binding: Readonly<LoopBridgeBindingV1>, context: Readonly<{
+    operation: "intake" | "confirm" | "start" | "approve" | "answer"; commandId: string;
+  }>) => unknown | Promise<unknown>;
   qualifiedOperations: readonly LoopBridgeOperationV1[];
 };
 export type LoopAdapterConfigurationV1 = {
@@ -192,12 +192,12 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       throw unavailable();
     return status;
   };
-  function execute(args: string[], run: string, json = true, beforeSpawn?: () => void,
-    command?: { id: string; binding: LoopBridgeBindingV1 }): Promise<LoopEngineStatusV1 | undefined> {
+  function execute(args: string[], run: string, beforeSpawn?: () => void,
+    command?: { id: string; binding: LoopBridgeBindingV1 }): Promise<LoopEngineStatusV1> {
     if (closing) return Promise.reject(unavailable());
     validate(); runId(run);
     beforeSpawn?.();
-    const operation = new Promise<LoopEngineStatusV1 | undefined>((fulfill, reject) => {
+    const operation = new Promise<LoopEngineStatusV1>((fulfill, reject) => {
       const child = spawn(c.interpreter, [c.entrypoint, ...args], { cwd: c.cwd, shell: false,
         // Positive allowlist: no inherited service or sibling credentials, no HOME/PATH.
         env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
@@ -213,22 +213,24 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
         if (failed || ![0, 2, 3].includes(code ?? -1)) { reject(unavailable()); return; }
         try {
-          if (!json && code === 0) { fulfill(undefined); return; }
           let observed: LoopEngineStatusV1;
           try { observed = decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), run); }
           catch {
-            // Approve has no JSON flag. A definite refusal can still be bound to
-            // the exact run through its validated status observation.
-            if (json || (code !== 2 && code !== 3)) throw unavailable();
+            // A refusal may have no decodable state (for example a busy lock).
+            // One independent status read can recover an already saved admission.
+            if (!command || (code !== 2 && code !== 3)) throw unavailable();
             observed = await status(run);
           }
           if (code === 2 || code === 3) {
             if (!command) throw unavailable();
-            // Exit status describes this invocation, even when the run remains waiting/ready.
-            const receipt: LoopEngineStatusV1["receipts"][number] = { commandId: command.id,
-              bindingDigest: sha256Digest(command.binding), state: "refused",
-              evidenceDigest: sha256Digest({ exitCode: code, status: observed }), error: code === 2 ? "REFUSED" : "INELIGIBLE" };
-            observed.receipts = [receipt, ...observed.receipts.filter(saved => saved.commandId !== command.id)].slice(0, 100);
+            // A saved matching admission survives a later engine refusal.
+            if (!observed.receipts.some(saved => saved.commandId === command.id
+              && saved.bindingDigest === sha256Digest(command.binding))) {
+              const receipt: LoopEngineStatusV1["receipts"][number] = { commandId: command.id,
+                bindingDigest: sha256Digest(command.binding), state: "refused",
+                evidenceDigest: sha256Digest({ exitCode: code, status: observed }), error: code === 2 ? "REFUSED" : "INELIGIBLE" };
+              observed.receipts = [receipt, ...observed.receipts.filter(saved => saved.commandId !== command.id)].slice(0, 100);
+            }
           }
           fulfill(observed);
         } catch { reject(unavailable()); }
@@ -299,7 +301,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   const available = (operation: LoopBridgeOperationV1) => {
     validate();
     return !closing && c.contract.qualifiedOperations.includes(operation)
-      && (!["start", "approve", "answer"].includes(operation) || !!c.contract.atomicAdmission);
+      && (operation === "stop" || typeof c.contract.admissionExpectation === "function");
   };
   async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string) {
     if (!available(operation) || binding.adapterId !== c.adapterId || binding.toolingRevision !== c.toolingRevision
@@ -307,26 +309,32 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     validate(); beforeSpawn();
     const run = runId(binding.loopRunId);
     const apply = async () => {
+      let expectation: string | undefined;
+      if (operation !== "stop") {
+        const expected = await c.contract.admissionExpectation!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }),
+          Object.freeze({ operation, commandId }));
+        beforeSpawn();
+        expectation = await commandFile(commandId, "expect.json", canonicalJson(expected));
+      }
       beforeSpawn();
       let args: string[];
       switch (operation) {
-        case "intake": args = ["intake", run, "--source", await commandFile(commandId, "source.txt", text!), "--settings", c.settingsFile, "--json"]; break;
+        case "intake": args = ["intake", run, "--source", await commandFile(commandId, "source.txt", text!), "--settings", c.settingsFile, "--availability", c.availabilityFile, "--json"]; break;
         case "confirm": args = ["confirm-request", run, "--sha256", binding.requestSha256, "--json"]; break;
         case "start": args = ["start", run, "--settings", c.settingsFile, "--availability", c.availabilityFile, "--json"]; break;
         case "stop": args = ["stop", run, "--json"]; break;
-        case "approve":
-          return await execute(["approve", run, binding.body.step as string], run, false, beforeSpawn, { id: commandId, binding }) ?? status(run);
+        case "approve": args = ["approve", run, binding.body.step as string, "--json"]; break;
         case "answer": args = ["answer", run, binding.body.questionId as string, "--input-version",
-          String(binding.inputVersion), "--file", await commandFile(commandId, "answer.txt", text!), "--by", "owner", "--json"]; break;
+          String(binding.body.inputVersion), "--file", await commandFile(commandId, "answer.txt", text!), "--by", "owner", "--json"]; break;
       }
-      return (await execute(args, run, true, beforeSpawn, { id: commandId, binding }))!;
+      if (expectation) args.push("--expect", expectation);
+      return execute(args, run, beforeSpawn, { id: commandId, binding });
     };
-    // No invented CLI flags: only the reviewed A2 lock seam can enable these calls.
+    // A2 owns compare-and-admit under its mutation lock.
     if (activeCommands.has(commandId)) throw unavailable();
     activeCommands.add(commandId);
     try {
-      return await (["start", "approve", "answer"].includes(operation)
-        ? c.contract.atomicAdmission!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }), apply) : apply());
+      return await apply();
     } finally { activeCommands.delete(commandId); }
   }
   const recoveryChildren = new Map<string, LoopRecoveryChildV1>();
