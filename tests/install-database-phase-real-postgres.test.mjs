@@ -35,6 +35,7 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { reclaimLeakedSegments } from "./helpers/shared-memory-reclaim.mjs";
 import { pgHbaPeerMapV1, planPgClusterLayoutV1 } from "../src/pg-runtime/v1/pg-cluster-layout";
 import { vendorPgRuntimeV1 } from "../src/updater/v1/pg/pg-runtime-vendor";
 import { initializeDatabaseV1 as initializeDatabaseV1Script } from "../src/updater/v1/pg/init-database.mjs";
@@ -692,13 +693,37 @@ test("init killed at EVERY statement, before and during it, converges on retry (
         if (pid > 1 && isProcessAlive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
       }
     });
-    const outcome = await killEveryStatement({ label: "init", phase: "init",
-      request: initRequest(root, { logins, port }), passwords, duringSample: 16,
-      // Retired debris is removed between runs only to bound the disk use (each is a
-      // whole cluster); it is asserted to EXIST first, which is the claim.
-      afterKill: async () => {
-        for (const name of retiredDirectories(root)) rmSync(join(root, "pg", name), { recursive: true, force: true });
-      } });
+    // Every kill here is a SIGKILL, and a SIGKILLed postmaster, `initdb` or `postgres
+    // --boot` cannot release its SysV segment: each leaves one behind with a dead
+    // creator, and a few runs of this lane filled the machine's segments so `initdb`
+    // failed for every other job. The data directory's inode is the segment's key and
+    // survives the sweep's rename, so the segments are given back BEFORE a retired
+    // directory is deleted, and again after the loop for what the last sweep retired.
+    const leaked = { removed: [], remaining: [], unreadable: 0 };
+    const giveBackSegments = async () => {
+      const report = await reclaimLeakedSegments(
+        ["data-A", ...retiredDirectories(root)].map(name => join(root, "pg", name)));
+      leaked.removed.push(...report.removed);
+      leaked.remaining = report.remaining;
+      if (report.status === "unreadable") leaked.unreadable += 1;
+    };
+    let outcome;
+    try {
+      outcome = await killEveryStatement({ label: "init", phase: "init",
+        request: initRequest(root, { logins, port }), passwords, duringSample: 16,
+        // Retired debris is removed between runs only to bound the disk use (each is a
+        // whole cluster); it is asserted to EXIST first, which is the claim.
+        afterKill: async () => {
+          await giveBackSegments();
+          for (const name of retiredDirectories(root)) rmSync(join(root, "pg", name), { recursive: true, force: true });
+        } });
+    } finally {
+      // In a `finally` so a failing lane gives them back too. A postmaster still
+      // alive here is reported by the assertions below, never signalled.
+      await giveBackSegments();
+    }
+    t.diagnostic(`init: ${leaked.removed.length} leaked SysV segment(s) given back, `
+      + `${leaked.unreadable} unreadable ipcs table(s)`);
     // `lateArms` is the X1 mechanism, counted rather than hidden: a run that armed a
     // deferred kill and finished anyway. It is printed even when it is zero, so a
     // lane that no longer exercises the case says so instead of leaving a reader
@@ -715,6 +740,9 @@ test("init killed at EVERY statement, before and during it, converges on retry (
     const rows = execFileSync("/bin/ps", ["-axww", "-o", "pid=,command="], { encoding: "utf8" });
     assert.equal(rows.includes(` -D ${join(root, "pg", "data-A")}`), false,
       "no PG-family process may still be running on the data directory");
+    // ...and nothing of the lane holds a segment: a creator still alive, or a segment still
+    // attached, is a postmaster the lane did not stop and that the loop above never reaped.
+    assert.deepEqual(leaked.remaining, [], "no SysV segment of the lane's clusters may survive the lane");
     const context = await startPostmaster({ root, port });
     const control = await spawnPgFamily({ executable: join(root, "runtime/pg-current/bin/pg_controldata"),
       args: ["-D", join(root, "pg", "data-A")], ...context, role: "database", cwd: join(root, "pg") });
