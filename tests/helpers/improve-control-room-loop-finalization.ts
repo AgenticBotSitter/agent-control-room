@@ -269,7 +269,11 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href&&proce
 // lineage, never a qualification verdict or completion JSON. R is created by the
 // lead, not by these tests. Opens must reuse the same persistent database and
 // signed target, and close must close connections only. Cold GET child processes
-// reopen this setup. The test owns every finalizer/publisher assertion.
+// reopen this setup. The lead declares comma-separated noncredential variable
+// names in CONTROL_ROOM_I1_CHILD_ENV for database/configuration reopening. Only
+// those names plus HOME/TMPDIR pass through; credential-looking names or store
+// paths are refused at gate start. Fixed gate controls override passthrough.
+// The test owns every finalizer/publisher assertion.
 import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
 import type { DatabaseClient } from "../../src/persistence/database";
@@ -284,7 +288,7 @@ import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { isAbsolute, relative, sep } from "node:path";
+import { dirname, isAbsolute, relative, sep } from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 const execI1 = promisify(execFile);
 export type I1Gate = "B3a" | "B3c-refused" | "B3c-owned" | "B4";
@@ -308,7 +312,22 @@ export async function i1Regular(file:string,root?:string){
   if(root)assert.ok(relative(root,file)!==""&&relative(root,file)!==".."&&!relative(root,file).startsWith(`..${sep}`)&&!isAbsolute(relative(root,file)),"I-1 path must be inside R");
   return file;
 }
+export function i1ChildEnvironment(env:Readonly<Record<string,string|undefined>>=process.env):Record<string,string|undefined>{
+  const names=(env.CONTROL_ROOM_I1_CHILD_ENV??"").split(",").map(name=>name.trim()).filter(Boolean);
+  const child:Record<string,string|undefined>={HOME:env.HOME,TMPDIR:env.TMPDIR};
+  const credentialStore=/(?:^|[/\\:=;\s"'?&#])(?:\.env(?:\.[\w.-]+)?|\.codex|\.hermes|\.aws|\.ssh|\.gnupg|\.netrc|\.npmrc|\.pgpass|auth\.json|credentials?(?:\.[\w.-]+)?|tokens?(?:\.[\w.-]+)?|keychains?)(?=$|[/\\:;\s"'?&#])/i;
+  for(const name of names){
+    assert.ok(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name),"I-1 CONTROL_ROOM_I1_CHILD_ENV requires variable names");
+    assert.ok(!/KEY|TOKEN|SECRET|PASSWORD|AUTH|COOKIE/i.test(name),"I-1 CONTROL_ROOM_I1_CHILD_ENV refuses credential-looking variable names");
+    const value=env[name];
+    assert.ok(value===undefined||!credentialStore.test(value),"I-1 CONTROL_ROOM_I1_CHILD_ENV refuses credential store values");
+    if(value!==undefined)Object.defineProperty(child,name,{value,enumerable:true,configurable:true,writable:true});
+  }
+  child.CONTROL_ROOM_I1_CHILD_ENV=names.join(",");
+  return child;
+}
 export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
+  const childEnvironment=i1ChildEnvironment();
   const root=process.env.CONTROL_ROOM_I1_R;
   assert.ok(root&&isAbsolute(root),`${gate} requires R: CONTROL_ROOM_I1_R and a reviewed private setup module`);
   assert.equal(await realpath(root),root);
@@ -318,6 +337,15 @@ export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
   await i1Regular(setupFile,root);
   const carrierFile=await i1Regular(join(root,"config/contract.json"),root);
   const carrier=JSON.parse(await readFile(carrierFile,"utf8"));
+  // cr-entry.py replaces CR_* from this pinned file; the parent environment
+  // alone cannot tell us where cr.py's trash_root_for will move the logs.
+  const entryRoots=JSON.parse(await readFile(await i1Regular(join(root,"tools/loop/bridge/cr-entry.json"),root),"utf8"));
+  const workRoot=entryRoots.CR_WORK_ROOT;
+  const trashMessage=`${gate} requires R: CR_WORK_ROOT and its sibling .cr-trash must be inside R`;
+  assert.ok(typeof workRoot==="string"&&isAbsolute(workRoot),trashMessage);
+  const trashRoot=join(dirname(workRoot),".cr-trash"),inside=relative(root,trashRoot);
+  assert.ok(inside!==""&&inside!==".."&&!inside.startsWith(`..${sep}`)&&!isAbsolute(inside),trashMessage);
+  assert.equal(workRoot,carrier.configuration.workRoot,`${gate} requires R: CR_WORK_ROOT must match carrier workRoot`);
   await i1Regular(carrier.modulePath,root);
   assert.equal(carrier.modulePath,join(root,"tools/loop/bridge/a2-contract.mjs"));
   assert.equal(i1ByteHash(await readFile(carrier.modulePath)),carrier.moduleSha256,"I-1 checks module bytes before import");
@@ -369,7 +397,7 @@ export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
       // A fresh Node process reopens the private setup's persistent database.
       // Neither this process's module cache nor a run-link map can serve it.
       const child=await execI1(process.execPath,["--import","tsx",resolve("tests/helpers/improve-control-room-loop-finalization.ts"),"--i1-card-host",gate],{
-        cwd:process.cwd(),encoding:"utf8",timeout:60000,maxBuffer:1<<20,env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1",CONTROL_ROOM_I1_R:root,
+        cwd:process.cwd(),encoding:"utf8",timeout:60000,maxBuffer:1<<20,env:{...childEnvironment,NODE_ENV:"test",PATH:"/usr/bin:/bin",CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1",CONTROL_ROOM_I1_R:root,
           [`CONTROL_ROOM_${prefix}_A2_CONTRACT`]:setupFile}});
       const line=child.stdout.split("\n").find(value=>value.startsWith("I1_CARD_JSON "));
       assert.ok(line,"I-1 cold card process must report its completed GET");

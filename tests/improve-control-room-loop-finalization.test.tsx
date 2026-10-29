@@ -416,7 +416,18 @@ if(ordinary){
   });
 }
 
-import { installedI1Gate, i1ByteHash, i1Regular } from "./helpers/improve-control-room-loop-finalization";
+import { installedI1Gate, i1ByteHash, i1Regular, i1ChildEnvironment } from "./helpers/improve-control-room-loop-finalization";
+if(ordinary)test("I-1 child environment accepts only declared noncredential variables",async()=>{
+  const env={HOME:"/fixture/home",TMPDIR:"/fixture/tmp",CONTROL_ROOM_I1_CHILD_ENV:" PGHOST, PGDATABASE ",PGHOST:"/fixture/socket",PGDATABASE:"fixture",UNDECLARED:"omit"};
+  assert.deepEqual(i1ChildEnvironment(env),{HOME:env.HOME,TMPDIR:env.TMPDIR,PGHOST:env.PGHOST,PGDATABASE:env.PGDATABASE,CONTROL_ROOM_I1_CHILD_ENV:"PGHOST,PGDATABASE"});
+  for(const name of ["API_KEY","access_token","SecretPath","dbPassword","AUTH_FILE","sessionCookie"]){
+    assert.throws(()=>i1ChildEnvironment({...env,CONTROL_ROOM_I1_CHILD_ENV:name}),/CONTROL_ROOM_I1_CHILD_ENV refuses credential-looking variable names/);
+  }
+  for(const value of ["/fixture/.env","/fixture/.env.local","/fixture/.codex/auth.json","/fixture/.hermes","/fixture/.aws/config","/fixture/credentials.json","/fixture/tokens.json","/fixture/Keychains/login.keychain-db"]){
+    assert.throws(()=>i1ChildEnvironment({...env,CONTROL_ROOM_I1_CHILD_ENV:"CONFIG_FILE",CONFIG_FILE:value}),/CONTROL_ROOM_I1_CHILD_ENV refuses credential store values/);
+  }
+  assert.throws(()=>i1ChildEnvironment({...env,CONTROL_ROOM_I1_CHILD_ENV:"NOT A NAME"}),/requires variable names/);
+});
 if(process.env.CONTROL_ROOM_B3C_REQUIRE_A2==="1")test("B3c reviewed retention and refused cleanup contract",async t=>{
   const g=await installedI1Gate(t,"B3c-refused");
   assert.equal(g.carrier.finalization,"retain");assert.equal(g.adapter().finalization?.cleanup,undefined);
@@ -482,6 +493,7 @@ if(process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE==="1")test("B3c reviewed ret
     ...(candidate?["publish:before","publish:after","append-published:before","append-published:after"]:[]),
     "append-announced:before","append-announced:after","journal:before","journal:after"];
   let logCrash:boolean|undefined,publications=0,crashes=0,restarts=0;
+  let committedCandidateRevision:string|null=null;
   const trip=(point:string)=>{if(points[0]===point){points.shift();crashes++;throw Error(`I1_CRASH ${point}`);}};
   const {execFile}=await import("node:child_process"),{promisify}=await import("node:util");
   const crashCommand=async(name:string,side:string,argv:string[])=>{
@@ -558,13 +570,17 @@ if(process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE==="1")test("B3c reviewed ret
       }};
     try{const result=await g.finalize(capability,async input=>{
       publications++;assert.equal(candidate,true,"H-S has no publication or B4 commit crash point");
-      trip("publish:before");const receipt=await g.publisher().publishCompletion(input);trip("publish:after");return receipt;
+      trip("publish:before");const receipt=await g.publisher().publishCompletion(input);
+      committedCandidateRevision=receipt.candidate.candidateRevision;trip("publish:after");return receipt;
     });assert.ok(result);record=result;break;}
     catch(error){
       assert.match(String(error),/I1_CRASH/);
       for(let restart=0;restart<2;restart++){
         await g.reopen();restarts++;
-        if(candidate){const card=await g.card();if(await g.count())assert.ok(card.candidate,"H-C2 card GET first after restart");}
+        if(candidate){
+          const card=await g.card();
+          assert.equal(card.candidate?.candidateRevision??null,committedCandidateRevision,"H-C2 first card GET after every restart reflects the committed candidate, including before publication");
+        }
         else{const native=await g.nativeRead();if(native)assert.equal(native.observation.outcome,"stopped","H-S read first after restart");}
         const retained=await g.adapter().finalization!.readRecord(g.target);if(retained?.custody)await g.rehash(retained);
       }
@@ -576,6 +592,7 @@ if(process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE==="1")test("B3c reviewed ret
   assert.equal(record.phase,"cleanup");assert.equal(record.cleanup?.state,"complete");assert.equal(record.cleanup.reasonCode,"CLEANUP_COMPLETE");
   assert.equal(await g.count(),candidate?1:0);if(!candidate)assert.equal(publications,0);
   const journal=(await g.state()).close;assert.equal(journal.local,true);assert.equal(journal.clone_kept,initial.clone);assert.equal(journal.state,"closed");
+  if(logCrash)assert.ok(journal.moves.length>0,"close plan listed logs, so cleanup must move at least one log");
   const expected:string[]=[],actual:string[]=[];
   for(const move of journal.moves){
     assert.equal(move.state,"done");assert.notEqual(move.source,initial.clone);

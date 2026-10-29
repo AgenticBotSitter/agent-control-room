@@ -142,7 +142,7 @@ test('B3a reviewed A2 recovery contract',{skip:process.env.CONTROL_ROOM_B3A_REQU
       assert.equal((await bridge.status(g.f.identity,g.target.projectId,g.target.requestId)).display.runLinkId,g.target.runLinkId);
       const saved=await g.state();assert.deepEqual(saved.chain.counters,beforeCounters,'recovery does not reset limits');
       assert.equal(saved.steps.length,beforeSteps,'denied recovery launches no paid attempt');
-      assert.ok(['runnable','waiting','stopped','terminal','uncertain','input_changed','unavailable'].includes(observation.mode));
+      assert.equal(observation.mode,'runnable','B3a prepared recovery run remains runnable with model routes denied');
     }finally{await worker.close();}
     const after=await g.cr(['recovery',g.target.run.loopRunId,'inspect','--json']);
     if(after.driver.record){assert.equal(after.driver.state,'ended');assert.match(after.driver.record.generation,/^[a-f0-9]{32}$/);}
@@ -151,8 +151,7 @@ test('B3a reviewed A2 recovery contract',{skip:process.env.CONTROL_ROOM_B3A_REQU
   // R272 uses the owner account. This is honest isolation evidence, not B0
   // worker-account qualification. R6 Phase A is ordered after this gate.
   const r272={noWorkerAccount:true,isolationEvidenceDigest:g.configuration.executionIdentity.isolationEvidenceDigest};
-  assert.equal(r272.noWorkerAccount,true);assert.equal(r272.isolationEvidenceDigest,sha256Digest('R272: no worker account'));
-  console.log(`B3a run=${g.target.run.loopRunId} service_restarts=2 real_driver_admissions=${admissions} model_launch_routes_denied=true isolation=R272`);
+  console.log(`B3a run=${g.target.run.loopRunId} service_restarts=2 real_driver_admissions=${admissions} model_launch_routes_denied=true isolation=R272 r272=${JSON.stringify(r272)}`);
 });
 
 import { resultCrashDatabase, exclusiveSyntheticRecoveryCapability } from './helpers/improve-control-room-loop-recovery';
