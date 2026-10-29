@@ -148,7 +148,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   const finalization = captureLoopFinalizationCapabilityV1(c.contract.finalization);
   const monitoring = c.contract.monitoring ? Object.freeze({ enabled: c.contract.monitoring.enabled.bind(c.contract.monitoring),
     decodeStatus: c.contract.monitoring.decodeStatus.bind(c.contract.monitoring) }) : undefined;
-  if (monitoring && dirname(c.availabilityFile) !== c.configRoot) throw unavailable();
+  if (monitoring) checkedPath(c.availabilityFile, c.configRoot);
   const monitoringEnabled = () => { try { return monitoring?.enabled() === true; } catch { return false; } };
   const clock = c.monitoringClock ?? loopMonitoringClockV1;
   let monitor: ReturnType<typeof createImproveControlRoomLoopMonitorV1> | undefined;

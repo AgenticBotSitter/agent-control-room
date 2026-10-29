@@ -49,6 +49,40 @@ async function fixture(t:TestContext,existingRoot?:string,fileName='health.json'
 }
 const ordinary=process.env.CONTROL_ROOM_B3B_LOAD!=='1';
 if(ordinary){
+  test('B3b monitoring adapter accepts only regular availability descendants',async t=>{
+    const e=await monitoringEngine(t);
+    const directory=join(e.configuration.configRoot,'config');await mkdir(directory,{mode:0o700});
+    const availabilityFile=join(directory,'availability.json');
+    await writeFile(availabilityFile,await readFile(e.configuration.availabilityFile),{mode:0o600});
+    const contract={...e.configuration.contract,monitoring:{enabled:()=>true,decodeStatus:()=>({reasonCode:null,deadline:null,workerState:'none'})}};
+    const configuration={...e.configuration,contract,availabilityFile};
+    await t.test('nested availability loads and refreshes beside the file',async()=>{
+      const adapter=createImproveControlRoomLoopAdapterV1({...configuration,contract:{...contract,recovery:{enabled:()=>true,
+        inspect:async()=>{throw Error('unused');},claimDriver:async()=>({kind:'busy' as const,evidenceDigest:sha256Digest('SYNTHETIC')})}}});
+      try{
+        assert.equal(typeof adapter.monitoringTick,'function');adapter.monitoringTick!();
+        await until(async()=>(await e.healthTraces()).length===1);
+        await until(async()=>!existsSync(availabilityFile+'.monitor.lock'));
+        assert.equal(JSON.parse(await readFile(availabilityFile,'utf8')).schema_version,1);
+        assert.equal(existsSync(availabilityFile+'.schedule.json'),true);
+      }finally{await adapter.close();}
+    });
+    await t.test('outside config root is refused',async()=>{
+      const outside=await mkdtemp(resolve('.test-tmp/b3b-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+      const file=join(outside,'availability.json');await writeFile(file,'{}',{mode:0o600});
+      assert.throws(()=>createImproveControlRoomLoopAdapterV1({...configuration,availabilityFile:file}),/loop_adapter_unavailable/);
+    });
+    await t.test('symlinked availability and ancestor are refused',async()=>{
+      const file=join(directory,'linked.json'),alias=join(e.configuration.configRoot,'alias');
+      await symlink(availabilityFile,file);await symlink(directory,alias,'dir');
+      for(const path of [file,join(alias,'availability.json')]){
+        assert.throws(()=>createImproveControlRoomLoopAdapterV1({...configuration,availabilityFile:path}),/loop_adapter_unavailable/);
+      }
+    });
+    await t.test('directory availability is refused',async()=>{
+      assert.throws(()=>createImproveControlRoomLoopAdapterV1({...configuration,availabilityFile:directory}),/loop_adapter_unavailable/);
+    });
+  });
   test('B3b normal cadence and one bounded retry',async t=>{
     const f=await fixture(t);await f.tick();assert.equal(f.calls(),1);f.monitor.assertAvailability();
     f.advance(2999999);await f.tick();assert.equal(f.calls(),1,'B3b premature collection count remains one');

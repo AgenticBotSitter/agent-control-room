@@ -423,7 +423,10 @@ if(ordinary)test("I-1 child environment accepts only declared noncredential vari
   for(const name of ["API_KEY","access_token","SecretPath","dbPassword","AUTH_FILE","sessionCookie"]){
     assert.throws(()=>i1ChildEnvironment({...env,CONTROL_ROOM_I1_CHILD_ENV:name}),/CONTROL_ROOM_I1_CHILD_ENV refuses credential-looking variable names/);
   }
-  for(const value of ["/fixture/.env","/fixture/.env.local","/fixture/.codex/auth.json","/fixture/.hermes","/fixture/.aws/config","/fixture/credentials.json","/fixture/tokens.json","/fixture/Keychains/login.keychain-db"]){
+  for(const value of ["/fixture/.env","/fixture/.env.local","/fixture/.codex/auth.json","/fixture/.hermes","/fixture/.aws/config","/fixture/credentials.json","/fixture/tokens.json","/fixture/Keychains/login.keychain-db",
+    "/fixture/secret","/fixture/secrets","/fixture/secrets.json","/fixture/.git-credentials","/fixture/.docker/config.json","/fixture/.kube/config",
+    "/fixture/id_rsa","/fixture/id_ed25519","/fixture/.pypirc","/fixture/.config/gcloud","/fixture/config/api-key","/fixture/config/api-keys.json",
+    "C:\\fixture\\.docker\\config.json","CONFIG=/fixture/SECRETS.JSON"]){
     assert.throws(()=>i1ChildEnvironment({...env,CONTROL_ROOM_I1_CHILD_ENV:"CONFIG_FILE",CONFIG_FILE:value}),/CONTROL_ROOM_I1_CHILD_ENV refuses credential store values/);
   }
   assert.throws(()=>i1ChildEnvironment({...env,CONTROL_ROOM_I1_CHILD_ENV:"NOT A NAME"}),/requires variable names/);

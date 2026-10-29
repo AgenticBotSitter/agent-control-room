@@ -315,7 +315,7 @@ export async function i1Regular(file:string,root?:string){
 export function i1ChildEnvironment(env:Readonly<Record<string,string|undefined>>=process.env):Record<string,string|undefined>{
   const names=(env.CONTROL_ROOM_I1_CHILD_ENV??"").split(",").map(name=>name.trim()).filter(Boolean);
   const child:Record<string,string|undefined>={HOME:env.HOME,TMPDIR:env.TMPDIR};
-  const credentialStore=/(?:^|[/\\:=;\s"'?&#])(?:\.env(?:\.[\w.-]+)?|\.codex|\.hermes|\.aws|\.ssh|\.gnupg|\.netrc|\.npmrc|\.pgpass|auth\.json|credentials?(?:\.[\w.-]+)?|tokens?(?:\.[\w.-]+)?|keychains?)(?=$|[/\\:;\s"'?&#])/i;
+  const credentialStore=/(?:^|[/\\:=;\s"'?&#])(?:\.env(?:\.[\w.-]+)?|\.codex|\.hermes|\.aws|\.ssh|\.gnupg|\.netrc|\.npmrc|\.pgpass|auth\.json|credentials?(?:\.[\w.-]+)?|tokens?(?:\.[\w.-]+)?|keychains?|secrets?(?:\.[\w.-]+)?|\.git-credentials|\.docker[/\\]config\.json|\.kube[/\\]config|id_rsa|id_ed25519|\.pypirc|gcloud|api-keys?(?:\.[\w.-]+)?)(?=$|[/\\:;\s"'?&#])/i;
   for(const name of names){
     assert.ok(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name),"I-1 CONTROL_ROOM_I1_CHILD_ENV requires variable names");
     assert.ok(!/KEY|TOKEN|SECRET|PASSWORD|AUTH|COOKIE/i.test(name),"I-1 CONTROL_ROOM_I1_CHILD_ENV refuses credential-looking variable names");
@@ -343,8 +343,12 @@ export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
   const workRoot=entryRoots.CR_WORK_ROOT;
   const trashMessage=`${gate} requires R: CR_WORK_ROOT and its sibling .cr-trash must be inside R`;
   assert.ok(typeof workRoot==="string"&&isAbsolute(workRoot),trashMessage);
-  const trashRoot=join(dirname(workRoot),".cr-trash"),inside=relative(root,trashRoot);
-  assert.ok(inside!==""&&inside!==".."&&!inside.startsWith(`..${sep}`)&&!isAbsolute(inside),trashMessage);
+  assert.ok(typeof entryRoots.CR_HOME_WORK==="string"&&isAbsolute(entryRoots.CR_HOME_WORK),trashMessage);
+  // Clones use WORK.parent; logs outside WORK use HOME_WORK itself.
+  for(const trashRoot of [join(dirname(workRoot),".cr-trash"),join(entryRoots.CR_HOME_WORK,".cr-trash")]){
+    const inside=relative(root,trashRoot);
+    assert.ok(inside!==""&&inside!==".."&&!inside.startsWith(`..${sep}`)&&!isAbsolute(inside),trashMessage);
+  }
   assert.equal(workRoot,carrier.configuration.workRoot,`${gate} requires R: CR_WORK_ROOT must match carrier workRoot`);
   await i1Regular(carrier.modulePath,root);
   assert.equal(carrier.modulePath,join(root,"tools/loop/bridge/a2-contract.mjs"));
