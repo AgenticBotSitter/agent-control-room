@@ -1,6 +1,7 @@
 import { LoopCandidatePublisherV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createImproveControlRoomLoopFinalizerV1, finalizationEnabledV1, loopFinalizationTargetSchemaV1,
   verifyFinalizationInspectionV1, verifyFinalizationRecordV1, type LoopFinalizationPortV1, type LoopFinalizationTargetV1 } from "./improve-control-room-loop-finalization";
+import { loopMonitoringAttentionV1, type LoopMonitoringStatusV1 } from "./improve-control-room-loop-monitoring";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
@@ -45,6 +46,7 @@ export class ImproveControlRoomLoopServiceV1 {
   readonly #adapter: LoopAdapterV1;
   readonly #freshness: number;
   readonly #publisher: LoopCandidatePublisherV1;
+  readonly #monitoring = new WeakMap<LoopDecisionStatusV1, LoopMonitoringStatusV1>();
   readonly #swept = new Set<string>();
   readonly #sweepCursor = new Map<string, string>();
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
@@ -323,6 +325,7 @@ export class ImproveControlRoomLoopServiceV1 {
       nextAction: 'Ask the lead to check this saved run before continuing.' };
     else if (recoveryUnavailable) attention = { code: 'UNAVAILABLE', message: 'Recovery could not be verified.',
       nextAction: 'Ask the lead to check this saved run before continuing.' };
+    if (!recoveryTerminal && !pending && !recoveryInputChanged && current.monitoring) attention = loopMonitoringAttentionV1(current.monitoring) ?? attention;
     const display = loopImprovementStatusSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
       localVersion: lineage.view.currentVersion, description: lineage.view.description,
       requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: lineage.view.runLink?.runLinkId ?? null,
@@ -334,12 +337,14 @@ export class ImproveControlRoomLoopServiceV1 {
         requestedModel: current.progress.requestedModel ?? null, observedModel: current.progress.observedModel ?? null,
         identityVerified: current.progress.identityVerified === true && !!current.progress.observedModel, repairCount: current.progress.repairCount ?? null },
       attention, observedAt: new Date(this.clock()).toISOString() });
-    return { engine:current, view:loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
+    const projected = loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
       decisions: loopImprovementDecisionsSchemaV1.parse(recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,
-      progress: current.progress, approval: current.approval, question: current.question, identity: "unverified" } }) };
+      progress: current.progress, approval: current.approval, question: current.question, identity: "unverified" } });
+    if (current.monitoring && !recoveryTerminal) this.#monitoring.set(projected, current.monitoring);
+    return { engine:current, view:projected };
   }
   async #finalizationTarget(target: LoopRecoveryTargetV1, supplied?: LoopEngineStatusV1): Promise<LoopFinalizationTargetV1> {
     const snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));
@@ -439,11 +444,22 @@ export class ImproveControlRoomLoopServiceV1 {
         if (!request.runLink) { items[index] = blocked("UNAVAILABLE"); continue; }
         try {
           const observed = await this.#statusWithEngine(identity, request.projectId, request.requestId),status=observed.view, gate = currentLoopGate(status);
+          const monitoring = this.#monitoring.get(status);
+          const summary = monitoring ? loopMonitoringAttentionV1(monitoring) : null;
           if (!gate || gate.kind==="blocked"&&gate.code==="UNAVAILABLE") {
             const lifecycle=await this.#lifecycleAttention(identity,request.projectId,request.requestId,observed.engine);
-            if(lifecycle||!gate){items[index]=lifecycle;continue;}
+            if(lifecycle){items[index]=lifecycle;continue;}
           }
-          if (gate.kind === "blocked") { items[index] = blocked(gate.code, status.engine.revision, status); continue; }
+          if (!gate) {
+            if (summary && !["stopped", "finished"].includes(status.engine.state))
+              items[index] = {...blocked("UNAVAILABLE", status.engine.revision, status), summary: `${summary.message} ${summary.nextAction}`};
+            continue;
+          }
+          if (gate.kind === "blocked") {
+            items[index] = blocked(gate.code, status.engine.revision, status);
+            if (gate.code === "UNAVAILABLE" && summary) items[index]!.summary = `${summary.message} ${summary.nextAction}`;
+            continue;
+          }
           const bound = { ...base, localVersion: status.request.currentVersion, runLinkId: status.display.runLinkId, observedAt: status.display.observedAt, engineRevision: status.engine.revision };
           if (gate.kind === "confirm") items[index] = { ...bound, kind: "confirmation", identity: { kind: "confirmation",
             requestSha256: status.engine.requestSha256, settingsSha256: status.engine.settingsSha256 },

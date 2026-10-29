@@ -708,10 +708,18 @@ export function createPrivateTaskBootstrap(dependencies: {
       if (config.loopBridge && (recoveryEnabled || finalizationEnabledV1(config.loopBridge.adapter.finalization))) {
         const recoveryService = new ImproveControlRoomLoopServiceV1(web.client,
           { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, config.loopBridge, clock);
-        recoveryWorker = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
+        const recovery = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
           enabled: ()=>{let recovery=false;try{recovery=config.loopRecovery?.enabled()===true;}catch{/* Default off. */}
             return recovery||finalizationEnabledV1(config.loopBridge!.adapter.finalization);},
-          observe:recoveryService.finalizationPort().observe, createCycle: createPipelineAdvanceCycleV1 });
+          observe:recoveryService.finalizationPort().observe, onTick: config.loopBridge.adapter.monitoringTick, createCycle: createPipelineAdvanceCycleV1 });
+        let recoveryClose: Promise<void> | undefined;
+        recoveryWorker = Object.freeze({ ...recovery, close: () => recoveryClose ??= (async () => {
+          // The same adapter owns collection. Drain it before application/pools,
+          // including when recovery itself could not confirm cleanup.
+          const driver = await Promise.allSettled([recovery.close()]);
+          const adapter = await Promise.allSettled([config.loopBridge!.adapter.close()]);
+          if ([...driver, ...adapter].some(result => result.status === "rejected")) throw new Error("loop_recovery_cleanup_uncertain");
+        })() });
       }
       const readyApplication = application;
       let pipelineCycle:ReturnType<typeof createPipelineAdvanceCycleV1>|undefined;
