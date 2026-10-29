@@ -407,6 +407,28 @@ test("B4 wire current-head guard",async()=>{
   }finally{await f.close();}
 });
 
+test("B4 card shows unavailable for missing final-report sections",async()=>{
+  const f=await syntheticFixture();try{const {loopCandidateCardSchemaV1}=await import("../src/improve-control-room/v1/loop-candidate-wire");
+    const React=await import("react"),{renderToStaticMarkup}=await import("react-dom/server");
+    const {ImprovementFinishCandidate}=await import("../private-app/app/improvement-finish-card");
+    await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
+    const html=(card:typeof c)=>renderToStaticMarkup(React.createElement(ImprovementFinishCandidate,{card,fresh:true,isFresh:()=>true,invalidate:()=>{},refresh:()=>{},clearProtected:()=>{}}));
+    const present=html(loopCandidateCardSchemaV1.parse(c));
+    assert.match(present,/SYNTHETIC finished candidate/);assert.match(present,/Changed areas: Owner finish card/);
+    assert.match(present,/Database: No database changes declared/,"B4 an existing row still parses and shows its declared database changes");
+    assert.match(present,/Repairs: 1 /);assert.match(present,/SYNTHETIC input validated/);assert.match(present,/SYNTHETIC receipt checked/);
+    const missing=loopCandidateCardSchemaV1.parse({...c,evidence:{...c.evidence,summary:null,changedAreas:null,databaseChanges:null,
+      assumptions:null,validations:null,rounds:{...c.evidence.rounds,repairs:null}}});
+    const shown=html(missing);
+    for(const line of ["Summary: Unavailable","Changed areas: Unavailable","Database: Unavailable","Repairs: Unavailable","Assumptions: Unavailable","Validations: Unavailable"])
+      assert.ok(shown.includes(line),`B4 missing section shows ${line}`);
+    assert.doesNotMatch(shown,/No database changes declared/,"B4 a missing database section is never shown as declared none");
+    for(const bad of [{summary:""},{changedAreas:[]},{databaseChanges:{kind:"unknown"}},{rounds:{...c.evidence.rounds,repairs:-1}},
+      {assumptions:[{...c.evidence.assumptions![0]!,evidenceDigest:null}]},{validations:[{...c.evidence.validations![0]!,evidenceDigest:null}]}])
+      assert.equal(loopCandidateCardSchemaV1.safeParse({...c,evidence:{...c.evidence,...bad}}).success,false,`B4 present values keep their bounds: ${Object.keys(bad)[0]}`);
+  }finally{await f.close();}
+});
+
 test("B4 decision exact head binding refuses before an insert",async()=>{
   const f=await syntheticFixture();try{
     await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;

@@ -94,14 +94,14 @@ export function ImprovementFinishCandidate({ card:c,fresh,isFresh,invalidate,ref
   }
   return <article aria-label="Finished candidate" style={{ minWidth:0,overflowWrap:"anywhere" }}>
     <h3>Finished candidate — {c.state === "ready" ? "waiting for your decision" : c.state === "accepted" ? "Accepted" : "Declined"}</h3>
-    <p>{e.summary}</p><p>Changed areas: {e.changedAreas.join(" · ")}</p>
+    <p>{e.summary ?? "Summary: Unavailable"}</p><p>Changed areas: {e.changedAreas?.join(" · ") ?? "Unavailable"}</p>
     <p>Base revision: <code style={{userSelect:"text"}}>{b.baseRevision}</code></p>
     <p>Candidate revision: <code style={{userSelect:"text"}}>{c.candidateRevision}</code></p>
     <p>{!fresh ? "Evidence retained; current status unverified" : c.freshness === "current"
       ? "Evidence checked just now" : "Evidence is out of date; decisions are blocked."}</p>
     <p>Accept and Decline record an owner decision only. Acceptance creates no signed deploy or delivery approval.</p>
     <details><summary style={targetStyle}>Show evidence</summary>
-      <p>Database: {e.databaseChanges.kind === "none" ? "No database changes declared" :
+      <p>Database: {e.databaseChanges === null ? "Unavailable" : e.databaseChanges.kind === "none" ? "No database changes declared" :
         `${e.databaseChanges.summary} Compatibility: ${e.databaseChanges.compatibilityNotes} Rollback: ${e.databaseChanges.rollbackNotes}`}</p>
       <h4>Completed checks</h4><ul>{e.checks.map(check => <li key={check.id}>{check.commandLabel}: {check.status} · {check.completed} completed,
         {" "}{check.passed} passed, {check.failed} failed, {check.skipped} skipped · <span title={`${check.durationMs} milliseconds`}>{humanDuration(check.durationMs)}</span> · Exit {check.exitCode ?? "unavailable"}
@@ -112,11 +112,13 @@ export function ImprovementFinishCandidate({ card:c,fresh,isFresh,invalidate,ref
           Family: {r.identityVerified ? r.family : "Unverified"}</p><p>{r.candidateRevision} · {r.reportDigest}</p></li>)}</ul>
       <details><summary style={targetStyle}>Findings</summary><ul>{e.findings.map(f => <li key={`${f.origin}:${f.id}`}>
         {f.origin} / {f.id}: {f.severity} · {f.disposition} · {f.summary} · {f.evidenceDigest}</li>)}</ul></details>
-      <p>Attempts: {e.rounds.attempts} · Review rejections: {e.rounds.reviewRejections} · Repairs: {e.rounds.repairs} · Redesigns: {e.rounds.redesigns}</p>
+      <p>Attempts: {e.rounds.attempts} · Review rejections: {e.rounds.reviewRejections} · Repairs: {e.rounds.repairs ?? "Unavailable"} · Redesigns: {e.rounds.redesigns}</p>
       <p>Elapsed: <span title={`${e.timing.durationMs} milliseconds`}>{humanDuration(e.timing.durationMs)}</span> · {e.timing.startedAt} → {e.timing.finishedAt}</p>
       <details><summary style={targetStyle}>Assumptions and validations</summary>
-        <ul>{e.assumptions.map(a => <li key={a.id}>{a.text} · {a.status} · {a.evidenceDigest ?? "Evidence unavailable"}</li>)}</ul>
-        <ul>{e.validations.map(v => <li key={v.id}>{v.text} · {v.status} · {v.evidenceDigest ?? "Evidence unavailable"}</li>)}</ul>
+        {e.assumptions === null ? <p>Assumptions: Unavailable</p>
+          : <ul>{e.assumptions.map(a => <li key={a.id}>{a.text} · {a.status} · {a.evidenceDigest ?? "Evidence unavailable"}</li>)}</ul>}
+        {e.validations === null ? <p>Validations: Unavailable</p>
+          : <ul>{e.validations.map(v => <li key={v.id}>{v.text} · {v.status} · {v.evidenceDigest ?? "Evidence unavailable"}</li>)}</ul>}
       </details>
       <details><summary style={targetStyle}>Recorded overrides</summary>
         <p>Same-family review override: {e.overrides.allowSameFamilyReview ? "Enabled" : "Disabled"}</p>

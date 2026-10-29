@@ -23,14 +23,15 @@ export const loopCandidateEvidenceSchemaV1 = z.object({ schemaVersion: z.literal
     toolingRevision: digest, a2SchemaVersion: z.literal(1), a2InputVersion: loopCandidateInputVersionV1, engineRevision: count,
     requestSha256: hash, settingsSha256: hash, baseRevision: revision, candidateRevision: revision,
     inputsDigest: digest, recipeDigest: digest, environmentDigest: digest }).strict(),
-  summary: text(4000), changedAreas: z.array(label).min(1).max(100), databaseChanges: updateCandidateDatabaseChangesSchemaV1,
+  // Null means the final report lacked this section; the card shows it as unavailable.
+  summary: text(4000).nullable(), changedAreas: z.array(label).min(1).max(100).nullable(), databaseChanges: updateCandidateDatabaseChangesSchemaV1.nullable(),
   checks: z.array(check).min(1).max(32), reviews: z.array(review).min(1).max(32),
   findings: z.array(z.object({ origin: id, id, severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
     disposition: z.enum(["OPEN", "FIXED", "REJECTED_WITH_EVIDENCE"]), summary: text(1000), evidenceDigest: digest }).strict()).max(100),
-  rounds: z.object({ attempts: count, reviewRejections: count, repairs: count, redesigns: count }).strict(),
+  rounds: z.object({ attempts: count, reviewRejections: count, repairs: count.nullable(), redesigns: count }).strict(),
   timing: z.object({ startedAt: utc, finishedAt: utc, durationMs: count }).strict(),
-  assumptions: z.array(z.object({ id, text: text(1000), status: z.enum(["validated", "unverified"]), evidenceDigest: digest.nullable() }).strict()).max(32),
-  validations: z.array(z.object({ id, text: text(1000), status, evidenceDigest: digest.nullable() }).strict()).max(32),
+  assumptions: z.array(z.object({ id, text: text(1000), status: z.enum(["validated", "unverified"]), evidenceDigest: digest.nullable() }).strict()).max(32).nullable(),
+  validations: z.array(z.object({ id, text: text(1000), status, evidenceDigest: digest.nullable() }).strict()).max(32).nullable(),
   overrides: z.object({ allowSameFamilyReview: z.boolean(), allowStandardFinal: z.boolean(),
     waivedConflicts: z.array(label).max(32), fallback: text(1000).nullable() }).strict(),
   completionDigest: digest, retentionDigest: digest,
@@ -56,8 +57,8 @@ export const loopCandidateEvidenceSchemaV1 = z.object({ schemaVersion: z.literal
   }
   if (current.some(r => !r.identityVerified || !r.family)) bad("current review independence unverified");
   if (v.findings.some(f => f.disposition === "OPEN" && f.severity !== "LOW")) bad("open blocking finding");
-  if (v.assumptions.some(a => a.status === "validated" && a.evidenceDigest === null)
-    || v.validations.some(a => a.status === "PASS" && a.evidenceDigest === null)) bad("validation evidence absent");
+  if ((v.assumptions ?? []).some(a => a.status === "validated" && a.evidenceDigest === null)
+    || (v.validations ?? []).some(a => a.status === "PASS" && a.evidenceDigest === null)) bad("validation evidence absent");
 });
 export type LoopCandidateEvidenceV1 = z.infer<typeof loopCandidateEvidenceSchemaV1>;
 export const loopCandidateCardSchemaV1 = z.object({ candidateId: id, projectId: id, requestId: id, localVersion: positive,
