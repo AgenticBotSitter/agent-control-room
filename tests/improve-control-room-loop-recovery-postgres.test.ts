@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client } from 'pg';
-import { spawn,type ChildProcess } from 'node:child_process';
+import { spawn,execFile,type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { withRealPostgres,requiresRealPostgres } from './support/attack-kit/index';
 import { syntheticRecoveryEngine,syntheticRecoveryCapability,seedRecoveryRun,seedRecoveryPostgres,pgRecoveryIdentity,pgRecoveryScope,pgRecoveryProject,pgRecoveryOwner,recoveryPgWeb,recoveryKey,resultCrashDatabase } from './helpers/improve-control-room-loop-recovery';
@@ -20,6 +21,8 @@ async function run(work:(pg:Pg)=>Promise<void>){
   assert.equal(result.cleanedUp,true);assert.deepEqual(result.leftovers,[]);console.log('B3a PostgreSQL teardown cleanedUp=true leftovers=0');
 }
 const signal=()=>new AbortController().signal;
+// Linux keeps the exact kernel argv; hosts without /proc (macOS) ask ps for the same command line.
+const processCommand=async(pid:number)=>process.platform==='linux'?readFile(`/proc/${pid}/cmdline`,'utf8'):(await promisify(execFile)('ps',['-ww','-o','command=','-p',String(pid)])).stdout;
 
 test('B3a production login admission journal receipts and pending exact retries',async t=>run(async pg=>{
   let identity=pgRecoveryIdentity();await seedRecoveryPostgres(pg.admin(),identity);
@@ -170,7 +173,7 @@ test('B3a PostgreSQL 24 separate processes contend one retained result and drive
     const winnerResult=results.find(r=>r.state==='started')!,winner=children.find(child=>child.pid===winnerResult.pid)!;
     const winnerExit=once(winner,'exit');winner.kill('SIGKILL');await winnerExit;
     assert.ok(winnerResult.child);const orphan=winnerResult.child;
-    const command=await readFile(`/proc/${orphan}/cmdline`,'utf8');assert.ok(command.includes(e.configuration.entrypoint)&&command.includes(saved.run),'B3a orphan identity matches the actual owned wait');
+    const command=await processCommand(orphan);assert.ok(command.includes(e.configuration.entrypoint)&&command.includes(saved.run),'B3a orphan identity matches the actual owned wait');
     for(const child of children)if(child.connected)child.send({kind:'finish'});
     await Promise.all(children.map(child=>child.exitCode!==null||child.signalCode!==null?Promise.resolve():once(child,'exit')));
     const c=await exclusiveSyntheticRecoveryCapability(t,e),adapter=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,recovery:c.capability}});t.after(()=>adapter.close());
@@ -185,7 +188,7 @@ test('B3a PostgreSQL 24 separate processes contend one retained result and drive
   }finally{
     await admin.query('ROLLBACK').catch(()=>{});
     await Promise.all(children.map(async child=>{if(child.exitCode!==null||child.signalCode!==null)return;const exit=once(child,'exit');if(child.connected)child.send({kind:'finish'});const timer=setTimeout(()=>child.kill('SIGKILL'),5000);try{await exit;}finally{clearTimeout(timer);}}));
-    for(const pid of pids){try{const command=await readFile(`/proc/${pid}/cmdline`,'utf8');if(command.includes(e.configuration.entrypoint)&&command.includes('wait'))process.kill(pid,'SIGTERM');}catch{/* Already reaped. */}}
+    for(const pid of pids){try{const command=await processCommand(pid);if(command.includes(e.configuration.entrypoint)&&command.includes('wait'))process.kill(pid,'SIGTERM');}catch{/* Already reaped. */}}
     await admin.end();await owner.close();
   }
 }));
