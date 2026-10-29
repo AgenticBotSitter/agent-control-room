@@ -21,7 +21,8 @@ const probes=[
   {name:'duplicate driver refusal',file:'src/web/v1/improve-control-room-loop-adapter.ts',find:'    if (acquisitions.has(run) || recoveryChildren.has(run)) return { kind: "busy", evidenceDigest: sha256Digest({ run, owned: true }) };',replace:'    /* MUTANT: local duplicate-driver fence disabled. */',pattern:'B3a duplicate driver refuses second spawn',assertion:'B3a one spawn callback across duplicate drivers'},
   {name:'stopped uncertain changed refusal',file:'src/web/v1/improve-control-room-loop-adapter.ts',find:`        if (observation.mode !== "runnable" || observation.action !== binding.action || observation.revision !== binding.expectedRevision
           || !["none", "ended"].includes(observation.driver.state)) return { kind: "uncertain" as const, evidenceDigest: observation.evidenceDigest };`,replace:'        /* MUTANT: verified recovery observation fence disabled. */',pattern:'B3a stopped uncertain changed input refuse acquisition',assertion:'B3a stopped uncertain changed acquisition count is zero'},
-  {name:'closing acquisition fence',file:'src/web/v1/improve-control-room-loop-recovery.ts',find:'      closing=true;abort.abort();',replace:'      /* MUTANT: closing admission fence disabled. */ abort.abort();',pattern:'B3a closed worker refuses another tick',assertion:'B3a no child admitted after close'},
+  // Suppress abort too: its post-observation guard otherwise masks the closing fence.
+  {name:'closing acquisition fence',file:'src/web/v1/improve-control-room-loop-recovery.ts',find:'      closing=true;abort.abort();',replace:'      /* MUTANT: closing admission fence and masking abort disabled. */',pattern:'B3a closed worker refuses another tick',assertion:'B3a no child admitted after close'},
 ];
 test('B3a recovery guard categories fail independently and restore green',{timeout:290000},async t=>{
   await mkdir(resolve('.test-tmp'),{recursive:true});const copy=await mkdtemp(resolve('.test-tmp/b3a-mutations-'));
