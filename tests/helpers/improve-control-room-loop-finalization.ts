@@ -188,6 +188,28 @@ export async function persistentFinalizationCapability(root:string,dependencies:
   };
   return capability;
 }
+/** Synthetic local-close journal: only completed moves contribute to the receipt.
+ * Re-entry reads the saved journal instead of moving a second time. */
+export function ownedCleanupCapability(capability:LoopFinalizationCapabilityV1,root:string,
+  hooks:{state?:"complete"|"refused"|"uncertain";called?:()=>Promise<void>}={}){
+  return {...capability,async cleanup(binding:LoopFinalizationBindingV1,retentionDigest:string){
+    await hooks.called?.();
+    const inspection=await capability.inspect((({eventDigest:_event,...target})=>target)(binding));
+    const state=hooks.state??"complete",journal=join(root,"synthetic-close-journal.json");
+    let moves:{source:string;destination:string;sha256:string;state:"done"}[]=[];
+    if(state!=="refused"){
+      try{moves=JSON.parse(await readFile(journal,"utf8"));}
+      catch(error){
+        if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;
+        moves=[{source:"synthetic-run.log",destination:"synthetic-trash/run.log",sha256:sha256Digest("SYNTHETIC log"),state:"done"}];
+        await durable(journal,moves);
+      }
+    }
+    const reasons={complete:"CLEANUP_COMPLETE",refused:"CLEANUP_REFUSED",uncertain:"CLEANUP_UNCERTAIN"} as const;
+    return{schemaVersion:1 as const,binding,inventoryDigest:inspection.observation.inventoryDigest,retentionDigest,
+      state,removedDigest:sha256Digest(moves),reasonCode:reasons[state],finishedAt:inspection.observation.observedAt};
+  }};
+}
 export async function finalizationFixture(){
   const f=await syntheticCandidateFixture();
   const scope={tenantId:"tenant:web",workspaceId:"workspace:web"};

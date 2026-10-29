@@ -22,9 +22,10 @@ export const loopFinalizationCustodySchemaV1 = z.object({schemaVersion:z.literal
 export const loopFinalizationTerminationSchemaV1 = z.object({schemaVersion:z.literal(1),binding:loopFinalizationBindingSchemaV1,
   inventoryDigest:digest,state:z.enum(["already-ended","uncertain"]),ownershipDigest:digest,observedAt:z.string().datetime()}).strict();
 export const loopFinalizationCleanupSchemaV1 = z.object({schemaVersion:z.literal(1),binding:loopFinalizationBindingSchemaV1,
-  inventoryDigest:digest,retentionDigest:digest,state:z.literal("refused"),removedDigest:digest,
-  reasonCode:z.literal("CLEANUP_REFUSED"),finishedAt:z.string().datetime()}).strict()
-  .refine(v=>v.removedDigest===sha256Digest([]));
+  inventoryDigest:digest,retentionDigest:digest,state:z.enum(["refused","complete","uncertain"]),removedDigest:digest,
+  reasonCode:z.enum(["CLEANUP_REFUSED","CLEANUP_COMPLETE","CLEANUP_UNCERTAIN"]),finishedAt:z.string().datetime()}).strict()
+  .refine(v=>v.reasonCode===({refused:"CLEANUP_REFUSED",complete:"CLEANUP_COMPLETE",uncertain:"CLEANUP_UNCERTAIN"} as const)[v.state]
+    &&(v.state!=="refused"||v.removedDigest===sha256Digest([])));
 export const loopFinalizationRecordSchemaV1 = z.object({schemaVersion:z.literal(1),binding:loopFinalizationBindingSchemaV1,
   sequence:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),previousDigest:digest.nullable(),phase:z.enum(["retained","terminated","published","announced","cleanup"]),
   observation:loopFinalizationObservationSchemaV1,custody:loopFinalizationCustodySchemaV1.nullable(),termination:loopFinalizationTerminationSchemaV1.nullable(),
@@ -35,11 +36,13 @@ export type LoopFinalizationInspectionV1 = z.infer<typeof inspectionSchema>;
 export type LoopFinalizationCapabilityV1 = LoopCandidateDependenciesV1 & {
   enabled():boolean;
   inspect(target:Readonly<LoopFinalizationTargetV1>):Promise<LoopFinalizationInspectionV1>;
-  /** Installation-owned durable fence also excludes A2 writers/Stop/input changes.
-   * Unknown owner generation is never taken over by product code. */
+  /** Orders this instance's callbacks. Cross-process durability comes from
+   * optimistic comparisons, append CAS and publisher replay (one committed candidate). */
   withFence<T>(binding:Readonly<LoopFinalizationBindingV1>,work:()=>Promise<T>):Promise<T>;
   /** Copies and verifies the complete immutable corpus; replays reverify bytes. */
   retain(binding:Readonly<LoopFinalizationBindingV1>,inventoryDigest:string):Promise<z.infer<typeof loopFinalizationCustodySchemaV1>>;
+  /** A2 local close owns its journal and replays safely after a lost append. */
+  cleanup?(binding:Readonly<LoopFinalizationBindingV1>,retentionDigest:string):Promise<z.infer<typeof loopFinalizationCleanupSchemaV1>>;
   readRecord(target:Readonly<LoopFinalizationTargetV1>):Promise<LoopFinalizationRecordV1|null>;
   /** Compare-and-append previousDigest, fsync, exact replay; never overwrite. */
   appendRecord(binding:Readonly<LoopFinalizationBindingV1>,record:Readonly<LoopFinalizationRecordV1>):Promise<LoopFinalizationRecordV1>;
@@ -74,13 +77,20 @@ function verifyPublication(raw:unknown,o:LoopFinalizationObservationV1,retention
     ||p.completionDigest!==o.completionDigest||p.retentionDigest!==retentionDigest)throw unavailable();
   return p;
 }
-/** Capture only the non-destructive ports. Supplied stop/delete callbacks have
- * no call path, and cannot opt this phase into destructive cleanup. */
+/** Capture the reviewed local-close port when present. Arbitrary stop/delete
+ * callbacks are never captured. */
 export function captureLoopFinalizationCapabilityV1(value:LoopFinalizationCapabilityV1|undefined):LoopFinalizationCapabilityV1|undefined{
   if(!value)return undefined;
   for(const key of ["enabled","inspect","withFence","retain","readRecord","appendRecord"] as const)if(typeof value[key]!=="function")throw unavailable();
   if(!value.source||!value.repository||typeof value.source.readVerifiedCompletion!=="function"||typeof value.repository.observe!=="function")throw unavailable();
-  return Object.freeze({enabled:value.enabled.bind(value),inspect:async target=>verifyFinalizationInspectionV1(await value.inspect(loopFinalizationTargetSchemaV1.parse(target)),target),
+  const cleanup=value.cleanup;
+  if(cleanup!==undefined&&typeof cleanup!=="function")throw unavailable();
+  return Object.freeze({...(cleanup===undefined?{}:{cleanup:async(binding:Readonly<LoopFinalizationBindingV1>,retentionDigest:string)=>{
+      binding=Object.freeze(loopFinalizationBindingSchemaV1.parse(binding));retentionDigest=digest.parse(retentionDigest);
+      const receipt=loopFinalizationCleanupSchemaV1.parse(bounded(await cleanup.call(value,binding,retentionDigest)));
+      if(!same(receipt.binding,binding)||receipt.retentionDigest!==retentionDigest)throw unavailable();
+      return receipt;
+    }}),enabled:value.enabled.bind(value),inspect:async target=>verifyFinalizationInspectionV1(await value.inspect(loopFinalizationTargetSchemaV1.parse(target)),target),
     withFence:async(binding,work)=>value.withFence(Object.freeze(loopFinalizationBindingSchemaV1.parse(binding)),work),
     retain:async(binding,inventoryDigest)=>loopFinalizationCustodySchemaV1.parse(bounded(await value.retain(Object.freeze(loopFinalizationBindingSchemaV1.parse(binding)),digest.parse(inventoryDigest)))),
     readRecord:async target=>{target=loopFinalizationTargetSchemaV1.parse(target);const raw=await value.readRecord(target);return raw===null?null:verifyFinalizationRecordV1(raw,target);},
@@ -144,8 +154,16 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
         await active();await append("published",{publication});
       }
       if(["terminated","published"].includes(record!.phase))await append("announced");
-      if(record!.phase==="announced")await append("cleanup",{cleanup:{schemaVersion:1,binding:b,inventoryDigest:o.inventoryDigest,
-        retentionDigest:custody.retentionDigest,state:"refused",removedDigest:sha256Digest([]),reasonCode:"CLEANUP_REFUSED",finishedAt:o.observedAt}});
+      if(record!.phase==="announced"){
+        let cleanup:z.infer<typeof loopFinalizationCleanupSchemaV1>;
+        if(c.cleanup){
+          await retain();await active();
+          cleanup=loopFinalizationCleanupSchemaV1.parse(bounded(await c.cleanup(b,custody.retentionDigest)));await active();
+          if(!same(cleanup.binding,b)||cleanup.inventoryDigest!==o.inventoryDigest||cleanup.retentionDigest!==custody.retentionDigest)throw unavailable();
+        }else cleanup={schemaVersion:1,binding:b,inventoryDigest:o.inventoryDigest,retentionDigest:custody.retentionDigest,
+          state:"refused",removedDigest:sha256Digest([]),reasonCode:"CLEANUP_REFUSED",finishedAt:o.observedAt};
+        await append("cleanup",{cleanup});
+      }
       return record;
     });
   }};

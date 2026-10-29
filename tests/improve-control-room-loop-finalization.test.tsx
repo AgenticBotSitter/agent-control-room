@@ -35,7 +35,7 @@ if (ordinary) test("B3c terminal run reaches shared attention without a browser 
   assert.match(renderToStaticMarkup(<ActionInboxPanel data={{tasks:{state:"loading"},operator:{state:"loading"}}} items={inbox} />),/stopped/i);
 });
 
-import { finalizationFixture, persistentFinalizationCapability, KEY, type FixtureState } from "./helpers/improve-control-room-loop-finalization";
+import { finalizationFixture, persistentFinalizationCapability, ownedCleanupCapability, KEY, type FixtureState } from "./helpers/improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopFinalizerV1, captureLoopFinalizationCapabilityV1, verifyFinalizationRecordV1,
   type LoopFinalizationCapabilityV1, type LoopFinalizationRecordV1 } from "../src/web/v1/improve-control-room-loop-finalization";
 import { loopAttentionKey, loopAttentionComplete, loopAttentionItemSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
@@ -55,6 +55,80 @@ async function direct(f:Awaited<ReturnType<typeof finalizationFixture>>,capabili
   return createImproveControlRoomLoopFinalizerV1({capability,publishCompletion:publish,authorize,signal:signal()}).finalize(f.target);
 }
 if(ordinary){
+  test("B3c owned cleanup closes through A2 local close",async t=>{
+    const f=await using(t);let cleanups=0;
+    const c=ownedCleanupCapability(f.capability,f.retained,{called:async()=>{
+      cleanups++;assert.equal((await f.capability.readRecord(f.target))?.phase,"announced");
+    }});
+    const captured=captureLoopFinalizationCapabilityV1(c)!;
+    const record=await direct(f,captured);
+    assert.equal(cleanups,1,"B3c owned cleanup callback count is one");
+    assert.equal(record?.cleanup?.state,"complete");assert.equal(record?.cleanup?.reasonCode,"CLEANUP_COMPLETE");
+    assert.equal(record?.cleanup?.removedDigest,sha256Digest(JSON.parse(await readFile(join(f.retained,"synthetic-close-journal.json"),"utf8"))));
+    for(let restart=0;restart<2;restart++)assert.deepEqual(await direct(f,captured),record);
+    assert.equal(cleanups,1);assert.deepEqual(f.forbidden,[]);
+  });
+  test("B3c cleanup rejects malformed or foreign receipts before append",async t=>{
+    const f=await using(t),owned=ownedCleanupCapability(f.capability,f.retained);
+    assert.throws(()=>captureLoopFinalizationCapabilityV1({...f.capability,cleanup:null} as unknown as LoopFinalizationCapabilityV1));
+    for(const patch of [
+      {state:"complete",reasonCode:"CLEANUP_REFUSED"},
+      {state:"refused",reasonCode:"CLEANUP_REFUSED",removedDigest:sha256Digest("SYNTHETIC removed")},
+      {extra:true},{retentionDigest:sha256Digest("SYNTHETIC foreign retention")},
+      {inventoryDigest:sha256Digest("SYNTHETIC foreign inventory")},
+      {binding:{...f.state.observation.binding,eventDigest:sha256Digest("SYNTHETIC foreign event")}},
+    ]){
+      const c=captureLoopFinalizationCapabilityV1({...owned,cleanup:async(b,d)=>({...await owned.cleanup(b,d),...patch})} as LoopFinalizationCapabilityV1)!;
+      await assert.rejects(direct(f,c));assert.equal((await f.capability.readRecord(f.target))?.phase,"announced");
+    }
+    assert.equal((await direct(f,captureLoopFinalizationCapabilityV1(owned)!))?.cleanup?.state,"complete");
+  });
+  test("B3c cleanup before custody re-verification is forbidden",async t=>{
+    for(const changed of ["corpus","inspection"] as const){
+      const f=await finalizationFixture();let cleanups=0;
+      try{
+        const owned=ownedCleanupCapability(f.capability,f.retained,{called:async()=>{cleanups++;}});
+        const c={...owned,appendRecord:async(b:Parameters<typeof owned.appendRecord>[0],r:LoopFinalizationRecordV1)=>{
+          const saved=await owned.appendRecord(b,r);
+          if(r.phase==="announced"){
+            if(changed==="corpus")await writeFile(join(f.retained,"output.txt"),"SYNTHETIC changed after announcement");
+            else{f.state.observation.evidenceDigest=sha256Digest("SYNTHETIC changed inspection");await f.save();}
+          }
+          return saved;
+        }};
+        await direct(f,c).catch(()=>{});
+        assert.equal(cleanups,0,"B3c cleanup before custody re-verify count is zero");
+        assert.equal((await f.capability.readRecord(f.target))?.phase,"announced");
+      }finally{await f.close();}
+    }
+  });
+  test("B3c refused cleanup receipt stays final on replay",async t=>{
+    const f=await using(t);
+    f.state.observation={...f.state.observation,outcome:"stopped",reasonCode:"STOPPED",completionDigest:null};await f.save();
+    const first=await direct(f);assert.equal(first?.cleanup?.state,"refused");let cleanups=0,appends=0;
+    const owned=ownedCleanupCapability(f.capability,f.retained,{called:async()=>{cleanups++;}});
+    const c={...owned,appendRecord:async(b:Parameters<typeof owned.appendRecord>[0],r:LoopFinalizationRecordV1)=>{appends++;return owned.appendRecord(b,r);}};
+    for(let restart=0;restart<2;restart++)assert.deepEqual(await direct(f,c),first);
+    assert.equal(cleanups,0);assert.equal(appends,0);
+  });
+  test("B3c cleanup receipts stay final and crash before append replays close",async t=>{
+    for(const state of ["complete","refused","uncertain"] as const)for(const after of [false,true]){
+      const f=await finalizationFixture();let cleanups=0,crashed=false;
+      try{
+        const owned=ownedCleanupCapability(f.capability,f.retained,{state,called:async()=>{cleanups++;}});
+        const c={...owned,appendRecord:async(b:Parameters<typeof owned.appendRecord>[0],r:LoopFinalizationRecordV1)=>{
+          if(r.phase==="cleanup"&&!crashed){crashed=true;if(after)await owned.appendRecord(b,r);throw new Error("SYNTHETIC cleanup append crash");}
+          return owned.appendRecord(b,r);
+        }};
+        await assert.rejects(direct(f,c));
+        const restarted=await persistentFinalizationCapability(f.retained,f.config);
+        const replay=ownedCleanupCapability(restarted,f.retained,{state,called:async()=>{cleanups++;}});
+        const last=await direct(f,replay);assert.equal(last?.cleanup?.state,state);assert.equal(last?.sequence,5);
+        assert.deepEqual(await direct(f,replay),last);assert.equal(cleanups,after?1:2);
+        assert.equal(last?.cleanup?.removedDigest,state==="refused"?sha256Digest([]):sha256Digest(JSON.parse(await readFile(join(f.retained,"synthetic-close-journal.json"),"utf8"))));
+      }finally{await f.close();}
+    }
+  });
   test("B3c bootstrap observes terminal runs using the existing server cycle",async t=>{
     const {taskStartupFixture}=await import("./helpers/task-startup");
     const {createPrivateTaskBootstrap}=await import("../src/web/v1/private-task-startup");
