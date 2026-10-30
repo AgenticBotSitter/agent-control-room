@@ -461,7 +461,7 @@ test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent
 
 // Check 2's product-observable refusals through the real bridge over the SYNTHETIC engine.
 // Engine-internal send-back routing, the fourth-question cap and final-rejection invalidation
-// are A2 policy and stay on A2's own suites (see BUILD-B5-R2).
+// are A2 policy and stay on A2's own reviewed tools suites.
 test("B5 SYNTHETIC companion refuses stale admission, a second Start and answers after Stop", async t => {
   await load();
   const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());

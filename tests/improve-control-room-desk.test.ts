@@ -837,8 +837,8 @@ test("B5 fixture completion cannot become a legacy candidate", async t => {
   const before = await counts();
   const { requestId } = await driveSyntheticFirstWebsiteV1(f, f.bridge, f.identity, f.project.projectId, "b5-legacy");
   assert.equal(f.phase(), "finished");
-  // The SYNTHETIC completion reaches only the loop publisher, which refuses it at BASE (see BUILD-B5).
-  await assert.rejects(f.publish(), /loop_candidate_integrity_failed/u);
+  // The SYNTHETIC completion reaches only the loop publisher, which records a loop candidate.
+  assert.equal((await f.publish()).state, "recorded");
   // The legacy pipeline candidate path has no row to bind a loop request or run link to.
   for (const pipelineRunId of [requestId, (await f.lineage()).id])
     await assert.rejects(f.desk.recordCandidate({ projectId: f.project.projectId, improvementRequestId: requestId, pipelineRunId,
@@ -850,5 +850,5 @@ test("B5 fixture completion cannot become a legacy candidate", async t => {
   assert.deepEqual(view.legacy, await f.desk.view(f.identity, f.project.projectId));
   assert.equal(view.legacy.requests.length, 0); assert.deepEqual(view.loopRequests.map(r => r.requestId), [requestId]);
   assert.equal(view.loopRequests[0]!.grantsDeployAuthority, false);
-  assert.equal((await f.client.query("SELECT 1 FROM control_loop_update_candidates")).rows.length, 0);
+  assert.equal((await f.client.query("SELECT 1 FROM control_loop_update_candidates")).rows.length, 1, "B5 the completion is one loop candidate only");
 });

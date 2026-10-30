@@ -438,7 +438,8 @@ export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidate
 export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCheckRecordV1[], outputs: ReadonlyMap<string, Uint8Array>,
   card: LoopCandidateCardV1, journey: B5JourneyV1) {
   const { base, rejected, final } = manifest.heads, b = card.evidence.binding;
-  if (new Set([base, rejected, final]).size !== 3 || card.candidateRevision !== final || b.baseRevision !== base
+  if (card.candidateRevision !== final) refuse("B5_HEAD_BINDING", "card head");
+  if (new Set([base, rejected, final]).size !== 3 || b.baseRevision !== base
     || manifest.lineage.requestId !== card.requestId || manifest.lineage.runLinkId !== b.runLinkId) refuse("B5_HEAD_BINDING", "card");
   const failed = checks.find(check => check.head === rejected), passed = checks.find(check => check.head === final);
   if (!failed || !passed || checks.length !== 2) refuse("B5_HEAD_BINDING", "diagnostic heads");
@@ -451,7 +452,7 @@ export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCh
   }
   // The card's required recipe really ran at the final head; the diagnostic stays labelled optional.
   const smoke = card.evidence.checks.find(c => c.id === "site-smoke"), status = card.evidence.checks.find(c => c.id === "site-status");
-  if (!smoke || !smoke.required || smoke.status !== "PASS" || smoke.candidateRevision !== final || smoke.completed < 1 || smoke.failed !== 0
+  if (!smoke || !smoke.required || smoke.status !== "PASS" || smoke.candidateRevision !== card.candidateRevision || smoke.completed < 1 || smoke.failed !== 0
     || smoke.skipped !== 0 || status?.required !== false) refuse("B5_HEAD_BINDING", "card checks");
   for (const check of checks) if (b5Bytes(outputs.get(check.outputPath) ?? "") !== check.outputSha256) refuse("B5_ARTIFACT_BYTES", check.outputPath);
 }
