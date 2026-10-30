@@ -399,7 +399,7 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
       "B1a bigint schema version projects as a number");
     assert.deepEqual(await web.desk.recordLoopRunLink({ projectId: ids.project, requestId: f.saved.request.requestId,
       initialInputVersion: 1, run: loopRun() }), { runLink: f.linked.runLink, replayed: true }, "bigint run link exact replay");
-    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 254);
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 256);
     const observed = loopObservation();
     await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed);
     assert.equal((await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed)).replayed, true);
@@ -409,7 +409,7 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
     for (const table of ["pipeline_runs", "work_items", "control_native_task_queue"])
       assert.equal((await b1aSql(pg, `SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0);
     assert.deepEqual((await b1aSql(pg, "SELECT roleid,member,admin_option,inherit_option,set_option FROM pg_auth_members ORDER BY 1,2")).rows, roles.rows);
-    console.log(`B1a fresh web_digest=${digest} updater_equal=true public_count=254`);
+    console.log(`B1a fresh web_digest=${digest} updater_equal=true public_count=256`);
   } finally { await web.close(); }
 }));
 
@@ -626,7 +626,7 @@ async function prepareB1aFixture(pg: Pg, database: string) {
 async function transformB1aFixture(pg: Pg, database: string) {
   assert.match(database, /^cr14b_rehearsal_[a-z0-9_]{1,40}$/u);
   const beforeCatalog = (await b1aSql(pg, catalogSql, [], database)).rows as Array<{ name: string }>;
-  assert.equal(beforeCatalog.length, 254);
+  assert.equal(beforeCatalog.length, 256);
   const beforeLedger = (await b1aSql(pg, "SELECT * FROM control_room_schema_migrations ORDER BY ledger_order", [], database)).rows;
   const ledgerOwner = (await b1aSql(pg, "SELECT pg_get_userbyid(relowner) AS owner,relacl::text AS acl FROM pg_class WHERE oid='public.control_room_schema_migrations'::regclass", [], database)).rows;
   const beforeAuthority = await fixtureAuthoritySnapshot(pg, database);

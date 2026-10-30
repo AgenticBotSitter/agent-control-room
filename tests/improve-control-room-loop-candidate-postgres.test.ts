@@ -185,13 +185,26 @@ test("B4 PostgreSQL fresh production login exact grants preflight and schema dig
   assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json","utf8")).digest,measured);
   await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:"test"},now,{nativeQueue:true});
   const count=(await sql(pg,"SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n;
-  assert.equal(count,254);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
+  assert.equal(count,256);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
   for(const table of ["control_loop_update_candidates","control_loop_update_candidate_decisions"]){
    for(const role of ["app","scheduler","coordinator","results","publisher","queueWorker","intake","news","fleet"])
     await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:"42501"},`B4 broad role ${role} denied`);
    for(const role of ["control_room_reader","control_room_backup"])assert.equal((await sql(pg,"SELECT has_table_privilege($1,$2,'SELECT,INSERT') yes",[role,table])).rows[0].yes,false);
    for(const right of ["SELECT","INSERT"])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,true);
    for(const right of ["UPDATE","DELETE","TRUNCATE"])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,false);
+  }
+  // 0305 B6 roster master: same production treatment, plus UPDATE on exactly the edit-in-place columns.
+  const rosterUpdate:Record<string,string[]>={
+   control_loop_roster_models:["cost","default_effort","efforts","family","launcher","max_build_grade","model_class","nick","note","on_off","provider","roles","updated_at","updated_by"],
+   control_loop_roster_state:["exported_sha256","exported_version","last_idempotency_key","last_request_digest","updated_at","version"]};
+  for(const [table,columns] of Object.entries(rosterUpdate)){
+   for(const role of ["app","scheduler","coordinator","results","publisher","queueWorker","intake","news","fleet"])
+    await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:"42501"},`B6 broad role ${role} denied`);
+   for(const role of ["control_room_reader","control_room_backup"])assert.equal((await sql(pg,"SELECT has_any_column_privilege($1,$2,'SELECT,INSERT,UPDATE') yes",[role,table])).rows[0].yes,false);
+   for(const right of ["SELECT","INSERT"])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,true);
+   for(const right of ["UPDATE","DELETE","TRUNCATE"])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,false);
+   const updatable=(await sql(pg,"SELECT attname FROM pg_attribute WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege('control_room_web',attrelid,attnum,'UPDATE') ORDER BY attname COLLATE \"C\"",[table])).rows.map(r=>r.attname);
+   assert.deepEqual(updatable,columns,`B6 ${table} web UPDATE columns`);
   }
   const receipt=await f.publish();assert.equal(receipt.state,"recorded");assert.equal((await f.publish()).state,"replayed");
   const card=(await f.desk.readLoopCandidate(identity,project,f.requestId)).candidate!;
