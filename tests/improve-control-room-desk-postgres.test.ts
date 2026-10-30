@@ -1128,14 +1128,19 @@ test("B5 retained website lineage uses the web login", async () => b1aRun(async 
     const view = await e.desk.viewLoopDesk(identity, ids.project);
     assert.equal(view.loopRequests[0]!.requestId, requestId); assert.equal(view.loopRequests[0]!.runLink!.runLinkId, runLinkId);
     assert.equal(view.loopRequests[0]!.savedAuthorization, true); assert.equal(view.loopRequests[0]!.startsWork, false);
-    // BLOCKED at BASE: the website Confirm authorization key does not bind B4 lineage (BUILD-B5).
+    // The website Start claim binds the Confirm-recorded authorization, so B4 publishes on PostgreSQL
+    // through the 0304 SQL guard, and the retained card replays exactly.
     const before = await b1aSnapshot(pg);
-    await assert.rejects(e.publish(), /loop_candidate_integrity_failed/u, "B5 records the website-Start to B4 publication gap on PostgreSQL");
-    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM control_loop_update_candidates")).rows[0].n, 0);
-    assert.equal(await b1aSnapshot(pg), before, "B5 refused publication leaves signed lineage bytes unchanged");
+    const recorded = await e.publish();
+    assert.equal(recorded.state, "recorded", "B5 website-started run records its B4 finish card on PostgreSQL");
+    assert.equal(recorded.candidate.candidateRevision, e.heads.final);
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM control_loop_update_candidates")).rows[0].n, 1);
+    assert.equal(await b1aSnapshot(pg), before, "B5 publication leaves the signed lineage bytes unchanged");
+    const replayed = await e.publish();
+    assert.equal(replayed.state, "replayed"); assert.deepEqual(replayed.candidate, recorded.candidate, "B5 retained publication replays the same candidate");
     assert.equal(await legacyRows(), legacy, "B5 legacy signed rows, decisions and pipeline/task rows are unchanged");
     assert.equal(JSON.stringify(await readMacGrantCatalogV1(web.client)), grants); assert.equal(await readPrivateWebSchemaDigest(web.client), digest);
     assert.deepEqual(web.errors.filter(error => error.sqlState === "42501"), [], "B5 web login needs no privilege it lacks");
-    console.log("B5 retained website lineage production_login=control_room_web commands=12 legacy_unchanged=true grants_unchanged=true publication=BLOCKED_AT_BASE");
+    console.log("B5 retained website lineage production_login=control_room_web commands=12 legacy_unchanged=true grants_unchanged=true publication=recorded");
   } finally { await bridge.close(); await web.close(); }
 }));

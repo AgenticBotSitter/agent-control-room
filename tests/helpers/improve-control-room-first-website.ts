@@ -4,19 +4,21 @@
 // database, browser or process until a caller invokes it. This helper never
 // selects a role or model; A2 and the qualified lineup do.
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { createPrivateTaskBootstrap } from "../../src/web/v1/private-task-startup";
+import { loopCandidateCardSchemaV1, type LoopCandidateCardV1 } from "../../src/improve-control-room/v1/loop-candidate-wire";
 const exec = promisify(execFile);
 const GIT_ENV: NodeJS.ProcessEnv = { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 
 /** Spec reservations (SPEC-B5-v4); preflight probes them, it never kills an owner. */
 export const B5_PORTS = Object.freeze({ product: 60460, preview: 60461, postgresBase: 60470, postgresCount: 10 });
-/** Live-install and lead listeners that B5 never connects to or stops. */
+/** Live-install listeners (3210/3211/3310/3311/7864) and the lead's own listener (39473),
+ * which the lead brief names as off limits. B5 never connects to or stops them. */
 export const B5_PROTECTED_PORTS = Object.freeze([3210, 3211, 3310, 3311, 7864, 39473]);
 export const B5_REQUEST_TEXT = "Add a visible Ready status badge to this page, with id=status and role=status. Use amber or teal; ask me which before choosing. Preserve the page title. Change only index.html.";
 export const B5_MAX_DURATION_MS = 14_400_000;
@@ -27,12 +29,12 @@ export const B5_RECIPES = Object.freeze([
 ] as const);
 export const B5_REQUIRED_RISK = Object.freeze({ categories: ["code", "owner_visible", "ci"], slots: ["attack-review", "ui-review", "ci-review"] } as const);
 
-/** A missing landed contract. The CLI refuses here rather than inventing a flag,
- * a run.json edit or a globally visible project.skills substitute. */
-export const B5_BLOCKED_PREREQUISITES = Object.freeze([{
-  code: "A2_ROLE_SCOPED_INPUT_WRITER_MISSING",
-  contract: "A supported A2 command/API that, after intake allocates the run and before confirm-request/start, binds an immutable supplied-input path and bytes to a role list (build only, code-review only) and returns a receipt; A2 currently reads run.json supplied_inputs but exposes no writer.",
-}] as const);
+/** Prerequisite 7: the two scoped stimuli, bound through A2's landed `cr bind-input`
+ * after intake and before confirmation/Start. Never a run.json edit or project.skills. */
+export const B5_INPUT_BINDINGS = Object.freeze([
+  { name: "b5-builder-fault", input: "faultInput", roles: ["build"] },
+  { name: "b5-review-instruction", input: "reviewInput", roles: ["code-review"] },
+] as const);
 
 export class B5RefusalV1 extends Error {
   constructor(readonly code: string, readonly detail = "") { super(code); }
@@ -59,9 +61,13 @@ export type FirstWebsiteConfigV1 = z.infer<typeof firstWebsiteConfigSchemaV1>;
 
 // Types refer to the reviewed product constructor, not an alternate host.
 export type FirstWebsiteStartedRuntimeV1 = Awaited<ReturnType<ReturnType<typeof createPrivateTaskBootstrap>["start"]>>;
+/** The landed private A2 entry wrapper the assembly's adapter already uses (same
+ * interpreter/entrypoint/cwd and confined roots). B5 runs only `bind-input` through it. */
+export type FirstWebsiteA2EntryV1 = { interpreter: string; entrypoint: string; cwd: string };
 export type FirstWebsiteHostV1 = {
   startup: FirstWebsiteStartedRuntimeV1;
   origin: string; // exact qualified product origin, matching device.origin
+  a2Entry: FirstWebsiteA2EntryV1;
   close(): Promise<void>; // idempotent, drains/reaps every assembly-owned resource
 };
 export type CreateFirstWebsiteHostV1 = (config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal) => Promise<FirstWebsiteHostV1>;
@@ -157,8 +163,6 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   const origin = new URL(config.device.origin);
   if (origin.origin !== config.device.origin || !["https:", "http:"].includes(origin.protocol)) refuse("B5_DEVICE_ORIGIN");
   const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname);
-  // Last: a landed prerequisite that does not exist yet. Nothing has been created.
-  for (const blocked of B5_BLOCKED_PREREQUISITES) refuse(blocked.code, blocked.contract);
   return { config, uid, evidenceDir, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
     phoneTransport: loopback ? "loopback-only" : "lead-supplied" };
 }
@@ -254,19 +258,99 @@ export async function runIndependentStatusCheckV1(project: string, outputPath: s
     exitCode: result.exitCode, ...counts, outputPath, outputSha256: b5Bytes(result.output) }) };
 }
 
+// ---------- role-scoped supplied inputs through A2's landed `cr bind-input` ----------
+/** The receipt `cr bind-input --json` returns (tools loop/README.md "Role-scoped supplied inputs"). */
+export const b5BindInputReceiptSchemaV1 = z.object({
+  name: z.string().regex(/^[a-z0-9-]+$/u), index: z.number().int().nonnegative(), path: z.string().min(1).max(4096),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u), size: z.number().int().nonnegative(), roles: z.array(z.string().min(1)).min(1),
+  source: z.string().min(1).max(4096), at: z.string().min(1), input_version: z.union([z.string().min(1), z.number().int().positive()]),
+  revision: z.number().int().positive(), invalidated: z.array(z.string()), replaces: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+}).passthrough();
+export type B5BindInputReceiptV1 = z.infer<typeof b5BindInputReceiptSchemaV1>;
+const B5_A2_OUTPUT_LIMIT = 1 << 20;
+/** Runs one A2 entry command with the adapter's positive environment allowlist: no
+ * inherited service or sibling credentials, no HOME/PATH, no shell. */
+export async function runA2EntryV1(entry: FirstWebsiteA2EntryV1, args: readonly string[], timeoutMs = 60_000) {
+  return new Promise<{ code: number | null; stdout: string }>((done, fail) => {
+    const child = spawn(entry.interpreter, [entry.entrypoint, ...args], { cwd: entry.cwd, shell: false,
+      env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
+    const output: Buffer[] = []; let bytes = 0, failed = false;
+    const timer = setTimeout(() => { failed = true; child.kill("SIGKILL"); }, timeoutMs);
+    child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > B5_A2_OUTPUT_LIMIT) { failed = true; child.kill("SIGKILL"); } else output.push(chunk); });
+    child.stderr.on("data", () => {});
+    child.on("error", () => { failed = true; });
+    child.on("close", code => { clearTimeout(timer);
+      if (failed) fail(new B5RefusalV1("B5_A2_ENTRY_FAILED")); else done({ code, stdout: Buffer.concat(output).toString("utf8") }); });
+  });
+}
+/** Before intake: the landed writer exists at the qualified entry and takes the documented options. */
+export async function probeBindInputCapabilityV1(entry: FirstWebsiteA2EntryV1) {
+  const help = await runA2EntryV1(entry, ["bind-input", "--help"]);
+  if (help.code !== 0 || !["--file", "--role", "--json"].every(option => help.stdout.includes(option))) refuse("B5_A2_BIND_INPUT_UNAVAILABLE");
+}
+/** After intake allocated `loopRunId` and before confirmation/Start: stage each scoped input's
+ * exact preflight bytes inside the confined A2 work root, bind it through `cr bind-input`, and
+ * check the returned receipt and the read-only bound copy. Any mismatch is a refusal; nothing
+ * edits engine state directly. Returns the receipts for the manifest. */
+export async function bindFirstWebsiteInputsV1(input: { entry: FirstWebsiteA2EntryV1; loopRunId: string; stageDir: string;
+  files: Readonly<Record<"faultInput" | "reviewInput", string>>; digests: Readonly<Record<string, string>>; runWorkDir: string }) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/u.test(input.loopRunId)) refuse("B5_INPUT_BINDING", "run");
+  await mkdir(input.stageDir, { recursive: false, mode: 0o700 }).catch(() => refuse("B5_INPUT_BINDING", "stage exists"));
+  const receipts: B5BindInputReceiptV1[] = [];
+  for (const binding of B5_INPUT_BINDINGS) {
+    const bytes = await readFile(input.files[binding.input]);
+    if (b5Bytes(bytes) !== input.digests[binding.input]) refuse("B5_INPUT_CHANGED", binding.input);
+    const staged = join(input.stageDir, `${binding.name}.md`);
+    await writeFile(staged, bytes, { flag: "wx", mode: 0o400 });
+    const result = await runA2EntryV1(input.entry, ["bind-input", input.loopRunId, binding.name, "--file", staged,
+      ...binding.roles.flatMap(role => ["--role", role]), "--json"]);
+    let envelope: { receipt?: unknown; error?: unknown };
+    try { envelope = JSON.parse(result.stdout) as typeof envelope; } catch { return refuse("B5_INPUT_BINDING_REFUSED", binding.name); }
+    if (result.code !== 0) refuse("B5_INPUT_BINDING_REFUSED", `${binding.name}:${typeof envelope.error === "string" ? envelope.error : "unknown"}`);
+    const parsed = b5BindInputReceiptSchemaV1.safeParse(envelope.receipt);
+    if (!parsed.success) refuse("B5_INPUT_BINDING_RECEIPT", binding.name);
+    const receipt = parsed.data!, sha = input.digests[binding.input]!.slice("sha256:".length);
+    if (receipt.name !== binding.name || JSON.stringify(receipt.roles) !== JSON.stringify(binding.roles) || receipt.sha256 !== sha
+      || receipt.size !== bytes.length || receipt.source !== staged || receipt.replaces !== null || !inside(input.runWorkDir, receipt.path))
+      refuse("B5_INPUT_BINDING_RECEIPT", binding.name);
+    // Bound before owner confirmation: the binding may invalidate an --expect, never a confirmation.
+    if (receipt.invalidated.includes("confirmation")) refuse("B5_INPUT_BINDING_LATE", binding.name);
+    if (receipts.length && receipt.revision <= receipts.at(-1)!.revision) refuse("B5_INPUT_BINDING_RECEIPT", "revision");
+    await canonical(receipt.path, "file", "B5_INPUT_BINDING_COPY");
+    if (b5Bytes(await readFile(receipt.path)) !== input.digests[binding.input] || ((await lstat(receipt.path)).mode & 0o222) !== 0)
+      refuse("B5_INPUT_BINDING_COPY", binding.name);
+    receipts.push(receipt);
+  }
+  return receipts;
+}
+/** After dispatch: each generated brief carries A2's "Additional supplied input (read in full)"
+ * line for a bound copy, with its pinned SHA-256, exactly when its role is in that binding's
+ * roles. Build sees only the fault; both code reviews see only the neutral instruction; every
+ * other role sees neither. Reports quoted inside a brief are not that line. */
+export function assertRoleScopedBriefsV1(briefs: readonly { role: string; text: string }[], receipts: readonly B5BindInputReceiptV1[]) {
+  if (briefs.filter(b => b.role === "build").length < 1 || briefs.filter(b => b.role === "code-review").length < 2) refuse("B5_BRIEF_SCOPE", "briefs");
+  for (const brief of briefs) for (const receipt of receipts) {
+    const line = `Additional supplied input (read in full): ${receipt.path} (SHA256 ${receipt.sha256})`;
+    const named = brief.text.split("\n").filter(text => text === line).length;
+    if (named !== (receipt.roles.includes(brief.role) ? 1 : 0)) refuse("B5_BRIEF_SCOPE", `${brief.role}:${receipt.name}`);
+  }
+}
+
 // ---------- retained evidence verifier ----------
 const at = z.string().datetime();
 const real = z.literal("real");
 export const B5_REQUIRED_ARTIFACTS = Object.freeze(["journey.json", "database-snapshot.json", "independent-status-check.json", "teardown.json",
   "screens/01-prepare.png", "screens/02-confirm-start.png", "screens/03-question.png", "screens/04-plan.png", "screens/05-spec.png",
   "screens/06-repair.png", "screens/07-finish-phone.png", "screens/08-finish-desktop.png", "screens/09-retained.png"]);
+const bindingRecord = z.object({ name: z.enum(["b5-builder-fault", "b5-review-instruction"]), roles: z.array(z.string().min(1)).min(1),
+  sha256, path: z.string().min(1).max(4096), revision: z.number().int().positive(), at, receiptDigest: sha256 }).strict();
 export const b5ManifestSchemaV1 = z.object({
   schemaVersion: z.literal(1), kind: z.literal("b5-first-website-proof"),
   product: z.object({ baseRevision: revision, headRevision: revision, environmentDigest: sha256 }).strict(),
+  // jobSandboxDigest is recorded for the reviewer; no independent source exists for the verifier to compare it with.
   pins: z.object({ a2ToolingRevision: sha256, schemaDigest: sha256, jobSandboxDigest: sha256, qualificationDigest: sha256, recipeDigest: sha256,
     settingsSha256: sha256, availabilitySha256: sha256, faultInputSha256: sha256, reviewInputSha256: sha256, authorizationSha256: sha256,
-    assemblyDigest: sha256, assemblyExport: z.literal(B5_ASSEMBLY_EXPORT), inputBindingReceipts: z.array(z.object({
-      role: z.enum(["build", "code-review"]), inputSha256: sha256, receiptDigest: sha256, boundAt: at }).strict()).length(2) }).strict(),
+    assemblyDigest: sha256, assemblyExport: z.literal(B5_ASSEMBLY_EXPORT), inputBindings: z.array(bindingRecord).length(2) }).strict(),
   risk: z.object({ categories: z.array(z.string()), slots: z.array(z.string()) }).strict(),
   launch: z.object({ uid: z.number().int().nonnegative(), context: z.literal("current-session"), isolationClaim: z.literal("none"),
     consumedRoots: z.array(z.string().min(1)).min(1) }).strict(),
@@ -278,47 +362,132 @@ export const b5ManifestSchemaV1 = z.object({
   timestamps: z.object({ startedAt: at, finishedAt: at }).strict(),
   artifacts: z.array(z.object({ path: z.string().min(1).max(256), sha256, bytes: z.number().int().nonnegative() }).strict()).min(1),
 }).strict();
+type B5ManifestV1 = z.infer<typeof b5ManifestSchemaV1>;
 const step = z.object({ n: z.number().int().positive(), role: z.string().min(1), identity: z.string().min(1), family: z.string().min(1),
   verified: z.boolean(), head: revision, startedAt: at, endedAt: at, verdict: z.enum(["DONE", "CLEAN", "NEEDS-FIX"]).nullable(),
   findings: z.array(z.object({ severity: z.enum(["HIGH", "MEDIUM", "LOW"]), state: z.enum(["open", "fixed"]), summary: z.string() }).strict()),
   diagnostic: z.enum(["PASS", "FAIL"]).nullable() }).strict();
+export const B5_DOM_SCREENS = Object.freeze(["07-finish-phone", "08-finish-desktop", "09-retained"] as const);
 export const b5JourneySchemaV1 = z.object({
   schemaVersion: z.literal(1),
   actions: z.array(z.object({ name: z.string().min(1), device: z.enum(["phone", "desktop"]), at, method: z.enum(["GET", "POST"]),
     path: z.string().min(1), status: z.number().int() }).strict()).min(1),
   closed: z.array(z.object({ label: z.string().min(1), from: at, to: at }).strict()).min(2),
   steps: z.array(step).min(1),
+  // Facts read from the rendered finish card's DOM on each device and after the owned restart.
+  dom: z.array(z.object({ screen: z.enum(B5_DOM_SCREENS), candidateRevision: revision, baseRevision: revision, requestId: z.string().min(1) }).strict()).min(3),
   devices: z.array(z.object({ kind: z.enum(["phone", "desktop"]), real: z.boolean(), browser: z.string().min(1) }).strict()).min(1),
 }).strict();
+type B5JourneyV1 = z.infer<typeof b5JourneySchemaV1>;
 export const b5TeardownSchemaV1 = z.object({
   schemaVersion: z.literal(1), b3cCleanup: z.enum(["complete", "refused", "uncertain", "missing"]), scratchAbsent: z.boolean(),
   ownedProcesses: z.number().int().nonnegative(), ownedListenersReleased: z.boolean(), protectedListenersUntouched: z.boolean(),
   postgresStopped: z.boolean(), cleanupAt: at,
   retainedRead: z.object({ at, candidateRevision: revision, receiptDigest: sha256 }).strict().nullable(),
 }).strict();
-export type B5CardFactsV1 = { candidateRevision: string; baseRevision: string; requestId: string; runLinkId: string; toolingRevision: string };
+type B5TeardownV1 = z.infer<typeof b5TeardownSchemaV1>;
+/** Signed companion/candidate rows read through the service login after cleanup. Session,
+ * credential and key tables are not listed, so they can never be retained here. */
+export const B5_SNAPSHOT_TABLES = Object.freeze(["control_loop_improvement_requests", "control_loop_improvement_inputs", "control_loop_improvement_run_links",
+  "control_loop_improvement_authorizations", "control_loop_improvement_commands", "control_loop_update_candidates"] as const);
+export const b5DatabaseSnapshotSchemaV1 = z.object({ schemaVersion: z.literal(1), readAt: at,
+  rows: z.array(z.object({ table: z.enum(B5_SNAPSHOT_TABLES), sha256, row: z.record(z.string(), z.unknown()) }).strict()).min(3) }).strict();
+type B5SnapshotV1 = z.infer<typeof b5DatabaseSnapshotSchemaV1>;
+/** The qualified pins preflight validated from the lead's configuration, never read from the manifest. */
+export type B5QualifiedPinsV1 = { toolingRevision: string; schemaDigest: string; productBase: string; productHead: string; uid: number;
+  digests: Readonly<Record<"settings" | "availability" | "authorization" | "qualification" | "assembly" | "faultInput" | "reviewInput", string>> };
 export type B5VerdictV1 = { state: "complete" | "incomplete"; reasons: string[] };
 
 const ms = (value: string) => Date.parse(value);
-/** (a) The main chain is real; fixtures are labelled and cannot fill a real gate. */
-export function assertRealChainV1(manifest: z.infer<typeof b5ManifestSchemaV1>, artifacts: ReadonlyMap<string, Uint8Array>, card: B5CardFactsV1) {
-  if (manifest.pins.a2ToolingRevision !== card.toolingRevision) refuse("B5_FIXTURE_NOT_REAL", "tooling");
-  for (const [path, bytes] of artifacts) if (!path.endsWith(".png") && /SYNTHETIC/u.test(Buffer.from(bytes).toString("utf8"))) refuse("B5_FIXTURE_NOT_REAL", path);
+/** (a) The main chain is real. Provenance is structural: the card the real service returned
+ * names the engine that produced it, and that tooling revision must be the qualified pin;
+ * the retained signed rows must be that card's own rows; every verified review on the card
+ * must be a journey step. A SYNTHETIC engine's card carries its own tooling revision. */
+export function assertRealChainV1(manifest: B5ManifestV1, card: LoopCandidateCardV1, snapshot: B5SnapshotV1, journey: B5JourneyV1, pins: B5QualifiedPinsV1) {
+  const b = card.evidence.binding;
+  if (b.toolingRevision !== pins.toolingRevision) refuse("B5_FIXTURE_NOT_REAL", "card tooling");
+  if (manifest.pins.a2ToolingRevision !== pins.toolingRevision || manifest.pins.schemaDigest !== pins.schemaDigest) refuse("B5_FIXTURE_NOT_REAL", "manifest pins");
+  const row = (table: string, id: string) => snapshot.rows.find(r => r.table === table && r.row.id === id)?.row;
+  const candidate = row("control_loop_update_candidates", card.candidateId);
+  if (!candidate || candidate.record_digest !== card.recordDigest || candidate.candidate_revision !== card.candidateRevision
+    || candidate.request_id !== card.requestId || candidate.run_link_id !== b.runLinkId) refuse("B5_FIXTURE_NOT_REAL", "snapshot candidate");
+  if (!row("control_loop_improvement_requests", card.requestId) || !row("control_loop_improvement_run_links", b.runLinkId)) refuse("B5_FIXTURE_NOT_REAL", "snapshot lineage");
+  for (const review of card.evidence.reviews) {
+    if (!review.identityVerified || !journey.steps.some(s => s.verified && s.role === review.role && s.head === review.candidateRevision
+      && s.family === review.family && s.identity === review.observedModel && s.verdict === review.verdict)) refuse("B5_FIXTURE_NOT_REAL", `review ${review.stepId}`);
+  }
 }
-/** (b) Rejected/final heads and every artifact byte bind to the saved card. */
-export function assertHeadsAndBytesV1(manifest: z.infer<typeof b5ManifestSchemaV1>, checks: B5StatusCheckRecordV1[], outputs: ReadonlyMap<string, Uint8Array>, card: B5CardFactsV1) {
-  const { base, rejected, final } = manifest.heads;
-  if (new Set([base, rejected, final]).size !== 3 || card.candidateRevision !== final || card.baseRevision !== base
-    || manifest.lineage.requestId !== card.requestId || manifest.lineage.runLinkId !== card.runLinkId) refuse("B5_HEAD_BINDING", "card");
+/** The manifest's recorded pins equal what preflight qualified and what the card binds. */
+export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidateCardV1, journey: B5JourneyV1, pins: B5QualifiedPinsV1) {
+  const p = manifest.pins, d = pins.digests, b = card.evidence.binding, bad = (why: string) => refuse("B5_MANIFEST_PINS", why);
+  if (manifest.product.baseRevision !== pins.productBase || manifest.product.headRevision !== pins.productHead) bad("product");
+  if (p.settingsSha256 !== d.settings || p.availabilitySha256 !== d.availability || p.authorizationSha256 !== d.authorization
+    || p.qualificationDigest !== d.qualification || p.assemblyDigest !== d.assembly || p.faultInputSha256 !== d.faultInput || p.reviewInputSha256 !== d.reviewInput) bad("inputs");
+  if (p.recipeDigest !== b.recipeDigest || manifest.product.environmentDigest !== b.environmentDigest) bad("card binding");
+  if (!B5_REQUIRED_RISK.categories.every(c => manifest.risk.categories.includes(c)) || !B5_REQUIRED_RISK.slots.every(s => manifest.risk.slots.includes(s))) bad("risk");
+  if (manifest.launch.uid !== pins.uid) bad("uid");
+  if (manifest.lineage.loopRunId !== b.loopRunId || manifest.lineage.localVersion !== card.localVersion || manifest.lineage.a2InputVersion !== card.a2InputVersion) bad("lineage");
+  const confirm = journey.actions.filter(a => a.method === "POST" && /\/improvements\/loop\/[^/]+\/confirm$/u.test(a.path)).map(a => ms(a.at));
+  if (!confirm.length) bad("confirmation");
+  for (const binding of B5_INPUT_BINDINGS) {
+    const r = p.inputBindings.find(x => x.name === binding.name);
+    if (!r || JSON.stringify(r.roles) !== JSON.stringify(binding.roles) || r.sha256 !== d[binding.input] || ms(r.at) >= Math.min(...confirm)) bad(`binding ${binding.name}`);
+  }
+}
+/** (b) Rejected/final heads, the finish-card DOM, the card's checks and every artifact byte bind to the saved card. */
+export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCheckRecordV1[], outputs: ReadonlyMap<string, Uint8Array>,
+  card: LoopCandidateCardV1, journey: B5JourneyV1) {
+  const { base, rejected, final } = manifest.heads, b = card.evidence.binding;
+  if (new Set([base, rejected, final]).size !== 3 || card.candidateRevision !== final || b.baseRevision !== base
+    || manifest.lineage.requestId !== card.requestId || manifest.lineage.runLinkId !== b.runLinkId) refuse("B5_HEAD_BINDING", "card");
   const failed = checks.find(check => check.head === rejected), passed = checks.find(check => check.head === final);
   if (!failed || !passed || checks.length !== 2) refuse("B5_HEAD_BINDING", "diagnostic heads");
   if (failed!.exitCode === 0 || failed!.failed < 1 || passed!.exitCode !== 0 || passed!.completed < 1 || passed!.passed !== passed!.completed
     || passed!.failed !== 0 || passed!.skipped !== 0 || failed!.protectedTestsDigest !== passed!.protectedTestsDigest
     || ms(failed!.endedAt) > ms(passed!.startedAt)) refuse("B5_HEAD_BINDING", "diagnostic results");
+  for (const screen of B5_DOM_SCREENS) {
+    const dom = journey.dom.find(x => x.screen === screen);
+    if (!dom || dom.candidateRevision !== card.candidateRevision || dom.baseRevision !== base || dom.requestId !== card.requestId) refuse("B5_HEAD_BINDING", `dom ${screen}`);
+  }
+  // The card's required recipe really ran at the final head; the diagnostic stays labelled optional.
+  const smoke = card.evidence.checks.find(c => c.id === "site-smoke"), status = card.evidence.checks.find(c => c.id === "site-status");
+  if (!smoke || !smoke.required || smoke.status !== "PASS" || smoke.candidateRevision !== final || smoke.completed < 1 || smoke.failed !== 0
+    || smoke.skipped !== 0 || status?.required !== false) refuse("B5_HEAD_BINDING", "card checks");
   for (const check of checks) if (b5Bytes(outputs.get(check.outputPath) ?? "") !== check.outputSha256) refuse("B5_ARTIFACT_BYTES", check.outputPath);
 }
+const statusTag = (html: string) => /<([a-z][a-z0-9]*)\b([^>]*\bid="status"[^>]*)>([^<]*)</iu.exec(html);
+/** Facts read independently from the retained candidate repository. */
+export async function readCandidateRepositoryV1(repository: string, heads: B5ManifestV1["heads"]) {
+  await canonical(repository, "directory", "B5_CANDIDATE_REPOSITORY");
+  const git = (args: string[]) => exec("/usr/bin/git", ["-C", repository, "-c", "core.fsmonitor=false", ...args],
+    { encoding: "utf8", timeout: 30_000, env: GIT_ENV, maxBuffer: 4 << 20 }).then(r => r.stdout, () => refuse("B5_CANDIDATE_REPOSITORY", args[0]));
+  const ancestor = (a: string, b: string) => exec("/usr/bin/git", ["-C", repository, "merge-base", "--is-ancestor", a, b],
+    { encoding: "utf8", timeout: 30_000, env: GIT_ENV }).then(() => true, () => false);
+  const protectedDigest = async (rev: string) => b5ProtectedTestsDigest(Object.fromEntries(await Promise.all(
+    Object.keys(B5_PROTECTED_TESTS).map(async name => [name, await git(["show", `${rev}:${name}`])]))));
+  return { head: (await git(["rev-parse", "HEAD"])).trim(), clean: await git(["status", "--porcelain=v1", "--untracked-files=all"]) === "",
+    ancestry: await ancestor(heads.base, heads.rejected) && await ancestor(heads.rejected, heads.final),
+    changed: (await git(["diff", "--name-only", heads.base, heads.final])).split("\n").filter(Boolean),
+    pages: { rejected: await git(["show", `${heads.rejected}:index.html`]), final: await git(["show", `${heads.final}:index.html`]) },
+    protectedTests: [await protectedDigest(heads.base), await protectedDigest(heads.rejected), await protectedDigest(heads.final)] };
+}
+/** (b) continued: final repository HEAD and clean tracked/untracked state equal the card's
+ * candidate; only index.html changed; protected tests untouched at every head; the rejected
+ * page really lacked role=status and the final page really carries it. */
+export function assertCandidateRepositoryV1(facts: Awaited<ReturnType<typeof readCandidateRepositoryV1>>, manifest: B5ManifestV1,
+  checks: B5StatusCheckRecordV1[], card: LoopCandidateCardV1) {
+  const bad = (why: string) => refuse("B5_CANDIDATE_REPOSITORY", why);
+  if (facts.head !== card.candidateRevision || facts.head !== manifest.heads.final || !facts.clean) bad("head");
+  if (!facts.ancestry) bad("ancestry");
+  if (JSON.stringify(facts.changed) !== JSON.stringify(["index.html"]) || card.evidence.changedAreas && !card.evidence.changedAreas.includes("index.html")) bad("changed paths");
+  if (new Set(facts.protectedTests).size !== 1 || checks.some(check => check.protectedTestsDigest !== facts.protectedTests[0])) bad("protected tests");
+  const rejected = statusTag(facts.pages.rejected), final = statusTag(facts.pages.final);
+  const title = (html: string) => /<title>Proof site<\/title>/u.test(html);
+  if (!title(facts.pages.rejected) || !rejected || !/\bReady\b/u.test(rejected[3]!) || /\brole="status"/u.test(rejected[2]!)) bad("rejected page");
+  if (!title(facts.pages.final) || !final || !/\bReady\b/u.test(final[3]!) || !/\brole="status"/u.test(final[2]!)) bad("final page");
+}
 /** (c) Real reviewer rejection while the browser was closed, original-builder repair, fresh reviews. */
-export function assertRejectionRepairV1(manifest: z.infer<typeof b5ManifestSchemaV1>, journey: z.infer<typeof b5JourneySchemaV1>) {
+export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5JourneyV1) {
   const { rejected, final } = manifest.heads, steps = [...journey.steps].sort((a, b) => a.n - b.n);
   const closed = (s: z.infer<typeof step>) => journey.closed.some(c => ms(c.from) <= ms(s.startedAt) && ms(s.endedAt) <= ms(c.to));
   const broken = (why: string) => refuse("B5_REJECTION_REPAIR", why);
@@ -339,16 +508,19 @@ export function assertRejectionRepairV1(manifest: z.infer<typeof b5ManifestSchem
   if (steps.some(s => s.findings.some(f => (f.severity === "HIGH" || f.severity === "MEDIUM") && f.state === "open") && s.n > repair!.n)) broken("open finding");
 }
 /** (d) Full B3c-2 cleanup, then the same immutable candidate read back from the retained corpus. */
-export function assertCleanupRetainedV1(teardown: z.infer<typeof b5TeardownSchemaV1>, card: B5CardFactsV1, finishedAt: string) {
+export function assertCleanupRetainedV1(teardown: B5TeardownV1, card: LoopCandidateCardV1, snapshot: B5SnapshotV1, finishedAt: string) {
   if (teardown.b3cCleanup !== "complete" || !teardown.scratchAbsent || teardown.ownedProcesses !== 0 || !teardown.ownedListenersReleased
     || !teardown.protectedListenersUntouched || !teardown.postgresStopped) refuse("B5_CLEANUP_RETAINED", "cleanup");
-  if (!teardown.retainedRead || teardown.retainedRead.candidateRevision !== card.candidateRevision
-    || ms(teardown.retainedRead.at) < ms(teardown.cleanupAt) || ms(teardown.cleanupAt) > ms(finishedAt)) refuse("B5_CLEANUP_RETAINED", "retained read");
+  if (!teardown.retainedRead || teardown.retainedRead.candidateRevision !== card.candidateRevision || teardown.retainedRead.receiptDigest !== card.recordDigest
+    || ms(teardown.retainedRead.at) < ms(teardown.cleanupAt) || ms(snapshot.readAt) < ms(teardown.cleanupAt) || ms(teardown.cleanupAt) > ms(finishedAt))
+    refuse("B5_CLEANUP_RETAINED", "retained read");
 }
-/** Reopens and hashes the retained bytes, compares them with the card read through the
- * real service (supplied by the caller) and refuses any changed, missing, stale or
- * fixture-classified proof. Missing real phone evidence is INCOMPLETE, never a skip. */
-export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, readCard: () => Promise<B5CardFactsV1>): Promise<B5VerdictV1> {
+/** Reopens and hashes the retained bytes, reads the card through the real service (the
+ * caller's `readCard` is that HTTP read), re-reads the candidate repository and compares
+ * DOM/candidate facts independently. Refuses any changed, missing, stale or fixture-provenance
+ * proof. Missing real phone evidence is INCOMPLETE, never a skip. */
+export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: { readCard: () => Promise<unknown>; candidateRepository: string;
+  pins: B5QualifiedPinsV1 }): Promise<B5VerdictV1> {
   const load = async (path: string) => {
     if (!/^[a-z0-9][a-z0-9./-]{0,255}$/u.test(path) || path.includes("..") || !inside(evidenceDir, join(evidenceDir, path))) refuse("B5_ARTIFACT_BYTES", "path");
     await canonical(join(evidenceDir, path), "file", "B5_ARTIFACT_BYTES");
@@ -369,11 +541,17 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, readCard
   for (const check of checks) if (!artifacts.has(check.outputPath)) refuse("B5_ARTIFACT_MISSING", check.outputPath);
   const journey = json(b5JourneySchemaV1, artifacts.get("journey.json")!, "B5_JOURNEY_INVALID");
   const teardown = json(b5TeardownSchemaV1, artifacts.get("teardown.json")!, "B5_TEARDOWN_INVALID");
-  const card = await readCard();
-  assertRealChainV1(manifest, artifacts, card);
-  assertHeadsAndBytesV1(manifest, checks, artifacts, card);
+  const snapshot = json(b5DatabaseSnapshotSchemaV1, artifacts.get("database-snapshot.json")!, "B5_SNAPSHOT_INVALID");
+  for (const entry of snapshot.rows) if (b5Bytes(JSON.stringify(entry.row)) !== entry.sha256) refuse("B5_SNAPSHOT_INVALID", entry.table);
+  const read = loopCandidateCardSchemaV1.safeParse(await input.readCard());
+  if (!read.success) refuse("B5_CARD_UNAVAILABLE");
+  const card = read.data!;
+  assertHeadsAndBytesV1(manifest, checks, artifacts, card, journey);
+  assertRealChainV1(manifest, card, snapshot, journey, input.pins);
+  assertManifestPinsV1(manifest, card, journey, input.pins);
+  assertCandidateRepositoryV1(await readCandidateRepositoryV1(input.candidateRepository, manifest.heads), manifest, checks, card);
   assertRejectionRepairV1(manifest, journey);
-  assertCleanupRetainedV1(teardown, card, manifest.timestamps.finishedAt);
+  assertCleanupRetainedV1(teardown, card, snapshot, manifest.timestamps.finishedAt);
   const reasons: string[] = [];
   if (manifest.classification.device !== "real" || !journey.devices.some(d => d.kind === "phone" && d.real)) reasons.push("B5_PHONE_EVIDENCE_MISSING");
   if (!journey.devices.some(d => d.kind === "desktop" && d.real)) reasons.push("B5_DESKTOP_EVIDENCE_MISSING");
@@ -382,10 +560,11 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, readCard
 
 // ---------- SYNTHETIC companion host (fixture lanes only; never the real chain) ----------
 /** Real product desk/bridge/publisher over the caller's database, with a labelled
- * SYNTHETIC engine whose saved state the owned host advances on its own scan ticks,
- * with no browser request. Its PASS is not real B5. */
+ * SYNTHETIC engine. The test (or browser spec) calls `tick()` at each gate to stand in for
+ * the engine's progress while the browser is closed; there is no scan loop. What this proves
+ * is that the real client only reads while saved state moves. Its PASS is not real B5. */
 export async function syntheticFirstWebsiteEngineV1(input: { client: import("../../src/persistence/database").DatabaseClient;
-  scope: { tenantId: string; workspaceId: string }; projectId: string; clock: () => number }) {
+  scope: { tenantId: string; workspaceId: string }; projectId: string; clock: () => number; heads?: { base: string; rejected: string; final: string } }) {
   const { ImproveControlRoomDeskServiceV1 } = await import("../../src/improve-control-room/v1/service");
   const { ImproveControlRoomLoopServiceV1 } = await import("../../src/web/v1/improve-control-room-loop-service");
   const { LoopCandidatePublisherV1, LoopCandidateStaleCompletionV1 } = await import("../../src/improve-control-room/v1/loop-candidate-publisher");
@@ -403,7 +582,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
     decodeObservation: (v: unknown) => loopImprovementObservationSchemaV1.parse(v),
     matchesSavedInput: (_r: unknown, o: { settingsDigest: string; confirmation: { sha256: string } }, i: { description: string; settingsText: string }) =>
       o.settingsDigest === loopByteHashV1(i.settingsText) && o.confirmation.sha256 === loopByteHashV1(i.description) };
-  const base = "a".repeat(40), rejected = "c".repeat(40), final = "d".repeat(40);
+  const { base, rejected, final } = input.heads ?? { base: "a".repeat(40), rejected: "c".repeat(40), final: "d".repeat(40) };
   const question = { questionId: "question:b5-colour", inputVersion: "SYNTHETIC:1", reportSha256: "e".repeat(64), owner: true, changesInput: false };
   const questionText = "SYNTHETIC plan question: amber or teal for the Ready badge?";
   const documents = { plan: "SYNTHETIC complete sealed plan.\nUse amber, as answered.\n", spec: "SYNTHETIC complete sealed spec.\nOnly index.html changes.\n" };
@@ -468,7 +647,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
   const publisher = new LoopCandidatePublisherV1(desk, config);
   const openBridge = () => new ImproveControlRoomLoopServiceV1(f.client, scope, { integrityKey: KEY, adapter, loopCandidates: config }, clock);
   const step = (role: string, head: string, verdict: string | null) => { launches++; steps.push({ n: steps.length + 1, role, head, verdict }); };
-  /** One owned service scan. It advances saved engine state only when the run is not waiting on the owner. */
+  /** One fixture progress step, called by the test. It advances saved engine state only when the run is not waiting on the owner. */
   const tick = async () => {
     if (!saved || saved.state !== "running") return phase;
     if (phase === "started") { step("plan", base, null); saved.state = "waiting"; saved.revision++; saved.question = question; phase = "question"; }
@@ -512,7 +691,7 @@ export async function driveSyntheticFirstWebsiteV1(e: Awaited<ReturnType<typeof 
   return { requestId, runLinkId };
 }
 /** The PGlite web fixture plus a real web process over the SYNTHETIC engine. */
-export async function syntheticFirstWebsiteFixtureV1(options: { dataDir?: string } = {}) {
+export async function syntheticFirstWebsiteFixtureV1(options: { dataDir?: string; heads?: { base: string; rejected: string; final: string } } = {}) {
   const { taskFixture, taskFixtureOnDisk } = await import("./web-task");
   const { now, origin, trust } = await import("./web-foundation");
   const { createPrivateWebProcess } = await import("../../src/web/v1/private-process");
@@ -520,7 +699,7 @@ export async function syntheticFirstWebsiteFixtureV1(options: { dataDir?: string
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };
-  const e = await syntheticFirstWebsiteEngineV1({ client: f.client, scope, projectId: f.project.projectId, clock: () => now });
+  const e = await syntheticFirstWebsiteEngineV1({ client: f.client, scope, projectId: f.project.projectId, clock: () => now, heads: options.heads });
   const open = () => ({ bridge: e.openBridge(), app: createPrivateWebProcess({ origin, ...trust, ...scope, loadKeys: async () => trust.keys, clock: () => now,
     database: { client: f.client, close: async () => {} }, loopBridge: { integrityKey: e.KEY, adapter: e.adapter, loopCandidates: e.config } }) });
   let service = open(), restarts = 0;

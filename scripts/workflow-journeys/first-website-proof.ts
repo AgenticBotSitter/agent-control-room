@@ -4,7 +4,7 @@
 // provisions accounts, reads credentials, installs, delivers, pushes or chooses a
 // role. Exit 0 only with complete verified proof; otherwise a safe refusal line.
 import { fileURLToPath } from "node:url";
-import { B5_BLOCKED_PREREQUISITES, B5RefusalV1, preflightFirstWebsiteV1 } from "../../tests/helpers/improve-control-room-first-website";
+import { B5RefusalV1, preflightFirstWebsiteV1 } from "../../tests/helpers/improve-control-room-first-website";
 
 function parseArguments(argv: readonly string[]) {
   const values = new Map<string, string>();
@@ -21,10 +21,12 @@ function parseArguments(argv: readonly string[]) {
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   await preflightFirstWebsiteV1({ ...args, cliFile: fileURLToPath(import.meta.url) });
-  // Preflight refuses while any landed prerequisite is missing. The journey controller
-  // binds the role-scoped inputs between intake and confirmation through that landed
-  // contract, so it is added with that contract's reviewed integration, then imports
-  // the assembly through loadFirstWebsiteAssemblyV1 under a maxDurationMs signal.
+  // The device-journey controller is not built yet. It will import the assembly through
+  // loadFirstWebsiteAssemblyV1 under a maxDurationMs signal, run probeBindInputCapabilityV1
+  // before intake, bind both scoped inputs with bindFirstWebsiteInputsV1 after intake and
+  // before confirmation, check assertRoleScopedBriefsV1 after dispatch, and finish with
+  // verifyFirstWebsiteEvidenceV1. Until then nothing past preflight runs: no import, intake
+  // or paid work that could not reach a verified end.
   throw new B5RefusalV1("B5_JOURNEY_CONTROLLER_UNBOUND");
 }
 
@@ -34,7 +36,5 @@ try {
 } catch (error) {
   const code = error instanceof B5RefusalV1 ? error.code : "B5_INTERNAL";
   console.log(`FAILED: ${code}; proof retained`);
-  const blocked = B5_BLOCKED_PREREQUISITES.find(item => item.code === code);
-  if (blocked) console.log(`BLOCKED: ${blocked.contract}`);
   process.exitCode = 1;
 }

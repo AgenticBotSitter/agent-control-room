@@ -40,7 +40,8 @@ import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import type { TestContext } from "node:test";
 import type * as B5Helper from "./helpers/improve-control-room-first-website";
-import type { B5CardFactsV1, B5StatusCheckRecordV1 } from "./helpers/improve-control-room-first-website";
+import type { B5BindInputReceiptV1, B5QualifiedPinsV1, B5StatusCheckRecordV1 } from "./helpers/improve-control-room-first-website";
+import type { LoopCandidateCardV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
 import { request as webRequest } from "./helpers/web-foundation";
 // B5 helper bindings load lazily, so the registration case above imports no B5 module.
 let H: typeof B5Helper;
@@ -120,7 +121,7 @@ test("B5 proof CLI refuses missing, invalid and unqualified configuration before
   assert.equal(await lstat(join(s.root, "config", "imported.flag")).then(() => true, () => false), false, "B5 assembly is never imported on refusal");
 });
 
-test("B5 preflight checks product, ports and identity, then blocks on the missing A2 input writer", async t => {
+test("B5 preflight checks product, ports and identity before any effect", async t => {
   await load();
   const s = await scratch(t), product = join(s.parent, "product");
   await mkdir(join(product, "scripts"), { recursive: true }); await writeFile(join(product, "scripts", "cli.ts"), "// fixture\n");
@@ -133,7 +134,9 @@ test("B5 preflight checks product, ports and identity, then blocks on the missin
     H.preflightFirstWebsiteV1({ configFile: await s.write(value), evidenceDir: s.evidence, cliFile: join(product, "scripts", "cli.ts"), probe: async () => true, ...extra });
   const code = async (value: unknown, extra: Partial<Parameters<typeof B5Helper.preflightFirstWebsiteV1>[0]> = {}) =>
     input(value, extra).then(() => "PASSED", (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
-  assert.equal(await code(config), "A2_ROLE_SCOPED_INPUT_WRITER_MISSING", "B5 complete preflight stops at the missing landed A2 contract");
+  assert.equal(await code(config), "PASSED", "B5 complete preflight passes with the landed A2 input writer");
+  const ready = await input(config);
+  assert.deepEqual([ready.digests.faultInput, ready.digests.reviewInput], [H.b5Bytes("Builder-only first-attempt instruction.\n"), H.b5Bytes("Code-review-only neutral instruction.\n")]);
   assert.equal(await code(config, { uid: 424242 }), "B5_EXECUTION_IDENTITY_MISMATCH");
   assert.equal(await code(config, { cliFile: resolve("scripts/workflow-journeys/first-website-proof.ts") }), "B5_PRODUCT_ROOT");
   assert.equal(await code({ ...config, product: { ...config.product, candidateRevision: baseRevision } }), "B5_PRODUCT_REVISION");
@@ -189,41 +192,64 @@ test("B5 proof site planted omission passes smoke and fails the named diagnostic
   assert.match(missing.output, /ENOENT/u, "B5 missing page is a setup failure, not the planted semantic failure");
 });
 
-/** Real-shaped retained evidence built from the actually executed diagnostics. */
+/** Retained evidence around a card the real product publisher recorded and the real HTTP
+ * handler returned, over a proof-site repository whose diagnostics actually ran. The
+ * engine is SYNTHETIC, so `fixturePins` qualify its tooling only to exercise the guards;
+ * `qualifiedPins` stand for a real configuration that the fixture's card cannot meet. */
 async function evidenceSet(t: Pick<TestContext, "after">) {
   const p = await proofSite(t), dir = join(p.dir, "evidence"), base = p.seeded.head;
-  const card: B5CardFactsV1 = { candidateRevision: p.final, baseRevision: base, requestId: "request:proof", runLinkId: "run-link:proof", toolingRevision: H.b5Bytes("tooling") };
+  const f = await H.syntheticFirstWebsiteFixtureV1({ heads: { base, rejected: p.rejected, final: p.final } }); t.after(() => f.close());
+  const project = f.project.projectId;
+  const { requestId } = await H.driveSyntheticFirstWebsiteV1(f, f.bridge, f.identity, project, "b5-verify");
+  assert.equal((await f.publish()).state, "recorded");
+  const readCard = async () => (await (await f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/candidate`))).json()).candidate;
+  const card = (await readCard()) as LoopCandidateCardV1;
+  const rows: { table: string; sha256: string; row: Record<string, unknown> }[] = [];
+  for (const table of H.B5_SNAPSHOT_TABLES) for (const value of (await f.client.query<Record<string, unknown>>(`SELECT * FROM ${table}`)).rows) {
+    const row = JSON.parse(JSON.stringify(value, (_k, v: unknown) => typeof v === "bigint" ? Number(v) : v)) as Record<string, unknown>;
+    rows.push({ table, sha256: H.b5Bytes(JSON.stringify(row)), row });
+  }
+  const digests = { settings: H.b5Bytes("settings"), availability: H.b5Bytes("availability"), authorization: H.b5Bytes("authorization"),
+    qualification: H.b5Bytes("qualification"), assembly: H.b5Bytes("assembly"), faultInput: H.b5Bytes("fault"), reviewInput: H.b5Bytes("review") };
+  const fixturePins: B5QualifiedPinsV1 = { toolingRevision: f.adapter.toolingRevision, schemaDigest: f.adapter.schemaDigest,
+    productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501, digests };
+  const qualifiedPins: B5QualifiedPinsV1 = { ...fixturePins, toolingRevision: H.b5Bytes("qualified A2 tooling") };
   const time = (minute: number) => new Date(Date.UTC(2026, 9, 30, 12, minute)).toISOString();
   const step = (n: number, role: string, identity: string, family: string, head: string, verdict: string | null, extra: Record<string, unknown> = {}) =>
     ({ n, role, identity, family, verified: true, head, startedAt: time(10 + n * 2), endedAt: time(11 + n * 2), verdict, findings: [], diagnostic: null, ...extra });
+  const reviews = card.evidence.reviews, old = reviews.find(r => !r.current)!, current = reviews.filter(r => r.current);
   const steps = [step(1, "plan", "writer-p", "family-p", base, "DONE"), step(2, "build", "writer-b", "family-b", p.rejected, "DONE"),
-    step(3, "code-review", "reviewer-1", "family-r", p.rejected, "NEEDS-FIX", { diagnostic: "FAIL", findings: [{ severity: "MEDIUM", state: "open", summary: "status element lacks role=status" }] }),
+    step(3, old.role, old.observedModel!, old.family!, old.candidateRevision, old.verdict, { diagnostic: "FAIL", findings: [{ severity: "MEDIUM", state: "open", summary: "status element lacks role=status" }] }),
     step(4, "build", "writer-b", "family-b", p.final, "DONE"),
-    step(5, "code-review", "reviewer-1", "family-r", p.final, "CLEAN", { diagnostic: "PASS" }), step(6, "code-review", "reviewer-2", "family-s", p.final, "CLEAN", { diagnostic: "PASS" }),
-    step(7, "attack-review", "reviewer-3", "family-r", p.final, "CLEAN"), step(8, "ui-review", "reviewer-4", "family-s", p.final, "CLEAN"),
-    step(9, "ci-review", "reviewer-5", "family-r", p.final, "CLEAN"), step(10, "final", "reviewer-6", "family-f", p.final, "CLEAN")];
+    ...current.map((r, i) => step(5 + i, r.role, r.observedModel!, r.family!, r.candidateRevision, r.verdict, r.role === "code-review" ? { diagnostic: "PASS" } : {}))];
+  const dom = H.B5_DOM_SCREENS.map(screen => ({ screen, candidateRevision: card.candidateRevision, baseRevision: base, requestId }));
   const files: Record<string, unknown> = {
-    "journey.json": { schemaVersion: 1, actions: [{ name: "Prepare request", device: "phone", at: time(1), method: "POST", path: "/api/v1/projects/p/improvements/loop", status: 201 }],
-      closed: [{ label: "after Start", from: time(2), to: time(11) }, { label: "after spec approval", from: time(12), to: time(40) }], steps,
-      devices: [{ kind: "phone", real: true, browser: "phone browser" }, { kind: "desktop", real: true, browser: "desktop browser" }] },
-    "database-snapshot.json": { rows: [], card },
+    "journey.json": { schemaVersion: 1, actions: [
+      { name: "Prepare request", device: "phone", at: time(0), method: "POST", path: `/api/v1/projects/p/improvements/loop/intake`, status: 201 },
+      { name: "Confirm this exact request", device: "phone", at: time(2), method: "POST", path: `/api/v1/projects/p/improvements/loop/${requestId}/confirm`, status: 200 }],
+    closed: [{ label: "after Start", from: time(3), to: time(11) }, { label: "after spec approval", from: time(12), to: time(40) }], steps, dom,
+    devices: [{ kind: "phone", real: true, browser: "phone browser" }, { kind: "desktop", real: true, browser: "desktop browser" }] },
+    "database-snapshot.json": { schemaVersion: 1, readAt: time(43), rows },
     "independent-status-check.json": [p.failed.record, p.passed.record],
     "teardown.json": { schemaVersion: 1, b3cCleanup: "complete", scratchAbsent: true, ownedProcesses: 0, ownedListenersReleased: true, protectedListenersUntouched: true,
-      postgresStopped: true, cleanupAt: time(41), retainedRead: { at: time(42), candidateRevision: p.final, receiptDigest: H.b5Bytes("receipt") } },
+      postgresStopped: true, cleanupAt: time(41), retainedRead: { at: time(42), candidateRevision: card.candidateRevision, receiptDigest: card.recordDigest } },
   };
   const raw: Record<string, string | Uint8Array> = { "status-check/rejected.txt": p.failed.output, "status-check/final.txt": p.passed.output };
   for (const n of ["01-prepare", "02-confirm-start", "03-question", "04-plan", "05-spec", "06-repair", "07-finish-phone", "08-finish-desktop", "09-retained"]) raw[`screens/${n}.png`] = new Uint8Array([137, 80, 78, 71, n.length]);
-  const write = async (change: (v: { files: Record<string, unknown>; manifest: Record<string, unknown> }) => void = () => {}) => {
+  type Files = { files: Record<string, unknown>; manifest: Record<string, unknown> };
+  const write = async (change: (v: Files) => void = () => {}) => {
     await rm(dir, { recursive: true, force: true }); await mkdir(join(dir, "screens"), { recursive: true }); await mkdir(join(dir, "status-check"));
+    const b = card.evidence.binding, binding = (name: string, roles: string[], sha256: string, revision: number) =>
+      ({ name, roles, sha256, path: `/scratch/work/run/inputs/${name}.md`, revision, at: time(1), receiptDigest: H.b5Bytes(name) });
     const manifest: Record<string, unknown> = { schemaVersion: 1, kind: "b5-first-website-proof",
-      product: { baseRevision: "1".repeat(40), headRevision: "2".repeat(40), environmentDigest: H.b5Bytes("environment") },
-      pins: { a2ToolingRevision: card.toolingRevision, schemaDigest: H.b5Bytes("schema"), jobSandboxDigest: H.b5Bytes("sandbox"), qualificationDigest: H.b5Bytes("qualification"),
-        recipeDigest: H.b5Bytes(JSON.stringify(H.B5_RECIPES)), settingsSha256: H.b5Bytes("settings"), availabilitySha256: H.b5Bytes("availability"), faultInputSha256: H.b5Bytes("fault"),
-        reviewInputSha256: H.b5Bytes("review"), authorizationSha256: H.b5Bytes("authorization"), assemblyDigest: H.b5Bytes("assembly"), assemblyExport: "createFirstWebsiteHostV1",
-        inputBindingReceipts: [{ role: "build", inputSha256: H.b5Bytes("fault"), receiptDigest: H.b5Bytes("r1"), boundAt: time(1) }, { role: "code-review", inputSha256: H.b5Bytes("review"), receiptDigest: H.b5Bytes("r2"), boundAt: time(1) }] },
+      product: { baseRevision: fixturePins.productBase, headRevision: fixturePins.productHead, environmentDigest: b.environmentDigest },
+      pins: { a2ToolingRevision: fixturePins.toolingRevision, schemaDigest: fixturePins.schemaDigest, jobSandboxDigest: H.b5Bytes("sandbox"), qualificationDigest: digests.qualification,
+        recipeDigest: b.recipeDigest, settingsSha256: digests.settings, availabilitySha256: digests.availability, faultInputSha256: digests.faultInput,
+        reviewInputSha256: digests.reviewInput, authorizationSha256: digests.authorization, assemblyDigest: digests.assembly, assemblyExport: "createFirstWebsiteHostV1",
+        inputBindings: [binding("b5-builder-fault", ["build"], digests.faultInput, 2), binding("b5-review-instruction", ["code-review"], digests.reviewInput, 3)] },
       risk: { categories: ["code", "owner_visible", "ci"], slots: ["attack-review", "ui-review", "ci-review"] },
       launch: { uid: 501, context: "current-session", isolationClaim: "none", consumedRoots: ["runs", "work", "config"] },
-      lineage: { requestId: card.requestId, runLinkId: card.runLinkId, loopRunId: "run-proof", localVersion: 1, a2InputVersion: 1 },
+      lineage: { requestId, runLinkId: b.runLinkId, loopRunId: b.loopRunId, localVersion: card.localVersion, a2InputVersion: card.a2InputVersion },
       heads: { base, rejected: p.rejected, final: p.final },
       classification: { website: "real", storage: "real", engine: "real", sendBack: "real", recovery: "real", finish: "real", device: "real", stimuli: "fixture" },
       timestamps: { startedAt: time(0), finishedAt: time(45) } };
@@ -234,33 +260,63 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     v.manifest.artifacts ??= [...bytes].map(([path, value]) => ({ path, sha256: H.b5Bytes(value), bytes: Buffer.byteLength(value) }));
     await writeFile(join(dir, "manifest.json"), JSON.stringify(v.manifest));
   };
-  type Journey = { steps: Record<string, unknown>[]; devices: Record<string, unknown>[] };
-  const refusal = (readCard = async () => card) => H.verifyFirstWebsiteEvidenceV1(dir, readCard).then(v => v.state, (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
-  return { p, dir, card, write, refusal, journey: (v: { files: Record<string, unknown> }) => v.files["journey.json"] as Journey,
-    teardown: (v: { files: Record<string, unknown> }) => v.files["teardown.json"] as Record<string, unknown> };
+  type Journey = { steps: Record<string, unknown>[]; devices: Record<string, unknown>[]; dom: Record<string, unknown>[] };
+  const verify = (o: { readCard?: () => Promise<unknown>; pins?: B5QualifiedPinsV1 } = {}) =>
+    H.verifyFirstWebsiteEvidenceV1(dir, { readCard: o.readCard ?? readCard, candidateRepository: p.project, pins: o.pins ?? fixturePins });
+  const refusal = (o: Parameters<typeof verify>[0] = {}) => verify(o).then(v => v.state, (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
+  return { p, f, dir, card, readCard, fixturePins, qualifiedPins, write, verify, refusal, journey: (v: Files) => v.files["journey.json"] as Journey,
+    teardown: (v: Files) => v.files["teardown.json"] as Record<string, unknown>,
+    snapshot: (v: Files) => v.files["database-snapshot.json"] as { rows: { table: string; sha256: string; row: Record<string, unknown> }[] } };
 }
 test("B5 verifier accepts complete real-shaped evidence and reports missing phone evidence as incomplete", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(); assert.deepEqual(await H.verifyFirstWebsiteEvidenceV1(e.dir, async () => e.card), { state: "complete", reasons: [] });
+  await e.write(); assert.deepEqual(await e.verify(), { state: "complete", reasons: [] });
   await e.write(v => { e.journey(v).devices = [{ kind: "phone", real: false, browser: "360px emulation" }, { kind: "desktop", real: true, browser: "desktop browser" }]; });
-  assert.deepEqual(await H.verifyFirstWebsiteEvidenceV1(e.dir, async () => e.card), { state: "incomplete", reasons: ["B5_PHONE_EVIDENCE_MISSING"] });
+  assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PHONE_EVIDENCE_MISSING"] });
   await e.write(); await writeFile(join(e.dir, "screens/03-question.png"), "changed");
   assert.equal(await e.refusal(), "B5_ARTIFACT_BYTES", "B5 changed retained bytes are refused");
   await e.write(v => { v.manifest.artifacts = []; }); assert.equal(await e.refusal(), "B5_MANIFEST_INVALID");
   await e.write(v => { v.manifest.classification = { ...(v.manifest.classification as object), engine: "fixture" }; });
   assert.equal(await e.refusal(), "B5_MANIFEST_INVALID", "B5 a fixture engine classification never satisfies the real schema");
+  await e.write(); assert.equal(await e.refusal({ readCard: async () => null }), "B5_CARD_UNAVAILABLE", "B5 no service card is never complete");
 });
 test("B5 verifier refuses a fixture chain presented as real", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(v => { e.journey(v).devices.push({ kind: "desktop", real: true, browser: "SYNTHETIC fixture browser" }); });
-  assert.equal(await e.refusal(), "B5_FIXTURE_NOT_REAL", "B5 forged fixture chain is refused by its own guard");
+  // The manifest claims the qualified pins; the card the service returned was produced by the SYNTHETIC engine.
+  await e.write(v => { (v.manifest.pins as Record<string, unknown>).a2ToolingRevision = e.qualifiedPins.toolingRevision; });
+  assert.equal(await e.refusal({ pins: e.qualifiedPins }), "B5_FIXTURE_NOT_REAL", "B5 forged fixture chain is refused by its own guard");
+  await e.write(); assert.equal(await e.refusal({ pins: e.qualifiedPins }), "B5_FIXTURE_NOT_REAL", "B5 fixture manifest pins are refused");
+  // Retained rows that are not the card's own rows, and a journey that omits a verified card review.
+  await e.write(v => { const row = e.snapshot(v).rows.find(r => r.table === "control_loop_update_candidates")!; row.row.record_digest = H.b5Bytes("other"); row.sha256 = H.b5Bytes(JSON.stringify(row.row)); });
+  assert.equal(await e.refusal(), "B5_FIXTURE_NOT_REAL");
+  await e.write(v => { e.journey(v).steps = e.journey(v).steps.filter(s => s.role !== "ui-review"); }); assert.equal(await e.refusal(), "B5_FIXTURE_NOT_REAL");
+  await e.write(v => { e.snapshot(v).rows[0]!.row.id = "changed"; }); assert.equal(await e.refusal(), "B5_SNAPSHOT_INVALID");
 });
 test("B5 verifier binds rejected and final heads to the saved card", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(); assert.equal(await e.refusal(async () => ({ ...e.card, candidateRevision: e.p.rejected })), "B5_HEAD_BINDING", "B5 stale card head is refused by the head guard");
+  // A stale service card, rendered as such on every device.
+  const stale = JSON.parse(JSON.stringify(e.card).replaceAll(e.p.final, e.p.rejected)) as LoopCandidateCardV1;
+  await e.write(v => { for (const d of e.journey(v).dom) d.candidateRevision = e.p.rejected; });
+  assert.equal(await e.refusal({ readCard: async () => stale }), "B5_HEAD_BINDING", "B5 stale card head is refused by the head guard");
+  await e.write(v => { e.journey(v).dom[1]!.candidateRevision = e.p.rejected; }); assert.equal(await e.refusal(), "B5_HEAD_BINDING", "B5 finish DOM must show the card head");
+});
+test("B5 verifier re-reads the candidate repository and its page facts", async t => {
+  await load();
+  const e = await evidenceSet(t);
+  await e.write(); await writeFile(join(e.p.project, "notes.txt"), "untracked");
+  assert.equal(await e.refusal(), "B5_CANDIDATE_REPOSITORY", "B5 dirty candidate repository is refused");
+  await rm(join(e.p.project, "notes.txt")); assert.equal(await e.refusal(), "complete");
+  await writeFile(join(e.p.project, "index.html"), (await readFile(join(e.p.project, "index.html"), "utf8")).replace(' role="status"', ""));
+  await git(e.p.project, ["commit", "--quiet", "-am", "Later change"]);
+  assert.equal(await e.refusal(), "B5_CANDIDATE_REPOSITORY", "B5 a moved candidate HEAD is refused");
+  await git(e.p.project, ["reset", "--quiet", "--hard", e.p.final]); assert.equal(await e.refusal(), "complete");
+  await e.write(v => { (v.manifest.pins as Record<string, unknown>).settingsSha256 = H.b5Bytes("other settings"); });
+  assert.equal(await e.refusal(), "B5_MANIFEST_PINS", "B5 manifest pins must equal the preflight digests");
+  await e.write(v => { for (const b of (v.manifest.pins as { inputBindings: { at: string }[] }).inputBindings) b.at = "2026-10-30T12:05:00.000Z"; });
+  assert.equal(await e.refusal(), "B5_MANIFEST_PINS", "B5 scoped inputs bound after confirmation are refused");
 });
 test("B5 verifier requires closed-browser rejection and original-builder repair", async t => {
   await load();
@@ -277,15 +333,67 @@ test("B5 verifier requires full cleanup before the retained read-back", async t 
 test("B5 verifier refuses chronologically impossible and refusal-only proofs", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(v => { e.journey(v).steps[2]!.verdict = "CLEAN"; }); assert.equal(await e.refusal(), "B5_REJECTION_REPAIR");
+  await e.write(v => { e.journey(v).steps[2]!.findings = []; }); assert.equal(await e.refusal(), "B5_REJECTION_REPAIR");
   await e.write(v => { e.journey(v).steps[4]!.startedAt = "2026-10-30T12:01:00.000Z"; }); assert.equal(await e.refusal(), "B5_REJECTION_REPAIR");
-  await e.write(v => { e.journey(v).steps = e.journey(v).steps.filter(s => s.role !== "ui-review"); }); assert.equal(await e.refusal(), "B5_REJECTION_REPAIR");
+  await e.write(v => { e.journey(v).steps[2]!.verdict = "CLEAN"; }); assert.equal(await e.refusal(), "B5_FIXTURE_NOT_REAL", "B5 a journey contradicting the card's rejection is refused");
   await e.write(v => { (v.files["independent-status-check.json"] as B5StatusCheckRecordV1[]).reverse().forEach(r => { r.head = e.p.final; }); });
   assert.equal(await e.refusal(), "B5_HEAD_BINDING");
   await e.write(v => { e.teardown(v).retainedRead = null; }); assert.equal(await e.refusal(), "B5_CLEANUP_RETAINED");
 });
 
-test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent restart, and records the finish-card gap", async t => {
+/** A stand-in for the landed A2 entry: it implements only the documented `bind-input`
+ * contract (tools loop/README.md) over files in its own cwd. The real writer is A2's. */
+const FAKE_A2 = `import { createHash } from "node:crypto";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+const args = process.argv.slice(2), mode = existsSync("mode.json") ? JSON.parse(readFileSync("mode.json", "utf8")) : {};
+if (args[0] !== "bind-input") process.exit(2);
+if (args[1] === "--help") { console.log(mode.noRole ? "usage: cr bind-input RUN NAME --file FILE --json" : "usage: cr bind-input RUN NAME --file FILE --role ROLE [--role ROLE ...] [--json]"); process.exit(0); }
+const [run, name] = args.slice(1, 3), file = args[args.indexOf("--file") + 1], roles = args.flatMap((a, i) => a === "--role" ? [args[i + 1]] : []).sort();
+if (mode.refuse) { console.log(JSON.stringify({ error: mode.refuse })); process.exit(2); }
+const state = existsSync("state.json") ? JSON.parse(readFileSync("state.json", "utf8")) : { revision: 1, bindings: [] };
+const data = readFileSync(file), sha256 = createHash("sha256").update(data).digest("hex"), dir = resolve("runs", run, "inputs");
+mkdirSync(dir, { recursive: true }); const path = join(dir, name + "-" + sha256.slice(0, 16) + ".md"); if (!existsSync(path)) { copyFileSync(file, path); chmodSync(path, 0o444); }
+state.revision += 1;
+const receipt = { name, index: state.bindings.length, path, sha256, size: data.length, roles: mode.widen ? ["build", "code-review"] : roles, source: file,
+  at: new Date().toISOString(), input_version: 1, revision: state.revision, invalidated: mode.confirmed ? ["expect", "confirmation"] : ["expect"], replaces: null };
+state.bindings.push(receipt); writeFileSync("state.json", JSON.stringify(state));
+console.log(JSON.stringify({ run, receipt }));
+`;
+test("B5 binds the builder fault and the review instruction through A2 bind-input before confirmation", async t => {
+  await load();
+  const s = await scratch(t), a2 = join(s.root, "a2"); await mkdir(a2);
+  await writeFile(join(a2, "cr.mjs"), FAKE_A2);
+  const entry = { interpreter: process.execPath, entrypoint: join(a2, "cr.mjs"), cwd: a2 };
+  const files = { faultInput: s.config.faultInputFile, reviewInput: s.config.reviewInputFile };
+  const digests = { faultInput: H.b5Bytes(await readFile(files.faultInput)), reviewInput: H.b5Bytes(await readFile(files.reviewInput)) };
+  let stage = 0;
+  const bind = () => H.bindFirstWebsiteInputsV1({ entry, loopRunId: "run-b5", stageDir: join(s.root, "work", `b5-supplied-${++stage}`), files, digests, runWorkDir: join(a2, "runs", "run-b5") });
+  const code = (p: Promise<unknown>) => p.then(() => "PASSED", (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
+  await mkdir(join(s.root, "work"));
+  await H.probeBindInputCapabilityV1(entry);
+  const receipts = await bind();
+  assert.deepEqual(receipts.map(r => [r.name, r.roles]), [["b5-builder-fault", ["build"]], ["b5-review-instruction", ["code-review"]]], "B5 fault binds to build only and the instruction to code-review only");
+  assert.deepEqual(receipts.map(r => `sha256:${r.sha256}`), [digests.faultInput, digests.reviewInput]);
+  for (const r of receipts) assert.equal((await lstat(r.path)).mode & 0o222, 0, "B5 bound copies are read-only");
+  // Generated briefs: only the named roles carry A2's supplied-input line.
+  const line = (r: B5BindInputReceiptV1) => `Additional supplied input (read in full): ${r.path} (SHA256 ${r.sha256})`;
+  const briefs = [{ role: "plan", text: "Plan." }, { role: "build", text: `Build.\n${line(receipts[0]!)}\n` },
+    { role: "code-review", text: `Review. The builder report mentions ${receipts[0]!.path}.\n${line(receipts[1]!)}\n` }, { role: "code-review", text: `Review.\n${line(receipts[1]!)}\n` }];
+  H.assertRoleScopedBriefsV1(briefs, receipts);
+  assert.throws(() => H.assertRoleScopedBriefsV1([...briefs, { role: "final", text: line(receipts[0]!) }], receipts), /B5_BRIEF_SCOPE/u, "B5 a fault line in another role's brief is refused");
+  assert.throws(() => H.assertRoleScopedBriefsV1(briefs.slice(0, 3), receipts), /B5_BRIEF_SCOPE/u, "B5 both code reviews must receive the instruction");
+  // Refusals: late binding, widened roles, A2 refusal, changed input and a missing writer.
+  const modes: [Record<string, unknown>, string][] = [[{ confirmed: true }, "B5_INPUT_BINDING_LATE"], [{ widen: true }, "B5_INPUT_BINDING_RECEIPT"],
+    [{ refuse: "SUPPLIED_ROLE_UNUSED" }, "B5_INPUT_BINDING_REFUSED"]];
+  for (const [mode, expected] of modes) { await writeFile(join(a2, "mode.json"), JSON.stringify(mode)); assert.equal(await code(bind()), expected); }
+  await writeFile(join(a2, "mode.json"), JSON.stringify({ noRole: true }));
+  assert.equal(await code(H.probeBindInputCapabilityV1(entry)), "B5_A2_BIND_INPUT_UNAVAILABLE");
+  await writeFile(join(a2, "mode.json"), "{}"); await writeFile(files.faultInput, "changed after preflight");
+  assert.equal(await code(bind()), "B5_INPUT_CHANGED");
+});
+
+test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent restart, and records the finish card", async t => {
   await load();
   const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
   const project = f.project.projectId, base = `/api/v1/projects/${encodeURIComponent(project)}/improvements/loop`;
@@ -326,20 +434,69 @@ test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent
   assert.equal(await f.tick(), "finished");
   const roles = f.steps.map(x => `${x.role}:${x.head === f.heads.rejected ? "rejected" : x.head === f.heads.final ? "final" : "base"}:${x.verdict}`);
   assert.deepEqual(roles.slice(5, 8), ["build:rejected:DONE", "code-review:rejected:NEEDS-FIX", "build:final:DONE"]);
-  // BLOCKED at BASE: website Confirm records the Start authorization as start:<confirm id>,
-  // while B4 lineage requires it to equal the Start claim's own key. B5 changes no
-  // production code, so publication of a website-started run is refused today.
-  await assert.rejects(f.publish(), /loop_candidate_integrity_failed/u, "B5 records the website-Start to B4 finish-card gap at BASE");
-  const authorization = (await f.client.query<{ start_key: string }>("SELECT start_key FROM control_loop_improvement_authorizations")).rows;
-  const claim = (await f.client.query<{ idempotency_key: string }>("SELECT idempotency_key FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows;
-  assert.equal(authorization.length, 1); assert.deepEqual(claim, [{ idempotency_key: "b5-start-0000000001" }]);
-  assert.match(authorization[0]!.start_key, /^start:/u); assert.equal((await f.client.query("SELECT 1 FROM control_loop_update_candidates")).rows.length, 0);
+  // The website Confirm records the Start authorization under its own key; B4 lineage binds
+  // it through the signed Start claim's authorization id, so the website-started run publishes.
+  const authorization = (await f.client.query<{ id: string; start_key: string }>("SELECT id,start_key FROM control_loop_improvement_authorizations")).rows;
+  const claim = (await f.client.query<{ idempotency_key: string; binding: { authorizationId?: string } }>(
+    "SELECT idempotency_key,binding FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows;
+  assert.equal(authorization.length, 1); assert.equal(claim.length, 1); assert.equal(claim[0]!.idempotency_key, "b5-start-0000000001");
+  assert.match(authorization[0]!.start_key, /^start:/u); assert.notEqual(authorization[0]!.start_key, claim[0]!.idempotency_key);
+  assert.equal(claim[0]!.binding.authorizationId, authorization[0]!.id, "B5 the website Start claim names the Confirm-recorded authorization");
+  assert.equal((await f.publish()).state, "recorded", "B5 website-started run records its B4 finish card");
+  assert.equal((await f.publish()).state, "replayed", "B5 finish-card publication replays exactly");
+  assert.equal((await f.client.query("SELECT 1 FROM control_loop_update_candidates")).rows.length, 1);
   const card = await f.handle(webRequest(`${base}/${encodeURIComponent(requestId)}/candidate`)); assert.equal(card.status, 200);
-  assert.equal((await card.json()).candidate, null, "B5 no finish card exists without a verified publication");
+  const published = (await card.json()).candidate;
+  assert.equal(published?.evidence?.binding?.candidateRevision, f.heads.final, "B5 the finish card names the repaired head");
+  assert.equal(published?.evidence?.binding?.requestId, requestId); assert.equal(published?.evidence?.binding?.runLinkId, runLinkId);
   assert.equal(f.calls.filter(c => c === "start").length, 1); assert.equal((await f.desk.viewLoopDesk(f.identity, project)).loopRequests.length, 1);
   // The finish card is labelled fixture evidence and cannot satisfy the real verifier.
-  const fixtureCard = { candidateRevision: f.heads.final, baseRevision: f.heads.base, requestId, runLinkId, toolingRevision: f.adapter.toolingRevision };
   const dir = join(await owned(t, "b5-forged-"), "evidence"); await mkdir(dir);
   await writeFile(join(dir, "manifest.json"), JSON.stringify({ schemaVersion: 1, kind: "b5-first-website-proof", state: "finished", source: "SYNTHETIC" }));
-  await assert.rejects(H.verifyFirstWebsiteEvidenceV1(dir, async () => fixtureCard), (e: unknown) => e instanceof H.B5RefusalV1 && e.code === "B5_MANIFEST_INVALID");
+  await assert.rejects(H.verifyFirstWebsiteEvidenceV1(dir, { readCard: async () => published, candidateRepository: resolve("."),
+    pins: { toolingRevision: H.b5Bytes("qualified A2 tooling"), schemaDigest: H.b5Bytes("schema"), productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501,
+      digests: { settings: "", availability: "", authorization: "", qualification: "", assembly: "", faultInput: "", reviewInput: "" } } }),
+  (e: unknown) => e instanceof H.B5RefusalV1 && e.code === "B5_MANIFEST_INVALID");
+});
+
+// Check 2's product-observable refusals through the real bridge over the SYNTHETIC engine.
+// Engine-internal send-back routing, the fourth-question cap and final-rejection invalidation
+// are A2 policy and stay on A2's own suites (see BUILD-B5-R2).
+test("B5 SYNTHETIC companion refuses stale admission, a second Start and answers after Stop", async t => {
+  await load();
+  const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
+  const project = f.project.projectId, mutate = f.bridge.mutate.bind(f.bridge, f.identity, project);
+  await mutate(null, "intake", { description: H.B5_REQUEST_TEXT }, "b5-c-intake-000001");
+  const saved = (await f.desk.viewLoopDesk(f.identity, project)).loopRequests[0]!, requestId = saved.requestId, runLinkId = saved.runLink!.runLinkId;
+  const current = () => f.bridge.status(f.identity, project, requestId);
+  let s = await current();
+  const confirm = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 };
+  await assert.rejects(mutate(requestId, "confirm", { ...confirm, requestSha256: "0".repeat(64) }, "b5-c-confirm-stale1"), "B5 a changed request is stale at confirmation");
+  await assert.rejects(mutate(requestId, "confirm", { ...confirm, settingsSha256: "0".repeat(64) }, "b5-c-confirm-stale2"), "B5 changed settings are stale at confirmation");
+  await assert.rejects(mutate(requestId, "start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, "b5-c-start-early01"),
+    "B5 Start before the exact confirmation is refused");
+  assert.equal(f.calls.filter(c => c === "start" || c === "confirm").length, 0, "B5 refused admissions reach no engine command");
+  await mutate(requestId, "confirm", confirm, "b5-c-confirm-00001"); s = await current();
+  const start = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId };
+  await mutate(requestId, "start", start, "b5-c-start-000001");
+  await assert.rejects(mutate(requestId, "start", start, "b5-c-start-000002"), "B5 a second Start under another key is refused");
+  await mutate(requestId, "start", start, "b5-c-start-000001"); // the reply was lost; the exact retry replays
+  assert.equal(f.calls.filter(c => c === "start").length, 1, "B5 duplicate Start and lost-reply retry consume once");
+  assert.equal(await f.tick(), "question"); s = await current();
+  const q = f.question, answer = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, questionId: q.questionId,
+    inputVersion: q.inputVersion, questionReportSha256: q.reportSha256, text: "Amber." };
+  await assert.rejects(mutate(requestId, "answer", { ...answer, inputVersion: "SYNTHETIC:0" }, "b5-c-answer-input01"), "B5 an answer for another input version is refused");
+  await assert.rejects(mutate(requestId, "answer", { ...answer, questionReportSha256: "f".repeat(64) }, "b5-c-answer-report1"), "B5 an answer for another question report is refused");
+  // Reads and two owned restarts while waiting are read-only.
+  const calls = f.calls.length, launches = f.launches();
+  await f.restart(); await current(); await f.bridge.readAttention(f.identity); await f.restart(); s = await current();
+  assert.equal(f.calls.length, calls); assert.equal(f.launches(), launches); assert.equal(f.restarts(), 2);
+  // Stop while waiting, then the saved question can no longer be answered.
+  await mutate(requestId, "stop", { runLinkId }, "b5-c-stop-0000001");
+  assert.equal(f.status()!.state, "stopped"); assert.equal(await f.tick(), "stopped", "B5 a stopped run does not advance");
+  s = await current();
+  await assert.rejects(mutate(requestId, "answer", { ...answer, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision }, "b5-c-answer-stop01"),
+    "B5 an answer after Stop is refused");
+  assert.equal(f.calls.filter(c => c === "answer").length, 0); assert.equal(f.launches(), launches, "B5 Stop launches no worker");
+  assert.equal((await f.desk.viewLoopDesk(f.identity, project)).loopRequests.length, 1, "B5 one saved request throughout");
 });

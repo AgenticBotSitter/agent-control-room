@@ -9,11 +9,12 @@ const exec=promisify(execFile),root=resolve("."),file="tests/helpers/improve-con
 // Each probe disables one NEW B5 verifier guard. The forged proof in its named case
 // must then fail that case's own intended assertion; unchanged product/A2 guards are not re-mutated.
 const probes=[
-  {name:"real versus fixture qualification",find:`  if (manifest.pins.a2ToolingRevision !== card.toolingRevision) refuse("B5_FIXTURE_NOT_REAL", "tooling");
-  for (const [path, bytes] of artifacts) if (!path.endsWith(".png") && /SYNTHETIC/u.test(Buffer.from(bytes).toString("utf8"))) refuse("B5_FIXTURE_NOT_REAL", path);`,
-  replace:"  void manifest; void artifacts; void card;",pattern:"B5 verifier refuses a fixture chain presented as real",assertion:"B5 forged fixture chain is refused by its own guard"},
+  {name:"real versus fixture qualification",find:`  if (b.toolingRevision !== pins.toolingRevision) refuse("B5_FIXTURE_NOT_REAL", "card tooling");`,
+  replace:"",pattern:"B5 verifier refuses a fixture chain presented as real",assertion:"B5 forged fixture chain is refused by its own guard"},
   {name:"rejected and final head binding",find:"if (new Set([base, rejected, final]).size !== 3 || card.candidateRevision !== final || ",replace:"if (new Set([base, rejected, final]).size !== 3 || ",
     pattern:"B5 verifier binds rejected and final heads to the saved card",assertion:"B5 stale card head is refused by the head guard"},
+  {name:"candidate repository HEAD and clean state",find:`  if (facts.head !== card.candidateRevision || facts.head !== manifest.heads.final || !facts.clean) bad("head");`,replace:"",
+    pattern:"B5 verifier re-reads the candidate repository and its page facts",assertion:"B5 dirty candidate repository is refused"},
   {name:"artifact byte binding",find:"if (b5Bytes(bytes) !== entry.sha256 || bytes.length !== entry.bytes || artifacts.has(entry.path))",replace:"if (artifacts.has(entry.path))",
     pattern:"B5 verifier accepts complete real-shaped evidence and reports missing phone evidence as incomplete",assertion:"B5 changed retained bytes are refused"},
   {name:"closed-browser rejection and original-builder repair",find:"if (!repair || repair.identity !== defective!.identity || repair.family !== defective!.family)",replace:"if (!repair)",

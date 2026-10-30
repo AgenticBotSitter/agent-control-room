@@ -98,18 +98,27 @@ for (const width of [360, 1280]) test(`B5 fixture owner journey survives closed 
     // Closed again: build, reviewer rejection, original-builder repair, fresh reviews.
     await close(); expect(await f.tick()).toBe("finished");
     expect(f.steps.map(s => `${s.role}:${s.verdict}`).slice(5, 8)).toEqual(["build:DONE", "code-review:NEEDS-FIX", "build:DONE"]);
-    // 06-08 Reopen the same saved request. At BASE the website-started run cannot publish
-    // its B4 card (BUILD-B5 BLOCKED), so the honest unavailable label is shown.
+    // The owned host publishes the B4 card with no browser request; the website-started
+    // run's Start claim binds the Confirm-recorded authorization.
+    expect((await f.publish()).state).toBe("recorded");
+    // 06-08 Reopen the same saved request: one finished card naming the repaired head.
     page = await open(savedPath);
-    await expect(page.getByText("Completion reported; candidate evidence unavailable", { exact: true })).toBeVisible();
-    await expect(page.getByRole("article", { name: "Finished candidate", exact: true })).toHaveCount(0);
-    await page.screenshot({ path: test.info().outputPath(`06-finished-${width}.png`) });
+    const card = page.getByRole("article", { name: "Finished candidate", exact: true });
+    await expect(card).toHaveCount(1); await expect(card).toContainText(f.heads.final);
+    await expect(card).toContainText("Finished candidate — waiting for your decision");
+    await expect(page.getByText("Completion reported; candidate evidence unavailable", { exact: true })).toHaveCount(0);
+    await card.getByText("Show evidence", { exact: true }).click();
+    for (const label of ["Findings", "Assumptions and validations", "Recorded overrides"]) await card.getByText(label, { exact: true }).click();
+    await target(card.getByRole("button", { name: "Accept this candidate — record only", exact: true }));
+    await page.screenshot({ path: test.info().outputPath(`07-finished-${width}.png`) });
     const before = posts.length; await page.reload(); await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.goto("https://product.invalid/needs-me"); await page.goBack(); expect(posts).toHaveLength(before);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    // 09 Owned service restart: same saved request, still no card fabricated.
+    // 09 Owned service restart: the same retained card and head.
     await close(); await f.restart(); page = await open(savedPath);
-    await expect(page.getByText("Completion reported; candidate evidence unavailable", { exact: true })).toBeVisible();
+    const retained = page.getByRole("article", { name: "Finished candidate", exact: true });
+    await expect(retained).toHaveCount(1); await expect(retained).toContainText(f.heads.final);
+    await page.screenshot({ path: test.info().outputPath(`09-retained-${width}.png`) });
     truncated = true; await page.goto("https://product.invalid/"); await badge(page, "0+");
     truncated = false; unavailable = true; await page.reload(); await badge(page, "?");
     unavailable = false; deny = true; await page.reload();
