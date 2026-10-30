@@ -1,13 +1,14 @@
 -- Additive B6 model roster master. The production migrator owns transaction/ledger.
 -- The database is the one master; <install>/roster/roster-export.tsv is a read-only
--- export of it. Rows carry only export structure (no tab, CR or LF in a field):
+-- export of it. Rows carry only export structure (no tab, CR or LF in a field; no
+-- name that makes its line a "#" comment or blank, which cr would skip unchecked):
 -- every roster rule (launchers, roles, efforts, nicks, grades) belongs to the
 -- tools' `cr models check`, which the product runs on each candidate before commit.
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
 CREATE TABLE control_loop_roster_models (
   tenant_id text NOT NULL REFERENCES tenants(id) CHECK (tenant_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'),
-  name text NOT NULL CHECK (name <> '' AND translate(name, E'\t\r\n', '') = name),
+  name text NOT NULL CHECK (name <> '' AND translate(name, E'\t\r\n', '') = name AND name !~ '^[[:space:]]*(#|$)'),
   position integer NOT NULL CHECK (position BETWEEN 1 AND 10000),
   launcher text NOT NULL CHECK (translate(launcher, E'\t\r\n', '') = launcher),
   provider text NOT NULL CHECK (translate(provider, E'\t\r\n', '') = provider),

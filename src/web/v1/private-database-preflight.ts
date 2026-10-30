@@ -90,7 +90,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Current value includes the 0303 retained loop candidate schema and grants, the 0304
 // candidate guard that binds Start lineage to the signed authorization id, and the 0305 B6
 // roster master. The previous value was `16521bab...`.
-export const privateWebSchemaDigest = "50acf92412518fe562ef54426f0bdebc46233a4c8724e6e36efabcb8f174a976";
+export const privateWebSchemaDigest = "8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway

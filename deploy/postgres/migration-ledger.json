@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "4011597a3220b409eba9ff15a160721199766bab7a56734e74012445faebe65f",
+  "digest": "f3d703cccfd0bfc5001498e0f3d1aa793c556b3b1a4f73073b854847d9743468",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -1037,7 +1037,7 @@
     {
       "file": "db/migrations/0305_control_loop_roster.sql",
       "order": 173,
-      "sha256": "2dfd63acd9480d2247da7de1f325350f64fe3a18d88f9f57b62a2666eb890852",
+      "sha256": "17b823f81b3eb8bb6676a8a4d5263de11147bf5a6049983928715bd5e3534af9",
       "kind": "migrate"
     },
     {

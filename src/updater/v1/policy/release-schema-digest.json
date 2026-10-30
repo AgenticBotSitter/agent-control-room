@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "50acf92412518fe562ef54426f0bdebc46233a4c8724e6e36efabcb8f174a976",
+  "digest": "8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c",
   "note": "Measured in PGlite with every migration through the additive 0305 roster master. Native PostgreSQL17 and updater digest equality remain required release qualification; this pin alone is not that proof."
 }

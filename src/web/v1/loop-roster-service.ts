@@ -107,15 +107,14 @@ export class LoopRosterServiceV1 {
 
   /** The only way a state row is created. A second call when a state row exists is refused. */
   async seedFromTsv(text: string, label: "export-file" | "tools-seed"): Promise<{ version: number }> {
-    let rows: LoopRosterRowV1[];
-    try { rows = parseLoopRosterV1(text); }
+    let rows: LoopRosterRowV1[], canonical: string;
+    try { rows = parseLoopRosterV1(text); canonical = renderLoopRosterV1(rows); }
     catch (error) {
       if (error instanceof LoopRosterFormatError) throw new LoopRosterRefusedV1("format", [],
         `roster file unreadable (${error.reason}); the header must be exactly: ${loopRosterColumnsV1.join(" ")}`);
       throw error;
     }
     await this.checkWithCr(text, rows.length);
-    const canonical = renderLoopRosterV1(rows);
     const seedSha = loopRosterSha256V1(text);
     // An export-file seed is already the export; record it only when its bytes are canonical so reconcile rewrites
     // a valid but non-canonical file (comments, blank lines) exactly once.
@@ -193,7 +192,8 @@ export class LoopRosterServiceV1 {
   }
 
   /** Serialized by one in-process lock; re-reads the master inside it so a later edit is never exported stale.
-   * Writes one file in one directory: tmp, fsync, rename, fsync directory, then records the export. */
+   * Writes one file in one directory: tmp, fsync, rename, fsync directory, then records the export. Across processes
+   * the rename is atomic (never a torn file) and an export whose version is no longer current exports again. */
   exportRoster(): Promise<LoopRosterExportResultV1> {
     const run = this.#exportChain.then(() => this.#export(), () => this.#export());
     this.#exportChain = run.catch(() => undefined);
@@ -225,8 +225,11 @@ export class LoopRosterServiceV1 {
       if (this.faults.afterTemporaryWrite || this.faults.afterRename) { crashed = true; throw error; }
       return pending;
     } finally { if (!crashed) await rm(temporary, { force: true }); }
-    await this.db.query(`UPDATE control_loop_roster_state SET exported_version=$2, exported_sha256=$3
-      WHERE tenant_id=$1 AND version=$2`, [this.scope.tenantId, version, loopRosterSha256V1(text)]);
+    const recorded = await this.db.query(`UPDATE control_loop_roster_state SET exported_version=$2, exported_sha256=$3
+      WHERE tenant_id=$1 AND version=$2 RETURNING tenant_id`, [this.scope.tenantId, version, loopRosterSha256V1(text)]);
+    // The master moved while this export ran, so another process may already have renamed newer bytes that this
+    // rename just replaced. Export again from the new master: the last writer is then always current.
+    if (recorded.rows.length === 0) return this.#export();
     return { exported: true, version };
   }
 
@@ -293,7 +296,10 @@ export class LoopRosterServiceV1 {
     const candidate = change(before.models.map(toRow)).rows;
     let text: string;
     try { text = renderLoopRosterV1(candidate); }
-    catch { throw new LoopRosterRefusedV1("format", [], "a field contains a tab or a line break"); }
+    catch (error) {
+      throw new LoopRosterRefusedV1("format", [], error instanceof LoopRosterFormatError && error.reason === "skipped_row"
+        ? "a model name may not be blank or start with #: the tools would skip the row" : "a field contains a tab or a line break");
+    }
     await this.checkWithCr(text, candidate.length);
     const committed = await this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("roster.manage", undefined, true);

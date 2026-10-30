@@ -92,6 +92,10 @@ test("B6 renderer reproduces a canonical roster and reads files the way cr does"
   assert.throws(() => parseLoopRosterV1(`${header}\na\tb\n`), /loop_roster_format/u);
   for (const brk of ["\t", "\n", "\r", " ", "\x85"])
     assert.throws(() => renderLoopRosterV1([{ ...rows[0]!, note: `x${brk}y` }]), /loop_roster_format/u);
+  // A row cr would skip as a comment or a blank line is never rendered: cr would not check it.
+  const blankRow = Object.fromEntries(Object.keys(rows[0]!).map(column => [column, ""])) as LoopRosterRowV1;
+  for (const row of [{ ...rows[0]!, name: "#evil-model" }, { ...rows[0]!, name: " #evil-model" }, { ...blankRow, name: " " }])
+    assert.throws(() => renderLoopRosterV1([row]), (error: { reason?: string }) => error.reason === "skipped_row", JSON.stringify(row.name));
   assert.ok(isLoopRosterRouteV1("/api/v1/loop-roster/models/nvidia%2Fbeta-2/on"));
   assert.ok(!isLoopRosterRouteV1("/api/v1/loop-roster/models/nvidia/beta-2"));
 });
@@ -136,6 +140,12 @@ test("B6 HTTP shape: slashed names, stale versions, replay, owner-only edits (st
   assert.equal((await f.setOn("missing-model", true, 2)).status, 404);
   assert.equal((await f.setOn("nvidia/beta-2", true, 2)).status, 201);
   assert.equal((await f.put("x", fields(beta), 3, "short")).status, 400, "idempotency key is required");
+  const comment = await f.put("#evil-model", fields(beta), 3);
+  assert.equal(comment.status, 422); assert.equal((await comment.json() as { reason: string }).reason, "format", "a # name is refused");
+  for (const name of ["#evil-model", " #evil-model", " "])
+    await assert.rejects(f.db.query(`INSERT INTO control_loop_roster_models SELECT tenant_id,$1,9999,launcher,provider,family,model_class,
+      roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at FROM control_loop_roster_models LIMIT 1`, [name]),
+    /check constraint/u, `the database refuses ${JSON.stringify(name)}`);
   await f.db.query("UPDATE control_role_grants SET role_key='operator'");
   assert.equal((await f.get()).canEdit, false);
   assert.equal((await f.setOn("nvidia/beta-2", false, 3)).status, 403, "non-owner edit refused");
@@ -256,8 +266,12 @@ realTest("B6 rules come from cr: bad rows are refused with cr's own problem text
     assert.equal(body.reason, "rules", label); assert.ok(body.problems.some(line => problem.test(line)), `${label}: ${body.problems.join(" | ")}`);
     assert.ok(body.problems.every(line => !line.includes(f.root)), "no install paths in the refusal");
   }
-  const tab = await f.put(sol.name, { ...fields(sol), note: "a\tb" }, 1);
-  assert.equal(tab.status, 422); assert.equal((await tab.json() as { reason: string }).reason, "format");
+  // Export structure, refused before cr: a tab splits a field, and a "#" name would make the row a comment cr skips.
+  for (const [label, name, row] of [["tab in a field", sol.name, { ...fields(sol), note: "a\tb" }],
+    ["name starting with #", "#evil-model", { ...fields(sol), launcher: "nope", family: "BADFAMILY", nick: "zz-unique" }]] as const) {
+    const refused = await f.put(name, row, 1);
+    assert.equal(refused.status, 422, label); assert.equal((await refused.json() as { reason: string }).reason, "format", label);
+  }
   assert.equal((await f.get()).version, 1, "nothing committed");
   const long = await f.put(sol.name, { ...fields(sol), note: "n".repeat(201) }, 1);
   assert.equal(long.status, 201, "a 201-character note is accepted (no such rule in cr)");
@@ -399,4 +413,22 @@ test("B6 restore: an older database re-renders the surviving export to the older
   const restarted = new LoopRosterServiceV1(f.client, scope, f.tools, () => now);
   assert.deepEqual(await restarted.start(), { seeded: true, exported: true, version: 1 });
   assert.equal(await readFile(f.exportPath, "utf8"), synthetic, "the export follows the restored master");
+});
+
+test("B6 a slow export from another process never leaves an older file behind (stand-in check)", async t => {
+  const f = await rosterFixture(t);
+  await writeFile(f.exportPath, synthetic, { mode: 0o600 });
+  await f.service.start();
+  // Process A renders version 1; before its rename, an edit commits in process B and B exports version 2.
+  let once = false;
+  const slow = new LoopRosterServiceV1(f.client, scope, f.tools, () => now, { afterTemporaryWrite: async () => {
+    if (once) return; once = true;
+    await f.db.query("UPDATE control_loop_roster_models SET note='newer' WHERE name='alpha-1'");
+    await f.db.query("UPDATE control_loop_roster_state SET version=version+1");
+    assert.deepEqual(await f.service.exportRoster(), { exported: true, version: 2 });
+  } });
+  assert.deepEqual(await slow.exportRoster(), { exported: true, version: 2 }, "A's stale rename is followed by a current export");
+  assert.match(await readFile(f.exportPath, "utf8"), /\tnewer\t/u, "the file on disk is the newer master");
+  assert.deepEqual(await f.service.reconcile(), { exported: true, version: 2 });
+  assert.deepEqual(await readdir(join(f.root, "roster")), ["roster-export.tsv"]);
 });

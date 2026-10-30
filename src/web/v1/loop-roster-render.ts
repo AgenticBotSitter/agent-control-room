@@ -14,6 +14,8 @@ const pythonLineBreak = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/u;
 const fieldBreak = /[\t\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/u;
 // Python's str.strip() whitespace for "blank line" detection; cr skips such lines and "#" comments.
 const blank = (line: string) => line.replace(/[\s\x1c-\x1f\x85]/gu, "") === "";
+// A rendered row cr would skip (blank, or "#" first, with or without leading whitespace) is never checked by cr.
+const skipped = (line: string) => blank(line) || /^[\s\x1c-\x1f\x85]*#/u.test(line);
 
 export const loopRosterSha256V1 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
@@ -24,7 +26,9 @@ export function renderLoopRosterV1(rows: readonly LoopRosterRowV1[]): string {
   for (const row of rows) {
     const values = loopRosterColumnsV1.map(column => row[column]);
     if (values.some(value => typeof value !== "string" || fieldBreak.test(value))) throw new LoopRosterFormatError("field_break");
-    lines.push(values.join("\t"));
+    const line = values.join("\t");
+    if (skipped(line)) throw new LoopRosterFormatError("skipped_row");
+    lines.push(line);
   }
   return `${lines.join("\n")}\n`;
 }
