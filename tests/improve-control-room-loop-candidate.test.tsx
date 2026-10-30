@@ -30,7 +30,9 @@ test("B4 finished candidate reaches Home and saved request", async () => {
 
 // SYNTHETIC contract: this verifier checks an independently sealed fixture manifest,
 // receipt/output custody and effective policy. It is not an A2 production mapping.
-async function syntheticFixture() {
+// website: real bridge intake, Confirm and Start, each under its own browser key, so the
+// Confirm-recorded authorization start key never equals the Start claim's key.
+async function syntheticFixture(options: { website?: boolean } = {}) {
   const f = await taskFixture();
   const { ImproveControlRoomDeskServiceV1 } = await import("../src/improve-control-room/v1/service");
   const { ImproveControlRoomLoopServiceV1 } = await import("../src/web/v1/improve-control-room-loop-service");
@@ -50,17 +52,36 @@ async function syntheticFixture() {
     approval:null,question:null,progress:{step:"final",completed:1,attention:"none"},receipts:[]};
   const forbidden:string[]=[], unexpected=async()=>{forbidden.push("unexpected operation");throw new Error("SYNTHETIC forbidden");};
   const adapter:import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,
-    reserveRun:()=>run.loopRunId,available:()=>true,status:async()=>structuredClone(status),intake:unexpected,confirmRequest:unexpected,approve:unexpected,answer:unexpected,
+    reserveRun:()=>run.loopRunId,available:()=>true,status:async()=>structuredClone(status),
+    intake:options.website?async(id,b,text,fence)=>{fence();status={...status,revision:3,state:"draft",description:text,confirmation:null,
+      receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC intake"})}]};return structuredClone(status);}:unexpected,
+    confirmRequest:options.website?async(id,b,fence)=>{fence();status={...status,revision:4,state:"ready",confirmation:{path:"request.md",sha256:loopByteHashV1(status.description),
+      at:new Date(now).toISOString(),who:"owner",input_version:status.inputVersion},
+      receipts:[...status.receipts,{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC Confirm"})}]};return structuredClone(status);}:unexpected,
+    approve:unexpected,answer:unexpected,
     start:async(id,b,fence)=>{fence();status={...status,state:"running",revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC Start"})}]};return structuredClone(status);},
     stop:unexpected,close:async()=>{}};
   const lineage=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,confirmedContract);
-  const draft=await lineage.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},"b4-synthetic-draft-0001");
-  const link=await lineage.recordLoopRunLink({projectId:f.project.projectId,requestId:draft.request.requestId,initialInputVersion:1,run});
-  await lineage.authorizeLoopStart(f.identity,f.project.projectId,{requestId:draft.request.requestId,expectedVersion:1,runLinkId:link.runLink.runLinkId,
-    requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},"b4-synthetic-start-0001",{
-    inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,revision:status.revision,confirmation:status.confirmation!});
   const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
-  await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-synthetic-start-0001");
+  let draft:{request:{requestId:string}},link:{runLink:{runLinkId:string}};
+  if(options.website){
+    const intake=await bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},"b4-website-intake-0001");
+    assert.equal(intake.state,"accepted","B4 website intake is accepted");
+    const intakeStatus=await bridge.status(f.identity,f.project.projectId,intake.requestId);
+    draft={request:{requestId:intake.requestId}};link={runLink:{runLinkId:intakeStatus.request.runLink!.runLinkId}};
+    const confirm=await bridge.mutate(f.identity,f.project.projectId,intake.requestId,"confirm",{expectedVersion:1,expectedRevision:intakeStatus.engine.revision,
+      requestSha256:intakeStatus.engine.requestSha256,settingsSha256:intakeStatus.engine.settingsSha256},"b4-website-confirm-0001");
+    assert.equal(confirm.state,"accepted","B4 website Confirm is accepted");
+  } else {
+    draft=await lineage.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},"b4-synthetic-draft-0001");
+    link=await lineage.recordLoopRunLink({projectId:f.project.projectId,requestId:draft.request.requestId,initialInputVersion:1,run});
+    await lineage.authorizeLoopStart(f.identity,f.project.projectId,{requestId:draft.request.requestId,expectedVersion:1,runLinkId:link.runLink.runLinkId,
+      requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},"b4-synthetic-start-0001",{
+      inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,revision:status.revision,confirmation:status.confirmation!});
+  }
+  const started=await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},
+    options.website?"b4-website-start-browser-0001":"b4-synthetic-start-0001");
+  assert.equal(started.state,"accepted","B4 Start is accepted");
   const head="b".repeat(40),base="a".repeat(40),d=sha256Digest({fixture:"SYNTHETIC B4 custody"});
   const startedAt=new Date(now-1000).toISOString(),endedAt=new Date(now).toISOString();
   let evidence:import("../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateEvidenceV1=loopCandidateEvidenceSchemaV1.parse({schemaVersion:1,
@@ -182,6 +203,78 @@ test("B4 SYNTHETIC publisher signed service HTTP retained card and inert decisio
     assert.equal((await f.db.query<{n:number}>("SELECT count(*)::int n FROM pipeline_runs")).rows[0]!.n,0);
     assert.deepEqual(f.forbidden,[]);
   }finally{await f.close();}
+});
+
+test("B4 website intake, Confirm and Start under distinct browser keys records the finish card",async()=>{
+  const f=await syntheticFixture({website:true});
+  try {
+    const claims=(await f.client.query<{operation:string;idempotency_key:string;binding:{authorizationId:string|null}}>(`SELECT operation,idempotency_key,binding
+      FROM control_loop_improvement_commands WHERE request_id=$1 AND entry_kind='claim' ORDER BY operation`,[f.requestId])).rows;
+    assert.deepEqual(claims.map(c=>[c.operation,c.idempotency_key]),[["confirm","b4-website-confirm-0001"],["intake","b4-website-intake-0001"],["start","b4-website-start-browser-0001"]]);
+    const authorization=(await f.client.query<{id:string;start_key:string}>("SELECT id,start_key FROM control_loop_improvement_authorizations WHERE request_id=$1",[f.requestId])).rows;
+    assert.equal(authorization.length,1);assert.match(authorization[0]!.start_key,/^start:/u);
+    assert.notEqual(authorization[0]!.start_key,"b4-website-start-browser-0001","B4 website Confirm key differs from the browser Start key");
+    assert.equal(claims.find(c=>c.operation==="start")!.binding.authorizationId,authorization[0]!.id,"B4 signed Start claim names the Confirm-recorded authorization");
+    const receipt=await f.publish();assert.equal(receipt.state,"recorded","B4 website-started run records its finish card");
+    assert.equal((await f.publish()).state,"replayed");
+    const response=await f.handle(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/candidate`));
+    assert.equal(response.status,200);const card=(await response.json()).candidate;
+    assert.equal(card.candidateId,receipt.candidate.candidateId);assert.equal(card.candidateRevision,"b".repeat(40));assert.equal(card.canDecide,true);
+    assert.deepEqual(f.forbidden,[]);
+  } finally { await f.close(); }
+});
+
+// Re-signs both Start journal rows with the real key: only the authorization binding can refuse.
+async function reSignStart(f:Awaited<ReturnType<typeof syntheticFixture>>,change:(binding:Record<string,unknown>)=>void){
+  const {hmacSha256Tag}=await import("../src/security");
+  await f.db.exec("ALTER TABLE control_loop_improvement_commands DISABLE TRIGGER control_loop_commands_append_only");
+  for(const raw of (await f.client.query<Record<string,unknown>>(`SELECT * FROM control_loop_improvement_commands
+    WHERE request_id=$1 AND operation='start'`,[f.requestId])).rows){
+    const {record_digest:_digest,auth_tag:_tag,...rest}=raw,record:Record<string,unknown>={...rest,created_at:new Date(raw.created_at as string).toISOString()};
+    change(record.binding as Record<string,unknown>);
+    await f.client.query(`UPDATE control_loop_improvement_commands SET binding=$1::jsonb,record_digest=$2,auth_tag=$3
+      WHERE command_id=$4 AND entry_kind=$5`,[JSON.stringify(record.binding),sha256Digest(record),
+      hmacSha256Tag(KEY,{purpose:"loop-improvement-command/v1",record}),raw.command_id,raw.entry_kind]);
+  }
+  await f.db.exec("ALTER TABLE control_loop_improvement_commands ENABLE TRIGGER control_loop_commands_append_only");
+}
+const rawCandidateInsert=(f:Awaited<ReturnType<typeof syntheticFixture>>)=>{const e=f.evidence();return f.client.query(`
+  INSERT INTO control_loop_update_candidates(tenant_id,id,project_id,request_id,owner_identity_id,run_link_id,local_version,a2_input_version,
+  candidate_revision,completion_digest,retention_digest,record_digest,auth_tag,payload,created_at)
+  VALUES('tenant:web','loop-candidate:sql-proof',$1,$2,'identity:web',$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
+  [e.binding.projectId,e.binding.requestId,e.binding.runLinkId,e.binding.localVersion,JSON.stringify(e.binding.a2InputVersion),
+   e.binding.candidateRevision,e.completionDigest,e.retentionDigest,sha256Digest({fixture:"SYNTHETIC raw SQL"}),`hmac-sha256:${"f".repeat(64)}`,JSON.stringify(e),new Date(now).toISOString()]);};
+
+test("B4 Start claim naming another request's authorization is refused in service and SQL",async()=>{
+  const f=await syntheticFixture({website:true});
+  try {
+    const {loopByteHashV1}=await import("../src/web/v1/improve-control-room-loop-adapter");
+    const description="SYNTHETIC other improvement",settingsText='{"fixture":"SYNTHETIC B4"}',run={adapterId:f.adapter.adapterId,loopRunId:"synthetic-run:b4-other",toolingRevision,a2SchemaVersion:1 as const};
+    const other=await f.lineage.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},"b4-other-draft-0001");
+    const link=await f.lineage.recordLoopRunLink({projectId:f.project.projectId,requestId:other.request.requestId,initialInputVersion:1,run});
+    const confirmation={path:"request.md",sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:"owner" as const,input_version:"SYNTHETIC:1"};
+    await f.lineage.authorizeLoopStart(f.identity,f.project.projectId,{requestId:other.request.requestId,expectedVersion:1,runLinkId:link.runLink.runLinkId,
+      requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},"b4-other-start-0001",
+      {inputVersion:"SYNTHETIC:1",settingsDigest:loopByteHashV1(settingsText),revision:4,confirmation});
+    const foreign=(await f.client.query<{id:string}>("SELECT id FROM control_loop_improvement_authorizations WHERE request_id=$1",[other.request.requestId])).rows[0]!.id;
+    await reSignStart(f,()=>{});await f.desk.prepareLoopCandidateCompletion(f.runLinkId);
+    await reSignStart(f,binding=>{binding.authorizationId=foreign;});
+    await assert.rejects(f.publish(),/loop_candidate_integrity_failed/u,"B4 service refuses a Start claim signed for another request's authorization");
+    await assert.rejects(rawCandidateInsert(f),/loop candidate current binding rejected/u,"B4 SQL refuses a Start claim bound to another request's authorization");
+    assert.equal((await f.client.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,0);
+  } finally { await f.close(); }
+});
+
+test("B4 Start claim bound to another A2 input version is refused in service and SQL",async()=>{
+  const f=await syntheticFixture({website:true});
+  try {
+    await reSignStart(f,()=>{});await f.desk.prepareLoopCandidateCompletion(f.runLinkId);
+    await reSignStart(f,binding=>{binding.inputVersion="SYNTHETIC:9";});
+    await assert.rejects(f.publish(),/loop_candidate_integrity_failed/u,"B4 service refuses a Start claim whose input version differs from its authorization");
+    await assert.rejects(rawCandidateInsert(f),/loop candidate current binding rejected/u,"B4 SQL refuses a Start claim whose input version differs from its authorization");
+    await reSignStart(f,binding=>{binding.inputVersion="SYNTHETIC:1";});
+    await rawCandidateInsert(f);
+  } finally { await f.close(); }
 });
 
 test("B4 readiness refuses independent missing counts, bindings, seals and policy",async()=>{

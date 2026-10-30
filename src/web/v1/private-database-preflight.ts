@@ -87,8 +87,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
-// Current value includes the 0303 retained loop candidate schema and grants.
-export const privateWebSchemaDigest = "2020964be1f3806cb3aa2cf5ee450817a03700d171dcf5c06504a9ae770a22ce";
+// Current value includes the 0303 retained loop candidate schema and grants and the 0304
+// candidate guard that binds Start lineage to the signed authorization id. The previous
+// value was `2020964b...`.
+export const privateWebSchemaDigest = "16521bab896f3e5a479ef0895f96cc3db9acad5c5494bc06cebd92fda2456b41";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway

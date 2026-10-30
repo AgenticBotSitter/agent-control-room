@@ -765,10 +765,16 @@ export class ImproveControlRoomDeskServiceV1 {
     if (!authorization) throw new WebAccessError("conflict");
     this.#verifyLoop("authorizations", authorization);
     const initial = await this.#loopInput(tx, root, claim.binding.localVersion);
-    if (authorization.run_link_id !== link.id || authorization.request_id !== root.id || authorization.project_id !== root.project_id
-      || authorization.owner_identity_id !== root.owner_identity_id || authorization.start_key !== claim.idempotency_key
+    // Website Confirm records start:<confirm command> while Start keeps the browser's own
+    // key, so lineage follows the signed Start claim's authorization id, never start_key.
+    if (authorization.id !== claim.binding.authorizationId || authorization.run_link_id !== link.id
+      || authorization.request_id !== root.id || authorization.project_id !== root.project_id
+      || authorization.owner_identity_id !== root.owner_identity_id
       || Number(authorization.input_version) !== claim.binding.localVersion || authorization.request_sha256 !== initial.request_sha256
-      || authorization.settings_sha256 !== initial.settings_sha256) throw new Error("loop_candidate_integrity_failed");
+      || authorization.settings_sha256 !== initial.settings_sha256 || authorization.request_sha256 !== claim.binding.requestSha256
+      || authorization.settings_sha256 !== claim.binding.settingsSha256
+      || canonicalJson(authorization.a2_input_version) !== canonicalJson(claim.binding.inputVersion))
+      throw new Error("loop_candidate_integrity_failed");
     return { root, input, link };
   }
 

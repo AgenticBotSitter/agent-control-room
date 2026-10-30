@@ -40,6 +40,8 @@ const probes=[
   pattern:"B4 tampered retained decision fails verification",assertion:"B4 tampered decision never becomes a readable card"},
  {name:"decision exact head",file:service,find:"b.candidateRevision !== row.candidate_revision || b.candidateRecordDigest !== row.record_digest",replace:"b.candidateRecordDigest !== row.record_digest",
   pattern:"B4 decision exact head binding refuses before an insert",assertion:"B4 altered head attempts zero decision inserts"},
+ {name:"Start authorization input version",file:service,find:" || canonicalJson(authorization.a2_input_version) !== canonicalJson(claim.binding.inputVersion)",replace:"",
+  pattern:"B4 Start claim bound to another A2 input version is refused in service and SQL",assertion:"B4 service refuses a Start claim whose input version differs from its authorization"},
  {name:"decision source freshness",file:service,find:'if (canonicalJson(verified) !== canonicalJson(prepared.e)) throw new WebAccessError("conflict");',replace:"/* MUTANT: changed completion admitted. */",
   pattern:"B4 decision freshness refuses changed sealed completion",assertion:"B4 changed sealed completion attempts zero decision inserts"},
 ];
@@ -76,10 +78,10 @@ const sqlProbesAll=[
  {name:"SQL decision append-only",file:"db/migrations/0303_control_loop_update_candidates.sql",
   find:"BEFORE UPDATE OR DELETE OR TRUNCATE ON control_loop_update_candidate_decisions",replace:"BEFORE DELETE OR TRUNCATE ON control_loop_update_candidate_decisions",
   pattern:"B4 SQL append-only guard refuses schema-owner changes",assertion:"B4 SQL schema owner cannot rewrite decisions"},
- {name:"SQL current binding",file:"db/migrations/0303_control_loop_update_candidates.sql",
+ {name:"SQL current binding",file:"db/migrations/0304_control_loop_candidate_start_authorization.sql",
   find:"AND i.request_sha256=NEW.payload->'binding'->>'requestSha256'",replace:"AND true",
   pattern:"B4 SQL current-input guard independently refuses wrong request bytes",assertion:"B4 SQL wrong request bytes are refused by current binding trigger"},
- {name:"SQL completed counts",file:"db/migrations/0303_control_loop_update_candidates.sql",
+ {name:"SQL completed counts",file:"db/migrations/0304_control_loop_candidate_start_authorization.sql",
   find:"AND (item->>'completed')::numeric>0",replace:"AND true",
   pattern:"B4 SQL completed-check guard independently refuses zero counts",assertion:"B4 SQL zero counts are refused by required check trigger"},
  {name:"SQL owner grant",file:"db/migrations/0303_control_loop_update_candidates.sql",
@@ -92,6 +94,9 @@ const sqlProbesAll=[
   find:"REVOKE ALL ON control_loop_update_candidates, control_loop_update_candidate_decisions FROM control_room_application,",
   replace:"REVOKE ALL ON control_loop_update_candidates, control_loop_update_candidate_decisions FROM",
   pattern:"B4 SQL broad application role denial is independent",assertion:"B4 application login has no candidate SELECT"},
+ {name:"SQL Start authorization input version",file:"db/migrations/0304_control_loop_candidate_start_authorization.sql",
+  find:"\n        AND a.a2_input_version=c.binding->'inputVersion'",replace:"",
+  pattern:"B4 SQL Start authorization guard refuses a claim bound to another A2 input version",assertion:"B4 SQL refuses a Start claim whose input version differs from its authorization"},
 ];
 function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(name,{timeout:600000},async t=>{
  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b4-sql-mutations-"));
@@ -126,7 +131,7 @@ function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(na
 }); }
 sqlGuardPartition("B4 SQL consumption guards require independently loaded native mutations",[sqlProbesAll[0]!]);
 sqlGuardPartition("B4 SQL decision immutability guards require independently loaded native mutations",[sqlProbesAll[1]!]);
-sqlGuardPartition("B4 SQL binding guards require independently loaded native mutations",[sqlProbesAll[2]!]);
+sqlGuardPartition("B4 SQL binding guards require independently loaded native mutations",[sqlProbesAll[2]!,sqlProbesAll[7]!]);
 sqlGuardPartition("B4 SQL completed checks guards require independently loaded native mutations",[sqlProbesAll[3]!]);
 sqlGuardPartition("B4 SQL authority guards require independently loaded native mutations",[sqlProbesAll[4]!]);
 sqlGuardPartition("B4 SQL candidate immutability guards require independently loaded native mutations",[sqlProbesAll[5]!]);
