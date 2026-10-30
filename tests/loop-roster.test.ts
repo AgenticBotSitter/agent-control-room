@@ -382,3 +382,21 @@ realTest("B6 H1 regression: a roster edit and export through the real adapter ne
   await assert.rejects(adapter.roster!.check(join(root, "config/settings.json")), /loop_adapter_unavailable/u,
     "the adapter checks only files under the roster directory");
 });
+
+test("B6 restore: an older database re-renders the surviving export to the older version (stand-in check)", async t => {
+  const f = await rosterFixture(t);
+  await writeFile(f.exportPath, synthetic, { mode: 0o600 });
+  await f.service.start();
+  const backup = { models: (await f.db.query("SELECT * FROM control_loop_roster_models ORDER BY position")).rows,
+    state: (await f.db.query("SELECT * FROM control_loop_roster_state")).rows };
+  assert.equal((await f.setOn("alpha-1", false, 1)).status, 201);
+  assert.notEqual(await readFile(f.exportPath, "utf8"), synthetic);
+  // Restore the older database; the roster directory survives the app/database restore.
+  await f.db.query("DELETE FROM control_loop_roster_models"); await f.db.query("DELETE FROM control_loop_roster_state");
+  for (const table of ["control_loop_roster_state", "control_loop_roster_models"] as const)
+    for (const row of table === "control_loop_roster_state" ? backup.state : backup.models)
+      await f.db.query(`INSERT INTO ${table} SELECT * FROM json_populate_record(NULL::${table}, $1::json)`, [JSON.stringify(row)]);
+  const restarted = new LoopRosterServiceV1(f.client, scope, f.tools, () => now);
+  assert.deepEqual(await restarted.start(), { seeded: true, exported: true, version: 1 });
+  assert.equal(await readFile(f.exportPath, "utf8"), synthetic, "the export follows the restored master");
+});
