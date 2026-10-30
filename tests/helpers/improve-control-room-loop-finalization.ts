@@ -374,7 +374,7 @@ export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
   const f=await setupModule.openI1ProductGate({gate,configuration}) as I1Setup;
   let cleanupProduct=async()=>{};t.after(async()=>{try{await cleanupProduct();}finally{await f.close();}});
   assert.equal(f.monitorMutations?.toolingRevision,configuration.toolingRevision,"R6 requires monitor mutation evidence at R's pinned tooling revision");
-  assert.deepEqual(f.monitorMutations.argv,["/usr/bin/python3","-B","loop/mutate_a2.py","all"]);
+  assert.deepEqual(f.monitorMutations.argv,[configuration.interpreter,"-B","loop/mutate_a2.py","all"]);
   const mutations=await readFile(await i1Regular(f.monitorMutations.outputFile,root),"utf8");
   assert.match(mutations,/(?:^|\n)RESULT: PASS \(all slices\)\s*$/,"R6 requires A2M-3 mutate_a2.py all PASS output");
   const target=loopFinalizationTargetSchemaV1.parse(f.target);
