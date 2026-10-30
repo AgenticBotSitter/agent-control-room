@@ -471,22 +471,22 @@ test("B5 SYNTHETIC companion refuses stale admission, a second Start and answers
   const current = () => f.bridge.status(f.identity, project, requestId);
   let s = await current();
   const confirm = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 };
-  await assert.rejects(mutate(requestId, "confirm", { ...confirm, requestSha256: "0".repeat(64) }, "b5-c-confirm-stale1"), "B5 a changed request is stale at confirmation");
-  await assert.rejects(mutate(requestId, "confirm", { ...confirm, settingsSha256: "0".repeat(64) }, "b5-c-confirm-stale2"), "B5 changed settings are stale at confirmation");
-  await assert.rejects(mutate(requestId, "start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, "b5-c-start-early01"),
+  await assert.rejects(mutate(requestId, "confirm", { ...confirm, requestSha256: "0".repeat(64) }, "b5-c-confirm-stale1"), /conflict/u, "B5 a changed request is stale at confirmation");
+  await assert.rejects(mutate(requestId, "confirm", { ...confirm, settingsSha256: "0".repeat(64) }, "b5-c-confirm-stale2"), /conflict/u, "B5 changed settings are stale at confirmation");
+  await assert.rejects(mutate(requestId, "start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, "b5-c-start-early01"), /conflict/u,
     "B5 Start before the exact confirmation is refused");
   assert.equal(f.calls.filter(c => c === "start" || c === "confirm").length, 0, "B5 refused admissions reach no engine command");
   await mutate(requestId, "confirm", confirm, "b5-c-confirm-00001"); s = await current();
   const start = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId };
   await mutate(requestId, "start", start, "b5-c-start-000001");
-  await assert.rejects(mutate(requestId, "start", start, "b5-c-start-000002"), "B5 a second Start under another key is refused");
+  await assert.rejects(mutate(requestId, "start", start, "b5-c-start-000002"), /conflict/u, "B5 a second Start under another key is refused");
   await mutate(requestId, "start", start, "b5-c-start-000001"); // the reply was lost; the exact retry replays
   assert.equal(f.calls.filter(c => c === "start").length, 1, "B5 duplicate Start and lost-reply retry consume once");
   assert.equal(await f.tick(), "question"); s = await current();
   const q = f.question, answer = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, questionId: q.questionId,
     inputVersion: q.inputVersion, questionReportSha256: q.reportSha256, text: "Amber." };
-  await assert.rejects(mutate(requestId, "answer", { ...answer, inputVersion: "SYNTHETIC:0" }, "b5-c-answer-input01"), "B5 an answer for another input version is refused");
-  await assert.rejects(mutate(requestId, "answer", { ...answer, questionReportSha256: "f".repeat(64) }, "b5-c-answer-report1"), "B5 an answer for another question report is refused");
+  await assert.rejects(mutate(requestId, "answer", { ...answer, inputVersion: "SYNTHETIC:0" }, "b5-c-answer-input01"), /conflict/u, "B5 an answer for another input version is refused");
+  await assert.rejects(mutate(requestId, "answer", { ...answer, questionReportSha256: "f".repeat(64) }, "b5-c-answer-report1"), /conflict/u, "B5 an answer for another question report is refused");
   // Reads and two owned restarts while waiting are read-only.
   const calls = f.calls.length, launches = f.launches();
   await f.restart(); await current(); await f.bridge.readAttention(f.identity); await f.restart(); s = await current();
@@ -495,7 +495,7 @@ test("B5 SYNTHETIC companion refuses stale admission, a second Start and answers
   await mutate(requestId, "stop", { runLinkId }, "b5-c-stop-0000001");
   assert.equal(f.status()!.state, "stopped"); assert.equal(await f.tick(), "stopped", "B5 a stopped run does not advance");
   s = await current();
-  await assert.rejects(mutate(requestId, "answer", { ...answer, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision }, "b5-c-answer-stop01"),
+  await assert.rejects(mutate(requestId, "answer", { ...answer, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision }, "b5-c-answer-stop01"), /conflict/u,
     "B5 an answer after Stop is refused");
   assert.equal(f.calls.filter(c => c === "answer").length, 0); assert.equal(f.launches(), launches, "B5 Stop launches no worker");
   assert.equal((await f.desk.viewLoopDesk(f.identity, project)).loopRequests.length, 1, "B5 one saved request throughout");
