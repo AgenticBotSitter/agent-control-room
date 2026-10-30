@@ -1111,9 +1111,10 @@ test("B5 retained website lineage uses the web login", async () => b1aRun(async 
     assert.deepEqual((await web.client.query("SELECT current_user,session_user")).rows,
       [{ current_user: "control_room_web", session_user: "control_room_web" }]);
     // A retained signed legacy request and its pipeline run must be untouched by the loop journey.
-    const pipelines = new LinearPipelineServiceV1(web.client, scope, KEY, { assertCurrent: () => true, isAcceptedResultCurrent: () => false });
+    // One installation has one integrity key: sign the legacy rows with the key the website desk verifies.
+    const pipelines = new LinearPipelineServiceV1(web.client, scope, e.KEY, { assertCurrent: () => true, isAcceptedResultCurrent: () => false });
     const savedTemplate = await pipelines.createTemplate(identity, ids.project, template);
-    await new ImproveControlRoomDeskServiceV1(web.client, scope, KEY, pipelines).create(identity, ids.project, { description: "Retained signed legacy request.",
+    await new ImproveControlRoomDeskServiceV1(web.client, scope, e.KEY, pipelines).create(identity, ids.project, { description: "Retained signed legacy request.",
       pipelineTemplateId: savedTemplate.templateId, selectedWorkerIds: ["worker:build", "worker:check"], leadWorkerId: "worker:lead" }, "b5-pg-legacy-0001");
     const legacyRows = async () => JSON.stringify(await Promise.all(["control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions",
       "pipeline_runs", "work_items", "control_native_task_queue"].map(async table => (await b1aSql(pg, `SELECT * FROM ${table} ORDER BY 1,2`)).rows)));
@@ -1128,6 +1129,8 @@ test("B5 retained website lineage uses the web login", async () => b1aRun(async 
     const view = await e.desk.viewLoopDesk(identity, ids.project);
     assert.equal(view.loopRequests[0]!.requestId, requestId); assert.equal(view.loopRequests[0]!.runLink!.runLinkId, runLinkId);
     assert.equal(view.loopRequests[0]!.savedAuthorization, true); assert.equal(view.loopRequests[0]!.startsWork, false);
+    assert.deepEqual(view.legacy.templates.map(choice => choice.templateId), [savedTemplate.templateId], "B5 retained legacy template verifies");
+    assert.equal(view.legacy.requests.length, 1, "B5 retained legacy request verifies");
     // The website Start claim binds the Confirm-recorded authorization, so B4 publishes on PostgreSQL
     // through the 0304 SQL guard, and the retained card replays exactly.
     const before = await b1aSnapshot(pg);
