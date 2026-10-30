@@ -1,5 +1,7 @@
 import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
+import { LoopRosterServiceV1 } from "./loop-roster-service";
+import { createLoopRosterHttpHandlerV1, isLoopRosterRouteV1 } from "./loop-roster-http";
 import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ownerPushLinkV1 } from "../../web-push/v1/policy";
 import { localOwnerSignInTargetV1 } from "./local-owner-session";
@@ -327,6 +329,13 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: loopCandidateDesk, clock }) : undefined;
+  // B6: the roster master and its export, from the same pinned adapter. Start seeds or reconciles once.
+  const loopRosterTools = options.loopBridge?.adapter.roster;
+  const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock) : undefined;
+  const loopRosterStarted = loopRoster?.start().catch(() => undefined);
+  const loopRosterHttp = loopRoster ? createLoopRosterHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: loopRoster, clock }) : undefined;
   const improvementHttp = improvementDesk || loopBridge ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: improvementDesk, loopBridge, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
@@ -864,6 +873,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (isLoopRosterRouteV1(url.pathname)) {
+        if (!loopRosterHttp) throw new WebAccessError("not_found");
+        await loopRosterStarted;
+        return loopRosterHttp(request);
+      }
       if (isLoopCandidateRouteV1(url.pathname)) {
         if (!loopCandidateHttp) throw new WebAccessError("not_found");
         return loopCandidateHttp(request);

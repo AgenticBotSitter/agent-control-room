@@ -310,4 +310,12 @@ GRANT SELECT, INSERT ON control_loop_improvement_commands TO control_room_privat
 
 GRANT SELECT, INSERT ON control_loop_update_candidates, control_loop_update_candidate_decisions TO control_room_private_web;
 
+-- 0305: the B6 roster master. Rows are edited in place (no delete; retire with on_off='off');
+-- the state row carries the version, the export marker and the last command replay key.
+GRANT SELECT, INSERT ON control_loop_roster_models, control_loop_roster_state TO control_room_private_web;
+GRANT UPDATE (launcher, provider, family, model_class, roles, efforts, default_effort, cost, on_off, note, nick,
+  max_build_grade, updated_by, updated_at) ON control_loop_roster_models TO control_room_private_web;
+GRANT UPDATE (version, exported_version, exported_sha256, last_idempotency_key, last_request_digest, updated_at)
+  ON control_loop_roster_state TO control_room_private_web;
+
 COMMIT;

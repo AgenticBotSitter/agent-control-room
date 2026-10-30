@@ -671,7 +671,7 @@ for (const mode of ["shipped ownership", "prepared", "wrong owner", "nonempty"] 
     if (mode === "nonempty") await b1aSql(pg, "INSERT INTO tenants(id,display_name) VALUES('tenant:retained','Fixture retained')", [], database);
     const f = await prepareB1aFixture(pg, database);
     if (mode === "prepared") {
-      assert.equal(f.metadata, true); assert.equal(f.catalogCount, 253);
+      assert.equal(f.metadata, true); assert.equal(f.catalogCount, 255);
       assert.equal(f.result.evidence.disposition, "fixture_prepared", "B1a fixture_prepared after measured catalog count");
       assert.equal(f.digestReads, 2); assert.equal(f.empty, true);
       assert.deepEqual(f.result.evidence.fixtureCounts, { tenant: 1, owner: 1, workspace: 1, idea: 1, enrollment: 1, signal: 1 });
@@ -849,6 +849,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     try { baselineDigest = await readPrivateWebSchemaDigest(reference); baselineGrants = [...await readMacGrantCatalogV1(reference)].sort(); }
     finally { await reference.end(); }
     // Remove empty dependents in reverse ledger order before proving the older down.
+    await b1aSql(pg, await readFile("db/down/0305_control_loop_roster.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0304_control_loop_candidate_start_authorization.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0303_control_loop_update_candidates.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0302_control_loop_improvement_commands.sql", "utf8"), [], pg.database, "migrator");
@@ -863,6 +864,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0302_control_loop_improvement_commands.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0303_control_loop_update_candidates.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0304_control_loop_candidate_start_authorization.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0305_control_loop_roster.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/roles/production_table_grants.sql", "utf8"), [], pg.database, "migrator");
     await applyB1aRoles(pg, resolve("."), pg.database);
     const f = await b1aLinked(pg), web = b1aWeb(pg);

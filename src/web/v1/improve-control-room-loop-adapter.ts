@@ -13,6 +13,7 @@ import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
 import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, loopProgressSchemaV1, unavailableLoopGate,
   type LoopImprovementDecisionsV1 } from "./improve-control-room-loop-attention-wire";
 import { canonicalJson, sha256Digest } from "../../security";
+import { runLoopModelsCheckV1, type LoopRosterToolsV1 } from "./loop-roster-check";
 
 export const loopByteHashV1 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -125,6 +126,8 @@ export interface LoopAdapterV1 {
   answer(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
   /** Called only after the command's durable result commits. */
   releaseCommandFiles?(commandId: string): Promise<void>;
+  /** B6: `<configRoot>/roster`, the tools seed and `cr models check`, behind this adapter's own pin checks. */
+  readonly roster?: LoopRosterToolsV1;
   close(): Promise<void>;
 }
 const unavailable = () => new Error("loop_adapter_unavailable");
@@ -483,8 +486,21 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         });
       });
     } });
+  // The tools tree is <configRoot>/tools/loop; the entrypoint is <loop>/bridge/cr-entry.py.
+  const toolsLoop = dirname(dirname(c.entrypoint)), rosterRoot = join(c.configRoot, "roster");
+  const roster: LoopRosterToolsV1 = Object.freeze({ rosterRoot, toolsSeed: join(toolsLoop, "models.tsv"),
+    check: async (file: string) => {
+      if (closing) throw unavailable();
+      // The same interpreter, entrypoint, manifest/toolingRevision and settings pins every engine call checks.
+      validate(false);
+      const crScript = checkedPath(join(toolsLoop, "cr.py"), c.configRoot);
+      checkedPath(file, rosterRoot);
+      const operation = runLoopModelsCheckV1({ interpreter: c.interpreter, crScript, cwd: c.cwd, file, timeoutMs });
+      pending.add(operation);
+      try { return await operation; } finally { pending.delete(operation); }
+    } });
   let closePromise: Promise<void> | undefined;
-  return Object.freeze({ adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
+  return Object.freeze({ roster, adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
     settingsText, contract: c.contract.lineage,
     reserveRun: () => runId(c.contract.generateRunId()), available,
     ...(recovery ? { inspectRecovery, recover } : {}),
