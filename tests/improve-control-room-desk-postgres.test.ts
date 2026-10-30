@@ -1099,3 +1099,41 @@ test("B2a desk owner isolation", async () => b1aRun(async pg => {
     console.log("B2a desk owner isolation production_login=control_room_web legacy_preserved=true signed_bytes_unchanged=true grants_unchanged=true adapter_calls=0");
   } finally { await bridge.close(); await web.close(); }
 }));
+
+test("B5 retained website lineage uses the web login", async () => b1aRun(async pg => {
+  const { syntheticFirstWebsiteEngineV1, driveSyntheticFirstWebsiteV1 } = await import("./helpers/improve-control-room-first-website");
+  await b1aSeed(pg); const web = b1aWeb(pg);
+  const e = await syntheticFirstWebsiteEngineV1({ client: web.client, scope, projectId: ids.project, clock: Date.now });
+  const bridge = e.openBridge();
+  try {
+    assert.deepEqual((await web.client.query("SELECT current_user,session_user")).rows,
+      [{ current_user: "control_room_web", session_user: "control_room_web" }]);
+    // A retained signed legacy request and its pipeline run must be untouched by the loop journey.
+    const pipelines = new LinearPipelineServiceV1(web.client, scope, KEY, { assertCurrent: () => true, isAcceptedResultCurrent: () => false });
+    const savedTemplate = await pipelines.createTemplate(identity, ids.project, template);
+    await new ImproveControlRoomDeskServiceV1(web.client, scope, KEY, pipelines).create(identity, ids.project, { description: "Retained signed legacy request.",
+      pipelineTemplateId: savedTemplate.templateId, selectedWorkerIds: ["worker:build", "worker:check"], leadWorkerId: "worker:lead" }, "b5-pg-legacy-0001");
+    const legacyRows = async () => JSON.stringify(await Promise.all(["control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions",
+      "pipeline_runs", "work_items", "control_native_task_queue"].map(async table => (await b1aSql(pg, `SELECT * FROM ${table} ORDER BY 1,2`)).rows)));
+    const legacy = await legacyRows(), grants = JSON.stringify(await readMacGrantCatalogV1(web.client)), digest = await readPrivateWebSchemaDigest(web.client);
+    // Website commands through the real bridge, SYNTHETIC workers only.
+    const { requestId, runLinkId } = await driveSyntheticFirstWebsiteV1(e, bridge, identity, ids.project, "b5-pg");
+    assert.equal(e.phase(), "finished");
+    const commands = await b1aSql(pg, "SELECT operation,entry_kind FROM control_loop_improvement_commands WHERE request_id=$1 ORDER BY operation,entry_kind", [requestId]);
+    assert.deepEqual(commands.rows.map(r => `${r.operation}:${r.entry_kind}`), ["answer:claim", "answer:result", "approve:claim", "approve:claim", "approve:result", "approve:result",
+      "confirm:claim", "confirm:result", "intake:claim", "intake:result", "start:claim", "start:result"], "B5 one signed claim/result per website command");
+    for (const table of LOOP_TABLES) assert.equal((await b1aSql(pg, `SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 1, `B5 one ${table} row`);
+    const view = await e.desk.viewLoopDesk(identity, ids.project);
+    assert.equal(view.loopRequests[0]!.requestId, requestId); assert.equal(view.loopRequests[0]!.runLink!.runLinkId, runLinkId);
+    assert.equal(view.loopRequests[0]!.savedAuthorization, true); assert.equal(view.loopRequests[0]!.startsWork, false);
+    // BLOCKED at BASE: the website Confirm authorization key does not bind B4 lineage (BUILD-B5).
+    const before = await b1aSnapshot(pg);
+    await assert.rejects(e.publish(), /loop_candidate_integrity_failed/u, "B5 records the website-Start to B4 publication gap on PostgreSQL");
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM control_loop_update_candidates")).rows[0].n, 0);
+    assert.equal(await b1aSnapshot(pg), before, "B5 refused publication leaves signed lineage bytes unchanged");
+    assert.equal(await legacyRows(), legacy, "B5 legacy signed rows, decisions and pipeline/task rows are unchanged");
+    assert.equal(JSON.stringify(await readMacGrantCatalogV1(web.client)), grants); assert.equal(await readPrivateWebSchemaDigest(web.client), digest);
+    assert.deepEqual(web.errors.filter(error => error.sqlState === "42501"), [], "B5 web login needs no privilege it lacks");
+    console.log("B5 retained website lineage production_login=control_room_web commands=12 legacy_unchanged=true grants_unchanged=true publication=BLOCKED_AT_BASE");
+  } finally { await bridge.close(); await web.close(); }
+}));

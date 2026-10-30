@@ -827,3 +827,28 @@ test("B2a desk HTTP delegates one signed legacy/loop projection without adapter 
   assert.equal((await handler(webRequest(path))).status, 401);
   assert.equal(f.writes(), before); assert.equal(adapterCalls, 0);
 });
+
+test("B5 fixture completion cannot become a legacy candidate", async t => {
+  const { syntheticFirstWebsiteFixtureV1, driveSyntheticFirstWebsiteV1 } = await import("./helpers/improve-control-room-first-website");
+  const f = await syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
+  const legacyTables = ["control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "pipeline_runs", "work_items"];
+  const counts = async () => Object.fromEntries(await Promise.all(legacyTables.map(async table =>
+    [table, (await f.client.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n] as const)));
+  const before = await counts();
+  const { requestId } = await driveSyntheticFirstWebsiteV1(f, f.bridge, f.identity, f.project.projectId, "b5-legacy");
+  assert.equal(f.phase(), "finished");
+  // The SYNTHETIC completion reaches only the loop publisher, which refuses it at BASE (see BUILD-B5).
+  await assert.rejects(f.publish(), /loop_candidate_integrity_failed/u);
+  // The legacy pipeline candidate path has no row to bind a loop request or run link to.
+  for (const pipelineRunId of [requestId, (await f.lineage()).id])
+    await assert.rejects(f.desk.recordCandidate({ projectId: f.project.projectId, improvementRequestId: requestId, pipelineRunId,
+      baseRevision: f.heads.base, candidateRevision: f.heads.final, summary: "B5 fixture completion.", changedAreas: ["index.html"],
+      testResults: [testResult("fast")], databaseChanges: { kind: "none" }, riskFlags: [], independentReviews: [],
+      leadWorkerId: "worker:lead" }), "B5 a loop completion is never a legacy candidate");
+  assert.deepEqual(await counts(), before, "B5 fixture completion writes no legacy request, candidate, decision or pipeline row");
+  const view = await f.desk.viewLoopDesk(f.identity, f.project.projectId);
+  assert.deepEqual(view.legacy, await f.desk.view(f.identity, f.project.projectId));
+  assert.equal(view.legacy.requests.length, 0); assert.deepEqual(view.loopRequests.map(r => r.requestId), [requestId]);
+  assert.equal(view.loopRequests[0]!.grantsDeployAuthority, false);
+  assert.equal((await f.client.query("SELECT 1 FROM control_loop_update_candidates")).rows.length, 0);
+});
