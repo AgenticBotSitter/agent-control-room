@@ -39,10 +39,12 @@ import { lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import type { TestContext } from "node:test";
-import { B5_RECIPES, B5_REQUEST_TEXT, B5RefusalV1, b5Bytes, loadFirstWebsiteAssemblyV1, preflightFirstWebsiteV1, readProtectedTestsDigest,
-  runIndependentStatusCheckV1, seedProofSiteV1, syntheticFirstWebsiteFixtureV1, verifyFirstWebsiteEvidenceV1, type B5CardFactsV1,
-  type B5StatusCheckRecordV1 } from "./helpers/improve-control-room-first-website";
+import type * as B5Helper from "./helpers/improve-control-room-first-website";
+import type { B5CardFactsV1, B5StatusCheckRecordV1 } from "./helpers/improve-control-room-first-website";
 import { request as webRequest } from "./helpers/web-foundation";
+// B5 helper bindings load lazily, so the registration case above imports no B5 module.
+let H: typeof B5Helper;
+const load = async () => { H ??= await import("./helpers/improve-control-room-first-website"); return H; };
 const run = promisify(execFile), GIT_ENV: NodeJS.ProcessEnv = { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 const git = (cwd: string, args: string[]) => run("/usr/bin/git", ["-C", cwd, "-c", "user.name=Proof fixture", "-c", "user.email=proof@localhost",
   "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", env: GIT_ENV }).then(r => r.stdout.trim());
@@ -54,7 +56,7 @@ async function tree(root: string): Promise<string[]> {
   const out: string[] = [];
   for (const name of (await readdir(root)).sort()) {
     const path = join(root, name), stat = await lstat(path);
-    out.push(stat.isDirectory() ? `${path}/` : `${path} ${b5Bytes(await (await import("node:fs/promises")).readFile(path))}`);
+    out.push(stat.isDirectory() ? `${path}/` : `${path} ${H.b5Bytes(await readFile(path))}`);
     if (stat.isDirectory()) out.push(...await tree(path));
   }
   return out;
@@ -63,7 +65,7 @@ async function tree(root: string): Promise<string[]> {
 async function scratch(t: Pick<TestContext, "after">) {
   const parent = await owned(t, "b5-cli-"), root = join(parent, `acr-b5-${Date.now()}`);
   await mkdir(join(root, "config"), { recursive: true });
-  const settings = { schema_version: 1, project: { risk_categories: ["code", "owner_visible", "ci"], test_checks: B5_RECIPES },
+  const settings = { schema_version: 1, project: { risk_categories: ["code", "owner_visible", "ci"], test_checks: H.B5_RECIPES },
     roles: { code_reviews: [{ model: "slot-a", route: "route-a" }, { model: "slot-b", route: "route-b" }],
       risk_reviews: ["attack-review", "ui-review", "ci-review"].map(role => ({ role, model: `slot-${role}`, route: "route-r" })) } };
   const files: Record<string, string> = { "first-website-host.mjs": `import { writeFileSync } from "node:fs";\nwriteFileSync(new URL("./imported.flag", import.meta.url), "imported");\nexport async function createFirstWebsiteHostV1() { throw new Error("fixture host never starts"); }\n`,
@@ -71,13 +73,13 @@ async function scratch(t: Pick<TestContext, "after">) {
     "authorization.json": "{}", "transport.json": "{}", "fault-input.md": "Builder-only first-attempt instruction.\n", "review-input.md": "Code-review-only neutral instruction.\n" };
   for (const [name, text] of Object.entries(files)) await writeFile(join(root, "config", name), text);
   const c = (name: string) => join(root, "config", name);
-  const config = { schemaVersion: 1, product: { root: resolve("."), baseRevision: "a".repeat(40), candidateRevision: "b".repeat(40), assetsDigest: b5Bytes("assets") },
-    a2: { contractFile: c("a2-contract.json"), toolingRevision: b5Bytes("tooling"), schemaDigest: b5Bytes("schema"), qualificationEvidence: c("qualification.json") },
-    assembly: { module: c("first-website-host.mjs"), digest: b5Bytes(files["first-website-host.mjs"]!) }, scratchRoot: root,
+  const config = { schemaVersion: 1, product: { root: resolve("."), baseRevision: "a".repeat(40), candidateRevision: "b".repeat(40), assetsDigest: H.b5Bytes("assets") },
+    a2: { contractFile: c("a2-contract.json"), toolingRevision: H.b5Bytes("tooling"), schemaDigest: H.b5Bytes("schema"), qualificationEvidence: c("qualification.json") },
+    assembly: { module: c("first-website-host.mjs"), digest: H.b5Bytes(files["first-website-host.mjs"]!) }, scratchRoot: root,
     ports: { product: 60460, preview: 60461, postgresBase: 60470 },
     device: { origin: "https://device.invalid", transportQualification: c("transport.json"), actor: "reviewer" },
     settingsFile: c("settings.json"), availabilityFile: c("availability.json"), authorizationEvidence: c("authorization.json"),
-    requestText: B5_REQUEST_TEXT, faultInputFile: c("fault-input.md"), reviewInputFile: c("review-input.md"), maxDurationMs: 14_400_000 };
+    requestText: H.B5_REQUEST_TEXT, faultInputFile: c("fault-input.md"), reviewInputFile: c("review-input.md"), maxDurationMs: 14_400_000 };
   const write = async (value: unknown, name = "config.json") => { await writeFile(join(parent, name), JSON.stringify(value)); return join(parent, name); };
   return { parent, root, config, settings, write, evidence: join(root, "evidence") };
 }
@@ -88,13 +90,14 @@ async function cli(configFile: string, evidenceDir: string, extra: string[] = []
 }
 
 test("B5 proof CLI refuses missing, invalid and unqualified configuration before any effect", async t => {
+  await load();
   const s = await scratch(t), before = await tree(s.parent);
   const cases: [string, () => Promise<string>, string][] = [
     ["missing config", async () => join(s.parent, "absent.json"), "B5_CONFIG_PATH"],
     ["unknown key", () => s.write({ ...s.config, fallback: true }), "B5_CONFIG_INVALID"],
     ["changed request", () => s.write({ ...s.config, requestText: "Change something else." }), "B5_REQUEST_TEXT_CHANGED"],
     ["over-long duration", () => s.write({ ...s.config, maxDurationMs: 14_400_001 }), "B5_CONFIG_INVALID"],
-    ["assembly digest", () => s.write({ ...s.config, assembly: { ...s.config.assembly, digest: b5Bytes("other") } }), "B5_ASSEMBLY_DIGEST"],
+    ["assembly digest", () => s.write({ ...s.config, assembly: { ...s.config.assembly, digest: H.b5Bytes("other") } }), "B5_ASSEMBLY_DIGEST"],
     ["input outside scratch", () => s.write({ ...s.config, faultInputFile: resolve("package.json") }), "B5_CONFINEMENT"],
   ];
   for (const [name, configFile, code] of cases) {
@@ -118,6 +121,7 @@ test("B5 proof CLI refuses missing, invalid and unqualified configuration before
 });
 
 test("B5 preflight checks product, ports and identity, then blocks on the missing A2 input writer", async t => {
+  await load();
   const s = await scratch(t), product = join(s.parent, "product");
   await mkdir(join(product, "scripts"), { recursive: true }); await writeFile(join(product, "scripts", "cli.ts"), "// fixture\n");
   await git(product, ["init", "--quiet"]); await git(product, ["add", "."]); await git(product, ["commit", "--quiet", "-m", "base"]);
@@ -125,10 +129,10 @@ test("B5 preflight checks product, ports and identity, then blocks on the missin
   await writeFile(join(product, "scripts", "cli.ts"), "// fixture 2\n"); await git(product, ["commit", "--quiet", "-am", "head"]);
   const candidateRevision = await git(product, ["rev-parse", "HEAD"]);
   const config = { ...s.config, product: { ...s.config.product, root: product, baseRevision, candidateRevision } };
-  const input = async (value: unknown, extra: Partial<Parameters<typeof preflightFirstWebsiteV1>[0]> = {}) =>
-    preflightFirstWebsiteV1({ configFile: await s.write(value), evidenceDir: s.evidence, cliFile: join(product, "scripts", "cli.ts"), probe: async () => true, ...extra });
-  const code = async (value: unknown, extra: Partial<Parameters<typeof preflightFirstWebsiteV1>[0]> = {}) =>
-    input(value, extra).then(() => "PASSED", (e: unknown) => e instanceof B5RefusalV1 ? e.code : String(e));
+  const input = async (value: unknown, extra: Partial<Parameters<typeof B5Helper.preflightFirstWebsiteV1>[0]> = {}) =>
+    H.preflightFirstWebsiteV1({ configFile: await s.write(value), evidenceDir: s.evidence, cliFile: join(product, "scripts", "cli.ts"), probe: async () => true, ...extra });
+  const code = async (value: unknown, extra: Partial<Parameters<typeof B5Helper.preflightFirstWebsiteV1>[0]> = {}) =>
+    input(value, extra).then(() => "PASSED", (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
   assert.equal(await code(config), "A2_ROLE_SCOPED_INPUT_WRITER_MISSING", "B5 complete preflight stops at the missing landed A2 contract");
   assert.equal(await code(config, { uid: 424242 }), "B5_EXECUTION_IDENTITY_MISMATCH");
   assert.equal(await code(config, { cliFile: resolve("scripts/workflow-journeys/first-website-proof.ts") }), "B5_PRODUCT_ROOT");
@@ -149,26 +153,27 @@ test("B5 preflight checks product, ports and identity, then blocks on the missin
   assert.equal(await lstat(s.evidence).then(() => true, () => false), false, "B5 preflight creates no evidence directory");
   assert.equal(await lstat(join(s.root, "config", "imported.flag")).then(() => true, () => false), false);
   // The assembly loader re-hashes before import and requires the named export.
-  await assert.rejects(loadFirstWebsiteAssemblyV1({ ...config, assembly: { ...config.assembly, digest: b5Bytes("changed") } } as never), /B5_ASSEMBLY_DIGEST/u);
-  assert.equal(typeof await loadFirstWebsiteAssemblyV1(config as never), "function");
+  await assert.rejects(H.loadFirstWebsiteAssemblyV1({ ...config, assembly: { ...config.assembly, digest: H.b5Bytes("changed") } } as never), /B5_ASSEMBLY_DIGEST/u);
+  assert.equal(typeof await H.loadFirstWebsiteAssemblyV1(config as never), "function");
 });
 
 /** Seeds the proof site, commits a defective then a repaired page, and runs the
  * diagnostic independently at both heads. The page content is generic test data. */
 async function proofSite(t: Pick<TestContext, "after">) {
   const dir = await owned(t, "b5-site-"), project = join(dir, "project");
-  const seeded = await seedProofSiteV1(project);
+  const seeded = await H.seedProofSiteV1(project);
   const page = (badge: string) => `<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Proof site</title></head>\n<body>\n<main><h1>Proof site</h1>${badge}<p>A small page for the first website proof.</p></main>\n</body>\n</html>\n`;
   await writeFile(join(project, "index.html"), page(`<span id="status" style="background:#f59e0b">Ready</span>`));
   await git(project, ["commit", "--quiet", "-am", "Add Ready badge"]); const rejected = await git(project, ["rev-parse", "HEAD"]);
   const smoke = await run(process.execPath, ["--test", "tests/site-smoke.test.mjs"], { cwd: project, encoding: "utf8", env: GIT_ENV });
-  const failed = await runIndependentStatusCheckV1(project, "status-check/rejected.txt");
+  const failed = await H.runIndependentStatusCheckV1(project, "status-check/rejected.txt");
   await writeFile(join(project, "index.html"), page(`<span id="status" role="status" style="background:#f59e0b">Ready</span>`));
   await git(project, ["commit", "--quiet", "-am", "Announce the Ready badge"]); const final = await git(project, ["rev-parse", "HEAD"]);
-  const passed = await runIndependentStatusCheckV1(project, "status-check/final.txt");
+  const passed = await H.runIndependentStatusCheckV1(project, "status-check/final.txt");
   return { dir, project, seeded, rejected, final, smoke, failed, passed };
 }
 test("B5 proof site planted omission passes smoke and fails the named diagnostic", async t => {
+  await load();
   const p = await proofSite(t);
   assert.equal((await git(p.project, ["rev-list", "--count", p.seeded.head])), "1"); assert.equal(await git(p.project, ["remote"]), "");
   assert.match(p.smoke.stdout, /# pass 2\n/u); assert.match(p.smoke.stdout, /# fail 0\n/u);
@@ -178,16 +183,16 @@ test("B5 proof site planted omission passes smoke and fails the named diagnostic
   assert.deepEqual([p.passed.record.exitCode, p.passed.record.completed, p.passed.record.passed, p.passed.record.failed, p.passed.record.skipped], [0, 1, 1, 0, 0]);
   assert.equal(p.failed.record.head, p.rejected); assert.equal(p.passed.record.head, p.final); assert.notEqual(p.rejected, p.final);
   assert.equal(p.failed.record.protectedTestsDigest, p.seeded.protectedTestsDigest); assert.equal(p.passed.record.protectedTestsDigest, p.seeded.protectedTestsDigest);
-  assert.equal(await readProtectedTestsDigest(p.project), p.seeded.protectedTestsDigest);
+  assert.equal(await H.readProtectedTestsDigest(p.project), p.seeded.protectedTestsDigest);
   await rm(join(p.project, "index.html"));
-  const missing = await runIndependentStatusCheckV1(p.project, "status-check/missing.txt");
+  const missing = await H.runIndependentStatusCheckV1(p.project, "status-check/missing.txt");
   assert.match(missing.output, /ENOENT/u, "B5 missing page is a setup failure, not the planted semantic failure");
 });
 
 /** Real-shaped retained evidence built from the actually executed diagnostics. */
 async function evidenceSet(t: Pick<TestContext, "after">) {
   const p = await proofSite(t), dir = join(p.dir, "evidence"), base = p.seeded.head;
-  const card: B5CardFactsV1 = { candidateRevision: p.final, baseRevision: base, requestId: "request:proof", runLinkId: "run-link:proof", toolingRevision: b5Bytes("tooling") };
+  const card: B5CardFactsV1 = { candidateRevision: p.final, baseRevision: base, requestId: "request:proof", runLinkId: "run-link:proof", toolingRevision: H.b5Bytes("tooling") };
   const time = (minute: number) => new Date(Date.UTC(2026, 9, 30, 12, minute)).toISOString();
   const step = (n: number, role: string, identity: string, family: string, head: string, verdict: string | null, extra: Record<string, unknown> = {}) =>
     ({ n, role, identity, family, verified: true, head, startedAt: time(10 + n * 2), endedAt: time(11 + n * 2), verdict, findings: [], diagnostic: null, ...extra });
@@ -204,18 +209,18 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     "database-snapshot.json": { rows: [], card },
     "independent-status-check.json": [p.failed.record, p.passed.record],
     "teardown.json": { schemaVersion: 1, b3cCleanup: "complete", scratchAbsent: true, ownedProcesses: 0, ownedListenersReleased: true, protectedListenersUntouched: true,
-      postgresStopped: true, cleanupAt: time(41), retainedRead: { at: time(42), candidateRevision: p.final, receiptDigest: b5Bytes("receipt") } },
+      postgresStopped: true, cleanupAt: time(41), retainedRead: { at: time(42), candidateRevision: p.final, receiptDigest: H.b5Bytes("receipt") } },
   };
   const raw: Record<string, string | Uint8Array> = { "status-check/rejected.txt": p.failed.output, "status-check/final.txt": p.passed.output };
   for (const n of ["01-prepare", "02-confirm-start", "03-question", "04-plan", "05-spec", "06-repair", "07-finish-phone", "08-finish-desktop", "09-retained"]) raw[`screens/${n}.png`] = new Uint8Array([137, 80, 78, 71, n.length]);
   const write = async (change: (v: { files: Record<string, unknown>; manifest: Record<string, unknown> }) => void = () => {}) => {
     await rm(dir, { recursive: true, force: true }); await mkdir(join(dir, "screens"), { recursive: true }); await mkdir(join(dir, "status-check"));
     const manifest: Record<string, unknown> = { schemaVersion: 1, kind: "b5-first-website-proof",
-      product: { baseRevision: "1".repeat(40), headRevision: "2".repeat(40), environmentDigest: b5Bytes("environment") },
-      pins: { a2ToolingRevision: card.toolingRevision, schemaDigest: b5Bytes("schema"), jobSandboxDigest: b5Bytes("sandbox"), qualificationDigest: b5Bytes("qualification"),
-        recipeDigest: b5Bytes(JSON.stringify(B5_RECIPES)), settingsSha256: b5Bytes("settings"), availabilitySha256: b5Bytes("availability"), faultInputSha256: b5Bytes("fault"),
-        reviewInputSha256: b5Bytes("review"), authorizationSha256: b5Bytes("authorization"), assemblyDigest: b5Bytes("assembly"), assemblyExport: "createFirstWebsiteHostV1",
-        inputBindingReceipts: [{ role: "build", inputSha256: b5Bytes("fault"), receiptDigest: b5Bytes("r1"), boundAt: time(1) }, { role: "code-review", inputSha256: b5Bytes("review"), receiptDigest: b5Bytes("r2"), boundAt: time(1) }] },
+      product: { baseRevision: "1".repeat(40), headRevision: "2".repeat(40), environmentDigest: H.b5Bytes("environment") },
+      pins: { a2ToolingRevision: card.toolingRevision, schemaDigest: H.b5Bytes("schema"), jobSandboxDigest: H.b5Bytes("sandbox"), qualificationDigest: H.b5Bytes("qualification"),
+        recipeDigest: H.b5Bytes(JSON.stringify(H.B5_RECIPES)), settingsSha256: H.b5Bytes("settings"), availabilitySha256: H.b5Bytes("availability"), faultInputSha256: H.b5Bytes("fault"),
+        reviewInputSha256: H.b5Bytes("review"), authorizationSha256: H.b5Bytes("authorization"), assemblyDigest: H.b5Bytes("assembly"), assemblyExport: "createFirstWebsiteHostV1",
+        inputBindingReceipts: [{ role: "build", inputSha256: H.b5Bytes("fault"), receiptDigest: H.b5Bytes("r1"), boundAt: time(1) }, { role: "code-review", inputSha256: H.b5Bytes("review"), receiptDigest: H.b5Bytes("r2"), boundAt: time(1) }] },
       risk: { categories: ["code", "owner_visible", "ci"], slots: ["attack-review", "ui-review", "ci-review"] },
       launch: { uid: 501, context: "current-session", isolationClaim: "none", consumedRoots: ["runs", "work", "config"] },
       lineage: { requestId: card.requestId, runLinkId: card.runLinkId, loopRunId: "run-proof", localVersion: 1, a2InputVersion: 1 },
@@ -226,19 +231,20 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     const bytes = new Map<string, string | Uint8Array>(Object.entries(raw));
     for (const [name, value] of Object.entries(v.files)) bytes.set(name, JSON.stringify(value));
     for (const [name, value] of bytes) await writeFile(join(dir, name), value);
-    v.manifest.artifacts ??= [...bytes].map(([path, value]) => ({ path, sha256: b5Bytes(value), bytes: Buffer.byteLength(value) }));
+    v.manifest.artifacts ??= [...bytes].map(([path, value]) => ({ path, sha256: H.b5Bytes(value), bytes: Buffer.byteLength(value) }));
     await writeFile(join(dir, "manifest.json"), JSON.stringify(v.manifest));
   };
   type Journey = { steps: Record<string, unknown>[]; devices: Record<string, unknown>[] };
-  const refusal = (readCard = async () => card) => verifyFirstWebsiteEvidenceV1(dir, readCard).then(v => v.state, (e: unknown) => e instanceof B5RefusalV1 ? e.code : String(e));
+  const refusal = (readCard = async () => card) => H.verifyFirstWebsiteEvidenceV1(dir, readCard).then(v => v.state, (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
   return { p, dir, card, write, refusal, journey: (v: { files: Record<string, unknown> }) => v.files["journey.json"] as Journey,
     teardown: (v: { files: Record<string, unknown> }) => v.files["teardown.json"] as Record<string, unknown> };
 }
 test("B5 verifier accepts complete real-shaped evidence and reports missing phone evidence as incomplete", async t => {
+  await load();
   const e = await evidenceSet(t);
-  await e.write(); assert.deepEqual(await verifyFirstWebsiteEvidenceV1(e.dir, async () => e.card), { state: "complete", reasons: [] });
+  await e.write(); assert.deepEqual(await H.verifyFirstWebsiteEvidenceV1(e.dir, async () => e.card), { state: "complete", reasons: [] });
   await e.write(v => { e.journey(v).devices = [{ kind: "phone", real: false, browser: "360px emulation" }, { kind: "desktop", real: true, browser: "desktop browser" }]; });
-  assert.deepEqual(await verifyFirstWebsiteEvidenceV1(e.dir, async () => e.card), { state: "incomplete", reasons: ["B5_PHONE_EVIDENCE_MISSING"] });
+  assert.deepEqual(await H.verifyFirstWebsiteEvidenceV1(e.dir, async () => e.card), { state: "incomplete", reasons: ["B5_PHONE_EVIDENCE_MISSING"] });
   await e.write(); await writeFile(join(e.dir, "screens/03-question.png"), "changed");
   assert.equal(await e.refusal(), "B5_ARTIFACT_BYTES", "B5 changed retained bytes are refused");
   await e.write(v => { v.manifest.artifacts = []; }); assert.equal(await e.refusal(), "B5_MANIFEST_INVALID");
@@ -246,25 +252,30 @@ test("B5 verifier accepts complete real-shaped evidence and reports missing phon
   assert.equal(await e.refusal(), "B5_MANIFEST_INVALID", "B5 a fixture engine classification never satisfies the real schema");
 });
 test("B5 verifier refuses a fixture chain presented as real", async t => {
+  await load();
   const e = await evidenceSet(t);
   await e.write(v => { e.journey(v).devices.push({ kind: "desktop", real: true, browser: "SYNTHETIC fixture browser" }); });
   assert.equal(await e.refusal(), "B5_FIXTURE_NOT_REAL", "B5 forged fixture chain is refused by its own guard");
 });
 test("B5 verifier binds rejected and final heads to the saved card", async t => {
+  await load();
   const e = await evidenceSet(t);
   await e.write(); assert.equal(await e.refusal(async () => ({ ...e.card, candidateRevision: e.p.rejected })), "B5_HEAD_BINDING", "B5 stale card head is refused by the head guard");
 });
 test("B5 verifier requires closed-browser rejection and original-builder repair", async t => {
+  await load();
   const e = await evidenceSet(t);
   await e.write(v => { e.journey(v).steps[3]!.identity = "writer-other"; });
   assert.equal(await e.refusal(), "B5_REJECTION_REPAIR", "B5 repair by a different writer is refused by the repair guard");
 });
 test("B5 verifier requires full cleanup before the retained read-back", async t => {
+  await load();
   const e = await evidenceSet(t);
   await e.write(v => { e.teardown(v).b3cCleanup = "refused"; });
   assert.equal(await e.refusal(), "B5_CLEANUP_RETAINED", "B5 refused cleanup is refused by the cleanup guard");
 });
 test("B5 verifier refuses chronologically impossible and refusal-only proofs", async t => {
+  await load();
   const e = await evidenceSet(t);
   await e.write(v => { e.journey(v).steps[2]!.verdict = "CLEAN"; }); assert.equal(await e.refusal(), "B5_REJECTION_REPAIR");
   await e.write(v => { e.journey(v).steps[4]!.startedAt = "2026-10-30T12:01:00.000Z"; }); assert.equal(await e.refusal(), "B5_REJECTION_REPAIR");
@@ -275,9 +286,10 @@ test("B5 verifier refuses chronologically impossible and refusal-only proofs", a
 });
 
 test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent restart, and records the finish-card gap", async t => {
-  const f = await syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
+  await load();
+  const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
   const project = f.project.projectId, base = `/api/v1/projects/${encodeURIComponent(project)}/improvements/loop`;
-  await f.bridge.mutate(f.identity, project, null, "intake", { description: B5_REQUEST_TEXT }, "b5-intake-000000001");
+  await f.bridge.mutate(f.identity, project, null, "intake", { description: H.B5_REQUEST_TEXT }, "b5-intake-000000001");
   const desk = await f.desk.viewLoopDesk(f.identity, project), requestId = desk.loopRequests[0]!.requestId;
   assert.equal(desk.loopRequests.length, 1); assert.deepEqual(f.calls, ["intake"], "B5 Prepare creates no clone, plan or Start");
   const current = () => f.bridge.status(f.identity, project, requestId);
@@ -329,5 +341,5 @@ test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent
   const fixtureCard = { candidateRevision: f.heads.final, baseRevision: f.heads.base, requestId, runLinkId, toolingRevision: f.adapter.toolingRevision };
   const dir = join(await owned(t, "b5-forged-"), "evidence"); await mkdir(dir);
   await writeFile(join(dir, "manifest.json"), JSON.stringify({ schemaVersion: 1, kind: "b5-first-website-proof", state: "finished", source: "SYNTHETIC" }));
-  await assert.rejects(verifyFirstWebsiteEvidenceV1(dir, async () => fixtureCard), (e: unknown) => e instanceof B5RefusalV1 && e.code === "B5_MANIFEST_INVALID");
+  await assert.rejects(H.verifyFirstWebsiteEvidenceV1(dir, async () => fixtureCard), (e: unknown) => e instanceof H.B5RefusalV1 && e.code === "B5_MANIFEST_INVALID");
 });
