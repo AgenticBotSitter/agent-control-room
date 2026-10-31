@@ -466,7 +466,7 @@ def trace(frame, event, arg):
         if (side == 'before' and event == 'call') or (side == 'after' and event == 'return'):
             os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)
     if point == 'journal' and name == 'save_run' and frame.f_back.f_code.co_name == 'close_run':
-        close = frame.f_locals.get('st', {}).get('close', {})
+        close = frame.f_locals.get('state', {}).get('close', {})
         if close.get('state') == 'closing' and all(m['state'] == 'intent' for m in close['moves']):
             if (side == 'before' and event == 'call') or (side == 'after' and event == 'return'):
                 os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)

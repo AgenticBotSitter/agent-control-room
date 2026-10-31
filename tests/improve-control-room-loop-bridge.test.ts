@@ -648,7 +648,7 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
   const port=Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE??59420);
   assert.ok(port>=59420 && port<=59429,"real proof uses its reserved PostgreSQL ports");
   const proof=await withRealPostgres(async pg=>{
-    const admin=new Pool(pg.connection("admin")),web=bindPrivatePgPool(new Pool(pg.connection("web")));
+    const admin=new Pool(pg.admin()),web=bindPrivatePgPool(new Pool(pg.connection("web")));
     try{
     await admin.query("INSERT INTO tenants(id,display_name) VALUES('tenant:web','Bridge proof')");
     await admin.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Bridge proof')");
@@ -699,7 +699,7 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
     };
     const adoptGate=async(run:string)=>{
       const status=await adapter.status(run);assert.ok(status.confirmation,"prepared gate has exact confirmed request evidence");ownedRuns.add(run);
-      const saved=await desk.saveLoopDraft(identity,project.projectId,{description:status.description,settingsText:adapter.settingsText},`a2-gate-draft-${++sequence}`);
+      const saved=await desk.saveLoopDraft(identity,project.projectId,{description:status.description,settingsText:adapter.settingsText},`a2-gate-draft-key-${++sequence}`);
       const id=saved.request.requestId;
       const link=await desk.recordLoopRunLink({projectId:project.projectId,requestId:id,initialInputVersion:1,run:status.run});
       await desk.authorizeLoopStart(identity,project.projectId,{requestId:id,expectedVersion:1,runLinkId:link.runLink.runLinkId,
