@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 import { withRealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
+import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
 import { WebProjectService } from "../src/web/v1/project-service";
 import { parseStrictJsonV1 } from "../src/installer/shared/strict-json.mjs";
@@ -648,7 +649,10 @@ if(process.env.CONTROL_ROOM_B1B_REQUIRE_A2==="1") test("reviewed A2 bridge contr
   const port=Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE??59420);
   assert.ok(port>=59420 && port<=59429,"real proof uses its reserved PostgreSQL ports");
   const proof=await withRealPostgres(async pg=>{
-    const admin=new Pool(pg.admin()),web=bindPrivatePgPool(new Pool(pg.connection("web")));
+    const admin=new Pool(pg.admin()),login=pg.connection("web");
+    // The product wraps the raw login in privatePgOptions; the driver refuses a session without them.
+    const web=bindPrivatePgPool(new Pool({...privatePgOptions({host:"127.0.0.1",port:pg.port,database:pg.database,username:login.user,
+      password:login.password,majorVersion:17 as const}),host:login.host}));
     try{
     await admin.query("INSERT INTO tenants(id,display_name) VALUES('tenant:web','Bridge proof')");
     await admin.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Bridge proof')");
