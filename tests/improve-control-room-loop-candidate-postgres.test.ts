@@ -246,10 +246,11 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -347,16 +348,17 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   assert.ok(files.includes("db/migrations/0302_control_loop_improvement_commands.sql"));assert.ok(!files.includes("db/migrations/0303_control_loop_update_candidates.sql"));
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
+   await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
    await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
   const tables=["control_loop_improvement_requests","control_loop_improvement_inputs","control_loop_improvement_run_links","control_loop_improvement_authorizations","control_loop_improvement_commands"];
   const snapshot=async()=>JSON.stringify(await Promise.all(tables.map(async table=>({table,rows:(await sql(pg,`SELECT row_to_json(t)::text bytes FROM ${table} t ORDER BY created_at,record_digest`)).rows}))));
   const before=await snapshot();
-  const upgraded=await migrateRoot(pg,resolve("."));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0303_control_loop_update_candidates.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0304_control_loop_candidate_start_authorization.sql")));
+  const upgraded=await migrateRoot(pg,resolve("."));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0303_control_loop_update_candidates.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0304_control_loop_candidate_start_authorization.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0305_control_loop_candidate_unavailable_sections.sql")));
   const {readMacGrantCatalogV1,desiredMacGrantsV1,diffMacGrantsV1,applyMacGrantDiffV1}=await import("../scripts/mac-local/database-upgrade-grants.mjs");
   const roleFiles=["private_web_roles.sql","task_coordinator_roles.sql","native_queue_producer_roles.sql","native_results_roles.sql","local_result_publisher_roles.sql","native_queue_worker_roles.sql","agent_reviewer_roles.sql","fleet_gateway_roles.sql"];
   const sources=Object.fromEntries(await Promise.all(roleFiles.map(async name=>[name,await readFile(join("db/roles",name),"utf8")])));

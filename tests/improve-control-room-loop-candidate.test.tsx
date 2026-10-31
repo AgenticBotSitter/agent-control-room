@@ -585,6 +585,32 @@ test("B4 card shows unavailable for missing final-report sections",async()=>{
   }finally{await f.close();}
 });
 
+// I-1 rehearsal: the real A2 completion of a final report without these sections carries
+// null for each (and cr always reports repairs=null). The wire accepted that, but the SQL
+// guard ran jsonb_array_elements(null) and failed with 22023 before anything was stored.
+test("B4 a final report missing optional sections records and replays its finish card",async()=>{
+  const f=await syntheticFixture();try{
+    f.edit(e=>{e.summary=null;e.changedAreas=null;e.databaseChanges=null;e.assumptions=null;e.validations=null;e.rounds.repairs=null;});
+    const receipt=await f.publish();assert.equal(receipt.state,"recorded","B4 null sections are stored, not refused by the SQL guard");
+    assert.equal((await f.publish()).state,"replayed");
+    const card=(await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate!;
+    assert.equal(card.candidateId,receipt.candidate.candidateId);
+    for(const key of ["summary","changedAreas","databaseChanges","assumptions","validations"] as const)assert.equal(card.evidence[key],null,`B4 ${key} stays unavailable`);
+    assert.equal(card.evidence.rounds.repairs,null);
+    // Present values keep their SQL bounds: a non-null section of the wrong shape is still refused.
+    const row=(await f.client.query<Record<string,unknown>>("SELECT * FROM control_loop_update_candidates WHERE id=$1",[receipt.candidate.candidateId])).rows[0]!;
+    const insert=(path:string,value:string)=>f.client.query(`INSERT INTO control_loop_update_candidates(tenant_id,id,project_id,request_id,owner_identity_id,run_link_id,
+      local_version,a2_input_version,candidate_revision,completion_digest,retention_digest,payload,created_at,record_digest,auth_tag)
+      SELECT tenant_id,$2,project_id,request_id,owner_identity_id,run_link_id,local_version,a2_input_version,candidate_revision,completion_digest,
+      retention_digest,jsonb_set(payload,$3::text[],$4::jsonb),created_at,record_digest,auth_tag FROM control_loop_update_candidates WHERE id=$1`,
+      [row.id,`loop-candidate:sql-bound-${path.replace(/[^a-z]/giu,"")}`,`{${path}}`,value]);
+    for(const [path,value] of [["assumptions",'"none"'],["validations","{}"],["changedAreas",'"x"'],["changedAreas","[]"],["summary","1"],
+      ["summary",'""'],["databaseChanges",'"none"'],["rounds,repairs",'"1"'],["assumptions",'[{"id":"a:1","text":"x","status":"validated","evidenceDigest":null}]']] as const)
+      await assert.rejects(insert(path,value),(e:{code?:string;sqlState?:string})=>(e.code??e.sqlState)==="23514",`B4 SQL refuses ${path}=${value}`);
+    assert.equal((await f.client.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,1);
+  }finally{await f.close();}
+});
+
 test("B4 decision exact head binding refuses before an insert",async()=>{
   const f=await syntheticFixture();try{
     await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
