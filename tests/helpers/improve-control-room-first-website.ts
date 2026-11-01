@@ -305,6 +305,7 @@ export async function runIndependentStatusCheckV1(project: string, outputPath: s
   const head = (await exec("/usr/bin/git", ["-C", project, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 30_000,
     env: GIT_ENV })).stdout.trim();
   const protectedTestsDigest = await readProtectedTestsDigest(project);
+  if (protectedTestsDigest !== b5ProtectedTestsDigest(B5_PROTECTED_TESTS)) refuse("B5_PROTECTED_TEST_CHANGED");
   const started = Date.now();
   const result = await exec(node, ["--test", "tests/site-status.test.mjs"], { cwd: project, encoding: "utf8", timeout: 60_000, maxBuffer: 1 << 20,
     env: { PATH: "/usr/bin:/bin", NODE_ENV: "test", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" } })

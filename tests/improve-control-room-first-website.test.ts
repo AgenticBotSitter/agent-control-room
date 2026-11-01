@@ -771,7 +771,7 @@ test("F04a owner action checks actual accepted command claim/result and saved Am
   console.log('RESULT: PASS F04a actual service accepted command pair and Amber answer required; wrong answer/missing result refuse');
 });
 
-test("F04a listener, sentinel and normalized-instruction guard mutations reach intended assertions", {timeout:120000}, async t => {
+test("F04a listener, contamination and protected-diagnostic guard mutations reach intended assertions", {timeout:120000}, async t => {
   const {assertGuardBites}=await import('./support/attack-kit/index');
   const {symlink}=await import('node:fs/promises');
   const root=resolve('.'),copy=await owned(t,'b5-f04a-mutations-');
@@ -787,6 +787,8 @@ test("F04a listener, sentinel and normalized-instruction guard mutations reach i
       name:'F04a contamination scans exact bytes across every reviewer-visible surface and repair',lane:'tests/improve-control-room-first-website.test.ts',assertion:'brief leak must refuse'},
     {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (normalized.includes(needle)) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
       name:'F04a contamination scans exact bytes across every reviewer-visible surface and repair',lane:'tests/improve-control-room-first-website.test.ts',assertion:'brief leak must refuse'},
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (protectedTestsDigest !== b5ProtectedTestsDigest(B5_PROTECTED_TESTS)) refuse("B5_PROTECTED_TEST_CHANGED");',replace:'',
+      name:'F04a independent diagnostic refuses modified protected source before execution',lane:'tests/improve-control-room-first-website.test.ts',assertion:'modified protected diagnostic must refuse before execution'},
   ];
   const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1'}; delete env.NODE_TEST_CONTEXT;
   for(const p of probes){
@@ -799,7 +801,7 @@ test("F04a listener, sentinel and normalized-instruction guard mutations reach i
     assert.doesNotMatch(result.output,/SyntaxError|# tests 0|# skipped [1-9]|timed out/iu);
     assert.match((await green()).stdout,/# pass 1/u);
   }
-  console.log('RESULT: PASS F04a three guard mutations baseline=green loaded=intended-assertion restored=green acquisitions=0');
+  console.log('RESULT: PASS F04a four guard mutations baseline=green loaded=intended-assertion restored=green');
 });
 
 test("F04a capped controller reserves five minutes and aborts before further acquisition", async t => {
@@ -864,4 +866,12 @@ test("F04a Git scan refuses changed symlinks and preserves whole deleted files",
   const linked=await git(p.project,['rev-parse','HEAD']);
   await assert.rejects(H.readB5ReviewGitSurfacesV1(p.project,deleted,linked),{code:'B5_REVIEW_SCAN_INCOMPLETE'});
   console.log('RESULT: PASS F04a deleted whole-file bytes retained; changed symlink refuses coverage');
+});
+
+test("F04a independent diagnostic refuses modified protected source before execution", async t => {
+  await load();const p=await proofSite(t),marker=join(p.dir,'unexpected-execution.flag');
+  await writeFile(join(p.project,'tests/site-status.test.mjs'),`import test from 'node:test';import {writeFileSync} from 'node:fs';test('fixture altered protected diagnostic',()=>writeFileSync(${JSON.stringify(marker)},'executed'));`);
+  await assert.rejects(H.runIndependentStatusCheckV1(p.project,'status-check/altered.txt'),{code:'B5_PROTECTED_TEST_CHANGED'},'modified protected diagnostic must refuse before execution');
+  assert.equal(await lstat(marker).then(()=>true,()=>false),false,'modified diagnostic was never executed');
+  console.log('RESULT: PASS F04a altered protected diagnostic refused before Node test execution');
 });
