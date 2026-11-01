@@ -613,7 +613,8 @@ test("F04a contamination scans exact bytes across every reviewer-visible surface
       expected: kinds.map(kind => ({ kind, name: kind })), surfaces });
   };
   let attempt = 0;
-  for (const kind of kinds) for (const value of [marker, phrase.toUpperCase().replaceAll(' ', ' /*\n */ ')]) {
+  for (const kind of kinds) for (const value of [marker, phrase.toUpperCase().replaceAll(' ', ' /*\n */ '),
+    marker.toUpperCase(), phrase.replace('violet', 'vio\nlet'), phrase.replace('violet', 'vio/*x*/let')]) {
     await assert.rejects(runAudit(kind, `// TODO fixture unchanged context: ${value}`, ++attempt), { code: "B5_REVIEW_CONTAMINATED" }, `${kind} leak must refuse`);
   }
   const clean = await runAudit('changed-file-new', '<span id="status">Ready</span>', ++attempt);
@@ -783,10 +784,14 @@ test("F04a listener, contamination and protected-diagnostic guard mutations reac
   const probes=[
     {file:'tests/support/attack-kit/real-postgres.ts',find:'if (options.signalOwner === "caller" && (!target.listenerCount("SIGINT") || !target.listenerCount("SIGTERM"))) {',replace:'if (false) {',
       name:'F04a caller ownership refuses either missing process signal listener before acquisition',lane:'tests/improve-control-room-first-website-device.test.ts',assertion:'Missing expected exception'},
-    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (Buffer.from(bytes).includes(Buffer.from(policy.sentinel))) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (contains(policy.sentinel)) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
       name:'F04a contamination scans exact bytes across every reviewer-visible surface and repair',lane:'tests/improve-control-room-first-website.test.ts',assertion:'brief leak must refuse'},
-    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (normalized.includes(needle)) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (contains(phrase)) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
       name:'F04a contamination scans exact bytes across every reviewer-visible surface and repair',lane:'tests/improve-control-room-first-website.test.ts',assertion:'brief leak must refuse'},
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'projections.uncommented.includes(needle.compact)',replace:'false',
+      name:'F04a fix contamination refuses instruction split inside a word by blockComment',lane:'tests/improve-control-room-first-website.test.ts',assertion:'Missing expected exception'},
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'return projections.normalized.includes(needle.normalized) || projections.compact.includes(needle.compact)\n      || projections.uncommented.includes(needle.compact);',replace:'return projections.normalized.includes(needle.normalized);',
+      name:'F04a fix contamination refuses instruction split inside a word by whitespace',lane:'tests/improve-control-room-first-website.test.ts',assertion:'Missing expected exception'},
     {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (protectedTestsDigest !== b5ProtectedTestsDigest(B5_PROTECTED_TESTS)) refuse("B5_PROTECTED_TEST_CHANGED");',replace:'',
       name:'F04a independent diagnostic refuses modified protected source before execution',lane:'tests/improve-control-room-first-website.test.ts',assertion:'modified protected diagnostic must refuse before execution'},
   ];
@@ -801,7 +806,7 @@ test("F04a listener, contamination and protected-diagnostic guard mutations reac
     assert.doesNotMatch(result.output,/SyntaxError|# tests 0|# skipped [1-9]|timed out/iu);
     assert.match((await green()).stdout,/# pass 1/u);
   }
-  console.log('RESULT: PASS F04a four guard mutations baseline=green loaded=intended-assertion restored=green');
+  console.log('RESULT: PASS F04a six guard mutations baseline=green loaded=intended-assertion restored=green');
 });
 
 test("F04a capped controller reserves five minutes and aborts before further acquisition", async t => {
@@ -874,4 +879,48 @@ test("F04a independent diagnostic refuses modified protected source before execu
   await assert.rejects(H.runIndependentStatusCheckV1(p.project,'status-check/altered.txt'),{code:'B5_PROTECTED_TEST_CHANGED'},'modified protected diagnostic must refuse before execution');
   assert.equal(await lstat(marker).then(()=>true,()=>false),false,'modified diagnostic was never executed');
   console.log('RESULT: PASS F04a altered protected diagnostic refused before Node test execution');
+});
+
+for (const [variant, split] of Object.entries({ whitespace: " ", line: "\n", zeroWidth: "\u200b", softHyphen: "\u00ad", blockComment: "/*x*/", htmlComment: "<!--x-->" })) {
+  test(`F04a fix contamination refuses instruction split inside a word by ${variant}`, async () => {
+    await load();
+    const sentinel = `b5-private-${(await import("node:crypto")).randomBytes(24).toString("hex")}`;
+    const phrase = ["Keep the synthetic violet", "harbor quietly unannounced"].join(" ");
+    const policy = { normalizer: "b5-unicode-v1" as const, sentinel, distinctiveInstructions: [phrase] };
+    assert.throws(() => H.assertB5FaultTextAbsentV1(Buffer.from(phrase.replace("violet", `vio${split}let`)), policy), { code: "B5_REVIEW_CONTAMINATED" });
+    assert.doesNotThrow(() => H.assertB5FaultTextAbsentV1(Buffer.from("The violet badge has an accessibility status role."), policy));
+    console.log(`RESULT: PASS F04a fix word-internal instruction split ${variant}`);
+  });
+}
+for (const variant of ["upper", "zeroWidth", "comment", "htmlComment", "line"] as const) {
+  test(`F04a fix contamination normalizes sentinel ${variant}`, async () => {
+    await load();
+    const sentinel = `b5-private-${(await import("node:crypto")).randomBytes(24).toString("hex")}`;
+    const text = variant === "upper" ? sentinel.toUpperCase() : sentinel.slice(0, 17)
+      + ({ zeroWidth: "\u200b", comment: "/*x*/", htmlComment: "<!--x-->", line: "\n" }[variant]) + sentinel.slice(17);
+    assert.throws(() => H.assertB5FaultTextAbsentV1(Buffer.from(text), {
+      normalizer: "b5-unicode-v1", sentinel, distinctiveInstructions: ["Keep the synthetic violet harbor quietly unannounced"],
+    }), { code: "B5_REVIEW_CONTAMINATED" });
+    console.log(`RESULT: PASS F04a fix normalized sentinel ${variant}`);
+  });
+}
+
+test("F04a fix short caps retain a proportional work window", async t => {
+  const { createFirstWebsiteControllerOwnerV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.parse("2026-11-01T00:00:00Z") });
+  try {
+    for (const [cap, work] of [[1, 1], [2, 1], [1000, 500], [60000, 30000], [300000, 150000], [320000, 160000], [600000, 300000], [14400000, 14100000]]) {
+      const owner = createFirstWebsiteControllerOwnerV1();
+      try {
+        const started = Date.now(); owner.startDeadline(cap!);
+        assert.equal(owner.capAt(), started + cap!);
+        assert.equal(owner.workAt(), started + work!);
+        t.mock.timers.tick(work! - 1); assert.equal(owner.signal.aborted, false);
+        t.mock.timers.tick(1); assert.equal(owner.signal.aborted, true);
+        assert.equal(owner.signal.reason.code, "B5_DEADLINE");
+        await owner.cleanup();
+      } finally { owner.dispose(); }
+    }
+  } finally { t.mock.timers.reset(); }
+  console.log("RESULT: PASS F04a fix deadline caps=1ms..4h reserve=min(5min,half-cap) exact work/abort boundaries");
 });

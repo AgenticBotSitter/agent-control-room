@@ -522,3 +522,61 @@ test("F04a default helper begins its stop synchronously as before caller mode", 
   await work;assert.equal(target.listenerCount('SIGINT'),0);assert.equal(target.listenerCount('SIGTERM'),0);
   console.log('RESULT: PASS F04a default helper stop initiation and signal listener removal unchanged');
 });
+
+test("F04a fix controller drives every phase through the frozen mailbox without extra lead acknowledgements", async t => {
+  const { runFirstWebsiteDevicePhaseV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  const root = await scratch(t), phaseNow = Date.now();
+  const phaseTime = () => new Date(phaseNow).toISOString();
+  const mailbox = await createB5DeviceMailboxV1(root, local, { real: false, projectId: "project:fixture", now: () => phaseNow });
+  t.after(() => mailbox.close());
+  const policy = { normalizer: "b5-unicode-v1" as const, sentinel: `b5-private-${(await import("node:crypto")).randomBytes(24).toString("hex")}`,
+    distinctiveInstructions: ["Keep the synthetic violet harbor quietly unannounced"] };
+  const actions = { connect: ["connected"], prepare: ["prepared"], "bindings-ready": ["bindings-ready-observed"],
+    "confirm-start": ["confirmed", "started"], question: ["answered"], plan: ["plan-read", "plan-approved"],
+    spec: ["spec-read", "spec-approved"], close: ["closed"], repair: ["repair-observed"], finish: ["finished"], retained: ["retained-read"] };
+  const phases: [B5DeviceRequestV1["phase"], "phone" | "desktop"][] = [
+    ["connect", "phone"], ["connect", "desktop"], ["prepare", "phone"], ["bindings-ready", "phone"], ["confirm-start", "phone"],
+    ["close", "phone"], ["close", "desktop"], ["question", "phone"], ["plan", "phone"], ["spec", "phone"],
+    ["close", "phone"], ["close", "desktop"], ["repair", "phone"], ["finish", "phone"], ["finish", "desktop"], ["retained", "phone"],
+  ];
+  // Only the external owner is simulated. Publication, authenticated read
+  // correlation, capture custody and immutable receipt acceptance are real.
+  let sequence = 0, readyPublished = false;
+  const observe = async () => {
+    let request: B5DeviceRequestV1 | undefined;
+    const limit = Date.now() + 5000;
+    while (Date.now() < limit) {
+      const saved = await readFile(join(mailbox.root, "request.json"), "utf8").catch(() => "null");
+      const candidate = JSON.parse(saved) as B5DeviceRequestV1 | null;
+      if (candidate && candidate.sequence === sequence + 1) { request = candidate; break; }
+      await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    assert.ok(request, "controller must publish the next mailbox request");
+    assert.equal(request.sequence, ++sequence);
+    assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")), request);
+    if (request.phase === "confirm-start") assert.equal(readyPublished, true);
+    const observation = await correlated(mailbox, request, (request.device === "phone" ? "a" : "b").repeat(43));
+    const bytes = Buffer.from(`fixture capture ${request.sequence}`), path = `captures/frame-${request.sequence}.png`;
+    await writeFile(join(mailbox.root, path), bytes, { mode: 0o600 });
+    const receipt = { ...request, observedAt: phaseTime(), real: false, browser: "fixture browser", actions: actions[request.phase], observation,
+      captures: [{ path, sha256: b5DeviceHashV1(bytes), device: request.device, sequence: request.sequence, sessionNonce: request.sessionNonce, capturedAt: phaseTime() }],
+      ...(request.phase === "close" ? { closeAttestation: { actor: "owner", closedAt: phaseTime(), allProofTabsClosed: true } } : {}) };
+    await writeFile(join(mailbox.root, "inbox", `${request.sequence}.json`), JSON.stringify(receipt), { mode: 0o600 });
+  };
+  const failures: string[] = [];
+  for (const [phase, device] of phases) {
+    try {
+      const binding = sequence >= 3 ? { requestId: "request:fixture", runLinkId: "link:fixture", inputVersion: 1 } : undefined;
+      const [result] = await Promise.all([runFirstWebsiteDevicePhaseV1({ mailbox, phase, device, binding, policy, signal: new AbortController().signal, expiresAt: new Date(phaseNow + 60000).toISOString(),
+        onPublished() { if (phase === "bindings-ready") readyPublished = true; } }), observe()]);
+      assert.equal(result.receipt.phase, phase); assert.equal(result.receipt.device, device);
+      assert.deepEqual(result.receipt.binding, binding);
+      assert.deepEqual(await mailbox.readReceipt(sequence), result.receipt);
+    } catch (error) { failures.push(`${phase}/${device}: ${(error as { code?: string }).code ?? String(error)}`); }
+  }
+  assert.deepEqual(failures, [], "every controller phase must complete using only the frozen mailbox contract");
+  assert.equal(readyPublished, true); assert.equal(sequence, 16);
+  assert.deepEqual((await readdir(mailbox.root)).filter(name => name.startsWith("visual-")), []);
+  assert.deepEqual((await readdir(join(mailbox.root, "inbox"))).sort(), Array.from({ length: 16 }, (_, i) => `${i + 1}.json`).sort());
+  console.log("RESULT: PASS F04a fix controller phases=16 through bindings-ready/confirm/question/plan/spec/finish/retained; real mailbox fixture observations; extra-lead-acks=0");
+});

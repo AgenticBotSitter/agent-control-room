@@ -810,6 +810,13 @@ export function normalizeB5FaultTextV1(value: string) {
   return value.normalize("NFKC").toUpperCase().toLowerCase().normalize("NFKC").replace(/ς/gu, "σ")
     .replace(/[\p{P}\p{S}\p{Z}\p{C}\s]+/gu, " ").trim();
 }
+/** Compact both ordinary separators and comment-wrapped word fragments.
+ * Keep both projections: comments may themselves contain a leaked instruction. */
+function b5FaultProjections(value: string) {
+  const normalized = normalizeB5FaultTextV1(value);
+  const compact = (text: string) => normalizeB5FaultTextV1(text).replace(/[^\p{L}\p{N}]/gu, "");
+  return { normalized, compact: compact(value), uncommented: compact(value.normalize("NFKC").replace(/\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->/gu, "")) };
+}
 export type B5ReviewSurfaceV1 = { kind: "brief" | "builder-report" | "commit-message" | "diff" |
   "changed-file-old" | "changed-file-new" | "owner-payload" | "screenshot-source"; name: string; bytes: Uint8Array };
 export function assertB5FaultTextAbsentV1(bytes: Uint8Array, policy: B5FaultScanPolicyV1) {
@@ -818,12 +825,16 @@ export function assertB5FaultTextAbsentV1(bytes: Uint8Array, policy: B5FaultScan
   let text: string;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
   catch { return refuse("B5_REVIEW_SCAN_INCOMPLETE"); }
-  if (Buffer.from(bytes).includes(Buffer.from(policy.sentinel))) refuse("B5_REVIEW_CONTAMINATED");
-  const normalized = normalizeB5FaultTextV1(text);
+  const projections = b5FaultProjections(text);
+  const contains = (value: string) => {
+    const needle = b5FaultProjections(value);
+    if (needle.normalized.length < 16 || needle.compact.length < 16) refuse("B5_REVIEW_SCAN_POLICY");
+    return projections.normalized.includes(needle.normalized) || projections.compact.includes(needle.compact)
+      || projections.uncommented.includes(needle.compact);
+  };
+  if (contains(policy.sentinel)) refuse("B5_REVIEW_CONTAMINATED");
   for (const phrase of policy.distinctiveInstructions) {
-    const needle = normalizeB5FaultTextV1(phrase);
-    if (needle.length < 16) refuse("B5_REVIEW_SCAN_POLICY");
-    if (normalized.includes(needle)) refuse("B5_REVIEW_CONTAMINATED");
+    if (contains(phrase)) refuse("B5_REVIEW_CONTAMINATED");
   }
 }
 /** The inventory must be derived from actual dispatch records and Git trees,

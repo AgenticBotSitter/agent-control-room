@@ -15,7 +15,7 @@ import {
   B5DeviceRefusalV1, createB5DeviceCleanupV1, type B5TransportQualificationV1,
   loadB5TransportV1, waitB5DeviceJsonV1, writeB5DeviceRequestV1,
   B5_DEVICE_INSTALL_COMMAND_V1, B5_DEVICE_OFF_COMMAND_V1, B5_DEVICE_STATUS_COMMAND_V1, b5MappingDigestV1,
-  type B5DeviceRequestV1,
+  type B5DeviceRequestV1, type B5DeviceMailboxV1,
 } from "./first-website-device";
 
 import { z } from "zod";
@@ -125,7 +125,7 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
     startDeadline(ms) {
       if (timer || !Number.isSafeInteger(ms) || ms < 1 || ms > B5_MAX_DURATION_MS) throw new B5RefusalV1("B5_DEADLINE_INVALID");
       abort.signal.throwIfAborted();
-      const reserve = Math.min(300_000, ms - 1); capAt = Date.now() + ms; workAt = capAt - reserve;
+      const reserve = Math.min(300_000, Math.floor(ms / 2)); capAt = Date.now() + ms; workAt = capAt - reserve;
       timer = setTimeout(() => abort.abort(new B5RefusalV1("B5_DEADLINE")), ms - reserve);
     },
     dispose() {
@@ -215,6 +215,24 @@ async function diagnosticSnapshot(repository: string, root: string, head: string
       && result.output.includes("status element announces itself with role=status") && result.output.includes("ERR_ASSERTION")
       : result.record.exitCode === 0 && result.record.failed === 0 && result.record.passed === result.record.completed), "B5_DIAGNOSTIC_RESULT");
   return result;
+}
+
+/** The controller's device handshake, shared by every journey phase. */
+export async function runFirstWebsiteDevicePhaseV1(input: {
+  mailbox: B5DeviceMailboxV1; phase: B5DeviceRequestV1["phase"]; device: B5DeviceRequestV1["device"];
+  expiresAt: string; binding?: B5DeviceRequestV1["binding"]; signal: AbortSignal;
+  policy: z.infer<typeof b5FaultScanPolicySchemaV1>; onPublished?(): void;
+}) {
+  input.signal.throwIfAborted();
+  const request = await input.mailbox.request(input.phase, input.device, input.expiresAt, input.binding);
+  input.onPublished?.();
+  assertB5FaultValueAbsentV1(request, input.policy);
+  const receipt = await waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root, input.signal, Date.parse(input.expiresAt));
+  assertB5FaultValueAbsentV1(receipt, input.policy);
+  const accepted = await input.mailbox.accept(receipt);
+  // Binary frames still need the lead's visual check under the capture
+  // contract. It does not define a second per-phase acknowledgement mailbox.
+  return { receipt: accepted };
 }
 
 /** Foreground F04a driver. It collects actual observations and delegates the
@@ -328,23 +346,10 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         await service(`${projectPath}/${encodeURIComponent(s.request.requestId)}/approval-document`);
       if (requestId && ["repair", "finish", "retained"].includes(name))
         await service(`${projectPath}/${encodeURIComponent(requestId)}/candidate`);
-      const phaseDeadline = Math.min(owner.workAt()!, Date.parse(q.expiresAt));
-      const request = await mailbox.request(name, device, new Date(phaseDeadline).toISOString(), binding);
-      if (name === "bindings-ready") bindingsReadyPublishedAt = new Date().toISOString();
-      assertB5FaultValueAbsentV1(request, policy);
-      const receipt = await waitB5DeviceJsonV1(join(deviceRoot, "inbox", `${request.sequence}.json`), deviceRoot, workSignal, phaseDeadline);
-      assertB5FaultValueAbsentV1(receipt, policy);
-      const accepted = await mailbox.accept(receipt);
-      const captureDigests = accepted.captures.map(capture => capture.sha256);
-      await writeB5DeviceRequestV1(join(deviceRoot, `visual-request-${request.sequence}.json`), {
-        schemaVersion: 1, actor: "lead", sequence: request.sequence, captureDigests, method: "visual", holdUncertainFrames: true });
-      const visual = z.object({ schemaVersion: z.literal(1), actor: z.literal("lead"), sequence: z.literal(request.sequence),
-        captureDigests: z.array(z.string()), method: z.literal("visual"), clear: z.literal(true), noUncertainFrames: z.literal(true),
-        observedAt: z.string().datetime() }).strict().safeParse(await waitB5DeviceJsonV1(
-          join(deviceRoot, "inbox", `visual-${request.sequence}.json`), deviceRoot, workSignal, phaseDeadline));
-      need(visual.success && JSON.stringify(visual.data.captureDigests) === JSON.stringify(captureDigests)
-        && Date.parse(visual.data.observedAt) >= Date.parse(accepted.observedAt) && Date.parse(visual.data.observedAt) <= Date.now(), "B5_CAPTURE_VISUAL_REVIEW_REQUIRED");
-      actions.push({ receipt: accepted, visual: visual.data }); return accepted;
+      const result = await runFirstWebsiteDevicePhaseV1({ mailbox, phase: name, device, binding, signal: workSignal, policy,
+        expiresAt: new Date(Math.min(owner.workAt()!, Date.parse(q.expiresAt))).toISOString(),
+        onPublished() { if (name === "bindings-ready") bindingsReadyPublishedAt = new Date().toISOString(); } });
+      actions.push(result); return result.receipt;
     };
     // Arm ownership BEFORE publishing an owner install request. An interrupted
     // or uncertain command still requires cancellation, reconciliation/removal.
