@@ -73,7 +73,7 @@ export type FirstWebsiteHostV1 = {
 export type CreateFirstWebsiteHostV1 = (config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal) => Promise<FirstWebsiteHostV1>;
 export type FirstWebsiteOwnedV1 = {
   processCount: number; listenerReleased: boolean; postgresStopped: boolean;
-  runScratchAbsent: boolean; protectedListenersUntouched: boolean;
+  runScratchAbsent: boolean;
 };
 export type FirstWebsiteProofV1 = {
   /** Owner-only local delivery channel. No HTTP route or persisted code. */

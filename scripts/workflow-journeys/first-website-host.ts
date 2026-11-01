@@ -30,7 +30,7 @@ import { createImproveControlRoomLoopRecoveryV1 } from "../../src/web/v1/improve
 import { createPipelineAdvanceCycleV1 } from "../../src/web/v1/private-task-startup";
 import { withRealPostgres, type RealPostgres } from "../../tests/support/attack-kit/real-postgres";
 import { loadB5A2V1, projectB5RunV1, joinB5FinalProjectionV1, b5RawHash } from "../../tests/helpers/improve-control-room-first-website-a2";
-import { B5RefusalV1, B5_PORTS, B5_PROTECTED_PORTS, B5_REQUEST_TEXT, B5_SNAPSHOT_TABLES, b5Bytes, firstWebsiteConfigSchemaV1,
+import { B5RefusalV1, B5_PORTS, B5_REQUEST_TEXT, B5_SNAPSHOT_TABLES, b5Bytes, firstWebsiteConfigSchemaV1,
   preflightFirstWebsiteV1, probeBindInputCapabilityV1, withFirstWebsiteHostV1,
   type FirstWebsiteConfigV1, type FirstWebsiteHostV1 } from "../../tests/helpers/improve-control-room-first-website";
 
@@ -77,7 +77,8 @@ export async function withFirstWebsiteOwnerCodeV1<T>(host: FirstWebsiteHostV1, u
 }
 
 /** Read-only packet checks finish before PG, listeners or recovery acquisition. */
-export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>) {
+export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1> | undefined) {
+  need(input, "B5_A2_QUALIFICATION_REQUIRED");
   const config = firstWebsiteConfigSchemaV1.parse(input), root = config.scratchRoot;
   const st = await regular(root, root, true);
   need((st.mode & 0o077) === 0, "B5_HOST_CUSTODY");
@@ -299,7 +300,6 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
     await regular(directory, root, true);
   }
   const baselinePids = await descendantPids();
-  const ownedPorts = new Set<number>();
   const integrityKey = randomBytes(32), ready = deferred<FirstWebsiteHostV1>(), finish = deferred<void>();
   let closing: Promise<void> | undefined, current: Awaited<ReturnType<typeof startRuntime>> | undefined;
   let pgRef: RealPostgres | undefined, pgClean = false, cleanupFailed = false, ownerCode = "";
@@ -411,7 +411,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       current = value; registry.application = application;
       const binding = service.start(); void binding.catch(() => {});
       await hooks.at?.("listener-bind");
-      await binding; ownedPorts.add(B5_PORTS.product);
+      await binding;
       activeSignal.throwIfAborted();
       recovery.start();
       need(service.isReady(), "B5_HOST_NOT_READY");
@@ -421,7 +421,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   }
 
   const done = withRealPostgres(async pg => {
-    pgRef = pg; ownedPorts.add(pg.port);
+    pgRef = pg;
     try {
       need(pg.postmasterPidCaptured, "B5_HOST_PG_OWNERSHIP");
       signal.throwIfAborted(); await seedFirstWebsiteDatabaseV1(pg); signal.throwIfAborted();
@@ -450,7 +450,9 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
               await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
               const rows: { table: typeof B5_SNAPSHOT_TABLES[number]; sha256: string; row: Record<string, unknown> }[] = [];
               for (const table of B5_SNAPSHOT_TABLES) {
-                const values = await tx.query<Record<string, unknown>>(`SELECT * FROM ${table} WHERE tenant_id=$1`, [scope.tenantId]);
+                const columns = table === "control_loop_update_candidates" ? "id,request_id,run_link_id,candidate_revision,record_digest"
+                  : table === "control_loop_improvement_inputs" ? "request_id,version" : "id";
+                const values = await tx.query<Record<string, unknown>>(`SELECT ${columns} FROM ${table} WHERE tenant_id=$1`, [scope.tenantId]);
                 for (const raw of values.rows) {
                   const row = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
                   rows.push({ table, sha256: b5Bytes(JSON.stringify(row)), row });
@@ -536,12 +538,10 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
             const runScratchAbsent = !commandScratch && (pgRef ? !await lstat(pgRef.runDirectory).then(() => true, () => false) : pgClean);
             const descendants = await descendantPids();
             const processCount = [...descendants].filter(pid => !baselinePids.has(pid)).length + (stopped ? 0 : 1);
-            // Noninterference follows the owned-resource inventory: only these
-            // reserved ports were acquired, and no external owner is stopped.
-            // No protected listener is connected to or probed.
+            // This reports owned cleanup only. Protected listeners are never
+            // probed, so this method cannot attest their external state.
             return { processCount, listenerReleased: !!closing && bodyDone && !cleanupFailed && await listenerReleased(),
-              postgresStopped: stopped && pgClean, runScratchAbsent,
-              protectedListenersUntouched: [...ownedPorts].every(port => !B5_PROTECTED_PORTS.includes(port)) };
+              postgresStopped: stopped && pgClean, runScratchAbsent };
           },
         },
       };

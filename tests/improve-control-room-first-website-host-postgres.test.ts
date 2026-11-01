@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHook } from "node:async_hooks";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { transpileModule } from "typescript";
+import { assertGuardBites } from "./support/attack-kit/index";
 import { databaseSqlStateV1 } from "../src/persistence/database";
 import { Client, Pool } from "pg";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, mkdir, mkdtemp, writeFile, symlink, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { withRealPostgres } from "./support/attack-kit/real-postgres";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
@@ -11,20 +16,128 @@ import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process"
 import { parseStoredProjectPresentationV1 } from "../src/config/v1/project-presentation";
 import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
-import { createFirstWebsiteHostV1, seedFirstWebsiteDatabaseV1, withFirstWebsiteOwnerCodeV1, prepareFirstWebsiteAssemblyV1, firstWebsiteProjectPayloadV1 } from "../scripts/workflow-journeys/first-website-host";
-import { B5_PORTS, firstWebsiteConfigSchemaV1, loadFirstWebsiteAssemblyV1 } from "./helpers/improve-control-room-first-website";
+import { createFirstWebsiteHostV1, seedFirstWebsiteDatabaseV1, withFirstWebsiteOwnerCodeV1, prepareFirstWebsiteAssemblyV1, firstWebsiteProjectPayloadV1, validateFirstWebsiteHostV1 } from "../scripts/workflow-journeys/first-website-host";
+import { B5_PORTS, B5_SNAPSHOT_TABLES, b5Bytes, firstWebsiteConfigSchemaV1, loadFirstWebsiteAssemblyV1 } from "./helpers/improve-control-room-first-website";
 
 const origin = "http://127.0.0.1:60460";
-const configFile = process.env.CONTROL_ROOM_B5_ASSEMBLY_CONFIG;
-const requireReal = process.env.CONTROL_ROOM_B5_ASSEMBLY_REQUIRE_REAL === "1";
-test("F03a native gate requires an explicit frozen configuration", () => {
-  if (requireReal) assert.ok(configFile, "NOT RUN: CONTROL_ROOM_B5_ASSEMBLY_CONFIG must name a prepared frozen F03-0 packet");
+const configFile = process.env.CONTROL_ROOM_B5_CONFIG;
+const requireReal = process.env.CONTROL_ROOM_B5_HOST_REQUIRE_A2 === "1";
+async function resolveQualification(file?: string) {
+  const input = file ? firstWebsiteConfigSchemaV1.parse(JSON.parse(await readFile(resolve(file), "utf8"))) : undefined;
+  return validateFirstWebsiteHostV1(input);
+}
+
+test("B5 host-postgres missing qualification refuses before acquisition", async () => {
+  let acquisitions = 0;
+  const resources: string[] = [];
+  const hook = createHook({ init(_id, type) {
+    if (["PROCESSWRAP", "TCPSERVERWRAP", "TCPWRAP"].includes(type)) resources.push(type);
+  } });
+  hook.enable();
+  try {
+    await assert.rejects(resolveQualification().then(() => { acquisitions++; }),
+      { code: "B5_A2_QUALIFICATION_REQUIRED" }, "B5 host-postgres qualification guard refuses missing packet");
+  } finally { hook.disable(); }
+  assert.equal(acquisitions, 0);
+  assert.deepEqual(resources, [], "missing qualification creates no child, PG connection or listener");
+});
+
+test("F03a ownership inspection reports only observed cleanup facts", async () => {
+  // Execute the actual inspection method with bounded local observations: a
+  // closed listener/PG and empty work directory. No protected port is probed.
+  const source = await readFile("scripts/workflow-journeys/first-website-host.ts", "utf8");
+  const body = /async inspectOwned\(\) \{([\s\S]*?)\n          \},/u.exec(source)?.[1];
+  assert.ok(body, "the host inspection method is present");
+  const inspect = new Function("context", `with (context) { return (async () => {${body}})(); }`);
+  const result = await inspect({ pgRef: undefined, pgClean: true, root: "/owned", join,
+    readdir: async () => [], descendantPids: async () => new Set(), baselinePids: new Set(),
+    closing: Promise.resolve(), bodyDone: true, cleanupFailed: false, listenerReleased: async () => true });
+  assert.deepEqual(result, { processCount: 0, listenerReleased: true, postgresStopped: true, runScratchAbsent: true },
+    "ownership inspection must not claim protected-listener observation from reserved constants");
+});
+
+test("B5 host-postgres qualification guard-off mutation fails the ordinary refusal assertion", { timeout: 120_000 }, async () => {
+  const exec = promisify(execFile), root = resolve(".");
+  await mkdir(join(root, ".test-tmp"), { recursive: true });
+  const copy = await mkdtemp(join(root, ".test-tmp/b5-host-gate-"));
+  const file = "scripts/workflow-journeys/first-website-host.ts";
+  const lane = "tests/improve-control-room-first-website-host-postgres.test.ts";
+  try {
+    await exec("git", ["-c", "core.hooksPath=/dev/null", "clone", "--local", "--no-hardlinks", "--quiet", root, copy], { timeout: 60_000 });
+    await symlink(join(root, "node_modules"), join(copy, "node_modules"), "dir");
+    // Test the current working bytes, including before the fix is committed.
+    for (const path of [file, lane]) await writeFile(join(copy, path), await readFile(join(root, path)));
+    const cmd = [process.execPath, "scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",
+      "--test-name-pattern=^B5 host-postgres missing qualification refuses before acquisition$", lane];
+    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+    const green = () => exec(cmd[0]!, cmd.slice(1), { cwd: copy, env, timeout: 40_000, maxBuffer: 1 << 20 });
+    assert.match((await green()).stdout, /# pass 1/u);
+    const original = await readFile(join(copy, file), "utf8");
+    const result = await assertGuardBites({ root: copy, file, allowDirtyTree: true,
+      find: '  need(input, "B5_A2_QUALIFICATION_REQUIRED");', replace: "", testCmd: cmd, boundMs: 40_000,
+      because: "B5 host-postgres qualification guard refuses missing packet" });
+    assert.equal(result.applied, true); assert.equal(result.exitCode, 1); assert.equal(result.signal, null);
+    assert.match(result.output, /B5 host-postgres qualification guard refuses missing packet/u);
+    assert.match(result.output, /ERR_ASSERTION/u); assert.match(result.output, /# fail 1/u);
+    assert.doesNotMatch(result.output, /SyntaxError|# skipped [1-9]|# tests 0|timed out/iu);
+    assert.equal(await readFile(join(copy, file), "utf8"), original);
+    assert.match((await green()).stdout, /# pass 1/u);
+    console.log("RESULT: PASS B5 host-postgres qualification mutation baseline=green guard-off=intended-assertion restored=green");
+  } finally { await rm(copy, { recursive: true, force: true }); }
+});
+
+test("B5 host-postgres frozen native gate cannot skip to green", { timeout: 60_000 }, async () => {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const root = await mkdtemp(resolve(".test-tmp/b5-host-packet-"));
+  try {
+    const invalid = join(root, "invalid.json"); await writeFile(invalid, "{}");
+    for (const file of [undefined, invalid]) {
+      const env: NodeJS.ProcessEnv = { ...process.env, CONTROL_ROOM_B5_HOST_REQUIRE_A2: "1" };
+      delete env.NODE_TEST_CONTEXT; delete env.CONTROL_ROOM_B5_CONFIG;
+      if (file) env.CONTROL_ROOM_B5_CONFIG = file;
+      const result = await promisify(execFile)(process.execPath, ["scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",
+        "--test-name-pattern=^B5 real Mac-local assembly and owned restart/close$",
+        "tests/improve-control-room-first-website-host-postgres.test.ts"], { env, timeout: 25_000, maxBuffer: 1 << 20 })
+        .then(() => assert.fail("frozen native gate must refuse the missing/invalid packet"),
+          (error: Error & { code: number; stdout: string }) => error);
+      assert.equal(result.code, 1);
+      assert.match(result.stdout, /# fail 1/u); assert.match(result.stdout, /# skipped 0/u);
+      assert.match(result.stdout, file ? /"message": "Invalid input: expected 1"/u : /B5_A2_QUALIFICATION_REQUIRED/u);
+      assert.doesNotMatch(result.stdout, /RESULT: PASS/u);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("F03a snapshot queries only schema-derived identifiers and candidate digests", async () => {
+  const source = await readFile("scripts/workflow-journeys/first-website-host.ts", "utf8");
+  const body = /readSnapshot\(\) \{ return ownedRead\(async \(\) => \{([\s\S]*?)\n          \}\); \},/u.exec(source)?.[1];
+  assert.ok(body);
+  const javascript = transpileModule(`async function read() {${body}}`, {}).outputText;
+  const queries: string[] = [];
+  const active = { web: { client: { transaction: async (use: (tx: unknown) => Promise<unknown>) => use({
+    query: async (sql: string, values?: string[]) => {
+      queries.push(sql);
+      if (values) assert.deepEqual(values, ["tenant:b5"]);
+      return { rows: [] };
+    },
+  }) } } };
+  const inspect = new Function("context", `with (context) { ${javascript}; return read(); }`);
+  await inspect({ current: active, closing: undefined, hooks: {}, scope: { tenantId: "tenant:b5" },
+    B5_SNAPSHOT_TABLES, b5Bytes, need: assert.ok });
+  assert.deepEqual(queries, ["SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+    "SELECT id FROM control_loop_improvement_requests WHERE tenant_id=$1",
+    "SELECT request_id,version FROM control_loop_improvement_inputs WHERE tenant_id=$1",
+    "SELECT id FROM control_loop_improvement_run_links WHERE tenant_id=$1",
+    "SELECT id FROM control_loop_improvement_authorizations WHERE tenant_id=$1",
+    "SELECT id FROM control_loop_improvement_commands WHERE tenant_id=$1",
+    "SELECT id,request_id,run_link_id,candidate_revision,record_digest FROM control_loop_update_candidates WHERE tenant_id=$1"]);
 });
 
 test("F03a real PG roles, disposable seed and local sign-in prerequisites", {
-  skip: process.env.CONTROL_ROOM_B5_ASSEMBLY_PG !== "1" ? "NOT RUN: set CONTROL_ROOM_B5_ASSEMBLY_PG=1 for real PG17" : false,
+  skip: !requireReal && process.env.CONTROL_ROOM_B5_ASSEMBLY_PG !== "1" ? "NOT RUN: set CONTROL_ROOM_B5_ASSEMBLY_PG=1 for real PG17" : false,
   timeout: 600_000,
 }, async () => {
+  if (requireReal) await resolveQualification(configFile);
   const result = await withRealPostgres(async pg => {
     await seedFirstWebsiteDatabaseV1(pg);
     const login = pg.connection("web");
@@ -54,10 +167,10 @@ test("F03a real PG roles, disposable seed and local sign-in prerequisites", {
   assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []);
 });
 
-test("F03a real carrier, built loopback browser, cold restart and close", {
-  skip: !configFile ? "NOT RUN: frozen F03-0 packet and strict B5 config not supplied" : false, timeout: 600_000,
+test("B5 real Mac-local assembly and owned restart/close", {
+  skip: !configFile && !requireReal ? "NOT RUN: frozen F03-0 packet and strict B5 config not supplied" : false, timeout: 600_000,
 }, async () => {
-  const config = firstWebsiteConfigSchemaV1.parse(JSON.parse(await readFile(resolve(configFile!), "utf8")));
+  const { config } = await resolveQualification(configFile);
   const { chromium } = await import("@playwright/test");
   const abort = new AbortController();
   let host: Awaited<ReturnType<typeof createFirstWebsiteHostV1>> | undefined;
@@ -120,7 +233,7 @@ test("F03a real carrier, built loopback browser, cold restart and close", {
     await Promise.resolve(); assert.equal(closed, false, "close must await the owned proof-read barrier");
     releaseRead(); await assert.rejects(reading, /B5_HOST_CLOSED/u); await close;
     const owned = await host.proof.inspectOwned();
-    assert.deepEqual(owned, { processCount: 0, listenerReleased: true, postgresStopped: true, runScratchAbsent: true, protectedListenersUntouched: true });
+    assert.deepEqual(owned, { processCount: 0, listenerReleased: true, postgresStopped: true, runScratchAbsent: true });
     console.log("RESULT: PASS F03a loopback browser/restart/close (assembly evidence only; no device qualification)");
   } finally { releaseClose(); releaseRead(); if (browser.isConnected()) await browser.close(); await host?.close(); }
 });
@@ -136,9 +249,9 @@ test("F03a preparation refuses an unconfined root before effects", async () => {
 
 for (const stage of ["pool-open", "listener-bind", "ready"] as const) {
   test(`F03a native abort during ${stage} owns late resolution`, {
-    skip: !configFile ? "NOT RUN: frozen configuration required for real acquisition abort" : false, timeout: 600_000,
+    skip: !configFile && !requireReal ? "NOT RUN: frozen configuration required for real acquisition abort" : false, timeout: 600_000,
   }, async () => {
-    const config = firstWebsiteConfigSchemaV1.parse(JSON.parse(await readFile(resolve(configFile!), "utf8")));
+    const { config } = await resolveQualification(configFile);
     const abort = new AbortController(); let reached = false;
     const factory = await loadFirstWebsiteAssemblyV1(config) as typeof createFirstWebsiteHostV1;
     await assert.rejects(factory(config, abort.signal, { async at(value) {
