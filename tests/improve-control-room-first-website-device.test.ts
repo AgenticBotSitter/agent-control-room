@@ -463,3 +463,22 @@ test("F03b remote preflight retains its fence unless the caller supplies the cle
   assert.deepEqual(acquired, []);
   console.log("RESULT: PASS remote preflight clears signal fence only with callable cleanup/close handle; acquisitions=0");
 });
+
+test("F04a repeated correlated document reads return code-only refusals without throwing", async t => {
+  const { mailbox, request } = await ready(t);
+  const before = mailbox.observation();
+  const reload = () => mailbox.handle(new Request(local + mailbox.projectPath, { headers: {
+    cookie: `control_room_local_owner=${"a".repeat(43)}; b5_correlation=${request.sessionNonce}`,
+  } }), async () => new Response("actual product fixture"));
+  for (const parallel of [false, true]) {
+    const results = await Promise.allSettled(parallel ? [reload(), reload()] : [reload()]);
+    for (const result of results) {
+      assert.equal(result.status, "fulfilled", "duplicate correlation must stay a Response on the product path");
+      if (result.status !== "fulfilled") continue;
+      assert.equal(result.value.status, 409);
+      assert.match(await result.value.text(), /^B5_DEVICE_(?:DUPLICATE|SEQUENCE_RACE)$/u);
+      assert.equal(result.value.headers.get("cache-control"), "no-store");
+    }
+    assert.deepEqual(mailbox.observation(), before, "a reload must not replace the evidence observation");
+  }
+});

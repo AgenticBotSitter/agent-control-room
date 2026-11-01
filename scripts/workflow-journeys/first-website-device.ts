@@ -229,6 +229,12 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
           headers.append("set-cookie", "b5_correlation=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + (origin.startsWith("https:") ? "; Secure" : ""));
         } else headers.append("set-cookie", `b5_correlation=${current.sessionNonce}; Path=/; HttpOnly; SameSite=Strict` + (origin.startsWith("https:") ? "; Secure" : ""));
         return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      }).catch(error => {
+        // Reloads can race the single evidence observation. Keep the refusal on
+        // the HTTP path without replacing evidence or throwing into the product.
+        if (error instanceof B5DeviceRefusalV1 && ["B5_DEVICE_DUPLICATE", "B5_DEVICE_SEQUENCE_RACE"].includes(error.code))
+          return new Response(error.code, { status: 409, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+        throw error;
       });
     },
     observation() { return observed ? structuredClone(observed) : undefined; },
