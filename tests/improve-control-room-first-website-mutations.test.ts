@@ -49,6 +49,16 @@ const probes=[
     pattern:"F04b removed mapping claims require retained owner receipt and unchanged status",assertion:"F04b nonzero owner removal cannot be relabeled removed"},
   {name:"complete qualified lineup",find:'  if (p.lineup.some(q=>!admitted.has(key(q)))) refuse("B5_PROVIDER_PROVENANCE_MISMATCH");',replace:'',
     pattern:"F04b provider relabelling cannot promote scripted transport or change lineup",assertion:"F04b qualified lineup cannot omit an admitted role"},
+  {name:"native receipt route admission",target:"scripts/workflow-journeys/first-website-controller.ts",find:'&& slot.route === route',replace:'',
+    pattern:"F04b controller writes complete fixture evidence from accepted receipts after the cold read",assertion:"F04b writer must compare actual native receipt route with qualified provenance"},
+  {name:"actual staged provider provenance",find:'    if(!marker.success || providers.classification !== "fixture" || providers.transport !== "scripted") refuse("B5_PROVIDER_PROVENANCE_MISMATCH");',replace:'',
+    pattern:"F04b staged fixture marker refuses real qualification even without a rehearsal label",assertion:"F04b actual staged fixture cannot be promoted by relabeling qualified data"},
+  {name:"complete final website report",find:'  if (!card.evidence.summary?.trim() || !card.evidence.changedAreas?.includes("index.html") || card.evidence.databaseChanges?.kind !== "none"\n    || card.evidence.assumptions === null || card.evidence.validations === null) refuse("B5_FULL_REPORT_INCOMPLETE");',replace:'',
+    pattern:"F04b full website report cannot qualify with absent final sections",assertion:"F04b each required final report section must be present"},
+  {name:"selected identity admission",find:'&& s.identity === (selected ? review.selectedModel : review.observedModel)',replace:'',
+    pattern:"F04b R295 selected review identities join without claiming observation",assertion:"F04b selected model must match admitted journey"},
+  {name:"screen response versus signed cold record",find:'&& r.recordDigest === card.recordDigest',replace:'',
+    pattern:"F04b per-screen HTTP receipts bind distinct envelopes to the authoritative cold card",assertion:"a different signed card cannot be hidden by fresh response hashes"},
   {name:"controller missing qualification",find:'  if (packet === undefined) refuse("B5_A2_QUALIFICATION_REQUIRED");',replace:"",
     lane:"tests/improve-control-room-first-website-controller-postgres.test.ts",pattern:"B5 controller-postgres missing qualification refuses before acquisition",assertion:"B5 controller-postgres missing qualification guard"},
 ];
@@ -58,17 +68,18 @@ test("B5 verifier guard mutations bite independently and restore green",{timeout
     execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
     await symlink(join(root,"node_modules"),join(copy,"node_modules"),"dir");
     // Exercise current uncommitted bytes; never accidentally test only the clone's old HEAD.
-    for (const path of [file,"scripts/workflow-journeys/first-website-device.ts","tests/improve-control-room-first-website.test.ts","tests/improve-control-room-first-website-controller-postgres.test.ts"])
+    for (const path of [file,"scripts/workflow-journeys/first-website-device.ts","scripts/workflow-journeys/first-website-controller.ts","scripts/workflow-journeys/first-website-host.ts","tests/improve-control-room-first-website.test.ts","tests/improve-control-room-first-website-controller-postgres.test.ts"])
       await writeFile(join(copy,path),await readFile(join(root,path)));
     for(const p of probes)await t.test(p.name,async()=>{
       const cmd=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=^${p.pattern}$`,p.lane ?? "tests/improve-control-room-first-website.test.ts"];
-      const original=await readFile(join(copy,file),"utf8");
-      const result=await assertGuardBites({root:copy,file,find:p.find,replace:p.replace,testCmd:cmd,boundMs:40000,allowDirtyTree:true,because:p.assertion});
+      const target=("target" in p ? p.target : undefined) ?? file;
+      const original=await readFile(join(copy,target),"utf8");
+      const result=await assertGuardBites({root:copy,file:target,find:p.find,replace:p.replace,testCmd:cmd,boundMs:40000,allowDirtyTree:true,because:p.assertion});
       assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
       assert.ok(result.output.includes(p.assertion),`B5 loaded mutant reached intended assertion: ${p.assertion}`);
       assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);
       assert.doesNotMatch(result.output,/SyntaxError|# skipped [1-9]|# tests 0|timed out/iu);
-      assert.equal(await readFile(join(copy,file),"utf8"),original);
+      assert.equal(await readFile(join(copy,target),"utf8"),original);
       const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1"};delete env.NODE_TEST_CONTEXT;
       const restored=await exec(cmd[0]!,cmd.slice(1),{cwd:copy,env,timeout:40000,maxBuffer:4*1024*1024});
       assert.match(restored.stdout,/# pass 1/u);assert.match(restored.stdout,/# fail 0/u);assert.doesNotMatch(restored.stdout,/# skipped [1-9]|# tests 0/u);

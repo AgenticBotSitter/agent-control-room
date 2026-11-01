@@ -173,11 +173,11 @@ async function portFree(port: number) {
 
 export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
   controllerOwner?: import("../../scripts/workflow-journeys/first-website-controller").B5ControllerOwnerV1;
-  capture:B5CaptureQualificationV1; providers: B5ProviderProvenanceV1; digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only" };
+  capture:B5CaptureQualificationV1; providers: B5ProviderProvenanceV1; digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only"; rehearsal?: B5RehearsalPacketV1 };
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
 export async function preflightFirstWebsiteV1(input: { configFile: string; evidenceDir: string; cliFile: string;
-  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1 }): Promise<FirstWebsitePreflightV1> {
+  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1; existingEvidence?: boolean }): Promise<FirstWebsitePreflightV1> {
   const uid = input.uid ?? process.getuid?.() ?? refuse("B5_EXECUTION_IDENTITY_UNAVAILABLE");
   await canonical(input.configFile, "file", "B5_CONFIG_PATH");
   let raw: unknown;
@@ -195,7 +195,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   if (input.evidenceDir !== evidenceDir) refuse("B5_EVIDENCE_DIR", "must be <scratchRoot>/evidence");
   if (await lstat(evidenceDir).then(() => true, () => false)) {
     await canonical(evidenceDir, "directory", "B5_EVIDENCE_DIR");
-    if ((await readdir(evidenceDir)).length) refuse("B5_EVIDENCE_DIR", "not empty");
+    if (!input.existingEvidence && (await readdir(evidenceDir)).length) refuse("B5_EVIDENCE_DIR", "not empty");
   }
   if (config.assembly.module !== join(root, "config", "first-website-host.mjs")) refuse("B5_ASSEMBLY_MODULE", "location");
   const digests: Record<string, string> = {};
@@ -232,14 +232,36 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     if (JSON.stringify(check) !== JSON.stringify(recipe)) refuse("B5_RECIPE_MISMATCH", recipe.id);
   }
   // Qualification bytes are independently supplied, confined and hashed above. No default real provider.
-  let qualification: { providers?: unknown; capture?:unknown };
+  let qualification: { providers?: unknown; capture?:unknown; rehearsal?: { packetFile: string; packetSha256: string } };
   const providerBytes = await readFirstWebsitePrivateBytesV1(config.a2.qualificationEvidence, root);
   if (b5Bytes(providerBytes) !== digests.qualification) refuse("B5_INPUT_CHANGED");
   try { qualification = JSON.parse(providerBytes.toString("utf8")); }
   catch { refuse("B5_PROVIDER_PROVENANCE_MISSING"); }
   const providers = qualifyB5ProvidersV1(qualification!.providers, config.a2.toolingRevision, digests.availability!);
+  // The staged transport is independent evidence. Removing the rehearsal label
+  // or changing qualified availability/provider labels cannot promote its bytes.
+  const stagedProviderFile = join(root,"config/b5-provider.json");
+  const hasFixtureStage = await lstat(stagedProviderFile).then(()=>true,e=>{if(e.code === "ENOENT")return false;throw e;});
+  if(hasFixtureStage) {
+    let staged: unknown;
+    try { staged=JSON.parse((await readFirstWebsitePrivateBytesV1(stagedProviderFile,root)).toString("utf8")); }
+    catch { return refuse("B5_PROVIDER_PROVENANCE_MISMATCH"); }
+    const marker=z.object({version:z.literal(1),providers:z.literal("fixture"),reason:z.literal("B5_PROVIDER_FIXTURE")}).passthrough().safeParse(staged);
+    if(!marker.success || providers.classification !== "fixture" || providers.transport !== "scripted") refuse("B5_PROVIDER_PROVENANCE_MISMATCH");
+  }
   const capture = b5CaptureQualificationSchemaV1.safeParse(qualification!.capture);
   if (!capture.success || capture.data.qualificationDigest !== digests.transport) refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
+  let rehearsal: B5RehearsalPacketV1 | undefined;
+  if (qualification!.rehearsal !== undefined) {
+    const r = z.object({ packetFile: absolute, packetSha256: sha256 }).strict().safeParse(qualification!.rehearsal);
+    if (!r.success || !inside(root, r.data.packetFile) || !loopback || providers.transport !== "scripted"
+      || config.maxDurationMs > 600_000) refuse("B5_REHEARSAL_PACKET_INVALID");
+    if (b5Bytes(await readFirstWebsitePrivateBytesV1(r.data!.packetFile, root)) !== r.data!.packetSha256)
+      refuse("B5_REHEARSAL_PACKET_CHANGED");
+    rehearsal = await requireFirstWebsiteRehearsalPart2V1(r.data!.packetFile);
+    if (rehearsal.root !== root || rehearsal.toolingRevision !== config.a2.toolingRevision
+      || rehearsal.productRevision !== config.product.candidateRevision) refuse("B5_REHEARSAL_PACKET_CHANGED");
+  }
   // Product: the reviewed disposable checkout is clean, at the pinned candidate, descended from BASE, and runs this CLI.
   await canonical(config.product.root, "directory", "B5_PRODUCT_ROOT");
   if (!inside(config.product.root, input.cliFile)) refuse("B5_PRODUCT_ROOT", "cli outside product checkout");
@@ -255,15 +277,43 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     || ports.some(port => B5_PROTECTED_PORTS.includes(port))) refuse("B5_PORT_RESERVATION");
   for (const port of ports) if (!await (input.probe ?? portFree)(port)) refuse("B5_PORT_BUSY", String(port));
   return { config, uid, evidenceDir, providers, capture:capture.data!, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
-    phoneTransport: loopback ? "loopback-only" : "tailscale-serve" };
+    phoneTransport: loopback ? "loopback-only" : "tailscale-serve", ...(rehearsal ? { rehearsal } : {}) };
 }
 
-/** PART 2 STUB: no transport seam or real-launch denial probe is implemented here.
- * A packet alone cannot make this stub green. Part 2 must qualify and implement
- * the named seam, denial probe and all production joins before replacing it. */
-export async function requireFirstWebsiteRehearsalPart2V1(packet?: unknown): Promise<never> {
+/** Lead-qualified, immutable provider stage. This is a test interface, never a
+ * real-provider enable flag. The actual tools loader and native denial probes
+ * still validate the executable tree before the controller permits intake. */
+export const b5RehearsalPacketSchemaV1 = z.object({
+  schemaVersion: z.literal(1), kind: z.literal("b5-fixture-provider-rehearsal"), root: absolute,
+  productRevision: revision, toolsRevision: revision, toolingRevision: sha256,
+  providerConfigSha256: sha256, corpusSha256: sha256, fenceSha256: sha256, jobSandboxDigest: sha256,
+  browser:z.object({executablePath:z.enum(["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"]).nullable(),sha256:sha256.nullable()}).strict().refine(b=>(b.executablePath === null) === (b.sha256 === null)),
+}).strict();
+export type B5RehearsalPacketV1 = z.infer<typeof b5RehearsalPacketSchemaV1>;
+export async function requireFirstWebsiteRehearsalPart2V1(packet?: unknown): Promise<B5RehearsalPacketV1> {
   if (packet === undefined) refuse("B5_A2_QUALIFICATION_REQUIRED");
-  return refuse("B5_PROVIDER_SEAM_PART2_REQUIRED");
+  if (typeof packet !== "string" || !absolute.safeParse(packet).success) refuse("B5_REHEARSAL_PACKET_INVALID");
+  const file = packet as string, root = dirname(dirname(file));
+  if (file !== join(root, "config/b5-rehearsal.json") || !/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1)))
+    refuse("B5_REHEARSAL_PACKET_INVALID");
+  let parsed;
+  try { parsed = b5RehearsalPacketSchemaV1.safeParse(JSON.parse((await readFirstWebsitePrivateBytesV1(file, root)).toString("utf8"))); }
+  catch { return refuse("B5_REHEARSAL_PACKET_INVALID"); }
+  if (!parsed.success || parsed.data.root !== root) refuse("B5_REHEARSAL_PACKET_INVALID");
+  const r = parsed.data!;
+  const handoff = JSON.parse((await readFirstWebsitePrivateBytesV1(join(root,"config/b5-handoff.json"),root)).toString("utf8"));
+  if(handoff.toolsPin !== r.toolsRevision || handoff.productPin !== r.productRevision) refuse("B5_REHEARSAL_PACKET_CHANGED");
+  for (const [path, hash] of [["config/b5-provider.json", r.providerConfigSha256], ["config/b5-corpus.json", r.corpusSha256],
+    ["config/b5-fence.sb", r.fenceSha256], ["config/manifest.sha256", r.toolingRevision]] as const)
+    if (b5Bytes(await readFirstWebsitePrivateBytesV1(join(root, path), root)) !== hash) refuse("B5_REHEARSAL_PACKET_CHANGED");
+  const provider = JSON.parse((await readFirstWebsitePrivateBytesV1(join(root,"config/b5-provider.json"),root)).toString("utf8"));
+  if (provider.version !== 1 || provider.providers !== "fixture" || provider.reason !== "B5_PROVIDER_FIXTURE"
+    || provider.pins?.["config/b5-corpus.json"] !== r.corpusSha256.slice(7)
+    || provider.pins?.["config/b5-fence.sb"] !== r.fenceSha256.slice(7)) refuse("B5_REHEARSAL_PACKET_CHANGED");
+  if (await lstat(join(root,"config/i1/real-jobs-enabled")).then(()=>true, e=>{if(e.code === "ENOENT")return false;throw e;}))
+    refuse("B5_REHEARSAL_REAL_ENABLE");
+  return r;
 }
 
 // ---------- disposable proof site (runtime-generated only in scratch) ----------
@@ -472,7 +522,7 @@ export const b5ManifestSchemaV1 = z.object({
 type B5ManifestV1 = z.infer<typeof b5ManifestSchemaV1>;
 const step = z.object({ provider: z.object({ transport: z.enum(["real-provider", "scripted"]),
   admittedIdentity: z.string().min(1), route: z.string().min(1), grade: z.string().min(1) }).strict(), n: z.number().int().positive(), role: z.string().min(1), identity: z.string().min(1), family: z.string().min(1),
-  verified: z.boolean(), head: revision, startedAt: at, endedAt: at, verdict: z.enum(["DONE", "CLEAN", "NEEDS-FIX"]).nullable(),
+  verified: z.boolean(), identityBasis: z.enum(["selected", "observed"]).optional(), head: revision, startedAt: at, endedAt: at, verdict: z.enum(["DONE", "CLEAN", "NEEDS-FIX"]).nullable(),
   findings: z.array(z.object({ severity: z.enum(["HIGH", "MEDIUM", "LOW"]), state: z.enum(["open", "fixed"]), summary: z.string() }).strict()),
   diagnostic: z.enum(["PASS", "FAIL"]).nullable() }).strict();
 export const B5_DOM_SCREENS = Object.freeze(["08-finish-desktop"] as const);
@@ -489,7 +539,7 @@ export const b5JourneySchemaV1 = z.object({
   restarts: z.array(z.object({ phase: z.enum(["waiting", "final"]), at }).strict()).length(2),
   serviceFacts: z.array(z.object({ screen: z.enum(finishScreens), device: z.enum(["phone", "desktop"]), ...evidenceBinding,
     baseRevision: revision, candidateRevision: revision, at, sequence: z.number().int().positive(), responseDigest: sha256,
-    captureSourcePath:z.string().min(1), capturePath: z.string().min(1), captureDigest: sha256, receiptPath: z.string().min(1) }).strict()).length(3),
+    responseReceiptPath:z.string().min(1).optional(), captureSourcePath:z.string().min(1), capturePath: z.string().min(1), captureDigest: sha256, receiptPath: z.string().min(1) }).strict()).length(3),
   actions: z.array(z.object({ name: z.enum(actionNames), sequence: z.number().int().positive(), ...evidenceBinding,
     receiptPath: z.string().min(1), device: z.enum(["phone", "desktop"]), at, method: z.enum(["GET", "POST"]),
     path: z.string().min(1), status: z.number().int() }).strict()).min(1),
@@ -563,8 +613,10 @@ export function assertRealChainV1(manifest: B5ManifestV1, card: LoopCandidateCar
     || candidate.request_id !== card.requestId || candidate.run_link_id !== b.runLinkId) refuse("B5_FIXTURE_NOT_REAL", "snapshot candidate");
   if (!row("control_loop_improvement_requests", card.requestId) || !row("control_loop_improvement_run_links", b.runLinkId)) refuse("B5_FIXTURE_NOT_REAL", "snapshot lineage");
   for (const review of card.evidence.reviews) {
-    if (!review.identityVerified || !journey.steps.some(s => s.verified && s.role === review.role && s.head === review.candidateRevision
-      && s.family === review.family && s.identity === review.observedModel && s.verdict === review.verdict)) refuse("B5_FIXTURE_NOT_REAL", `review ${review.stepId}`);
+    const selected = review.identityBasis === "selected";
+    if (!(selected ? review.selectedModel && review.family : review.identityVerified) || !journey.steps.some(s =>
+      (selected ? s.identityBasis === "selected" : s.verified) && s.role === review.role && s.head === review.candidateRevision
+      && s.family === review.family && s.identity === (selected ? review.selectedModel : review.observedModel) && s.verdict === review.verdict)) refuse("B5_FIXTURE_NOT_REAL", `review ${review.stepId}`);
   }
 }
 /** Compare actual admitted/observed steps with qualified availability and tooling, including fixture transport. */
@@ -657,14 +709,15 @@ export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5Journ
   const { rejected, final } = manifest.heads, steps = [...journey.steps].sort((a, b) => a.n - b.n);
   const closed = (s: z.infer<typeof step>) => journey.closed.some(c => ms(c.from) <= ms(s.startedAt) && ms(s.endedAt) <= ms(c.to));
   const broken = (why: string) => refuse("B5_REJECTION_REPAIR", why);
+  const qualified = (s: z.infer<typeof step>) => s.verified || s.identityBasis === "selected";
   const defective = steps.find(s => s.role === "build" && s.head === rejected);
   const rejection = steps.find(s => s.role === "code-review" && s.head === rejected && s.verdict === "NEEDS-FIX" && s.diagnostic === "FAIL"
     && s.findings.some(f => f.severity === "MEDIUM"));
-  if (!defective || !rejection || rejection.n < defective.n || rejection.family === defective.family || !rejection.verified) broken("rejection");
+  if (!defective || !rejection || rejection.n < defective.n || rejection.family === defective.family || !qualified(rejection)) broken("rejection");
   const repair = steps.find(s => s.role === "build" && s.n > rejection!.n && s.head === final);
   if (!repair || repair.identity !== defective!.identity || repair.family !== defective!.family) broken("original builder repair");
   const after = steps.filter(s => s.n > repair!.n);
-  const fresh = (role: string) => after.filter(s => s.role === role && s.head === final && s.verdict === "CLEAN" && s.verified && s.family !== repair!.family);
+  const fresh = (role: string) => after.filter(s => s.role === role && s.head === final && s.verdict === "CLEAN" && qualified(s) && s.family !== repair!.family);
   const codes = fresh("code-review");
   if (codes.length < 2 || new Set(codes.map(s => s.family)).size < 2 || codes.some(s => s.diagnostic !== "PASS")) broken("fresh code reviews");
   for (const role of ["attack-review", "ui-review", "ci-review", "final"]) if (!fresh(role).length) broken(`fresh ${role}`);
@@ -750,12 +803,24 @@ export function assertB5ActionEvidenceV1(j: B5JourneyV1, card: LoopCandidateCard
     const r = receipt(f.receiptPath, f.device, f.sequence);
     const capture = r.captures.find(c => c.path === f.captureSourcePath);
     const png=Buffer.from(artifacts.get(f.capturePath) ?? []);
+    // HTTP envelopes include a live observedAt. Each screen binds its own
+    // exact entity digest to a sanitized receipt and the cold signed record;
+    // neither a saved network body nor identical timestamps are required.
+    let responseMatches = f.responseDigest === responseDigest;
+    if (f.responseReceiptPath) {
+      try {
+        const r = z.object({ responseDigest:sha256, recordDigest:sha256, requestId:z.string(),
+          candidateRevision:revision, at }).strict().parse(JSON.parse(Buffer.from(artifacts.get(f.responseReceiptPath) ?? []).toString("utf8")));
+        responseMatches = r.responseDigest === f.responseDigest && r.recordDigest === card.recordDigest
+          && r.requestId === card.requestId && r.candidateRevision === card.candidateRevision && r.at === f.at;
+      } catch { responseMatches = false; }
+    }
     const completePng=png.length >= 57 && png.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
       && png.subarray(-12).equals(Buffer.from([0,0,0,0,73,69,78,68,174,66,96,130]));
     if (!completePng || f.device !== a.device || f.sequence !== a.sequence || f.receiptPath !== a.receiptPath || f.at !== a.at
       || f.requestId !== card.requestId || f.runLinkId !== card.evidence.binding.runLinkId || f.localVersion !== card.localVersion || f.inputVersion !== card.a2InputVersion
       || f.candidateRevision !== card.candidateRevision || f.baseRevision !== card.evidence.binding.baseRevision
-      || f.responseDigest !== responseDigest || !capture || capture.device !== f.device
+      || !responseMatches || !capture || capture.device !== f.device
       || capture.sequence !== f.sequence || capture.sessionNonce !== r.sessionNonce || ms(capture.capturedAt) < ms(r.observation.observedAt)
       || ms(capture.capturedAt) > ms(r.expiresAt) || capture.sha256 !== f.captureDigest
       || f.capturePath !== `screens/${screen}.png` || b5Bytes(artifacts.get(f.capturePath) ?? new Uint8Array()) !== f.captureDigest)
@@ -878,6 +943,8 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   const read = loopCandidateCardSchemaV1.safeParse(http ? http.card : observed);
   if (!read.success) refuse("B5_CARD_UNAVAILABLE");
   const card = read.data!;
+  if (!card.evidence.summary?.trim() || !card.evidence.changedAreas?.includes("index.html") || card.evidence.databaseChanges?.kind !== "none"
+    || card.evidence.assumptions === null || card.evidence.validations === null) refuse("B5_FULL_REPORT_INCOMPLETE");
   await input.finishTeardown?.();
   const evidenceStat = await canonical(evidenceDir, "directory", "B5_ARTIFACT_BYTES");
   if ((evidenceStat.mode & 0o777) !== 0o700 || evidenceStat.uid !== process.getuid?.()) refuse("B5_ARTIFACT_BYTES");

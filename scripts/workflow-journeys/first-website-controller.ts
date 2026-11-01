@@ -1,10 +1,10 @@
 // Proof-only foreground controller. Imports are inert. Engine commands go
 // through the product website; role input binding uses the qualified A2 entry.
 import { randomBytes } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
-  missingB5TransportCleanupV1, B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
+  b5JourneySchemaV1, finalizeFirstWebsiteEvidenceV1, missingB5TransportCleanupV1, B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
   loadFirstWebsiteAssemblyV1, probeBindInputCapabilityV1, bindFirstWebsiteInputsV1, assertRoleScopedBriefsV1,
   b5FaultScanPolicySchemaV1, normalizeB5FaultTextV1, assertB5FaultTextAbsentV1, assertB5FaultValueAbsentV1, auditFirstWebsiteReviewV1, readB5ReviewGitSurfacesV1,
   readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, readB5CandidateResponseV1, assertFirstWebsiteOwnerCommandV1,
@@ -200,7 +200,7 @@ async function ownerChannel(host: FirstWebsiteHostV1, root: string, owner: B5Con
  * repository, and never turns these diagnostic records into engine receipts. */
 async function diagnosticSnapshot(repository: string, root: string, head: string, label: string) {
   need(/^[a-f0-9]{40}$/u.test(head) && /^(rejected|final)$/u.test(label), "B5_DIAGNOSTIC_HEAD");
-  const directory = join(root, `diagnostic-${label}-${head}`);
+  const directory = join(dirname(root), `diagnostic-${label}-${head}`);
   await mkdir(directory, { mode: 0o700 });
   const git = (args: string[]) => exec("/usr/bin/git", ["-C", directory, "-c", "core.hooksPath=/dev/null", ...args], {
     timeout: 60_000, maxBuffer: 1 << 20, env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
@@ -256,7 +256,9 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   let watcher: Promise<void> | undefined;
   const workSignal = owner.signal;
   const statusChecks: Awaited<ReturnType<typeof runIndependentStatusCheckV1>>[] = [];
-  const actions: unknown[] = [], observations: unknown[] = [], audits: unknown[] = [];
+  const actions: {receipt: import("./first-website-device").B5DeviceReceiptV1; browser?: z.infer<typeof b5ControllerBrowserEventsSchemaV1>}[] = [], observations: unknown[] = [], audits: unknown[] = [];
+  const restarts: {phase:"waiting"|"final";at:string}[] = [];
+  const startedAt = new Date().toISOString();
   let cleanupResult: B5ControllerCleanupV1 | undefined;
   const write = async (name: string, value: unknown) => {
     need(/^[a-z][a-z0-9-]*$/u.test(name), "B5_CONTROLLER_EVIDENCE_PATH");
@@ -280,13 +282,14 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       need(normalized.includes(normalizeB5FaultTextV1(term)), "B5_FAULT_INPUT_SECRECY");
     need(instruction.includes(policy.sentinel) && policy.distinctiveInstructions.every(phrase => normalized.includes(normalizeB5FaultTextV1(phrase))), "B5_FAULT_INPUT_SECRECY");
     assertB5FaultTextAbsentV1(neutralBytes, policy);
-    need(preflight.phoneTransport === "tailscale-serve", "B5_DEVICE_QUALIFICATION_REQUIRED");
-    const q = await loadB5TransportV1(config.device.transportQualification, root, config.device.origin, digests.transport);
-    owner.qualifyTransport(q);
+    need(preflight.phoneTransport === "tailscale-serve" || preflight.rehearsal && preflight.providers.transport === "scripted", "B5_DEVICE_QUALIFICATION_REQUIRED");
+    const q = preflight.phoneTransport === "tailscale-serve" ? await loadB5TransportV1(config.device.transportQualification, root, config.device.origin, digests.transport) : undefined;
+    if(q) owner.qualifyTransport(q);
     await mkdir(evidenceDir, { mode: 0o700 }).catch(e => { if (e.code !== "EEXIST") throw e; });
     await chmod(evidenceDir, 0o700); wroteEvidence = true;
     await write("controller-start", { schemaVersion: 1, startedAt: new Date().toISOString(), preflightDigests: digests,
-      mappingAttempted: false, captureMode: q.captureMode, phoneDomAvailable: false, binaryScan: "lead-visual-check-required" });
+      mappingAttempted: false, captureMode: q?.captureMode ?? "fixture-browser-loopback", phoneDomAvailable: false, binaryScan: "lead-visual-check-required" });
+    if(preflight.rehearsal) await runFirstWebsiteProviderDenialsV1(preflight,workSignal,owner);
     const create = await loadFirstWebsiteAssemblyV1(config); workSignal.throwIfAborted();
     owner.beginAcquisition();
     acquiring = create(config, workSignal, { signalOwner: owner });
@@ -327,7 +330,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       } catch (error) { failures.push(codeOf(error)); }
       need(!failures.length, "B5_STOP_UNAVAILABLE");
     });
-    watcher = (async () => {
+    const observe = () => (async () => {
       while (watching && !workSignal.aborted) {
         if (!requestId) {
           const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
@@ -344,6 +347,14 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         await pause(workSignal);
       }
     })().catch(error => { if (watching && !workSignal.aborted) owner.abort(new B5RefusalV1(codeOf(error))); });
+    watcher=observe();
+    const restart = async () => {
+      // Drain the observer's real HTTP exchange before closing the listener.
+      // Its expected downtime must not race a read into a false engine failure.
+      watching=false; await watcher; workSignal.throwIfAborted();
+      await host!.proof.restart(workSignal); workSignal.throwIfAborted();
+      watching=true; watcher=observe();
+    };
     const phase = async (name: B5DeviceRequestV1["phase"], device: "phone" | "desktop", s?: LoopDecisionStatusV1) => {
       workSignal.throwIfAborted();
       const binding = s?.request.runLink ? { requestId: s.request.requestId, runLinkId: s.request.runLink.runLinkId, inputVersion: s.request.currentVersion } : undefined;
@@ -356,12 +367,15 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       if (requestId && ["repair", "finish", "retained"].includes(name))
         await service(`${projectPath}/${encodeURIComponent(requestId)}/candidate`);
       const result = await runFirstWebsiteDevicePhaseV1({ mailbox, phase: name, device, binding, signal: workSignal, policy,
-        expiresAt: new Date(Math.min(owner.workAt()!, Date.parse(q.expiresAt))).toISOString(),
+        expiresAt: new Date(Math.min(owner.workAt()!, q ? Date.parse(q.expiresAt) : Infinity)).toISOString(),
         onPublished() { if (name === "bindings-ready") bindingsReadyPublishedAt = new Date().toISOString(); } });
-      actions.push(result); return result.receipt;
+      const browser = preflight.rehearsal ? b5ControllerBrowserEventsSchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(
+        join(deviceRoot,"service",`${result.receipt.sequence}.json`),root)).toString("utf8"))) : undefined;
+      actions.push({...result,...(browser ? {browser} : {})}); return result.receipt;
     };
     // Arm ownership BEFORE publishing an owner install request. An interrupted
     // or uncertain command still requires cancellation, reconciliation/removal.
+    if(q) {
     owner.armMapping(q, async (request, activeSignal) => {
       await writeB5DeviceRequestV1(join(deviceRoot, "install-cancelled.json"), { schemaVersion: 1, cancelPendingInstall: true, at: new Date().toISOString() });
       await writeB5DeviceRequestV1(join(deviceRoot, "removal-request.json"), { schemaVersion: 1, ...request, reconcilePendingInstall: true,
@@ -379,6 +393,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       && Date.parse(installed.observedAt) >= Date.parse(requestedAt) && Date.parse(installed.observedAt) <= Date.now()
       && installed.statusDigest === q.installedDigest && b5MappingDigestV1(installed.status) === q.installedDigest, "B5_DEVICE_INSTALL_RECEIPT");
     owner.mappingInstalled();
+    }
     await phase("connect", "phone"); await phase("connect", "desktop"); await phase("prepare", "phone");
     const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
     need(desk.loopRequests.length === 1 && desk.loopRequests[0].description === B5_REQUEST_TEXT && desk.loopRequests[0].runLink, "B5_REQUEST_JOIN");
@@ -460,7 +475,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
       const gate = s.decisions?.gate;
       if (gate?.kind === "question") {
-        if (!questionSeen) { await host.proof.restart(workSignal); s = await status(); need(s.engine.question, "B5_QUESTION_RESTART"); }
+        if (!questionSeen) { await restart(); restarts.push({phase:"waiting",at:new Date().toISOString()}); s = await status(); need(s.engine.question, "B5_QUESTION_RESTART"); }
         need(s.engine.question, "B5_QUESTION_RESTART");
         const question = s.engine.question;
         await phase("question", "phone", s);
@@ -481,14 +496,17 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         need(questionSeen && planSeen && specSeen && p.finalHead && p.cleanup?.state === "complete", "B5_JOURNEY_INCOMPLETE");
         assertRoleScopedBriefsV1(p.steps.map(step => ({ role: step.role, text: step.brief })), receipts);
         statusChecks.push(await diagnosticSnapshot(p.repository, evidenceDir, p.finalHead, "final"));
+        const cleanupAt=new Date().toISOString();
         await phase("repair", "phone", s); await phase("finish", "phone", s); await phase("finish", "desktop", s);
-        await host.proof.restart(workSignal); s = await status(); await phase("retained", "phone", s);
+        await restart(); restarts.push({phase:"final",at:new Date().toISOString()}); s = await status(); await phase("retained", "phone", s);
         await write("controller-observations", { actions, observations, audits, snapshot: await host.proof.readSnapshot({ evidenceOnly: true }), statusChecks: statusChecks.map(check => check.record) });
         wroteObservations = true;
         const pins: B5QualifiedPinsV1 = { capture: preflight.capture, providers: preflight.providers, toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
           productBase: config.product.baseRevision, productHead: config.product.candidateRevision, uid: preflight.uid,
           digests: { settings: digests.settings!, availability: digests.availability!, authorization: digests.authorization!, qualification: digests.qualification!,
             assembly: digests.assembly!, faultInput: digests.faultInput!, reviewInput: digests.reviewInput! } };
+        const snapshot=await host.proof.readSnapshot({evidenceOnly:true});
+        let coldCard: import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1 | undefined;
         verdict = await verifyFirstWebsiteControllerEvidenceV1(evidenceDir, { candidateRepository: p.repository, pins,
           proofRoot: root, cleanupTargets: p.cleanup.targets.map(target => target.source),
           readCard: async () => {
@@ -498,8 +516,15 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
             const card = loopCandidateCardSchemaV1.parse(value.card);
             need(card.requestId === requestId && card.projectId === host!.proof.project.projectId && card.candidateRevision === p.finalHead
               && card.evidence.binding.runLinkId === s.request.runLink!.runLinkId, "B5_COLD_CARD_JOIN");
-            return value;
-          }, finishTeardown: async () => { watching = false; await watcher; cleanupResult = await owner.cleanup(); await host!.close(); } });
+            coldCard=card; return value;
+          }, finishTeardown: async () => {
+            watching = false; await watcher; cleanupResult = await owner.cleanup(); await host!.close();
+            if(preflight.rehearsal) {
+              need(coldCard,"B5_CARD_UNAVAILABLE");
+              await writeFirstWebsiteControllerEvidenceV1({preflight,projection:p,actions,restarts,receipts,statusChecks,card:coldCard,
+                cleanup:cleanupResult,owned:await host!.proof.inspectOwned(),snapshot,startedAt,cleanupAt});
+            }
+          } });
         break;
       }
       await pause(workSignal);
@@ -536,13 +561,205 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   if (wroteEvidence && !wroteObservations) try {
     await write("controller-observations", { actions, observations, audits, statusChecks: statusChecks.map(check => check.record) });
   } catch { verdict.state = "incomplete"; verdict.reasons.push("B5_OBSERVATIONS_WRITE_FAILED"); }
-  if (verdict.reasons.some(reason => reason !== "B5_PROVIDER_FIXTURE"))
+  if (verdict.reasons.some(reason => !["B5_PROVIDER_FIXTURE","B5_PHONE_EVIDENCE_MISSING","B5_DESKTOP_EVIDENCE_MISSING","B5_CAPTURE_MODE_UNAPPROVED"].includes(reason)))
     verdict.reasons = [...verdict.reasons.filter(reason => reason !== "B5_PROVIDER_FIXTURE"),
       ...verdict.reasons.filter(reason => reason === "B5_PROVIDER_FIXTURE")];
   if (wroteEvidence) try { await write("controller-verdict", verdict); }
   catch { verdict.state = "incomplete"; verdict.reasons.push("B5_VERDICT_WRITE_FAILED"); }
-  if (verdict.reasons.some(reason => reason !== "B5_PROVIDER_FIXTURE"))
+  if (verdict.reasons.some(reason => !["B5_PROVIDER_FIXTURE","B5_PHONE_EVIDENCE_MISSING","B5_DESKTOP_EVIDENCE_MISSING","B5_CAPTURE_MODE_UNAPPROVED"].includes(reason)))
     verdict.reasons = [...verdict.reasons.filter(reason => reason !== "B5_PROVIDER_FIXTURE"),
       ...verdict.reasons.filter(reason => reason === "B5_PROVIDER_FIXTURE")];
   return verdict;
+}
+
+/** Build evidence only from accepted mailbox receipts, successful browser
+ * exchanges and the real engine projection. The caller finalizes it after its
+ * authoritative cold read and the shared outer cleanup. No HTTP bodies persist. */
+export const b5ControllerBrowserEventsSchemaV1 = z.object({
+  sequence: z.number().int().positive(), events: z.array(z.object({
+    name: z.enum(["intake", "confirm", "start", "answer", "approve-plan", "approve-spec", "finish-phone", "finish-desktop", "retained"]),
+    at: z.string().datetime(), method: z.enum(["GET", "POST"]), path: z.string(), status: z.number().int(),
+    responseDigest: z.string().optional(), recordDigest: z.string().optional(), candidateRevision: z.string().optional(), baseRevision: z.string().optional(),
+  }).strict()), dom: z.object({ candidateRevision:z.string(), baseRevision:z.string(), requestId:z.string() }).strict().optional(),
+}).strict();
+
+export async function writeFirstWebsiteControllerEvidenceV1(input: {
+  preflight: FirstWebsitePreflightV1;
+  projection: Awaited<ReturnType<FirstWebsiteHostV1["proof"]["readRun"]>>;
+  actions: {receipt: import("./first-website-device").B5DeviceReceiptV1; browser?: z.infer<typeof b5ControllerBrowserEventsSchemaV1>}[];
+  restarts: {phase:"waiting"|"final";at:string}[]; receipts: import("../../tests/helpers/improve-control-room-first-website").B5BindInputReceiptV1[];
+  statusChecks: Awaited<ReturnType<typeof runIndependentStatusCheckV1>>[];
+  card: import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1;
+  cleanup: B5ControllerCleanupV1; owned: import("../../tests/helpers/improve-control-room-first-website").FirstWebsiteOwnedV1;
+  snapshot: Awaited<ReturnType<FirstWebsiteHostV1["proof"]["readSnapshot"]>>; startedAt: string; cleanupAt: string;
+}) {
+  const { preflight:p, projection:run, card, statusChecks, cleanup, owned } = input;
+  const root=p.config.scratchRoot, dir=p.evidenceDir, b=card.evidence.binding;
+  need(run.cleanup?.state === "complete" && run.finalHead === card.candidateRevision, "B5_JOURNEY_INCOMPLETE");
+  const saved = new Map<string,string>();
+  const save = async (path:string, bytes:Uint8Array|string) => {
+    need(/^[a-z0-9][a-z0-9./-]{0,255}$/u.test(path) && !path.includes("..") && Buffer.byteLength(bytes)<=1<<20,"B5_ARTIFACT_BYTES");
+    if(saved.has(path)) { need(saved.get(path) === b5Bytes(bytes),"B5_ARTIFACT_BYTES"); return; }
+    saved.set(path,b5Bytes(bytes));
+    await mkdir(dirname(join(dir,path)),{recursive:true,mode:0o700});
+    await writeFile(join(dir,path),bytes,{flag:"wx",mode:0o600});
+  };
+  const json = (path:string,value:unknown)=>save(path,JSON.stringify(value)+"\n");
+  const actions: z.infer<typeof b5JourneySchemaV1>["actions"] = [], serviceFacts: z.infer<typeof b5JourneySchemaV1>["serviceFacts"] = [], dom: z.infer<typeof b5JourneySchemaV1>["dom"] = [];
+  const closed: z.infer<typeof b5JourneySchemaV1>["closed"] = [];
+  let closePair: typeof input.actions = [];
+  for (const item of input.actions) {
+    const r=item.receipt, receiptPath=`mailbox/receipts/${r.sequence}.json`;
+    await save(receiptPath, await readFirstWebsitePrivateBytesV1(join(root,"device/receipts",`${r.sequence}.json`),root));
+    for (const c of r.captures) {
+      const bytes=await readFirstWebsitePrivateBytesV1(join(root,"device",c.path),root);
+      need(b5Bytes(bytes) === c.sha256,"B5_CAPTURE_CORRELATION"); await save(`mailbox/${c.path}`,bytes);
+    }
+    const browser=item.browser;
+    need(browser && browser.sequence === r.sequence,"B5_BROWSER_EVIDENCE_MISSING");
+    for(const event of browser.events) {
+      need(event.status>=200 && event.status<300,"B5_ACTION_EVIDENCE");
+      const {name,at,method,path,status}=event;
+      actions.push({name,at,method,path,status,sequence:r.sequence,device:r.device,receiptPath,
+        requestId:card.requestId,runLinkId:b.runLinkId,localVersion:card.localVersion,inputVersion:card.a2InputVersion});
+      if (["finish-phone","finish-desktop","retained"].includes(name)) {
+        const screen=name === "finish-phone" ? "07-finish-phone" : name === "finish-desktop" ? "08-finish-desktop" : "09-retained";
+        need(event.recordDigest === card.recordDigest && event.candidateRevision === card.candidateRevision && event.baseRevision === b.baseRevision,"B5_COLD_CARD_JOIN");
+        const capture=r.captures[0]!, capturePath=`screens/${screen}.png`, responseReceiptPath=`responses/${r.sequence}.json`;
+        await save(capturePath,await readFirstWebsitePrivateBytesV1(join(root,"device",capture.path),root));
+        await json(responseReceiptPath,{responseDigest:event.responseDigest,recordDigest:event.recordDigest,requestId:card.requestId,candidateRevision:card.candidateRevision,at});
+        serviceFacts.push({screen,device:r.device,sequence:r.sequence,at,requestId:card.requestId,runLinkId:b.runLinkId,localVersion:card.localVersion,
+          inputVersion:card.a2InputVersion,candidateRevision:card.candidateRevision,baseRevision:b.baseRevision,responseDigest:event.responseDigest!,responseReceiptPath,
+          captureSourcePath:capture.path,capturePath,captureDigest:capture.sha256,receiptPath});
+        if(r.device === "desktop") { need(browser.dom,"B5_HEAD_BINDING"); dom.push({screen,...browser.dom}); }
+      }
+    }
+    const screen = ({prepare:"01-prepare","confirm-start":"02-confirm-start",question:"03-question",plan:"04-plan",spec:"05-spec",repair:"06-repair"} as Record<string,string>)[r.phase];
+    if(screen) await save(`screens/${screen}.png`,await readFirstWebsitePrivateBytesV1(join(root,"device",r.captures[0]!.path),root));
+    if(r.phase === "close") closePair.push(item);
+    else if(closePair.length) {
+      need(closePair.length === 2,"B5_ACTION_EVIDENCE");
+      closed.push({label:`closed-${closed.length+1}`,from:closePair.map(c=>c.receipt.observedAt).sort().at(-1)!,to:r.observation.observedAt,
+        receipts:closePair.map(c=>({device:c.receipt.device,sequence:c.receipt.sequence,path:`mailbox/receipts/${c.receipt.sequence}.json`}))});
+      closePair=[];
+    }
+  }
+  const raw = z.object({steps:z.array(z.object({n:z.number(),role:z.string(),log:z.string(),grade:z.string().optional(),report_snapshot:z.object({path:z.string(),sha256:z.string()}).passthrough().optional(),
+    sidecar_seals:z.array(z.object({path:z.string(),sha256:z.string()}).passthrough()).optional()}).passthrough()),
+    chain:z.object({consumed_results:z.array(z.object({step:z.number(),verdict:z.string()}).passthrough())}).passthrough()}).passthrough()
+    .parse(JSON.parse((await readFirstWebsitePrivateBytesV1(join(root,"runs",b.loopRunId,"run.json"),root)).toString("utf8")));
+  const roster=(await readFirstWebsitePrivateBytesV1(join(root,"tools/loop/models.tsv"),root)).toString("utf8").trimEnd().split(/\r?\n/u);
+  const columns=roster.shift()!.split("\t");need(columns.includes("name") && columns.includes("family"),"B5_PROVIDER_PROVENANCE_MISMATCH");
+  const families=new Map<string,string>();
+  for(const line of roster.filter(line=>line && !line.startsWith("#"))) {
+    const fields=line.split("\t"),name=fields[columns.indexOf("name")]!,family=fields[columns.indexOf("family")]!;
+    need(name && family && !families.has(name),"B5_PROVIDER_PROVENANCE_MISMATCH");families.set(name,family);
+  }
+  const steps: z.infer<typeof b5JourneySchemaV1>["steps"] = [];
+  for (const [i,s] of run.steps.entries()) {
+    // QUESTION-only dispatches have no terminal completed report; their gate,
+    // answer and restart are recorded separately, never invented as DONE.
+    const verdict=s.verdict ?? raw.chain.consumed_results.find(r=>r.step === s.n)?.verdict;
+    if(!s.endedAt || !verdict || !["DONE","CLEAN","NEEDS-FIX"].includes(verdict)) continue;
+    const review=card.evidence.reviews.find(r=>r.stepId === `step-${s.n}`);
+    const source=raw.steps.find(x=>x.n === s.n); need(source?.report_snapshot,"B5_REVIEW_SCAN_INCOMPLETE");
+    const metadata=z.object({served_model:z.string().optional(),served_route:z.object({family:z.string()}).passthrough().optional(),
+      receipts:z.array(z.object({path:z.string(),sha256:z.string().regex(/^[a-f0-9]{64}$/u)})).min(1)}).passthrough().safeParse(s.modelIdentity);
+    need(metadata.success,"B5_PROVIDER_PROVENANCE_MISMATCH");
+    const nativeReceipts=[];
+    for(const seal of metadata.data.receipts) {
+      const bytes=await readFirstWebsitePrivateBytesV1(seal.path,root);
+      need(b5Bytes(bytes) === `sha256:${seal.sha256}`,"B5_PROVIDER_PROVENANCE_MISMATCH");
+      const receipt=z.object({attempt:z.number().int().positive(),launcher:z.string().min(1),requested_model:z.string(),resolved_model:z.string().min(1),state:z.string(),log:z.string()}).passthrough().parse(JSON.parse(bytes.toString("utf8")));
+      need(receipt.requested_model === s.requestedModel && receipt.log === source.log,"B5_PROVIDER_PROVENANCE_MISMATCH");nativeReceipts.push(receipt);
+    }
+    const native=nativeReceipts.sort((a,b)=>a.attempt-b.attempt).at(-1)!;
+    const identity=native.resolved_model,route=native.launcher,grade=source.grade ?? "not-applicable";
+    const family=metadata.data.served_route?.family ?? families.get(identity);
+    const slot=p.providers.lineup.find(q=>q.role === s.role && q.identity === identity);
+    need(native.state === "COMPLETE" && (!metadata.data.served_model || metadata.data.served_model === identity)
+      && family && slot && slot.family === family && slot.route === route && slot.grade === grade
+      && (!["plan","spec","build","fix"].includes(s.role) || source.grade !== undefined)
+      && (!review || review.family === family && (review.selectedModel ?? review.observedModel) === identity),"B5_PROVIDER_PROVENANCE_MISMATCH");
+    const report=await readFirstWebsitePrivateBytesV1(source.report_snapshot.path,run.workDir);
+    need(b5Bytes(report) === `sha256:${source.report_snapshot.sha256}`,"B5_REVIEW_SCAN_CHANGED");
+    let diagnostic:"FAIL"|"PASS"|null=null;
+    if(s.role === "code-review") {
+      const seal=source.sidecar_seals?.[0]; need(seal,"B5_REVIEW_SCAN_INCOMPLETE");
+      const bytes=await readFirstWebsitePrivateBytesV1(seal.path,run.workDir);
+      need(b5Bytes(bytes) === `sha256:${seal.sha256}`,"B5_REVIEW_SCAN_CHANGED");
+      const sidecar=z.object({checks:z.array(z.object({id:z.string(),status:z.string()}).passthrough())}).passthrough().parse(JSON.parse(bytes.toString("utf8")));
+      const check=sidecar.checks.find(c=>c.id === "site-status"); need(check && ["PASS","FAIL"].includes(check.status),"B5_DIAGNOSTIC_RESULT");
+      diagnostic=check.status as "PASS"|"FAIL";
+    }
+    const head=s.role === "build" ? run.steps[i+1]?.headAtStart : s.headAtStart;
+    need(head && /^[a-f0-9]{40}$/u.test(head),"B5_HEAD_BINDING");
+    steps.push({n:s.n,role:s.role,identity,family,verified:review?.identityVerified ?? false,identityBasis:"selected",head,
+      provider:{transport:p.providers.transport,admittedIdentity:identity,route,grade},startedAt:s.startedAt,endedAt:s.endedAt,
+      verdict:verdict as "DONE"|"CLEAN"|"NEEDS-FIX",diagnostic,
+      findings:(s.findings ?? []).map(f=>{const v=z.object({severity:z.enum(["HIGH","MEDIUM","LOW"]),disposition:z.string()}).passthrough().parse(f);
+        return {severity:v.severity,state:v.disposition === "OPEN" ? "open" as const : "fixed" as const,summary:"Details in retained review report"};})});
+  }
+  await json("journey.json",b5JourneySchemaV1.parse({schemaVersion:1,phoneCapture:p.capture.phoneCapture,captureQualificationDigest:p.capture.qualificationDigest,
+    restarts:input.restarts,actions,serviceFacts,closed,steps,dom,devices:["phone","desktop"].map(kind=>({kind,real:input.actions.filter(a=>a.receipt.device === kind).every(a=>a.receipt.real),browser:input.actions.find(a=>a.receipt.device === kind)!.receipt.browser}))}));
+  await json("database-snapshot.json",input.snapshot); await json("independent-status-check.json",statusChecks.map(c=>c.record));
+  const retained=actions.find(a=>a.name === "retained"); need(retained,"B5_ACTION_EVIDENCE");
+  const packet=p.rehearsal;
+  need(packet,"B5_REHEARSAL_PACKET_INVALID");
+  return finalizeFirstWebsiteEvidenceV1(dir,{
+    schemaVersion:1,kind:"b5-first-website-proof",product:{baseRevision:p.config.product.baseRevision,headRevision:p.config.product.candidateRevision,environmentDigest:b.environmentDigest},
+    pins:{a2ToolingRevision:p.config.a2.toolingRevision,schemaDigest:p.config.a2.schemaDigest,jobSandboxDigest:packet.jobSandboxDigest,
+      qualificationDigest:p.digests.qualification!,recipeDigest:b.recipeDigest,settingsSha256:p.digests.settings!,availabilitySha256:p.digests.availability!,
+      faultInputSha256:p.digests.faultInput!,reviewInputSha256:p.digests.reviewInput!,authorizationSha256:p.digests.authorization!,assemblyDigest:p.digests.assembly!,assemblyExport:"createFirstWebsiteHostV1",
+      inputBindings:input.receipts.map(r=>({name:r.name as "b5-builder-fault"|"b5-review-instruction",roles:r.roles,sha256:`sha256:${r.sha256}`,path:r.path,revision:r.revision,at:new Date(r.at).toISOString(),receiptDigest:b5Bytes(JSON.stringify(r))}))},
+    risk:{categories:p.settings.riskCategories,slots:p.settings.riskSlots},launch:{uid:p.uid,context:"current-session",isolationClaim:"none",consumedRoots:["config","runs","work"]},
+    lineage:{requestId:card.requestId,runLinkId:b.runLinkId,loopRunId:b.loopRunId,localVersion:card.localVersion,a2InputVersion:card.a2InputVersion},
+    heads:{base:b.baseRevision,rejected:run.rejectedHeads[0]!,final:card.candidateRevision},
+    classification:{website:"real",storage:"real",engine:"real",sendBack:"real",recovery:"real",finish:"real",providers:p.providers.classification,device:"fixture",stimuli:"fixture"},
+    timestamps:{startedAt:input.startedAt,finishedAt:new Date().toISOString()},
+  }, {schemaVersion:1,b3cCleanup:"complete",scratchAbsent:owned.runScratchAbsent,ownedProcesses:owned.processCount,ownedListenersReleased:owned.listenerReleased,
+    protectedListenersUntouched:true,postgresStopped:owned.postgresStopped,cleanupAt:input.cleanupAt,
+    retainedRead:{at:retained.at,candidateRevision:card.candidateRevision,receiptDigest:card.recordDigest},transportCleanup:cleanup},
+  {proofRoot:root,candidateRepository:run.repository,cleanupTargets:run.cleanup.targets.map(t=>t.source)});
+}
+
+/** B is independent of engine intake. The tools helper owns launcher groups and
+ * reaps them before returning; interruption cannot cancel that safety close. */
+export async function runFirstWebsiteProviderDenialsV1(preflight:FirstWebsitePreflightV1, signal:AbortSignal, owner:B5ControllerOwnerV1) {
+  const p=preflight.rehearsal; need(p && preflight.providers.transport === "scripted","B5_REHEARSAL_PACKET_INVALID");
+  const root=p.root;
+  need((await readdir(join(root,"runs"))).length === 0,"B5_REHEARSAL_ROOT_USED");
+  need(!await import("node:fs/promises").then(fs=>fs.lstat(join(root,"config/b5-run-binding.json")).then(()=>true,e=>{if(e.code === "ENOENT")return false;throw e;})),"B5_REHEARSAL_ROOT_USED");
+  // Validate the source manifest, interpreter bytes, carrier callables, build
+  // and bind-input capability before executing even a denial probe. This is
+  // read-only qualification, with no PG, listener, intake or model launch.
+  const {entry}=await (await import("./first-website-host")).validateFirstWebsiteHostV1(preflight.config,owner);
+  signal.throwIfAborted();
+  const configuration=JSON.parse((await readFirstWebsitePrivateBytesV1(join(root,"config/b5-provider.json"),root)).toString("utf8"));
+  need(configuration.python === entry.interpreter,"B5_HOST_INTERPRETER_PIN");
+  for(const route of ["codex-job","claude-job","marvin-job"]) {
+    signal.throwIfAborted();
+    const name=`b5-real-exec-denial-${route}.json`,trace=join(preflight.evidenceDir,name);
+    const result=await exec(entry.interpreter,["-I","-B",join(root,"tools/loop/bridge/b5-provider.py"),"denial-probe",root,join(root,"config/b5-provider.json"),route,trace],
+      {cwd:root,env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",HOME:join(root,"home-work"),TMPDIR:join(root,"tmp"),TZ:"UTC",LANG:"C"},timeout:125_000,maxBuffer:1<<20});
+    need(result.stdout.includes("B5_REAL_LAUNCH_ATTEMPTED B5_REAL_LAUNCH_DENIED"),"B5_DENIAL_NOT_PROVEN");
+    const record=JSON.parse((await readFirstWebsitePrivateBytesV1(trace,root)).toString("utf8"));
+    need(record.marker === "B5_REAL_LAUNCH_DENIED" && record.markers?.includes("B5_REAL_LAUNCH_ATTEMPTED")
+      && record.route === route && [1,13].includes(record.errno) && record.childExit !== 0 && record.providers === "fixture"
+      && record.nativeReceiptSha256?.length && record.nativeCleanup === "closed provider custody; ended launcher"
+      && JSON.stringify(record.target) === JSON.stringify(configuration.probes[route].target),"B5_DENIAL_NOT_PROVEN");
+    // The native helper verifies the pinned target bytes before attempting
+    // exec, including targets larger than the evidence reader's 1 MiB cap.
+  }
+  const unsupported: {route:string;exitCode:number;marker:string}[]=[];
+  for(const route of ["nvidia-job","opencode-job","ollama-job"]) {
+    signal.throwIfAborted();
+    const denied=await exec(entry.interpreter,["-I","-B",join(root,"lead/bin/launch-router.py"),route],
+      {cwd:root,env:{NODE_ENV:"test",PATH:"/usr/bin:/bin",HOME:join(root,"home-work"),TMPDIR:join(root,"tmp"),TZ:"UTC"},timeout:10_000,maxBuffer:65536})
+      .then(()=>({code:0,stderr:""}),error=>({code:error.code,stderr:error.stderr}));
+    need(denied.code === 2 && denied.stderr.trim() === "B5_FIXTURE_ROUTE_DENIED","B5_DENIAL_NOT_PROVEN");
+    unsupported.push({route,exitCode:2,marker:"B5_FIXTURE_ROUTE_DENIED"});
+  }
+  await writeFile(join(preflight.evidenceDir,"b5-unsupported-routes.json"),JSON.stringify(unsupported)+"\n",{flag:"wx",mode:0o600});
+  signal.throwIfAborted();
 }

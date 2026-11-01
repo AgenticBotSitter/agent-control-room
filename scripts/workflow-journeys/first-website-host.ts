@@ -89,7 +89,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     && config.ports.postgresBase === B5_PORTS.postgresBase, "B5_PORT_RESERVATION");
 
   const preflight = await preflightFirstWebsiteV1({ configFile: join(root, "config/b5.json"),
-    evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts"), signalOwner });
+    evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts"), signalOwner, existingEvidence: !!signalOwner });
   need(JSON.stringify(preflight.config) === JSON.stringify(config), "B5_HOST_CONFIG_CHANGED");
   const transport = config.device.origin === origin ? undefined : await loadB5TransportV1(
     config.device.transportQualification, root, config.device.origin, preflight.digests.transport);
@@ -133,7 +133,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     need(assets.digest === config.product.assetsDigest, "B5_HOST_ASSETS");
     for (const file of ["runtime.js", "index.js"]) await regular(join(config.product.root, "dist-vps/server", file), root);
     return { config, handoff, assets, entry, transport, digests: preflight.digests,
-      configDigest: b5Bytes(await readFile(join(root, "config/b5.json"))),
+      rehearsal: preflight.rehearsal, configDigest: b5Bytes(await readFile(join(root, "config/b5.json"))),
       handoffDigest: b5Bytes(await readFile(join(root, "config/b5-handoff.json"))) };
   } finally { await loaded.adapter.close(); }
 }
@@ -322,7 +322,8 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   }
   // Install one real registry delegate. Each request reaches the current real
   // Mac-local object; no source registry or replacement renderer is involved.
-  const deviceMailbox = prepared.transport ? await createB5DeviceMailboxV1(root, config.device.origin, { real: true, projectId, inventory: prepared.transport.inventory }) : undefined;
+  const deviceMailbox = prepared.transport || prepared.rehearsal ? await createB5DeviceMailboxV1(root, config.device.origin,
+    { real: !!prepared.transport, projectId, ...(prepared.transport ? { inventory: prepared.transport.inventory } : {}) }) : undefined;
   const registryKey = join(config.product.root, "dist-vps/server/runtime.js");
   const existing = registries.get(registryKey);
   need(!existing?.claimed, "B5_HOST_ALREADY_RUNNING");
@@ -551,7 +552,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
                 expectedRevision: status.revision, schemaDigest: active.adapter.schemaDigest });
               const joined = await joinB5FinalProjectionV1({ ...projectionInput, finalization: active.adapter.finalization, target,
                 readColdCard: async () => { const card = await get(requestPath + "/candidate");
-                  need(card.status === 200, "B5_HOST_COLD_CARD"); return card.json(); } });
+                  need(card.status === 200, "B5_HOST_COLD_CARD"); return (await card.json() as {candidate:unknown}).candidate; } });
               need(current === active && !closing, "B5_HOST_GENERATION_CHANGED"); return joined;
             } finally {
               const signedOut = await fetch(origin + "/api/v1/local-owner-session", { method: "DELETE", headers: { origin, cookie },
