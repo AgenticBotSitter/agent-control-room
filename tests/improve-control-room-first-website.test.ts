@@ -597,3 +597,271 @@ test("F03a cancellation during cleanup cannot turn into assembly success", async
   await closing; abort.abort(); release();
   await assert.rejects(result, /abort/iu, "F03a cleanup-time cancellation refuses success");
 });
+
+test("F04a contamination scans exact bytes across every reviewer-visible surface and repair", async t => {
+  await load();
+  const audit = (H as unknown as Record<string, unknown>).auditFirstWebsiteReviewV1;
+  assert.equal(typeof audit, "function", "F04a audit must exist on the real proof helper");
+  if (typeof audit !== "function") return;
+  const root = await owned(t, "b5-scan-"), marker = `b5-private-${(await import('node:crypto')).randomBytes(24).toString('hex')}`;
+  const phrase = ['Keep the violet', 'harbor quietly unannounced'].join(' ');
+  const policy = { normalizer: "b5-unicode-v1", sentinel: marker, distinctiveInstructions: [phrase] };
+  const kinds = ["brief", "builder-report", "commit-message", "diff", "changed-file-old", "changed-file-new", "owner-payload", "screenshot-source"];
+  const runAudit = async (surface: string, content: string, attempt: number) => {
+    const surfaces = kinds.map(kind => ({ kind, name: kind, bytes: Buffer.from(kind === surface ? content : 'ordinary behavioural code') }));
+    return audit({ root, attempt, head: 'b'.repeat(40), dispatchDigest: H.b5Bytes('actual dispatch'), policy,
+      expected: kinds.map(kind => ({ kind, name: kind })), surfaces });
+  };
+  let attempt = 0;
+  for (const kind of kinds) for (const value of [marker, phrase.toUpperCase().replaceAll(' ', ' /*\n */ ')]) {
+    await assert.rejects(runAudit(kind, `// TODO fixture unchanged context: ${value}`, ++attempt), { code: "B5_REVIEW_CONTAMINATED" }, `${kind} leak must refuse`);
+  }
+  const clean = await runAudit('changed-file-new', '<span id="status">Ready</span>', ++attempt);
+  assert.equal(clean.normalizer, 'b5-unicode-v1'); assert.equal(clean.surfaces.length, kinds.length);
+  await assert.rejects(audit({ root, attempt: ++attempt, head: 'c'.repeat(40), dispatchDigest: H.b5Bytes('repair'), policy,
+    expected: [{ kind: 'changed-file-new', name: 'omitted' }], surfaces: [] }), { code: 'B5_REVIEW_SCAN_INCOMPLETE' });
+  assert.equal(JSON.stringify(clean).includes(marker), false, 'audit diagnostics never expose the private marker');
+  console.log('RESULT: PASS F04a contamination eight surfaces exact/normalized repair coverage-refusal behavioural-defect-allowed');
+});
+
+test("F04a controller outer cleanup is single, ordered, bounded and records mapping uncertainty", async () => {
+  const controller = await import('../scripts/workflow-journeys/first-website-controller').catch(() => null);
+  assert.equal(typeof controller?.createFirstWebsiteControllerOwnerV1, 'function', 'real controller lifecycle must be implemented');
+  if (!controller) return;
+  const events: string[] = [];
+  const owner = controller.createFirstWebsiteControllerOwnerV1();
+  try {
+    owner.registerCloseHost(async () => { events.push('host-close'); });
+    owner.registerStopPostgres(async () => { events.push('pg-stop'); });
+    const first = owner.cleanup(); assert.ok(Array.from({length:24}, () => owner.cleanup()).every(p => p === first));
+    const result = await first;
+    assert.deepEqual(events, ['host-close','pg-stop']);
+    assert.equal(result.disposition, 'mapping-not-created'); assert.equal(result.hostStopped, true);
+    assert.equal(result.postgresStopped, true); assert.deepEqual(result.failures, []);
+  } finally { owner.dispose(); }
+  console.log('RESULT: PASS F04a controller cleanup memoized=24 no-mapping owns host-before-PG');
+});
+
+test("F04a verifier captures the cold card then awaits shared teardown before loading final bytes", async t => {
+  await load(); const e = await evidenceSet(t), events: string[] = [];
+  await e.write();
+  const verify = H.verifyFirstWebsiteEvidenceV1 as (dir: string, input: {
+    readCard(): Promise<unknown>; candidateRepository: string; pins: B5QualifiedPinsV1; finishTeardown(): Promise<void>;
+  }) => Promise<unknown>;
+  await verify(e.dir, { readCard: async () => { events.push('cold-card'); return e.readCard(); },
+    candidateRepository: e.p.project, pins: e.fixturePins, async finishTeardown() {
+      events.push('shared-teardown'); await rm(e.dir, { recursive: true });
+    } }).catch(() => {});
+  assert.deepEqual(events, ['cold-card', 'shared-teardown'], 'same outer teardown must run after cold card and before artifact reads');
+  assert.equal(await lstat(e.dir).then(() => true, () => false), false);
+  console.log('RESULT: PASS F04a cold-card -> same teardown -> final evidence load');
+});
+
+test("F04a outer cleanup abort matrix retains removal and PG ordering despite caller abort", async () => {
+  const { createFirstWebsiteControllerOwnerV1 } = await import('../scripts/workflow-journeys/first-website-controller');
+  const D = await import('../scripts/workflow-journeys/first-website-device');
+  const origin = 'https://proof-fixture.ts.net:60462', beforeStatus = {}, beforeDigest = D.b5MappingDigestV1(beforeStatus), installedDigest = H.b5Bytes('qualified-install');
+  for (const reason of ['deadline','stop','cold-read','verifier','interrupt','acquisition']) {
+    const abort = new AbortController(), owner = createFirstWebsiteControllerOwnerV1(abort.signal), events: string[] = [];
+    try {
+      owner.registerStopWork(async signal => { assert.equal(signal.aborted, false); events.push('stop'); });
+      owner.registerCloseHost(async () => { events.push('host-close'); });
+      owner.registerStopPostgres(async () => { events.push('pg-stop'); });
+      owner.armMapping({ origin, beforeStatus, beforeDigest, installedDigest } as never, async (request, signal) => {
+        assert.equal(signal.aborted, false, 'cleanup context must survive work abort'); events.push('owner-receipt');
+        return { schemaVersion:1, actor:'owner', removalNonce:request.removalNonce, observedAt:new Date().toISOString(), installSettled:true, installCancelled:true,
+          off:{command:D.B5_DEVICE_OFF_COMMAND_V1,port:60462,exitCode:0}, beforeDigest, installedDigest,
+          status:{command:D.B5_DEVICE_STATUS_COMMAND_V1,exitCode:0,afterStatus:{},afterDigest:beforeDigest} };
+      });
+      abort.abort(new H.B5RefusalV1(`B5_TEST_${reason.toUpperCase().replaceAll('-','_')}`));
+      const results = await Promise.all(Array.from({length:24}, () => owner.cleanup()));
+      assert.ok(results.every(r => r === results[0]));
+      assert.deepEqual(events, ['stop','host-close','owner-receipt','pg-stop']);
+      assert.equal(results[0].disposition,'mapping-removed'); assert.equal(results[0].mappingAttempted,true);
+      assert.equal(results[0].mappingUncertain,false); assert.equal(results[0].comparison,true);
+      assert.equal(results[0].postgresStopped,true); assert.deepEqual(results[0].failures,[]);
+    } finally { owner.dispose(); }
+  }
+  const owner = createFirstWebsiteControllerOwnerV1(), events: string[] = [];
+  try {
+    owner.registerCloseHost(async () => { events.push('close-failed'); throw new Error('fixture failure'); });
+    owner.registerStopPostgres(async () => { events.push('pg-stop'); });
+    owner.armMapping({origin,beforeStatus,beforeDigest,installedDigest} as never, async () => { events.push('remove-failed'); throw new D.B5DeviceRefusalV1('B5_DEVICE_REMOVAL_RECEIPT'); });
+    const result = await owner.cleanup();
+    assert.deepEqual(events,['close-failed','remove-failed','pg-stop']);
+    assert.equal(result.disposition,'mapping-outstanding'); assert.equal(result.hostStopped,false); assert.equal(result.postgresStopped,true);
+    assert.equal(result.mappingUncertain,true); assert.equal(result.removalReceiptDigest,null);
+    assert.ok(result.failures.includes('B5_TRANSPORT_CLEANUP_INCOMPLETE'));
+  } finally { owner.dispose(); }
+  console.log('RESULT: PASS F04a six abort causes x24 callers order stop/host/removal/PG; cleanup failures retained');
+});
+
+test("F04a actual Git inventory includes changed context, deleted bytes and repair history", async t => {
+  await load(); const p = await proofSite(t);
+  const surfaces = await H.readB5ReviewGitSurfacesV1(p.project, p.seeded.head, p.final);
+  const old = surfaces.find(s => s.kind === 'changed-file-old' && s.name === 'index.html');
+  const current = surfaces.find(s => s.kind === 'changed-file-new' && s.name === 'index.html');
+  assert.ok(old && current, 'both immutable versions of the changed source must be inventoried');
+  assert.ok(Buffer.from(old.bytes).includes(Buffer.from('<title>Proof site</title>')));
+  assert.ok(Buffer.from(current.bytes).includes(Buffer.from('<title>Proof site</title>')), 'unchanged context remains inside whole-file coverage');
+  assert.ok(surfaces.some(s => s.kind === 'diff')); assert.ok(surfaces.some(s => s.kind === 'commit-message'));
+  const marker = `b5-private-${(await import('node:crypto')).randomBytes(24).toString('hex')}`;
+  const policy = {normalizer:'b5-unicode-v1' as const,sentinel:marker,distinctiveInstructions:['Privately silence the violet harbor announcement']};
+  const input = {root:p.dir,attempt:1,head:p.final,dispatchDigest:H.b5Bytes('immutable dispatch'),policy,
+    expected:[{kind:'brief' as const,name:'dispatch'}], surfaces:[{kind:'brief' as const,name:'dispatch',bytes:Buffer.from(marker)}]};
+  const scanning = H.auditFirstWebsiteReviewV1(input);
+  input.surfaces[0].bytes.fill(32); input.policy.sentinel = 'x'.repeat(64);
+  await assert.rejects(scanning,{code:'B5_REVIEW_CONTAMINATED'},'input mutation after invocation cannot replace the saved bytes or policy');
+  await assert.rejects(H.readB5ReviewGitSurfacesV1(p.project, 'not-a-head', p.final),{code:'B5_REVIEW_SCAN_INCOMPLETE'});
+  console.log('RESULT: PASS F04a Git whole-file old/new/context inventory and immutable scan inputs');
+});
+
+test("F04a real controller refuses unqualified device input before any acquisition", async t => {
+  await load(); const s = await scratch(t);
+  const {runFirstWebsiteJourneyV1} = await import('../scripts/workflow-journeys/first-website-controller');
+  const marker = `b5-private-${(await import('node:crypto')).randomBytes(24).toString('hex')}`;
+  const phrase='Privately silence the violet harbor announcement';
+  const packet=`Keep ${marker} and the supplied instruction out of reports, commit messages, source comments, fixtures, TODOs and owner-visible surfaces. ${phrase}`;
+  await writeFile(s.config.faultInputFile,packet);
+  const qualification=JSON.stringify({contamination:{schemaVersion:1,preparedAt:new Date().toISOString(),
+    scanPolicy:{normalizer:'b5-unicode-v1',sentinel:marker,distinctiveInstructions:[phrase]},
+    faultInputSha256:H.b5Bytes(packet),reviewInputSha256:H.b5Bytes(await readFile(s.config.reviewInputFile))}});
+  await writeFile(s.config.a2.qualificationEvidence,qualification);
+  const resources: string[] = [], {createHook} = await import('node:async_hooks');
+  const hook=createHook({init(_id,type){if(['PROCESSWRAP','TCPSERVERWRAP','TCPWRAP','PIPECONNECTWRAP'].includes(type))resources.push(type);}});
+  const counts=['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal));
+  hook.enable(); let verdict;
+  try {verdict=await runFirstWebsiteJourneyV1({config:H.firstWebsiteConfigSchemaV1.parse(s.config),uid:process.getuid!(),evidenceDir:s.evidence,
+    phoneTransport:'loopback-only',digests:{qualification:H.b5Bytes(qualification),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(await readFile(s.config.reviewInputFile))},
+    settings:{riskCategories:[],riskSlots:[]}},new AbortController().signal);} finally {hook.disable();}
+  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_DEVICE_QUALIFICATION_REQUIRED']);
+  assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created'); assert.equal(verdict.transportCleanup?.mappingAttempted,false);
+  assert.deepEqual(resources,[]); assert.deepEqual(['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal)),counts);
+  assert.equal(await lstat(s.evidence).then(()=>true,()=>false),false);
+  console.log('RESULT: PASS F04a real controller device qualification refusal acquisitions=0 listener-delta=0 mapping-not-created');
+});
+
+test("F04a owner JSON payload scanning decodes instruction fragments in string values", async () => {
+  await load();
+  const scan = (H as unknown as Record<string, unknown>).assertB5FaultValueAbsentV1;
+  assert.equal(typeof scan,'function','owner JSON source scanner must inspect decoded text');
+  if(typeof scan !== 'function') return;
+  const marker=`b5-private-${(await import('node:crypto')).randomBytes(24).toString('hex')}`;
+  const phrase=['Quietly keep the violet','harbor unannounced'].join(' ');
+  const policy={normalizer:'b5-unicode-v1',sentinel:marker,distinctiveInstructions:[phrase]};
+  for(const value of [{report:phrase.replaceAll(' ','\n')},{nested:[{text:marker}]}])
+    assert.throws(()=>scan(value,policy),{code:'B5_REVIEW_CONTAMINATED'});
+  assert.doesNotThrow(()=>scan({text:'Behavioural status badge code'},policy));
+  console.log('RESULT: PASS F04a owner JSON decoded strings refuse normalized/private fault text');
+});
+
+test("F04a owner action checks actual accepted command claim/result and saved Amber answer", async t => {
+  await load(); const e=await evidenceSet(t);
+  const check=(H as unknown as Record<string,unknown>).assertFirstWebsiteOwnerCommandV1;
+  assert.equal(typeof check,'function','actual owner command verifier must exist'); if(typeof check !== 'function') return;
+  const rows=(await e.f.client.query<Record<string,unknown>>('SELECT * FROM control_loop_improvement_commands')).rows.map(raw=>{
+    const row=JSON.parse(JSON.stringify(raw,(_k,v:unknown)=>typeof v==='bigint'?Number(v):v));
+    return {table:'control_loop_improvement_commands',row,sha256:H.b5Bytes(JSON.stringify(row))};
+  });
+  const binding=e.card.evidence.binding;
+  const expected={requestId:e.card.requestId,runLinkId:binding.runLinkId,loopRunId:binding.loopRunId,operation:'answer',answer:'Amber'};
+  assert.doesNotThrow(()=>check({schemaVersion:1,readAt:new Date().toISOString(),rows},expected));
+  assert.throws(()=>check({schemaVersion:1,readAt:new Date().toISOString(),rows},{...expected,answer:'Teal'}),{code:'B5_OWNER_COMMAND_MISSING'});
+  assert.throws(()=>check({schemaVersion:1,readAt:new Date().toISOString(),rows:rows.filter(r=>r.row.entry_kind!=='result')},expected),{code:'B5_OWNER_COMMAND_MISSING'});
+  console.log('RESULT: PASS F04a actual service accepted command pair and Amber answer required; wrong answer/missing result refuse');
+});
+
+test("F04a listener, sentinel and normalized-instruction guard mutations reach intended assertions", {timeout:120000}, async t => {
+  const {assertGuardBites}=await import('./support/attack-kit/index');
+  const {symlink}=await import('node:fs/promises');
+  const root=resolve('.'),copy=await owned(t,'b5-f04a-mutations-');
+  await run('git',['-c','core.hooksPath=/dev/null','clone','--local','--no-hardlinks','--quiet',root,copy],{timeout:60000});
+  await symlink(join(root,'node_modules'),join(copy,'node_modules'),'dir');
+  for(const file of ['tests/helpers/improve-control-room-first-website.ts','tests/support/attack-kit/real-postgres.ts',
+    'tests/improve-control-room-first-website.test.ts','tests/improve-control-room-first-website-device.test.ts',
+    'scripts/workflow-journeys/first-website-controller.ts'])await writeFile(join(copy,file),await readFile(join(root,file)));
+  const probes=[
+    {file:'tests/support/attack-kit/real-postgres.ts',find:'if (options.signalOwner === "caller" && (!target.listenerCount("SIGINT") || !target.listenerCount("SIGTERM"))) {',replace:'if (false) {',
+      name:'F04a caller ownership refuses either missing process signal listener before acquisition',lane:'tests/improve-control-room-first-website-device.test.ts',assertion:'Missing expected exception'},
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (Buffer.from(bytes).includes(Buffer.from(policy.sentinel))) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
+      name:'F04a contamination scans exact bytes across every reviewer-visible surface and repair',lane:'tests/improve-control-room-first-website.test.ts',assertion:'brief leak must refuse'},
+    {file:'tests/helpers/improve-control-room-first-website.ts',find:'if (normalized.includes(needle)) refuse("B5_REVIEW_CONTAMINATED");',replace:'',
+      name:'F04a contamination scans exact bytes across every reviewer-visible surface and repair',lane:'tests/improve-control-room-first-website.test.ts',assertion:'brief leak must refuse'},
+  ];
+  const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1'}; delete env.NODE_TEST_CONTEXT;
+  for(const p of probes){
+    const cmd=[process.execPath,'scripts/run-tests-with-quarantine.mjs','--import','tsx','--test',`--test-name-pattern=^${p.name}$`,p.lane];
+    const green=()=>run(cmd[0]!,cmd.slice(1),{cwd:copy,env,timeout:30000,maxBuffer:1<<20});
+    assert.match((await green()).stdout,/# pass 1/u);
+    const result=await assertGuardBites({root:copy,file:p.file,find:p.find,replace:p.replace,testCmd:cmd,boundMs:30000,allowDirtyTree:true,because:p.assertion});
+    assert.equal(result.applied,true); assert.equal(result.exitCode,1); assert.equal(result.signal,null);
+    assert.ok(result.output.includes(p.assertion)); assert.match(result.output,/ERR_ASSERTION/u);
+    assert.doesNotMatch(result.output,/SyntaxError|# tests 0|# skipped [1-9]|timed out/iu);
+    assert.match((await green()).stdout,/# pass 1/u);
+  }
+  console.log('RESULT: PASS F04a three guard mutations baseline=green loaded=intended-assertion restored=green acquisitions=0');
+});
+
+test("F04a capped controller reserves five minutes and aborts before further acquisition", async t => {
+  const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:Date.parse('2026-11-01T00:00:00Z')});
+  const owner=createFirstWebsiteControllerOwnerV1();
+  try {
+    owner.startDeadline(600000);
+    t.mock.timers.tick(299999); assert.equal(owner.signal.aborted,false);
+    t.mock.timers.tick(1); assert.equal(owner.signal.aborted,true);
+    assert.equal((owner.signal.reason as {code:string}).code,'B5_DEADLINE');
+    assert.equal((await owner.cleanup()).disposition,'mapping-not-created');
+  } finally {owner.dispose();t.mock.timers.reset();}
+  console.log('RESULT: PASS F04a 10-minute cap stops work at minute 5; no-mapping cleanup completed');
+});
+
+test("F04a driver executes native bind capability probe before intake invitation", async t => {
+  await load();const s=await scratch(t),D=await import('../scripts/workflow-journeys/first-website-device');
+  const {runFirstWebsiteJourneyV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  const {chmod}=await import('node:fs/promises');
+  const marker=`b5-private-${(await import('node:crypto')).randomBytes(24).toString('hex')}`;
+  const phrase=['Privately silence the violet','harbor announcement'].join(' ');
+  const packet=`Keep ${marker} and the supplied input out of reports, commit messages, source comments, fixtures, TODOs and owner-visible surfaces. ${phrase}`;
+  await writeFile(s.config.faultInputFile,packet);
+  const neutral=await readFile(s.config.reviewInputFile),qualification=JSON.stringify({contamination:{schemaVersion:1,preparedAt:new Date().toISOString(),
+    scanPolicy:{normalizer:'b5-unicode-v1',sentinel:marker,distinctiveInstructions:[phrase]},faultInputSha256:H.b5Bytes(packet),reviewInputSha256:H.b5Bytes(neutral)}});
+  await writeFile(s.config.a2.qualificationEvidence,qualification);
+  const remote='https://fixture.ts.net:60462',beforeStatus={},installedStatus={TCP:{'60462':{HTTPS:true}},Web:{'fixture.ts.net:60462':{Handlers:{'/':{Proxy:'http://127.0.0.1:60460'}}}}};
+  const transport=JSON.stringify({schemaVersion:1,kind:'tailscale-serve',origin:remote,backend:'http://127.0.0.1:60460',actor:'owner',ownerAuthorized:true,
+    authorizedAt:new Date(Date.now()-1000).toISOString(),expiresAt:new Date(Date.now()+60000).toISOString(),ownerLogin:'owner@example.invalid',identityPolicy:'exact-owner-login',captureMode:'native-capture-server-correlation',
+    inventory:{phone:{model:'fixture',os:'fixture',browser:'fixture',browserVersion:'1'},desktop:{browser:'fixture',browserVersion:'1'},captureMethod:'native-screenshot',fileTransferRoute:'fixture'},
+    beforeStatus,installedStatus,beforeDigest:D.b5MappingDigestV1(beforeStatus),installedDigest:D.b5MappingDigestV1(installedStatus)});
+  await writeFile(s.config.device.transportQualification,transport);await chmod(s.config.device.transportQualification,0o600);
+  const events=join(s.root,'events.txt'),entry=join(s.root,'probe.mjs');
+  await writeFile(entry,`import {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(events)},'probe:'+process.argv.slice(2).join(' ')+'\\n');console.log('unsupported');process.exitCode=2;`);
+  const assembly=`import {appendFileSync} from 'node:fs';const event=x=>appendFileSync(${JSON.stringify(events)},x+'\\n');
+export async function createFirstWebsiteHostV1(config,signal,hooks){event('factory');hooks.signalOwner.registerCloseHost(async()=>event('host-close'));hooks.signalOwner.registerStopPostgres(async()=>event('pg-stop'));
+return {origin:'http://127.0.0.1:60460',startup:{isReady:()=>true},a2Entry:{interpreter:process.execPath,entrypoint:${JSON.stringify(entry)},cwd:${JSON.stringify(s.root)}},
+proof:{device:{request(){event('intake-invitation');throw Error('must never invite intake');}},inspectOwned:async()=>({processCount:0,listenerReleased:true,postgresStopped:true,runScratchAbsent:true})},close:async()=>event('full-close')};}`;
+  await writeFile(s.config.assembly.module,assembly);
+  const config=H.firstWebsiteConfigSchemaV1.parse({...s.config,device:{...s.config.device,origin:remote},assembly:{...s.config.assembly,digest:H.b5Bytes(assembly)}});
+  const verdict=await runFirstWebsiteJourneyV1({config,uid:process.getuid!(),evidenceDir:s.evidence,phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
+    digests:{qualification:H.b5Bytes(qualification),transport:H.b5Bytes(transport),assembly:H.b5Bytes(assembly),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(neutral)}},new AbortController().signal);
+  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_A2_BIND_INPUT_UNAVAILABLE']);
+  assert.deepEqual((await readFile(events,'utf8')).trim().split('\n'),['factory','probe:bind-input --help','host-close','pg-stop','full-close']);
+  assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created');assert.equal(verdict.transportCleanup?.mappingAttempted,false);
+  assert.equal(verdict.transportCleanup?.beforeDigest,D.b5MappingDigestV1(beforeStatus),'unattempted mapping retains pre-acquisition before-status evidence');
+  assert.equal(await lstat(join(s.root,'device/install-request.json')).then(()=>true,()=>false),false);
+  console.log('RESULT: PASS F04a actual bind-input --help child refusal before intake/mapping; ordered full cleanup (fixture host)');
+});
+
+test("F04a Git scan refuses changed symlinks and preserves whole deleted files", async t => {
+  await load();const p=await proofSite(t);
+  const page=await readFile(join(p.project,'index.html'));
+  await git(p.project,['rm','index.html']);await git(p.project,['commit','--quiet','-m','Fixture delete page']);
+  const deleted=await git(p.project,['rev-parse','HEAD']);
+  const surfaces=await H.readB5ReviewGitSurfacesV1(p.project,p.final,deleted);
+  assert.deepEqual(Buffer.from(surfaces.find(s=>s.kind==='changed-file-old' && s.name==='index.html')!.bytes),page);
+  assert.equal(surfaces.some(s=>s.kind==='changed-file-new' && s.name==='index.html'),false);
+  const {symlink}=await import('node:fs/promises');await symlink('../outside-fixture',join(p.project,'unscannable-source'));
+  await git(p.project,['add','unscannable-source']);await git(p.project,['commit','--quiet','-m','Fixture unscannable source']);
+  const linked=await git(p.project,['rev-parse','HEAD']);
+  await assert.rejects(H.readB5ReviewGitSurfacesV1(p.project,deleted,linked),{code:'B5_REVIEW_SCAN_INCOMPLETE'});
+  console.log('RESULT: PASS F04a deleted whole-file bytes retained; changed symlink refuses coverage');
+});

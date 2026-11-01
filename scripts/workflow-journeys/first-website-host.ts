@@ -278,7 +278,7 @@ export async function createFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfi
   const config = firstWebsiteConfigSchemaV1.parse(input), deadline = new AbortController();
   const combined = AbortSignal.any([signal, deadline.signal]);
   const cleanupBudgetMs = Math.min(300_000, Math.floor(config.maxDurationMs / 4));
-  const timer = setTimeout(() => deadline.abort(new B5RefusalV1("B5_HOST_DEADLINE")), config.maxDurationMs - cleanupBudgetMs);
+  const timer = hooks.signalOwner ? undefined : setTimeout(() => deadline.abort(new B5RefusalV1("B5_HOST_DEADLINE")), config.maxDurationMs - cleanupBudgetMs);
   const stopTimer = () => clearTimeout(timer);
   combined.addEventListener("abort", stopTimer, { once: true });
   try {
@@ -298,6 +298,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   const prepared = await validateFirstWebsiteHostV1(input, hooks.signalOwner);
   signal.throwIfAborted();
   const { config, handoff, assets, entry } = prepared, root = config.scratchRoot;
+  if (hooks.signalOwner) need(typeof hooks.signalOwner.registerStopPostgres === "function", "B5_HOST_PG_STOP_PORT_REQUIRED");
   const pgOwnership = hooks.signalOwner ? { signalOwner: "caller" as const, cleanup: () => hooks.signalOwner!.cleanup() } : {};
   if (prepared.transport) {
     assertB5DeviceSignalCleanupV1({ signalOwner: pgOwnership.signalOwner, cleanup: hooks.signalOwner?.cleanup });
@@ -433,12 +434,15 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
     } catch (error) { await close(); throw error; }
   }
 
-  hooks.signalOwner?.registerCloseHost(() => {
-    void close().catch(() => {});
-    return stopServing();
-  });
+  hooks.signalOwner?.registerCloseHost(stopServing);
   const done = withRealPostgres(async pg => {
     pgRef = pg;
+    hooks.signalOwner?.registerStopPostgres?.(async () => {
+      try { await pg.stop(); }
+      finally { finish.resolve(); }
+      try { await done; }
+      finally { registry.application = undefined; registry.claimed = cleanupFailed || !pgClean; }
+    });
     try {
       starting = (async () => {
         need(pg.postmasterPidCaptured, "B5_HOST_PG_OWNERSHIP");
@@ -474,7 +478,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
               for (const table of B5_SNAPSHOT_TABLES) {
                 const columns = table === "control_loop_update_candidates" ? "id,request_id,run_link_id,candidate_revision,record_digest"
                   : table === "control_loop_improvement_inputs" ? "request_id,version"
-                  : table === "control_loop_improvement_commands" ? "command_id,entry_kind" : "id";
+                  : table === "control_loop_improvement_commands" ? "command_id,entry_kind,request_id,operation,binding,result,created_at" : "id";
                 const values = await tx.query<Record<string, unknown>>(`SELECT ${columns} FROM ${table} WHERE tenant_id=$1`, [scope.tenantId]);
                 for (const raw of values.rows) {
                   const row = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
@@ -606,7 +610,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       await attempt(() => current?.close());
       await attempt(() => deviceClosed);
       if (failures.length) { cleanupFailed = true; throw new B5RefusalV1("B5_HOST_CLEANUP_UNCERTAIN"); }
-    } finally { ownerCode = ""; finish.resolve(); }
+    } finally { ownerCode = ""; if (!hooks.signalOwner) finish.resolve(); }
   })(); }
   function close() { return closing ??= (async () => {
     signal.removeEventListener("abort", aborted);
@@ -617,8 +621,10 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
     if (cleanupFailed) throw new B5RefusalV1("B5_HOST_CLEANUP_UNCERTAIN");
   })(); }
   function aborted() { void close().catch(() => {}); }
-  signal.addEventListener("abort", aborted, { once: true });
-  if (signal.aborted) aborted();
+  if (!hooks.signalOwner) {
+    signal.addEventListener("abort", aborted, { once: true });
+    if (signal.aborted) aborted();
+  }
   try { const host = await ready.promise; signal.throwIfAborted(); return host; }
   catch (error) { await close(); throw error; }
 }

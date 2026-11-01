@@ -300,7 +300,7 @@ export const b5RemovalReceiptSchemaV1 = z.object({ schemaVersion: z.literal(1), 
   beforeDigest: digest, installedDigest: digest,
 }).strict();
 export type B5RemovalReceiptV1 = z.infer<typeof b5RemovalReceiptSchemaV1>;
-export type B5MappingDispositionV1 = { disposition: "mapping-removed" | "mapping-outstanding"; hostStopped: boolean;
+export type B5MappingDispositionV1 = { disposition: "mapping-removed" | "mapping-outstanding"; hostStopped: boolean; comparison: boolean | null;
   failures: string[]; removalReceiptDigest?: string; beforeDigest: string; installedDigest: string; afterDigest?: string };
 async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, code: string) {
   const abort = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
@@ -318,18 +318,23 @@ export function createB5DeviceCleanupV1(q: B5TransportQualificationV1, ports: {
   let closing: Promise<B5MappingDispositionV1> | undefined;
   const now = ports.now ?? Date.now;
   return () => closing ??= (async () => {
-    const result: B5MappingDispositionV1 = { disposition: "mapping-outstanding", hostStopped: false, failures: [], beforeDigest: q.beforeDigest, installedDigest: q.installedDigest };
+    const result: B5MappingDispositionV1 = { disposition: "mapping-outstanding", hostStopped: false, comparison: null, failures: [], beforeDigest: q.beforeDigest, installedDigest: q.installedDigest };
     try { await bounded(ports.closeHost, Math.min(60_000, ports.closeMs ?? 60_000), "B5_DEVICE_HOST_CLOSE_TIMEOUT"); result.hostStopped = true; }
     catch (error) { result.failures.push(error instanceof B5DeviceRefusalV1 ? error.code : "B5_DEVICE_HOST_CLEANUP"); }
     const removalNonce = randomBytes(16).toString("hex"), requestedAt = new Date(now()).toISOString();
     try {
-      const receipt = parse(b5RemovalReceiptSchemaV1, await bounded(signal => ports.requestRemoval({ removalNonce, requestedAt }, signal),
-        Math.min(120_000, ports.removalMs ?? 120_000), "B5_DEVICE_REMOVAL_TIMEOUT"), "B5_DEVICE_REMOVAL_RECEIPT");
+      const value = await bounded(signal => ports.requestRemoval({ removalNonce, requestedAt }, signal),
+        Math.min(120_000, ports.removalMs ?? 120_000), "B5_DEVICE_REMOVAL_TIMEOUT");
+      result.removalReceiptDigest = b5DeviceHashV1(stable(value));
+      const receipt = parse(b5RemovalReceiptSchemaV1, value, "B5_DEVICE_REMOVAL_RECEIPT");
+      result.afterDigest = b5MappingDigestV1(receipt.status.afterStatus);
       need(receipt.removalNonce === removalNonce && Date.parse(receipt.observedAt) >= Date.parse(requestedAt) && Date.parse(receipt.observedAt) <= now(), "B5_DEVICE_REMOVAL_RECEIPT");
       need(receipt.off.exitCode === 0 && receipt.status.exitCode === 0, "B5_DEVICE_REMOVAL_COMMAND");
       need(receipt.beforeDigest === q.beforeDigest && receipt.installedDigest === q.installedDigest
         && receipt.status.afterDigest === b5MappingDigestV1(receipt.status.afterStatus), "B5_DEVICE_MAPPING_DIGEST");
-      need(!proofPresent(receipt.status.afterStatus, q.origin) && stable(withoutProof(receipt.status.afterStatus, q.origin)) === stable(withoutProof(q.beforeStatus, q.origin)), "B5_DEVICE_MAPPING_DRIFT");
+      result.comparison = !proofPresent(receipt.status.afterStatus, q.origin)
+        && stable(withoutProof(receipt.status.afterStatus, q.origin)) === stable(withoutProof(q.beforeStatus, q.origin));
+      need(result.comparison, "B5_DEVICE_MAPPING_DRIFT");
       result.disposition = "mapping-removed"; result.removalReceiptDigest = b5DeviceHashV1(stable(receipt)); result.afterDigest = receipt.status.afterDigest;
     } catch (error) { result.failures.push(error instanceof B5DeviceRefusalV1 ? error.code : "B5_DEVICE_REMOVAL_RECEIPT"); }
     return result;

@@ -12,9 +12,9 @@
 // a lane that has the binaries and still skips is a broken lane, so the tests
 // call the helper and fail rather than reporting a green skip.
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
@@ -571,11 +571,11 @@ function nativeCommand(pgBin: string, run: string, name: string, args: string[])
   return [binary, args];
 }
 
-function native(pgBin: string, run: string, name: string, args: string[]) {
+function native(pgBin: string, run: string, name: string, args: string[], timeout = 120_000) {
   const [file, argv] = nativeCommand(pgBin, run, name, args);
   return exec(file, argv, {
     env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" },
-    timeout: 120_000, maxBuffer: 1 << 26,
+    timeout, maxBuffer: 1 << 26,
   });
 }
 
@@ -662,35 +662,55 @@ function shortSocketDirectory(run: string, port: number): string {
  */
 const runRoot = (): string => process.env.ATTACK_KIT_RUN_ROOT?.trim() || tmpdir();
 
-function validateSignalOwner(options: Pick<WithRealPostgresOptions, "signalOwner" | "cleanup">) {
+function validateSignalOwner(options: Pick<WithRealPostgresOptions, "signalOwner" | "cleanup">,
+  target: Pick<NodeJS.Process, "listenerCount"> = process) {
   if (options.signalOwner !== undefined && options.signalOwner !== "helper" && options.signalOwner !== "caller") {
     throw new Error("attack_kit_signal_owner_invalid");
   }
   if (options.signalOwner === "caller" && typeof options.cleanup !== "function") {
     throw new Error("attack_kit_caller_cleanup_required");
   }
+  if (options.signalOwner === "caller" && (!target.listenerCount("SIGINT") || !target.listenerCount("SIGTERM"))) {
+    throw new Error("attack_kit_caller_signal_listeners_required");
+  }
 }
 
-/** The actual cluster teardown callback, also exercised without native PG.
- * Caller cleanup may fail; the stop is still awaited before propagating it.
- * The caller must own signals before acquisition and await this teardown. */
+/** Plain idempotent PG stop. Caller mode never calls the outer cleanup.
+ * The 60-second caller bound includes an independent synchronous fallback;
+ * production supplies that fallback before any postmaster can start. */
 export function createPostgresTeardown(stop: () => Promise<void>,
   options: Pick<WithRealPostgresOptions, "signalOwner" | "cleanup">,
-  target: Pick<NodeJS.Process, "once" | "removeListener" | "exit"> = process): () => Promise<void> {
-  validateSignalOwner(options);
+  target: Pick<NodeJS.Process, "once" | "removeListener" | "exit" | "listenerCount" | "exitCode"> = process,
+  safety?: { exitStop: () => void; boundMs?: number }): () => Promise<void> {
+  validateSignalOwner(options, target);
   const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
   const onSignal = (signal: NodeJS.Signals) => {
-    void stop().finally(() => {
-      target.exit(signal === "SIGINT" ? 130 : 143);
+    void stop().finally(() => { target.exit(signal === "SIGINT" ? 130 : 143); });
+  };
+  const onExit = () => { try { safety?.exitStop(); } catch { target.exitCode = 1; } };
+  if (options.signalOwner !== "caller") for (const signal of signals) target.once(signal, onSignal);
+  else target.once("exit", onExit);
+  let closing: Promise<void> | undefined;
+  return () => {
+    if (closing) return closing;
+    if (options.signalOwner !== "caller") return closing = (async () => {
+      for (const signal of signals) target.removeListener(signal, onSignal);
+      await stop();
+    })();
+    return closing = Promise.resolve().then(async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([stop(), new Promise<never>((_, no) => {
+          timer = setTimeout(() => {
+            try { safety?.exitStop(); }
+            catch { no(new Error("attack_kit_caller_stop_unconfirmed")); return; }
+            no(new Error("attack_kit_caller_stop_timeout"));
+          }, Math.min(30_000, safety?.boundMs ?? 30_000));
+        })]);
+        target.removeListener("exit", onExit);
+      } finally { clearTimeout(timer); }
     });
   };
-  if (options.signalOwner !== "caller") for (const signal of signals) target.once(signal, onSignal);
-  let closing: Promise<void> | undefined;
-  return () => closing ??= (async () => {
-    for (const signal of signals) target.removeListener(signal, onSignal);
-    try { if (options.signalOwner === "caller") await options.cleanup!(); }
-    finally { await stop(); }
-  })();
 }
 
 /** One start/stop cycle, from `initdb` to a migrated, role-provisioned database. */
@@ -783,9 +803,11 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
               // stop the postmaster for real.
               return;
             }
-            await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", mode, "-w", "-t", "60", "stop"]);
+            await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", mode, "-w", "-t", options.signalOwner === "caller" ? "10" : "60", "stop"],
+              options.signalOwner === "caller" ? 12_000 : 120_000);
           },
           signal: (signal) => { process.kill(pid!, signal); },
+          ...(options.signalOwner === "caller" ? { graceMs: 1_000, tickMs: 20 } : {}),
         });
         for (const step of ladder.steps) {
           if (step.failed) {
@@ -824,7 +846,8 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
           // Report success without stopping anything, as a `pg_ctl` does when a
           // postmaster will not take the shutdown request.
         } else {
-          await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"]);
+          await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", options.signalOwner === "caller" ? "10" : "30", "stop"],
+            options.signalOwner === "caller" ? 12_000 : 120_000);
         }
       } catch (error) {
         // Expected when the postmaster never came up, or is already gone; the
@@ -834,7 +857,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       const stillRecorded = await postmasterAlive(dataDirectory);
       let statusReportsRunning = false;
       try {
-        await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "status"]);
+        await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "status"], options.signalOwner === "caller" ? 3_000 : 120_000);
         statusReportsRunning = true;
       } catch {
         // pg_ctl status exits non-zero when no postmaster is running.
@@ -866,7 +889,30 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     }
   };
 
-  const teardown = createPostgresTeardown(stop, options);
+  const exitStop = () => {
+    if (stopped) return;
+    const invoke = (args: string[], timeout: number) => {
+      const [file, argv] = nativeCommand(pgBin, run, "pg_ctl", args);
+      return execFileSync(file, argv, { timeout, stdio: "ignore", env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", LC_ALL: "C" } });
+    };
+    for (const mode of ["fast", "immediate"]) {
+      try { invoke(["-D", dataDirectory, "-m", mode, "-w", "-t", "8", "stop"], 10_000); } catch { /* Verify independently below. */ }
+      let running = false;
+      try { invoke(["-D", dataDirectory, "status"], 2_000); running = true; } catch { /* Retained PID is also checked. */ }
+      let recorded: number | undefined;
+      try {
+        const text = readFileSync(join(dataDirectory, "postmaster.pid"), "utf8").split("\n")[0]?.trim();
+        if (text && /^\d+$/u.test(text)) recorded = Number(text);
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      const until = Date.now() + 500;
+      while ((pidAlive(postmasterPid) || pidAlive(recorded)) && Date.now() < until)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      if (!running && !pidAlive(postmasterPid) && !pidAlive(recorded)) return;
+    }
+    // Preserve data and report failure rather than hiding an orphan.
+    throw new Error("attack_kit_exit_stop_unconfirmed");
+  };
+  const teardown = createPostgresTeardown(stop, options, process, { exitStop });
 
   try {
     await mkdir(socketDirectory, { mode: 0o700 });

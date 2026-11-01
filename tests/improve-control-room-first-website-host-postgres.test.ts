@@ -108,7 +108,7 @@ test("B5 host-postgres frozen native gate cannot skip to green", { timeout: 60_0
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("F03a snapshot queries only schema-derived identifiers and candidate digests", async () => {
+test("F04a snapshot queries schema-derived identifiers, command evidence and candidate digests", async () => {
   const source = await readFile("scripts/workflow-journeys/first-website-host.ts", "utf8");
   const body = /readSnapshot\(\) \{ return ownedRead\(async \(\) => \{([\s\S]*?)\n          \}\); \},/u.exec(source)?.[1];
   assert.ok(body);
@@ -141,12 +141,15 @@ test("F03a snapshot queries only schema-derived identifiers and candidate digest
       for (const column of selected) {
         assert.ok(schemaColumns.has(column), `${table}.${column} must exist in its CREATE TABLE migration`);
         assert.ok(primaryKey.includes(column) || (table === "control_loop_update_candidates"
-          && ["request_id", "run_link_id", "candidate_revision", "record_digest"].includes(column)),
+          && ["request_id", "run_link_id", "candidate_revision", "record_digest"].includes(column))
+          || table === "control_loop_improvement_commands" && ["request_id", "operation", "binding", "result", "created_at"].includes(column),
           `${table}.${column} must be a key or candidate proof identifier/digest`);
       }
       for (const key of primaryKey.filter(column => column !== "tenant_id")) {
         assert.ok(selected.includes(key), `${table} projection must preserve primary key ${key}`);
       }
+      if (table === "control_loop_improvement_commands") for (const field of ["request_id", "operation", "binding", "result", "created_at"])
+        assert.ok(selected.includes(field), `F04a actual owner command evidence must include ${field}`);
       queriedTables.push(table!);
       // Real journal shape: claim/result share command_id but are distinct rows.
       const rows = table === "control_loop_improvement_commands"

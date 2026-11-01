@@ -249,6 +249,10 @@ test("F03b cleanup records outstanding on absent/late/failed/drifting removal an
       return receipt;
     } });
     const result = await cleanup(); assert.equal(result.disposition, "mapping-outstanding", kind); assert.equal(result.failures.length, 1, kind); assert.equal(requested, 1);
+    if (["command", "status", "drift", "digest", "retained-port"].includes(kind)) {
+      assert.match(result.removalReceiptDigest ?? "", /^sha256:[a-f0-9]{64}$/u, "F04a failed cleanup retains available receipt digest");
+      assert.match(result.afterDigest ?? "", /^sha256:[a-f0-9]{64}$/u, "F04a failed cleanup retains available actual after-status digest");
+    }
   }
   let requested = 0;
   const failed = await createB5DeviceCleanupV1(q, { now: () => now, async closeHost() { throw Error("failure"); },
@@ -350,32 +354,25 @@ test("F03b mailbox close drains an already-started receipt and refuses new work"
 });
 
 
-test("F03b caller ownership waits for the real helper cleanup callback before PG stop and exit", async () => {
-  const pg = await import("./support/attack-kit/real-postgres");
-  assert.equal(typeof pg.createPostgresTeardown, "function", "cooperative helper callback must exist");
-  const events: string[] = [], target = new (await import("node:events")).EventEmitter();
-  let release!: () => void;
-  const receipt = new Promise<void>(yes => { release = yes; });
-  const q = qualification();
-  const cleanup = createB5DeviceCleanupV1(q, { now: () => now,
-    async closeHost() { events.push("host-close"); },
-    async requestRemoval(request) { await receipt; events.push("owner-removal-receipt"); return removal(q, request); } });
-  const teardown = pg.createPostgresTeardown(async () => { events.push("pg-stop"); },
-    { signalOwner: "caller", cleanup }, target as never);
-  assert.equal(target.listenerCount("SIGTERM"), 0);
-  assert.equal(target.listenerCount("SIGINT"), 0);
-  const closing = teardown();
-  const callers = Array.from({ length: 24 }, () => teardown());
-  assert.ok(callers.every(work => work === closing), "24 concurrent callers share one teardown");
-  const stopped = closing.finally(() => { events.push("exit-143"); });
-  await new Promise<void>(yes => setImmediate(yes));
-  assert.deepEqual(events, ["host-close"]);
-  release(); await stopped;
-  assert.deepEqual(events, ["host-close", "owner-removal-receipt", "pg-stop", "exit-143"]);
-  await teardown(); assert.equal(events.filter(x => x === "pg-stop").length, 1);
-  assert.doesNotThrow(() => assertB5DeviceSignalCleanupV1({ signalOwner: "caller", cleanup }));
-  assert.throws(() => assertB5DeviceSignalCleanupV1(), { code: "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED" });
-  console.log("RESULT: PASS real helper callback host-close -> owner-removal-receipt -> pg-stop -> exit-143");
+test("F04a caller PG stop never calls outer cleanup, is memoized and awaits stop", async () => {
+  const { createPostgresTeardown } = await import("./support/attack-kit/real-postgres");
+  const target = new (await import("node:events")).EventEmitter();
+  const protect = () => {};
+  target.on("SIGINT", protect); target.on("SIGTERM", protect);
+  let release!: () => void, stops = 0, callbacks = 0;
+  const barrier = new Promise<void>(yes => { release = yes; });
+  let teardown!: () => Promise<void>;
+  const cleanup = async () => { callbacks++; await Promise.resolve(); await teardown(); };
+  teardown = createPostgresTeardown(async () => { stops++; await barrier; }, { signalOwner: "caller", cleanup }, target as never);
+  const work = teardown();
+  assert.equal(callbacks, 0, "plain stop must not recurse into outer cleanup");
+  assert.ok(Array.from({ length: 24 }, () => teardown()).every(p => p === work));
+  let completed = false; void work.then(() => { completed = true; });
+  await new Promise<void>(yes => setImmediate(yes)); assert.equal(completed, false);
+  release(); await work; assert.equal(stops, 1); assert.equal(callbacks, 0);
+  assert.equal(target.listenerCount("SIGINT"), 1); assert.equal(target.listenerCount("SIGTERM"), 1);
+  assert.equal(target.listenerCount("exit"), 0, "successful stop removes the fallback exit hook");
+  console.log("RESULT: PASS F04a caller stop no-cycle memoized=24 awaits-stop caller-listeners-retained");
 });
 
 test("F03b helper refuses caller ownership without cleanup before acquisition", async () => {
@@ -386,9 +383,23 @@ test("F03b helper refuses caller ownership without cleanup before acquisition", 
     /attack_kit_caller_cleanup_required/u);
 });
 
-test("F03b helper default signal protection and cleanup failure fallback", async () => {
+test("F04a caller ownership refuses either missing process signal listener before acquisition", async () => {
+  const { createPostgresTeardown, withRealPostgres } = await import("./support/attack-kit/real-postgres");
+  const target = new (await import("node:events")).EventEmitter();
+  const options = { signalOwner: "caller" as const, cleanup: async () => {} };
+  assert.throws(() => createPostgresTeardown(async () => {}, options, target as never), /attack_kit_caller_signal_listeners_required/u);
+  target.on("SIGTERM", () => {});
+  assert.throws(() => createPostgresTeardown(async () => {}, options, target as never), /attack_kit_caller_signal_listeners_required/u);
+  target.removeAllListeners(); target.on("SIGINT", () => {});
+  assert.throws(() => createPostgresTeardown(async () => {}, options, target as never), /attack_kit_caller_signal_listeners_required/u);
+  if (!process.listenerCount("SIGINT") || !process.listenerCount("SIGTERM"))
+    await assert.rejects(withRealPostgres(async () => { assert.fail("must refuse before acquisition"); },
+      { port: 60470, allowedPorts: [60470], ...options }), /attack_kit_caller_signal_listeners_required/u);
+  console.log("RESULT: PASS F04a LOW-2 missing SIGINT or SIGTERM refuses before acquisition");
+});
+
+test("F03b helper default signal protection unchanged", async () => {
   const pg = await import("./support/attack-kit/real-postgres");
-  assert.equal(typeof pg.createPostgresTeardown, "function");
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     const events: string[] = [], target = new (await import("node:events")).EventEmitter();
     Object.assign(target, { exit(code: number) { events.push(`exit-${code}`); } });
@@ -398,28 +409,26 @@ test("F03b helper default signal protection and cleanup failure fallback", async
     assert.deepEqual(events, ["pg-stop", signal === "SIGINT" ? "exit-130" : "exit-143"]);
     await teardown(); assert.equal(target.listenerCount("SIGINT"), 0); assert.equal(target.listenerCount("SIGTERM"), 0);
   }
-  let stopped = false;
-  const teardown = pg.createPostgresTeardown(async () => { stopped = true; }, {
-    signalOwner: "caller", cleanup: async () => { throw new Error("cleanup-failed"); },
-  });
-  await assert.rejects(teardown(), /cleanup-failed/u); assert.equal(stopped, true);
-  console.log("RESULT: PASS helper default signal exit codes unchanged; throwing caller cleanup still stops PG");
+  console.log("RESULT: PASS helper default signal exit codes unchanged");
 });
 
-test("F03b bounded missing owner receipt still reaches helper PG stop", async () => {
+test("F04a outer cleanup owns host then bounded receipt then awaited PG stop", async () => {
   const { createPostgresTeardown } = await import("./support/attack-kit/real-postgres");
+  const target = new (await import("node:events")).EventEmitter();
+  target.on("SIGINT", () => {}); target.on("SIGTERM", () => {});
   const events: string[] = [];
-  const cleanup = createB5DeviceCleanupV1(qualification(), {
+  let work: Promise<unknown> | undefined;
+  const removalCleanup = createB5DeviceCleanupV1(qualification(), {
     now: () => now, removalMs: 5,
     async closeHost() { events.push("host-close"); },
     async requestRemoval() { events.push("owner-removal-request"); return new Promise(() => {}); },
   });
-  const teardown = createPostgresTeardown(async () => { events.push("pg-stop"); }, { signalOwner: "caller", cleanup });
-  await teardown();
+  const cleanup = () => work ??= (async () => { try { return await removalCleanup(); } finally { await stop(); } })();
+  const stop = createPostgresTeardown(async () => { await Promise.resolve(); events.push("pg-stop"); }, { signalOwner: "caller", cleanup }, target as never);
+  await cleanup();
   assert.deepEqual(events, ["host-close", "owner-removal-request", "pg-stop"]);
-  assert.equal((await cleanup()).disposition, "mapping-outstanding");
-  assert.deepEqual((await cleanup()).failures, ["B5_DEVICE_REMOVAL_TIMEOUT"]);
-  console.log("RESULT: PASS bounded missing receipt reports mapping-outstanding before PG stop");
+  assert.equal((await removalCleanup()).disposition, "mapping-outstanding");
+  console.log("RESULT: PASS F04a bounded missing receipt still awaits PG stop without cycle");
 });
 
 test("F03b remote preflight retains its fence unless the caller supplies the cleanup handle", async t => {
@@ -481,4 +490,35 @@ test("F04a repeated correlated document reads return code-only refusals without 
     }
     assert.deepEqual(mailbox.observation(), before, "a reload must not replace the evidence observation");
   }
+});
+
+test("F04a caller-only PG exit hook never enters outer cleanup and remains until verified stop", async () => {
+  const { createPostgresTeardown } = await import("./support/attack-kit/real-postgres");
+  const target = new (await import("node:events")).EventEmitter();
+  target.on('SIGINT', () => {}); target.on('SIGTERM', () => {});
+  const events: string[] = [];
+  const stop = createPostgresTeardown(async () => { events.push('pg-stop'); }, {
+    signalOwner: 'caller', cleanup: async () => { assert.fail('exit must never call outer cleanup'); },
+  }, target as never, { exitStop: () => { events.push('sync-pg-stop'); } });
+  assert.equal(target.listenerCount('exit'), 1);
+  target.emit('exit', 143); assert.deepEqual(events, ['sync-pg-stop']);
+  await stop(); assert.deepEqual(events, ['sync-pg-stop','pg-stop']);
+  assert.equal(target.listenerCount('exit'), 0);
+  const wedged = new (await import("node:events")).EventEmitter();
+  wedged.on('SIGINT', () => {}); wedged.on('SIGTERM', () => {});
+  let fallback = 0;
+  const bounded = createPostgresTeardown(async () => new Promise(() => {}), { signalOwner: 'caller', cleanup: async () => {} },
+    wedged as never, { boundMs: 5, exitStop: () => { fallback++; } });
+  await assert.rejects(bounded(), /attack_kit_caller_stop_timeout/u);
+  assert.equal(fallback, 1); assert.equal(wedged.listenerCount('exit'), 1, 'unverified stop keeps exit protection');
+  console.log('RESULT: PASS F04a exit PG-only synchronous fallback; bounded stop failure retains protection');
+});
+
+test("F04a default helper begins its stop synchronously as before caller mode", async () => {
+  const {createPostgresTeardown}=await import('./support/attack-kit/real-postgres');
+  const target=new (await import('node:events')).EventEmitter();let called=false;
+  const teardown=createPostgresTeardown(async()=>{called=true;},{},target as never);
+  const work=teardown();assert.equal(called,true,'default helper must retain immediate stop initiation');
+  await work;assert.equal(target.listenerCount('SIGINT'),0);assert.equal(target.listenerCount('SIGTERM'),0);
+  console.log('RESULT: PASS F04a default helper stop initiation and signal listener removal unchanged');
 });

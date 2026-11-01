@@ -153,14 +153,14 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
   const deadline = setTimeout(() => abort.abort(new B5DeviceRefusalV1("B5_DEVICE_DEADLINE")), bodyBudget);
   const interrupt = () => abort.abort(new B5DeviceRefusalV1("B5_DEVICE_INTERRUPT"));
   process.on("SIGINT", interrupt); process.on("SIGTERM", interrupt);
-  let closeServing: (() => Promise<void>) | undefined;
+  let closeServing: (() => Promise<void>) | undefined, stopPostgres: (() => Promise<void>) | undefined;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
   let browser: Awaited<ReturnType<(typeof import("@playwright/test"))["chromium"]["launch"]>> | undefined;
   let reachedMapping = false, completed = false, reason: unknown, cleanupResult: Awaited<ReturnType<ReturnType<typeof createB5DeviceCleanupV1>>> | undefined;
   const deviceRoot = join(config.scratchRoot, "device");
   // Registered before ANY acquisition or owner installation request, including
   // uncertain/in-flight installation. Late host acquisition is still owned.
-  const cleanup = createB5DeviceCleanupV1(q, { async closeHost() {
+  const removalCleanup = createB5DeviceCleanupV1(q, { async closeHost() {
     await mkdir(deviceRoot, { mode: 0o700 }).catch(e => { if (e.code !== "EEXIST") throw e; });
     const failures: unknown[] = [];
     try { await writeB5DeviceRequestV1(join(deviceRoot, "install-cancelled.json"), { schemaVersion: 1, cancelledAt: new Date().toISOString(), cancelPendingInstall: true }); }
@@ -176,12 +176,16 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
       commands: [B5_DEVICE_OFF_COMMAND_V1, B5_DEVICE_STATUS_COMMAND_V1] });
     return waitB5DeviceJsonV1(join(deviceRoot, "removal-receipt.json"), deviceRoot, signal, Date.now() + 120_000);
   } });
+  let cleanupWork: Promise<Awaited<ReturnType<typeof removalCleanup>>> | undefined;
+  const cleanup = () => cleanupWork ??= (async () => {
+    try { return await removalCleanup(); } finally { await stopPostgres?.(); }
+  })();
   const interrupted = () => { void cleanup().catch(() => {}); };
   abort.signal.addEventListener("abort", interrupted, { once: true });
   try {
     const factory = await loadFirstWebsiteAssemblyV1(config);
     acquiring = factory(config, abort.signal, { signalOwner: {
-      registerCloseHost(close) { closeServing = close; }, cleanup,
+      registerCloseHost(close) { closeServing = close; }, registerStopPostgres(stop) { stopPostgres = stop; }, cleanup,
     } }).then(value => { host = value; return value; });
     host = await acquiring; abort.signal.throwIfAborted();
     code(host.proof.device, "B5_DEVICE_MAILBOX_REQUIRED");
@@ -316,8 +320,9 @@ test("B5 cooperative PG17 SIGTERM child stops PG after owner receipt", {
   const { spawn } = await import("node:child_process");
   const { pathToFileURL } = await import("node:url");
   const helper = pathToFileURL(resolve("tests/support/attack-kit/real-postgres.ts")).href;
-  for (const failure of [false, true]) {
-    const root = join(scratch, failure ? "throw" : "receipt");
+  for (const mode of ["receipt", "throw", "exit"] as const) {
+    const failure = mode === "throw";
+    const root = join(scratch, mode);
     await mkdir(root, { mode: 0o700 });
     const script = join(root, "signal-child.mjs");
     await writeFile(script, `
@@ -337,18 +342,20 @@ const cleanup = () => cleanupWork ??= (async () => {
   process.send({ kind: 'removal-request', events });
   await receipt;
   events.push('owner-removal-receipt');
-  if (${failure}) throw new Error('injected-cleanup-failure');
+  try { if (${failure}) throw new Error('injected-cleanup-failure'); }
+  finally { await pgRef?.stop(); events.push('pg-stop'); }
+
 })();
-const interrupt = () => { void cleanup().catch(() => {}); releaseBody(); };
-process.on('SIGTERM', interrupt);
-process.on('message', message => { if (message?.kind === 'receipt') releaseReceipt(); });
+const interrupt = () => { void cleanup().finally(() => releaseBody()).catch(() => {}); };
+process.on('SIGTERM', interrupt); process.on('SIGINT', interrupt);
+process.on('message', message => { if (message?.kind === 'receipt') releaseReceipt(); if (message?.kind === 'exit-now') process.exit(143); });
 try {
   const result = await withRealPostgres(async pg => {
     pgRef = pg;
     await new Promise((yes, no) => { server.once('error', no); server.listen(join(root, 'host.sock'), yes); });
     const pid = Number((await readFile(join(pg.dataDirectory, 'postmaster.pid'), 'utf8')).split('\\n')[0]);
     process.send({ kind: 'ready', pid, run: pg.runDirectory, data: pg.dataDirectory, socket: pg.socketDirectory });
-    await body;
+    await body; await cleanup();
   }, { port: 60470, allowedPorts: [60470,60471,60472,60473,60474,60475,60476,60477,60478,60479],
     pgBin: process.env.PG_BIN, signalOwner: 'caller', cleanup });
   if (!result.cleanedUp) throw new Error('cluster-not-cleaned');
@@ -357,9 +364,9 @@ try {
     process.send({ kind: 'failure', message: 'native-child-failure' }); process.exitCode = 1;
   }
 } finally {
-  if (pgRef && !await pgRef.isRunning()) events.push('pg-stop');
+  if (pgRef && await pgRef.isRunning()) throw new Error('postmaster-survived');
   if (server.listening) await new Promise(yes => server.close(yes));
-  clearInterval(keepAlive); process.removeListener('SIGTERM', interrupt);
+  clearInterval(keepAlive); process.removeListener('SIGTERM', interrupt); process.removeListener('SIGINT', interrupt);
 }
 events.push('exit-143');
 process.send({ kind: 'complete', events }, () => { process.disconnect(); process.exitCode ??= 143; });
@@ -389,17 +396,24 @@ process.send({ kind: 'complete', events }, () => { process.disconnect(); process
     try {
       ready = await message("ready") as unknown as typeof ready;
       assert.ok(ready && Number.isInteger(ready.pid) && ready.pid > 1);
-      child.kill("SIGTERM");
-      const waiting = await message("removal-request");
-      assert.deepEqual(waiting.events, ["host-close"]);
-      process.kill(ready.pid, 0); // PG must still be alive at the receipt barrier.
-      assert.equal(messages.some(m => m.kind === "complete"), false);
-      child.send({ kind: "receipt" });
-      const complete = await message("complete");
-      assert.deepEqual(complete.events, ["host-close", "owner-removal-receipt", "pg-stop", "exit-143"]);
-      assert.deepEqual(await exited, [143, null]);
-      assert.throws(() => process.kill(ready!.pid, 0), { code: "ESRCH" });
-      for (const path of [ready.run, ready.data, ready.socket]) assert.equal(await lstat(path).then(() => true, () => false), false);
+      if (mode === "exit") {
+        child.send({ kind: "exit-now" });
+        assert.deepEqual(await exited, [143, null]);
+        assert.equal(messages.some(m => m.kind === "removal-request"), false, "exit fallback must never invoke caller cleanup");
+        assert.throws(() => process.kill(ready!.pid, 0), { code: "ESRCH" });
+      } else {
+        child.kill("SIGTERM");
+        const waiting = await message("removal-request");
+        assert.deepEqual(waiting.events, ["host-close"]);
+        process.kill(ready.pid, 0); // PG must still be alive at the receipt barrier.
+        assert.equal(messages.some(m => m.kind === "complete"), false);
+        child.send({ kind: "receipt" });
+        const complete = await message("complete");
+        assert.deepEqual(complete.events, ["host-close", "owner-removal-receipt", "pg-stop", "exit-143"]);
+        assert.deepEqual(await exited, [143, null]);
+        assert.throws(() => process.kill(ready!.pid, 0), { code: "ESRCH" });
+        for (const path of [ready.run, ready.data, ready.socket]) assert.equal(await lstat(path).then(() => true, () => false), false);
+      }
     } finally {
       // Keep the child's cooperative receipt path available even if an assertion
       // fails. Reap its own PG before any last-resort child termination.
@@ -421,7 +435,13 @@ process.send({ kind: 'complete', events }, () => { process.disconnect(); process
           child.kill("SIGKILL"); await exited;
         }
       }
+      if (ready) {
+        const running = await exec(join(pgBin, "pg_ctl"), ["-D", ready.data, "status"], { timeout: 10_000 }).then(() => true, () => false);
+        if (running) await exec(join(pgBin, "pg_ctl"), ["-D", ready.data, "-m", "fast", "-w", "-t", "20", "stop"], { timeout: 30_000 });
+        assert.throws(() => process.kill(ready!.pid, 0), { code: "ESRCH" }, "native seam reaper left no postmaster");
+      }
+      if (mode === "exit") await rm(root, { recursive: true, force: true });
     }
   }
-  console.log("RESULT: PASS native PG17 SIGTERM receipt/throw paths host-close -> owner-removal-receipt -> pg-stop -> exit-143; orphaned-postgres=0");
+  console.log("RESULT: PASS native PG17 SIGTERM receipt/throw paths host-close -> owner-removal-receipt -> pg-stop -> exit-143; caller process.exit PG-only fallback; orphaned-postgres=0");
 });

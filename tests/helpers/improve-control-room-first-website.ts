@@ -5,13 +5,15 @@
 // selects a role or model; A2 and the qualified lineup do.
 import { B5DeviceRefusalV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, validateB5DeviceOriginV1 } from "../../scripts/workflow-journeys/first-website-device";
 import type { B5DeviceMailboxV1 } from "../../scripts/workflow-journeys/first-website-device";
+import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { loopBridgeBindingSchemaV1, loopBridgeOutcomeSchemaV1, type LoopBridgeOperationV1 } from "../../src/improve-control-room/v1/schemas";
 import { loopCandidateCardSchemaV1, type LoopCandidateCardV1 } from "../../src/improve-control-room/v1/loop-candidate-wire";
 const exec = promisify(execFile);
 const GIT_ENV: NodeJS.ProcessEnv = { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
@@ -70,12 +72,14 @@ export type FirstWebsiteHostV1 = {
   origin: string; // exact loopback assembly origin, separate from device.origin
   a2Entry: FirstWebsiteA2EntryV1;
   proof: FirstWebsiteProofV1;
-  close(): Promise<void>; // idempotent, drains/reaps every assembly-owned resource
+  close(): Promise<void>; // idempotent, drains/reaps every assembly-owned resource; caller cleanup must finish its separate PG stop port
 };
 export type FirstWebsiteCleanupOwnerV1 = {
   /** Registered before PG acquisition. Closes serving resources without waiting
    * for the caller's own removal receipt or PG shutdown. */
   registerCloseHost(close: () => Promise<void>): void;
+  /** Separate plain PG stop lets the outer owner place removal before PG. */
+  registerStopPostgres?(stop: () => Promise<void>): void;
   cleanup(): Promise<unknown>;
 };
 export type CreateFirstWebsiteHostV1 = (config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal,
@@ -149,6 +153,7 @@ async function portFree(port: number) {
 }
 
 export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
+  controllerOwner?: import("../../scripts/workflow-journeys/first-website-controller").B5ControllerOwnerV1;
   digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only" };
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
@@ -328,22 +333,26 @@ export type B5BindInputReceiptV1 = z.infer<typeof b5BindInputReceiptSchemaV1>;
 const B5_A2_OUTPUT_LIMIT = 1 << 20;
 /** Runs one A2 entry command with the adapter's positive environment allowlist: no
  * inherited service or sibling credentials, no HOME/PATH, no shell. */
-export async function runA2EntryV1(entry: FirstWebsiteA2EntryV1, args: readonly string[], timeoutMs = 60_000) {
+export async function runA2EntryV1(entry: FirstWebsiteA2EntryV1, args: readonly string[], timeoutMs = 60_000, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   return new Promise<{ code: number | null; stdout: string }>((done, fail) => {
     const child = spawn(entry.interpreter, [entry.entrypoint, ...args], { cwd: entry.cwd, shell: false,
       env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
     const output: Buffer[] = []; let bytes = 0, failed = false;
-    const timer = setTimeout(() => { failed = true; child.kill("SIGKILL"); }, timeoutMs);
+    const cancel = () => { failed = true; child.kill("SIGKILL"); };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    const timer = setTimeout(cancel, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > B5_A2_OUTPUT_LIMIT) { failed = true; child.kill("SIGKILL"); } else output.push(chunk); });
     child.stderr.on("data", () => {});
     child.on("error", () => { failed = true; });
-    child.on("close", code => { clearTimeout(timer);
+    child.on("close", code => { clearTimeout(timer); signal?.removeEventListener("abort", cancel);
       if (failed) fail(new B5RefusalV1("B5_A2_ENTRY_FAILED")); else done({ code, stdout: Buffer.concat(output).toString("utf8") }); });
   });
 }
 /** Before intake: the landed writer exists at the qualified entry and takes the documented options. */
-export async function probeBindInputCapabilityV1(entry: FirstWebsiteA2EntryV1) {
-  const help = await runA2EntryV1(entry, ["bind-input", "--help"]);
+export async function probeBindInputCapabilityV1(entry: FirstWebsiteA2EntryV1, signal?: AbortSignal) {
+  const help = await runA2EntryV1(entry, ["bind-input", "--help"], 60_000, signal);
   if (help.code !== 0 || !["--file", "--role", "--json"].every(option => help.stdout.includes(option))) refuse("B5_A2_BIND_INPUT_UNAVAILABLE");
 }
 /** After intake allocated `loopRunId` and before confirmation/Start: stage each scoped input's
@@ -351,17 +360,20 @@ export async function probeBindInputCapabilityV1(entry: FirstWebsiteA2EntryV1) {
  * check the returned receipt and the read-only bound copy. Any mismatch is a refusal; nothing
  * edits engine state directly. Returns the receipts for the manifest. */
 export async function bindFirstWebsiteInputsV1(input: { entry: FirstWebsiteA2EntryV1; loopRunId: string; stageDir: string;
-  files: Readonly<Record<"faultInput" | "reviewInput", string>>; digests: Readonly<Record<string, string>>; runWorkDir: string }) {
+  files: Readonly<Record<"faultInput" | "reviewInput", string>>; digests: Readonly<Record<string, string>>; runWorkDir: string; signal?: AbortSignal }) {
+  input.signal?.throwIfAborted();
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/u.test(input.loopRunId)) refuse("B5_INPUT_BINDING", "run");
+  await canonical(dirname(input.stageDir), "directory", "B5_INPUT_BINDING");
   await mkdir(input.stageDir, { recursive: false, mode: 0o700 }).catch(() => refuse("B5_INPUT_BINDING", "stage exists"));
   const receipts: B5BindInputReceiptV1[] = [];
   for (const binding of B5_INPUT_BINDINGS) {
+    input.signal?.throwIfAborted();
     const bytes = await readFile(input.files[binding.input]);
     if (b5Bytes(bytes) !== input.digests[binding.input]) refuse("B5_INPUT_CHANGED", binding.input);
     const staged = join(input.stageDir, `${binding.name}.md`);
     await writeFile(staged, bytes, { flag: "wx", mode: 0o400 });
     const result = await runA2EntryV1(input.entry, ["bind-input", input.loopRunId, binding.name, "--file", staged,
-      ...binding.roles.flatMap(role => ["--role", role]), "--json"]);
+      ...binding.roles.flatMap(role => ["--role", role]), "--json"], 60_000, input.signal);
     let envelope: { receipt?: unknown; error?: unknown };
     try { envelope = JSON.parse(result.stdout) as typeof envelope; } catch { return refuse("B5_INPUT_BINDING_REFUSED", binding.name); }
     if (result.code !== 0) refuse("B5_INPUT_BINDING_REFUSED", `${binding.name}:${typeof envelope.error === "string" ? envelope.error : "unknown"}`);
@@ -454,7 +466,8 @@ type B5SnapshotV1 = z.infer<typeof b5DatabaseSnapshotSchemaV1>;
 /** The qualified pins preflight validated from the lead's configuration, never read from the manifest. */
 export type B5QualifiedPinsV1 = { toolingRevision: string; schemaDigest: string; productBase: string; productHead: string; uid: number;
   digests: Readonly<Record<"settings" | "availability" | "authorization" | "qualification" | "assembly" | "faultInput" | "reviewInput", string>> };
-export type B5VerdictV1 = { state: "complete" | "incomplete"; reasons: string[] };
+export type B5VerdictV1 = { state: "complete" | "incomplete"; reasons: string[];
+  transportCleanup?: import("../../scripts/workflow-journeys/first-website-controller").B5ControllerCleanupV1 };
 
 const ms = (value: string) => Date.parse(value);
 /** (a) The main chain is real. Provenance is structural: the card the real service returned
@@ -579,7 +592,11 @@ export function assertCleanupRetainedV1(teardown: B5TeardownV1, card: LoopCandid
  * DOM/candidate facts independently. Refuses any changed, missing, stale or fixture-provenance
  * proof. Missing real phone evidence is INCOMPLETE, never a skip. */
 export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: { readCard: () => Promise<unknown>; candidateRepository: string;
-  pins: B5QualifiedPinsV1 }): Promise<B5VerdictV1> {
+  pins: B5QualifiedPinsV1; finishTeardown?: () => Promise<void> }): Promise<B5VerdictV1> {
+  const read = loopCandidateCardSchemaV1.safeParse(await input.readCard());
+  if (!read.success) refuse("B5_CARD_UNAVAILABLE");
+  const card = read.data!;
+  await input.finishTeardown?.();
   const load = async (path: string) => {
     if (!/^[a-z0-9][a-z0-9./-]{0,255}$/u.test(path) || path.includes("..") || !inside(evidenceDir, join(evidenceDir, path))) refuse("B5_ARTIFACT_BYTES", "path");
     await canonical(join(evidenceDir, path), "file", "B5_ARTIFACT_BYTES");
@@ -602,9 +619,6 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   const teardown = json(b5TeardownSchemaV1, artifacts.get("teardown.json")!, "B5_TEARDOWN_INVALID");
   const snapshot = json(b5DatabaseSnapshotSchemaV1, artifacts.get("database-snapshot.json")!, "B5_SNAPSHOT_INVALID");
   for (const entry of snapshot.rows) if (b5Bytes(JSON.stringify(entry.row)) !== entry.sha256) refuse("B5_SNAPSHOT_INVALID", entry.table);
-  const read = loopCandidateCardSchemaV1.safeParse(await input.readCard());
-  if (!read.success) refuse("B5_CARD_UNAVAILABLE");
-  const card = read.data!;
   assertHeadsAndBytesV1(manifest, checks, artifacts, card, journey);
   assertRealChainV1(manifest, card, snapshot, journey, input.pins);
   assertManifestPinsV1(manifest, card, journey, input.pins);
@@ -780,4 +794,169 @@ export async function loadFirstWebsiteAssemblyV1(config: Readonly<FirstWebsiteCo
   const create = module[B5_ASSEMBLY_EXPORT];
   if (typeof create !== "function") refuse("B5_ASSEMBLY_EXPORT");
   return create as CreateFirstWebsiteHostV1;
+}
+
+// ---------- private attempt/head contamination audits ----------
+export const b5FaultScanPolicySchemaV1 = z.object({
+  normalizer: z.literal("b5-unicode-v1"), sentinel: z.string().min(32).max(256),
+  distinctiveInstructions: z.array(z.string().min(20).max(4096)).min(1).max(32),
+}).strict();
+export type B5FaultScanPolicyV1 = z.infer<typeof b5FaultScanPolicySchemaV1>;
+/** NFKC plus Unicode upper/lower folding; punctuation, comment
+ * delimiters and whitespace are equivalent separators. Version is pinned in
+ * private policy and every audit; changing this algorithm invalidates audits. */
+export function normalizeB5FaultTextV1(value: string) {
+  return value.normalize("NFKC").toUpperCase().toLowerCase().normalize("NFKC").replace(/ς/gu, "σ")
+    .replace(/[\p{P}\p{S}\p{Z}\p{C}\s]+/gu, " ").trim();
+}
+export type B5ReviewSurfaceV1 = { kind: "brief" | "builder-report" | "commit-message" | "diff" |
+  "changed-file-old" | "changed-file-new" | "owner-payload" | "screenshot-source"; name: string; bytes: Uint8Array };
+export function assertB5FaultTextAbsentV1(bytes: Uint8Array, policy: B5FaultScanPolicyV1) {
+  const valid = b5FaultScanPolicySchemaV1.safeParse(policy);
+  if (!valid.success) refuse("B5_REVIEW_SCAN_POLICY");
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return refuse("B5_REVIEW_SCAN_INCOMPLETE"); }
+  if (Buffer.from(bytes).includes(Buffer.from(policy.sentinel))) refuse("B5_REVIEW_CONTAMINATED");
+  const normalized = normalizeB5FaultTextV1(text);
+  for (const phrase of policy.distinctiveInstructions) {
+    const needle = normalizeB5FaultTextV1(phrase);
+    if (needle.length < 16) refuse("B5_REVIEW_SCAN_POLICY");
+    if (normalized.includes(needle)) refuse("B5_REVIEW_CONTAMINATED");
+  }
+}
+/** The inventory must be derived from actual dispatch records and Git trees,
+ * never a list supplied by the builder. Save exact reviewed bytes privately
+ * BEFORE scanning, including failures; no matched text appears in the result. */
+export async function auditFirstWebsiteReviewV1(input: { root: string; attempt: number; head: string; dispatchDigest: string;
+  policy: B5FaultScanPolicyV1; expected: Pick<B5ReviewSurfaceV1, "kind" | "name">[]; surfaces: B5ReviewSurfaceV1[] }) {
+  const policy = b5FaultScanPolicySchemaV1.safeParse(input.policy);
+  if (!policy.success) refuse("B5_REVIEW_SCAN_POLICY");
+  input = { ...input, policy: policy.data!, expected: input.expected.map(s => ({ ...s })),
+    surfaces: input.surfaces.map(s => ({ ...s, bytes: Buffer.from(s.bytes) })) };
+  if (!Number.isSafeInteger(input.attempt) || input.attempt < 1 || !revision.safeParse(input.head).success
+    || !sha256.safeParse(input.dispatchDigest).success) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+  await canonical(input.root, "directory", "B5_REVIEW_SCAN_PATH");
+  const key = (s: { kind: string; name: string }) => JSON.stringify([s.kind, s.name]);
+  const expected = new Set(input.expected.map(key)), actual = new Set(input.surfaces.map(key));
+  if (!expected.size || expected.size !== input.expected.length || actual.size !== input.surfaces.length
+    || expected.size !== actual.size || [...expected].some(k => !actual.has(k))) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+  const directory = join(input.root, `review-audit-${input.attempt}-${input.head}`);
+  await mkdir(directory, { mode: 0o700 }).catch(() => refuse("B5_REVIEW_SCAN_PATH"));
+  const records: { kind: string; nameDigest: string; sha256: string; bytes: number; snapshot: string }[] = [];
+  for (const [index, surface] of input.surfaces.entries()) {
+    if (surface.bytes.byteLength > 1 << 20) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+    const bytes = Buffer.from(surface.bytes), snapshot = `${index}.bin`;
+    await writeFile(join(directory, snapshot), bytes, { flag: "wx", mode: 0o600 });
+    records.push({ kind: surface.kind, nameDigest: b5Bytes(surface.name), sha256: b5Bytes(bytes), bytes: bytes.length, snapshot });
+  }
+  const result = { schemaVersion: 1, normalizer: input.policy.normalizer, attempt: input.attempt, head: input.head,
+    dispatchDigest: input.dispatchDigest, policyDigest: b5Bytes(JSON.stringify(input.policy)), surfaces: records };
+  await writeFile(join(directory, "inventory.json"), JSON.stringify(result), { flag: "wx", mode: 0o600 });
+  for (const surface of input.surfaces) assertB5FaultTextAbsentV1(surface.bytes, input.policy);
+  await writeFile(join(directory, "clean.json"), JSON.stringify({ inventoryDigest: b5Bytes(JSON.stringify(result)) }), { flag: "wx", mode: 0o600 });
+  return result;
+}
+
+/** Immutable Git objects at the review's saved head, including old/deleted
+ * contents and full changed files (unchanged context included). Binary or
+ * oversized files fail coverage rather than being silently omitted. */
+export async function readB5ReviewGitSurfacesV1(repository: string, base: string, head: string): Promise<B5ReviewSurfaceV1[]> {
+  if (!revision.safeParse(base).success || !revision.safeParse(head).success) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+  const git = async (args: string[]) => (await exec("/usr/bin/git", ["-C", repository, "--literal-pathspecs", "-c", "core.fsmonitor=false",
+    "-c", "core.hooksPath=/dev/null", ...args], { env: GIT_ENV, encoding: "buffer", timeout: 30_000, maxBuffer: 1 << 20 })).stdout;
+  try {
+    await git(["merge-base", "--is-ancestor", base, head]);
+    const result: B5ReviewSurfaceV1[] = [
+      { kind: "diff", name: `${base}..${head}`, bytes: await git(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--full-index", base, head, "--"]) },
+      { kind: "commit-message", name: `${base}..${head}`, bytes: await git(["log", "--format=%B%x00", `${base}..${head}`, "--"]) },
+    ];
+    const names = new TextDecoder("utf-8", { fatal: true }).decode(await git(["diff", "--name-only", "--no-renames", "-z", base, head, "--"])).split("\0").filter(Boolean);
+    for (const name of names) {
+      if (name.startsWith("/") || name.split("/").some(p => p === ".." || p === ".git") || /[\0\r\n]/u.test(name)) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+      for (const [ref, kind] of [[base, "changed-file-old"], [head, "changed-file-new"]] as const) {
+        const entry = await git(["ls-tree", "-z", ref, "--", name]);
+        if (!entry.length) continue; // absent in this tree, e.g. added/deleted
+        const entries = new TextDecoder("utf-8", { fatal: true }).decode(entry).split("\0").filter(Boolean);
+        if (entries.length !== 1 || !/^100(?:644|755) blob [a-f0-9]{40}\t/u.test(entries[0]!)
+          || entries[0]!.slice(entries[0]!.indexOf("\t") + 1) !== name) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+        result.push({ kind, name, bytes: await git(["show", `${ref}:${name}`]) });
+      }
+    }
+    return result;
+  } catch (error) { if (error instanceof B5RefusalV1) throw error; return refuse("B5_REVIEW_SCAN_INCOMPLETE"); }
+}
+
+/** Bounded stable read for actual saved dispatch/report bytes. Never accepts
+ * credentials, symlinks or a file outside this disposable root. */
+export async function readFirstWebsitePrivateBytesV1(file: string, root: string) {
+  if (!inside(root, file)) refuse("B5_REVIEW_SCAN_PATH");
+  const before = await canonical(file, "file", "B5_REVIEW_SCAN_PATH");
+  if (before.uid !== process.getuid?.() || before.mode & 0o022) refuse("B5_REVIEW_SCAN_PATH");
+  const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = await fd.stat();
+    if (!stat.isFile() || stat.ino !== before.ino || stat.dev !== before.dev) refuse("B5_REVIEW_SCAN_CHANGED");
+    const buffer = Buffer.alloc(before.size + 1); let length = 0;
+    while (length < buffer.length) {
+      const read = await fd.read(buffer, length, buffer.length - length, null);
+      if (!read.bytesRead) break;
+      length += read.bytesRead;
+    }
+    const after = await fd.stat(), named = await canonical(file, "file", "B5_REVIEW_SCAN_PATH");
+    if (length !== before.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs
+      || named.ino !== stat.ino || named.dev !== stat.dev) refuse("B5_REVIEW_SCAN_CHANGED");
+    return buffer.subarray(0, length);
+  } finally { await fd.close(); }
+}
+
+/** Scan exact JSON source as well as decoded text used by owner renderers.
+ * Escaped newlines in transport bytes must not hide a displayed instruction. */
+export function assertB5FaultValueAbsentV1(value: unknown, policy: B5FaultScanPolicyV1) {
+  assertB5FaultTextAbsentV1(Buffer.from(JSON.stringify(value)), policy);
+  const pending: { value: unknown; depth: number }[] = [{ value, depth: 0 }]; let count = 0;
+  while (pending.length) {
+    const item = pending.pop()!;
+    if (++count > 100_000 || item.depth > 64) refuse("B5_REVIEW_SCAN_INCOMPLETE");
+    if (typeof item.value === "string") assertB5FaultTextAbsentV1(Buffer.from(item.value), policy);
+    else if (item.value && typeof item.value === "object") for (const [key, child] of Object.entries(item.value)) {
+      assertB5FaultTextAbsentV1(Buffer.from(key), policy);
+      pending.push({ value: child, depth: item.depth + 1 });
+    }
+  }
+}
+
+/** Check the actual append-only command journal after observing service status.
+ * A mailbox action word alone never proves an intake, answer or approval. */
+export function assertFirstWebsiteOwnerCommandV1(snapshot: Awaited<ReturnType<FirstWebsiteProofV1["readSnapshot"]>>, expected: {
+  requestId: string; runLinkId: string; loopRunId: string; operation: LoopBridgeOperationV1;
+  body?: Readonly<Record<string, unknown>>; answer?: string; inputVersion?: string | number; notBefore?: string;
+}) {
+  const rows = snapshot.rows.filter(entry => entry.table === "control_loop_improvement_commands").map(entry => {
+    if (entry.sha256 !== b5Bytes(JSON.stringify(entry.row))) refuse("B5_OWNER_COMMAND_INVALID");
+    return entry.row;
+  });
+  const found: string[] = [];
+  for (const claim of rows.filter(row => row.entry_kind === "claim" && row.operation === expected.operation && row.request_id === expected.requestId)) {
+    const parsed = loopBridgeBindingSchemaV1.safeParse(claim.binding);
+    if (!parsed.success) continue;
+    const binding = parsed.data;
+    if (binding.loopRunId !== expected.loopRunId || expected.operation !== "intake" && binding.runLinkId !== expected.runLinkId
+      || expected.inputVersion !== undefined && binding.inputVersion !== expected.inputVersion
+      || Object.entries(expected.body ?? {}).some(([key, value]) => JSON.stringify(binding.body[key]) !== JSON.stringify(value))) continue;
+    if (expected.answer !== undefined && (typeof binding.body.text !== "string"
+      || binding.body.text.trim().replace(/[.!]$/u, "").toLowerCase() !== expected.answer.toLowerCase())) continue;
+    const claimedAt = typeof claim.created_at === "string" ? Date.parse(claim.created_at) : NaN;
+    if (!Number.isFinite(claimedAt) || expected.notBefore !== undefined && claimedAt < Date.parse(expected.notBefore)) continue;
+    const results = rows.filter(row => row.command_id === claim.command_id && row.entry_kind === "result"
+      && row.request_id === expected.requestId && row.operation === expected.operation);
+    if (results.length !== 1 || JSON.stringify(results[0].binding) !== JSON.stringify(claim.binding)) continue;
+    const outcome = loopBridgeOutcomeSchemaV1.safeParse(results[0].result);
+    if (!outcome.success || outcome.data.state !== "accepted" || outcome.data.loopRunId !== binding.loopRunId
+      || outcome.data.toolingRevision !== binding.toolingRevision || typeof results[0].created_at !== "string"
+      || Date.parse(results[0].created_at) < claimedAt) continue;
+    found.push(String(claim.command_id));
+  }
+  if (found.length !== 1) refuse("B5_OWNER_COMMAND_MISSING");
+  return found[0]!;
 }
