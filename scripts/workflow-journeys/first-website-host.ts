@@ -1,6 +1,6 @@
 // Proof-only, inert Mac-local assembly with qualified device origin gates.
 // No installation discovery, transport command, intake or provider launch.
-import { B5DeviceRefusalV1, createB5DeviceMailboxV1, loadB5TransportV1, b5DeviceRemoteOriginsV1 } from "./first-website-device";
+import { assertB5DeviceSignalCleanupV1, B5DeviceRefusalV1, createB5DeviceMailboxV1, loadB5TransportV1, b5DeviceRemoteOriginsV1 } from "./first-website-device";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { lstat, readFile, readdir, realpath, writeFile } from "node:fs/promises";
@@ -78,7 +78,8 @@ export async function withFirstWebsiteOwnerCodeV1<T>(host: FirstWebsiteHostV1, u
 }
 
 /** Read-only packet checks finish before PG, listeners or recovery acquisition. */
-export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1> | undefined) {
+export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1> | undefined,
+  signalOwner?: import("../../tests/helpers/improve-control-room-first-website").FirstWebsiteCleanupOwnerV1) {
   need(input, "B5_A2_QUALIFICATION_REQUIRED");
   const config = firstWebsiteConfigSchemaV1.parse(input), root = config.scratchRoot;
   const st = await regular(root, root, true);
@@ -88,7 +89,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     && config.ports.postgresBase === B5_PORTS.postgresBase, "B5_PORT_RESERVATION");
 
   const preflight = await preflightFirstWebsiteV1({ configFile: join(root, "config/b5.json"),
-    evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts") });
+    evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts"), signalOwner });
   need(JSON.stringify(preflight.config) === JSON.stringify(config), "B5_HOST_CONFIG_CHANGED");
   const transport = config.device.origin === origin ? undefined : await loadB5TransportV1(
     config.device.transportQualification, root, config.device.origin, preflight.digests.transport);
@@ -266,7 +267,9 @@ function pool(pg: RealPostgres, role: "web" | "coordinator") {
 /** One factory call owns one PG lifetime. Every restart replaces only the
  * application/adapter/recovery/listener, preserving PG, corpus and integrity key.
  */
-export type FirstWebsiteAssemblyHooksV1 = { at?(stage: "pool-open" | "listener-bind" | "ready" | "closing" | "proof-read"): Promise<void> };
+export type FirstWebsiteAssemblyHooksV1 = {
+  signalOwner?: import("../../tests/helpers/improve-control-room-first-website").FirstWebsiteCleanupOwnerV1;
+  at?(stage: "pool-open" | "listener-bind" | "ready" | "closing" | "proof-read"): Promise<void> };
 const registries = new Map<string, { application?: ReturnType<typeof createMacLocalWebProcessV1>; claimed: boolean }>();
 
 export async function createFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal,
@@ -292,9 +295,14 @@ export async function createFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfi
 async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal,
   hooks: FirstWebsiteAssemblyHooksV1): Promise<FirstWebsiteHostV1> {
   signal.throwIfAborted();
-  const prepared = await validateFirstWebsiteHostV1(input);
+  const prepared = await validateFirstWebsiteHostV1(input, hooks.signalOwner);
   signal.throwIfAborted();
   const { config, handoff, assets, entry } = prepared, root = config.scratchRoot;
+  const pgOwnership = hooks.signalOwner ? { signalOwner: "caller" as const, cleanup: () => hooks.signalOwner!.cleanup() } : {};
+  if (prepared.transport) {
+    assertB5DeviceSignalCleanupV1({ signalOwner: pgOwnership.signalOwner, cleanup: hooks.signalOwner?.cleanup });
+    need(typeof hooks.signalOwner?.registerCloseHost === "function", "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED");
+  }
   for (const name of ["ATTACK_KIT_RUN_ROOT", "ATTACK_KIT_SOCKET_ROOT"] as const) {
     const directory = process.env[name];
     need(directory && (directory === root || inside(root, directory)), "B5_HOST_PG_SCRATCH");
@@ -304,7 +312,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   const integrityKey = randomBytes(32), ready = deferred<FirstWebsiteHostV1>(), finish = deferred<void>();
   let closing: Promise<void> | undefined, current: Awaited<ReturnType<typeof startRuntime>> | undefined;
   let pgRef: RealPostgres | undefined, pgClean = false, cleanupFailed = false, ownerCode = "";
-  let restarting: Promise<void> | undefined, bodyDone = false;
+  let restarting: Promise<void> | undefined, starting: Promise<void> | undefined, servingClosed: Promise<void> | undefined, bodyDone = false;
   const privateReads = new Set<Promise<unknown>>();
   function ownedRead<T>(read: () => Promise<T>): Promise<T> {
     if (closing || restarting) return Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"));
@@ -425,12 +433,20 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
     } catch (error) { await close(); throw error; }
   }
 
+  hooks.signalOwner?.registerCloseHost(() => {
+    void close().catch(() => {});
+    return stopServing();
+  });
   const done = withRealPostgres(async pg => {
     pgRef = pg;
     try {
-      need(pg.postmasterPidCaptured, "B5_HOST_PG_OWNERSHIP");
-      signal.throwIfAborted(); await seedFirstWebsiteDatabaseV1(pg); signal.throwIfAborted();
-      current = await startRuntime(pg, signal);
+      starting = (async () => {
+        need(pg.postmasterPidCaptured, "B5_HOST_PG_OWNERSHIP");
+        signal.throwIfAborted(); need(!closing, "B5_HOST_CLOSED");
+        await seedFirstWebsiteDatabaseV1(pg); signal.throwIfAborted(); need(!closing, "B5_HOST_CLOSED");
+        current = await startRuntime(pg, signal);
+      })();
+      await starting;
       const host: FirstWebsiteHostV1 = {
         origin, a2Entry: entry, get startup() { need(current, "B5_HOST_NOT_READY"); return current.runtime; }, close,
         proof: {
@@ -554,9 +570,9 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       };
       ready.resolve(host);
       await finish.promise;
-    } finally { bodyDone = true; await current?.close(); ownerCode = ""; }
+    } finally { bodyDone = true; await stopServing(); }
   }, { port: B5_PORTS.postgresBase, allowedPorts: Array.from({ length: B5_PORTS.postgresCount }, (_, i) => B5_PORTS.postgresBase + i),
-    pgBin: process.env.PG_BIN }).then(result => { pgClean = result.cleanedUp; }, async error => {
+    pgBin: process.env.PG_BIN, ...pgOwnership }).then(result => { pgClean = result.cleanedUp; }, async error => {
       // The helper also tears down when its body aborts, but returns no result
       // in that case. Observe destruction before distinguishing a clean abort
       // from failed/uncertain cleanup; never silently clear that latter fence.
@@ -573,14 +589,29 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
     });
   // Always observe failure, including one before the factory's await.
   void done.catch(() => {});
+  function stopServing() { return servingClosed ??= (async () => {
+    const deviceClosed = deviceMailbox?.close();
+    // Observe an early mailbox rejection while draining the host.
+    void deviceClosed?.catch(() => {});
+    registry.application = undefined;
+    const failures: unknown[] = [];
+    const attempt = async (work: () => Promise<unknown> | undefined) => {
+      try { await work(); } catch (error) { failures.push(error); }
+    };
+    try {
+      await attempt(() => hooks.at?.("closing"));
+      await starting?.catch(() => {});
+      await attempt(() => restarting);
+      await Promise.allSettled([...privateReads]);
+      await attempt(() => current?.close());
+      await attempt(() => deviceClosed);
+      if (failures.length) { cleanupFailed = true; throw new B5RefusalV1("B5_HOST_CLEANUP_UNCERTAIN"); }
+    } finally { ownerCode = ""; finish.resolve(); }
+  })(); }
   function close() { return closing ??= (async () => {
     signal.removeEventListener("abort", aborted);
-    const deviceClosed = deviceMailbox?.close();
-    registry.application = undefined;
-    try { await hooks.at?.("closing"); await restarting; await Promise.allSettled([...privateReads]); await current?.close(); }
+    try { await stopServing(); }
     finally {
-      await deviceClosed;
-      finish.resolve();
       try { await done; } finally { registry.application = undefined; registry.claimed = cleanupFailed || !pgClean; }
     }
     if (cleanupFailed) throw new B5RefusalV1("B5_HOST_CLEANUP_UNCERTAIN");

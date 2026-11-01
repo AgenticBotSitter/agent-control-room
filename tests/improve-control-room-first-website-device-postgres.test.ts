@@ -3,13 +3,13 @@ import test from "node:test";
 import { createHook } from "node:async_hooks";
 import { createConnection } from "node:net";
 import { randomBytes } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assertGuardBites } from "./support/attack-kit/index";
 import { firstWebsiteConfigSchemaV1, loadFirstWebsiteAssemblyV1, type FirstWebsiteHostV1 } from "./helpers/improve-control-room-first-website";
-import { validateFirstWebsiteHostV1, withFirstWebsiteOwnerCodeV1 } from "../scripts/workflow-journeys/first-website-host";
+import { withFirstWebsiteOwnerCodeV1 } from "../scripts/workflow-journeys/first-website-host";
 import { B5DeviceRefusalV1, resolveB5DeviceSmokePacketV1, readB5DeviceFileV1, parseB5DeviceJsonV1, loadB5TransportV1,
   b5DeviceHashV1, b5MappingDigestV1, createB5DeviceCleanupV1, waitB5DeviceJsonV1, writeB5DeviceRequestV1,
   B5_DEVICE_INSTALL_COMMAND_V1, B5_DEVICE_OFF_COMMAND_V1, B5_DEVICE_STATUS_COMMAND_V1,
@@ -38,8 +38,9 @@ async function resolveQualification(scenario: Scenario, file?: string) {
   }
   const st = await lstat(socket);
   code(st.isSocket() && st.uid === process.getuid?.() && (st.mode & 0o777) === 0o600 && await realpath(socket) === socket, "B5_DEVICE_OWNER_CHANNEL_REQUIRED");
-  // Real assembly qualification also runs before browser or native host creation.
-  await validateFirstWebsiteHostV1(config);
+  // The factory repeats assembly/transport preflight with the actual registered
+  // cleanup owner before PG acquisition. Browser acquisition follows the host.
+  // A packet alone cannot clear the signal-ownership fence.
   return { config, q, trial };
 }
 
@@ -75,7 +76,8 @@ test("B5 device qualification guard-off mutation fails its intended assertion", 
   try {
     await exec("git", ["-c", "core.hooksPath=/dev/null", "clone", "--local", "--no-hardlinks", "--quiet", root, copy], { timeout: 60_000 });
     const { symlink } = await import("node:fs/promises"); await symlink(join(root, "node_modules"), join(copy, "node_modules"), "dir");
-    for (const path of [file, lane, "scripts/workflow-journeys/first-website-host.ts", "tests/helpers/improve-control-room-first-website.ts"])
+    for (const path of [file, lane, "scripts/workflow-journeys/first-website-host.ts", "tests/helpers/improve-control-room-first-website.ts",
+      "tests/support/attack-kit/real-postgres.ts", "tests/improve-control-room-first-website-device.test.ts"])
       await writeFile(join(copy, path), await readFile(join(root, path)));
     const cmd = [process.execPath, "scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",
       "--test-name-pattern=^B5 device-postgres missing qualification refuses before acquisition$", lane];
@@ -91,6 +93,19 @@ test("B5 device qualification guard-off mutation fails its intended assertion", 
     assert.doesNotMatch(result.output, /SyntaxError|# tests 0|# skipped [1-9]|timed out/iu);
     assert.equal(await readFile(join(copy, file), "utf8"), original); assert.match((await green()).stdout, /# pass 1/u);
     console.log("RESULT: PASS F03b qualification mutation baseline=green guard-off=intended-assertion restored=green");
+    const helperFile = "tests/support/attack-kit/real-postgres.ts";
+    const helperOriginal = await readFile(join(copy, helperFile), "utf8");
+    const seamCmd = [process.execPath, "scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",
+      "--test-name-pattern=^F03b helper refuses caller ownership without cleanup before acquisition$", "tests/improve-control-room-first-website-device.test.ts"];
+    const seam = await assertGuardBites({ root: copy, file: helperFile, allowDirtyTree: true,
+      find: 'if (options.signalOwner === "caller" && typeof options.cleanup !== "function")', replace: "if (false)",
+      testCmd: seamCmd, boundMs: 30_000, because: "caller cleanup guard refuses before acquisition" });
+    assert.equal(seam.applied, true); assert.equal(seam.exitCode, 1); assert.equal(seam.signal, null);
+    assert.match(seam.output, /caller cleanup guard refuses before acquisition/u);
+    assert.match(seam.output, /ERR_ASSERTION/u);
+    assert.doesNotMatch(seam.output, /SyntaxError|# tests 0|# skipped [1-9]|timed out|initdb/u);
+    assert.equal(await readFile(join(copy, helperFile), "utf8"), helperOriginal);
+    console.log("RESULT: PASS caller cleanup guard mutation baseline=green guard-off=intended-assertion restored=green; no PG acquisition");
   } finally { await rm(copy, { recursive: true, force: true }); }
 });
 
@@ -138,6 +153,7 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
   const deadline = setTimeout(() => abort.abort(new B5DeviceRefusalV1("B5_DEVICE_DEADLINE")), bodyBudget);
   const interrupt = () => abort.abort(new B5DeviceRefusalV1("B5_DEVICE_INTERRUPT"));
   process.on("SIGINT", interrupt); process.on("SIGTERM", interrupt);
+  let closeServing: (() => Promise<void>) | undefined;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
   let browser: Awaited<ReturnType<(typeof import("@playwright/test"))["chromium"]["launch"]>> | undefined;
   let reachedMapping = false, completed = false, reason: unknown, cleanupResult: Awaited<ReturnType<ReturnType<typeof createB5DeviceCleanupV1>>> | undefined;
@@ -150,10 +166,9 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
     try { await writeB5DeviceRequestV1(join(deviceRoot, "install-cancelled.json"), { schemaVersion: 1, cancelledAt: new Date().toISOString(), cancelPendingInstall: true }); }
     catch (error) { failures.push(error); }
     try { await browser?.close(); } catch (error) { failures.push(error); }
-    // Failed acquisition itself is not a cleanup failure if the host factory
-    // completed its own cleanup. The factory's errors stay in the trial result.
-    if (acquiring) await acquiring.catch(error => { failures.push(error); });
-    try { await host?.close(); } catch (error) { failures.push(error); }
+    // This handle drains host acquisition/serving only. Full host close also
+    // awaits this cleanup's receipt, so awaiting that here would deadlock.
+    try { await closeServing?.(); } catch (error) { failures.push(error); }
     if (failures.length) throw new B5DeviceRefusalV1("B5_DEVICE_HOST_CLEANUP");
   }, async requestRemoval(request, signal) {
     await writeB5DeviceRequestV1(join(deviceRoot, "removal-request.json"), { schemaVersion: 1, ...request, port: 60462,
@@ -165,7 +180,9 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
   abort.signal.addEventListener("abort", interrupted, { once: true });
   try {
     const factory = await loadFirstWebsiteAssemblyV1(config);
-    acquiring = factory(config, abort.signal).then(value => { host = value; return value; });
+    acquiring = factory(config, abort.signal, { signalOwner: {
+      registerCloseHost(close) { closeServing = close; }, cleanup,
+    } }).then(value => { host = value; return value; });
     host = await acquiring; abort.signal.throwIfAborted();
     code(host.proof.device, "B5_DEVICE_MAILBOX_REQUIRED");
     const mailbox = host.proof.device;
@@ -261,13 +278,18 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
   } catch (error) { reason = error; }
   finally {
     cleanupResult = await cleanup();
-    clearTimeout(deadline); abort.signal.removeEventListener("abort", interrupted);
-    process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt);
+    // Full host close includes the PG stop after the shared owner cleanup.
+    try { await host?.close(); await acquiring?.catch(() => {}); }
+    catch (error) { reason ??= error; cleanupResult.failures.push("B5_DEVICE_PG_CLEANUP"); }
     try {
       const owned = host ? await host.proof.inspectOwned().catch(() => null) : null;
       await writeB5DeviceRequestV1(join(deviceRoot, "cleanup-result.json"), { ...cleanupResult, owned, reachedMapping,
         exitReason: reason instanceof B5DeviceRefusalV1 ? reason.code : reason ? "B5_DEVICE_NATIVE_FAILURE" : "complete" });
-    } finally { restorePgRoots(); }
+    } finally {
+      clearTimeout(deadline); abort.signal.removeEventListener("abort", interrupted);
+      process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt);
+      restorePgRoots();
+    }
   }
   assert.equal(cleanupResult.disposition, "mapping-removed"); assert.equal(cleanupResult.hostStopped, true); assert.deepEqual(cleanupResult.failures, []);
   code(host, "B5_DEVICE_HOST_REQUIRED");
@@ -275,4 +297,131 @@ for (const scenario of scenarios) test(scenario === "smoke" ? "B5 actual phone a
   if (scenario === "smoke") { if (reason) throw reason instanceof B5DeviceRefusalV1 ? reason : new B5DeviceRefusalV1("B5_DEVICE_NATIVE_FAILURE"); assert.equal(completed, true); }
   else { assert.equal(reachedMapping, true); assert.equal(abort.signal.aborted, true); assert.equal(reason, abort.signal.reason); }
   console.log(`RESULT: PASS B5 actual ${scenario === "smoke" ? "phone and desktop Tailscale smoke" : `device forced-abort ${scenario}`} mapping-removed owned-delta=0`);
+});
+
+// Independent seam qualification: no device packet, mapping command or live
+// install. The owner receipt below is an IPC barrier, not transport evidence.
+test("B5 cooperative PG17 SIGTERM child stops PG after owner receipt", {
+  skip: process.env.CONTROL_ROOM_B5_SIGNAL_REQUIRE_PG !== "1", timeout: 600_000,
+}, async () => {
+  const scratch = process.env.CONTROL_ROOM_B5_SIGNAL_ROOT;
+  code(scratch && resolve(scratch) === scratch && await realpath(scratch) === scratch, "B5_SIGNAL_DISPOSABLE_ROOT_REQUIRED");
+  code(scratch.startsWith("/private/tmp/b5-seam-"), "B5_SIGNAL_DISPOSABLE_ROOT_REQUIRED");
+  const st = await lstat(scratch);
+  code(st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o777) === 0o700, "B5_SIGNAL_DISPOSABLE_ROOT_REQUIRED");
+  const exec = promisify(execFile), pgBin = process.env.PG_BIN;
+  code(pgBin, "B5_SIGNAL_PG17_REQUIRED");
+  const version = await exec(join(pgBin, "postgres"), ["--version"], { timeout: 30_000 });
+  code(/PostgreSQL\) 17\./u.test(version.stdout), "B5_SIGNAL_PG17_REQUIRED");
+  const { spawn } = await import("node:child_process");
+  const { pathToFileURL } = await import("node:url");
+  const helper = pathToFileURL(resolve("tests/support/attack-kit/real-postgres.ts")).href;
+  for (const failure of [false, true]) {
+    const root = join(scratch, failure ? "throw" : "receipt");
+    await mkdir(root, { mode: 0o700 });
+    const script = join(root, "signal-child.mjs");
+    await writeFile(script, `
+import { withRealPostgres } from ${JSON.stringify(helper)};
+import { createServer } from 'node:net';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const root = process.env.ATTACK_KIT_RUN_ROOT;
+const events = [], server = createServer();
+let releaseBody, releaseReceipt, pgRef, cleanupWork;
+const body = new Promise(yes => { releaseBody = yes; });
+const receipt = new Promise(yes => { releaseReceipt = yes; });
+const keepAlive = setInterval(() => {}, 1000);
+const cleanup = () => cleanupWork ??= (async () => {
+  if (server.listening) await new Promise((yes, no) => server.close(e => e ? no(e) : yes()));
+  events.push('host-close');
+  process.send({ kind: 'removal-request', events });
+  await receipt;
+  events.push('owner-removal-receipt');
+  if (${failure}) throw new Error('injected-cleanup-failure');
+})();
+const interrupt = () => { void cleanup().catch(() => {}); releaseBody(); };
+process.on('SIGTERM', interrupt);
+process.on('message', message => { if (message?.kind === 'receipt') releaseReceipt(); });
+try {
+  const result = await withRealPostgres(async pg => {
+    pgRef = pg;
+    await new Promise((yes, no) => { server.once('error', no); server.listen(join(root, 'host.sock'), yes); });
+    const pid = Number((await readFile(join(pg.dataDirectory, 'postmaster.pid'), 'utf8')).split('\\n')[0]);
+    process.send({ kind: 'ready', pid, run: pg.runDirectory, data: pg.dataDirectory, socket: pg.socketDirectory });
+    await body;
+  }, { port: 60470, allowedPorts: [60470,60471,60472,60473,60474,60475,60476,60477,60478,60479],
+    pgBin: process.env.PG_BIN, signalOwner: 'caller', cleanup });
+  if (!result.cleanedUp) throw new Error('cluster-not-cleaned');
+} catch (error) {
+  if (!${failure} || error.message !== 'injected-cleanup-failure') {
+    process.send({ kind: 'failure', message: 'native-child-failure' }); process.exitCode = 1;
+  }
+} finally {
+  if (pgRef && !await pgRef.isRunning()) events.push('pg-stop');
+  if (server.listening) await new Promise(yes => server.close(yes));
+  clearInterval(keepAlive); process.removeListener('SIGTERM', interrupt);
+}
+events.push('exit-143');
+process.send({ kind: 'complete', events }, () => { process.disconnect(); process.exitCode ??= 143; });
+`, { mode: 0o600, flag: "wx" });
+    const child = spawn(process.execPath, ["--import", "tsx", script], {
+      env: { ...process.env, ATTACK_KIT_RUN_ROOT: root, ATTACK_KIT_SOCKET_ROOT: root },
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    let childError = "", ready: { pid: number; run: string; data: string; socket: string } | undefined;
+    child.stderr?.on("data", chunk => { childError += String(chunk); });
+    const exited = new Promise<[number | null, NodeJS.Signals | null]>((yes, no) => {
+      child.once("error", no); child.once("exit", (exitCode, signal) => yes([exitCode, signal]));
+    });
+    const messages: Record<string, unknown>[] = [];
+    child.on("message", message => { messages.push(message as Record<string, unknown>); });
+    async function message(kind: string) {
+      const end = Date.now() + 180_000;
+      while (Date.now() < end) {
+        const found = messages.find(m => m.kind === kind);
+        if (found) return found;
+        assert.equal(child.exitCode, null, `child exited before ${kind}; stderr-present=${!!childError}`);
+        assert.equal(messages.some(m => m.kind === "failure"), false);
+        await new Promise(yes => setTimeout(yes, 20));
+      }
+      throw new Error(`B5_SIGNAL_CHILD_TIMEOUT:${kind}`);
+    }
+    try {
+      ready = await message("ready") as unknown as typeof ready;
+      assert.ok(ready && Number.isInteger(ready.pid) && ready.pid > 1);
+      child.kill("SIGTERM");
+      const waiting = await message("removal-request");
+      assert.deepEqual(waiting.events, ["host-close"]);
+      process.kill(ready.pid, 0); // PG must still be alive at the receipt barrier.
+      assert.equal(messages.some(m => m.kind === "complete"), false);
+      child.send({ kind: "receipt" });
+      const complete = await message("complete");
+      assert.deepEqual(complete.events, ["host-close", "owner-removal-receipt", "pg-stop", "exit-143"]);
+      assert.deepEqual(await exited, [143, null]);
+      assert.throws(() => process.kill(ready!.pid, 0), { code: "ESRCH" });
+      for (const path of [ready.run, ready.data, ready.socket]) assert.equal(await lstat(path).then(() => true, () => false), false);
+    } finally {
+      // Keep the child's cooperative receipt path available even if an assertion
+      // fails. Reap its own PG before any last-resort child termination.
+      if (child.exitCode === null && child.signalCode === null) {
+        if (child.connected) child.send({ kind: "receipt" });
+        child.kill("SIGTERM");
+        let timer: NodeJS.Timeout | undefined;
+        await Promise.race([exited, new Promise(yes => { timer = setTimeout(yes, 120_000); })]).finally(() => clearTimeout(timer));
+        if (child.exitCode === null && child.signalCode === null) {
+          // The helper may still be provisioning and not have sent ready.
+          // Its exclusively owned root is the recovery boundary in that case.
+          for (const name of await readdir(root)) {
+            if (!/^attack-kit-pg-[A-Za-z0-9]+$/u.test(name)) continue;
+            const data = join(root, name, "data");
+            const status = await exec(join(pgBin, "pg_ctl"), ["-D", data, "status"], { timeout: 30_000 })
+              .then(() => true, () => false);
+            if (status) await exec(join(pgBin, "pg_ctl"), ["-D", data, "-m", "fast", "-w", "-t", "60", "stop"], { timeout: 90_000 });
+          }
+          child.kill("SIGKILL"); await exited;
+        }
+      }
+    }
+  }
+  console.log("RESULT: PASS native PG17 SIGTERM receipt/throw paths host-close -> owner-removal-receipt -> pg-stop -> exit-143; orphaned-postgres=0");
 });

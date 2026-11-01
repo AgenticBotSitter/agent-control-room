@@ -72,7 +72,14 @@ export type FirstWebsiteHostV1 = {
   proof: FirstWebsiteProofV1;
   close(): Promise<void>; // idempotent, drains/reaps every assembly-owned resource
 };
-export type CreateFirstWebsiteHostV1 = (config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal) => Promise<FirstWebsiteHostV1>;
+export type FirstWebsiteCleanupOwnerV1 = {
+  /** Registered before PG acquisition. Closes serving resources without waiting
+   * for the caller's own removal receipt or PG shutdown. */
+  registerCloseHost(close: () => Promise<void>): void;
+  cleanup(): Promise<unknown>;
+};
+export type CreateFirstWebsiteHostV1 = (config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal,
+  hooks?: { signalOwner?: FirstWebsiteCleanupOwnerV1 }) => Promise<FirstWebsiteHostV1>;
 export type FirstWebsiteOwnedV1 = {
   processCount: number; listenerReleased: boolean; postgresStopped: boolean;
   runScratchAbsent: boolean;
@@ -146,7 +153,7 @@ export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: numbe
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
 export async function preflightFirstWebsiteV1(input: { configFile: string; evidenceDir: string; cliFile: string;
-  uid?: number; probe?: (port: number) => Promise<boolean> }): Promise<FirstWebsitePreflightV1> {
+  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1 }): Promise<FirstWebsitePreflightV1> {
   const uid = input.uid ?? process.getuid?.() ?? refuse("B5_EXECUTION_IDENTITY_UNAVAILABLE");
   await canonical(input.configFile, "file", "B5_CONFIG_PATH");
   let raw: unknown;
@@ -182,7 +189,8 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     try {
       validateB5DeviceOriginV1(config.device.origin);
       await loadB5TransportV1(config.device.transportQualification, root, config.device.origin, digests.transport);
-      assertB5DeviceSignalCleanupV1();
+      assertB5DeviceSignalCleanupV1({ signalOwner: input.signalOwner ? "caller" : "helper", cleanup: input.signalOwner?.cleanup });
+      if (typeof input.signalOwner?.registerCloseHost !== "function") refuse("B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED");
     } catch (error) { if (error instanceof B5DeviceRefusalV1) refuse(error.code); throw error; }
   }
   if (digests.assembly !== config.assembly.digest) refuse("B5_ASSEMBLY_DIGEST");

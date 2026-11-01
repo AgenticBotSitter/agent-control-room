@@ -188,6 +188,11 @@ export interface RealPostgres {
 }
 
 export interface WithRealPostgresOptions {
+  /** Default helper ownership retains process-exiting orphan protection.
+   * Caller ownership requires cleanup registered before acquisition; it must
+   * close the host and await bounded external receipts before PG teardown. */
+  signalOwner?: "helper" | "caller";
+  cleanup?: () => Promise<unknown>;
   /** Port to bind. Required: the kit never picks a port for the caller. */
   port: number;
   /** Override the database name. */
@@ -657,6 +662,37 @@ function shortSocketDirectory(run: string, port: number): string {
  */
 const runRoot = (): string => process.env.ATTACK_KIT_RUN_ROOT?.trim() || tmpdir();
 
+function validateSignalOwner(options: Pick<WithRealPostgresOptions, "signalOwner" | "cleanup">) {
+  if (options.signalOwner !== undefined && options.signalOwner !== "helper" && options.signalOwner !== "caller") {
+    throw new Error("attack_kit_signal_owner_invalid");
+  }
+  if (options.signalOwner === "caller" && typeof options.cleanup !== "function") {
+    throw new Error("attack_kit_caller_cleanup_required");
+  }
+}
+
+/** The actual cluster teardown callback, also exercised without native PG.
+ * Caller cleanup may fail; the stop is still awaited before propagating it.
+ * The caller must own signals before acquisition and await this teardown. */
+export function createPostgresTeardown(stop: () => Promise<void>,
+  options: Pick<WithRealPostgresOptions, "signalOwner" | "cleanup">,
+  target: Pick<NodeJS.Process, "once" | "removeListener" | "exit"> = process): () => Promise<void> {
+  validateSignalOwner(options);
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+  const onSignal = (signal: NodeJS.Signals) => {
+    void stop().finally(() => {
+      target.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  };
+  if (options.signalOwner !== "caller") for (const signal of signals) target.once(signal, onSignal);
+  let closing: Promise<void> | undefined;
+  return () => closing ??= (async () => {
+    for (const signal of signals) target.removeListener(signal, onSignal);
+    try { if (options.signalOwner === "caller") await options.cleanup!(); }
+    finally { await stop(); }
+  })();
+}
+
 /** One start/stop cycle, from `initdb` to a migrated, role-provisioned database. */
 async function startCluster(options: WithRealPostgresOptions & { pgBin: string }): Promise<RealPostgres> {
   const { pgBin, port } = options;
@@ -830,28 +866,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     }
   };
 
-  // A signal must not leave a postmaster behind. This machine has 32 SysV
-  // shared-memory segments in total, so one orphaned cluster blocks every other
-  // job; `scripts/dev/cleanup-test-postgres.mjs` can reclaim an unattached one,
-  // but only after the damage. The handler is installed before initdb, removed
-  // once `stop` has run, and re-raises the signal's conventional exit code so
-  // the surrounding runner still sees a signalled failure.
-  const onSignal = (signal: NodeJS.Signals) => {
-    void stop().finally(() => {
-      process.exit(signal === "SIGINT" ? 130 : 143);
-    });
-  };
-  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
-  for (const signal of signals) process.once(signal, onSignal);
-  const releaseSignals = () => {
-    for (const signal of signals) process.removeListener(signal, onSignal);
-  };
-  // The teardown every path shares: release the handlers first, so a signal
-  // arriving during an ordinary stop does not re-enter `stop`, then stop.
-  const teardown = async () => {
-    releaseSignals();
-    await stop();
-  };
+  const teardown = createPostgresTeardown(stop, options);
 
   try {
     await mkdir(socketDirectory, { mode: 0o700 });
@@ -1103,6 +1118,7 @@ export async function withRealPostgres<T>(
   if (typeof body !== "function") throw new Error("attack_kit_body_required");
   const { port, allowedPorts, boundMs, ...rest } = options ?? ({} as WithRealPostgresOptions);
   if (port === undefined) throw new Error("attack_kit_port_required");
+  validateSignalOwner(rest);
   await assertPortAvailable(port, allowedPorts);
   const pgBin = resolvePgBin(rest.pgBin);
   if (pgBin === null) throw new Error(`attack_kit_postgres_unavailable:${realPostgresSkipMessage(rest.pgBin)}`);

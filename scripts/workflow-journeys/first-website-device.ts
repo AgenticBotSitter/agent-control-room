@@ -119,13 +119,10 @@ export async function loadB5TransportV1(file: string, root: string, origin: stri
   if (expectedDigest !== undefined) need(b5DeviceHashV1(bytes) === expectedDigest, "B5_DEVICE_QUALIFICATION_CHANGED");
   return validateB5TransportV1(parseB5DeviceJsonV1(bytes.toString("utf8")), origin);
 }
-/** The current real-PG helper owns SIGINT/SIGTERM and calls process.exit after
- * stopping PG. That bypasses the outer, asynchronous owner removal receipt.
- * No approved cooperative signal-ownership port exists in that dependency.
- * Keep native acquisition fenced until a separately reviewed dependency change
- * or revised host composition supplies it; packet assertions cannot clear it. */
-export function assertB5DeviceSignalCleanupV1(): never {
-  throw new B5DeviceRefusalV1("B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED");
+/** Remote acquisition is qualified only with explicit cooperative ownership.
+ * A private packet cannot substitute for the registered cleanup callback. */
+export function assertB5DeviceSignalCleanupV1(options?: { signalOwner?: string; cleanup?: () => Promise<unknown> }): void {
+  need(options?.signalOwner === "caller" && typeof options.cleanup === "function", "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED");
 }
 export function b5DeviceRemoteOriginsV1(q: B5TransportQualificationV1) {
   return Object.freeze([Object.freeze({ origin: q.origin, admit(headers: Headers) {

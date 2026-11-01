@@ -350,23 +350,116 @@ test("F03b mailbox close drains an already-started receipt and refuses new work"
 });
 
 
-test("F03b native acquisition remains fenced by the unqualified PG signal cleanup dependency", () => {
-  assert.throws(() => assertB5DeviceSignalCleanupV1(), { code: "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED" });
-  console.log("RESULT: BLOCKED B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED; owner packet cannot clear dependency fence");
-});
-
-test("F03b PG signal callback cannot wait for an outstanding owner removal receipt", async () => {
-  const source = await readFile("tests/support/attack-kit/real-postgres.ts", "utf8");
-  const body = /const onSignal = \(signal: NodeJS\.Signals\) => \{([\s\S]*?)\n  \};/u.exec(source)?.[1];
-  assert.ok(body, "current PG signal handler must be inspected; changes require requalification");
-  const events: string[] = [];
-  const handler = new Function("stop", "process", `return signal => {${body}}`)(
-    async () => { events.push("pg-stop"); }, { exit: (code: number) => events.push(`process-exit-${code}`) });
+test("F03b caller ownership waits for the real helper cleanup callback before PG stop and exit", async () => {
+  const pg = await import("./support/attack-kit/real-postgres");
+  assert.equal(typeof pg.createPostgresTeardown, "function", "cooperative helper callback must exist");
+  const events: string[] = [], target = new (await import("node:events")).EventEmitter();
   let release!: () => void;
   const receipt = new Promise<void>(yes => { release = yes; });
-  const outerCleanup = (async () => { events.push("host-close"); await Promise.resolve(); events.push("owner-removal-request"); await receipt; events.push("owner-removal-receipt"); })();
-  handler("SIGINT"); await new Promise<void>(yes => setImmediate(yes));
-  assert.deepEqual(events, ["host-close", "pg-stop", "owner-removal-request", "process-exit-130"]);
-  release(); await outerCleanup;
-  console.log("RESULT: CONFIRMED PG hard exit precedes owner removal receipt (source callback, no PG acquisition)");
+  const q = qualification();
+  const cleanup = createB5DeviceCleanupV1(q, { now: () => now,
+    async closeHost() { events.push("host-close"); },
+    async requestRemoval(request) { await receipt; events.push("owner-removal-receipt"); return removal(q, request); } });
+  const teardown = pg.createPostgresTeardown(async () => { events.push("pg-stop"); },
+    { signalOwner: "caller", cleanup }, target as never);
+  assert.equal(target.listenerCount("SIGTERM"), 0);
+  assert.equal(target.listenerCount("SIGINT"), 0);
+  const closing = teardown();
+  const callers = Array.from({ length: 24 }, () => teardown());
+  assert.ok(callers.every(work => work === closing), "24 concurrent callers share one teardown");
+  const stopped = closing.finally(() => { events.push("exit-143"); });
+  await new Promise<void>(yes => setImmediate(yes));
+  assert.deepEqual(events, ["host-close"]);
+  release(); await stopped;
+  assert.deepEqual(events, ["host-close", "owner-removal-receipt", "pg-stop", "exit-143"]);
+  await teardown(); assert.equal(events.filter(x => x === "pg-stop").length, 1);
+  assert.doesNotThrow(() => assertB5DeviceSignalCleanupV1({ signalOwner: "caller", cleanup }));
+  assert.throws(() => assertB5DeviceSignalCleanupV1(), { code: "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED" });
+  console.log("RESULT: PASS real helper callback host-close -> owner-removal-receipt -> pg-stop -> exit-143");
+});
+
+test("F03b helper refuses caller ownership without cleanup before acquisition", async () => {
+  const { withRealPostgres, createPostgresTeardown } = await import("./support/attack-kit/real-postgres");
+  assert.throws(() => createPostgresTeardown(async () => {}, { signalOwner: "caller" }),
+    /attack_kit_caller_cleanup_required/u, "caller cleanup guard refuses before acquisition");
+  await assert.rejects(withRealPostgres(async () => {}, { port: 60470, allowedPorts: [60470], signalOwner: "caller" }),
+    /attack_kit_caller_cleanup_required/u);
+});
+
+test("F03b helper default signal protection and cleanup failure fallback", async () => {
+  const pg = await import("./support/attack-kit/real-postgres");
+  assert.equal(typeof pg.createPostgresTeardown, "function");
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    const events: string[] = [], target = new (await import("node:events")).EventEmitter();
+    Object.assign(target, { exit(code: number) { events.push(`exit-${code}`); } });
+    const teardown = pg.createPostgresTeardown(async () => { events.push("pg-stop"); }, {}, target as never);
+    assert.equal(target.listenerCount(signal), 1);
+    target.emit(signal, signal); await new Promise<void>(yes => setImmediate(yes));
+    assert.deepEqual(events, ["pg-stop", signal === "SIGINT" ? "exit-130" : "exit-143"]);
+    await teardown(); assert.equal(target.listenerCount("SIGINT"), 0); assert.equal(target.listenerCount("SIGTERM"), 0);
+  }
+  let stopped = false;
+  const teardown = pg.createPostgresTeardown(async () => { stopped = true; }, {
+    signalOwner: "caller", cleanup: async () => { throw new Error("cleanup-failed"); },
+  });
+  await assert.rejects(teardown(), /cleanup-failed/u); assert.equal(stopped, true);
+  console.log("RESULT: PASS helper default signal exit codes unchanged; throwing caller cleanup still stops PG");
+});
+
+test("F03b bounded missing owner receipt still reaches helper PG stop", async () => {
+  const { createPostgresTeardown } = await import("./support/attack-kit/real-postgres");
+  const events: string[] = [];
+  const cleanup = createB5DeviceCleanupV1(qualification(), {
+    now: () => now, removalMs: 5,
+    async closeHost() { events.push("host-close"); },
+    async requestRemoval() { events.push("owner-removal-request"); return new Promise(() => {}); },
+  });
+  const teardown = createPostgresTeardown(async () => { events.push("pg-stop"); }, { signalOwner: "caller", cleanup });
+  await teardown();
+  assert.deepEqual(events, ["host-close", "owner-removal-request", "pg-stop"]);
+  assert.equal((await cleanup()).disposition, "mapping-outstanding");
+  assert.deepEqual((await cleanup()).failures, ["B5_DEVICE_REMOVAL_TIMEOUT"]);
+  console.log("RESULT: PASS bounded missing receipt reports mapping-outstanding before PG stop");
+});
+
+test("F03b remote preflight retains its fence unless the caller supplies the cleanup handle", async t => {
+  const { preflightFirstWebsiteV1, B5_REQUEST_TEXT, b5Bytes } = await import("./helpers/improve-control-room-first-website");
+  const { createHook } = await import("node:async_hooks");
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const root = await mkdtemp(resolve(".test-tmp/acr-b5-seam-")); await chmod(root, 0o700);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, "config"); await mkdir(directory, { mode: 0o700 });
+  const file = (name: string) => join(directory, name);
+  const q = { ...qualification(), authorizedAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const files = { "first-website-host.mjs": "// inert fixture", "contract.json": "{}", "qualification.json": "{}",
+    "settings.json": "{}", "availability.json": "{}", "authorization.json": "{}", "transport.json": JSON.stringify(q),
+    "fault.md": "fixture builder input", "review.md": "fixture reviewer input" };
+  for (const [name, contents] of Object.entries(files)) await writeFile(file(name), contents, { mode: 0o600 });
+  const digest = b5Bytes("fixture");
+  const config = { schemaVersion: 1,
+    product: { root: join(root, "product"), baseRevision: "a".repeat(40), candidateRevision: "b".repeat(40), assetsDigest: digest },
+    a2: { contractFile: file("contract.json"), toolingRevision: digest, schemaDigest: digest, qualificationEvidence: file("qualification.json") },
+    assembly: { module: file("first-website-host.mjs"), digest: b5Bytes(files["first-website-host.mjs"]) },
+    scratchRoot: root, ports: { product: 60460, preview: 60461, postgresBase: 60470 },
+    device: { origin: remote, transportQualification: file("transport.json"), actor: "owner" },
+    settingsFile: file("settings.json"), availabilityFile: file("availability.json"), authorizationEvidence: file("authorization.json"),
+    requestText: B5_REQUEST_TEXT, faultInputFile: file("fault.md"), reviewInputFile: file("review.md") };
+  await writeFile(file("b5.json"), JSON.stringify(config), { mode: 0o600 });
+  const input = { configFile: file("b5.json"), evidenceDir: join(root, "evidence"), cliFile: join(root, "product/scripts/cli.ts") };
+  const acquired: string[] = [];
+  const hook = createHook({ init(_id, type) { if (["PROCESSWRAP", "TCPSERVERWRAP", "TCPWRAP"].includes(type)) acquired.push(type); } });
+  hook.enable();
+  try {
+    await assert.rejects(preflightFirstWebsiteV1(input), { code: "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED" });
+    await assert.rejects(preflightFirstWebsiteV1({ ...input, signalOwner: { cleanup: async () => {} } as never }),
+      { code: "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED" });
+    // A supplied owner clears only this fence: deliberately invalid settings
+    // still refuse at the next independent guard, before any subprocess/probe.
+    await assert.rejects(preflightFirstWebsiteV1({ ...input, signalOwner: {
+      registerCloseHost() { assert.fail("preflight must not acquire a host"); },
+      async cleanup() { assert.fail("preflight must not start cleanup"); },
+    } }), { code: "B5_RISK_CATEGORIES" });
+  } finally { hook.disable(); }
+  assert.deepEqual(acquired, []);
+  console.log("RESULT: PASS remote preflight clears signal fence only with callable cleanup/close handle; acquisitions=0");
 });
