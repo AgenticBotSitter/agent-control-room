@@ -205,8 +205,9 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
   const project = f.project.projectId;
   const { requestId } = await H.driveSyntheticFirstWebsiteV1(f, f.bridge, f.identity, project, "b5-verify");
   assert.equal((await f.publish()).state, "recorded");
-  const readCard = async () => (await (await f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/candidate`))).json()).candidate;
-  const card = (await readCard()) as LoopCandidateCardV1;
+  const readCard = async () => f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/candidate`));
+  const card = (await (await readCard()).json()).candidate as LoopCandidateCardV1;
+  const responseDigest = H.b5Bytes(new Uint8Array(await (await readCard()).arrayBuffer()));
   const rows: { table: string; sha256: string; row: Record<string, unknown> }[] = [];
   for (const table of H.B5_SNAPSHOT_TABLES) for (const value of (await f.client.query<Record<string, unknown>>(`SELECT ${H.B5_SNAPSHOT_COLUMNS[table].join(",")} FROM ${table}`)).rows) {
     const row = JSON.parse(JSON.stringify(value, (_k, v: unknown) => typeof v === "bigint" ? Number(v) : v)) as Record<string, unknown>;
@@ -261,7 +262,7 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
       captures:[{path:captureSourcePath,sha256:captureDigest,device:a.device,sessionNonce,sequence:a.sequence,capturedAt:a.at}],
       observation:{sessionDigest:H.b5Bytes(sessionNonce),routeClass:"project-document",method:"GET",status:200,observedAt:a.at,sessionNonce,sequence:a.sequence,device:a.device} };
     if (a.sequence >= 11) journey.serviceFacts.push({ screen, device:a.device, requestId, localVersion:card.localVersion, runLinkId:card.evidence.binding.runLinkId, inputVersion:card.a2InputVersion,
-      baseRevision:base,candidateRevision:card.candidateRevision,at:a.at,sequence:a.sequence,responseDigest:H.b5Bytes(JSON.stringify(card)),captureSourcePath,capturePath,captureDigest,receiptPath:a.receiptPath });
+      baseRevision:base,candidateRevision:card.candidateRevision,at:a.at,sequence:a.sequence,responseDigest,captureSourcePath,capturePath,captureDigest,receiptPath:a.receiptPath });
   }
   delete (files['receipts/1.json'] as Record<string,unknown>).binding;
   for (const [sequence,device,minute] of [[4,"phone",3.1],[5,"desktop",3.1],[9,"phone",6.5],[10,"desktop",6.5]] as const) {
@@ -493,7 +494,7 @@ test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent
     pins: { capture: { phoneCapture:"native-screenshot+server", qualificationDigest:H.b5Bytes("capture qualification"),approval:"approved",approvalEvidenceDigest:H.b5Bytes("synthetic approval qualification") }, providers: { classification: "fixture", transport: "scripted", toolingRevision: H.b5Bytes("qualified A2 tooling"),
       availabilitySha256: H.b5Bytes("availability"), lineup: [{ role: "build", identity: "fixture", family: "fixture", route: "fixture", grade: "fixture" }] }, toolingRevision: H.b5Bytes("qualified A2 tooling"), schemaDigest: H.b5Bytes("schema"), productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501,
       digests: { settings: "", availability: "", authorization: "", qualification: "", assembly: "", faultInput: "", reviewInput: "" } } }),
-  (e: unknown) => e instanceof H.B5RefusalV1 && e.code === "B5_MANIFEST_INVALID");
+  (e: unknown) => e instanceof H.B5RefusalV1 && e.code === "B5_PROVIDER_PROVENANCE_MISSING");
 });
 
 // Check 2's product-observable refusals through the real bridge over the SYNTHETIC engine.
@@ -772,7 +773,7 @@ test("F04a real controller refuses unqualified device input before any acquisiti
   try {verdict=await runFirstWebsiteJourneyV1({config:H.firstWebsiteConfigSchemaV1.parse(s.config),uid:process.getuid!(),evidenceDir:s.evidence,
     providers:JSON.parse(await readFile(s.config.a2.qualificationEvidence,'utf8')).providers ?? {classification:'fixture',transport:'scripted',toolingRevision:s.config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'loopback-only',digests:{qualification:H.b5Bytes(qualification),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(await readFile(s.config.reviewInputFile))},
     settings:{riskCategories:[],riskSlots:[]}},new AbortController().signal);} finally {hook.disable();}
-  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_DEVICE_QUALIFICATION_REQUIRED']);
+  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_DEVICE_QUALIFICATION_REQUIRED','B5_PROVIDER_FIXTURE']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created'); assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.deepEqual(resources,[]); assert.deepEqual(['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal)),counts);
   assert.equal(await lstat(s.evidence).then(()=>true,()=>false),false);
@@ -887,7 +888,7 @@ proof:{device:{request(){event('intake-invitation');throw Error('must never invi
   const config=H.firstWebsiteConfigSchemaV1.parse({...s.config,device:{...s.config.device,origin:remote},assembly:{...s.config.assembly,digest:H.b5Bytes(assembly)}});
   const verdict=await runFirstWebsiteJourneyV1({config,uid:process.getuid!(),evidenceDir:s.evidence,providers:{classification:'fixture',transport:'scripted',toolingRevision:config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
     digests:{qualification:H.b5Bytes(qualification),transport:H.b5Bytes(transport),assembly:H.b5Bytes(assembly),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(neutral)}},new AbortController().signal);
-  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_A2_BIND_INPUT_UNAVAILABLE']);
+  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_A2_BIND_INPUT_UNAVAILABLE','B5_PROVIDER_FIXTURE']);
   assert.deepEqual((await readFile(events,'utf8')).trim().split('\n'),['factory','probe:bind-input --help','host-close','pg-stop','full-close']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created');assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.equal(verdict.transportCleanup?.beforeDigest,D.b5MappingDigestV1(beforeStatus),'unattempted mapping retains pre-acquisition before-status evidence');
@@ -1191,4 +1192,59 @@ test("F04b truncated screenshot refuses even after rehashing manifest and receip
   for(const entry of manifest.artifacts){const b=await readFile(join(e.dir,entry.path));entry.bytes=b.length;entry.sha256=H.b5Bytes(b);}
   await writeFile(join(e.dir,'manifest.json'),JSON.stringify(manifest));
   assert.equal(await e.refusal(),'B5_CAPTURE_CORRELATION','F04b a digest cannot certify a truncated PNG');
+});
+
+// Synthetic real-provenance fixtures test the positive contract only. No real
+// provider or device qualification, rehearsal or REAL-B5-PASS is claimed here.
+for (const realProvenance of [false, true]) test(`F04b fix controller finalized retention ${realProvenance ? 'synthetic real-provenance reaches complete' : 'fixture remains incomplete'}`, async t => {
+  await load(); const e = await evidenceSet(t);
+  const { verifyFirstWebsiteControllerEvidenceV1 } = await import('../scripts/workflow-journeys/first-website-controller');
+  const pins = structuredClone(e.fixturePins);
+  if (realProvenance) { pins.providers.classification = 'real'; pins.providers.transport = 'real-provider'; }
+  await e.write(v => {
+    if (realProvenance) {
+      (v.manifest.classification as Record<string, unknown>).providers = 'real';
+      for (const step of e.journey(v).steps) (step.provider as Record<string, unknown>).transport = 'real-provider';
+    }
+  });
+  const manifest = H.b5ManifestSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8')));
+  const teardown = H.b5TeardownSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8')));
+  const cleanupTargets = [join(e.p.dir,'closed-run')];
+  const retention = {proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets};
+  const events: string[] = [];
+  const verdict = await verifyFirstWebsiteControllerEvidenceV1(e.dir, {
+    proofRoot:e.p.dir,cleanupTargets,candidateRepository:e.p.project,pins,
+    readCard:async()=>{events.push('cold-read');return e.readCard();},
+    finishTeardown:async()=>{events.push('cleanup-finalize');await H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,retention);},
+  });
+  assert.deepEqual(events,['cold-read','cleanup-finalize']);
+  assert.deepEqual(verdict,{state:realProvenance ? 'complete' : 'incomplete',reasons:realProvenance ? [] : ['B5_PROVIDER_FIXTURE'],transportCleanup:noMappingCleanup()});
+});
+
+test('F04b fix absent classification refuses missing provider provenance', async t => {
+  await load(); const e = await evidenceSet(t);
+  await e.write(v=>{delete v.manifest.classification;});
+  assert.equal(await e.refusal(),'B5_PROVIDER_PROVENANCE_MISSING');
+});
+
+test('F04b fix responseDigest hashes actual HTTP response bytes', async t => {
+  await load(); const e = await evidenceSet(t);
+  const response = await e.f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(e.card.projectId)}/improvements/loop/${encodeURIComponent(e.card.requestId)}/candidate`));
+  assert.equal(response.status,200);
+  const bytes = await response.arrayBuffer();
+  assert.notEqual(H.b5Bytes(new Uint8Array(bytes)),H.b5Bytes(JSON.stringify(e.card)),'HTTP envelope bytes differ from parsed card serialization');
+  await e.write(v=>{
+    const j = v.files['journey.json'] as {serviceFacts:{responseDigest:string}[]};
+    for (const fact of j.serviceFacts) fact.responseDigest=H.b5Bytes(new Uint8Array(bytes));
+  });
+  const verdict = await e.verify({readCard:async()=>new Response(bytes,{headers:{'content-type':'application/json'}})});
+  assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE']);
+  // Even harmless formatting changes change the byte digest, not the candidate facts.
+  const reformatted = JSON.stringify(JSON.parse(Buffer.from(bytes).toString('utf8')),null,2)+'\n';
+  assert.equal(await e.refusal({readCard:async()=>new Response(reformatted,{headers:{'content-type':'application/json'}})}),'B5_CAPTURE_CORRELATION');
+  await e.write(v=>{
+    const j = v.files['journey.json'] as {serviceFacts:{responseDigest:string}[]};
+    for (const fact of j.serviceFacts) fact.responseDigest=H.b5Bytes(reformatted);
+  });
+  assert.deepEqual((await e.verify({readCard:async()=>new Response(reformatted,{headers:{'content-type':'application/json'}})})).reasons,['B5_PROVIDER_FIXTURE']);
 });

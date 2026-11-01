@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { loopBridgeBindingSchemaV1, loopBridgeOutcomeSchemaV1, type LoopBridgeOperationV1 } from "../../src/improve-control-room/v1/schemas";
 import { loopCandidateCardSchemaV1, type LoopCandidateCardV1 } from "../../src/improve-control-room/v1/loop-candidate-wire";
+import { readBrowserJson } from "../../src/web/v1/browser-json";
 const exec = promisify(execFile);
 const GIT_ENV: NodeJS.ProcessEnv = { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 
@@ -682,7 +683,7 @@ export function assertCleanupRetainedV1(teardown: B5TeardownV1, card: LoopCandid
 }
 /** Owner gates are service-success observations bound to the same run and accepted device receipts. */
 export function assertB5ActionEvidenceV1(j: B5JourneyV1, card: LoopCandidateCardV1, teardown: B5TeardownV1,
-  artifacts: ReadonlyMap<string, Uint8Array>, pins: B5QualifiedPinsV1) {
+  artifacts: ReadonlyMap<string, Uint8Array>, pins: B5QualifiedPinsV1, responseDigest?: string) {
   const bad = () => refuse("B5_ACTION_EVIDENCE");
   let last = 0, lastAt = -Infinity, previous: B5JourneyV1["actions"][number] | undefined;
   const receipt = (path: string, device: "phone" | "desktop", sequence: number, intake=false) => {
@@ -754,7 +755,7 @@ export function assertB5ActionEvidenceV1(j: B5JourneyV1, card: LoopCandidateCard
     if (!completePng || f.device !== a.device || f.sequence !== a.sequence || f.receiptPath !== a.receiptPath || f.at !== a.at
       || f.requestId !== card.requestId || f.runLinkId !== card.evidence.binding.runLinkId || f.localVersion !== card.localVersion || f.inputVersion !== card.a2InputVersion
       || f.candidateRevision !== card.candidateRevision || f.baseRevision !== card.evidence.binding.baseRevision
-      || f.responseDigest !== b5Bytes(JSON.stringify(card)) || !capture || capture.device !== f.device
+      || f.responseDigest !== responseDigest || !capture || capture.device !== f.device
       || capture.sequence !== f.sequence || capture.sessionNonce !== r.sessionNonce || ms(capture.capturedAt) < ms(r.observation.observedAt)
       || ms(capture.capturedAt) > ms(r.expiresAt) || capture.sha256 !== f.captureDigest
       || f.capturePath !== `screens/${screen}.png` || b5Bytes(artifacts.get(f.capturePath) ?? new Uint8Array()) !== f.captureDigest)
@@ -844,13 +845,37 @@ export async function finalizeFirstWebsiteEvidenceV1(evidenceDir: string,
   await publish("manifest.json", value);
   return value;
 }
+/** Hash the exact HTTP entity-body bytes while the bounded JSON reader consumes
+ * them. Keep only the parsed candidate and digest in memory; never retain the body.
+ * responseDigest includes the HTTP JSON envelope and its original whitespace. */
+export async function readB5CandidateResponseV1(response: Response) {
+  const hash = createHash("sha256");
+  if (!response.ok || !response.body) return refuse("B5_CARD_UNAVAILABLE");
+  const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) { hash.update(chunk); controller.enqueue(chunk); },
+  }));
+  try {
+    const value = await readBrowserJson(new Response(body, { headers: response.headers }), 1 << 20, 10_000) as { candidate?: unknown };
+    const card = loopCandidateCardSchemaV1.parse(value.candidate);
+    return { card, responseDigest: `sha256:${hash.digest("hex")}` };
+  } catch { return refuse("B5_CARD_UNAVAILABLE"); }
+}
+
 /** Reopens and hashes the retained bytes, reads the card through the real service (the
  * caller's `readCard` is that HTTP read), re-reads the candidate repository and compares
  * DOM/candidate facts independently. Refuses any changed, missing, stale or fixture-provenance
- * proof. Missing real phone evidence is INCOMPLETE, never a skip. */
+ * proof. Missing real phone evidence is INCOMPLETE, never a skip.
+ * For capture correlation, readCard returns the actual Response or the result of
+ * readB5CandidateResponseV1 (the controller reads before revoking its session).
+ * A bare parsed card remains accepted for early card/lineage refusal checks, but
+ * cannot authenticate an HTTP response digest and refuses capture correlation. */
 export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: { readCard: () => Promise<unknown>; candidateRepository: string;
   pins: B5QualifiedPinsV1; retention?:B5RetentionV1; finishTeardown?: () => Promise<void> }): Promise<B5VerdictV1> {
-  const read = loopCandidateCardSchemaV1.safeParse(await input.readCard());
+  const result = await input.readCard();
+  const observed = result instanceof Response ? await readB5CandidateResponseV1(result) : result;
+  const http = observed && typeof observed === "object" && "card" in observed && "responseDigest" in observed
+    ? observed as { card: unknown; responseDigest: string } : undefined;
+  const read = loopCandidateCardSchemaV1.safeParse(http ? http.card : observed);
   if (!read.success) refuse("B5_CARD_UNAVAILABLE");
   const card = read.data!;
   await input.finishTeardown?.();
@@ -869,7 +894,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   const manifestBytes = await load("manifest.json");
   let rawManifest: { classification?: { providers?: unknown } } | undefined;
   try { rawManifest = JSON.parse(Buffer.from(manifestBytes).toString("utf8")); } catch { refuse("B5_MANIFEST_INVALID"); }
-  if (rawManifest && rawManifest.classification && rawManifest.classification.providers === undefined) refuse("B5_PROVIDER_PROVENANCE_MISSING");
+  if (rawManifest && rawManifest.classification?.providers === undefined) refuse("B5_PROVIDER_PROVENANCE_MISSING");
   if (input.pins.providers === undefined) refuse("B5_PROVIDER_PROVENANCE_MISSING");
   const manifest = json(b5ManifestSchemaV1, manifestBytes, "B5_MANIFEST_INVALID");
   const artifacts = new Map<string, Uint8Array>();
@@ -891,7 +916,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   assertCandidateRepositoryV1(await readCandidateRepositoryV1(input.candidateRepository, manifest.heads), manifest, checks, card);
   assertRejectionRepairV1(manifest, journey);
   assertCleanupRetainedV1(teardown, card, snapshot, manifest.timestamps.finishedAt);
-  assertB5ActionEvidenceV1(journey, card, teardown, artifacts, input.pins);
+  assertB5ActionEvidenceV1(journey, card, teardown, artifacts, input.pins, http?.responseDigest);
   if (teardown.retention) {
     if (!input.retention || input.retention.candidateRepository !== input.candidateRepository
       || JSON.stringify(teardown.retention) !== JSON.stringify(await qualifyB5RetentionV1(input.retention))) refuse("B5_CLEANUP_RETAINED");

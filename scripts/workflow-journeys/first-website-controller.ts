@@ -7,7 +7,7 @@ import {
   missingB5TransportCleanupV1, B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
   loadFirstWebsiteAssemblyV1, probeBindInputCapabilityV1, bindFirstWebsiteInputsV1, assertRoleScopedBriefsV1,
   b5FaultScanPolicySchemaV1, normalizeB5FaultTextV1, assertB5FaultTextAbsentV1, assertB5FaultValueAbsentV1, auditFirstWebsiteReviewV1, readB5ReviewGitSurfacesV1,
-  readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, assertFirstWebsiteOwnerCommandV1,
+  readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, readB5CandidateResponseV1, assertFirstWebsiteOwnerCommandV1,
   type B5QualifiedPinsV1,
   type FirstWebsitePreflightV1, type FirstWebsiteHostV1,
 } from "../../tests/helpers/improve-control-room-first-website";
@@ -156,7 +156,8 @@ async function pause(signal: AbortSignal) {
 
 /** Actual current-time local-owner HTTP reads. Cookies stay in memory and are
  * revoked after each exchange. There is no saved browser state or principal. */
-async function exchange(host: FirstWebsiteHostV1, path: string, signal: AbortSignal, body?: unknown) {
+async function exchange(host: FirstWebsiteHostV1, path: string, signal: AbortSignal, body?: unknown,
+  readResponse: (response: Response) => Promise<unknown> = response => readBrowserJson(response, 1 << 20, 10_000)) {
   return host.proof.withOwnerCode(async ownerCode => {
     const localSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
     const issued = await fetch(host.origin + "/api/v1/local-owner-session", { method: "POST", redirect: "error", signal: localSignal,
@@ -170,7 +171,7 @@ async function exchange(host: FirstWebsiteHostV1, path: string, signal: AbortSig
           ...(body === undefined ? {} : { "content-type": "application/json", "idempotency-key": `b5-stop-${randomBytes(16).toString("hex")}` }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       need(response.ok, "B5_CONTROLLER_SERVICE");
-      return await readBrowserJson(response, 1 << 20, 10_000);
+      return await readResponse(response);
     } finally {
       const signedOut = await fetch(host.origin + "/api/v1/local-owner-session", { method: "DELETE", redirect: "error",
         headers: { origin: host.origin, cookie }, signal: AbortSignal.timeout(10_000) });
@@ -233,6 +234,14 @@ export async function runFirstWebsiteDevicePhaseV1(input: {
   // Binary frames still need the lead's visual check under the capture
   // contract. It does not define a second per-phase acknowledgement mailbox.
   return { receipt: accepted };
+}
+
+/** Shared controller verification boundary; cleanup targets come from the B3c receipt. */
+export async function verifyFirstWebsiteControllerEvidenceV1(evidenceDir: string,
+  input: Parameters<typeof verifyFirstWebsiteEvidenceV1>[1] & { proofRoot: string; cleanupTargets: readonly string[] }) {
+  const { candidateRepository, pins, readCard, finishTeardown } = input;
+  return verifyFirstWebsiteEvidenceV1(evidenceDir, { candidateRepository, pins, readCard, finishTeardown,
+    retention: { proofRoot: input.proofRoot, candidateRepository, cleanupTargets: input.cleanupTargets } });
 }
 
 /** Foreground F04a driver. It collects actual observations and delegates the
@@ -480,13 +489,16 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
           productBase: config.product.baseRevision, productHead: config.product.candidateRevision, uid: preflight.uid,
           digests: { settings: digests.settings!, availability: digests.availability!, authorization: digests.authorization!, qualification: digests.qualification!,
             assembly: digests.assembly!, faultInput: digests.faultInput!, reviewInput: digests.reviewInput! } };
-        verdict = await verifyFirstWebsiteEvidenceV1(evidenceDir, { candidateRepository: p.repository, pins,
+        verdict = await verifyFirstWebsiteControllerEvidenceV1(evidenceDir, { candidateRepository: p.repository, pins,
+          proofRoot: root, cleanupTargets: p.cleanup.targets.map(target => target.source),
           readCard: async () => {
-            const value = await service(`${projectPath}/${encodeURIComponent(requestId!)}/candidate`) as { candidate?: unknown };
-            const card = loopCandidateCardSchemaV1.parse(value.candidate);
+            const value = await exchange(host!, `${projectPath}/${encodeURIComponent(requestId!)}/candidate`, workSignal,
+              undefined, readB5CandidateResponseV1) as Awaited<ReturnType<typeof readB5CandidateResponseV1>>;
+            assertB5FaultValueAbsentV1(value, policy);
+            const card = loopCandidateCardSchemaV1.parse(value.card);
             need(card.requestId === requestId && card.projectId === host!.proof.project.projectId && card.candidateRevision === p.finalHead
               && card.evidence.binding.runLinkId === s.request.runLink!.runLinkId, "B5_COLD_CARD_JOIN");
-            return card;
+            return value;
           }, finishTeardown: async () => { watching = false; await watcher; cleanupResult = await owner.cleanup(); await host!.close(); } });
         break;
       }
@@ -518,13 +530,19 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     verdict.state = "incomplete"; verdict.reasons.push("B5_TRANSPORT_CLEANUP_INCOMPLETE");
   }
   if (preflight.providers?.transport === "scripted") {
-    verdict.state = "incomplete"; verdict.reasons.unshift("B5_PROVIDER_FIXTURE");
+    verdict.state = "incomplete"; verdict.reasons.push("B5_PROVIDER_FIXTURE");
   }
   verdict.reasons = [...new Set(verdict.reasons)];
   if (wroteEvidence && !wroteObservations) try {
     await write("controller-observations", { actions, observations, audits, statusChecks: statusChecks.map(check => check.record) });
   } catch { verdict.state = "incomplete"; verdict.reasons.push("B5_OBSERVATIONS_WRITE_FAILED"); }
+  if (verdict.reasons.some(reason => reason !== "B5_PROVIDER_FIXTURE"))
+    verdict.reasons = [...verdict.reasons.filter(reason => reason !== "B5_PROVIDER_FIXTURE"),
+      ...verdict.reasons.filter(reason => reason === "B5_PROVIDER_FIXTURE")];
   if (wroteEvidence) try { await write("controller-verdict", verdict); }
   catch { verdict.state = "incomplete"; verdict.reasons.push("B5_VERDICT_WRITE_FAILED"); }
+  if (verdict.reasons.some(reason => reason !== "B5_PROVIDER_FIXTURE"))
+    verdict.reasons = [...verdict.reasons.filter(reason => reason !== "B5_PROVIDER_FIXTURE"),
+      ...verdict.reasons.filter(reason => reason === "B5_PROVIDER_FIXTURE")];
   return verdict;
 }
