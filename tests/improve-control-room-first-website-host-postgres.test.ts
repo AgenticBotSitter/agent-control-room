@@ -113,24 +113,56 @@ test("F03a snapshot queries only schema-derived identifiers and candidate digest
   const body = /readSnapshot\(\) \{ return ownedRead\(async \(\) => \{([\s\S]*?)\n          \}\); \},/u.exec(source)?.[1];
   assert.ok(body);
   const javascript = transpileModule(`async function read() {${body}}`, {}).outputText;
-  const queries: string[] = [];
+  // Migrations are the independent oracle: do not pin SQL copied from the host.
+  const migrations = (await Promise.all([
+    "0301_control_loop_improvement_lineage.sql",
+    "0302_control_loop_improvement_commands.sql",
+    "0303_control_loop_update_candidates.sql",
+  ].map(file => readFile(join("db/migrations", file), "utf8")))).join("\n");
+  const queriedTables: string[] = [];
+  let transactions = 0;
   const active = { web: { client: { transaction: async (use: (tx: unknown) => Promise<unknown>) => use({
     query: async (sql: string, values?: string[]) => {
-      queries.push(sql);
-      if (values) assert.deepEqual(values, ["tenant:b5"]);
-      return { rows: [] };
+      if (sql === "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY") {
+        transactions++;
+        return { rows: [] };
+      }
+      const select = /^SELECT ([a-z_,]+) FROM ([a-z_]+) WHERE tenant_id=\$1$/u.exec(sql);
+      assert.ok(select, "snapshot uses an explicit tenant-scoped projection");
+      const [, columns, table] = select;
+      assert.deepEqual(values, ["tenant:b5"]);
+      const definition = new RegExp(String.raw`CREATE TABLE ${table} \(([\s\S]*?)\n\);`, "u").exec(migrations)?.[1];
+      assert.ok(definition, `${table} has a CREATE TABLE migration`);
+      const schemaColumns = new Set([...definition.matchAll(/^  ([a-z_]+) (?:text|bigint|jsonb|timestamptz)\b/gmu)]
+        .map(match => match[1]));
+      const primaryKey = /PRIMARY KEY \(([^)]+)\)/u.exec(definition)?.[1].split(",");
+      assert.ok(primaryKey, `${table} has a primary key in its migration`);
+      const selected = columns!.split(",");
+      for (const column of selected) {
+        assert.ok(schemaColumns.has(column), `${table}.${column} must exist in its CREATE TABLE migration`);
+        assert.ok(primaryKey.includes(column) || (table === "control_loop_update_candidates"
+          && ["request_id", "run_link_id", "candidate_revision", "record_digest"].includes(column)),
+          `${table}.${column} must be a key or candidate proof identifier/digest`);
+      }
+      for (const key of primaryKey.filter(column => column !== "tenant_id")) {
+        assert.ok(selected.includes(key), `${table} projection must preserve primary key ${key}`);
+      }
+      queriedTables.push(table!);
+      // Real journal shape: claim/result share command_id but are distinct rows.
+      const rows = table === "control_loop_improvement_commands"
+        ? ["claim", "result"].map(entry_kind => Object.fromEntries(selected.map(column =>
+          [column, ({ command_id: "loop-command:" + "a".repeat(32), entry_kind } as Record<string, string>)[column]]))) : [];
+      return { rows };
     },
   }) } } };
   const inspect = new Function("context", `with (context) { ${javascript}; return read(); }`);
-  await inspect({ current: active, closing: undefined, hooks: {}, scope: { tenantId: "tenant:b5" },
+  const snapshot = await inspect({ current: active, closing: undefined, hooks: {}, scope: { tenantId: "tenant:b5" },
     B5_SNAPSHOT_TABLES, b5Bytes, need: assert.ok });
-  assert.deepEqual(queries, ["SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
-    "SELECT id FROM control_loop_improvement_requests WHERE tenant_id=$1",
-    "SELECT request_id,version FROM control_loop_improvement_inputs WHERE tenant_id=$1",
-    "SELECT id FROM control_loop_improvement_run_links WHERE tenant_id=$1",
-    "SELECT id FROM control_loop_improvement_authorizations WHERE tenant_id=$1",
-    "SELECT id FROM control_loop_improvement_commands WHERE tenant_id=$1",
-    "SELECT id,request_id,run_link_id,candidate_revision,record_digest FROM control_loop_update_candidates WHERE tenant_id=$1"]);
+  assert.equal(transactions, 1);
+  assert.deepEqual(queriedTables, [...B5_SNAPSHOT_TABLES], "every snapshot table is checked against its migration");
+  assert.equal(snapshot.rows.length, 2);
+  assert.deepEqual(snapshot.rows.map((item: { row: Record<string, unknown> }) => item.row.entry_kind), ["claim", "result"]);
+  assert.notEqual(snapshot.rows[0].sha256, snapshot.rows[1].sha256, "claim and result retain distinct snapshot hashes");
 });
 
 test("F03a real PG roles, disposable seed and local sign-in prerequisites", {

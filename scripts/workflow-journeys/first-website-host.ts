@@ -451,7 +451,8 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
               const rows: { table: typeof B5_SNAPSHOT_TABLES[number]; sha256: string; row: Record<string, unknown> }[] = [];
               for (const table of B5_SNAPSHOT_TABLES) {
                 const columns = table === "control_loop_update_candidates" ? "id,request_id,run_link_id,candidate_revision,record_digest"
-                  : table === "control_loop_improvement_inputs" ? "request_id,version" : "id";
+                  : table === "control_loop_improvement_inputs" ? "request_id,version"
+                  : table === "control_loop_improvement_commands" ? "command_id,entry_kind" : "id";
                 const values = await tx.query<Record<string, unknown>>(`SELECT ${columns} FROM ${table} WHERE tenant_id=$1`, [scope.tenantId]);
                 for (const raw of values.rows) {
                   const row = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
