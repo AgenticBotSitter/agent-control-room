@@ -35,7 +35,7 @@ test("B5 fixture browser has a dedicated proof lane", async () => {
 // ---------- B5 helper, CLI and verifier (fixture/offline; no model, no real run) ----------
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile, chmod } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import type { TestContext } from "node:test";
@@ -499,4 +499,101 @@ test("B5 SYNTHETIC companion refuses stale admission, a second Start and answers
     "B5 an answer after Stop is refused");
   assert.equal(f.calls.filter(c => c === "answer").length, 0); assert.equal(f.launches(), launches, "B5 Stop launches no worker");
   assert.equal((await f.desk.viewLoopDesk(f.identity, project)).loopRequests.length, 1, "B5 one saved request throughout");
+});
+
+test("F03a outer assembly lifecycle is available after helper import", async () => {
+  const helper = await load();
+  assert.equal(typeof (helper as Record<string, unknown>).withFirstWebsiteHostV1, "function",
+    "the imported helper must own late acquisition and all-exit close");
+  const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts as Record<string, string>;
+  for (const name of ["test", "test:improve-control-room-first-website"])
+    assert.ok(scripts[name]!.includes("tests/improve-control-room-first-website-host-postgres.test.ts"),
+      `F03a guarded host tests are registered in ${name}`);
+});
+
+test("F03a outer lifecycle closes a late acquisition before returning an abort", async () => {
+  await load();
+  const abort = new AbortController();
+  let release!: () => void, entered!: () => void, closed = 0, body = 0;
+  const opening = new Promise<void>(yes => { entered = yes; });
+  const barrier = new Promise<void>(yes => { release = yes; });
+  const result = H.withFirstWebsiteHostV1({} as never, abort.signal, async () => { body++; }, async () => {
+    entered(); await barrier;
+    return { close: async () => { closed++; } } as never;
+  });
+  await opening; abort.abort();
+  let settled = false; void result.catch(() => {}).finally(() => { settled = true; });
+  await Promise.resolve(); assert.equal(settled, false, "abort must wait for ownership transfer");
+  release(); await assert.rejects(result, /abort/iu);
+  assert.equal(closed, 1); assert.equal(body, 0, "F03a aborted late acquisition never enters the proof body");
+});
+
+test("F03a outer lifecycle drains concurrent abort and body failure through one close", async () => {
+  await load();
+  const abort = new AbortController();
+  let release!: () => void, entered!: () => void, closeCalls = 0;
+  const closing = new Promise<void>(yes => { entered = yes; });
+  const barrier = new Promise<void>(yes => { release = yes; });
+  const result = H.withFirstWebsiteHostV1({} as never, abort.signal, async () => {
+    abort.abort(); throw new Error("verifier refused");
+  }, async () => ({ close: async () => { closeCalls++; entered(); await barrier; } }) as never);
+  await closing;
+  let settled = false; void result.catch(() => {}).finally(() => { settled = true; });
+  await Promise.resolve(); assert.equal(settled, false);
+  release(); await assert.rejects(result, /verifier refused/u); assert.equal(closeCalls, 1);
+});
+
+test("F03a outer lifecycle preserves cleanup uncertainty and refuses pre-aborted acquisition", async () => {
+  await load();
+  let created = 0, closed = 0;
+  await assert.rejects(H.withFirstWebsiteHostV1({} as never, AbortSignal.abort(), async () => {}, async () => {
+    created++; return {} as never;
+  }), /abort/iu); assert.equal(created, 0);
+  await assert.rejects(H.withFirstWebsiteHostV1({} as never, new AbortController().signal, async () => {}, async () => ({
+    close: async () => { closed++; throw new Error("cleanup uncertain"); },
+  }) as never), /cleanup uncertain/u);
+  assert.equal(closed, 1);
+});
+
+
+test("F03a frozen configuration refuses changed bytes before carrier import or acquisition", async t => {
+  await load();
+  const { validateFirstWebsiteHostV1 } = await import("../scripts/workflow-journeys/first-website-host");
+  const s = await scratch(t); await chmod(s.root, 0o700);
+  const product = join(s.root, "product");
+  const cliFile = join(product, "scripts/workflow-journeys/first-website-proof.ts");
+  await mkdir(join(product, "scripts/workflow-journeys"), { recursive: true });
+  await writeFile(cliFile, "// inert pinned product for refusal checks\n");
+  await git(product, ["init", "--quiet"]); await git(product, ["add", "."]); await git(product, ["commit", "--quiet", "-m", "refusal fixture"]);
+  const head = await git(product, ["rev-parse", "HEAD"]);
+  const contractFile = join(s.root, "config/contract-cleanup.json"); await writeFile(contractFile, "{}");
+  const config = { ...s.config, product: { ...s.config.product, root: product, baseRevision: head, candidateRevision: head },
+    a2: { ...s.config.a2, contractFile }, device: { ...s.config.device, origin: "http://127.0.0.1:60460" } };
+  const files = [contractFile, config.settingsFile, config.availabilityFile, config.authorizationEvidence,
+    config.a2.qualificationEvidence, config.faultInputFile, config.reviewInputFile];
+  const hashes: Record<string, string> = {};
+  for (const file of files) hashes[file.slice(s.root.length + 1)] = H.b5Bytes(await readFile(file)).slice(7);
+  await writeFile(join(s.root, "config/b5-handoff.json"), JSON.stringify({ schemaVersion: 1, scope: "assembly-only", productPin: head,
+    toolsPin: head, baseline: head, hashes, pythonSha256: "a".repeat(64), nodeSha256: "b".repeat(64), validation: {},
+    nativeIntakeQualified: false, providerDeviceCertified: false }));
+  await writeFile(join(s.root, "config/b5.json"), JSON.stringify(config));
+  await writeFile(config.availabilityFile, '{"changed":true}');
+  const before = await tree(s.root);
+  await assert.rejects(validateFirstWebsiteHostV1(config as never), /B5_HOST_FROZEN_INPUT/u,
+    "F03a altered frozen availability refuses at its byte guard");
+  assert.deepEqual(await tree(s.root), before, "F03a refusal acquires no resources or file effects");
+  assert.equal(await lstat(join(s.root, "config/imported.flag")).then(() => true, () => false), false);
+});
+
+test("F03a cancellation during cleanup cannot turn into assembly success", async () => {
+  await load();
+  const abort = new AbortController();
+  let entered!: () => void, release!: () => void;
+  const closing = new Promise<void>(yes => { entered = yes; });
+  const barrier = new Promise<void>(yes => { release = yes; });
+  const result = H.withFirstWebsiteHostV1({} as never, abort.signal, async () => 7, async () => ({
+    close: async () => { entered(); await barrier; },
+  }) as never);
+  await closing; abort.abort(); release();
+  await assert.rejects(result, /abort/iu, "F03a cleanup-time cancellation refuses success");
 });

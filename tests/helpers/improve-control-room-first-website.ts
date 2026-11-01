@@ -10,7 +10,6 @@ import { createServer } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
-import type { createPrivateTaskBootstrap } from "../../src/web/v1/private-task-startup";
 import { loopCandidateCardSchemaV1, type LoopCandidateCardV1 } from "../../src/improve-control-room/v1/loop-candidate-wire";
 const exec = promisify(execFile);
 const GIT_ENV: NodeJS.ProcessEnv = { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
@@ -59,18 +58,61 @@ export const firstWebsiteConfigSchemaV1 = z.object({
 }).strict();
 export type FirstWebsiteConfigV1 = z.infer<typeof firstWebsiteConfigSchemaV1>;
 
-// Types refer to the reviewed product constructor, not an alternate host.
-export type FirstWebsiteStartedRuntimeV1 = Awaited<ReturnType<ReturnType<typeof createPrivateTaskBootstrap>["start"]>>;
+// Structural proof contract for the real Mac-local composition.
+export type FirstWebsiteStartedRuntimeV1 = { isReady(): boolean; close(): Promise<void> };
 /** The landed private A2 entry wrapper the assembly's adapter already uses (same
  * interpreter/entrypoint/cwd and confined roots). B5 runs only `bind-input` through it. */
 export type FirstWebsiteA2EntryV1 = { interpreter: string; entrypoint: string; cwd: string };
 export type FirstWebsiteHostV1 = {
-  startup: FirstWebsiteStartedRuntimeV1;
-  origin: string; // exact qualified product origin, matching device.origin
+  readonly startup: FirstWebsiteStartedRuntimeV1; // getter follows an owned restart
+  origin: string; // exact loopback assembly origin, separate from device.origin
   a2Entry: FirstWebsiteA2EntryV1;
+  proof: FirstWebsiteProofV1;
   close(): Promise<void>; // idempotent, drains/reaps every assembly-owned resource
 };
 export type CreateFirstWebsiteHostV1 = (config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal) => Promise<FirstWebsiteHostV1>;
+export type FirstWebsiteOwnedV1 = {
+  processCount: number; listenerReleased: boolean; postgresStopped: boolean;
+  runScratchAbsent: boolean; protectedListenersUntouched: boolean;
+};
+export type FirstWebsiteProofV1 = {
+  /** Owner-only local delivery channel. No HTTP route or persisted code. */
+  withOwnerCode<T>(use: (code: string) => Promise<T>): Promise<T>;
+  project: Readonly<{ projectId: string; repository: string; baseRevision: string }>;
+  readRun(loopRunId: string): Promise<
+    Awaited<ReturnType<typeof import("./improve-control-room-first-website-a2").projectB5RunV1>> |
+    Awaited<ReturnType<typeof import("./improve-control-room-first-website-a2").joinB5FinalProjectionV1>>>;
+  restart(signal: AbortSignal): Promise<void>;
+  readSnapshot(): Promise<{ schemaVersion: 1; readAt: string; rows: { table: typeof B5_SNAPSHOT_TABLES[number]; sha256: string; row: Record<string, unknown> }[] }>;
+  inspectOwned(): Promise<FirstWebsiteOwnedV1>;
+};
+
+/** The outer owner waits for late acquisition rather than abandoning resources.
+ * The factory must observe the signal; even a late successful factory is closed
+ * before this call settles. A cleanup rejection is retained, including on abort.
+ */
+export async function withFirstWebsiteHostV1<T>(config: Readonly<FirstWebsiteConfigV1>, signal: AbortSignal,
+  body: (host: FirstWebsiteHostV1) => Promise<T>, factory?: CreateFirstWebsiteHostV1): Promise<T> {
+  signal.throwIfAborted();
+  const create = factory ?? await loadFirstWebsiteAssemblyV1(config);
+  signal.throwIfAborted();
+  let host: FirstWebsiteHostV1 | undefined, closing: Promise<void> | undefined;
+  let value!: T;
+  const close = () => closing ??= Promise.resolve().then(() => host?.close());
+  const aborted = () => { if (host) void close().catch(() => {}); };
+  signal.addEventListener("abort", aborted, { once: true });
+  try {
+    host = await create(config, signal);
+    signal.throwIfAborted();
+    value = await body(host);
+    signal.throwIfAborted();
+  } finally {
+    try { await close(); } finally { signal.removeEventListener("abort", aborted); }
+  }
+  signal.throwIfAborted();
+  return value;
+}
+
 
 export const b5Bytes = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const credential = /(?:^|[/\\])(?:\.env(?:\.[^/\\]*)?|\.aws|\.codex|\.hermes|\.ssh|\.gnupg|\.netrc|\.pgpass|auth\.json|credentials?(?:\.[^/\\]*)?|tokens?(?:\.[^/\\]*)?|keychains?|secrets?(?:\.[^/\\]*)?)(?:[/\\]|$)/iu;
