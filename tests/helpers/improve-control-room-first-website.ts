@@ -3,6 +3,8 @@
 // retained-evidence verifier. Imports are inert: nothing here opens a listener,
 // database, browser or process until a caller invokes it. This helper never
 // selects a role or model; A2 and the qualified lineup do.
+import { B5DeviceRefusalV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, validateB5DeviceOriginV1 } from "../../scripts/workflow-journeys/first-website-device";
+import type { B5DeviceMailboxV1 } from "../../scripts/workflow-journeys/first-website-device";
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
@@ -51,7 +53,7 @@ export const firstWebsiteConfigSchemaV1 = z.object({
   assembly: z.object({ module: absolute, digest: sha256 }).strict(),
   scratchRoot: absolute,
   ports: z.object({ product: z.number().int(), preview: z.number().int(), postgresBase: z.number().int() }).strict(),
-  device: z.object({ origin: z.string().url().max(512), transportQualification: absolute, actor: z.literal("reviewer") }).strict(),
+  device: z.object({ origin: z.string().url().max(512), transportQualification: absolute, actor: z.literal("owner") }).strict(),
   settingsFile: absolute, availabilityFile: absolute, authorizationEvidence: absolute,
   requestText: z.string().min(1).max(4096), faultInputFile: absolute, reviewInputFile: absolute,
   maxDurationMs: z.number().int().positive().max(B5_MAX_DURATION_MS).default(B5_MAX_DURATION_MS),
@@ -76,6 +78,7 @@ export type FirstWebsiteOwnedV1 = {
   runScratchAbsent: boolean;
 };
 export type FirstWebsiteProofV1 = {
+  readonly device?: B5DeviceMailboxV1;
   /** Owner-only local delivery channel. No HTTP route or persisted code. */
   withOwnerCode<T>(use: (code: string) => Promise<T>): Promise<T>;
   project: Readonly<{ projectId: string; repository: string; baseRevision: string }>;
@@ -139,7 +142,7 @@ async function portFree(port: number) {
 }
 
 export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
-  digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "lead-supplied" | "loopback-only" };
+  digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only" };
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
 export async function preflightFirstWebsiteV1(input: { configFile: string; evidenceDir: string; cliFile: string;
@@ -174,6 +177,14 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     if (stat.uid !== uid) refuse("B5_EXECUTION_IDENTITY_MISMATCH", name);
     digests[name] = b5Bytes(await readFile(file));
   }
+  const loopback = config.device.origin === "http://127.0.0.1:60460";
+  if (!loopback) {
+    try {
+      validateB5DeviceOriginV1(config.device.origin);
+      await loadB5TransportV1(config.device.transportQualification, root, config.device.origin, digests.transport);
+      assertB5DeviceSignalCleanupV1();
+    } catch (error) { if (error instanceof B5DeviceRefusalV1) refuse(error.code); throw error; }
+  }
   if (digests.assembly !== config.assembly.digest) refuse("B5_ASSEMBLY_DIGEST");
   if (digests.faultInput === digests.reviewInput) refuse("B5_ROLE_INPUTS", "fault and review inputs must differ");
   // Saved risk policy: categories and the configured attack/UI/CI slots, never a model roster.
@@ -202,11 +213,8 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   if (config.ports.product !== B5_PORTS.product || config.ports.preview !== B5_PORTS.preview || config.ports.postgresBase !== B5_PORTS.postgresBase
     || ports.some(port => B5_PROTECTED_PORTS.includes(port))) refuse("B5_PORT_RESERVATION");
   for (const port of ports) if (!await (input.probe ?? portFree)(port)) refuse("B5_PORT_BUSY", String(port));
-  const origin = new URL(config.device.origin);
-  if (origin.origin !== config.device.origin || !["https:", "http:"].includes(origin.protocol)) refuse("B5_DEVICE_ORIGIN");
-  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname);
   return { config, uid, evidenceDir, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
-    phoneTransport: loopback ? "loopback-only" : "lead-supplied" };
+    phoneTransport: loopback ? "loopback-only" : "tailscale-serve" };
 }
 
 // ---------- disposable proof site (runtime-generated only in scratch) ----------

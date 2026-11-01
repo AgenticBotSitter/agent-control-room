@@ -1,0 +1,372 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { firstWebsiteConfigSchemaV1 } from "./helpers/improve-control-room-first-website";
+
+test("F03b device actor is the owner", () => {
+  const schema = firstWebsiteConfigSchemaV1.shape.device;
+  const device = { origin: "http://127.0.0.1:60460", transportQualification: "/private/tmp/qualification.json", actor: "owner" };
+  assert.equal(schema.safeParse(device).success, true, "owner must be accepted");
+  assert.equal(schema.safeParse({ ...device, actor: "reviewer" }).success, false);
+});
+
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createB5DeviceMailboxV1, b5DeviceHashV1, b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1,
+  parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
+  b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, type B5TransportQualificationV1,
+  type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
+
+const local = "http://127.0.0.1:60460", remote = "https://fixture.ts.net:60462";
+const now = Date.parse("2026-11-01T18:00:00.000Z"), time = (offset = 0) => new Date(now + offset).toISOString();
+function qualification(): B5TransportQualificationV1 {
+  const beforeStatus = { TCP: { "443": { HTTPS: true } }, Web: { "fixture.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:65000" } } } } };
+  const installedStatus = { TCP: { ...beforeStatus.TCP, "60462": { HTTPS: true } },
+    Web: { ...beforeStatus.Web, "fixture.ts.net:60462": { Handlers: { "/": { Proxy: local } } } } };
+  return { schemaVersion: 1, kind: "tailscale-serve", origin: remote, backend: local, actor: "owner", ownerAuthorized: true,
+    authorizedAt: time(-1000), expiresAt: time(60_000), ownerLogin: "owner@example.invalid", identityPolicy: "exact-owner-login",
+    captureMode: "native-capture-server-correlation", inventory: { phone: { model: "fixture-model", os: "fixture-os", browser: "fixture-browser", browserVersion: "fixture-version" },
+      desktop: { browser: "fixture-browser", browserVersion: "fixture-version" }, captureMethod: "native-screenshot", fileTransferRoute: "fixture transfer; not device qualification" },
+    beforeStatus, installedStatus, beforeDigest: b5MappingDigestV1(beforeStatus), installedDigest: b5MappingDigestV1(installedStatus) };
+}
+async function scratch(t: { after(fn: () => Promise<void>): void }) {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const root = await mkdtemp(resolve(".test-tmp/f03b-")); await chmod(root, 0o700);
+  t.after(() => rm(root, { recursive: true, force: true })); return root;
+}
+async function correlated(mailbox: B5DeviceMailboxV1, request: B5DeviceRequestV1, token = "a".repeat(43)) {
+  const url = local + mailbox.projectPath;
+  const first = await mailbox.handle(new Request(url, { headers: { cookie: `control_room_local_owner=${token}` } }), async () => new Response("actual product fixture"));
+  assert.match(first.headers.get("set-cookie")!, /b5_correlation=/u);
+  await mailbox.handle(new Request(url, { headers: { cookie: `control_room_local_owner=${token}; b5_correlation=${request.sessionNonce}` } }), async () => new Response("actual product fixture"));
+  return mailbox.observation()!;
+}
+async function ready(t: { after(fn: () => Promise<void>): void }, phase: B5DeviceRequestV1["phase"] = "connect") {
+  const root = await scratch(t), mailbox = await createB5DeviceMailboxV1(root, local, { real: false, projectId: "project:fixture", now: () => now });
+  const request = await mailbox.request(phase, "phone", time(10_000));
+  const capture = Buffer.from("honestly fixture capture bytes");
+  await writeFile(join(mailbox.root, "captures/phone.png"), capture, { mode: 0o600 });
+  const observation = await correlated(mailbox, request);
+  const receipt = { ...request, observedAt: time(), real: false, browser: "fixture browser", actions: [phase === "close" ? "closed" : "connected"],
+    captures: [{ path: "captures/phone.png", sha256: b5DeviceHashV1(capture), device: "phone", sequence: request.sequence, sessionNonce: request.sessionNonce, capturedAt: time() }], observation,
+    ...(phase === "close" ? { closeAttestation: { actor: "owner", closedAt: time(), allProofTabsClosed: true } } : {}) };
+  return { root, mailbox, request, receipt };
+}
+
+test("F03b strict JSON and schemas refuse unknown, duplicate, truncated and oversized inputs", () => {
+  for (const bytes of ['{"a":1,"a":2}', '{"a":', '{"a":NaN}']) assert.throws(() => parseB5DeviceJsonV1(bytes), { code: "B5_DEVICE_JSON" });
+  assert.throws(() => parseB5DeviceJsonV1(' '.repeat(65537)), { code: "B5_DEVICE_SIZE" });
+  assert.deepEqual(parseB5DeviceJsonV1('{"a":1}'), { a: 1 });
+  assert.equal(b5DeviceRequestSchemaV1.safeParse({}).success, false);
+  assert.equal(b5DeviceReceiptSchemaV1.safeParse({ command: "Start" }).success, false);
+});
+
+test("F03b transport pins origin, inventory, owner login, authorization and exclusive mapping", () => {
+  const q = qualification(); assert.equal(validateB5TransportV1(q, remote, now).actor, "owner");
+  for (const origin of ["https://fixture.ts.net", remote + "/", remote + "/x", remote + "?x=1", remote + "#x", "https://fixture.invalid:60462", "https://u@fixture.ts.net:60462", "http://fixture.ts.net:60462", local]) {
+    assert.throws(() => validateB5DeviceOriginV1(origin), { code: "B5_DEVICE_ORIGIN" });
+  }
+  const { inventory: _inventory, ...absent } = q;
+  assert.throws(() => validateB5TransportV1(absent, remote, now), { code: "B5_DEVICE_INVENTORY_REQUIRED" });
+  for (const patch of [{ ownerLogin: undefined }, { actor: "reviewer" }, { ownerAuthorized: false }, { inventory: {} }]) {
+    assert.throws(() => validateB5TransportV1({ ...q, ...patch }, remote, now), { code: "B5_DEVICE_QUALIFICATION" });
+  }
+  assert.throws(() => validateB5TransportV1(q, remote, now + 60_000), { code: "B5_DEVICE_EXPIRED" });
+  assert.throws(() => validateB5TransportV1({ ...q, installedDigest: q.beforeDigest }, remote, now), { code: "B5_DEVICE_MAPPING_DIGEST" });
+  const drift = { ...q.installedStatus, unrelated: "changed" };
+  assert.throws(() => validateB5TransportV1({ ...q, installedStatus: drift, installedDigest: b5MappingDigestV1(drift) }, remote, now), { code: "B5_DEVICE_MAPPING_DRIFT" });
+});
+
+test("F03b remote gate uses existing Tailscale owner/Funnel checks", () => {
+  const q = { ...qualification(), expiresAt: new Date(Date.now() + 10_000).toISOString() };
+  const [gate] = b5DeviceRemoteOriginsV1(q);
+  assert.equal(gate!.origin, remote);
+  assert.doesNotThrow(() => gate!.admit(new Headers({ "tailscale-user-login": q.ownerLogin })));
+  for (const headers of [{}, { "tailscale-user-login": "other@example.invalid" }, { "tailscale-user-login": q.ownerLogin, "tailscale-funnel-request": "true" }]) {
+    assert.throws(() => gate!.admit(new Headers(headers as Record<string, string>)), /remote_access_refused/u);
+  }
+});
+
+test("F03b mailbox publishes private atomic requests and immutable receipts", async t => {
+  const { root, mailbox, request, receipt } = await ready(t);
+  assert.match(request.sessionNonce, /^[a-f0-9]{32}$/u); assert.equal(request.sequence, 1);
+  for (const directory of [root, mailbox.root, join(mailbox.root, "receipts"), join(mailbox.root, "captures")]) assert.equal((await lstat(directory)).mode & 0o777, 0o700);
+  assert.equal((await lstat(join(mailbox.root, "request.json"))).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")), request);
+  await mailbox.accept(receipt);
+  const saved = await readFile(join(mailbox.root, "receipts/1.json"), "utf8");
+  assert.equal((await lstat(join(mailbox.root, "receipts/1.json"))).mode & 0o777, 0o600);
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_DUPLICATE" });
+  assert.equal(await readFile(join(mailbox.root, "receipts/1.json"), "utf8"), saved);
+  const second = await mailbox.request("prepare", "desktop", time(20_000));
+  assert.equal(second.sequence, 2); assert.notEqual(second.sessionNonce, request.sessionNonce);
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_STALE" });
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), ["1.json"]);
+  mailbox.close(); await assert.rejects(mailbox.request("connect", "phone", time(20_000)), { code: "B5_DEVICE_CLOSED" });
+  await assert.rejects(createB5DeviceMailboxV1(root, local, { real: false, projectId: "p" }), { code: "B5_DEVICE_EXISTS" });
+});
+
+for (const [patch, code] of [
+  [{ origin: "https://wrong.invalid" }, "B5_DEVICE_ORIGIN"], [{ sessionNonce: "b".repeat(32) }, "B5_DEVICE_NONCE"],
+  [{ device: "desktop" }, "B5_DEVICE_DEVICE"], [{ sequence: 2 }, "B5_DEVICE_STALE"],
+  [{ expiresAt: time(-1) }, "B5_DEVICE_REQUEST_CHANGED"], [{ observedAt: time(1) }, "B5_DEVICE_EXPIRED"],
+  [{ real: true }, "B5_DEVICE_REAL"], [{ actions: ["started"] }, "B5_DEVICE_ACTIONS"], [{ command: "start" }, "B5_DEVICE_SCHEMA"],
+] as const) test(`F03b receipt refusal ${code} ${Object.keys(patch)[0]}`, async t => {
+  const { mailbox, receipt } = await ready(t);
+  await assert.rejects(mailbox.accept({ ...receipt, ...patch }), { code });
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), [], "refusal leaves no accepted receipt");
+});
+
+test("F03b expired challenge and incorrect correlation refuse without receipt effects", async t => {
+  const root = await scratch(t); let clock = now;
+  const mailbox = await createB5DeviceMailboxV1(root, local, { real: false, projectId: "p", now: () => clock });
+  await assert.rejects(mailbox.request("connect", "phone", time()), { code: "B5_DEVICE_EXPIRED" });
+  const request = await mailbox.request("connect", "phone", time(10));
+  const { receipt } = await ready(t);
+  const value = { ...receipt, ...request };
+  await assert.rejects(mailbox.accept(value), { code: "B5_DEVICE_CORRELATION" });
+  clock += 10;
+  await assert.rejects(mailbox.accept(value), { code: "B5_DEVICE_EXPIRED" });
+});
+
+test("F03b capture mutation, path escape, symlink, changed request and large JSON refuse", async t => {
+  const { mailbox, receipt } = await ready(t);
+  await writeFile(join(mailbox.root, "captures/phone.png"), "changed");
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_CAPTURE_CHANGED" });
+  for (const path of ["../outside.png", "/absolute.png", "captures/../phone.png"]) {
+    await assert.rejects(mailbox.accept({ ...receipt, captures: [{ ...receipt.captures[0], path }] }), { code: "B5_DEVICE_PATH" });
+  }
+  await symlink("phone.png", join(mailbox.root, "captures/link.png"));
+  await assert.rejects(mailbox.accept({ ...receipt, captures: [{ ...receipt.captures[0], path: "captures/link.png" }] }), { code: "B5_DEVICE_PATH" });
+  await writeFile(join(mailbox.root, "request.json"), ' '.repeat(65537));
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_SIZE" });
+  await writeFile(join(mailbox.root, "request.json"), JSON.stringify({ ...receipt, phase: "prepare" }));
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_SCHEMA" });
+});
+
+test("F03b retained reads recheck capture bytes and close attestation timing", async t => {
+  const { mailbox, receipt } = await ready(t, "close");
+  await assert.rejects(mailbox.accept({ ...receipt, closeAttestation: undefined }), { code: "B5_DEVICE_CLOSE" });
+  await assert.rejects(mailbox.accept({ ...receipt, closeAttestation: { ...receipt.closeAttestation, closedAt: time(-1) } }), { code: "B5_DEVICE_CLOSE" });
+  await mailbox.accept(receipt); await mailbox.readReceipt(1);
+  await writeFile(join(mailbox.root, "captures/phone.png"), "changed after acceptance");
+  await assert.rejects(mailbox.readReceipt(1), { code: "B5_DEVICE_CAPTURE_CHANGED" });
+});
+
+test("F03b 24 callers released at an explicit barrier accept exactly one receipt", async t => {
+  const { mailbox, receipt } = await ready(t);
+  let release!: () => void; const barrier = new Promise<void>(yes => { release = yes; });
+  let arrived = 0;
+  const callers = Array.from({ length: 24 }, async () => { arrived++; await barrier; return mailbox.accept(structuredClone(receipt)); });
+  assert.equal(arrived, 24); release();
+  const results = await Promise.allSettled(callers);
+  assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
+  const refusals = results.filter(r => r.status === "rejected"); assert.equal(refusals.length, 23);
+  for (const refusal of refusals) assert.match(refusal.reason.code, /^B5_DEVICE_(SEQUENCE_RACE|DUPLICATE)$/u);
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), ["1.json"]);
+  console.log("RESULT: PASS F03b receipt barrier callers=24 accepted=1 refused=23 (fixtures)");
+});
+
+test("F03b cookie correlation binds device, session and exact authenticated read", async t => {
+  const { mailbox } = await ready(t);
+  const request = await mailbox.request("connect", "desktop", time(1000));
+  await assert.rejects(correlated(mailbox, request), { code: "B5_DEVICE_SESSION" });
+  await correlated(mailbox, request, "b".repeat(43));
+  assert.equal(mailbox.observation()!.device, "desktop");
+  const next = await mailbox.request("connect", "phone", time(1000));
+  for (const [path, status] of [[mailbox.projectPath, 401], ["/projects", 200], [mailbox.projectPath + "?challenge=" + next.sessionNonce, 200]] as const) {
+    const response = await mailbox.handle(new Request(local + path, { headers: { cookie: "control_room_local_owner=" + "a".repeat(43) } }), async () => new Response(null, { status }));
+    assert.equal(response.headers.get("set-cookie"), null); assert.equal(mailbox.observation(), undefined);
+  }
+});
+
+function removal(q: B5TransportQualificationV1, request: { removalNonce: string; requestedAt: string }) {
+  return { schemaVersion: 1, actor: "owner", removalNonce: request.removalNonce, observedAt: time(), installSettled: true, installCancelled: false,
+    off: { command: "tailscale serve --https=60462 off", port: 60462, exitCode: 0 }, status: { command: "tailscale serve status --json", exitCode: 0, afterStatus: q.beforeStatus, afterDigest: q.beforeDigest },
+    beforeDigest: q.beforeDigest, installedDigest: q.installedDigest };
+}
+for (const reason of ["success", "deadline", "owner Stop", "failed cold readCard", "verifier refusal", "interrupt", "acquisition failure"]) {
+  test(`F03b single outer cleanup after ${reason} closes before owner removal`, async () => {
+    const q = qualification(), events: string[] = [], abort = new AbortController();
+    let release!: () => void, closeEntered!: () => void;
+    const barrier = new Promise<void>(yes => { release = yes; }), entered = new Promise<void>(yes => { closeEntered = yes; });
+    const cleanup = createB5DeviceCleanupV1(q, { now: () => now, async closeHost(signal) {
+      assert.equal(signal.aborted, false); events.push("close"); closeEntered(); await barrier;
+    }, async requestRemoval(request, signal) {
+      assert.equal(signal.aborted, false); events.push("remove"); return removal(q, request);
+    } });
+    let cleanupPromise: ReturnType<typeof cleanup> | undefined, acquired = false;
+    const run = async () => {
+      try {
+        // Fail acquisition after installation was attempted. All later cases
+        // acquire successfully and then exit by their actual failure mechanism.
+        if (reason === "acquisition failure") throw new Error(reason);
+        acquired = true;
+        if (reason === "deadline") {
+          const deadline = setTimeout(() => abort.abort(new Error(reason)), 0);
+          try { await new Promise<void>(yes => abort.signal.addEventListener("abort", () => yes(), { once: true })); }
+          finally { clearTimeout(deadline); }
+          abort.signal.throwIfAborted();
+        }
+        if (reason === "owner Stop" || reason === "interrupt") { abort.abort(new Error(reason)); abort.signal.throwIfAborted(); }
+        if (reason === "failed cold readCard") {
+          const readCard = async () => { events.push("readCard"); throw new Error(reason); };
+          await readCard();
+        }
+        if (reason === "verifier refusal") { events.push("verify"); b5DeviceReceiptSchemaV1.parse({}); }
+        return "success";
+      } finally { cleanupPromise = cleanup(); assert.equal(cleanup(), cleanupPromise); await cleanupPromise; }
+    };
+    const outcome = run().then(value => ({ value, error: undefined }), error => ({ value: undefined, error }));
+    await entered;
+    assert.equal(acquired, reason !== "acquisition failure");
+    assert.equal(events.at(-1), "close"); assert.equal(events.includes("remove"), false); release();
+    const settled = await outcome;
+    if (reason === "success") assert.equal(settled.value, "success"); else assert.ok(settled.error);
+    const result = await cleanupPromise!;
+    assert.equal(result.disposition, "mapping-removed"); assert.equal(result.hostStopped, true); assert.deepEqual(result.failures, []);
+    assert.deepEqual(events.slice(-2), ["close", "remove"]);
+  });
+}
+
+test("F03b cleanup records outstanding on absent/late/failed/drifting removal and still contains failed host close", async () => {
+  const q = qualification();
+  for (const kind of ["absent", "late", "command", "status", "drift", "unsettled", "nonce", "old", "digest", "retained-port"] as const) {
+    let requested = 0;
+    const cleanup = createB5DeviceCleanupV1(q, { now: () => now, removalMs: 10, async closeHost() {}, async requestRemoval(request, signal) {
+      requested++;
+      if (kind === "absent" || kind === "late") return new Promise(resolve => { signal.addEventListener("abort", () => resolve(kind === "late" ? removal(q, request) : undefined), { once: true }); });
+      const receipt = removal(q, request);
+      if (kind === "command") receipt.off.exitCode = 1;
+      if (kind === "status") receipt.status.exitCode = 1;
+      if (kind === "unsettled") receipt.installSettled = false;
+      if (kind === "nonce") receipt.removalNonce = "b".repeat(32);
+      if (kind === "old") receipt.observedAt = time(-1);
+      if (kind === "digest") receipt.status.afterDigest = "sha256:" + "0".repeat(64);
+      if (kind === "drift" || kind === "retained-port") {
+        receipt.status.afterStatus = kind === "drift" ? { unrelated: "changed" } : q.installedStatus;
+        receipt.status.afterDigest = b5MappingDigestV1(receipt.status.afterStatus);
+      }
+      return receipt;
+    } });
+    const result = await cleanup(); assert.equal(result.disposition, "mapping-outstanding", kind); assert.equal(result.failures.length, 1, kind); assert.equal(requested, 1);
+  }
+  let requested = 0;
+  const failed = await createB5DeviceCleanupV1(q, { now: () => now, async closeHost() { throw Error("failure"); },
+    async requestRemoval(request) { requested++; return removal(q, request); } })();
+  assert.equal(failed.hostStopped, false); assert.deepEqual(failed.failures, ["B5_DEVICE_HOST_CLEANUP"]); assert.equal(requested, 1);
+});
+
+import { after } from "node:test";
+import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
+import { createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
+import { sha256Digest } from "../src/security";
+import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { privateOwnerBootstrapFixture, closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject } from "./helpers/private-owner-bootstrap-conformance";
+import { nodeExchange } from "./helpers/web-node";
+
+after(closePrivateOwnerBootstrapConformanceDatabase);
+
+test("F03b exact port remote composition proves product cookie route, auth, CSRF, expiry and Funnel refusal", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "b5-device" }); t.after(fixture.close);
+  await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
+    configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion });
+  const clock = { now: conformanceNow }, ownerCode = "fixture-disposable-owner-code-long-enough";
+  const q = { ...qualification(), expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const app = createMacLocalWebProcessV1({ origin: local, workspaceId: fixture.configuration.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: local, tenantId: fixture.configuration.tenantId,
+      provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 300, remoteOrigins: [remote] },
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => clock.now });
+  t.after(() => app.close());
+  let mailbox: B5DeviceMailboxV1 | undefined;
+  const handler = createMacLocalNodeHandler({ origin: local, application: app, remoteOrigins: b5DeviceRemoteOriginsV1(q),
+    assets: { count: 0, digest: "fixture", respond: () => undefined },
+    handler: request => mailbox ? mailbox.handle(request, () => app.handle(request, () => new Response("product render fixture"))) : app.handle(request, () => new Response("product render fixture")) });
+  t.after(() => handler.close());
+  const go = async (path: string, headers: string[] = [], method = "GET", body?: string) => {
+    const ex = nodeExchange({ path, method, body, headers: ["X-Forwarded-Proto", "https", "Tailscale-User-Login", q.ownerLogin, ...headers] });
+    ex.input.rawHeaders[1] = new URL(remote).host;
+    const done = new Promise<void>((yes, no) => { ex.output.once("finish", yes); ex.output.once("error", no); });
+    await handler.handle(ex.input, ex.output); await done;
+    return { status: ex.output.statusCode, headers: ex.headers, body: ex.body() };
+  };
+  const signInBody = JSON.stringify({ ownerCode });
+  const signedIn = await go("/api/v1/local-owner-session", ["Origin", remote, "Content-Type", "application/json", "Content-Length", String(Buffer.byteLength(signInBody))], "POST", signInBody);
+  assert.equal(signedIn.status, 201); const cookie = signedIn.headers.get("set-cookie")!.split(";")[0]!;
+  assert.match(signedIn.headers.get("set-cookie")!, /Secure/u);
+  const createBody = JSON.stringify({ title: "Disposable fixture project", summary: "Device correlation fixture" });
+  const created = await go("/api/v1/projects", ["Origin", remote, "Cookie", cookie, "Content-Type", "application/json", "Content-Length", String(Buffer.byteLength(createBody)), "Idempotency-Key", "b5-device-project-0001"], "POST", createBody);
+  assert.equal(created.status, 201, created.body);
+  const project = JSON.parse(created.body).project;
+  assert.ok(project.projectId);
+  mailbox = await createB5DeviceMailboxV1(await scratch(t), remote, { real: false, projectId: project.projectId, now: () => clock.now });
+  const request = await mailbox.request("connect", "phone", new Date(clock.now + 60_000).toISOString());
+  assert.equal((await go(mailbox.projectPath)).status, 303); assert.equal(mailbox.observation(), undefined);
+  const first = await go(mailbox.projectPath, ["Cookie", cookie]); assert.equal(first.status, 200);
+  assert.match(first.headers.get("set-cookie")!, new RegExp(`b5_correlation=${request.sessionNonce}`));
+  const second = await go(mailbox.projectPath, ["Cookie", `${cookie}; b5_correlation=${request.sessionNonce}`]);
+  assert.equal(second.status, 200); assert.equal(mailbox.observation()!.sessionNonce, request.sessionNonce);
+  assert.equal((await go(mailbox.projectPath + "?challenge=" + request.sessionNonce, ["Cookie", cookie])).status, 400, "the real product refuses invented query fields");
+  assert.equal((await go("/api/v1/projects", ["Cookie", cookie, "Tailscale-Funnel-Request", "true"])).status, 403);
+  assert.equal((await go("/api/v1/projects", ["Cookie", cookie, "Origin", "https://wrong.invalid"], "POST")).status, 403);
+  clock.now += 300_000;
+  assert.equal((await go("/api/v1/projects", ["Cookie", cookie])).status, 401);
+  const safe = JSON.stringify(mailbox.observation());
+  assert.doesNotMatch(safe, new RegExp(ownerCode + "|" + cookie.split("=")[1]! + "|" + q.ownerLogin));
+  console.log("RESULT: PASS F03b exact HTTPS:60462 existing product/session/gate/correlation composition (in-memory fixture)");
+});
+
+test("F03b capture attestation refuses swapped device/challenge/sequence and stale capture time", async t => {
+  const { mailbox, receipt } = await ready(t);
+  for (const patch of [{ device: "desktop" }, { sessionNonce: "b".repeat(32) }, { sequence: 2 }, { capturedAt: time(-1) }, { capturedAt: time(1) }]) {
+    await assert.rejects(mailbox.accept({ ...receipt, captures: [{ ...receipt.captures[0], ...patch }] }), { code: "B5_DEVICE_CORRELATION" });
+  }
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+});
+
+test("F03b request and receipt tampering, unsafe custody and oversized captures refuse", async t => {
+  const { mailbox, receipt, request } = await ready(t);
+  await writeFile(join(mailbox.root, "request.json"), JSON.stringify({ ...request, device: "desktop" }));
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_REQUEST_CHANGED" });
+  await writeFile(join(mailbox.root, "request.json"), JSON.stringify(request));
+  await chmod(join(mailbox.root, "captures/phone.png"), 0o644);
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_CUSTODY" });
+  await chmod(join(mailbox.root, "captures/phone.png"), 0o600);
+  await writeFile(join(mailbox.root, "captures/phone.png"), Buffer.alloc((1 << 20) + 1));
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_SIZE" });
+  await writeFile(join(mailbox.root, "captures/phone.png"), "honestly fixture capture bytes");
+  await mailbox.accept(receipt);
+  await writeFile(join(mailbox.root, "receipts/1.json"), JSON.stringify({ ...receipt, browser: "changed browser" }));
+  await assert.rejects(mailbox.readReceipt(1), { code: "B5_DEVICE_RECEIPT_CHANGED" });
+});
+
+test("F03b mailbox close drains an already-started receipt and refuses new work", async t => {
+  const { mailbox, receipt } = await ready(t); let settled = false;
+  const accepted = mailbox.accept(receipt).finally(() => { settled = true; });
+  const closing = mailbox.close(); assert.equal(mailbox.close(), closing);
+  await assert.rejects(mailbox.request("connect", "phone", time(1000)), { code: "B5_DEVICE_CLOSED" });
+  await closing; assert.equal(settled, true); await accepted;
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), ["1.json"]);
+});
+
+
+test("F03b native acquisition remains fenced by the unqualified PG signal cleanup dependency", () => {
+  assert.throws(() => assertB5DeviceSignalCleanupV1(), { code: "B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED" });
+  console.log("RESULT: BLOCKED B5_DEVICE_SIGNAL_CLEANUP_UNQUALIFIED; owner packet cannot clear dependency fence");
+});
+
+test("F03b PG signal callback cannot wait for an outstanding owner removal receipt", async () => {
+  const source = await readFile("tests/support/attack-kit/real-postgres.ts", "utf8");
+  const body = /const onSignal = \(signal: NodeJS\.Signals\) => \{([\s\S]*?)\n  \};/u.exec(source)?.[1];
+  assert.ok(body, "current PG signal handler must be inspected; changes require requalification");
+  const events: string[] = [];
+  const handler = new Function("stop", "process", `return signal => {${body}}`)(
+    async () => { events.push("pg-stop"); }, { exit: (code: number) => events.push(`process-exit-${code}`) });
+  let release!: () => void;
+  const receipt = new Promise<void>(yes => { release = yes; });
+  const outerCleanup = (async () => { events.push("host-close"); await Promise.resolve(); events.push("owner-removal-request"); await receipt; events.push("owner-removal-receipt"); })();
+  handler("SIGINT"); await new Promise<void>(yes => setImmediate(yes));
+  assert.deepEqual(events, ["host-close", "pg-stop", "owner-removal-request", "process-exit-130"]);
+  release(); await outerCleanup;
+  console.log("RESULT: CONFIRMED PG hard exit precedes owner removal receipt (source callback, no PG acquisition)");
+});

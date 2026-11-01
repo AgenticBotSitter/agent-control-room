@@ -78,7 +78,7 @@ async function scratch(t: Pick<TestContext, "after">) {
     a2: { contractFile: c("a2-contract.json"), toolingRevision: H.b5Bytes("tooling"), schemaDigest: H.b5Bytes("schema"), qualificationEvidence: c("qualification.json") },
     assembly: { module: c("first-website-host.mjs"), digest: H.b5Bytes(files["first-website-host.mjs"]!) }, scratchRoot: root,
     ports: { product: 60460, preview: 60461, postgresBase: 60470 },
-    device: { origin: "https://device.invalid", transportQualification: c("transport.json"), actor: "reviewer" },
+    device: { origin: "http://127.0.0.1:60460", transportQualification: c("transport.json"), actor: "owner" },
     settingsFile: c("settings.json"), availabilityFile: c("availability.json"), authorizationEvidence: c("authorization.json"),
     requestText: H.B5_REQUEST_TEXT, faultInputFile: c("fault-input.md"), reviewInputFile: c("review-input.md"), maxDurationMs: 14_400_000 };
   const write = async (value: unknown, name = "config.json") => { await writeFile(join(parent, name), JSON.stringify(value)); return join(parent, name); };

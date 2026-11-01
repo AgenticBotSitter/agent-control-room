@@ -1,5 +1,6 @@
-// Proof-only, inert Mac-local assembly. No private installation discovery, device
-// transport, intake or provider launch. The frozen F03-0 packet is prerequisite.
+// Proof-only, inert Mac-local assembly with qualified device origin gates.
+// No installation discovery, transport command, intake or provider launch.
+import { B5DeviceRefusalV1, createB5DeviceMailboxV1, loadB5TransportV1, b5DeviceRemoteOriginsV1 } from "./first-website-device";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { lstat, readFile, readdir, realpath, writeFile } from "node:fs/promises";
@@ -85,12 +86,12 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
   need(config.product.root === join(root, "product") && config.a2.contractFile === join(root, "config/contract-cleanup.json"), "B5_HOST_LAYOUT");
   need(config.ports.product === B5_PORTS.product && config.ports.preview === B5_PORTS.preview
     && config.ports.postgresBase === B5_PORTS.postgresBase, "B5_PORT_RESERVATION");
-  // Remote qualification and mapping belong to F03b. This slice opens only its
-  // local assembly origin, and cannot confer device readiness.
-  need(config.device.origin === origin, "B5_HOST_LOOPBACK_ONLY");
+
   const preflight = await preflightFirstWebsiteV1({ configFile: join(root, "config/b5.json"),
     evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts") });
   need(JSON.stringify(preflight.config) === JSON.stringify(config), "B5_HOST_CONFIG_CHANGED");
+  const transport = config.device.origin === origin ? undefined : await loadB5TransportV1(
+    config.device.transportQualification, root, config.device.origin, preflight.digests.transport);
   const handoff = handoffSchema.parse(await json(join(root, "config/b5-handoff.json"), root));
   for (const [name, hash] of Object.entries(handoff.hashes)) {
     const file = join(root, name); await regular(file, root);
@@ -130,7 +131,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     const assets = await loadPrivateClientAssets(join(config.product.root, "dist-vps/client"));
     need(assets.digest === config.product.assetsDigest, "B5_HOST_ASSETS");
     for (const file of ["runtime.js", "index.js"]) await regular(join(config.product.root, "dist-vps/server", file), root);
-    return { config, handoff, assets, entry, digests: preflight.digests,
+    return { config, handoff, assets, entry, transport, digests: preflight.digests,
       configDigest: b5Bytes(await readFile(join(root, "config/b5.json"))),
       handoffDigest: b5Bytes(await readFile(join(root, "config/b5-handoff.json"))) };
   } finally { await loaded.adapter.close(); }
@@ -193,7 +194,7 @@ export async function prepareFirstWebsiteAssemblyV1(root: string) {
         schemaDigest: loaded.adapter.schemaDigest, qualificationEvidence: join(root, "config/b5-qualification.json") },
       assembly: { module: assembly, digest: b5Bytes(wrapper) }, scratchRoot: root,
       ports: { product: B5_PORTS.product, preview: B5_PORTS.preview, postgresBase: B5_PORTS.postgresBase },
-      device: { origin, transportQualification: transport, actor: "reviewer" },
+      device: { origin, transportQualification: transport, actor: "owner" },
       settingsFile: c.settingsFile, availabilityFile: c.availabilityFile, authorizationEvidence: join(root, "config/authorization.json"),
       requestText: B5_REQUEST_TEXT, faultInputFile: join(root, "config/fault-input.txt"), reviewInputFile: join(root, "config/review-input.txt") });
     for (const file of [assembly, transport, join(root, "config/b5.json")])
@@ -312,6 +313,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   }
   // Install one real registry delegate. Each request reaches the current real
   // Mac-local object; no source registry or replacement renderer is involved.
+  const deviceMailbox = prepared.transport ? await createB5DeviceMailboxV1(root, config.device.origin, { real: true, projectId, inventory: prepared.transport.inventory }) : undefined;
   const registryKey = join(config.product.root, "dist-vps/server/runtime.js");
   const existing = registries.get(registryKey);
   need(!existing?.claimed, "B5_HOST_ALREADY_RUNNING");
@@ -395,12 +397,15 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       ownerCode = randomBytes(32).toString("base64url");
       application = createMacLocalWebProcessV1({ origin, workspaceId: scope.workspaceId, database: web,
         localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: scope.tenantId,
-          provider, subject: ownerId, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 }, loopBridge });
+          provider, subject: ownerId, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: prepared.transport ? 300 : 900,
+          ...(prepared.transport ? { remoteOrigins: [prepared.transport.origin] } : {}) }, loopBridge });
       const recoveryService = new ImproveControlRoomLoopServiceV1(web.client, scope, loopBridge);
       recovery = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
         enabled: () => loaded.configuration.contract.recovery!.enabled() === true || capability.enabled() === true,
         observe: recoveryService.finalizationPort().observe, onTick: adapter.monitoringTick, createCycle: createPipelineAdvanceCycleV1 });
-      service = createMacLocalNodeService({ origin, port: B5_PORTS.product, assets, handler: renderer.default,
+      service = createMacLocalNodeService({ origin, port: B5_PORTS.product, assets,
+        ...(prepared.transport ? { remoteOrigins: b5DeviceRemoteOriginsV1(prepared.transport) } : {}),
+        handler: request => deviceMailbox ? deviceMailbox.handle(request, () => renderer.default(request)) : renderer.default(request),
         application: { isReady: application.isReady, close: async () => { await recovery!.close(); await application!.close(); } } });
       const desk = new ImproveControlRoomDeskServiceV1(web.client, scope, integrityKey, undefined, Date.now,
         adapter.contract, loopBridge.loopCandidates);
@@ -429,6 +434,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       const host: FirstWebsiteHostV1 = {
         origin, a2Entry: entry, get startup() { need(current, "B5_HOST_NOT_READY"); return current.runtime; }, close,
         proof: {
+          ...(deviceMailbox ? { device: deviceMailbox } : {}),
           async withOwnerCode(use) { need(!closing && ownerCode, "B5_HOST_CLOSED"); return use(ownerCode); },
           project: Object.freeze({ projectId, repository: join(root, "work/repo"), baseRevision: handoff.baseline }),
           async restart(restartSignal) {
@@ -569,9 +575,11 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   void done.catch(() => {});
   function close() { return closing ??= (async () => {
     signal.removeEventListener("abort", aborted);
+    const deviceClosed = deviceMailbox?.close();
     registry.application = undefined;
     try { await hooks.at?.("closing"); await restarting; await Promise.allSettled([...privateReads]); await current?.close(); }
     finally {
+      await deviceClosed;
       finish.resolve();
       try { await done; } finally { registry.application = undefined; registry.claimed = cleanupFailed || !pgClean; }
     }
@@ -608,6 +616,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   // Finish module evaluation before the inert wrapper re-exports this module.
   // Awaiting main at module scope would deadlock that legitimate loader join.
   void main().catch(error => {
-    console.log(`FAILED: ${error instanceof B5RefusalV1 ? error.code : "B5_HOST_INTERNAL"}`); process.exitCode = 1;
+    console.log(`FAILED: ${error instanceof B5RefusalV1 || error instanceof B5DeviceRefusalV1 ? error.code : "B5_HOST_INTERNAL"}`); process.exitCode = 1;
   });
 }
