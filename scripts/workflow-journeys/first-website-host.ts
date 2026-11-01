@@ -31,7 +31,7 @@ import { createImproveControlRoomLoopRecoveryV1 } from "../../src/web/v1/improve
 import { createPipelineAdvanceCycleV1 } from "../../src/web/v1/private-task-startup";
 import { withRealPostgres, type RealPostgres } from "../../tests/support/attack-kit/real-postgres";
 import { loadB5A2V1, projectB5RunV1, joinB5FinalProjectionV1, b5RawHash } from "../../tests/helpers/improve-control-room-first-website-a2";
-import { B5RefusalV1, B5_PORTS, B5_REQUEST_TEXT, B5_SNAPSHOT_TABLES, b5Bytes, firstWebsiteConfigSchemaV1,
+import { B5RefusalV1, B5_PORTS, B5_REQUEST_TEXT, B5_SNAPSHOT_TABLES, B5_SNAPSHOT_COLUMNS, b5Bytes, firstWebsiteConfigSchemaV1,
   preflightFirstWebsiteV1, probeBindInputCapabilityV1, withFirstWebsiteHostV1,
   type FirstWebsiteConfigV1, type FirstWebsiteHostV1 } from "../../tests/helpers/improve-control-room-first-website";
 
@@ -469,14 +469,14 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
             })();
             try { await restarting; } finally { restarting = undefined; }
           },
-          readSnapshot() { return ownedRead(async () => {
+          readSnapshot(options?: { evidenceOnly?: boolean }) { return ownedRead(async () => {
             await hooks.at?.("proof-read");
             const active = current; need(active && !closing, "B5_HOST_CLOSED");
             const snapshot = await active.web.client.transaction(async tx => {
               await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
               const rows: { table: typeof B5_SNAPSHOT_TABLES[number]; sha256: string; row: Record<string, unknown> }[] = [];
               for (const table of B5_SNAPSHOT_TABLES) {
-                const columns = table === "control_loop_update_candidates" ? "id,request_id,run_link_id,candidate_revision,record_digest"
+                const columns = options?.evidenceOnly ? B5_SNAPSHOT_COLUMNS[table].join(",") : table === "control_loop_update_candidates" ? "id,request_id,run_link_id,candidate_revision,record_digest"
                   : table === "control_loop_improvement_inputs" ? "request_id,version"
                   : table === "control_loop_improvement_commands" ? "command_id,entry_kind,request_id,operation,binding,result,created_at" : "id";
                 const values = await tx.query<Record<string, unknown>>(`SELECT ${columns} FROM ${table} WHERE tenant_id=$1`, [scope.tenantId]);

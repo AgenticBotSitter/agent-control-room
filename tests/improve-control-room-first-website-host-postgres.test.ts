@@ -17,7 +17,7 @@ import { parseStoredProjectPresentationV1 } from "../src/config/v1/project-prese
 import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createFirstWebsiteHostV1, seedFirstWebsiteDatabaseV1, withFirstWebsiteOwnerCodeV1, prepareFirstWebsiteAssemblyV1, firstWebsiteProjectPayloadV1, validateFirstWebsiteHostV1 } from "../scripts/workflow-journeys/first-website-host";
-import { B5_PORTS, B5_SNAPSHOT_TABLES, b5Bytes, firstWebsiteConfigSchemaV1, loadFirstWebsiteAssemblyV1 } from "./helpers/improve-control-room-first-website";
+import { B5_PORTS, B5_SNAPSHOT_TABLES, B5_SNAPSHOT_COLUMNS, b5Bytes, firstWebsiteConfigSchemaV1, loadFirstWebsiteAssemblyV1 } from "./helpers/improve-control-room-first-website";
 
 const origin = "http://127.0.0.1:60460";
 const configFile = process.env.CONTROL_ROOM_B5_CONFIG;
@@ -110,7 +110,7 @@ test("B5 host-postgres frozen native gate cannot skip to green", { timeout: 60_0
 
 test("F04a snapshot queries schema-derived identifiers, command evidence and candidate digests", async () => {
   const source = await readFile("scripts/workflow-journeys/first-website-host.ts", "utf8");
-  const body = /readSnapshot\(\) \{ return ownedRead\(async \(\) => \{([\s\S]*?)\n          \}\); \},/u.exec(source)?.[1];
+  const body = /readSnapshot\(options\?: \{ evidenceOnly\?: boolean \}\) \{ return ownedRead\(async \(\) => \{([\s\S]*?)\n          \}\); \},/u.exec(source)?.[1];
   assert.ok(body);
   const javascript = transpileModule(`async function read() {${body}}`, {}).outputText;
   // Migrations are the independent oracle: do not pin SQL copied from the host.
@@ -119,6 +119,7 @@ test("F04a snapshot queries schema-derived identifiers, command evidence and can
     "0302_control_loop_improvement_commands.sql",
     "0303_control_loop_update_candidates.sql",
   ].map(file => readFile(join("db/migrations", file), "utf8")))).join("\n");
+  for (const evidenceOnly of [false,true]) {
   const queriedTables: string[] = [];
   let transactions = 0;
   const active = { web: { client: { transaction: async (use: (tx: unknown) => Promise<unknown>) => use({
@@ -148,7 +149,8 @@ test("F04a snapshot queries schema-derived identifiers, command evidence and can
       for (const key of primaryKey.filter(column => column !== "tenant_id")) {
         assert.ok(selected.includes(key), `${table} projection must preserve primary key ${key}`);
       }
-      if (table === "control_loop_improvement_commands") for (const field of ["request_id", "operation", "binding", "result", "created_at"])
+      if (evidenceOnly) assert.deepEqual(selected,B5_SNAPSHOT_COLUMNS[table as keyof typeof B5_SNAPSHOT_COLUMNS],"F04b evidence projection excludes command bodies and tags");
+      if (!evidenceOnly && table === "control_loop_improvement_commands") for (const field of ["request_id", "operation", "binding", "result", "created_at"])
         assert.ok(selected.includes(field), `F04a actual owner command evidence must include ${field}`);
       queriedTables.push(table!);
       // Real journal shape: claim/result share command_id but are distinct rows.
@@ -160,12 +162,13 @@ test("F04a snapshot queries schema-derived identifiers, command evidence and can
   }) } } };
   const inspect = new Function("context", `with (context) { ${javascript}; return read(); }`);
   const snapshot = await inspect({ current: active, closing: undefined, hooks: {}, scope: { tenantId: "tenant:b5" },
-    B5_SNAPSHOT_TABLES, b5Bytes, need: assert.ok });
+    options:{evidenceOnly}, B5_SNAPSHOT_TABLES, B5_SNAPSHOT_COLUMNS, b5Bytes, need: assert.ok });
   assert.equal(transactions, 1);
   assert.deepEqual(queriedTables, [...B5_SNAPSHOT_TABLES], "every snapshot table is checked against its migration");
   assert.equal(snapshot.rows.length, 2);
   assert.deepEqual(snapshot.rows.map((item: { row: Record<string, unknown> }) => item.row.entry_kind), ["claim", "result"]);
   assert.notEqual(snapshot.rows[0].sha256, snapshot.rows[1].sha256, "claim and result retain distinct snapshot hashes");
+  }
 });
 
 test("F03a real PG roles, disposable seed and local sign-in prerequisites", {

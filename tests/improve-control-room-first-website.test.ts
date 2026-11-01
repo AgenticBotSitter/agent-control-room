@@ -70,7 +70,10 @@ async function scratch(t: Pick<TestContext, "after">) {
     roles: { code_reviews: [{ model: "slot-a", route: "route-a" }, { model: "slot-b", route: "route-b" }],
       risk_reviews: ["attack-review", "ui-review", "ci-review"].map(role => ({ role, model: `slot-${role}`, route: "route-r" })) } };
   const files: Record<string, string> = { "first-website-host.mjs": `import { writeFileSync } from "node:fs";\nwriteFileSync(new URL("./imported.flag", import.meta.url), "imported");\nexport async function createFirstWebsiteHostV1() { throw new Error("fixture host never starts"); }\n`,
-    "a2-contract.json": "{}", "qualification.json": "{}", "settings.json": JSON.stringify(settings), "availability.json": "{}",
+    "a2-contract.json": "{}", "qualification.json": JSON.stringify({ providers: {
+      classification: "fixture", transport: "scripted", toolingRevision: H.b5Bytes("tooling"), availabilitySha256: H.b5Bytes("{}"),
+      lineup: [{ role: "build", identity: "fixture", family: "fixture", route: "fixture", grade: "fixture" }] },
+      capture:{phoneCapture:"native-screenshot+server",qualificationDigest:H.b5Bytes("{}"),approval:"pending",approvalEvidenceDigest:null} }), "settings.json": JSON.stringify(settings), "availability.json": "{}",
     "authorization.json": "{}", "transport.json": "{}", "fault-input.md": "Builder-only first-attempt instruction.\n", "review-input.md": "Code-review-only neutral instruction.\n" };
   for (const [name, text] of Object.entries(files)) await writeFile(join(root, "config", name), text);
   const c = (name: string) => join(root, "config", name);
@@ -205,40 +208,73 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
   const readCard = async () => (await (await f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/candidate`))).json()).candidate;
   const card = (await readCard()) as LoopCandidateCardV1;
   const rows: { table: string; sha256: string; row: Record<string, unknown> }[] = [];
-  for (const table of H.B5_SNAPSHOT_TABLES) for (const value of (await f.client.query<Record<string, unknown>>(`SELECT * FROM ${table}`)).rows) {
+  for (const table of H.B5_SNAPSHOT_TABLES) for (const value of (await f.client.query<Record<string, unknown>>(`SELECT ${H.B5_SNAPSHOT_COLUMNS[table].join(",")} FROM ${table}`)).rows) {
     const row = JSON.parse(JSON.stringify(value, (_k, v: unknown) => typeof v === "bigint" ? Number(v) : v)) as Record<string, unknown>;
     rows.push({ table, sha256: H.b5Bytes(JSON.stringify(row)), row });
   }
   const digests = { settings: H.b5Bytes("settings"), availability: H.b5Bytes("availability"), authorization: H.b5Bytes("authorization"),
     qualification: H.b5Bytes("qualification"), assembly: H.b5Bytes("assembly"), faultInput: H.b5Bytes("fault"), reviewInput: H.b5Bytes("review") };
-  const fixturePins: B5QualifiedPinsV1 = { toolingRevision: f.adapter.toolingRevision, schemaDigest: f.adapter.schemaDigest,
-    productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501, digests };
+  const fixturePins: B5QualifiedPinsV1 = { capture: { phoneCapture: "native-screenshot+server", qualificationDigest: H.b5Bytes("capture qualification"), approval:"approved",approvalEvidenceDigest:H.b5Bytes("synthetic approval qualification") }, toolingRevision: f.adapter.toolingRevision, schemaDigest: f.adapter.schemaDigest,
+    productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501, digests,
+    providers: { classification: "fixture", transport: "scripted", toolingRevision: f.adapter.toolingRevision,
+      availabilitySha256: digests.availability, lineup: [] } };
   const qualifiedPins: B5QualifiedPinsV1 = { ...fixturePins, toolingRevision: H.b5Bytes("qualified A2 tooling") };
-  const time = (minute: number) => new Date(Date.UTC(2026, 9, 30, 12, minute)).toISOString();
+  const time = (minute: number) => new Date(Date.UTC(2026, 9, 30, 12) + minute * 60_000).toISOString();
   const step = (n: number, role: string, identity: string, family: string, head: string, verdict: string | null, extra: Record<string, unknown> = {}) =>
-    ({ n, role, identity, family, verified: true, head, startedAt: time(10 + n * 2), endedAt: time(11 + n * 2), verdict, findings: [], diagnostic: null, ...extra });
+    ({ n, role, identity, family, provider: { transport: "scripted", admittedIdentity: identity, route: "fixture", grade: "fixture" }, verified: true, head, startedAt: time(10 + n * 2), endedAt: time(11 + n * 2), verdict, findings: [], diagnostic: null, ...extra });
   const reviews = card.evidence.reviews, old = reviews.find(r => !r.current)!, current = reviews.filter(r => r.current);
-  const steps = [step(1, "plan", "writer-p", "family-p", base, "DONE"), step(2, "build", "writer-b", "family-b", p.rejected, "DONE"),
+  const steps = [step(1, "plan", "writer-p", "family-p", base, "DONE", {startedAt:time(3.5),endedAt:time(4.5)}), step(2, "build", "writer-b", "family-b", p.rejected, "DONE"),
     step(3, old.role, old.observedModel!, old.family!, old.candidateRevision, old.verdict, { diagnostic: "FAIL", findings: [{ severity: "MEDIUM", state: "open", summary: "status element lacks role=status" }] }),
     step(4, "build", "writer-b", "family-b", p.final, "DONE"),
     ...current.map((r, i) => step(5 + i, r.role, r.observedModel!, r.family!, r.candidateRevision, r.verdict, r.role === "code-review" ? { diagnostic: "PASS" } : {}))];
-  const dom = H.B5_DOM_SCREENS.map(screen => ({ screen, candidateRevision: card.candidateRevision, baseRevision: base, requestId }));
+  fixturePins.providers.lineup = steps.map(s => ({ role: s.role, identity: s.identity, family: s.family, route: "fixture", grade: "fixture" }));
+  const dom = ["07-finish-phone", "08-finish-desktop", "09-retained"].map(screen => ({ screen, candidateRevision: card.candidateRevision, baseRevision: base, requestId }));
   const files: Record<string, unknown> = {
-    "journey.json": { schemaVersion: 1, actions: [
-      { name: "Prepare request", device: "phone", at: time(0), method: "POST", path: `/api/v1/projects/p/improvements/loop/intake`, status: 201 },
-      { name: "Confirm this exact request", device: "phone", at: time(2), method: "POST", path: `/api/v1/projects/p/improvements/loop/${requestId}/confirm`, status: 200 }],
-    closed: [{ label: "after Start", from: time(3), to: time(11) }, { label: "after spec approval", from: time(12), to: time(40) }], steps, dom,
+    "journey.json": { schemaVersion: 1, phoneCapture: "native-screenshot+server", captureQualificationDigest: fixturePins.capture.qualificationDigest,
+    restarts: [{ phase: "waiting", at: time(3.5) }, { phase: "final", at: time(40.5) }], serviceFacts: [],
+    actions: ["intake", "confirm", "start", "answer", "approve-plan", "approve-spec", "finish-phone", "finish-desktop", "retained"].map((name, i) => {
+      const read = i >= 6, minute = [0,2,3,4,5,6,39,40,42][i]!;
+      const suffix = name === "intake" ? "intake" : read ? "candidate" : name.startsWith("approve-") ? "approve" : name;
+      return { name, sequence: [1,2,3,6,7,8,11,12,13][i]!, requestId, localVersion:card.localVersion, runLinkId: card.evidence.binding.runLinkId, inputVersion: card.a2InputVersion,
+        receiptPath: `receipts/${[1,2,3,6,7,8,11,12,13][i]}.json`, device: name === "finish-desktop" ? "desktop" : "phone", at: time(minute),
+        method: read ? "GET" : "POST", path: `/api/v1/projects/p/improvements/loop/${name === "intake" ? "" : `${encodeURIComponent(requestId)}/`}${suffix}`, status: name === "intake" ? 201 : 200 };
+    }),
+    closed: [{ label: "after Start", from: time(3.1), to: time(3.4), receipts:[{device:"phone",sequence:4,path:"receipts/4.json"},{device:"desktop",sequence:5,path:"receipts/5.json"}] },
+      { label: "after spec approval", from: time(6.5), to: time(38),receipts:[{device:"phone",sequence:9,path:"receipts/9.json"},{device:"desktop",sequence:10,path:"receipts/10.json"}] }], steps, dom,
     devices: [{ kind: "phone", real: true, browser: "phone browser" }, { kind: "desktop", real: true, browser: "desktop browser" }] },
     "database-snapshot.json": { schemaVersion: 1, readAt: time(43), rows },
     "independent-status-check.json": [p.failed.record, p.passed.record],
-    "teardown.json": { schemaVersion: 1, b3cCleanup: "complete", scratchAbsent: true, ownedProcesses: 0, ownedListenersReleased: true, protectedListenersUntouched: true,
+    "teardown.json": { transportCleanup:noMappingCleanup(), schemaVersion: 1, b3cCleanup: "complete", scratchAbsent: true, ownedProcesses: 0, ownedListenersReleased: true, protectedListenersUntouched: true,
       postgresStopped: true, cleanupAt: time(41), retainedRead: { at: time(42), candidateRevision: card.candidateRevision, receiptDigest: card.recordDigest } },
   };
   const raw: Record<string, string | Uint8Array> = { "status-check/rejected.txt": p.failed.output, "status-check/final.txt": p.passed.output };
-  for (const n of ["01-prepare", "02-confirm-start", "03-question", "04-plan", "05-spec", "06-repair", "07-finish-phone", "08-finish-desktop", "09-retained"]) raw[`screens/${n}.png`] = new Uint8Array([137, 80, 78, 71, n.length]);
+  for (const n of ["01-prepare", "02-confirm-start", "03-question", "04-plan", "05-spec", "06-repair", "07-finish-phone", "08-finish-desktop", "09-retained"]) raw[`screens/${n}.png`] = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXf8AAAAASUVORK5CYII=","base64");
+  const journey = files["journey.json"] as { actions: {name: string; sequence: number; device: string; at: string; receiptPath: string}[]; serviceFacts: unknown[] };
+  const words: Record<string,string> = { intake:"prepared", confirm:"confirmed", start:"started", answer:"answered", "approve-plan":"plan-approved", "approve-spec":"spec-approved", "finish-phone":"finished", "finish-desktop":"finished", retained:"retained-read" };
+  const phases: Record<string,string> = { intake:"prepare", confirm:"confirm-start", start:"confirm-start", answer:"question", "approve-plan":"plan", "approve-spec":"spec", "finish-phone":"finish", "finish-desktop":"finish", retained:"retained" };
+  for (const a of journey.actions) {
+    const sessionNonce = a.sequence.toString(16).padStart(32,"0"), screen = a.name === "finish-phone" ? "07-finish-phone" : a.name === "finish-desktop" ? "08-finish-desktop" : a.name === "retained" ? "09-retained" : "01-prepare";
+    const capturePath = `screens/${screen}.png`, captureSourcePath=`captures/${screen}.png`, captureDigest = H.b5Bytes(raw[capturePath]!);
+    files[a.receiptPath] = { schemaVersion:1, sessionNonce, sequence:a.sequence, phase:phases[a.name], origin:"https://proof-fixture.ts.net:60462", device:a.device,
+      expiresAt:time(50), binding:{requestId,runLinkId:card.evidence.binding.runLinkId,inputVersion:card.localVersion}, observedAt:a.at,
+      real:true, browser:"synthetic receipt fixture", actions:[words[a.name]],
+      captures:[{path:captureSourcePath,sha256:captureDigest,device:a.device,sessionNonce,sequence:a.sequence,capturedAt:a.at}],
+      observation:{sessionDigest:H.b5Bytes(sessionNonce),routeClass:"project-document",method:"GET",status:200,observedAt:a.at,sessionNonce,sequence:a.sequence,device:a.device} };
+    if (a.sequence >= 11) journey.serviceFacts.push({ screen, device:a.device, requestId, localVersion:card.localVersion, runLinkId:card.evidence.binding.runLinkId, inputVersion:card.a2InputVersion,
+      baseRevision:base,candidateRevision:card.candidateRevision,at:a.at,sequence:a.sequence,responseDigest:H.b5Bytes(JSON.stringify(card)),captureSourcePath,capturePath,captureDigest,receiptPath:a.receiptPath });
+  }
+  delete (files['receipts/1.json'] as Record<string,unknown>).binding;
+  for (const [sequence,device,minute] of [[4,"phone",3.1],[5,"desktop",3.1],[9,"phone",6.5],[10,"desktop",6.5]] as const) {
+    const r = structuredClone(files['receipts/1.json']) as Record<string,unknown>, sessionNonce=sequence.toString(16).padStart(32,'0');
+    Object.assign(r,{binding:{requestId,runLinkId:card.evidence.binding.runLinkId,inputVersion:card.localVersion},phase:'close',sequence,sessionNonce,device,observedAt:time(minute),actions:['closed'],closeAttestation:{actor:'owner',closedAt:time(minute),allProofTabsClosed:true}});
+    Object.assign(r.observation as object,{sequence,sessionNonce,device,observedAt:time(minute)});
+    Object.assign((r.captures as object[])[0]!,{sequence,sessionNonce,device,capturedAt:time(minute)});
+    files[`receipts/${sequence}.json`]=r;
+  }
+  for (const [path,bytes] of Object.entries(raw)) if(path.startsWith('screens/')) raw[`mailbox/captures/${path.slice('screens/'.length)}`]=bytes;
   type Files = { files: Record<string, unknown>; manifest: Record<string, unknown> };
   const write = async (change: (v: Files) => void = () => {}) => {
-    await rm(dir, { recursive: true, force: true }); await mkdir(join(dir, "screens"), { recursive: true }); await mkdir(join(dir, "status-check"));
+    await rm(dir, { recursive: true, force: true }); await mkdir(join(dir, "screens"), { recursive: true, mode:0o700 }); await chmod(dir,0o700); await mkdir(join(dir, "status-check"),{mode:0o700}); await mkdir(join(dir, "receipts"),{mode:0o700}); await mkdir(join(dir,"mailbox"),{mode:0o700}); await mkdir(join(dir,"mailbox/captures"),{mode:0o700});
     const b = card.evidence.binding, binding = (name: string, roles: string[], sha256: string, revision: number) =>
       ({ name, roles, sha256, path: `/scratch/work/run/inputs/${name}.md`, revision, at: time(1), receiptDigest: H.b5Bytes(name) });
     const manifest: Record<string, unknown> = { schemaVersion: 1, kind: "b5-first-website-proof",
@@ -251,14 +287,14 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
       launch: { uid: 501, context: "current-session", isolationClaim: "none", consumedRoots: ["runs", "work", "config"] },
       lineage: { requestId, runLinkId: b.runLinkId, loopRunId: b.loopRunId, localVersion: card.localVersion, a2InputVersion: card.a2InputVersion },
       heads: { base, rejected: p.rejected, final: p.final },
-      classification: { website: "real", storage: "real", engine: "real", sendBack: "real", recovery: "real", finish: "real", device: "real", stimuli: "fixture" },
+      classification: { website: "real", storage: "real", engine: "real", sendBack: "real", recovery: "real", finish: "real", device: "real", providers: "fixture", stimuli: "fixture" },
       timestamps: { startedAt: time(0), finishedAt: time(45) } };
     const v = { files: structuredClone(files), manifest }; change(v);
     const bytes = new Map<string, string | Uint8Array>(Object.entries(raw));
     for (const [name, value] of Object.entries(v.files)) bytes.set(name, JSON.stringify(value));
-    for (const [name, value] of bytes) await writeFile(join(dir, name), value);
+    for (const [name, value] of bytes) await writeFile(join(dir, name), value, {mode:0o600});
     v.manifest.artifacts ??= [...bytes].map(([path, value]) => ({ path, sha256: H.b5Bytes(value), bytes: Buffer.byteLength(value) }));
-    await writeFile(join(dir, "manifest.json"), JSON.stringify(v.manifest));
+    await writeFile(join(dir, "manifest.json"), JSON.stringify(v.manifest), {mode:0o600});
   };
   type Journey = { steps: Record<string, unknown>[]; devices: Record<string, unknown>[]; dom: Record<string, unknown>[] };
   const verify = (o: { readCard?: () => Promise<unknown>; pins?: B5QualifiedPinsV1 } = {}) =>
@@ -271,9 +307,9 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
 test("B5 verifier accepts complete real-shaped evidence and reports missing phone evidence as incomplete", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(); assert.deepEqual(await e.verify(), { state: "complete", reasons: [] });
+  await e.write(); assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE"], transportCleanup:noMappingCleanup() });
   await e.write(v => { e.journey(v).devices = [{ kind: "phone", real: false, browser: "360px emulation" }, { kind: "desktop", real: true, browser: "desktop browser" }]; });
-  assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PHONE_EVIDENCE_MISSING"] });
+  assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE", "B5_PHONE_EVIDENCE_MISSING"], transportCleanup:noMappingCleanup() });
   await e.write(); await writeFile(join(e.dir, "screens/03-question.png"), "changed");
   assert.equal(await e.refusal(), "B5_ARTIFACT_BYTES", "B5 changed retained bytes are refused");
   await e.write(v => { v.manifest.artifacts = []; }); assert.equal(await e.refusal(), "B5_MANIFEST_INVALID");
@@ -308,11 +344,11 @@ test("B5 verifier re-reads the candidate repository and its page facts", async t
   const e = await evidenceSet(t);
   await e.write(); await writeFile(join(e.p.project, "notes.txt"), "untracked");
   assert.equal(await e.refusal(), "B5_CANDIDATE_REPOSITORY", "B5 dirty candidate repository is refused");
-  await rm(join(e.p.project, "notes.txt")); assert.equal(await e.refusal(), "complete");
+  await rm(join(e.p.project, "notes.txt")); assert.equal(await e.refusal(), "incomplete");
   await writeFile(join(e.p.project, "index.html"), (await readFile(join(e.p.project, "index.html"), "utf8")).replace(' role="status"', ""));
   await git(e.p.project, ["commit", "--quiet", "-am", "Later change"]);
   assert.equal(await e.refusal(), "B5_CANDIDATE_REPOSITORY", "B5 a moved candidate HEAD is refused");
-  await git(e.p.project, ["reset", "--quiet", "--hard", e.p.final]); assert.equal(await e.refusal(), "complete");
+  await git(e.p.project, ["reset", "--quiet", "--hard", e.p.final]); assert.equal(await e.refusal(), "incomplete");
   await e.write(v => { (v.manifest.pins as Record<string, unknown>).settingsSha256 = H.b5Bytes("other settings"); });
   assert.equal(await e.refusal(), "B5_MANIFEST_PINS", "B5 manifest pins must equal the preflight digests");
   await e.write(v => { for (const b of (v.manifest.pins as { inputBindings: { at: string }[] }).inputBindings) b.at = "2026-10-30T12:05:00.000Z"; });
@@ -451,10 +487,11 @@ test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent
   assert.equal(published?.evidence?.binding?.requestId, requestId); assert.equal(published?.evidence?.binding?.runLinkId, runLinkId);
   assert.equal(f.calls.filter(c => c === "start").length, 1); assert.equal((await f.desk.viewLoopDesk(f.identity, project)).loopRequests.length, 1);
   // The finish card is labelled fixture evidence and cannot satisfy the real verifier.
-  const dir = join(await owned(t, "b5-forged-"), "evidence"); await mkdir(dir);
-  await writeFile(join(dir, "manifest.json"), JSON.stringify({ schemaVersion: 1, kind: "b5-first-website-proof", state: "finished", source: "SYNTHETIC" }));
+  const dir = join(await owned(t, "b5-forged-"), "evidence"); await mkdir(dir,{mode:0o700});
+  await writeFile(join(dir, "manifest.json"), JSON.stringify({ schemaVersion: 1, kind: "b5-first-website-proof", state: "finished", source: "SYNTHETIC" }), {mode:0o600});
   await assert.rejects(H.verifyFirstWebsiteEvidenceV1(dir, { readCard: async () => published, candidateRepository: resolve("."),
-    pins: { toolingRevision: H.b5Bytes("qualified A2 tooling"), schemaDigest: H.b5Bytes("schema"), productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501,
+    pins: { capture: { phoneCapture:"native-screenshot+server", qualificationDigest:H.b5Bytes("capture qualification"),approval:"approved",approvalEvidenceDigest:H.b5Bytes("synthetic approval qualification") }, providers: { classification: "fixture", transport: "scripted", toolingRevision: H.b5Bytes("qualified A2 tooling"),
+      availabilitySha256: H.b5Bytes("availability"), lineup: [{ role: "build", identity: "fixture", family: "fixture", route: "fixture", grade: "fixture" }] }, toolingRevision: H.b5Bytes("qualified A2 tooling"), schemaDigest: H.b5Bytes("schema"), productBase: "1".repeat(40), productHead: "2".repeat(40), uid: 501,
       digests: { settings: "", availability: "", authorization: "", qualification: "", assembly: "", faultInput: "", reviewInput: "" } } }),
   (e: unknown) => e instanceof H.B5RefusalV1 && e.code === "B5_MANIFEST_INVALID");
 });
@@ -579,8 +616,8 @@ test("F03a frozen configuration refuses changed bytes before carrier import or a
   await writeFile(join(s.root, "config/b5.json"), JSON.stringify(config));
   await writeFile(config.availabilityFile, '{"changed":true}');
   const before = await tree(s.root);
-  await assert.rejects(validateFirstWebsiteHostV1(config as never), /B5_HOST_FROZEN_INPUT/u,
-    "F03a altered frozen availability refuses at its byte guard");
+  await assert.rejects(validateFirstWebsiteHostV1(config as never), /B5_PROVIDER_PROVENANCE_MISMATCH/u,
+    "F04b altered availability refuses against independent provider qualification before carrier import");
   assert.deepEqual(await tree(s.root), before, "F03a refusal acquires no resources or file effects");
   assert.equal(await lstat(join(s.root, "config/imported.flag")).then(() => true, () => false), false);
 });
@@ -733,9 +770,9 @@ test("F04a real controller refuses unqualified device input before any acquisiti
   const counts=['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal));
   hook.enable(); let verdict;
   try {verdict=await runFirstWebsiteJourneyV1({config:H.firstWebsiteConfigSchemaV1.parse(s.config),uid:process.getuid!(),evidenceDir:s.evidence,
-    phoneTransport:'loopback-only',digests:{qualification:H.b5Bytes(qualification),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(await readFile(s.config.reviewInputFile))},
+    providers:JSON.parse(await readFile(s.config.a2.qualificationEvidence,'utf8')).providers ?? {classification:'fixture',transport:'scripted',toolingRevision:s.config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'loopback-only',digests:{qualification:H.b5Bytes(qualification),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(await readFile(s.config.reviewInputFile))},
     settings:{riskCategories:[],riskSlots:[]}},new AbortController().signal);} finally {hook.disable();}
-  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_DEVICE_QUALIFICATION_REQUIRED']);
+  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_DEVICE_QUALIFICATION_REQUIRED']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created'); assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.deepEqual(resources,[]); assert.deepEqual(['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal)),counts);
   assert.equal(await lstat(s.evidence).then(()=>true,()=>false),false);
@@ -780,7 +817,7 @@ test("F04a listener, contamination and protected-diagnostic guard mutations reac
   await symlink(join(root,'node_modules'),join(copy,'node_modules'),'dir');
   for(const file of ['tests/helpers/improve-control-room-first-website.ts','tests/support/attack-kit/real-postgres.ts',
     'tests/improve-control-room-first-website.test.ts','tests/improve-control-room-first-website-device.test.ts',
-    'scripts/workflow-journeys/first-website-controller.ts'])await writeFile(join(copy,file),await readFile(join(root,file)));
+    'scripts/workflow-journeys/first-website-controller.ts','scripts/workflow-journeys/first-website-device.ts'])await writeFile(join(copy,file),await readFile(join(root,file)));
   const probes=[
     {file:'tests/support/attack-kit/real-postgres.ts',find:'if (options.signalOwner === "caller" && (!target.listenerCount("SIGINT") || !target.listenerCount("SIGTERM"))) {',replace:'if (false) {',
       name:'F04a caller ownership refuses either missing process signal listener before acquisition',lane:'tests/improve-control-room-first-website-device.test.ts',assertion:'Missing expected exception'},
@@ -848,9 +885,9 @@ return {origin:'http://127.0.0.1:60460',startup:{isReady:()=>true},a2Entry:{inte
 proof:{device:{request(){event('intake-invitation');throw Error('must never invite intake');}},inspectOwned:async()=>({processCount:0,listenerReleased:true,postgresStopped:true,runScratchAbsent:true})},close:async()=>event('full-close')};}`;
   await writeFile(s.config.assembly.module,assembly);
   const config=H.firstWebsiteConfigSchemaV1.parse({...s.config,device:{...s.config.device,origin:remote},assembly:{...s.config.assembly,digest:H.b5Bytes(assembly)}});
-  const verdict=await runFirstWebsiteJourneyV1({config,uid:process.getuid!(),evidenceDir:s.evidence,phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
+  const verdict=await runFirstWebsiteJourneyV1({config,uid:process.getuid!(),evidenceDir:s.evidence,providers:{classification:'fixture',transport:'scripted',toolingRevision:config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
     digests:{qualification:H.b5Bytes(qualification),transport:H.b5Bytes(transport),assembly:H.b5Bytes(assembly),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(neutral)}},new AbortController().signal);
-  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_A2_BIND_INPUT_UNAVAILABLE']);
+  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_A2_BIND_INPUT_UNAVAILABLE']);
   assert.deepEqual((await readFile(events,'utf8')).trim().split('\n'),['factory','probe:bind-input --help','host-close','pg-stop','full-close']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created');assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.equal(verdict.transportCleanup?.beforeDigest,D.b5MappingDigestV1(beforeStatus),'unattempted mapping retains pre-acquisition before-status evidence');
@@ -923,4 +960,235 @@ test("F04a fix short caps retain a proportional work window", async t => {
     }
   } finally { t.mock.timers.reset(); }
   console.log("RESULT: PASS F04a fix deadline caps=1ms..4h reserve=min(5min,half-cap) exact work/abort boundaries");
+});
+
+test("F04b missing provider provenance refuses complete-looking evidence", async t => {
+  await load(); const e = await evidenceSet(t);
+  await e.write(v => { delete (v.manifest.classification as Record<string, unknown>).providers; });
+  assert.equal(await e.refusal(), "B5_PROVIDER_PROVENANCE_MISSING", "F04b missing discriminator cannot obtain real success");
+});
+
+test("F04b provider relabelling cannot promote scripted transport or change lineup", async t => {
+  await load(); const e = await evidenceSet(t);
+  await e.write(); assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE"], transportCleanup:noMappingCleanup() }, "F04b scripted provider always remains incomplete");
+  await e.write(v => { (v.manifest.classification as Record<string, unknown>).providers = "real"; });
+  assert.equal(await e.refusal(), "B5_PROVIDER_PROVENANCE_MISMATCH", "F04b manifest label cannot promote fixture pins");
+  await e.write();
+  const pins = structuredClone(e.fixturePins); pins.providers.classification = "real";
+  assert.equal(await e.refusal({ pins }), "B5_PROVIDER_PROVENANCE_MISMATCH", "F04b pin label cannot promote scripted transport");
+  pins.providers.transport = "real-provider";
+  await e.write(v => { (v.manifest.classification as Record<string, unknown>).providers = "real"; });
+  assert.equal(await e.refusal({ pins }), "B5_PROVIDER_PROVENANCE_MISMATCH", "F04b both labels cannot promote actual scripted steps");
+  await e.write();
+  const absent = { ...e.fixturePins, providers: undefined } as unknown as B5QualifiedPinsV1;
+  assert.equal(await e.refusal({ pins: absent }), "B5_PROVIDER_PROVENANCE_MISSING");
+  await e.write(v => { (e.journey(v).steps[1]!.provider as Record<string, unknown>).admittedIdentity = "other"; });
+  assert.equal(await e.refusal(), "B5_PROVIDER_PROVENANCE_MISMATCH");
+  await e.write(v=>{e.journey(v).steps=e.journey(v).steps.filter(s=>s.role !== 'plan');});
+  assert.equal(await e.refusal(),"B5_PROVIDER_PROVENANCE_MISMATCH","F04b qualified lineup cannot omit an admitted role");
+});
+
+test("F04b evidence action list requires all owner gates and cold retained reads", async t => {
+  await load(); const e = await evidenceSet(t);
+  await e.write(v => { (e.journey(v) as unknown as { actions: unknown[] }).actions = (v.files['journey.json'] as {actions:unknown[]}).actions.slice(0,2); });
+  assert.equal(await e.refusal(), "B5_ACTION_EVIDENCE", "F04b intake plus Confirm is insufficient evidence");
+});
+
+test("F04b snapshot is a narrow unauthenticated projection", async t => {
+  await load(); const e = await evidenceSet(t);
+  await e.write(v => { const r = e.snapshot(v).rows.find(r => r.table === 'control_loop_update_candidates')!;
+    r.row.auth_tag = 'forged-tag'; r.sha256 = H.b5Bytes(JSON.stringify(r.row)); });
+  assert.equal(await e.refusal(), "B5_SNAPSHOT_INVALID", "F04b projection excludes auth tags even with recomputed hashes");
+});
+
+test("F04b capture correlation refuses swapped device, wrong head, request and bytes", async t => {
+  await load(); const e = await evidenceSet(t);
+  const journey = (v: {files:Record<string,unknown>}) => v.files['journey.json'] as ReturnType<typeof B5Helper.b5JourneySchemaV1.parse>;
+  for (const change of [
+    (j: ReturnType<typeof journey>) => { j.serviceFacts[0]!.device = 'desktop'; },
+    (j: ReturnType<typeof journey>) => { j.serviceFacts[0]!.candidateRevision = e.p.rejected; },
+    (j: ReturnType<typeof journey>) => { j.serviceFacts[0]!.requestId = 'wrong-request'; },
+    (j: ReturnType<typeof journey>) => { j.serviceFacts[0]!.captureDigest = H.b5Bytes('other capture'); },
+    (j: ReturnType<typeof journey>) => { j.serviceFacts[0]!.responseDigest = H.b5Bytes('forged projection'); },
+  ]) {
+    await e.write(v => change(journey(v)));
+    assert.ok(['B5_CAPTURE_CORRELATION','B5_ACTION_EVIDENCE'].includes(await e.refusal()), 'F04b mismatched capture/service joins refuse');
+  }
+  await e.write(v => { journey(v).captureQualificationDigest = H.b5Bytes('changed qualification'); });
+  assert.equal(await e.refusal(), 'B5_CAPTURE_PROVENANCE_MISMATCH', 'F04b capture qualification independently pinned');
+  await e.write(v => { journey(v).phoneCapture = 'approved-dom'; journey(v).dom = journey(v).dom.filter(d => d.screen === '08-finish-desktop'); });
+  assert.equal(await e.refusal(), 'B5_HEAD_BINDING', 'F04b approved DOM mode still requires actual phone DOM');
+  await e.write(v => { journey(v).dom = journey(v).dom.filter(d => d.screen === '08-finish-desktop'); });
+  assert.equal(await e.refusal(), 'incomplete', 'F04b native phone mode uses service facts; desktop DOM remains mandatory');
+});
+
+test("F04b duplicate actions, wrong run, omitted closure and pre-cleanup retained read refuse", async t => {
+  await load(); const e = await evidenceSet(t);
+  const journey = (v: {files:Record<string,unknown>}) => v.files['journey.json'] as ReturnType<typeof B5Helper.b5JourneySchemaV1.parse>;
+  await e.write(v => { journey(v).actions[3]!.sequence = journey(v).actions[2]!.sequence; });
+  assert.equal(await e.refusal(), 'B5_ACTION_EVIDENCE', 'F04b duplicate sequence refuses');
+  await e.write(v => { journey(v).actions[3]!.runLinkId = 'wrong-run'; });
+  assert.equal(await e.refusal(), 'B5_ACTION_EVIDENCE');
+  await e.write(v => { journey(v).closed.pop(); }); assert.equal(await e.refusal(), 'B5_JOURNEY_INVALID');
+  await e.write(v => { journey(v).actions.at(-1)!.at = '2026-10-30T12:40:30.000Z'; });
+  assert.equal(await e.refusal(), 'B5_ACTION_EVIDENCE', 'F04b retained action must follow B3c cleanup');
+  await e.write(v => { journey(v).restarts[0]!.at = '2026-10-30T12:43:00.000Z'; });
+  assert.equal(await e.refusal(), 'B5_ACTION_EVIDENCE');
+});
+
+test("F04b private artifacts refuse traversal, symlinks, truncation, duplicate paths and public modes", async t => {
+  await load(); const e = await evidenceSet(t);
+  await e.write(v => { (v.manifest.artifacts as unknown) = [{path:'../outside.json',sha256:H.b5Bytes('outside'),bytes:7}]; });
+  assert.equal(await e.refusal(), 'B5_ARTIFACT_BYTES');
+  await e.write(); await rm(join(e.dir,'screens/03-question.png')); await symlink(join(e.dir,'screens/04-plan.png'),join(e.dir,'screens/03-question.png'));
+  assert.equal(await e.refusal(), 'B5_ARTIFACT_BYTES');
+  await e.write(); await writeFile(join(e.dir,'screens/03-question.png'),Buffer.alloc((1<<20)+1));
+  assert.equal(await e.refusal(), 'B5_ARTIFACT_BYTES');
+  await e.write(v => { v.manifest.artifacts = [{path:'journey.json',sha256:H.b5Bytes(''),bytes:0},{path:'journey.json',sha256:H.b5Bytes(''),bytes:0}]; });
+  assert.equal(await e.refusal(), 'B5_ARTIFACT_BYTES');
+  await e.write(); await chmod(join(e.dir,'screens/03-question.png'),0o644);
+  assert.equal(await e.refusal(), 'B5_ARTIFACT_BYTES','F04b public artifact mode refuses');
+  await e.write(); await chmod(e.dir,0o755); assert.equal(await e.refusal(), 'B5_ARTIFACT_BYTES');
+  await chmod(e.dir,0o700);
+  await e.write(); await git(e.p.project,['remote','add','fixture','/nonexistent-fixture']);
+  assert.equal(await e.refusal(), 'B5_CANDIDATE_REPOSITORY', 'F04b retained candidate must have no remote');
+});
+
+const noMappingCleanup = () => ({disposition:'mapping-not-created' as const,mappingAttempted:false,mappingUncertain:false,comparison:null,
+  beforeDigest:null,installedDigest:null,afterDigest:null,removalReceiptDigest:null,hostStopped:true,postgresStopped:true,failures:[] as string[],overrunMs:0});
+
+test("F04b finalization preserves shared retained repository and hashes only run cleanup targets", async t => {
+  await load(); const e = await evidenceSet(t); await e.write();
+  const original = JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8'));
+  const teardown = JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8'));
+  teardown.transportCleanup = noMappingCleanup();
+  const other = join(e.p.dir,'other-run'); await mkdir(other); await writeFile(join(other,'retained.txt'),'other run');
+  const retention = {proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'run-one-work')]};
+  const before = await tree(e.p.project);
+  const finalized = await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,retention);
+  assert.deepEqual(await tree(e.p.project),before,'F04b finalization never removes a shared retained candidate');
+  assert.equal(await readFile(join(other,'retained.txt'),'utf8'),'other run');
+  assert.equal(finalized.artifacts.find(a=>a.path==='teardown.json')!.sha256,H.b5Bytes(await readFile(join(e.dir,'teardown.json'))));
+  assert.equal((await lstat(join(e.dir,'manifest.json'))).mode&0o777,0o600);
+  const verdict = await H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins:e.fixturePins,retention});
+  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE']);
+  assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created');
+  const second = {...retention,cleanupTargets:[join(e.p.dir,'run-two-work')]};
+  await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,second);
+  assert.deepEqual(await tree(e.p.project),before,'F04b second run preserves the same retained candidate');
+  await assert.rejects(H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins:e.fixturePins,retention}),/B5_CLEANUP_RETAINED/u);
+  await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,{...retention,cleanupTargets:[e.p.project]}),/B5_CLEANUP_RETAINED/u);
+  await mkdir(retention.cleanupTargets[0]!);
+  await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,retention),/B5_CLEANUP_RETAINED/u,'F04b live cleanup target cannot be reported absent');
+  assert.deepEqual(await tree(e.p.project),before);
+  console.log('RESULT: PASS F04b two runs preserve one no-remote retained repo; independent cleanup-target digests verified; no deletion by finalizer');
+});
+
+test("F04b cold service read precedes teardown and unavailable service cannot use forged snapshot", async t => {
+  await load(); const e = await evidenceSet(t); await e.write(); const events:string[]=[];
+  const original = JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8'));
+  const teardown = JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8')); teardown.transportCleanup=noMappingCleanup();
+  const retention = {proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'closed-run')]};
+  const v = await H.verifyFirstWebsiteEvidenceV1(e.dir,{candidateRepository:e.p.project,pins:e.fixturePins,retention,
+    readCard:async()=>{events.push('cold-read');return e.readCard();},finishTeardown:async()=>{events.push('shared-cleanup');await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,retention);}});
+  assert.equal(v.state,'incomplete'); assert.deepEqual(events,['cold-read','shared-cleanup'],'F04b cold service must remain available before teardown');
+  await assert.rejects(H.verifyFirstWebsiteEvidenceV1(e.dir,{candidateRepository:e.p.project,pins:e.fixturePins,retention,
+    readCard:async()=>null,finishTeardown:async()=>{assert.fail('unavailable cold read must remain a refusal');}}),/B5_CARD_UNAVAILABLE/u);
+  await assert.rejects(H.verifyFirstWebsiteEvidenceV1(e.dir,{candidateRepository:e.p.project,pins:e.fixturePins,retention,
+    readCard:e.readCard,finishTeardown:async()=>{throw new H.B5RefusalV1('B5_TEST_CLEANUP_FAILED');}}),/B5_TEST_CLEANUP_FAILED/u);
+  teardown.transportCleanup={...noMappingCleanup(),disposition:'mapping-outstanding',mappingAttempted:true,mappingUncertain:true,failures:['B5_TRANSPORT_CLEANUP_INCOMPLETE']};
+  await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,retention);
+  const outstanding=await H.verifyFirstWebsiteEvidenceV1(e.dir,{candidateRepository:e.p.project,pins:e.fixturePins,retention,readCard:e.readCard});
+  assert.equal(outstanding.state,'incomplete');assert.equal(outstanding.transportCleanup?.disposition,'mapping-outstanding');
+  assert.ok(outstanding.reasons.includes('B5_TRANSPORT_CLEANUP_INCOMPLETE'));
+});
+
+test("F04b actual proof CLI refuses missing provenance before importing the assembly", async t => {
+  await load(); const s=await scratch(t);
+  await writeFile(s.config.a2.qualificationEvidence,'{}');
+  const result=await cli(await s.write(s.config),s.evidence);
+  assert.equal(result.code,1);assert.equal(result.out,'FAILED: B5_PROVIDER_PROVENANCE_MISSING; proof retained\n');
+  assert.equal(await lstat(join(s.root,'config/imported.flag')).then(()=>true,()=>false),false);
+  console.log('RESULT: PASS F04b actual two-argument CLI missing-provenance exit=1 assembly-import=0 acquisition=0');
+});
+
+
+test("F04b closure evidence requires actual owner attestations on both devices", async t => {
+  await load(); const e=await evidenceSet(t);
+  await e.write(v=>{delete (v.files['receipts/4.json'] as Record<string,unknown>).closeAttestation;});
+  assert.equal(await e.refusal(),'B5_ACTION_EVIDENCE','F04b device closure receipt required');
+});
+
+
+test("F04b native phone evidence cannot clear pending capture approval or absent cleanup", async t => {
+  await load();const e=await evidenceSet(t);await e.write();
+  const pending = structuredClone(e.fixturePins);pending.capture.approval='pending';pending.capture.approvalEvidenceDigest=null;
+  const verdict=await e.verify({pins:pending});
+  assert.equal(verdict.state,'incomplete');assert.ok(verdict.reasons.includes('B5_CAPTURE_MODE_UNAPPROVED'),'F04b capture approval cannot be inferred from screenshots');
+  await e.write(v=>{delete e.teardown(v).transportCleanup;});
+  const unknown=await e.verify();assert.equal(unknown.state,'incomplete');
+  assert.equal(unknown.transportCleanup.disposition,'mapping-outstanding');assert.equal(unknown.transportCleanup.comparison,null);
+  assert.ok(unknown.reasons.includes('B5_TRANSPORT_CLEANUP_INCOMPLETE'));
+});
+
+
+test("F04b independent provenance binds transport, availability and tooling without real defaults", async () => {
+  await load();
+  const p={classification:'fixture' as const,transport:'scripted' as const,toolingRevision:H.b5Bytes('tools'),availabilitySha256:H.b5Bytes('availability'),
+    lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]};
+  assert.deepEqual(H.qualifyB5ProvidersV1(p,p.toolingRevision,p.availabilitySha256),p);
+  assert.throws(()=>H.qualifyB5ProvidersV1(undefined,p.toolingRevision,p.availabilitySha256),/B5_PROVIDER_PROVENANCE_MISSING/u);
+  for(const value of [{...p,classification:'real'},{...p,toolingRevision:H.b5Bytes('other tools')},{...p,availabilitySha256:H.b5Bytes('relabeled availability')}])
+    assert.throws(()=>H.qualifyB5ProvidersV1(value,p.toolingRevision,p.availabilitySha256),/B5_PROVIDER_PROVENANCE_MISMATCH/u);
+  const changed={...p,availabilitySha256:H.b5Bytes('availability with real label')};
+  assert.equal(H.qualifyB5ProvidersV1(changed,changed.toolingRevision,changed.availabilitySha256).classification,'fixture',
+    'F04b even independently requalified availability labels do not promote scripted transport');
+});
+
+test("F04b removed mapping claims require retained owner receipt and unchanged status", async t => {
+  await load();const e=await evidenceSet(t);const D=await import('../scripts/workflow-journeys/first-website-device');
+  const origin='https://proof-fixture.ts.net:60462',beforeStatus={Future:{keep:true}},installedStatus={...beforeStatus,TCP:{'60462':{HTTPS:true}},Web:{'proof-fixture.ts.net:60462':{Handlers:{'/':{Proxy:'http://127.0.0.1:60460'}}}}};
+  const q={schemaVersion:1,kind:'tailscale-serve',origin,backend:'http://127.0.0.1:60460',actor:'owner',ownerAuthorized:true,
+    authorizedAt:'2026-10-30T11:59:00.000Z',expiresAt:'2026-10-30T12:50:00.000Z',ownerLogin:'owner@example.test',identityPolicy:'exact-owner-login',captureMode:'native-capture-server-correlation',
+    inventory:{phone:{model:'fixture',os:'fixture',browser:'fixture',browserVersion:'fixture'},desktop:{browser:'fixture',browserVersion:'fixture'},captureMethod:'native-screenshot',fileTransferRoute:'fixture'},
+    beforeStatus,installedStatus,beforeDigest:D.b5MappingDigestV1(beforeStatus),installedDigest:D.b5MappingDigestV1(installedStatus)};
+  const request={removalNonce:'a'.repeat(32),requestedAt:'2026-10-30T12:43:00.000Z'};
+  const receipt={schemaVersion:1,actor:'owner',removalNonce:request.removalNonce,observedAt:'2026-10-30T12:44:00.000Z',installSettled:true,installCancelled:false,
+    off:{command:D.B5_DEVICE_OFF_COMMAND_V1,port:60462,exitCode:0},status:{command:D.B5_DEVICE_STATUS_COMMAND_V1,exitCode:0,afterStatus:beforeStatus,afterDigest:q.beforeDigest},beforeDigest:q.beforeDigest,installedDigest:q.installedDigest};
+  const pins=structuredClone(e.fixturePins);pins.capture.qualificationDigest=H.b5Bytes(JSON.stringify(q));
+  const write=async (change:(v:Record<string,unknown>)=>void=()=>{})=>{
+    await e.write(v=>{(v.files['journey.json'] as {captureQualificationDigest:string}).captureQualificationDigest=pins.capture.qualificationDigest;});
+    await mkdir(join(e.dir,'transport'),{mode:0o700});
+    const mutable=structuredClone(receipt);change(mutable);
+    for(const [name,value] of [['qualification',q],['removal-request',request],['removal-receipt',mutable]] as const)
+      await writeFile(join(e.dir,`transport/${name}.json`),JSON.stringify(value),{mode:0o600});
+    const manifest=JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8')),teardown=JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8'));
+    teardown.transportCleanup={...noMappingCleanup(),disposition:'mapping-removed',mappingAttempted:true,comparison:true,
+      beforeDigest:q.beforeDigest,installedDigest:q.installedDigest,afterDigest:D.b5MappingDigestV1(mutable.status.afterStatus),removalReceiptDigest:D.b5MappingDigestV1(mutable)};
+    await H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'removed-work')]});
+  };
+  const verify=()=>H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins,
+    retention:{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'removed-work')]}});
+  await write();assert.deepEqual((await verify()).reasons,['B5_PROVIDER_FIXTURE']);
+  await write(v=>{(v.off as {exitCode:number}).exitCode=1;});
+  assert.ok((await verify()).reasons.includes('B5_TRANSPORT_CLEANUP_INCOMPLETE'),'F04b nonzero owner removal cannot be relabeled removed');
+  await write(v=>{(v.status as {afterStatus:unknown;afterDigest:string}).afterStatus={Future:{keep:false}};});
+  assert.ok((await verify()).reasons.includes('B5_TRANSPORT_CLEANUP_INCOMPLETE'),'F04b other-entry status drift refuses removed claim');
+  await write();await rm(join(e.dir,'transport/removal-receipt.json'));
+  await assert.rejects(verify(),/B5_ARTIFACT_BYTES/u);
+});
+
+
+test("F04b truncated screenshot refuses even after rehashing manifest and receipts", async t => {
+  await load();const e=await evidenceSet(t);await e.write();
+  const bytes=(await readFile(join(e.dir,'screens/07-finish-phone.png'))).subarray(0,33),digest=H.b5Bytes(bytes);
+  for(const name of ['screens/07-finish-phone.png','mailbox/captures/07-finish-phone.png'])await writeFile(join(e.dir,name),bytes);
+  const receipt=JSON.parse(await readFile(join(e.dir,'receipts/11.json'),'utf8'));receipt.captures[0].sha256=digest;
+  await writeFile(join(e.dir,'receipts/11.json'),JSON.stringify(receipt));
+  const journey=JSON.parse(await readFile(join(e.dir,'journey.json'),'utf8'));journey.serviceFacts[0].captureDigest=digest;
+  await writeFile(join(e.dir,'journey.json'),JSON.stringify(journey));
+  const manifest=JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8'));
+  for(const entry of manifest.artifacts){const b=await readFile(join(e.dir,entry.path));entry.bytes=b.length;entry.sha256=H.b5Bytes(b);}
+  await writeFile(join(e.dir,'manifest.json'),JSON.stringify(manifest));
+  assert.equal(await e.refusal(),'B5_CAPTURE_CORRELATION','F04b a digest cannot certify a truncated PNG');
 });

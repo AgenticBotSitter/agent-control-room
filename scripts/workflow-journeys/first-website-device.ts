@@ -71,6 +71,13 @@ function proofPresent(value: Record<string, unknown>, origin: string) {
   return tcp?.["60462"] !== undefined || web?.[new URL(origin).host] !== undefined
     || (value.AllowFunnel as Record<string, unknown> | undefined)?.[new URL(origin).host] !== undefined;
 }
+/** Pure retained-evidence comparison; shared with cleanup so the verifier cannot
+ * apply a weaker definition of proof absence or unrelated mapping equality. */
+export function compareB5RemovedStatusV1(before: Record<string,unknown>, after: Record<string,unknown>, origin:string) {
+  validateB5DeviceOriginV1(origin);
+  return !proofPresent(before,origin) && !proofPresent(after,origin)
+    && stable(withoutProof(after,origin)) === stable(withoutProof(before,origin));
+}
 export function validateB5TransportV1(value: unknown, origin: string, now = Date.now()) {
   validateB5DeviceOriginV1(origin);
   need(value && typeof value === "object" && "inventory" in value, "B5_DEVICE_INVENTORY_REQUIRED");
@@ -332,8 +339,7 @@ export function createB5DeviceCleanupV1(q: B5TransportQualificationV1, ports: {
       need(receipt.off.exitCode === 0 && receipt.status.exitCode === 0, "B5_DEVICE_REMOVAL_COMMAND");
       need(receipt.beforeDigest === q.beforeDigest && receipt.installedDigest === q.installedDigest
         && receipt.status.afterDigest === b5MappingDigestV1(receipt.status.afterStatus), "B5_DEVICE_MAPPING_DIGEST");
-      result.comparison = !proofPresent(receipt.status.afterStatus, q.origin)
-        && stable(withoutProof(receipt.status.afterStatus, q.origin)) === stable(withoutProof(q.beforeStatus, q.origin));
+      result.comparison = compareB5RemovedStatusV1(q.beforeStatus,receipt.status.afterStatus,q.origin);
       need(result.comparison, "B5_DEVICE_MAPPING_DRIFT");
       result.disposition = "mapping-removed"; result.removalReceiptDigest = b5DeviceHashV1(stable(receipt)); result.afterDigest = receipt.status.afterDigest;
     } catch (error) { result.failures.push(error instanceof B5DeviceRefusalV1 ? error.code : "B5_DEVICE_REMOVAL_RECEIPT"); }

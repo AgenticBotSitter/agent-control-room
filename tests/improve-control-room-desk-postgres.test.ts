@@ -1147,5 +1147,25 @@ test("B5 retained website lineage uses the web login", async () => b1aRun(async 
     assert.equal(JSON.stringify(await readMacGrantCatalogV1(web.client)), grants); assert.equal(await readPrivateWebSchemaDigest(web.client), digest);
     assert.deepEqual(web.errors.filter(error => error.sqlState === "42501"), [], "B5 web login needs no privilege it lacks");
     console.log("B5 retained website lineage production_login=control_room_web commands=12 legacy_unchanged=true grants_unchanged=true publication=recorded");
+    // Projection hashes do not authenticate rows. Mutate through the isolated
+    // test administrator, then rehash only the permitted web-role projection.
+    const projection = async () => {
+      const rows = (await web.client.query("SELECT id,request_id,run_link_id,candidate_revision,record_digest FROM control_loop_update_candidates")).rows;
+      return rows.map(row => ({row,sha256:sha256Digest(row)}));
+    };
+    const original = (await b1aSql(pg,"SELECT record_digest,auth_tag FROM control_loop_update_candidates WHERE request_id=$1",[requestId])).rows[0];
+    for (const column of ["record_digest","auth_tag"] as const) {
+      await b1aSql(pg,"ALTER TABLE control_loop_update_candidates DISABLE TRIGGER USER");
+      try { await b1aSql(pg,`UPDATE control_loop_update_candidates SET ${column}=$1 WHERE request_id=$2`,[column === "record_digest" ? sha256Digest({tampered:"candidate"}) : TAG,requestId]); }
+      finally { await b1aSql(pg,"ALTER TABLE control_loop_update_candidates ENABLE TRIGGER USER"); }
+      const rehashed = await projection();
+      assert.ok(rehashed.every(e => e.sha256 === sha256Digest(e.row)),"F04b unauthenticated projection can be rehashed after tamper");
+      await assert.rejects(e.desk.readLoopCandidate(identity,ids.project,requestId),"F04b cold signed service refuses tamper despite fresh projection hashes");
+      await b1aSql(pg,"ALTER TABLE control_loop_update_candidates DISABLE TRIGGER USER");
+      try { await b1aSql(pg,`UPDATE control_loop_update_candidates SET ${column}=$1 WHERE request_id=$2`,[original[column],requestId]); }
+      finally { await b1aSql(pg,"ALTER TABLE control_loop_update_candidates ENABLE TRIGGER USER"); }
+    }
+    assert.equal((await e.desk.readLoopCandidate(identity,ids.project,requestId)).candidate?.recordDigest,recorded.candidate.recordDigest);
+    console.log("RESULT: PASS F04b cold service rejects candidate/tag tamper with recomputed projection hashes production_login=control_room_web");
   } finally { await bridge.close(); await web.close(); }
 }));

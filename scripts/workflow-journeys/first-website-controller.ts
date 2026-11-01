@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import {
-  B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
+  missingB5TransportCleanupV1, B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
   loadFirstWebsiteAssemblyV1, probeBindInputCapabilityV1, bindFirstWebsiteInputsV1, assertRoleScopedBriefsV1,
   b5FaultScanPolicySchemaV1, normalizeB5FaultTextV1, assertB5FaultTextAbsentV1, assertB5FaultValueAbsentV1, auditFirstWebsiteReviewV1, readB5ReviewGitSurfacesV1,
   readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, assertFirstWebsiteOwnerCommandV1,
@@ -242,7 +242,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   const owner = preflight.controllerOwner ?? createFirstWebsiteControllerOwnerV1(signal);
   const { config, evidenceDir, digests } = preflight, root = config.scratchRoot;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
-  let verdict: B5VerdictV1 = { state: "incomplete", reasons: [] }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
+  let verdict: B5VerdictV1 = { state: "incomplete", reasons: [], transportCleanup:missingB5TransportCleanupV1() }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
   let wroteEvidence = false, wroteObservations = false, watching = true;
   let watcher: Promise<void> | undefined;
   const workSignal = owner.signal;
@@ -474,9 +474,9 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         statusChecks.push(await diagnosticSnapshot(p.repository, evidenceDir, p.finalHead, "final"));
         await phase("repair", "phone", s); await phase("finish", "phone", s); await phase("finish", "desktop", s);
         await host.proof.restart(workSignal); s = await status(); await phase("retained", "phone", s);
-        await write("controller-observations", { actions, observations, audits, snapshot: await host.proof.readSnapshot(), statusChecks: statusChecks.map(check => check.record) });
+        await write("controller-observations", { actions, observations, audits, snapshot: await host.proof.readSnapshot({ evidenceOnly: true }), statusChecks: statusChecks.map(check => check.record) });
         wroteObservations = true;
-        const pins: B5QualifiedPinsV1 = { toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
+        const pins: B5QualifiedPinsV1 = { capture: preflight.capture, providers: preflight.providers, toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
           productBase: config.product.baseRevision, productHead: config.product.candidateRevision, uid: preflight.uid,
           digests: { settings: digests.settings!, availability: digests.availability!, authorization: digests.authorization!, qualification: digests.qualification!,
             assembly: digests.assembly!, faultInput: digests.faultInput!, reviewInput: digests.reviewInput! } };
@@ -492,7 +492,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
       await pause(workSignal);
     }
-  } catch (error) { verdict = { state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] }; }
+  } catch (error) { verdict = { ...verdict, state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] }; }
   finally {
     watching = false; await watcher;
     try {
@@ -513,6 +513,12 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     if (cleanupResult.failures.length || !cleanupResult.hostStopped || !cleanupResult.postgresStopped) {
       verdict.state = "incomplete"; verdict.reasons.push(...cleanupResult.failures);
     }
+  }
+  if (verdict.transportCleanup.disposition === "mapping-outstanding") {
+    verdict.state = "incomplete"; verdict.reasons.push("B5_TRANSPORT_CLEANUP_INCOMPLETE");
+  }
+  if (preflight.providers?.transport === "scripted") {
+    verdict.state = "incomplete"; verdict.reasons.unshift("B5_PROVIDER_FIXTURE");
   }
   verdict.reasons = [...new Set(verdict.reasons)];
   if (wroteEvidence && !wroteObservations) try {
