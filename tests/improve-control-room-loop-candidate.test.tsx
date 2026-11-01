@@ -368,7 +368,10 @@ if(process.env.CONTROL_ROOM_B4_REQUIRE_A2 === "1")test("B4 reviewed A2 completio
   assert.ok(evidence.checks.some(c=>c.required&&c.completed!>0&&c.status==="PASS"&&c.exitCode===0&&c.failed===0&&c.skipped===0));
   assert.ok(evidence.reviews.some(r=>r.current&&r.role==="final"));
   for(const review of evidence.reviews.filter(r=>r.current)){
-    assert.equal(review.verdict,"CLEAN");assert.equal(review.identityVerified,true);assert.ok(review.observedModel);assert.ok(review.family);
+    assert.equal(review.verdict,"CLEAN");assert.ok(review.family);
+    if(review.identityBasis==="selected")assert.ok(review.selectedModel);
+    else {assert.equal(review.identityVerified,true);assert.ok(review.observedModel);}
+    if(review.identityVerified)assert.ok(review.observedModel);
     assert.equal(review.candidateRevision,evidence.binding.candidateRevision);assert.equal(review.inputVersion,g.target.inputVersion);
   }
   assert.equal(evidence.findings.some(f=>f.disposition==="OPEN"&&f.severity!=="LOW"),false);
@@ -1052,4 +1055,118 @@ test("B4 finish card uses human durations and plain decision labels",async()=>{
    assert.ok(html.includes(`Finished candidate — ${label}`));
   }
  }finally{await f.close();}
+});
+
+import { loopCandidateEvidenceSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
+import { verifyLoopCandidateCompletionV1 } from "../src/improve-control-room/v1/loop-candidate-publisher";
+
+// SYNTHETIC wire and publisher boundary fixture; no launcher observation is claimed.
+const digest = `sha256:${"a".repeat(64)}`, base = "a".repeat(40), head = "b".repeat(40);
+const startedAt = "2026-01-01T00:00:00.000Z", endedAt = "2026-01-01T00:00:01.000Z";
+function evidence() {
+  return {
+    schemaVersion: 1,
+    binding: { projectId: "project:wire", requestId: "request:wire", runLinkId: "run:wire", localVersion: 1,
+      adapterId: "adapter:wire", loopRunId: "loop:wire", toolingRevision: digest, a2SchemaVersion: 1,
+      a2InputVersion: "input:1", engineRevision: 1, requestSha256: "a".repeat(64), settingsSha256: "a".repeat(64),
+      baseRevision: base, candidateRevision: head, inputsDigest: digest, recipeDigest: digest, environmentDigest: digest },
+    summary: "SYNTHETIC completion", changedAreas: ["Wire admission"], databaseChanges: { kind: "none" },
+    checks: [{ id: "check:wire", required: true, commandLabel: "SYNTHETIC check", receiptDigest: digest, outputDigest: digest,
+      candidateRevision: head, status: "PASS", exitCode: 0, completed: 1, passed: 1, failed: 0, skipped: 0,
+      durationMs: 1000, startedAt, endedAt }],
+    reviews: [{ current: true, stepId: "review:wire", role: "final", attempt: 1, requestedModel: "SYNTHETIC requested",
+      selectedModel: "SYNTHETIC selected", identityBasis: "selected", observedModel: null, identityVerified: false,
+      family: "synthetic-family", verdict: "CLEAN", candidateRevision: head, inputVersion: "input:1",
+      reportDigest: digest, sidecarDigest: digest, startedAt, endedAt }],
+    findings: [], rounds: { attempts: 1, reviewRejections: 0, repairs: 0, redesigns: 0 },
+    timing: { startedAt, finishedAt: endedAt, durationMs: 1000 }, assumptions: null, validations: null,
+    overrides: { allowSameFamilyReview: false, allowStandardFinal: false, waivedConflicts: [], fallback: null },
+    completionDigest: digest, retentionDigest: digest,
+  };
+}
+
+test("B5 selected identity admits a current final without observed identity", () => {
+  const parsed = loopCandidateEvidenceSchemaV1.parse(evidence());
+  assert.equal(parsed.reviews[0]!.selectedModel, "SYNTHETIC selected");
+  assert.equal(parsed.reviews[0]!.identityBasis, "selected");
+  assert.equal(parsed.reviews[0]!.identityVerified, false);
+  assert.equal(parsed.reviews[0]!.observedModel, null);
+});
+
+test("B5 selected identity preserves readiness and strict bounded review guards", () => {
+  const variants: [string, (e: any) => void][] = [
+    ["missing selection", e => { delete e.reviews[0].selectedModel; }],
+    ["empty selection", e => { e.reviews[0].selectedModel = ""; }],
+    ["blank selection", e => { e.reviews[0].selectedModel = "  "; }],
+    ["oversized selection", e => { e.reviews[0].selectedModel = "x".repeat(241); }],
+    ["missing basis", e => { delete e.reviews[0].identityBasis; }],
+    ["unknown basis", e => { e.reviews[0].identityBasis = "invented"; }],
+    ["empty family", e => { e.reviews[0].family = ""; }],
+    ["blank family", e => { e.reviews[0].family = "  "; }],
+    ["null family", e => { e.reviews[0].family = null; }],
+    ["false observation claim", e => { e.reviews[0].identityVerified = true; }],
+    ["observed basis without verification", e => { e.reviews[0].identityBasis = "observed"; }],
+    ["unknown review field", e => { e.reviews[0].extra = true; }],
+    ["missing final", e => { e.reviews[0].role = "code"; }],
+    ["stale head", e => { e.reviews[0].candidateRevision = base; }],
+    ["stale input", e => { e.reviews[0].inputVersion = "input:2"; }],
+    ["not clean", e => { e.reviews[0].verdict = "NEEDS-FIX"; }],
+    ["missing report", e => { delete e.reviews[0].reportDigest; }],
+    ["missing sidecar", e => { delete e.reviews[0].sidecarDigest; }],
+    ["backwards time", e => { e.reviews[0].endedAt = "2025-01-01T00:00:00.000Z"; }],
+    ["zero checks", e => { e.checks[0].completed = 0; e.checks[0].passed = 0; }],
+    ["blocking finding", e => { e.findings.push({ origin: "review:wire", id: "finding:wire", severity: "HIGH",
+      disposition: "OPEN", summary: "SYNTHETIC finding", evidenceDigest: digest }); }],
+    ["missing retention", e => { delete e.retentionDigest; }],
+  ];
+  for (const [name, edit] of variants) {
+    const value = evidence(); edit(value);
+    assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, false, name);
+  }
+});
+
+test("B5 selected and legacy observed identity retain observation semantics", () => {
+  const value: any = evidence();
+  value.reviews[0].identityVerified = true;
+  value.reviews[0].observedModel = "SYNTHETIC observation";
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, true);
+  value.reviews[0].identityBasis = "observed";
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, true);
+  delete value.reviews[0].identityBasis; delete value.reviews[0].selectedModel;
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, true);
+  value.reviews[0].identityVerified = false;
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, false);
+});
+
+function dependencies(read: (readNumber: number) => unknown) {
+  let reads = 0;
+  return { source: { toolingRevision: digest, schemaDigest: digest,
+    readVerifiedCompletion: async () => read(++reads) as ReturnType<typeof loopCandidateEvidenceSchemaV1.parse> },
+    repository: { observe: async () => ({ baseRevision: base, candidateRevision: head,
+      changedPaths: ["src/synthetic.ts"], addedPaths: [], commitSubjects: ["SYNTHETIC completion"] }) }, reads: () => reads };
+}
+
+test("B5 publisher accepts selected identity through both stable schema reads", async () => {
+  const deps = dependencies(() => evidence());
+  const result = await verifyLoopCandidateCompletionV1(deps, "run:wire", digest);
+  assert.equal(deps.reads(), 2);
+  assert.equal(result.reviews[0]!.identityVerified, false);
+  assert.equal(result.reviews[0]!.selectedModel, "SYNTHETIC selected");
+});
+
+test("B5 publisher rejects invalid selection on either read and changed custody", async () => {
+  for (const invalidRead of [1, 2]) {
+    const deps = dependencies(n => {
+      const value = evidence(); if (n === invalidRead) value.reviews[0]!.selectedModel = "";
+      return value;
+    });
+    await assert.rejects(verifyLoopCandidateCompletionV1(deps, "run:wire", digest));
+    assert.equal(deps.reads(), invalidRead);
+  }
+  const deps = dependencies(n => {
+    const value = evidence(); if (n === 2) value.reviews[0]!.selectedModel = "SYNTHETIC changed selection";
+    return value;
+  });
+  await assert.rejects(verifyLoopCandidateCompletionV1(deps, "run:wire", digest), /loop_candidate_unavailable/);
+  assert.equal(deps.reads(), 2);
 });
