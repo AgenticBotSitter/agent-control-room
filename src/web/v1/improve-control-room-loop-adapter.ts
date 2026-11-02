@@ -231,7 +231,10 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
           env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0" },
           timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 65536,
         }, (error, stdout) => {
-          if (error && (!allowed.includes(Number(error.code)) || error.killed || error.signal)) reject(unavailable());
+          // Any porcelain entry proves dirtiness, including bounded output
+          // returned when a large untracked tree exhausts maxBuffer.
+          if (args[0] === "status" && stdout.length) fulfill("dirty");
+          else if (error && (!allowed.includes(Number(error.code)) || error.killed || error.signal)) reject(unavailable());
           else fulfill(stdout.trim());
         });
         children.add(child); child.once("close", () => children.delete(child));
@@ -250,17 +253,19 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         refuse("REPOSITORY_OPERATION");
       }
       if (await git(["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"])) refuse("REPOSITORY_DIRTY");
-      if (branch !== "main") return;
-      const baseline = await git(["rev-parse", "--verify", "HEAD"]);
+      if (!["main", "master", "trunk"].includes(branch)) return;
       // Match the tools' run-new convention (loop/cr.py, run_prepare): cook/loop-<run>.
       const workingBranch = `cook/loop-${run}`;
       await git(["check-ref-format", "--branch", workingBranch]);
       const existing = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${workingBranch}`], [0, 1]);
-      if (existing && existing !== baseline) refuse("REPOSITORY_BRANCH_CONFLICT");
-      // No reset, force or stash: switching at the same commit preserves main,
-      // index and working files. Git also refuses a branch held by another worktree.
+      if (existing && existing !== await git(["rev-parse", "--verify", "HEAD"])) refuse("REPOSITORY_BRANCH_CONFLICT");
+      // Create from current HEAD so a commit during preflight stays checked out.
+      // No reset, force or stash; Git refuses a branch held by another worktree.
       await git(["switch", "--quiet", "--no-guess", "--no-recurse-submodules",
-        ...(existing ? [workingBranch] : ["-c", workingBranch, baseline])]);
+        ...(existing ? [workingBranch] : ["-c", workingBranch])]);
+      const baseline = await git(["rev-parse", "--verify", "HEAD"]);
+      if (await git(["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]) !== workingBranch
+        || await git(["rev-parse", "--verify", `refs/heads/${workingBranch}`]) !== baseline) refuse("REPOSITORY_PREPARATION");
     } catch (error) {
       if (error instanceof LoopIntakeRefusalV1) throw error;
       refuse("REPOSITORY_PREPARATION");

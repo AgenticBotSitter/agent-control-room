@@ -6,12 +6,13 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-sessio
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn, spawnSync } from "node:child_process";
+import childProcess from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import { loopMonitoringAttentionV1 } from "../src/web/v1/improve-control-room-loop-monitoring";
 import { createInterface } from "node:readline";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, writeFileSync } from "node:fs";
 import fsPromises from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
@@ -1329,6 +1330,71 @@ test("B5 working branch: main reaches A2 intake at the baseline without changing
   assert.equal(await readFile(join(r.repository, "index.html"), "utf8"), "<h1>Baseline</h1>\n");
   // An already prepared checkout remains usable for another intake.
   await f.intake(); assert.equal(await r.git("branch", "--show-current"), branch);
+});
+
+for (const defaultBranch of ["master", "trunk"]) {
+  test(`B5 working branch: ${defaultBranch} reaches intake on a run branch`, async t => {
+    const r = await workingBranchRepository(t);
+    await r.git("branch", "-m", defaultBranch);
+    const f = await fixture(t, r.repository), id = await f.intake(), current = await f.get(id);
+    const branch = `cook/loop-${current.request.runLink!.loopRunId}`;
+    assert.equal((await f.traces())[0]!.repositoryBranch, branch);
+    assert.equal(await r.git("branch", "--show-current"), branch);
+    assert.equal(await r.git("rev-parse", defaultBranch), r.baseline);
+    assert.equal(await r.git("rev-parse", "HEAD"), r.baseline);
+    assert.equal(await r.git("status", "--porcelain=v1"), "");
+  });
+}
+
+test("B5 working branch: a commit between preflight and switch stays checked out", async t => {
+  const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
+  const original = childProcess.execFile;
+  let committed = false;
+  const mocked = t.mock.method(childProcess, "execFile", (...args: Parameters<typeof execFile>) => {
+    const argv = args[1] as string[];
+    if (args[0] === "/usr/bin/git" && argv[1] === r.repository && argv.includes("switch") && !committed) {
+      writeFileSync(join(r.repository, "latest.txt"), "Latest committed owner work\n");
+      for (const command of [["add", "latest.txt"], ["commit", "--quiet", "-m", "Concurrent fixture commit"]]) {
+        const result = spawnSync("/usr/bin/git", ["-C", r.repository, "-c", "core.hooksPath=/dev/null",
+          "-c", "commit.gpgsign=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...command], {
+          env: { PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 10000,
+        });
+        assert.equal(result.status, 0, result.stderr.toString());
+      }
+      committed = true;
+    }
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const id = await f.intake(), current = await f.get(id);
+    assert.equal(committed, true, "commit lands immediately before the actual switch");
+    assert.equal(await r.git("rev-parse", "HEAD"), await r.git("rev-parse", "main"), "switch retains the latest commit");
+    assert.notEqual(await r.git("rev-parse", "HEAD"), r.baseline);
+    assert.equal(await readFile(join(r.repository, "latest.txt"), "utf8"), "Latest committed owner work\n");
+    assert.equal((await f.traces())[0]!.repositoryBranch, `cook/loop-${current.request.runLink!.loopRunId}`);
+    assert.equal(await r.git("status", "--porcelain=v1"), "");
+  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test("B5 working branch: ENOBUFS-size untracked tree refuses as dirty before intake", async t => {
+  const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
+  for (let i = 0; i < 800; i++) await writeFile(join(r.repository, `untracked-${i}-${"x".repeat(100)}.txt`), "Owner work\n");
+  const status = await r.git("status", "--porcelain=v1", "--untracked-files=all");
+  assert.ok(Buffer.byteLength(status) > 65536, "fixture exceeds the adapter Git output bound");
+  const response = await f.post("intake", { description });
+  assert.equal(response.status, 202);
+  const receipt = await response.json() as { requestId: string; state: string };
+  assert.equal(receipt.state, "refused");
+  const current = await f.get(receipt.requestId);
+  assert.equal(current.display.attention!.code, "REPOSITORY_DIRTY");
+  assert.equal(current.display.canStart, false); assert.equal(current.request.runLink, null);
+  assert.ok(!JSON.stringify(current).includes(r.repository));
+  assert.equal(await r.git("branch", "--show-current"), "main");
+  assert.equal(await r.git("rev-parse", "HEAD"), r.baseline);
+  assert.equal(await r.git("status", "--porcelain=v1", "--untracked-files=all"), status);
+  await assert.rejects(readFile(join(f.root, "trace.jsonl")), { code: "ENOENT" });
+  assert.deepEqual(await readdir(f.configuration.workRoot), []);
 });
 
 for (const state of ["dirty", "staged", "untracked", "detached", "merge", "rebase", "conflicting-branch"] as const) {
