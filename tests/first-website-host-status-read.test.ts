@@ -3,7 +3,7 @@ import test from "node:test";
 import { ZodError } from "zod";
 import { loopImprovementStatusSchemaV1 } from "../src/improve-control-room/v1/schemas";
 import { loopDecisionStatusSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
-import { parseFirstWebsiteStatusBodyV1 } from "../scripts/workflow-journeys/first-website-host";
+import { readFirstWebsiteColdStatusV1 } from "../scripts/workflow-journeys/first-website-host";
 
 const h = "a".repeat(64), rev = "b".repeat(40), at = "2026-01-01T00:00:00.000Z";
 const display = { schemaVersion: 1, projectId: "project:alpha", requestId: "request:alpha", localVersion: 1, description: "Build a site",
@@ -17,12 +17,21 @@ const body = loopDecisionStatusSchemaV1.parse({ schemaVersion: 1,
     confirmation: { sha256: h, at, who: "owner", inputVersion: 1 }, progress: { step: null, completed: 3, attention: "none" },
     approval: null, question: null, identity: "unverified" } });
 
-test("finished /status body is the nested wrapper: flat schema rejects it, host parse returns display", () => {
+const path = "/api/v1/projects/project:alpha/improvements/loop/request:alpha";
+const expected = { engineRevision: 7, runLinkId: "link:alpha", localVersion: 1 };
+const stub = (payload: unknown, status = 200) => async (p: string) => {
+  assert.equal(p, path + "/status"); return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+};
+
+test("flat schema rejects the real nested /status body (the old failure)", () => {
   assert.throws(() => loopImprovementStatusSchemaV1.parse(body), ZodError);
-  const observed = parseFirstWebsiteStatusBodyV1(body);
-  assert.equal(observed.engineRevision, 7); assert.equal(observed.startState, "started");
-  assert.equal(observed.confirmationCurrent, true); assert.equal(observed.runLinkId, "link:alpha"); assert.equal(observed.localVersion, 1);
 });
-test("host status parse still rejects a flat body", () => {
-  assert.throws(() => parseFirstWebsiteStatusBodyV1(display), ZodError);
+test("host finished-read accepts the nested /status body and returns display", async () => {
+  const observed = await readFirstWebsiteColdStatusV1(stub(body), path, expected);
+  assert.equal(observed.engineRevision, 7); assert.equal(observed.runLinkId, "link:alpha"); assert.equal(observed.localVersion, 1);
+});
+test("host finished-read refuses a flat body, a mismatched display and a non-200", async () => {
+  await assert.rejects(readFirstWebsiteColdStatusV1(stub(display), path, expected), ZodError);
+  await assert.rejects(readFirstWebsiteColdStatusV1(stub(body), path, { ...expected, engineRevision: 8 }), { code: "B5_HOST_COLD_STATUS" });
+  await assert.rejects(readFirstWebsiteColdStatusV1(stub(body, 500), path, expected), { code: "B5_HOST_COLD_STATUS" });
 });

@@ -75,8 +75,16 @@ function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unkn
 // The owner code remains in memory and is available only to a trusted local Node
 // caller, never a route, argument, receipt or diagnostic. This callback is also
 // the native browser's ordinary sign-in channel; it issues no session itself.
-/** The /status route returns the nested decision wrapper; the flat display record is its `display` member. */
-export function parseFirstWebsiteStatusBodyV1(body: unknown) { return loopDecisionStatusSchemaV1.parse(body).display; }
+/** The /status route returns the nested decision wrapper; the flat display record is its `display` member.
+ * Extracted from the finished-run read so a test can drive the real parse and checks with a stubbed fetch. */
+export async function readFirstWebsiteColdStatusV1(get: (path: string) => Promise<Response>, requestPath: string,
+  expected: { engineRevision: number; runLinkId: string; localVersion: number }) {
+  const statusRead = await get(requestPath + "/status"); need(statusRead.status === 200, "B5_HOST_COLD_STATUS");
+  const observed = loopDecisionStatusSchemaV1.parse(await statusRead.json()).display;
+  need(observed.engineRevision === expected.engineRevision && observed.startState === "started" && observed.confirmationCurrent
+    && observed.runLinkId === expected.runLinkId && observed.localVersion === expected.localVersion, "B5_HOST_COLD_STATUS");
+  return observed;
+}
 
 export async function withFirstWebsiteOwnerCodeV1<T>(host: FirstWebsiteHostV1, use: (code: string) => Promise<T>) {
   return host.proof.withOwnerCode(use);
@@ -540,10 +548,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
             try {
               const catalog = await get("/api/v1/projects"); await catalog.arrayBuffer();
               need(catalog.status === 200, "B5_HOST_COLD_CATALOG");
-              const statusRead = await get(requestPath + "/status"); need(statusRead.status === 200, "B5_HOST_COLD_STATUS");
-              const observed = parseFirstWebsiteStatusBodyV1(await statusRead.json());
-              need(observed.engineRevision === status.revision && observed.startState === "started" && observed.confirmationCurrent
-                && observed.runLinkId === link.id && observed.localVersion === Number(input.version), "B5_HOST_COLD_STATUS");
+              await readFirstWebsiteColdStatusV1(get, requestPath, { engineRevision: status.revision, runLinkId: link.id, localVersion: Number(input.version) });
               // The real status read verifies the unique signed start and its
               // accepted result. Project only its authoritative saved fields.
               const starts = (await active.web.client.query<{ command_id: string; binding: unknown }>(`SELECT command_id,binding
