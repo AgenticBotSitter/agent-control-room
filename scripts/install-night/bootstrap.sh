@@ -180,6 +180,7 @@ git_env() {
   "$ENV" -i LANG=C LC_ALL=C HOME=/var/empty XDG_CONFIG_HOME=/var/empty \
     GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
     GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 CONTROL_ROOM_GITHUB_TOKEN_FILE="$token_file" \
+    CONTROL_ROOM_BOOTSTRAP_HELPER_FILE="$d/cred.sh" \
     "$GIT" "$@"
 }
 git_run() { git_env --git-dir "$mirror" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null "$@"; }
@@ -205,7 +206,7 @@ esac
 CREDENTIAL_HELPER
 "$CHMOD" 500 "$cred"
 
-git_run -c credential.helper="$cred" -c protocol.allow=never -c protocol.https.allow=always \
+git_run -c 'credential.helper=!exec "$CONTROL_ROOM_BOOTSTRAP_HELPER_FILE"' -c protocol.allow=never -c protocol.https.allow=always \
   -c transfer.fsckObjects=true -c http.followRedirects=false fetch --force --no-tags --no-write-fetch-head "$REMOTE_URL" \
   '+refs/heads/main:refs/heads/control-room-attended-main' "+$commit:refs/install-night/confirmed" \
   || refuse 'bootstrap_fetch_refused'

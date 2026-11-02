@@ -1,3 +1,4 @@
+import { pgSocketOptionV1, pgConninfoValueV1, pgCtlInvocationV1 } from "../../../src/pg-runtime/v1/pg-path-quoting.mjs";
 // Disposable real-PostgreSQL runner for tests.
 //
 // Every cluster this module starts is socket-only, bound to a port the caller
@@ -572,9 +573,12 @@ function nativeCommand(pgBin: string, run: string, name: string, args: string[])
 }
 
 function native(pgBin: string, run: string, name: string, args: string[], timeout = 120_000) {
-  const [file, argv] = nativeCommand(pgBin, run, name, args);
+  const invocation = name === "pg_ctl"
+    ? pgCtlInvocationV1(args, { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" }, join(pgBin, "postgres"))
+    : { args, environment: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" } };
+  const [file, argv] = nativeCommand(pgBin, run, name, invocation.args);
   return exec(file, argv, {
-    env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" },
+    env: invocation.environment,
     timeout, maxBuffer: 1 << 26,
   });
 }
@@ -952,7 +956,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       // reachable only through the run directory even if a port were forwarded.
       await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-l", join(run, "server.log"),
         "-w", "-t", "60", "-o",
-        `-k ${socketDirectory} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=60`,
+        `${pgSocketOptionV1(socketDirectory)} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=60`,
         "start"]);
       if (options.startAttemptFault === "exit_non_zero_after_start") {
         // The injected failure is raised only after the cluster is REALLY up —
@@ -1006,7 +1010,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     // The production connection descriptors are libpq keyword/value strings, the
     // same shape the operator CLI and the rehearsal pass to the applier.
     const conninfo = (name: string, user: string, password: string) =>
-      `host=${socketDirectory} port=${port} dbname=${name} user=${user} password=${password}`;
+      `host=${pgConninfoValueV1(socketDirectory)} port=${port} dbname=${pgConninfoValueV1(name)} user=${pgConninfoValueV1(user)} password=${pgConninfoValueV1(password)}`;
     const admin = adminOptions();
     await oneShot(admin, `CREATE DATABASE "${database.replaceAll('"', '""')}" OWNER fixture_admin`);
 

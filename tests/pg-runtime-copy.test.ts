@@ -480,7 +480,7 @@ test("the layout's pinned environment is the whole environment, and it disagrees
   // The conf carries the two settings the design requires, verbatim.
   assert.match(layout.postgresqlConf, /^ssl = off$/mu);
   assert.match(layout.postgresqlConf, /^listen_addresses = ''$/mu);
-  assert.match(layout.postgresqlConf, /^unix_socket_directories = '.*\/pg\/socket'$/mu);
+  assert.match(layout.postgresqlConf, /^unix_socket_directories = '".*\/pg\/socket"'$/mu);
 });
 
 test("the environment verifier reports each missing pin by name, and accepts a correct environment", () => {
