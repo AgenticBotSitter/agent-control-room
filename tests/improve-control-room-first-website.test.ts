@@ -846,6 +846,7 @@ test("F04a real controller refuses unqualified device input before any acquisiti
   const resources: string[] = [], {createHook} = await import('node:async_hooks');
   const hook=createHook({init(_id,type){if(['PROCESSWRAP','TCPSERVERWRAP','TCPWRAP','PIPECONNECTWRAP'].includes(type))resources.push(type);}});
   const counts=['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal));
+  const before = await tree(s.parent);
   hook.enable(); let verdict;
   try {verdict=await runFirstWebsiteJourneyV1({config:H.firstWebsiteConfigSchemaV1.parse(s.config),uid:process.getuid!(),evidenceDir:s.evidence,
     providers:JSON.parse(await readFile(s.config.a2.qualificationEvidence,'utf8')).providers ?? {classification:'fixture',transport:'scripted',toolingRevision:s.config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'loopback-only',digests:{qualification:H.b5Bytes(qualification),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(await readFile(s.config.reviewInputFile))},
@@ -854,10 +855,20 @@ test("F04a real controller refuses unqualified device input before any acquisiti
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created'); assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.deepEqual(resources,[]); assert.deepEqual(['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal)),counts);
   assert.deepEqual((await readdir(s.evidence)).sort(),['controller-observations.json','controller-verdict.json']);
+  assert.deepEqual((await tree(s.parent)).filter(path=>path!==`${s.evidence}/` && !path.startsWith(`${s.evidence}/`)),before,
+    'qualification refusal changes no bytes or paths outside its own evidence directory');
+  assert.equal((await lstat(s.evidence)).mode & 0o777,0o700);
+  for (const name of await readdir(s.evidence)) assert.equal((await lstat(join(s.evidence,name))).mode & 0o777,0o600);
   const retained=JSON.parse(await readFile(join(s.evidence,'controller-verdict.json'),'utf8'));
   assert.deepEqual(retained.reasons,verdict.reasons);
   assert.equal(retained.detail[0].message,'B5_DEVICE_QUALIFICATION_REQUIRED');
-  console.log('RESULT: PASS F04a real controller device qualification refusal acquisitions=0 listener-delta=0 mapping-not-created diagnostic-retained');
+  const configFile=await s.write(s.config),beforeRetry=await tree(s.parent);
+  const retry=await cli(configFile,s.evidence);
+  assert.equal(retry.code,1);
+  assert.equal(retry.out,'FAILED: B5_EVIDENCE_DIR; proof retained\n',
+    'retry with retained diagnostics refuses in CLI preflight, before controller-start wx');
+  assert.deepEqual(await tree(s.parent),beforeRetry,'retry preserves all prior evidence and creates no controller-start');
+  console.log('RESULT: PASS F04a qualification refusal acquisitions=0 listener-delta=0 mapping-not-created only-private-diagnostics; same-dir retry refuses before writes');
 });
 
 test("F04a owner JSON payload scanning decodes instruction fragments in string values", async () => {

@@ -21,10 +21,10 @@ function fixture(revisionBoundEvent = true) {
   let outcome: "uncertain" | "stopped" = "uncertain", retains = 0, cleanups = 0;
   const inspect = (): LoopFinalizationInspectionV1 => {
     const binding = { ...target, eventDigest: sha256Digest({ ...(revisionBoundEvent ? { revision: target.expectedRevision } : {}), outcome }) };
-    const inventoryDigest = sha256Digest({ inventory: revisionBoundEvent ? target.expectedRevision : "same-event" });
-    const observedAt = "2026-11-02T00:00:00.000Z";
+    const inventoryDigest = sha256Digest({ inventory: target.expectedRevision });
+    const observedAt = new Date(Date.UTC(2026, 10, 2, 0, target.expectedRevision)).toISOString();
     return { observation: { schemaVersion: 1, binding, outcome, reasonCode: outcome === "uncertain" ? "UNAVAILABLE" : "STOPPED",
-      evidenceDigest: sha256Digest("evidence"), completionDigest: null, inventoryDigest, observedAt },
+      evidenceDigest: sha256Digest({ evidence: target.expectedRevision }), completionDigest: null, inventoryDigest, observedAt },
     termination: { schemaVersion: 1, binding, inventoryDigest, state: outcome === "uncertain" ? "uncertain" : "already-ended",
       ownershipDigest: sha256Digest("ownership"), observedAt } };
   };
@@ -119,6 +119,10 @@ test("B5 equal eventDigest at a later revision obtains fresh custody and cleanup
   f.advance("stopped");
   const record = await f.finalize();
   assert.equal(record?.binding.eventDigest, old?.binding.eventDigest);
+  assert.notEqual(record?.observation.inventoryDigest, old?.observation.inventoryDigest);
+  assert.notEqual(record?.observation.evidenceDigest, old?.observation.evidenceDigest);
+  assert.notEqual(record?.observation.observedAt, old?.observation.observedAt);
+  assert.equal(f.records[count]?.custody?.inventoryDigest, record?.observation.inventoryDigest);
   assert.equal(f.records[count]?.previousDigest, old?.recordDigest);
   assert.equal(f.records[count]?.phase, "retained");
   assert.equal(f.records[count]?.termination, null); assert.equal(f.records[count]?.publication, null); assert.equal(f.records[count]?.cleanup, null);
@@ -127,27 +131,49 @@ test("B5 equal eventDigest at a later revision obtains fresh custody and cleanup
   assert.deepEqual(f.effects, { retains: 4, cleanups: 2 });
 });
 
-test("B5 equal eventDigest still refuses any observation change beyond revision", async t => {
+test("B5 equal eventDigest refuses changed event facts and same-revision observation changes", async t => {
   for (const field of ["outcome", "reasonCode", "evidenceDigest", "inventoryDigest", "observedAt"] as const) {
-    for (const laterRevision of [false, true]) await t.test(`${field} laterRevision=${laterRevision}`, async () => {
-      const f = fixture(false); await f.finalize();
-      if (laterRevision) f.advance("uncertain");
-      const inspect = f.capability.inspect;
-      f.capability.inspect = async target => {
-        const value = await inspect(target);
-        if (field === "outcome") value.observation.outcome = "stalled";
-        else if (field === "reasonCode") value.observation.reasonCode = "TERMINATION_UNCERTAIN";
-        else if (field === "observedAt") value.observation.observedAt = "2026-11-02T00:01:00.000Z";
-        else {
-          value.observation[field] = sha256Digest("changed");
-          if (field === "inventoryDigest") value.termination!.inventoryDigest = value.observation.inventoryDigest;
-        }
-        return value;
-      };
-      await assert.rejects(f.finalize(), /loop_finalization_unavailable/);
-      assert.equal(f.records.length, 1); assert.deepEqual(f.effects, { retains: 0, cleanups: 0 });
-    });
+    for (const laterRevision of [false, true]) {
+      if (laterRevision && !["outcome", "reasonCode"].includes(field)) continue;
+      await t.test(`${field} laterRevision=${laterRevision}`, async () => {
+        const f = fixture(false); await f.finalize();
+        if (laterRevision) f.advance("uncertain");
+        const inspect = f.capability.inspect;
+        f.capability.inspect = async target => {
+          const value = await inspect(target);
+          if (field === "outcome") value.observation.outcome = "stalled";
+          else if (field === "reasonCode") value.observation.reasonCode = "TERMINATION_UNCERTAIN";
+          else if (field === "observedAt") value.observation.observedAt = "2026-11-02T00:01:00.000Z";
+          else {
+            value.observation[field] = sha256Digest("changed");
+            if (field === "inventoryDigest") value.termination!.inventoryDigest = value.observation.inventoryDigest;
+          }
+          return value;
+        };
+        await assert.rejects(f.finalize(), /loop_finalization_unavailable/);
+        assert.equal(f.records.length, 1); assert.deepEqual(f.effects, { retains: 0, cleanups: 0 });
+      });
+    }
   }
+});
+
+test("B5 equal eventDigest refuses changed completion facts", async t => {
+  for (const laterRevision of [false, true]) await t.test(`laterRevision=${laterRevision}`, async () => {
+    const f = fixture(false), inspect = f.capability.inspect;
+    let completionDigest = sha256Digest("completion:original");
+    f.capability.inspect = async target => {
+      const value = await inspect(target);
+      value.observation = { ...value.observation, outcome: "candidate_ready", reasonCode: "FINISHED", completionDigest };
+      return value; // uncertain termination announces without publication or custody
+    };
+    const old = await f.finalize();
+    if (laterRevision) f.advance("uncertain");
+    completionDigest = sha256Digest("completion:changed");
+    const current = await f.capability.inspect(f.target);
+    assert.equal(current.observation.binding.eventDigest, old?.binding.eventDigest);
+    await assert.rejects(f.finalize(), /loop_finalization_unavailable/);
+    assert.equal(f.records.length, 1); assert.deepEqual(f.effects, { retains: 0, cleanups: 0 });
+  });
 });
 
 test("B5 refuses a newer stored record before any append or custody", async () => {

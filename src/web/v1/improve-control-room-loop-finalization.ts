@@ -124,10 +124,15 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       if(record)record=verifyFinalizationRecordV1(record,target);
       let previousRecord=record;
       if(record&&!same(record.observation,o)){
-        // A2 inspection reports revision separately; the adapter captures a supplied
-        // eventDigest with no revision-bound guarantee. Equal digests may describe
-        // the same event seen later only when the observation differs by revision alone.
-        if(record.binding.eventDigest===b.eventDigest&&!same({...record.observation,binding:{...record.binding,expectedRevision:b.expectedRevision}},o))throw unavailable();
+        // cr.py finalize_inspect derives outcome/reason from lifecycle state and
+        // completion_sha256 from completion facts (3659-3696); inventory_sha256
+        // hashes live steps/pending_launch (3649-3658), with revision separate (3701).
+        // The supplied eventDigest has no revision-bound guarantee. At a later
+        // revision, the same outcome/reason/completion event may refresh inventory,
+        // evidence and observation time; none of its old custody may carry forward.
+        if(record.binding.eventDigest===b.eventDigest&&(record.binding.expectedRevision===b.expectedRevision
+          ||record.observation.outcome!==o.outcome||record.observation.reasonCode!==o.reasonCode
+          ||record.observation.completionDigest!==o.completionDigest))throw unavailable();
         // A newly verified event starts with no inherited custody, publication
         // or cleanup authority, while preserving the immutable audit chain.
         record=null;

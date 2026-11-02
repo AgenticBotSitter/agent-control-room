@@ -476,6 +476,8 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   const restarts: {phase:"waiting"|"final";at:string}[] = [];
   const startedAt = new Date().toISOString();
   let cleanupResult: B5ControllerCleanupV1 | undefined;
+  // Evidence is immutable per attempt, including preflight refusal diagnostics.
+  // CLI preflight refuses a nonempty evidenceDir; retry with a fresh scratchRoot/evidence.
   const write = async (name: string, value: unknown) => {
     need(/^[a-z][a-z0-9-]*$/u.test(name), "B5_CONTROLLER_EVIDENCE_PATH");
     const bytes = Buffer.from(JSON.stringify(value) + "\n"); need(bytes.length <= 1 << 20, "B5_CONTROLLER_EVIDENCE_SIZE");

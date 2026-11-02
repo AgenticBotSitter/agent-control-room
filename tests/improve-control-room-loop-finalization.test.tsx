@@ -352,6 +352,40 @@ if(ordinary){
     assert.equal(withoutRecord.items[0]!.kind,"stall","current inspection is renderable without the stale record");
     assert.deepEqual(await f.capability.readRecord(f.state.target),prior,"GET never updates the predecessor");
   });
+  test("B3c a newer stored record degrades service attention to blocked UNAVAILABLE",async t=>{
+    const f=await using(t),future={...f.target,expectedRevision:f.target.expectedRevision+1};
+    f.state.target=future;f.state.ended=false;
+    f.state.observation={...f.state.observation,binding:{...f.state.observation.binding,expectedRevision:future.expectedRevision},
+      outcome:"uncertain",reasonCode:"UNAVAILABLE",completionDigest:null};await f.save();
+    const newer=await createImproveControlRoomLoopFinalizerV1({capability:f.capability,authorize:async()=>future,
+      signal:signal(),publishCompletion:f.publish}).finalize(future);
+    assert.ok(newer);assert.deepEqual(verifyFinalizationRecordV1(newer,future),newer);
+    assert.throws(()=>verifyFinalizationRecordV1(newer,f.target),/loop_finalization_unavailable/);
+    // Simulate status read at N followed by a stored-record read from N+1.
+    f.state.target=f.target;
+    f.state.observation={...f.state.observation,binding:{...f.state.observation.binding,expectedRevision:f.target.expectedRevision}};
+    await f.save();
+    const before=await readFile(join(f.retained,"finalization-record.json"));
+    let reads=0,stored:LoopFinalizationRecordV1|null=newer;
+    const capability={...f.capability,readRecord:async(target:typeof f.target)=>{
+      reads++;assert.deepEqual(target,f.target);return stored;
+    },retain:async()=>{throw Error("GET must never retain");},appendRecord:async()=>{throw Error("GET must never append");}};
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    t.after(()=>bridge.close());
+    const source=await bridge.readAttention(f.identity);
+    assert.equal(reads,1,"service reaches the newer stored record");
+    assert.equal(source.state,"available");if(source.state!=="available")throw Error("attention unavailable");
+    assert.equal(source.items.length,1);assert.equal(source.items[0]!.kind,"blocked");
+    assert.deepEqual(source.items[0]!.identity,{kind:"blocked",code:"UNAVAILABLE"});
+    assert.equal("candidate" in source.items[0]!,false);
+    stored=null;
+    const withoutRecord=await bridge.readAttention(f.identity);
+    assert.equal(reads,2);assert.equal(withoutRecord.state,"available");
+    if(withoutRecord.state!=="available")throw Error("attention unavailable");
+    assert.equal(withoutRecord.items[0]!.kind,"stall","same inspection renders when the newer record is withdrawn");
+    assert.deepEqual(await readFile(join(f.retained,"finalization-record.json")),before,"GET never writes the newer stored record");
+  });
   test("B3c late revoked owner clears lifecycle result",async t=>{
     const f=await using(t);await f.observe();
     const c={...f.capability,readRecord:async(target:typeof f.target)=>{
