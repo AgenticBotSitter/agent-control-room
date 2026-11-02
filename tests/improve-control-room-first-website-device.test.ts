@@ -12,6 +12,7 @@ test("F03b device actor is the owner", () => {
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createB5DeviceMailboxV1, b5DeviceHashV1, b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1,
+  writeB5DeviceReceiptV1, writeB5DeviceRequestV1, waitB5DeviceJsonV1,
   parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
   b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, type B5TransportQualificationV1,
   type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
@@ -51,6 +52,48 @@ async function ready(t: { after(fn: () => Promise<void>): void }, phase: B5Devic
     ...(phase === "close" ? { closeAttestation: { actor: "owner", closedAt: time(), allProofTabsClosed: true } } : {}) };
   return { root, mailbox, request, receipt };
 }
+
+test("B5 inbox receipt writer publishes exclusively for the real reader; request writer refuses inbox misuse", async t => {
+  const { mailbox, request, receipt } = await ready(t);
+  t.after(() => mailbox.close());
+  const file = join(mailbox.root, "inbox", `${request.sequence}.json`);
+  await assert.rejects(writeB5DeviceRequestV1(file, receipt), { code: "B5_DEVICE_PATH" });
+  assert.deepEqual(await readdir(join(mailbox.root, "inbox")), []);
+  await writeB5DeviceReceiptV1(file, receipt);
+  const stat = await lstat(file);
+  assert.equal(stat.mode & 0o777, 0o600); assert.equal(stat.nlink, 1); assert.equal(stat.uid, process.getuid?.());
+  const delivered = await waitB5DeviceJsonV1(file, mailbox.root, new AbortController().signal, Date.now() + 1000);
+  assert.deepEqual(delivered, receipt);
+  await mailbox.accept(delivered);
+  assert.deepEqual(await mailbox.readReceipt(request.sequence), receipt);
+  const saved = await readFile(file, "utf8");
+  await assert.rejects(writeB5DeviceReceiptV1(file, { ...receipt, browser: "changed" }), { code: "B5_DEVICE_DUPLICATE" });
+  await assert.rejects(writeB5DeviceRequestV1(file, receipt), { code: "B5_DEVICE_PATH" });
+  assert.equal(await readFile(file, "utf8"), saved);
+  assert.deepEqual(await readdir(join(mailbox.root, "inbox")), [`${request.sequence}.json`]);
+  console.log("RESULT: PASS B5 inbox receipt accepted by real reader and mailbox; mode=0600 exclusive-create; request-writer misuse refused");
+});
+
+test("B5 inbox receipt writer refuses wrong paths and unsafe directory custody", async t => {
+  const { root, mailbox, receipt } = await ready(t);
+  t.after(() => mailbox.close());
+  for (const file of [join(mailbox.root, "1.json"), join(mailbox.root, "receipts/1.json"),
+    join(mailbox.root, "inbox/0.json"), join(mailbox.root, "inbox/01.json"), join(mailbox.root, "inbox/2.json"),
+    join(mailbox.root, "inbox/install-request.json"), join(root, "inbox/1.json"), "device/inbox/1.json"]) {
+    await assert.rejects(writeB5DeviceReceiptV1(file, receipt), { code: "B5_DEVICE_PATH" });
+  }
+  const inbox = join(mailbox.root, "inbox"), file = join(inbox, "1.json");
+  for (const directory of [mailbox.root, inbox]) {
+    await chmod(directory, 0o755);
+    await assert.rejects(writeB5DeviceReceiptV1(file, receipt), { code: "B5_DEVICE_CUSTODY" });
+    await chmod(directory, 0o700);
+  }
+  await rm(inbox, { recursive: true });
+  await symlink(join(mailbox.root, "receipts"), inbox);
+  await assert.rejects(writeB5DeviceReceiptV1(file, receipt), { code: "B5_DEVICE_PATH" });
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+  console.log("RESULT: PASS B5 inbox receipt path, sequence, root/inbox custody and symlink refusals");
+});
 
 test("F03b strict JSON and schemas refuse unknown, duplicate, truncated and oversized inputs", () => {
   for (const bytes of ['{"a":1,"a":2}', '{"a":', '{"a":NaN}']) assert.throws(() => parseB5DeviceJsonV1(bytes), { code: "B5_DEVICE_JSON" });
@@ -561,7 +604,7 @@ test("F04a fix controller drives every phase through the frozen mailbox without 
     const receipt = { ...request, observedAt: phaseTime(), real: false, browser: "fixture browser", actions: actions[request.phase], observation,
       captures: [{ path, sha256: b5DeviceHashV1(bytes), device: request.device, sequence: request.sequence, sessionNonce: request.sessionNonce, capturedAt: phaseTime() }],
       ...(request.phase === "close" ? { closeAttestation: { actor: "owner", closedAt: phaseTime(), allProofTabsClosed: true } } : {}) };
-    await writeFile(join(mailbox.root, "inbox", `${request.sequence}.json`), JSON.stringify(receipt), { mode: 0o600 });
+    await writeB5DeviceReceiptV1(join(mailbox.root, "inbox", `${request.sequence}.json`), receipt);
   };
   const failures: string[] = [];
   for (const [phase, device] of phases) {

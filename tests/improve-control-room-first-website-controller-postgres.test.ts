@@ -3,7 +3,7 @@ import test from "node:test";
 import { createHook } from "node:async_hooks";
 import { requireFirstWebsiteRehearsalPart2V1, firstWebsiteConfigSchemaV1, readFirstWebsitePrivateBytesV1, B5_REQUEST_TEXT, b5Bytes, b5ManifestSchemaV1, b5JourneySchemaV1 } from "./helpers/improve-control-room-first-website";
 import { b5ControllerBrowserEventsSchemaV1 } from "../scripts/workflow-journeys/first-website-controller";
-import { b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1, writeB5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
+import { b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1, writeB5DeviceReceiptV1 } from "../scripts/workflow-journeys/first-website-device";
 import { loopCandidateCardSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -218,7 +218,7 @@ async function rehearseNative(file: string | undefined, scenario:"complete"|"int
         captures:[{path:capturePath,sha256:b5Bytes(png),device:r.device,sequence:r.sequence,sessionNonce:r.sessionNonce,capturedAt}],...(closeAttestation ? {closeAttestation} : {})});
       await mkdir(join(root,"device/service"),{mode:0o700}).catch(e=>{if(e.code!=="EEXIST")throw e;});
       await writeFile(join(root,`device/service/${r.sequence}.json`),JSON.stringify({sequence:r.sequence,events,...(dom ? {dom} : {})})+"\n",{flag:"wx",mode:0o600});
-      await writeB5DeviceRequestV1(join(root,`device/inbox/${r.sequence}.json`),receipt);
+      await writeB5DeviceReceiptV1(join(root,`device/inbox/${r.sequence}.json`),receipt);
     }
     const result=await new Promise<{code:number|null;signal:NodeJS.Signals|null}>((yes,no)=>{
       const cancel=()=>no(new Error("B5_REHEARSAL_DEADLINE"));abort.signal.addEventListener("abort",cancel,{once:true});

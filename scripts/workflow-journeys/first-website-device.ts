@@ -366,6 +366,18 @@ export async function writeB5DeviceRequestV1(file: string, value: unknown) {
   catch (error) { throw error instanceof B5DeviceRefusalV1 ? error : new B5DeviceRefusalV1("B5_DEVICE_IO"); }
 }
 
+/** Device-side delivery for waitB5DeviceJsonV1; acceptance remains with the mailbox. */
+export async function writeB5DeviceReceiptV1(file: string, value: unknown) {
+  const inbox = dirname(file), root = dirname(inbox);
+  need(isAbsolute(file) && resolve(file) === file && basename(root) === "device" && basename(inbox) === "inbox"
+    && /^[1-9][0-9]*\.json$/u.test(basename(file)), "B5_DEVICE_PATH");
+  const receipt = parse(b5DeviceReceiptSchemaV1, value);
+  need(basename(file) === `${receipt.sequence}.json`, "B5_DEVICE_PATH");
+  await custody(root, root, true); await custody(inbox, root, true);
+  try { await publish(file, receipt, true); }
+  catch (error) { throw error instanceof B5DeviceRefusalV1 ? error : new B5DeviceRefusalV1("B5_DEVICE_IO"); }
+}
+
 function isCapture(bytes: Buffer, path: string) {
   if (path.endsWith(".png")) return bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
   if (/\.jpe?g$/u.test(path)) return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
