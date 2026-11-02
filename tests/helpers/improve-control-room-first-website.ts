@@ -43,7 +43,7 @@ export const B5_INPUT_BINDINGS = Object.freeze([
 export class B5RefusalV1 extends Error {
   constructor(readonly code: string, readonly detail = "") { super(code); }
 }
-const refuse = (code: string, detail = ""): never => { throw new B5RefusalV1(code, detail); };
+function refuse(code: string, detail = ""): never { throw new B5RefusalV1(code, detail); }
 
 const sha256 = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 const revision = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -187,7 +187,7 @@ async function portFree(port: number) {
 /** The handoff seals Node bytes; its executable location is fixed by staging.
  * Recipe settings cannot nominate another executable or grant their own approval. */
 export async function requireB5RecipesV1(checks: unknown, root: string): Promise<void> {
-  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) return refuse("B5_RECIPE_MISMATCH");
+  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) refuse("B5_RECIPE_MISMATCH");
   let approvedNode: string | undefined;
   const bound = checks.some(check => check?.argv?.[0] !== "node");
   if (bound && checks.some(check => check?.argv?.[0] === "node")) refuse("B5_RECIPE_MISMATCH");
