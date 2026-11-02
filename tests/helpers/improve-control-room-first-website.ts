@@ -867,8 +867,17 @@ export function assertB5ActionEvidenceV1(j: B5JourneyV1, card: LoopCandidateCard
 }
 /** Additional retained joins for controller real sessions. The qualification
  * comes from preflight/readiness, never from a self-labelled manifest. */
-function assertB5RealSessionEvidenceV1(journey:B5JourneyV1, artifacts:ReadonlyMap<string,Uint8Array>, pins:B5QualifiedPinsV1) {
-  if (!pins.realEvidence) return;
+function assertB5RealSessionEvidenceV1(manifest:B5ManifestV1, journey:B5JourneyV1, artifacts:ReadonlyMap<string,Uint8Array>, pins:B5QualifiedPinsV1) {
+  const claimsReal = manifest.classification.device === "real" || journey.devices.some(d=>d.real)
+    || [...artifacts].some(([path,bytes])=>{
+      if (!path.endsWith(".json")) return false;
+      try { return b5DeviceReceiptSchemaV1.safeParse(JSON.parse(Buffer.from(bytes).toString("utf8"))).data?.real === true; }
+      catch { return false; }
+    });
+  if (!pins.realEvidence) {
+    if (claimsReal) refuse("B5_REAL_EVIDENCE_QUALIFICATION_REQUIRED");
+    return;
+  }
   const parse = (path:string) => {
     try {return JSON.parse(Buffer.from(artifacts.get(path) ?? []).toString("utf8")) as unknown;}
     catch {return refuse("B5_REAL_EVIDENCE_MISSING");}
@@ -1068,7 +1077,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   assertRejectionRepairV1(manifest, journey);
   assertCleanupRetainedV1(teardown, card, snapshot, manifest.timestamps.finishedAt);
   assertB5ActionEvidenceV1(journey, card, teardown, artifacts, input.pins, http?.responseDigest);
-  assertB5RealSessionEvidenceV1(journey,artifacts,input.pins);
+  assertB5RealSessionEvidenceV1(manifest,journey,artifacts,input.pins);
   if (teardown.retention) {
     if (!input.retention || input.retention.candidateRepository !== input.candidateRepository
       || JSON.stringify(teardown.retention) !== JSON.stringify(await qualifyB5RetentionV1(input.retention))) refuse("B5_CLEANUP_RETAINED");

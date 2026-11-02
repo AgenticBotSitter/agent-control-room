@@ -304,7 +304,7 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     }),
     closed: [{ label: "after Start", from: time(3.1), to: time(3.4), receipts:[{device:"phone",sequence:4,path:"receipts/4.json"},{device:"desktop",sequence:5,path:"receipts/5.json"}] },
       { label: "after spec approval", from: time(6.5), to: time(38),receipts:[{device:"phone",sequence:9,path:"receipts/9.json"},{device:"desktop",sequence:10,path:"receipts/10.json"}] }], steps, dom,
-    devices: [{ kind: "phone", real: true, browser: "phone browser" }, { kind: "desktop", real: true, browser: "desktop browser" }] },
+    devices: [{ kind: "phone", real: false, browser: "phone browser" }, { kind: "desktop", real: false, browser: "desktop browser" }] },
     "database-snapshot.json": { schemaVersion: 1, readAt: time(43), rows },
     "independent-status-check.json": [p.failed.record, p.passed.record],
     "teardown.json": { transportCleanup:noMappingCleanup(), schemaVersion: 1, b3cCleanup: "complete", scratchAbsent: true, ownedProcesses: 0, ownedListenersReleased: true, protectedListenersUntouched: true,
@@ -320,7 +320,7 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     const capturePath = `screens/${screen}.png`, captureSourcePath=`captures/${screen}.png`, captureDigest = H.b5Bytes(raw[capturePath]!);
     files[a.receiptPath] = { schemaVersion:1, sessionNonce, sequence:a.sequence, phase:phases[a.name], origin:"https://proof-fixture.ts.net:60462", device:a.device,
       expiresAt:time(50), binding:{requestId,runLinkId:card.evidence.binding.runLinkId,inputVersion:card.localVersion}, observedAt:a.at,
-      real:true, browser:"synthetic receipt fixture", actions:[words[a.name]],
+      real:false, browser:"synthetic receipt fixture", actions:[words[a.name]],
       captures:[{path:captureSourcePath,sha256:captureDigest,device:a.device,sessionNonce,sequence:a.sequence,capturedAt:a.at}],
       observation:{sessionDigest:H.b5Bytes(sessionNonce),routeClass:"project-document",method:"GET",status:200,observedAt:a.at,sessionNonce,sequence:a.sequence,device:a.device} };
     if (a.sequence >= 11) journey.serviceFacts.push({ screen, device:a.device, requestId, localVersion:card.localVersion, runLinkId:card.evidence.binding.runLinkId, inputVersion:card.a2InputVersion,
@@ -350,7 +350,7 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
       launch: { uid: 501, context: "current-session", isolationClaim: "none", consumedRoots: ["runs", "work", "config"] },
       lineage: { requestId, runLinkId: b.runLinkId, loopRunId: b.loopRunId, localVersion: card.localVersion, a2InputVersion: card.a2InputVersion },
       heads: { base, rejected: p.rejected, final: p.final },
-      classification: { website: "real", storage: "real", engine: "real", sendBack: "real", recovery: "real", finish: "real", device: "real", providers: "fixture", stimuli: "fixture" },
+      classification: { website: "real", storage: "real", engine: "real", sendBack: "real", recovery: "real", finish: "real", device: "fixture", providers: "fixture", stimuli: "fixture" },
       timestamps: { startedAt: time(0), finishedAt: time(45) } };
     const v = { files: structuredClone(files), manifest }; change(v);
     const bytes = new Map<string, string | Uint8Array>(Object.entries(raw));
@@ -367,18 +367,33 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     teardown: (v: Files) => v.files["teardown.json"] as Record<string, unknown>,
     snapshot: (v: Files) => v.files["database-snapshot.json"] as { rows: { table: string; sha256: string; row: Record<string, unknown> }[] } };
 }
-test("B5 verifier accepts complete real-shaped evidence and reports missing phone evidence as incomplete", async t => {
+test("B5 verifier accepts fixture evidence only as incomplete", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(); assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE"], transportCleanup:noMappingCleanup() });
-  await e.write(v => { e.journey(v).devices = [{ kind: "phone", real: false, browser: "360px emulation" }, { kind: "desktop", real: true, browser: "desktop browser" }]; });
-  assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE", "B5_PHONE_EVIDENCE_MISSING"], transportCleanup:noMappingCleanup() });
+  await e.write(); assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE", "B5_PHONE_EVIDENCE_MISSING", "B5_DESKTOP_EVIDENCE_MISSING"], transportCleanup:noMappingCleanup() });
+  await e.write(v => { e.journey(v).devices = [{ kind: "phone", real: false, browser: "360px emulation" }, { kind: "desktop", real: false, browser: "desktop browser" }]; });
+  assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE", "B5_PHONE_EVIDENCE_MISSING", "B5_DESKTOP_EVIDENCE_MISSING"], transportCleanup:noMappingCleanup() });
   await e.write(); await writeFile(join(e.dir, "screens/03-question.png"), "changed");
   assert.equal(await e.refusal(), "B5_ARTIFACT_BYTES", "B5 changed retained bytes are refused");
   await e.write(v => { v.manifest.artifacts = []; }); assert.equal(await e.refusal(), "B5_MANIFEST_INVALID");
   await e.write(v => { v.manifest.classification = { ...(v.manifest.classification as object), engine: "fixture" }; });
   assert.equal(await e.refusal(), "B5_MANIFEST_INVALID", "B5 a fixture engine classification never satisfies the real schema");
   await e.write(); assert.equal(await e.refusal({ readCard: async () => null }), "B5_CARD_UNAVAILABLE", "B5 no service card is never complete");
+});
+test("B5 real bundle claims require real evidence pins independently of caller pins", async t => {
+  await load(); const e=await evidenceSet(t);
+  for (const claim of ['manifest','receipt','unreferenced receipt'] as const) {
+    await e.write(v=>{
+      if (claim === 'manifest') (v.manifest.classification as Record<string,unknown>).device='real';
+      else {
+        const receipt=structuredClone(v.files['receipts/1.json']) as Record<string,unknown>;
+        receipt.real=true;
+        v.files[claim === 'receipt' ? 'receipts/1.json' : 'receipts/unreferenced.json']=receipt;
+      }
+    });
+    await assert.rejects(e.verify(),{code:'B5_REAL_EVIDENCE_QUALIFICATION_REQUIRED'},claim);
+  }
+  console.log('RESULT: PASS manifest and referenced/unreferenced receipt real claims refuse missing realEvidence pins');
 });
 test("B5 verifier refuses a fixture chain presented as real", async t => {
   await load();
@@ -1033,7 +1048,7 @@ test("F04b missing provider provenance refuses complete-looking evidence", async
 
 test("F04b provider relabelling cannot promote scripted transport or change lineup", async t => {
   await load(); const e = await evidenceSet(t);
-  await e.write(); assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE"], transportCleanup:noMappingCleanup() }, "F04b scripted provider always remains incomplete");
+  await e.write(); assert.deepEqual(await e.verify(), { state: "incomplete", reasons: ["B5_PROVIDER_FIXTURE", "B5_PHONE_EVIDENCE_MISSING", "B5_DESKTOP_EVIDENCE_MISSING"], transportCleanup:noMappingCleanup() }, "F04b scripted provider always remains incomplete");
   await e.write(v => { (v.manifest.classification as Record<string, unknown>).providers = "real"; });
   assert.equal(await e.refusal(), "B5_PROVIDER_PROVENANCE_MISMATCH", "F04b manifest label cannot promote fixture pins");
   await e.write();
@@ -1134,7 +1149,7 @@ test("F04b finalization preserves shared retained repository and hashes only run
   assert.equal(finalized.artifacts.find(a=>a.path==='teardown.json')!.sha256,H.b5Bytes(await readFile(join(e.dir,'teardown.json'))));
   assert.equal((await lstat(join(e.dir,'manifest.json'))).mode&0o777,0o600);
   const verdict = await H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins:e.fixturePins,retention});
-  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE']);
+  assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created');
   const second = {...retention,cleanupTargets:[join(e.p.dir,'run-two-work')]};
   await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,second);
@@ -1232,7 +1247,7 @@ test("F04b removed mapping claims require retained owner receipt and unchanged s
   };
   const verify=()=>H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins,
     retention:{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'removed-work')]}});
-  await write();assert.deepEqual((await verify()).reasons,['B5_PROVIDER_FIXTURE']);
+  await write();assert.deepEqual((await verify()).reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
   await write(v=>{(v.off as {exitCode:number}).exitCode=1;});
   assert.ok((await verify()).reasons.includes('B5_TRANSPORT_CLEANUP_INCOMPLETE'),'F04b nonzero owner removal cannot be relabeled removed');
   await write(v=>{(v.status as {afterStatus:unknown;afterDigest:string}).afterStatus={Future:{keep:false}};});
@@ -1258,7 +1273,7 @@ test("F04b truncated screenshot refuses even after rehashing manifest and receip
 
 // Synthetic real-provenance fixtures test the positive contract only. No real
 // provider or device qualification, rehearsal or REAL-B5-PASS is claimed here.
-for (const realProvenance of [false, true]) test(`F04b fix controller finalized retention ${realProvenance ? 'synthetic real-provenance reaches complete' : 'fixture remains incomplete'}`, async t => {
+for (const realProvenance of [false, true]) test(`F04b fix controller finalized retention ${realProvenance ? 'real provider labels leave fixture devices incomplete' : 'fixture remains incomplete'}`, async t => {
   await load(); const e = await evidenceSet(t);
   const { verifyFirstWebsiteControllerEvidenceV1 } = await import('../scripts/workflow-journeys/first-website-controller');
   const pins = structuredClone(e.fixturePins);
@@ -1280,7 +1295,7 @@ for (const realProvenance of [false, true]) test(`F04b fix controller finalized 
     finishTeardown:async()=>{events.push('cleanup-finalize');await H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,retention);},
   });
   assert.deepEqual(events,['cold-read','cleanup-finalize']);
-  assert.deepEqual(verdict,{state:realProvenance ? 'complete' : 'incomplete',reasons:realProvenance ? [] : ['B5_PROVIDER_FIXTURE'],transportCleanup:noMappingCleanup()});
+  assert.deepEqual(verdict,{state:'incomplete',reasons:realProvenance ? ['B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING'] : ['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING'],transportCleanup:noMappingCleanup()});
 });
 
 test('F04b fix absent classification refuses missing provider provenance', async t => {
@@ -1300,7 +1315,7 @@ test('F04b fix responseDigest hashes actual HTTP response bytes', async t => {
     for (const fact of j.serviceFacts) fact.responseDigest=H.b5Bytes(new Uint8Array(bytes));
   });
   const verdict = await e.verify({readCard:async()=>new Response(bytes,{headers:{'content-type':'application/json'}})});
-  assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE']);
+  assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
   // Even harmless formatting changes change the byte digest, not the candidate facts.
   const reformatted = JSON.stringify(JSON.parse(Buffer.from(bytes).toString('utf8')),null,2)+'\n';
   assert.equal(await e.refusal({readCard:async()=>new Response(reformatted,{headers:{'content-type':'application/json'}})}),'B5_CAPTURE_CORRELATION');
@@ -1308,7 +1323,7 @@ test('F04b fix responseDigest hashes actual HTTP response bytes', async t => {
     const j = v.files['journey.json'] as {serviceFacts:{responseDigest:string}[]};
     for (const fact of j.serviceFacts) fact.responseDigest=H.b5Bytes(reformatted);
   });
-  assert.deepEqual((await e.verify({readCard:async()=>new Response(reformatted,{headers:{'content-type':'application/json'}})})).reasons,['B5_PROVIDER_FIXTURE']);
+  assert.deepEqual((await e.verify({readCard:async()=>new Response(reformatted,{headers:{'content-type':'application/json'}})})).reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
 });
 
 test('F04b R295 selected review identities join without claiming observation', async t => {
@@ -1340,7 +1355,7 @@ test('F04b per-screen HTTP receipts bind distinct envelopes to the authoritative
   };
   await e.write(apply());assert.equal((await e.verify()).state,'incomplete');
   await e.write(apply(true));assert.equal(await e.refusal(),'B5_CAPTURE_CORRELATION','a different signed card cannot be hidden by fresh response hashes');
-  await e.write(apply());assert.deepEqual((await e.verify()).reasons,['B5_PROVIDER_FIXTURE']);
+  await e.write(apply());assert.deepEqual((await e.verify()).reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
 });
 
 for (const realSession of [false, true]) test(realSession ? 'B5 controller writes complete simulated real session evidence after the cold read' : 'F04b controller writes complete fixture evidence from accepted receipts after the cold read', async t => {
@@ -1511,7 +1526,7 @@ test('F04b full website report cannot qualify with absent final sections', async
     const card=structuredClone(e.card);card.evidence[section]=null;
     assert.equal(await e.refusal({readCard:async()=>({card,responseDigest})}),'B5_FULL_REPORT_INCOMPLETE','F04b each required final report section must be present');
   }
-  assert.deepEqual((await e.verify()).reasons,['B5_PROVIDER_FIXTURE']);
+  assert.deepEqual((await e.verify()).reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
 });
 
 test('F04b staged fixture marker refuses real qualification even without a rehearsal label', async t => {
