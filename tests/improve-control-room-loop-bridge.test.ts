@@ -283,6 +283,67 @@ async function fixture(t: TestContext, repository?: string) {
   return { ...f, ...engine, bridge, service, handler, base, post, get, intake, confirm };
 }
 
+test("B5 committed unlinked intake has bounded observational status before its run link", async t => {
+  const f = await fixture(t);
+  let entered!: () => void, release!: () => void, statusReads = 0;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const adapter: LoopAdapterV1 = { ...f.adapter,
+    intake: async (...args) => { entered(); await gate; return f.adapter.intake(...args); },
+    status: async run => { statusReads++; return f.adapter.status(run); } };
+  let clock = now;
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+    { integrityKey: KEY, adapter }, () => clock);
+  const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, service: f.service, clock: () => now, loopBridge: bridge });
+  const dispatch = bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, "b5-pending-intake-0001");
+  await waiting;
+  try {
+    const desk = await bridge.viewDesk(f.identity, f.project.projectId), id = desk.loopRequests[0]!.requestId;
+    const journal = () => f.client.query("SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind");
+    const before = await journal();
+    const read = () => handler(request(`${f.base}/${encodeURIComponent(id)}/status`));
+    const response = await read();
+    assert.equal(response.status, 200, "committed claim is a normal status read");
+    const pending = await response.json() as Awaited<ReturnType<typeof bridge.status>>;
+    assert.equal(pending.display.attention?.code, "INTAKE_IN_PROGRESS");
+    assert.equal(pending.display.attention?.message, "Intake in progress.");
+    assert.equal(pending.request.runLink, null); assert.equal(pending.engine.state, "draft");
+    assert.equal(pending.decisions?.gate, null);
+    assert.equal(pending.display.canStart, false); assert.equal(pending.display.canStop, false);
+    clock = now + 119999;
+    assert.equal((await bridge.status(f.identity, f.project.projectId, id)).display.attention?.code, "INTAKE_IN_PROGRESS");
+    clock = now + 120000;
+    const stale = await bridge.status(f.identity, f.project.projectId, id);
+    assert.equal(stale.display.attention?.code, "INTAKE_TIMEOUT");
+    assert.equal(stale.engine.state, "refused"); assert.equal(stale.display.state, "blocked");
+    const staleResponse = await read();
+    assert.equal(staleResponse.status, 200);
+    assert.equal((await staleResponse.json() as typeof stale).display.attention?.code, "INTAKE_TIMEOUT");
+    const reopened = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+      { integrityKey: KEY, adapter }, () => clock);
+    assert.equal((await reopened.status(f.identity, f.project.projectId, id)).display.attention?.code, "INTAKE_TIMEOUT",
+      "reopening the service cannot renew the pending interval");
+    assert.match(stale.display.attention!.message, /could not be confirmed/);
+    assert.equal(stale.display.canStart, false); assert.equal(stale.display.canStop, false);
+    assert.equal(statusReads, 0, "unlinked reads never consult the engine");
+    assert.deepEqual(await journal(), before, "GET never appends a result or reconciles a claim");
+    assert.equal((await bridge.viewDesk(f.identity, f.project.projectId)).loopRequests[0]!.runLink, null);
+    clock = now; release();
+    assert.equal((await dispatch).state, "accepted");
+    const linked = await bridge.status(f.identity, f.project.projectId, id);
+    assert.ok(linked.request.runLink); assert.equal(linked.decisions?.gate?.kind, "confirm");
+    assert.equal(linked.display.attention, null); assert.equal(statusReads, 1);
+  } finally { clock = now; release(); await dispatch; }
+});
+
+test("B5 unlinked draft without a committed intake remains a conflict", async t => {
+  const f = await fixture(t);
+  const draft = await f.service.saveLoopDraft(f.identity, f.project.projectId, { description, settingsText }, "b5-no-intake-00000001");
+  const response = await f.handler(request(`${f.base}/${encodeURIComponent(draft.request.requestId)}/status`));
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "conflict" });
+});
+
 // Optional adjacent tooling checkout, supplied by the build/review lane. The
 // CLI uses its disposable Bridge fixture and dry launcher; no provider runs.
 if (process.env.CONTROL_ROOM_A2_TEST_LOOP) test("B1b real CLI intake completes with numbered progress and legacy control", async t => {

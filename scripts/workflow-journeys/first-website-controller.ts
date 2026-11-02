@@ -144,6 +144,29 @@ export const b5FirstWebsiteScanQualificationSchemaV1 = z.object({ contamination:
   faultInputSha256: z.string().regex(/^sha256:[a-f0-9]{64}$/u), reviewInputSha256: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
 }).strict() }).passthrough();
 
+/** Wait only for the committed intake/link boundary. HTTP failures and failed
+ * acceptance checks retain their original meaning; no conflict is retried. */
+export async function waitB5IntakeLinkV1<T extends object>(input: {
+  read(signal: AbortSignal): Promise<T | null>;
+  accepted(link: T): Promise<void>;
+  signal: AbortSignal; deadline: number;
+  clock?: () => number; pause?: (signal: AbortSignal) => Promise<void>;
+}): Promise<T> {
+  const clock = input.clock ?? Date.now;
+  const deadline = Math.min(input.deadline, clock() + 120_000);
+  return bounded(async timeoutSignal => {
+    const signal = AbortSignal.any([input.signal, timeoutSignal]);
+    const check = () => { signal.throwIfAborted(); need(clock() < deadline, "B5_INTAKE_LINK_TIMEOUT"); };
+    while (true) {
+      check();
+      const link = await input.read(signal);
+      check();
+      if (link) { await input.accepted(link); check(); return link; }
+      await (input.pause ?? pause)(signal);
+    }
+  }, Math.max(0, deadline - clock()), "B5_INTAKE_LINK_TIMEOUT");
+}
+
 async function pause(signal: AbortSignal) {
   signal.throwIfAborted();
   await new Promise<void>(yes => {
@@ -304,8 +327,26 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       assertB5FaultValueAbsentV1(value, policy); return value;
     };
     let previousObservation: string | undefined;
+    let intakeLinkReady = false, intakeLinkDeadline: number | undefined;
     const status = async (activeSignal = workSignal) => {
       need(requestId, "B5_REQUEST_JOIN");
+      if (!intakeLinkReady) {
+        intakeLinkDeadline ??= Math.min(Date.now() + 120_000, owner.workAt()!);
+        await waitB5IntakeLinkV1({ signal: activeSignal, deadline: intakeLinkDeadline,
+          read: async signal => {
+            const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk", undefined, signal));
+            const saved = desk.loopRequests.find(row => row.requestId === requestId);
+            need(saved && saved.description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN");
+            return saved.runLink;
+          },
+          accepted: async link => {
+            const snapshot = await host!.proof.readSnapshot(); assertB5FaultValueAbsentV1(snapshot, policy);
+            assertFirstWebsiteOwnerCommandV1(snapshot, { requestId: requestId!, runLinkId: link.runLinkId,
+              loopRunId: link.loopRunId, operation: "intake", body: { description: B5_REQUEST_TEXT } });
+          },
+        });
+        intakeLinkReady = true;
+      }
       const result = loopDecisionStatusSchemaV1.parse(await service(`${projectPath}/${encodeURIComponent(requestId)}/status`, undefined, activeSignal));
       need(result.request.requestId === requestId && result.request.projectId === host!.proof.project.projectId
         && result.request.description === B5_REQUEST_TEXT && result.request.requestSha256 === b5Bytes(B5_REQUEST_TEXT).slice(7)
@@ -335,7 +376,11 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         if (!requestId) {
           const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
           need(desk.loopRequests.length <= 1, "B5_REQUEST_JOIN");
-          if (desk.loopRequests.length) { need(desk.loopRequests[0].description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN"); requestId = desk.loopRequests[0].requestId; }
+          if (desk.loopRequests.length) {
+            const saved = desk.loopRequests[0];
+            need(saved.description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN"); requestId = saved.requestId;
+            intakeLinkDeadline ??= Math.min(Date.now() + 120_000, owner.workAt()!);
+          }
         }
         if (requestId) {
           const current = await status();
@@ -396,8 +441,9 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     }
     await phase("connect", "phone"); await phase("connect", "desktop"); await phase("prepare", "phone");
     const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
-    need(desk.loopRequests.length === 1 && desk.loopRequests[0].description === B5_REQUEST_TEXT && desk.loopRequests[0].runLink, "B5_REQUEST_JOIN");
+    need(desk.loopRequests.length === 1 && desk.loopRequests[0].description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN");
     requestId = desk.loopRequests[0].requestId;
+    intakeLinkDeadline ??= Math.min(Date.now() + 120_000, owner.workAt()!);
     let s = await status();
     need(s.engine.state === "draft" && !s.engine.confirmation && !s.display.confirmationCurrent && s.display.startState === "not_started", "B5_INPUT_BINDING_LATE");
     const runId = s.request.runLink!.loopRunId;

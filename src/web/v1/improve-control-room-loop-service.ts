@@ -27,6 +27,8 @@ const rowSchema = z.object({ tenant_id: id, command_id: z.string().regex(/^loop-
 type Row = z.infer<typeof rowSchema>;
 const purpose = "loop-improvement-command/v1";
 const sweepLimit = 16;
+// Covers bounded intake dispatch and its result/link commit; reads never renew it.
+const intakeStatusBoundMs = 120_000;
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 const sameTag = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const conflict = () => new WebAccessError("conflict");
@@ -297,28 +299,37 @@ export class ImproveControlRoomLoopServiceV1 {
       return { lineage, pending, startClaim, startResult: startClaim ? await this.#result(tx, startClaim) : undefined, mayWrite,
         intakeClaim, intakeResult: intakeClaim ? await this.#result(tx, intakeClaim) : undefined };
     });
-    if (!lineage.link && !startClaim && intakeClaim && intakeResult?.result?.state === "refused") {
-      const outcome = intakeResult.result;
-      const code = (Object.keys(loopIntakeRefusalReasonsV1) as (keyof typeof loopIntakeRefusalReasonsV1)[])
-        .find(code => loopIntakeRefusalEvidenceV1(intakeClaim.command_id, intakeClaim.binding, code) === outcome.evidenceDigest) ?? "REFUSED";
-      const message = loopIntakeRefusalReasonsV1[code];
-      // This is the local saved refusal, not an invented engine run. No A2 read,
+    if (!lineage.link && !startClaim && intakeClaim) {
+      const b = intakeClaim.binding;
+      if (b.localVersion !== Number(lineage.input.version) || b.requestSha256 !== lineage.input.request_sha256
+        || b.settingsSha256 !== lineage.input.settings_sha256 || b.runLinkId !== null || b.authorizationId !== null) throw unavailable();
+      const outcome = intakeResult?.result;
+      const refused = outcome?.state === "refused";
+      const age = this.clock() - Date.parse(intakeClaim.created_at);
+      const inProgress = !refused && age >= 0 && age < intakeStatusBoundMs;
+      const code = refused ? (Object.keys(loopIntakeRefusalReasonsV1) as (keyof typeof loopIntakeRefusalReasonsV1)[])
+        .find(code => loopIntakeRefusalEvidenceV1(intakeClaim.command_id, intakeClaim.binding, code) === outcome!.evidenceDigest) ?? "REFUSED" : inProgress ? "INTAKE_IN_PROGRESS" : "INTAKE_TIMEOUT";
+      const message = refused ? loopIntakeRefusalReasonsV1[code as keyof typeof loopIntakeRefusalReasonsV1]
+        : inProgress ? "Intake in progress." : "Intake could not be confirmed within two minutes.";
+      // This is local intake status, not an observed engine run. No A2 read,
       // run link, Start authority, or Stop is possible for this request.
-      const progress = { step: null, completed: 0, attention: "blocked" as const };
+      const progress = { step: null, completed: 0, attention: inProgress ? "none" as const : "blocked" as const };
       const display = loopImprovementStatusSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
         localVersion: lineage.view.currentVersion, description: lineage.view.description,
         requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: null,
-        engineRevision: outcome.revision, state: "blocked", startState: "not_started", confirmationCurrent: false,
-        canStart: false, canStop: false, progress: null, attention: { code, message, nextAction: "Correct the configuration, then prepare a new request. No work was started." },
+        engineRevision: outcome?.revision ?? 0, state: inProgress ? null : "blocked", startState: "not_started", confirmationCurrent: false,
+        canStart: false, canStop: false, progress: null, attention: { code, message, nextAction: refused ? "Correct the configuration, then prepare a new request. No work was started."
+          : inProgress ? "Wait while the saved request is linked. This status is limited to two minutes from intake."
+          : "Ask the lead to check this saved request before preparing another one." },
         observedAt: new Date(this.clock()).toISOString() });
       const engine: LoopEngineStatusV1 = { run: { adapterId: intakeClaim.binding.adapterId, loopRunId: intakeClaim.binding.loopRunId,
-        toolingRevision: intakeClaim.binding.toolingRevision, a2SchemaVersion: 1 }, revision: outcome.revision,
-        inputVersion: intakeClaim.binding.localVersion, state: "refused", description: lineage.view.description,
+        toolingRevision: intakeClaim.binding.toolingRevision, a2SchemaVersion: 1 }, revision: outcome?.revision ?? 0,
+        inputVersion: intakeClaim.binding.localVersion, state: inProgress ? "draft" : "refused", description: lineage.view.description,
         settingsSha256: lineage.view.settingsSha256, settingsDigest: lineage.view.settingsSha256,
         confirmation: null, approval: null, question: null, progress, receipts: [] };
       return { engine, view: loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
-        decisions: { gate: { kind: "blocked", code: "UNAVAILABLE", message }, observedAt: display.observedAt },
-        engine: { revision: engine.revision, state: "refused", draft: engine.description, requestSha256: lineage.view.requestSha256,
+        decisions: { gate: inProgress ? null : { kind: "blocked", code: "UNAVAILABLE", message }, observedAt: display.observedAt },
+        engine: { revision: engine.revision, state: engine.state, draft: engine.description, requestSha256: lineage.view.requestSha256,
           settingsSha256: engine.settingsSha256, inputVersion: engine.inputVersion, confirmation: null, approval: null, question: null, progress, identity: "unverified" } }) };
     }
     const current = await this.#adapter.status(this.#run(lineage).loopRunId);

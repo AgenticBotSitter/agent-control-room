@@ -127,8 +127,8 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
     <h3 ref={heading} tabIndex={-1}>Saved request</h3>
     <p style={{ whiteSpace: "pre-wrap" }}>{row.description}</p>
     {!row.runLink ? <>
-      {snapshot?.snapshot.engine.state === "refused" && snapshot.attention
-        ? <div role="alert" className="private-notice"><p>{snapshot.attention.message}</p><p>{snapshot.attention.nextAction}</p></div>
+      {snapshot?.attention
+        ? <div role={snapshot.attention.code === "INTAKE_IN_PROGRESS" ? "status" : "alert"} className="private-notice"><p>{snapshot.attention.message}</p><p>{snapshot.attention.nextAction}</p></div>
         : <p>Confirmation and a linked run are needed before Start.</p>}
     </> : <>
       <p role="status" aria-live="polite">{snapshot?.state ? {

@@ -1391,3 +1391,56 @@ test('F04b staged fixture marker refuses real qualification even without a rehea
     .then(()=> 'PASSED',(e:unknown)=>e instanceof H.B5RefusalV1 ? e.code : String(e));
   assert.equal(result,'B5_PROVIDER_PROVENANCE_MISMATCH','F04b actual staged fixture cannot be promoted by relabeling qualified data');
 });
+
+// The barrier accepts only a committed link; service errors are never retried.
+test("B5 intake link barrier waits before reading status and verifies acceptance", async () => {
+  const { waitB5IntakeLinkV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  let reads = 0, clock = 1000;
+  const events: string[] = [];
+  const link = { runLinkId: "link:synthetic", loopRunId: "run:synthetic" };
+  const result = await waitB5IntakeLinkV1({
+    read: async () => { events.push("desk"); return ++reads === 3 ? link : null; },
+    accepted: async value => { assert.equal(value, link); events.push("accepted"); },
+    signal: new AbortController().signal, deadline: 4000, clock: () => clock,
+    pause: async () => { clock += 1000; },
+  });
+  events.push("status");
+  assert.equal(result, link); assert.deepEqual(events, ["desk", "desk", "desk", "accepted", "status"]);
+});
+
+test("B5 intake link barrier has a fixed deadline and stops on cancellation", async () => {
+  const { waitB5IntakeLinkV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  let reads = 0, clock = 0;
+  await assert.rejects(waitB5IntakeLinkV1({ read: async () => { reads++; return null; }, accepted: async () => assert.fail(),
+    signal: new AbortController().signal, deadline: 2000, clock: () => clock, pause: async () => { clock += 1000; },
+  }), { code: "B5_INTAKE_LINK_TIMEOUT" });
+  assert.equal(reads, 2);
+  const abort = new AbortController();
+  await assert.rejects(waitB5IntakeLinkV1({ read: async () => null, accepted: async () => assert.fail(), signal: abort.signal,
+    deadline: 10000, clock: () => 0, pause: async () => { abort.abort(new Error("synthetic abort")); },
+  }), /synthetic abort/);
+});
+
+test("B5 intake link barrier preserves arbitrary conflicts and refused acceptance", async () => {
+  const { waitB5IntakeLinkV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  let reads = 0;
+  const conflict = new Error("HTTP 409");
+  await assert.rejects(waitB5IntakeLinkV1({ read: async () => { reads++; throw conflict; }, accepted: async () => assert.fail(),
+    signal: new AbortController().signal, deadline: Date.now() + 10000,
+  }), error => error === conflict);
+  assert.equal(reads, 1);
+  await assert.rejects(waitB5IntakeLinkV1({ read: async () => ({ runLinkId: "link:synthetic" }),
+    accepted: async () => { throw new Error("intake not accepted"); }, signal: new AbortController().signal,
+    deadline: Date.now() + 10000,
+  }), /intake not accepted/);
+});
+
+test("B5 intake deadline bounds a stalled desk read", { timeout: 2000 }, async () => {
+  const { waitB5IntakeLinkV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  let signal: AbortSignal | undefined;
+  await assert.rejects(waitB5IntakeLinkV1({
+    read: async activeSignal => { signal = activeSignal; return new Promise<never>(() => {}); },
+    accepted: async () => assert.fail(), signal: new AbortController().signal, deadline: Date.now() + 30,
+  }), { code: "B5_INTAKE_LINK_TIMEOUT" });
+  assert.equal(signal?.aborted, true);
+});

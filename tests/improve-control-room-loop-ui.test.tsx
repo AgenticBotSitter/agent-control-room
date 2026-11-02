@@ -640,3 +640,36 @@ test("B5 refused first planning step renders reason and recovery without Start a
     assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
   } finally { await m.close(); await f.close(); }
 });
+
+for (const pending of [true, false]) test(`B5 unlinked intake renders ${pending ? "progress" : "timeout"} without owner command authority`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const attention = pending ? { code: "INTAKE_IN_PROGRESS", message: "Intake in progress.",
+    nextAction: "Wait while the saved request is linked. This status is limited to two minutes from intake." }
+    : { code: "INTAKE_TIMEOUT", message: "Intake could not be confirmed within two minutes.",
+      nextAction: "Ask the lead to check this saved request before preparing another one." };
+  const local = { ...saved, request: { ...saved.request, runLink: null, savedAuthorization: false },
+    display: { ...saved.display, runLinkId: null, state: pending ? null : "blocked", startState: "not_started",
+      confirmationCurrent: false, canStart: false, canStop: false, attention },
+    engine: { ...saved.engine, state: pending ? "draft" : "refused", confirmation: null },
+    decisions: { gate: pending ? null : { kind: "blocked", code: "UNAVAILABLE", message: attention.message }, observedAt: saved.display.observedAt } };
+  const fetcher = (async (input, options) => {
+    const path = String(input);
+    if (path.endsWith(`/${encodeURIComponent(f.requestId)}/status`)) return Response.json(local);
+    const response = await wire.fetcher(input, options);
+    if (path.endsWith("/loop/desk")) {
+      const desk = await response.json();
+      return Response.json({ ...desk, loopRequests: desk.loopRequests.map((row: typeof saved.request) => ({ ...row, runLink: null, savedAuthorization: false })) });
+    }
+    return response;
+  }) as typeof fetch;
+  const m = await mount(f.project.projectId, fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), pending ? /Intake in progress\./ : /Intake could not be confirmed within two minutes\./);
+    assert.ok([...m.dom.window.document.querySelectorAll(pending ? '[role="status"]' : '[role="alert"]')]
+      .some(node => node.textContent?.includes(attention.message)));
+    assert.equal(m.button("Start confirmed work"), undefined); assert.equal(m.button("Stop this run"), undefined);
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); await f.close(); }
+});
