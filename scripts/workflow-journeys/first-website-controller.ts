@@ -366,8 +366,8 @@ export function readB5DesktopFactsV1(input: {candidateRevision:string|null;baseR
 
 /** R3 desktop evidence is rendered by the cached browser at the qualified
  * HTTPS origin. No intercepted routes, storage export, HAR or phone DOM claims.
- * Desktop close publishes capture facts, then waits for the existing owner
- * close-attestation receipt. It never invents a human attestation. */
+ * R3 line 70 keeps close as the owner's attestation checked against action
+ * timing. Close the browser, then await that existing mailbox receipt. */
 export async function captureFirstWebsiteDesktopV1(input: {
   request: B5DeviceRequestV1; host: FirstWebsiteHostV1; qualification: B5TransportQualificationV1;
   owner: B5ControllerOwnerV1; signal: AbortSignal;
@@ -424,10 +424,8 @@ export async function captureFirstWebsiteDesktopV1(input: {
     const browserIdentity=`${browser.browserType().name()}/${browser.version()}`;
     if(r.phase === "close") {
       await close();
-      // The lead combines these observed facts with the owner's genuine
-      // all-tabs-closed attestation in the existing inbox receipt. No new ack.
-      await writeFile(join(mailbox.root,`desktop-capture-${r.sequence}.json`),JSON.stringify({request:r,browser:browserIdentity,
-        observation,captures,browserClosedAt:new Date().toISOString()})+"\n",{flag:"wx",mode:0o600});
+      // Request, observation and frame remain in the existing mailbox. Avoid
+      // an unchecked second file purporting to certify browser-close timing.
       return undefined;
     }
     return {receipt:{...r,real:true,browser:browserIdentity,observedAt:new Date().toISOString(),

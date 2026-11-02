@@ -655,7 +655,7 @@ test('B5 real mailbox observes accepted owner HTTP actions and retains only corr
   console.log('RESULT: PASS real mailbox correlates owner HTTP success and exact response digest; wrong session and uncertain success excluded; no bodies or secrets retained; tamper refuses');
 });
 
-test('B5 desktop close captures browser facts and still requires the owner attestation', {timeout:10000}, async t => {
+test('B5 desktop close requires owner attestation without unchecked close evidence', {timeout:10000}, async t => {
   const root=await scratch(t),q=qualification();q.inventory.desktop={browser:'chromium',browserVersion:'unit'};
   const mailbox=await createB5DeviceMailboxV1(root,remote,{real:true,projectId:'unit-project',inventory:q.inventory});
   const C=await import('../scripts/workflow-journeys/first-website-controller');
@@ -683,15 +683,17 @@ test('B5 desktop close captures browser facts and still requires the owner attes
       }});
     await Promise.race([captured,phase.then(()=>assert.fail('owner attestation was not supplied'))]);
     assert.equal(closed,1);assert.deepEqual(await readdir(join(mailbox.root,'receipts')),[]);
-    const facts=JSON.parse(await readFile(join(mailbox.root,'desktop-capture-1.json'),'utf8'));
-    assert.equal(facts.closeAttestation,undefined);assert.equal(facts.actions,undefined);
+    assert.deepEqual((await readdir(mailbox.root)).filter(name=>name.startsWith('desktop-capture-')),[]);
+    const request=JSON.parse(await readFile(join(mailbox.root,'request.json'),'utf8'));
+    const frame=await readFile(join(mailbox.root,'captures/1-desktop.png'));
+    const captures=[{path:'captures/1-desktop.png',sha256:b5DeviceHashV1(frame),device:'desktop',sessionNonce:request.sessionNonce,sequence:request.sequence,capturedAt:new Date().toISOString()}];
     const at=new Date().toISOString();
-    await writeB5DeviceReceiptV1(join(mailbox.root,'inbox/1.json'),{...facts.request,real:true,browser:facts.browser,observation:facts.observation,
-      captures:facts.captures,observedAt:at,actions:['closed'],closeAttestation:{actor:'owner',allProofTabsClosed:true,closedAt:at}});
+    await writeB5DeviceReceiptV1(join(mailbox.root,'inbox/1.json'),{...request,real:true,browser:'chromium/unit',observation:mailbox.observation(),
+      captures,observedAt:at,actions:['closed'],closeAttestation:{actor:'owner',allProofTabsClosed:true,closedAt:at}});
     assert.equal((await phase).receipt.closeAttestation?.allProofTabsClosed,true);
     assert.equal(closed,1);
   } finally {chromium.launch=originalLaunch;}
-  console.log('RESULT: PASS simulated desktop browser closes before capture handoff; no invented owner attestation; existing inbox receipt completes phase; browser close once');
+  console.log('RESULT: PASS simulated desktop browser closes once; no unchecked close evidence file; existing owner inbox attestation completes phase');
 });
 
 for (const [name,value] of [
