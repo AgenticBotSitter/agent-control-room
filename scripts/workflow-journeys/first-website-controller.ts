@@ -572,9 +572,14 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   return verdict;
 }
 
-/** Build evidence only from accepted mailbox receipts, successful browser
- * exchanges and the real engine projection. The caller finalizes it after its
- * authoritative cold read and the shared outer cleanup. No HTTP bodies persist. */
+/** HTTP 202 also covers uncertain dispatch. The preparation barrier requires
+ * positive intake acceptance before waiting for confirmation controls. */
+export function assertB5AcceptedIntakeV1(value: unknown) {
+  const receipt = loopBridgeReceiptSchemaV1.parse(value);
+  need(receipt.state === "accepted", receipt.state === "refused" ? "B5_ENGINE_REFUSED" : "B5_INTAKE_UNCERTAIN");
+  return receipt;
+}
+
 export const b5ControllerBrowserEventsSchemaV1 = z.object({
   sequence: z.number().int().positive(), events: z.array(z.object({
     name: z.enum(["intake", "confirm", "start", "answer", "approve-plan", "approve-spec", "finish-phone", "finish-desktop", "retained"]),
@@ -583,6 +588,9 @@ export const b5ControllerBrowserEventsSchemaV1 = z.object({
   }).strict()), dom: z.object({ candidateRevision:z.string(), baseRevision:z.string(), requestId:z.string() }).strict().optional(),
 }).strict();
 
+/** Build evidence only from accepted mailbox receipts, successful browser
+ * exchanges and the real engine projection. The caller finalizes it after its
+ * authoritative cold read and the shared outer cleanup. No HTTP bodies persist. */
 export async function writeFirstWebsiteControllerEvidenceV1(input: {
   preflight: FirstWebsitePreflightV1;
   projection: Awaited<ReturnType<FirstWebsiteHostV1["proof"]["readRun"]>>;

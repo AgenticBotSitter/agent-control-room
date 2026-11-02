@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHook } from "node:async_hooks";
 import { requireFirstWebsiteRehearsalPart2V1, firstWebsiteConfigSchemaV1, readFirstWebsitePrivateBytesV1, B5_REQUEST_TEXT, b5Bytes, b5ManifestSchemaV1, b5JourneySchemaV1 } from "./helpers/improve-control-room-first-website";
-import { b5ControllerBrowserEventsSchemaV1 } from "../scripts/workflow-journeys/first-website-controller";
+import { assertB5AcceptedIntakeV1, b5ControllerBrowserEventsSchemaV1 } from "../scripts/workflow-journeys/first-website-controller";
 import { b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1, writeB5DeviceReceiptV1 } from "../scripts/workflow-journeys/first-website-device";
 import { loopCandidateCardSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -163,6 +163,7 @@ async function rehearseNative(file: string | undefined, scenario:"complete"|"int
       const post=async(name:typeof events[number]["name"],suffix:string,click:()=>Promise<void>)=>{
         const response=page.waitForResponse(res=>res.request().method() === "POST" && new URL(res.url()).pathname.endsWith(suffix));
         await click();const res=await response;assert.ok(res.ok());await res.finished();
+        if (name === "intake") assertB5AcceptedIntakeV1(await res.json());
         events.push({name,method:"POST",path:new URL(res.url()).pathname,status:res.status(),at:new Date().toISOString()});
       };
       if(r.phase === "prepare") {
@@ -326,3 +327,16 @@ async function nativeEvidenceNegatives(root:string, config:z.infer<typeof firstW
   action(journey);assert.deepEqual(H.assertB5ProviderProvenanceV1(manifest,journey,pins),["B5_PROVIDER_FIXTURE"]);
   console.log("RESULT: PASS retained native evidence refuses provider relabelling, missing discriminator, device promotion, action/capture/order and contamination negatives; proof bytes unchanged");
 }
+
+
+test("B5 browser intake requires accepted state even for HTTP 202", () => {
+  const receipt = { schemaVersion: 1, requestId: "request:synthetic", localVersion: 1,
+    commandId: "loop-command:" + "a".repeat(32), state: "accepted", replayed: false, engineRevision: 1, error: null };
+  assert.equal(assertB5AcceptedIntakeV1(receipt).state, "accepted");
+  for (const state of ["uncertain", "refused", "waiting"]) {
+    assert.throws(() => assertB5AcceptedIntakeV1({ ...receipt, state,
+      error: state === "uncertain" ? "LAUNCH_UNCERTAIN" : state === "refused" ? "REFUSED" : null }),
+      new RegExp(state === "refused" ? "B5_ENGINE_REFUSED" : "B5_INTAKE_UNCERTAIN"));
+  }
+  console.log("RESULT: PASS B5 browser intake rejects HTTP-success uncertain/refused/waiting states");
+});

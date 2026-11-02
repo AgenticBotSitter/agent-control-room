@@ -95,6 +95,17 @@ if os.path.exists(refusal):
     with open(refusal) as f: control=json.load(f)
     if control['op']!=op: control={}
 if control and not control.get('afterSave'):
+    if control.get('runDirectory') or control.get('savedRun'):
+        os.makedirs(os.path.join(root,'runs',run),exist_ok=True)
+        with open(os.path.join(root,'runs',run,'run.lock'),'w') as f: f.write('')
+    if control.get('savedRun'):
+        with open(os.path.join(root,'runs',run,'run.json'),'w') as f: f.write('{}')
+    if control.get('output')=='null-state':
+        print(json.dumps(dict(schema_version=1,run=control.get('envelopeRun',run),state=None,revision=0,next=None,attention=None,steps=[],counters={},error=dict(code=control.get('errorCode','SETTINGS_REPOSITORY'),message='PRIVATE engine detail must not cross HTTP'),request=None)),flush=True)
+        if control.get('hang'):
+            import time
+            time.sleep(10)
+        sys.exit(control['code'])
     emit('REFUSED',control.get('output','envelope'))
     if control.get('breakStatus'): os.remove(path)
     sys.exit(control['code'])
@@ -390,7 +401,7 @@ test("B1b A2 engine receipts (unwrapped adapter)", async t => {
   }
 });
 
-for(const code of [1,2,3]) for(const output of code===1?["envelope"]:["envelope","null-request"]){
+for(const code of [1,2,3]) for(const output of code===1?["envelope"]:["envelope","null-request","malformed","empty"]){
   test(`B1b A2 engine receipts save then exit ${code} ${output}`,async t=>{
     const f=await fixture(t),key=`b1b-a2-saved-exit-${code}-${output}`;
     await writeFile(join(f.root,"refusal.json"),JSON.stringify({op:"intake",code,afterSave:true,output}));
@@ -1222,4 +1233,59 @@ test("B2b approval document isolation", async t=>{
   const handler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
   assert.equal((await handler(request(path))).status,409,"changed gate/revision drops complete document");
   assert.equal(await journal(),before);console.log("B2b document complete=262144 escaped_budget=1600000 invalid_utf8/hash/seal/path/race=refused writes=0");
+});
+
+
+test("B5 definite intake refusal stays visible after reopen without an orphan run", async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: "intake", code: 2, output: "null-state", runDirectory: true }));
+  const response = await f.post("intake", { description }, "b5-intake-refusal-0001");
+  assert.equal(response.status, 202);
+  const receipt = await response.json() as { requestId: string; state: string };
+  assert.equal(receipt.state, "refused", "null-state A2 refusal is definite, not uncertain");
+  const reopened = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter: f.adapter }, () => now);
+  const current = await reopened.status(f.identity, f.project.projectId, receipt.requestId);
+  assert.equal(current.engine.state, "refused");
+  assert.equal(current.display.startState, "not_started");
+  assert.equal(current.display.canStart, false); assert.equal(current.display.canStop, false);
+  assert.equal(current.request.runLink, null);
+  assert.equal(current.display.attention?.code, "SETTINGS_REPOSITORY");
+  assert.match(current.display.attention!.message, /repository/i);
+  assert.doesNotMatch(JSON.stringify(current), /PRIVATE engine detail/);
+  const statusResponse = await f.handler(request(`${f.base}/${encodeURIComponent(receipt.requestId)}/status`, "GET"));
+  assert.equal(statusResponse.status, 200, "refused intake status must not conflict");
+  const replay = await f.post("intake", { description }, "b5-intake-refusal-0001");
+  assert.equal((await replay.json() as { state: string }).state, "refused");
+  assert.deepEqual(await readdir(f.configuration.workRoot), [], "definite refusal releases command files");
+  assert.deepEqual((await f.traces()).map(trace => trace.op), ["intake"], "reopen and replay do not invoke missing run status");
+});
+
+
+for (const control of [
+  { code: 0, output: "null-state" },
+  { code: 1, output: "null-state" },
+  { code: 2, output: "malformed" },
+  { code: 2, output: "null-state", errorCode: "invalid code" },
+  { code: 2, output: "null-state", savedRun: true },
+  { code: 2, output: "null-state", envelopeRun: "another-run" },
+  { code: 2, output: "null-state", hang: true },
+]) test(`B5 ambiguous intake remains uncertain ${JSON.stringify(control)}`, async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: "intake", ...control }));
+  const response = await f.post("intake", { description });
+  assert.equal((await response.json() as { state: string }).state, "uncertain");
+  assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM control_loop_improvement_commands WHERE entry_kind='result'")).rows[0]!.n, 0);
+  assert.equal((await readdir(f.configuration.workRoot)).length, 1, "ambiguous command evidence is retained");
+});
+
+test("B5 unknown valid A2 refusal gets a safe generic reason", async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: "intake", code: 3, output: "null-state", errorCode: "NEW_REFUSAL_CODE" }));
+  const response = await f.post("intake", { description });
+  const receipt = await response.json() as { requestId: string; state: string };
+  assert.equal(receipt.state, "refused");
+  const current = await f.get(receipt.requestId);
+  assert.match(current.display.attention!.message, /loop engine refused/i);
+  assert.equal(current.display.startState, "not_started");
+  assert.deepEqual(await readdir(f.configuration.workRoot), []);
 });

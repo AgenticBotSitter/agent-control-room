@@ -13,7 +13,7 @@ import { usePolledRead } from "./use-polled-read";
 const binding = (row: LoopImprovementRequestViewV1) => JSON.stringify([row.projectId, row.requestId,
   row.runLink?.runLinkId, row.currentVersion, row.description, row.requestSha256, row.settingsSha256]);
 const matches = (row: LoopImprovementRequestViewV1, status: LoopImprovementStatusV1) =>
-  status.runLinkId === row.runLink?.runLinkId
+  status.runLinkId === (row.runLink?.runLinkId ?? null)
   && status.localVersion === row.currentVersion && status.description === row.description
   && status.requestSha256 === row.requestSha256 && status.settingsSha256 === row.settingsSha256;
 
@@ -61,7 +61,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
   const identity = binding(row);
   const clearProtected = () => { verifiedRead.current = false; safeRef.current = undefined; setSafe(undefined); actions.current = {}; setRetry({ start: false, stop: false }); setNotices({}); };
   const read = usePolledRead({ key: `loop-status:${identity}:${epoch}`, shareKey: `loop-status:${identity}:${epoch}`,
-    baseIntervalMs: 30_000, enabled: !!row.runLink, dropValueOnError: true,
+    baseIntervalMs: 30_000, enabled: true, dropValueOnError: true,
     read: async signal => {
       verifiedRead.current = false;
       const captured = writeEpoch.current;
@@ -126,7 +126,11 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
   return <div>
     <h3 ref={heading} tabIndex={-1}>Saved request</h3>
     <p style={{ whiteSpace: "pre-wrap" }}>{row.description}</p>
-    {!row.runLink ? <p>Confirmation and a linked run are needed before Start.</p> : <>
+    {!row.runLink ? <>
+      {snapshot?.snapshot.engine.state === "refused" && snapshot.attention
+        ? <div role="alert" className="private-notice"><p>{snapshot.attention.message}</p><p>{snapshot.attention.nextAction}</p></div>
+        : <p>Confirmation and a linked run are needed before Start.</p>}
+    </> : <>
       <p role="status" aria-live="polite">{snapshot?.state ? {
         ready: "Ready to start", running: "Work is running", waiting_approval: "Waiting for your approval",
         waiting_question: "Waiting for an answer", waiting_owner: "Waiting for your decision",

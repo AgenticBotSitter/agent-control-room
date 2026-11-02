@@ -127,6 +127,26 @@ export interface LoopAdapterV1 {
   releaseCommandFiles?(commandId: string): Promise<void>;
   close(): Promise<void>;
 }
+export class LoopIntakeRefusalV1 extends Error {
+  constructor(readonly commandId: string, readonly bindingDigest: string, readonly code: string,
+    readonly evidenceDigest: string) { super("loop_intake_refused"); }
+}
+// A bounded reason commitment fits the existing signed outcome's evidence
+// digest. It binds the reason to this exact command; raw A2 messages are neither
+// persisted nor exposed. Unknown valid codes use the generic refusal reason.
+export const loopIntakeRefusalReasonsV1 = Object.freeze({
+  SETTINGS_REPOSITORY: "The request could not be prepared because the repository settings were refused. Check that the repository uses a working branch rather than main or detached HEAD.",
+  SETTINGS: "The request could not be prepared because its settings were refused. Check the project settings.",
+  REFUSED: "The request could not be prepared because the loop engine refused it. Check the repository and project settings.",
+});
+export function loopIntakeRefusalEvidenceV1(commandId: string, binding: LoopBridgeBindingV1, code: string) {
+  const reason = Object.hasOwn(loopIntakeRefusalReasonsV1, code) ? code : "REFUSED";
+  return sha256Digest({ kind: "loop-intake-refusal/v1", commandId, bindingDigest: sha256Digest(binding), reason });
+}
+const intakeRefusalEnvelopeSchema = z.object({ schema_version: z.literal(1), run: z.string().nullable(),
+  state: z.null(), revision, next: z.null(), attention: z.unknown(), steps: z.array(z.unknown()).max(1000),
+  counters: z.record(z.string(), z.unknown()), error: z.object({ code: z.string().regex(/^[A-Z][A-Z0-9_]{1,79}$/) }).passthrough(),
+  request: z.null().optional(), clock: z.enum(["ok", "uncertain"]).optional(), deadline: z.null().optional() }).strict();
 const unavailable = () => new Error("loop_adapter_unavailable");
 const credentialPath = /(?:^|[/\\])(?:\.env(?:\.[^/]*)?|\.aws|\.codex|\.hermes|auth\.json|credentials|tokens?)(?:[/\\]|$)/i;
 function checkedPath(path: string, root?: string, directory = false) {
@@ -242,8 +262,30 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
         if (failed || ![0, 2, 3].includes(code ?? -1)) { reject(unavailable()); return; }
         try {
+          let text: string | undefined;
+          try { text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)); } catch { /* Status may recover a saved admission. */ }
+          if (args[0] === "intake" && command && (code === 2 || code === 3) && text !== undefined) {
+            let raw: unknown;
+            try { raw = parseStrictJsonV1(text, { maxBytes: 65536 }); } catch { /* Leave malformed output to the existing status fallback. */ }
+            const refusal = intakeRefusalEnvelopeSchema.safeParse(raw);
+            if (refusal.success && (refusal.data.run === null || refusal.data.run === run)) {
+              // Absence is positive evidence only after checking the owned root and
+              // rejecting symlinks. Any other filesystem error stays uncertain.
+              checkedPath(c.runRoot, undefined, true);
+              let absent = false;
+              try {
+                checkedPath(join(c.runRoot, run), c.runRoot, true);
+                lstatSync(join(c.runRoot, run, "run.json"));
+              } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") absent = true; else throw error; }
+              if (absent) throw new LoopIntakeRefusalV1(command.id, sha256Digest(command.binding), refusal.data.error.code,
+                loopIntakeRefusalEvidenceV1(command.id, command.binding, refusal.data.error.code));
+            }
+          }
           let observed: LoopEngineStatusV1;
-          try { observed = decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), run); }
+          try {
+            if (text === undefined) throw unavailable();
+            observed = decode(text, run);
+          }
           catch {
             // A refusal may have no decodable state (for example a busy lock).
             // One independent status read can recover an already saved admission.
@@ -262,7 +304,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
             }
           }
           fulfill(observed);
-        } catch { reject(unavailable()); }
+        } catch (error) { reject(error instanceof LoopIntakeRefusalV1 ? error : unavailable()); }
       });
     });
     pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});

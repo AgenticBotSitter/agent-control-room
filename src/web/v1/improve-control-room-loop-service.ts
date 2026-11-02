@@ -12,7 +12,7 @@ import { loopBridgeBindingSchemaV1, loopBridgeBodiesV1, loopBridgeOperationSchem
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { currentLoopGate, loopAttentionSourceSchemaV1, loopDecisionStatusSchemaV1, loopApprovalDocumentSchemaV1,
   loopImprovementDecisionsSchemaV1, unavailableLoopGate, loopDocumentBinding, type LoopDecisionStatusV1, type LoopAttentionItemV1 } from "./improve-control-room-loop-attention-wire";
-import { loopRecoveryBindingSchemaV1, loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "./improve-control-room-loop-adapter";
+import { LoopIntakeRefusalV1, loopIntakeRefusalEvidenceV1, loopIntakeRefusalReasonsV1, loopRecoveryBindingSchemaV1, loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "./improve-control-room-loop-adapter";
 
 import { loopRecoveryCursorSchemaV1, loopRecoveryTargetSchemaV1, type LoopRecoveryPortV1, type LoopRecoveryTargetV1, type LoopRecoveryCursorV1 } from "./improve-control-room-loop-recovery";
 
@@ -270,7 +270,7 @@ export class ImproveControlRoomLoopServiceV1 {
   async #statusWithEngine(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
     if (!id.safeParse(projectId).success || !id.safeParse(requestId).success) throw new WebAccessError("invalid_request");
     // Authorization and signed lineage are checked before any external read. GET never adopts or reconciles.
-    const { lineage, startClaim, startResult, mayWrite, pending } = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
+    const { lineage, startClaim, startResult, mayWrite, pending, intakeClaim, intakeResult } = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
       const lineage = await reader.loopBridgeLineage(tx, projectId, requestId, actor.id);
       const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
         WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim'`, [this.scope.tenantId, requestId])).rows[0];
@@ -286,9 +286,41 @@ export class ImproveControlRoomLoopServiceV1 {
         this.#pins(pending.binding,pending.operation);
         if (pending.project_id!==projectId || pending.owner_identity_id!==actor.id) throw unavailable();
       }
+      const intakeRaw = !lineage.link ? (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+        WHERE tenant_id=$1 AND request_id=$2 AND operation='intake' AND entry_kind='claim'`, [this.scope.tenantId, requestId])).rows[0] : undefined;
+      const intakeClaim = intakeRaw ? this.#verify(intakeRaw) : undefined;
+      if (intakeClaim) {
+        this.#pins(intakeClaim.binding, "intake");
+        if (intakeClaim.project_id !== projectId || intakeClaim.owner_identity_id !== actor.id) throw unavailable();
+      }
       const mayWrite = actor.can("tasks.propose", projectId, true, "high");
-      return { lineage, pending, startClaim, startResult: startClaim ? await this.#result(tx, startClaim) : undefined, mayWrite };
+      return { lineage, pending, startClaim, startResult: startClaim ? await this.#result(tx, startClaim) : undefined, mayWrite,
+        intakeClaim, intakeResult: intakeClaim ? await this.#result(tx, intakeClaim) : undefined };
     });
+    if (!lineage.link && !startClaim && intakeClaim && intakeResult?.result?.state === "refused") {
+      const outcome = intakeResult.result;
+      const code = (Object.keys(loopIntakeRefusalReasonsV1) as (keyof typeof loopIntakeRefusalReasonsV1)[])
+        .find(code => loopIntakeRefusalEvidenceV1(intakeClaim.command_id, intakeClaim.binding, code) === outcome.evidenceDigest) ?? "REFUSED";
+      const message = loopIntakeRefusalReasonsV1[code];
+      // This is the local saved refusal, not an invented engine run. No A2 read,
+      // run link, Start authority, or Stop is possible for this request.
+      const progress = { step: null, completed: 0, attention: "blocked" as const };
+      const display = loopImprovementStatusSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
+        localVersion: lineage.view.currentVersion, description: lineage.view.description,
+        requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: null,
+        engineRevision: outcome.revision, state: "blocked", startState: "not_started", confirmationCurrent: false,
+        canStart: false, canStop: false, progress: null, attention: { code, message, nextAction: "Correct the configuration, then prepare a new request. No work was started." },
+        observedAt: new Date(this.clock()).toISOString() });
+      const engine: LoopEngineStatusV1 = { run: { adapterId: intakeClaim.binding.adapterId, loopRunId: intakeClaim.binding.loopRunId,
+        toolingRevision: intakeClaim.binding.toolingRevision, a2SchemaVersion: 1 }, revision: outcome.revision,
+        inputVersion: intakeClaim.binding.localVersion, state: "refused", description: lineage.view.description,
+        settingsSha256: lineage.view.settingsSha256, settingsDigest: lineage.view.settingsSha256,
+        confirmation: null, approval: null, question: null, progress, receipts: [] };
+      return { engine, view: loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
+        decisions: { gate: { kind: "blocked", code: "UNAVAILABLE", message }, observedAt: display.observedAt },
+        engine: { revision: engine.revision, state: "refused", draft: engine.description, requestSha256: lineage.view.requestSha256,
+          settingsSha256: engine.settingsSha256, inputVersion: engine.inputVersion, confirmation: null, approval: null, question: null, progress, identity: "unverified" } }) };
+    }
     const current = await this.#adapter.status(this.#run(lineage).loopRunId);
     let confirmationCurrent = false;
     try { this.#current(current, lineage, { expectedVersion: Number(lineage.input.version), expectedRevision: current.revision }, true, true); confirmationCurrent = true; }
@@ -662,7 +694,31 @@ export class ImproveControlRoomLoopServiceV1 {
         case "answer": status = await this.#adapter.answer(claim.command_id, b, body.text as string, beforeSpawn); break;
       }
       return await this.#complete(identity, projectId, claim, status, false);
-    } catch { return this.#receipt(admitted.claim, undefined, false); }
+    } catch (error) {
+      const claim = admitted.claim;
+      if (operation === "intake" && error instanceof LoopIntakeRefusalV1 && error.commandId === claim.command_id
+        && error.bindingDigest === sha256Digest(claim.binding)
+        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, claim.binding, error.code)) {
+        try {
+          this.#pins(claim.binding, "intake");
+          const outcome = loopBridgeOutcomeSchemaV1.parse({ state: "refused", revision: 0,
+            adapterId: claim.binding.adapterId, loopRunId: claim.binding.loopRunId, toolingRevision: claim.binding.toolingRevision,
+            evidenceDigest: error.evidenceDigest, error: "REFUSED" });
+          const result = await this.#desk.loopBridgeTransaction(identity, projectId, true, async ({ tx, actor, lineage }) => {
+            if (actor.id !== claim.owner_identity_id) throw new WebAccessError("not_found");
+            const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+              WHERE tenant_id=$1 AND command_id=$2 AND entry_kind='claim'`, [claim.tenant_id, claim.command_id])).rows[0];
+            if (!raw || !equal(this.#verify(raw), claim)) throw new Error("loop_command_integrity_failed");
+            const local = await lineage.loopBridgeLineage(tx, projectId, claim.request_id, actor.id);
+            if (local.link || local.authorization) throw conflict();
+            return await this.#result(tx, claim) ?? this.#insert(tx, { ...this.#material(claim), entry_kind: "result", result: outcome, created_at: actor.now });
+          });
+          await this.#releaseCommandFiles(claim);
+          return this.#receipt(claim, result, false);
+        } catch { /* A lost durable result remains uncertain and keeps its files. */ }
+      }
+      return this.#receipt(claim, undefined, false);
+    }
   }
   async #complete(identity: VerifiedWebIdentity, projectId: string, claim: Row, status: LoopEngineStatusV1, replayed: boolean) {
     const b = claim.binding;

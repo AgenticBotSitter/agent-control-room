@@ -9,7 +9,7 @@ import { now, origin, request, trust } from "./helpers/web-foundation";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
 import { loopImprovementDraftSchemaV1, loopBridgeBindingSchemaV1, loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1, type LoopBridgeBindingV1 } from "../src/improve-control-room/v1/schemas";
-import { loopByteHashV1, type LoopEngineStatusV1, type LoopAdapterV1 } from "../src/web/v1/improve-control-room-loop-adapter";
+import { LoopIntakeRefusalV1, loopIntakeRefusalEvidenceV1, loopByteHashV1, type LoopEngineStatusV1, type LoopAdapterV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { type LoopImprovementDecisionsV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopDecisionsBrowserClient as decisionClient } from "../src/web/v1/improve-control-room-loop-decisions-browser-client";
 import { LoopReadError } from "../src/web/v1/improve-control-room-loop-browser-client";
@@ -72,7 +72,7 @@ test("B2b browser schemas preserve UTF-8 byte limits without Buffer", () => {
 });
 const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC B2b"}';
 const exact = "  Draft with café 🧭\r\nKeep every byte.  ";
-async function fixture() {
+async function fixture(intakeRefused = false) {
   const f = await taskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
@@ -85,6 +85,8 @@ async function fixture() {
   const calls: string[] = [];
   const complete = async (op: string, id: string, b: LoopBridgeBindingV1, text?: string) => {
     calls.push(op);
+    if (op === "intake" && intakeRefused) throw new LoopIntakeRefusalV1(id, sha256Digest(b), "SETTINGS_REPOSITORY",
+      loopIntakeRefusalEvidenceV1(id, b, "SETTINGS_REPOSITORY"));
     if (op === "intake") saved = { run: { adapterId:"adapter:synthetic", loopRunId:b.loopRunId, toolingRevision, a2SchemaVersion:1 },
       revision:1, inputVersion:"SYNTHETIC:1", state:"draft", description:text!, settingsSha256:loopByteHashV1(settingsText), settingsDigest:loopByteHashV1(settingsText),
       confirmation:null, approval:null, question:null, progress:{step:"intake",completed:0,attention:"none"}, receipts:[] };
@@ -539,4 +541,28 @@ test("UI fix attention refresh during an in-flight read is coalesced and kept",a
     assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1","a pending refresh cannot swallow the new decision");
     assert.equal(reads,3,"one initial read, one held read and one coalesced fresh read");
   }finally{release();await m.close();}
+});
+
+
+test("B5 refused intake shows its plain repository reason immediately and after reopen", async () => {
+  const f = await fixture(true);
+  let m = await mount(f.project.projectId, f.transport);
+  try {
+    await settle();
+    await type(m, "#loop-intake-description", exact);
+    const field = m.dom.window.document.querySelector("#loop-intake-description")!;
+    const props = (field as unknown as Record<string, { onChange?: (event: unknown) => void }>)[Object.keys(field).find(key => key.startsWith("__reactProps"))!];
+    await act(async () => props!.onChange!({ target: { value: exact } }));
+    await act(async () => m.button("Prepare request").click()); await settle();
+    assert.match(m.text(), /repository settings were refused/i);
+    assert.match(m.text(), /No work was started/);
+    assert.equal(m.dom.window.document.querySelector<HTMLTextAreaElement>("#loop-intake-description")!.value, exact.replace(/\r\n/g, "\n"));
+    assert.equal(m.button("Start confirmed work"), undefined);
+    assert.equal(m.button("Stop this run"), undefined);
+    await m.close();
+    m = await mount(f.project.projectId, f.transport); await settle();
+    assert.match(m.text(), /repository settings were refused/i);
+    assert.match(m.text(), /No work was started/);
+    assert.deepEqual(f.calls, ["intake"]);
+  } finally { await m.close(); await f.close(); }
 });
