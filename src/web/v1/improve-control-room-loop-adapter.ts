@@ -1,7 +1,7 @@
 import { captureLoopFinalizationCapabilityV1, type LoopFinalizationCapabilityV1 } from "./improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopMonitorV1, loopMonitoringStatusSchemaV1, unavailableLoopMonitoringV1,
   loopMonitoringClockV1, type LoopMonitoringStatusV1, type LoopMonitoringClockV1 } from "./improve-control-room-loop-monitoring";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, open, readFile, rm } from "node:fs/promises";
@@ -135,6 +135,11 @@ export class LoopIntakeRefusalV1 extends Error {
 // digest. It binds the reason to this exact command; raw A2 messages are neither
 // persisted nor exposed. Unknown valid codes use the generic refusal reason.
 export const loopIntakeRefusalReasonsV1 = Object.freeze({
+  REPOSITORY_DIRTY: "The request could not be prepared because the repository has uncommitted changes. Commit or remove those changes before trying again.",
+  REPOSITORY_DETACHED: "The request could not be prepared because the repository has a detached HEAD. Select a branch before trying again.",
+  REPOSITORY_OPERATION: "The request could not be prepared because a merge, rebase or another Git operation is in progress. Finish or abort that operation before trying again.",
+  REPOSITORY_BRANCH_CONFLICT: "The request could not be prepared because its working branch already exists with different history. Resolve that branch conflict before trying again.",
+  REPOSITORY_PREPARATION: "The request could not be prepared because its repository working branch could not be set up. Check the project repository before trying again.",
   SETTINGS_REPOSITORY: "The request could not be prepared because the repository settings were refused. Check that the repository uses a working branch rather than main or detached HEAD.",
   SETTINGS: "The request could not be prepared because its settings were refused. Check the project settings.",
   REFUSED: "The request could not be prepared because the loop engine refused it. Check the repository and project settings.",
@@ -201,11 +206,66 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   };
   validate();
   const settingsText = readFileSync(c.settingsFile, "utf8");
-  const settings = parseStrictJsonV1(settingsText, { maxBytes: 65536 }) as { project?: { host_adapter?: unknown } };
+  const settings = parseStrictJsonV1(settingsText, { maxBytes: 65536 }) as { project?: { host_adapter?: unknown; repository?: unknown } };
   if (settings?.project?.host_adapter !== "local-loop") throw unavailable();
   let closing = false;
   const children = new Set<ChildProcess>(), pending = new Set<Promise<unknown>>();
   const activeCommands = new Set<string>();
+  async function prepareRepository(run: string, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void) {
+    // Missing repository settings remain A2's validation responsibility. Only the
+    // pinned local-loop repository is eligible for product branch preparation.
+    if (settings.project?.repository === undefined) return;
+    const refuse = (code: keyof typeof loopIntakeRefusalReasonsV1): never => {
+      throw new LoopIntakeRefusalV1(commandId, sha256Digest(binding), code,
+        loopIntakeRefusalEvidenceV1(commandId, binding, code));
+    };
+    const repository = settings.project.repository;
+    if (typeof repository !== "string") return refuse("REPOSITORY_PREPARATION");
+    try { checkedPath(repository, undefined, true); } catch { refuse("REPOSITORY_PREPARATION"); }
+    const git = async (args: string[], allowed = [0]) => {
+      if (closing) throw unavailable();
+      beforeSpawn();
+      const operation = new Promise<string>((fulfill, reject) => {
+        const child = execFile("/usr/bin/git", ["-C", repository, "-c", "core.hooksPath=/dev/null",
+          "-c", "core.fsmonitor=false", ...args], {
+          env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0" },
+          timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 65536,
+        }, (error, stdout) => {
+          if (error && (!allowed.includes(Number(error.code)) || error.killed || error.signal)) reject(unavailable());
+          else fulfill(stdout.trim());
+        });
+        children.add(child); child.once("close", () => children.delete(child));
+      });
+      pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});
+      return operation;
+    };
+    try {
+      if (await git(["rev-parse", "--show-toplevel"]) !== repository) refuse("REPOSITORY_PREPARATION");
+      const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]);
+      if (!branch) refuse("REPOSITORY_DETACHED");
+      const gitDir = await git(["rev-parse", "--absolute-git-dir"]);
+      for (const name of ["MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer", "BISECT_START"]) {
+        try { lstatSync(join(gitDir, name)); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+        refuse("REPOSITORY_OPERATION");
+      }
+      if (await git(["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"])) refuse("REPOSITORY_DIRTY");
+      if (branch !== "main") return;
+      const baseline = await git(["rev-parse", "--verify", "HEAD"]);
+      // Match the tools' run-new convention (loop/cr.py, run_prepare): cook/loop-<run>.
+      const workingBranch = `cook/loop-${run}`;
+      await git(["check-ref-format", "--branch", workingBranch]);
+      const existing = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${workingBranch}`], [0, 1]);
+      if (existing && existing !== baseline) refuse("REPOSITORY_BRANCH_CONFLICT");
+      // No reset, force or stash: switching at the same commit preserves main,
+      // index and working files. Git also refuses a branch held by another worktree.
+      await git(["switch", "--quiet", "--no-guess", "--no-recurse-submodules",
+        ...(existing ? [workingBranch] : ["-c", workingBranch, baseline])]);
+    } catch (error) {
+      if (error instanceof LoopIntakeRefusalV1) throw error;
+      refuse("REPOSITORY_PREPARATION");
+    }
+  }
   const runId = (run: string) => {
     const identity = loopImprovementRunIdentitySchemaV1.parse(c.contract.lineage.decodeRunIdentity({ adapterId: c.adapterId, loopRunId: run,
       toolingRevision: c.toolingRevision, a2SchemaVersion: 1 }));
@@ -399,6 +459,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
           String(binding.body.inputVersion), "--file", await commandFile(commandId, "answer.txt", text!), "--by", "owner", "--json"]; break;
       }
       if (expectation) args.push("--expect", expectation);
+      if (operation === "intake") await prepareRepository(run, commandId, binding, beforeSpawn);
       return execute(args, run, beforeSpawn, { id: commandId, binding });
     };
     // A2 owns compare-and-admit under its mutation lock.

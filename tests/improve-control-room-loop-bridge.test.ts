@@ -69,11 +69,16 @@ path=os.path.join(root,'runs',run+'.json')
 lock=open(path+'.lock','a'); fcntl.flock(lock,fcntl.LOCK_EX)
 def h(s): return hashlib.sha256(s.encode()).hexdigest()
 def flag(k): return args[args.index(k)+1]
+repository_branch=None
+if op=='intake':
+    import subprocess
+    with open(flag('--settings')) as f: repository=json.load(f).get('project',{}).get('repository')
+    if repository: repository_branch=subprocess.check_output(['/usr/bin/git','-C',repository,'branch','--show-current'],env={'GIT_CONFIG_GLOBAL':'/dev/null','GIT_CONFIG_NOSYSTEM':'1'}).decode().strip()
 expected=None
 if '--expect' in args:
     with open(flag('--expect')) as f: expected=json.load(f)
 with open(os.path.join(root,'trace.jsonl'),'a') as f:
-    f.write(json.dumps(dict(op=op,run=run,args=args,env=dict(os.environ),cwd=os.getcwd(),expectation=expected,
+    f.write(json.dumps(dict(op=op,run=run,args=args,env=dict(os.environ),cwd=os.getcwd(),repositoryBranch=repository_branch,expectation=expected,
         expectationText=open(flag('--expect')).read() if expected else None,
         fileMode=os.stat(flag('--expect')).st_mode & 0o777 if expected else None,
         directoryMode=os.stat(os.path.dirname(flag('--expect'))).st_mode & 0o777 if expected else None))+'\n')
@@ -167,14 +172,15 @@ const admissionRecords = z.array(z.discriminatedUnion("operation", [
   z.object({...recordBase,operation:z.literal("answer"),evidence:z.object({question_id:z.string().min(1),input_version:version,report_sha256:rawHash,answer_sha256:rawHash}).strict()}).strict(),
 ])).max(20).refine(records=>new Set(records.map(r=>r.command_id)).size===records.length);
 
-async function synthetic(t: TestContext) {
+async function synthetic(t: TestContext, repository?: string) {
+  const configuredSettings = repository ? JSON.stringify({ project: { host_adapter: "local-loop", repository }, fixture: "SYNTHETIC" }) : settingsText;
   await mkdir(resolve(".test-tmp"), { recursive: true });
   const root = await mkdtemp(resolve(".test-tmp/b1b-fixture-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const dir of ["runs", "work"]) await mkdir(join(root, dir));
   await writeFile(join(root, "engine.py"), executable);
   await writeFile(join(root, "tooling.json"), JSON.stringify({ fixture: "SYNTHETIC", revision: 1 }));
-  await writeFile(join(root, "settings.json"), settingsText); await writeFile(join(root, "availability.json"), "{}");
+  await writeFile(join(root, "settings.json"), configuredSettings); await writeFile(join(root, "availability.json"), "{}");
   const toolingRevision = `sha256:${loopByteHashV1(await readFile(join(root, "tooling.json")))}`;
   const lineage = { toolingRevision, decodeRunIdentity: (input: unknown) => {
     const value = loopImprovementRunIdentitySchemaV1.parse(input);
@@ -192,7 +198,7 @@ async function synthetic(t: TestContext) {
     interpreterSha256: loopByteHashV1(await readFile(realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"))),
     entrypointSha256: loopByteHashV1(executable), entrypoint: join(root, "engine.py"), toolingManifest: join(root, "tooling.json"), configRoot: root,
     workRoot: join(root, "work"), runRoot: join(root, "runs"), cwd: root, settingsFile: join(root, "settings.json"),
-    availabilityFile: join(root, "availability.json"), toolingRevision, settingsSha256: loopByteHashV1(settingsText), availabilitySha256: loopByteHashV1("{}"),
+    availabilityFile: join(root, "availability.json"), toolingRevision, settingsSha256: loopByteHashV1(configuredSettings), availabilitySha256: loopByteHashV1("{}"),
     executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"b".repeat(64)}` }, timeoutMs: 1000,
     contract: { lineage, schemaDigest: `sha256:${"c".repeat(64)}`, generateRunId: () => `fixture-run-${randomBytes(16).toString("hex")}`,
       qualifiedOperations: ["intake", "confirm", "start", "stop", "approve", "answer"],
@@ -251,14 +257,14 @@ async function synthetic(t: TestContext) {
     await writeFile(path, JSON.stringify({ ...saved, ...changes, run: saved.run }));
   };
   const traces = async () => (await readFile(join(root, "trace.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)) as
-    {op:string;run:string;args:string[];env:Record<string,string>;cwd:string;expectation:Record<string,unknown>|null;expectationText:string|null;fileMode:number|null;directoryMode:number|null}[];
+    {op:string;run:string;repositoryBranch:string|null;args:string[];env:Record<string,string>;cwd:string;expectation:Record<string,unknown>|null;expectationText:string|null;fileMode:number|null;directoryMode:number|null}[];
   return { root, adapter, raw, configuration, edit, traces, clearObservations:()=>observations.clear(), setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
 }
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, repository?: string) {
   const f = await taskFixture(); t.after(() => f.db.close());
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
-  const engine = await synthetic(t);
+  const engine = await synthetic(t, repository);
   const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter: engine.adapter }, () => now);
   const service = new ImproveControlRoomDeskServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, KEY, undefined, () => now);
   const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, service, clock: () => now, loopBridge: bridge });
@@ -1289,3 +1295,92 @@ test("B5 unknown valid A2 refusal gets a safe generic reason", async t => {
   assert.equal(current.display.startState, "not_started");
   assert.deepEqual(await readdir(f.configuration.workRoot), []);
 });
+
+// Real disposable Git repositories exercise the owner HTTP -> adapter -> intake hand-off.
+async function workingBranchRepository(t: TestContext) {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const repository = await mkdtemp(resolve(".test-tmp/b5-working-branch-"));
+  t.after(() => rm(repository, { recursive: true, force: true }));
+  const git = async (...args: string[]) => (await promisify(execFile)("/usr/bin/git", ["-C", repository,
+    "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], {
+    env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+      GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" }, timeout: 10000,
+  })).stdout.trim();
+  await git("init", "--quiet", "--initial-branch=main");
+  await writeFile(join(repository, "index.html"), "<h1>Baseline</h1>\n");
+  await git("add", "index.html"); await git("commit", "--quiet", "-m", "Baseline fixture");
+  return { repository, git, baseline: await git("rev-parse", "HEAD") };
+}
+
+test("B5 working branch: main reaches A2 intake at the baseline without changing owner files", async t => {
+  const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
+  const id = await f.intake(), current = await f.get(id), traces = await f.traces();
+  const branch = `cook/loop-${current.request.runLink!.loopRunId}`;
+  assert.equal(traces[0]!.repositoryBranch, branch, "working branch exists before A2 adopts the repository");
+  assert.equal(await r.git("branch", "--show-current"), branch);
+  assert.equal(await r.git("rev-parse", "HEAD"), r.baseline);
+  assert.equal(await r.git("rev-parse", "main"), r.baseline);
+  assert.equal(await r.git("status", "--porcelain=v1", "--untracked-files=all"), "");
+  assert.equal(await readFile(join(r.repository, "index.html"), "utf8"), "<h1>Baseline</h1>\n");
+  // An already prepared checkout remains usable for another intake.
+  await f.intake(); assert.equal(await r.git("branch", "--show-current"), branch);
+});
+
+for (const state of ["dirty", "staged", "untracked", "detached", "merge", "rebase", "conflicting-branch"] as const) {
+  test(`B5 working branch: ${state} refuses plainly before intake and survives reopen`, async t => {
+    const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
+    if (state === "dirty" || state === "staged") {
+      await writeFile(join(r.repository, "index.html"), "Owner edits\n");
+      if (state === "staged") await r.git("add", "index.html");
+    }
+    if (state === "untracked") await writeFile(join(r.repository, "owner.txt"), "Owner notes\n");
+    if (state === "detached") await r.git("checkout", "--quiet", "--detach");
+    if (state === "merge") await writeFile(join(r.repository, ".git/MERGE_HEAD"), r.baseline + "\n");
+    if (state === "rebase") await mkdir(join(r.repository, ".git/rebase-merge"));
+    const run = `fixture-run-${"d".repeat(32)}`;
+    if (state === "conflicting-branch") {
+      const different = await r.git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Different history fixture");
+      await r.git("branch", `cook/loop-${run}`, different);
+    }
+    const adapter = state === "conflicting-branch" ? { ...f.adapter, reserveRun: () => run } : f.adapter;
+    const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+    const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, clock: () => now, loopBridge: bridge });
+    const before = { refs: await r.git("show-ref"), head: await r.git("rev-parse", "HEAD"), branch: await r.git("branch", "--show-current"),
+      status: await r.git("status", "--porcelain=v1", "--untracked-files=all"), file: await readFile(join(r.repository, "index.html"), "utf8") };
+    const response = await handler(request(`${f.base}/intake`, "POST", { description }, `working-branch-${state}-0001`));
+    assert.equal(response.status, 202);
+    const receipt = await response.json() as { requestId: string; state: string };
+    assert.equal(receipt.state, "refused");
+    const reopened = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+    const current = await reopened.status(f.identity, f.project.projectId, receipt.requestId);
+    assert.equal(current.engine.state, "refused"); assert.equal(current.request.runLink, null);
+    assert.equal(current.display.canStart, false);
+    assert.match(current.display.attention!.message, state === "conflicting-branch" ? /branch.*different.*history/i :
+      state === "detached" ? /detached/i : state === "merge" || state === "rebase" ? /merge|rebase|operation/i : /uncommitted|dirty|changes/i);
+    assert.ok(!JSON.stringify(current).includes(r.repository), "repository paths stay private");
+    assert.deepEqual({ refs: await r.git("show-ref"), head: await r.git("rev-parse", "HEAD"), branch: await r.git("branch", "--show-current"),
+      status: await r.git("status", "--porcelain=v1", "--untracked-files=all"), file: await readFile(join(r.repository, "index.html"), "utf8") }, before);
+    await assert.rejects(readFile(join(f.root, "trace.jsonl")), { code: "ENOENT" });
+    assert.deepEqual(await readdir(f.configuration.workRoot), []);
+  });
+}
+
+for (const state of ["same-history", "already-working"] as const) {
+  test(`B5 working branch: ${state} is adopted without resetting refs or files`, async t => {
+    const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
+    const run = `fixture-run-${"e".repeat(32)}`, branch = state === "same-history" ? `cook/loop-${run}` : "cook/owner-work";
+    await r.git("branch", branch);
+    if (state === "already-working") await r.git("switch", "--quiet", branch);
+    const refs = await r.git("show-ref");
+    const adapter = { ...f.adapter, reserveRun: () => run };
+    const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+    const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, clock: () => now, loopBridge: bridge });
+    const response = await handler(request(`${f.base}/intake`, "POST", { description }, `working-branch-${state}-0001`));
+    assert.equal(response.status, 202); assert.equal((await response.json() as { state: string }).state, "accepted");
+    assert.equal((await f.traces())[0]!.repositoryBranch, branch);
+    assert.equal(await r.git("show-ref"), refs);
+    assert.equal(await r.git("rev-parse", "HEAD"), r.baseline);
+    assert.equal(await r.git("status", "--porcelain=v1", "--untracked-files=all"), "");
+  });
+}
