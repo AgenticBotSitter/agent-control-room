@@ -15,6 +15,7 @@ const squawkTestMarker = /\bsquawk\b/iu;
 // This list is deliberately small and each entry has an execution reason.
 // Exemptions run separately and their allowed skips are logged below.
 export const skippedTestExemptions = new Map([
+  ["tests/improve-control-room-first-website-a2.test.ts", "its pinned-tool fixture requires lead-gated CONTROL_ROOM_B5_PREP_REQUIRE_REAL, CONTROL_ROOM_B5_PREP_TOOLS, CONTROL_ROOM_B5_PREP_TOOLS_PIN and CONTROL_ROOM_B5_PREP_PYTHON; deterministic B5 preparation cases still run in ordinary CI"],
   ["tests/gateway-rollback-reboot.test.mjs", "R1 body is lead-run on the practice Mac VM via the reviewed rehearsal controller; portable capability coverage is tests/gateway-local-capability.test.mjs"],
   ["tests/automatic-claim-controller.test.mjs", "requires ACR_MAIN_CHECKOUT pointing at a current main checkout"],
   ["tests/codex-owner-trusted-local-exec.test.ts", "requires CONTROL_ROOM_REAL_CODEX_SANDBOX_EXECUTABLE; CI has no qualified real Codex sandbox binary"],
