@@ -448,7 +448,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   const owner = preflight.controllerOwner ?? createFirstWebsiteControllerOwnerV1(signal);
   const { config, evidenceDir, digests } = preflight, root = config.scratchRoot;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
-  let verdict: B5VerdictV1 = { state: "incomplete", reasons: [], transportCleanup:missingB5TransportCleanupV1() }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
+  let verdict: B5VerdictV1 & { detail?: { name: string; message: string }[] } = { state: "incomplete", reasons: [], transportCleanup:missingB5TransportCleanupV1() }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
   let wroteEvidence = false, wroteObservations = false, watching = true;
   let watcher: Promise<void> | undefined;
   const workSignal = owner.signal;
@@ -756,7 +756,13 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
       await pause(workSignal);
     }
-  } catch (error) { verdict = { ...verdict, state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] }; }
+  } catch (error) {
+    if (error instanceof Error) {
+      const detail = { name: error.name, message: error.message };
+      (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-error", detail });
+    }
+    verdict = { ...verdict, state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] };
+  }
   finally {
     watching = false; await watcher;
     try {
@@ -767,7 +773,13 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         const owned = await host.proof.inspectOwned();
         need(owned.processCount === 0 && owned.listenerReleased && owned.postgresStopped && owned.runScratchAbsent, "B5_OWNED_CLEANUP_INCOMPLETE");
       }
-    } catch (error) { verdict.state = "incomplete"; verdict.reasons.push(codeOf(error)); }
+    } catch (error) {
+      if (error instanceof Error) {
+        const detail = { name: error.name, message: error.message };
+        (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-cleanup-error", detail });
+      }
+      verdict.state = "incomplete"; verdict.reasons.push(codeOf(error));
+    }
     finally { owner.dispose(); }
   }
   if (cleanupResult) {

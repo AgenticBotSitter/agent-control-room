@@ -963,14 +963,32 @@ return {origin:'http://127.0.0.1:60460',startup:{isReady:()=>true},a2Entry:{inte
 proof:{device:{request(){event('intake-invitation');throw Error('must never invite intake');}},inspectOwned:async()=>({processCount:0,listenerReleased:true,postgresStopped:true,runScratchAbsent:true})},close:async()=>event('full-close')};}`;
   await writeFile(s.config.assembly.module,assembly);
   const config=H.firstWebsiteConfigSchemaV1.parse({...s.config,device:{...s.config.device,origin:remote},assembly:{...s.config.assembly,digest:H.b5Bytes(assembly)}});
-  const verdict=await runFirstWebsiteJourneyV1({config,uid:process.getuid!(),evidenceDir:s.evidence,providers:{classification:'fixture',transport:'scripted',toolingRevision:config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
-    digests:{qualification:H.b5Bytes(qualification),transport:H.b5Bytes(transport),assembly:H.b5Bytes(assembly),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(neutral)}},new AbortController().signal);
+  const preflight:B5Helper.FirstWebsitePreflightV1={config,uid:process.getuid!(),evidenceDir:s.evidence,providers:{classification:'fixture',transport:'scripted',toolingRevision:config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
+    digests:{qualification:H.b5Bytes(qualification),transport:H.b5Bytes(transport),assembly:H.b5Bytes(assembly),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(neutral)}};
+  const verdict=await runFirstWebsiteJourneyV1(preflight,new AbortController().signal);
   assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_A2_BIND_INPUT_UNAVAILABLE','B5_PROVIDER_FIXTURE']);
   assert.deepEqual((await readFile(events,'utf8')).trim().split('\n'),['factory','probe:bind-input --help','host-close','pg-stop','full-close']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created');assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.equal(verdict.transportCleanup?.beforeDigest,D.b5MappingDigestV1(beforeStatus),'unattempted mapping retains pre-acquisition before-status evidence');
   assert.equal(await lstat(join(s.root,'device/install-request.json')).then(()=>true,()=>false),false);
   console.log('RESULT: PASS F04a actual bind-input --help child refusal before intake/mapping; ordered full cleanup (fixture host)');
+
+  // Exercise the actual controller catch and retained fallback observations.
+  const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  const controllerOwner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'controller-error-evidence');
+  t.mock.method(controllerOwner,'beginAcquisition',()=>{
+    throw Object.assign(new TypeError('loop_finalization_unavailable'),{settings:'SYNTHETIC private settings',stack:'SYNTHETIC private stack'});
+  });
+  const failed=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner},new AbortController().signal);
+  assert.deepEqual(failed.reasons,['B5_CONTROLLER_FAILED','B5_PROVIDER_FIXTURE']);
+  const observed=JSON.parse(await readFile(join(evidenceDir,'controller-observations.json'),'utf8'));
+  assert.deepEqual(observed.observations,[{phase:'controller-error',detail:{name:'TypeError',message:'loop_finalization_unavailable'}}]);
+  assert.doesNotMatch(JSON.stringify(observed),/SYNTHETIC private|stack|settings/);
+  const retainedVerdict=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
+  assert.deepEqual(retainedVerdict.reasons,failed.reasons);
+  assert.deepEqual(retainedVerdict.detail,[{name:'TypeError',message:'loop_finalization_unavailable'}]);
+  assert.doesNotMatch(JSON.stringify(retainedVerdict),/SYNTHETIC private|stack|settings/);
+  console.log('RESULT: PASS B5_CONTROLLER_FAILED retains original error name/message in verdict/observations; excludes stack/settings');
 });
 
 test("F04a Git scan refuses changed symlinks and preserves whole deleted files", async t => {

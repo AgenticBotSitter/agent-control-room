@@ -59,7 +59,8 @@ export function verifyFinalizationInspectionV1(raw:unknown,target:LoopFinalizati
 }
 export function verifyFinalizationRecordV1(raw:unknown,target:LoopFinalizationTargetV1){
   const r=loopFinalizationRecordSchemaV1.parse(bounded(raw)),{recordDigest,...material}=r,o=r.observation;
-  if(sha256Digest(material)!==recordDigest||!same(finalizationTargetV1(r.binding),target)||!same(r.binding,o.binding)
+  // Stored records precede the current observation; revision is not run identity.
+  if(sha256Digest(material)!==recordDigest||!same(finalizationTargetV1(r.binding),{...target,expectedRevision:r.binding.expectedRevision})||!same(r.binding,o.binding)
     ||(r.sequence===1)!==(r.previousDigest===null))throw unavailable();
   for(const receipt of [r.custody,r.termination,r.cleanup])if(receipt&&(!same(receipt.binding,r.binding)||receipt.inventoryDigest!==o.inventoryDigest))throw unavailable();
   if(r.cleanup&&(!r.custody||r.cleanup.retentionDigest!==r.custody.retentionDigest))throw unavailable();
