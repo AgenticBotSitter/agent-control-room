@@ -8,9 +8,48 @@ import { planPgClusterLayoutV1 } from "../src/pg-runtime/v1/pg-cluster-layout.ts
 import { pgSocketOptionV1, pgConninfoValueV1, shellArgumentV1, pgCtlInvocationV1 } from "../src/pg-runtime/v1/pg-path-quoting.mjs";
 import { parseKeywordValueTarget } from "../deploy/postgres/evidence.mjs";
 import { withRealPostgres } from "./support/attack-kit/real-postgres.ts";
+import { namesDataDirectoryV1, pgProcessesOnDataDirectoryV1 } from "../src/updater/v1/pg/postmaster-pid.mjs";
 
 const bin = process.env.PG_BIN;
 const accounts = { database: "fixture_db", migrator: "fixture_migrate", deployer: "fixture_deploy" };
+
+test("process identity recognises old and new pg_ctl argv and shell wrappers", () => {
+  const bin = "/rt/pg-current/bin";
+  for (const suffix of ["plain", "space dir", "quote' dir", 'double" dir', 'both\'"quotes', 'comma,back\\ dir']) {
+    const data = `/fixture/pg/${suffix}/data-A`;
+    const invocation = pgCtlInvocationV1(["-D", data, "-o", "-p 56179", "start"], {});
+    const options = invocation.args[invocation.args.indexOf("-o") + 1];
+    const commands = [
+      `${bin}/pg_ctl -D ${data} -o -p 56179 start`,
+      `${bin}/pg_ctl ${invocation.args.join(" ")}`,
+      `/bin/sh -c exec "${bin}/postgres" -D "${data}" -p 56179 < "/dev/null"`,
+      `/bin/sh -c exec "${bin}/postgres" ${options} < "/dev/null"`,
+      `${bin}/postgres -D ${data}`,
+      `${bin}/initdb -D ${data} -U postgres`,
+    ];
+    for (const command of commands) {
+      assert.equal(namesDataDirectoryV1(command, data), true, command);
+      assert.deepEqual(pgProcessesOnDataDirectoryV1([{ pid: 41, ppid: 1, uid: 501, command }],
+        { data, binDirectories: [bin], uid: 501 }), [41], command);
+      assert.equal(namesDataDirectoryV1(command, `${data}-other`), false, command);
+    }
+    for (const ending of ["", " -p 56179"]) {
+      const command = `${bin}/pg_ctl -o -D ${shellArgumentV1(data)}${ending}`;
+      assert.equal(namesDataDirectoryV1(command, data), true, command);
+    }
+    for (const other of [`${data}-other`, `${data}/child`, `${data}'suffix`]) {
+      assert.equal(namesDataDirectoryV1(`${bin}/pg_ctl -o -D ${shellArgumentV1(other)}`, data), false);
+    }
+    assert.equal(namesDataDirectoryV1(`${bin}/pg_ctl -o -D ${shellArgumentV1(data)}suffix`, data), false);
+    const command = `${bin}/pg_ctl ${invocation.args.join(" ")}`;
+    for (const row of [
+      { pid: 41, ppid: 1, uid: 0, command },
+      { pid: 41, ppid: 1, uid: 501, command: command.replace(bin, "/foreign/bin") },
+    ]) {
+      assert.deepEqual(pgProcessesOnDataDirectoryV1([row], { data, binDirectories: [bin], uid: 501 }), []);
+    }
+  }
+});
 
 test("PostgreSQL 17 parses installer socket paths with spaces, quotes and backslashes", { skip: !bin }, async () => {
   const root = await mkdtemp("/tmp/pg-path-");
