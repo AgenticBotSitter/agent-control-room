@@ -169,6 +169,53 @@ export async function waitB5IntakeLinkV1<T extends object>(input: {
   }, Math.max(0, deadline - clock()), "B5_INTAKE_LINK_TIMEOUT");
 }
 
+/** Approval acceptance and recovery progression are separate observations. The
+ * phone submits once; only saved status is polled after exact command evidence. */
+export async function waitB5ApprovalProgressV1<T extends {
+  engine: Pick<LoopDecisionStatusV1["engine"], "state" | "approval">;
+}>(input: {
+  approval: NonNullable<LoopDecisionStatusV1["engine"]["approval"]>;
+  accepted(approval: NonNullable<LoopDecisionStatusV1["engine"]["approval"]>): Promise<void>;
+  read(signal: AbortSignal): Promise<T>;
+  signal: AbortSignal; deadline: number;
+  clock?: () => number; pause?: (signal: AbortSignal) => Promise<void>;
+}): Promise<T> {
+  const clock = input.clock ?? Date.now;
+  try {
+    return await bounded(async timeoutSignal => {
+      const signal = AbortSignal.any([input.signal, timeoutSignal]);
+      const check = () => { signal.throwIfAborted(); need(clock() < input.deadline, "B5_APPROVAL_NOT_OBSERVED"); };
+      let onAbort: () => void = () => {};
+      const cancelled = new Promise<never>((_, no) => {
+        onAbort = () => no(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
+      try {
+        return await Promise.race([cancelled, (async () => {
+          check(); await input.accepted(input.approval); check();
+          while (true) {
+            const after = await input.read(signal);
+            check();
+            need(after.engine.state !== "stopped", "B5_OWNER_STOP");
+            need(after.engine.state !== "refused", "B5_ENGINE_REFUSED");
+            const next = after.engine.approval, old = input.approval;
+            if (!next || next.step !== old.step || next.inputVersion !== old.inputVersion
+              || next.head !== old.head || next.reportSha256 !== old.reportSha256) return after;
+            await (input.pause ?? pause)(signal); check();
+          }
+        })()]);
+      } finally { signal.removeEventListener("abort", onAbort); }
+    }, Math.max(0, input.deadline - clock()), "B5_APPROVAL_NOT_OBSERVED");
+  } catch (error) {
+    // The owner's work timer may fire before this wait's timer at the same
+    // deadline. A gate still being awaited has the specific liveness failure.
+    if (error instanceof B5RefusalV1 && error.code === "B5_DEADLINE" && clock() >= input.deadline)
+      throw new B5RefusalV1("B5_APPROVAL_NOT_OBSERVED");
+    throw error;
+  }
+}
+
 async function pause(signal: AbortSignal) {
   signal.throwIfAborted();
   await new Promise<void>(yes => {
@@ -581,10 +628,11 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         questionSeen = true;
       } else if (gate?.kind === "approve") {
         need(s.engine.approval, "B5_APPROVAL_REQUIRED");
-        const name = s.engine.approval.step; await phase(name, "phone", s);
-        const after = await status();
-        need(!after.engine.approval || JSON.stringify(after.engine.approval) !== JSON.stringify(s.engine.approval), "B5_APPROVAL_NOT_OBSERVED");
-        await command("approve", { inputVersion: s.engine.approval.inputVersion, body: s.engine.approval });
+        const approval = s.engine.approval, name = approval.step;
+        await phase(name, "phone", s);
+        const after = await waitB5ApprovalProgressV1({ approval, signal: workSignal, deadline: owner.workAt()!, read: status,
+          accepted: descriptor => command("approve", { inputVersion: descriptor.inputVersion, body: descriptor }),
+        });
         if (name === "plan") planSeen = true;
         else { specSeen = true; await phase("close", "phone", after); await phase("close", "desktop", after); }
       } else if (s.engine.state === "finished") {
