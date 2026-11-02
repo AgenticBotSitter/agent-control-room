@@ -1611,13 +1611,14 @@ test('B5 desktop facts require actual rendered candidate and base at the qualifi
   const request={schemaVersion:1 as const,sequence:1,sessionNonce:'a'.repeat(32),phase:'finish' as const,device:'desktop' as const,
     origin:'https://unit-proof.ts.net:60462',expiresAt:new Date(Date.now()+1000).toISOString(),
     binding:{requestId:e.card.requestId,runLinkId:e.card.evidence.binding.runLinkId,inputVersion:e.card.localVersion}};
-  const input={request,card:e.card,text:e.card.candidateRevision+' '+e.card.evidence.binding.baseRevision,
+  const input={request,card:e.card,candidateRevision:e.card.candidateRevision,baseRevision:e.card.evidence.binding.baseRevision,
     url:request.origin+'/projects/unit/improvements#request='+encodeURIComponent(e.card.requestId)};
   assert.deepEqual(C.readB5DesktopFactsV1(input),{candidateRevision:e.card.candidateRevision,baseRevision:e.card.evidence.binding.baseRevision,requestId:e.card.requestId});
-  for(const change of [{text:null},{text:e.card.candidateRevision},{text:e.card.evidence.binding.baseRevision},
+  for(const change of [{candidateRevision:null},{baseRevision:null},{candidateRevision:e.card.evidence.binding.baseRevision,baseRevision:e.card.candidateRevision},
+    {candidateRevision:e.card.candidateRevision+' '+e.card.evidence.binding.baseRevision},{baseRevision:'Base revision: '+e.card.evidence.binding.baseRevision},
     {url:input.url.replace('unit-proof.ts.net','other.ts.net')},{url:input.url.replace(encodeURIComponent(e.card.requestId),'different-request')}])
     assert.throws(()=>C.readB5DesktopFactsV1({...input,...change}),{code:'B5_HEAD_BINDING'});
-  console.log('RESULT: PASS desktop facts require rendered final/base revisions, qualified HTTPS origin and exact request document; five mismatches refuse B5_HEAD_BINDING');
+  console.log('RESULT: PASS desktop facts require rendered final/base revisions, qualified HTTPS origin and exact request document; labelled revision values bind exactly; seven mismatches refuse B5_HEAD_BINDING');
 });
 
 

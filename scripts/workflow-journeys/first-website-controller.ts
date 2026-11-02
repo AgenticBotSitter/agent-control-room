@@ -355,10 +355,10 @@ export async function runFirstWebsiteDevicePhaseV1(input: {
 }
 
 /** Validate facts read from the rendered desktop article and its document URL. */
-export function readB5DesktopFactsV1(input: {text:string|null;url:string;request:B5DeviceRequestV1;
+export function readB5DesktopFactsV1(input: {candidateRevision:string|null;baseRevision:string|null;url:string;request:B5DeviceRequestV1;
   card:import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1}) {
-  const {card,request:r,text}=input,url=new URL(input.url);
-  need(r.device === "desktop" && r.binding && text?.includes(card.candidateRevision) && text.includes(card.evidence.binding.baseRevision)
+  const {card,request:r}=input,url=new URL(input.url);
+  need(r.device === "desktop" && r.binding && input.candidateRevision?.trim() === card.candidateRevision && input.baseRevision?.trim() === card.evidence.binding.baseRevision
     && url.origin === r.origin && url.hash === "#request="+encodeURIComponent(card.requestId)
     && card.requestId === r.binding.requestId && card.evidence.binding.runLinkId === r.binding.runLinkId,"B5_HEAD_BINDING");
   return {candidateRevision:card.candidateRevision,baseRevision:card.evidence.binding.baseRevision,requestId:card.requestId};
@@ -405,7 +405,15 @@ export async function captureFirstWebsiteDesktopV1(input: {
       const response=await context.request.get(q.origin+`/api/v1/projects/${encodeURIComponent(host.proof.project.projectId)}/improvements/loop/${encodeURIComponent(r.binding.requestId)}/candidate`);
       const body=await response.body();need(body.length <= 1<<20,"B5_ARTIFACT_BYTES");
       const {card}=await readB5CandidateResponseV1(new Response(new Uint8Array(body),{status:response.status(),headers:response.headers()}));
-      dom=readB5DesktopFactsV1({text:await article.textContent(),url:page.url(),request:r,card});
+      // Read only the code value in each labelled revision row of this article.
+      // Incidental page text, duplicate labels and swapped values cannot bind it.
+      const revisionValue=async (label:string)=>{
+        const row=article.locator("p").filter({hasText:new RegExp(`^${label}:\\s*[a-f0-9]{40}$`,"u")});
+        need(await row.count() === 1,"B5_HEAD_BINDING");
+        const code=row.locator("code");need(await code.count() === 1,"B5_HEAD_BINDING");
+        return code.textContent();
+      };
+      dom=readB5DesktopFactsV1({candidateRevision:await revisionValue("Candidate revision"),baseRevision:await revisionValue("Base revision"),url:page.url(),request:r,card});
     }
     signal.throwIfAborted();
     const observation=mailbox.observation();need(observation && observation.sequence === r.sequence && observation.device === "desktop","B5_DEVICE_CORRELATION");
