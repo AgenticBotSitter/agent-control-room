@@ -187,10 +187,10 @@ async function portFree(port: number) {
 /** The handoff seals Node bytes; its executable location is fixed by staging.
  * Recipe settings cannot nominate another executable or grant their own approval. */
 export async function requireB5RecipesV1(checks: unknown, root: string): Promise<void> {
-  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) refuse("B5_RECIPE_MISMATCH");
+  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) return refuse("B5_RECIPE_MISMATCH");
   let approvedNode: string | undefined;
   const bound = checks.some(check => check?.argv?.[0] !== "node");
-  if (bound && checks.some(check => check?.argv?.[0] === "node")) refuse("B5_RECIPE_MISMATCH");
+  if (bound && checks.some(check => check?.argv?.[0] === "node")) return refuse("B5_RECIPE_MISMATCH");
   if (bound) {
     try {
       const handoff = JSON.parse((await readFirstWebsitePrivateBytesV1(join(root, "config/b5-handoff.json"), root)).toString("utf8"));
