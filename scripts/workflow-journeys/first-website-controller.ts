@@ -8,11 +8,11 @@ import {
   loadFirstWebsiteAssemblyV1, probeBindInputCapabilityV1, bindFirstWebsiteInputsV1, assertRoleScopedBriefsV1,
   b5FaultScanPolicySchemaV1, normalizeB5FaultTextV1, assertB5FaultTextAbsentV1, assertB5FaultValueAbsentV1, auditFirstWebsiteReviewV1, readB5ReviewGitSurfacesV1,
   readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, readB5CandidateResponseV1, assertFirstWebsiteOwnerCommandV1,
-  type B5QualifiedPinsV1,
+  qualifyB5RealEvidenceV1, type B5QualifiedPinsV1,
   type FirstWebsitePreflightV1, type FirstWebsiteHostV1,
 } from "../../tests/helpers/improve-control-room-first-website";
 import {
-  B5DeviceRefusalV1, createB5DeviceCleanupV1, type B5TransportQualificationV1,
+  assertB5EvidenceSecretFreeV1, b5DeviceServiceEvidenceSchemaV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, createB5DeviceCleanupV1, type B5TransportQualificationV1,
   loadB5TransportV1, waitB5DeviceJsonV1, writeB5DeviceRequestV1,
   B5_DEVICE_INSTALL_COMMAND_V1, B5_DEVICE_OFF_COMMAND_V1, B5_DEVICE_STATUS_COMMAND_V1, b5MappingDigestV1,
   type B5DeviceRequestV1, type B5DeviceMailboxV1,
@@ -338,17 +338,93 @@ export async function runFirstWebsiteDevicePhaseV1(input: {
   mailbox: B5DeviceMailboxV1; phase: B5DeviceRequestV1["phase"]; device: B5DeviceRequestV1["device"];
   expiresAt: string; binding?: B5DeviceRequestV1["binding"]; signal: AbortSignal;
   policy: z.infer<typeof b5FaultScanPolicySchemaV1>; onPublished?(): void;
+  capture?(request: B5DeviceRequestV1): Promise<{receipt: import("./first-website-device").B5DeviceReceiptV1; dom?: z.infer<typeof b5DeviceServiceEvidenceSchemaV1>["dom"]} | undefined>;
 }) {
   input.signal.throwIfAborted();
   const request = await input.mailbox.request(input.phase, input.device, input.expiresAt, input.binding);
   input.onPublished?.();
   assertB5FaultValueAbsentV1(request, input.policy);
-  const receipt = await waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root, input.signal, Date.parse(input.expiresAt));
+  const captured = await input.capture?.(request);
+  const receipt = captured?.receipt ?? await waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root, input.signal, Date.parse(input.expiresAt));
   assertB5FaultValueAbsentV1(receipt, input.policy);
+  assertB5FaultValueAbsentV1(captured?.dom ?? null, input.policy);
   const accepted = await input.mailbox.accept(receipt);
   // Binary frames still need the lead's visual check under the capture
   // contract. It does not define a second per-phase acknowledgement mailbox.
-  return { receipt: accepted };
+  return { receipt: accepted, ...(captured?.dom ? {dom:captured.dom} : {}) };
+}
+
+/** Validate facts read from the rendered desktop article and its document URL. */
+export function readB5DesktopFactsV1(input: {text:string|null;url:string;request:B5DeviceRequestV1;
+  card:import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1}) {
+  const {card,request:r,text}=input,url=new URL(input.url);
+  need(r.device === "desktop" && r.binding && text?.includes(card.candidateRevision) && text.includes(card.evidence.binding.baseRevision)
+    && url.origin === r.origin && url.hash === "#request="+encodeURIComponent(card.requestId)
+    && card.requestId === r.binding.requestId && card.evidence.binding.runLinkId === r.binding.runLinkId,"B5_HEAD_BINDING");
+  return {candidateRevision:card.candidateRevision,baseRevision:card.evidence.binding.baseRevision,requestId:card.requestId};
+}
+
+/** R3 desktop evidence is rendered by the cached browser at the qualified
+ * HTTPS origin. No intercepted routes, storage export, HAR or phone DOM claims.
+ * Desktop close publishes capture facts, then waits for the existing owner
+ * close-attestation receipt. It never invents a human attestation. */
+export async function captureFirstWebsiteDesktopV1(input: {
+  request: B5DeviceRequestV1; host: FirstWebsiteHostV1; qualification: B5TransportQualificationV1;
+  owner: B5ControllerOwnerV1; signal: AbortSignal;
+}) {
+  const {request:r,host,qualification:q,owner,signal}=input;
+  need(r.device === "desktop" && ["connect","finish","close"].includes(r.phase) && r.origin === q.origin,"B5_DEVICE_REQUEST_CHANGED");
+  const mailbox=host.proof.device; need(mailbox,"B5_DEVICE_QUALIFICATION_REQUIRED");
+  signal.throwIfAborted();
+  const {chromium}=await import("@playwright/test");
+  const browser=await chromium.launch({headless:true});
+  let closing: Promise<void> | undefined;
+  const close=()=>closing ??= browser.close();
+  owner.registerResource(close);
+  const interrupted=()=>{void close().catch(()=>{});}; signal.addEventListener("abort",interrupted,{once:true});
+  try {
+    signal.throwIfAborted();
+    need(browser.browserType().name() === q.inventory.desktop.browser && browser.version() === q.inventory.desktop.browserVersion,"B5_DEVICE_BROWSER");
+    const context=await browser.newContext({viewport:{width:1280,height:850},serviceWorkers:"block"});
+    const page=await context.newPage();page.setDefaultTimeout(20_000);page.setDefaultNavigationTimeout(20_000);
+    await page.goto(q.origin+"/session");
+    await host.proof.withOwnerCode(async code=>{
+      await page.getByLabel("Owner code").fill(code);
+      await page.getByRole("button",{name:"Sign in",exact:true}).click();
+      await page.waitForURL(q.origin+"/projects");
+    });
+    // Two authenticated project reads establish this browser's server challenge.
+    await page.goto(q.origin+mailbox.projectPath);await page.goto(q.origin+mailbox.projectPath);
+    let dom: z.infer<typeof b5DeviceServiceEvidenceSchemaV1>["dom"];
+    if(r.phase === "finish") {
+      need(r.binding,"B5_REQUEST_JOIN");
+      await page.goto(q.origin+mailbox.projectPath+"/improvements#request="+encodeURIComponent(r.binding.requestId));
+      const article=page.getByRole("article",{name:"Finished candidate",exact:true});await article.waitFor();
+      // This request uses the same real browser session as the document and is
+      // observed independently by the owned handler before receipt acceptance.
+      const response=await context.request.get(q.origin+`/api/v1/projects/${encodeURIComponent(host.proof.project.projectId)}/improvements/loop/${encodeURIComponent(r.binding.requestId)}/candidate`);
+      const body=await response.body();need(body.length <= 1<<20,"B5_ARTIFACT_BYTES");
+      const {card}=await readB5CandidateResponseV1(new Response(new Uint8Array(body),{status:response.status(),headers:response.headers()}));
+      dom=readB5DesktopFactsV1({text:await article.textContent(),url:page.url(),request:r,card});
+    }
+    signal.throwIfAborted();
+    const observation=mailbox.observation();need(observation && observation.sequence === r.sequence && observation.device === "desktop","B5_DEVICE_CORRELATION");
+    const path=`captures/${r.sequence}-desktop.png`,bytes=await page.screenshot();need(bytes.length <= 1<<20,"B5_DEVICE_SIZE");
+    const capturedAt=new Date().toISOString();
+    await writeFile(join(mailbox.root,path),bytes,{flag:"wx",mode:0o600});
+    const captures=[{path,sha256:b5Bytes(bytes),device:"desktop" as const,sessionNonce:r.sessionNonce,sequence:r.sequence,capturedAt}];
+    const browserIdentity=`${browser.browserType().name()}/${browser.version()}`;
+    if(r.phase === "close") {
+      await close();
+      // The lead combines these observed facts with the owner's genuine
+      // all-tabs-closed attestation in the existing inbox receipt. No new ack.
+      await writeFile(join(mailbox.root,`desktop-capture-${r.sequence}.json`),JSON.stringify({request:r,browser:browserIdentity,
+        observation,captures,browserClosedAt:new Date().toISOString()})+"\n",{flag:"wx",mode:0o600});
+      return undefined;
+    }
+    return {receipt:{...r,real:true,browser:browserIdentity,observedAt:new Date().toISOString(),
+      actions:r.phase === "connect" ? ["connected" as const] : ["finished" as const],observation,captures},...(dom ? {dom} : {})};
+  } finally {signal.removeEventListener("abort",interrupted);await close();}
 }
 
 /** Shared controller verification boundary; cleanup targets come from the B3c receipt. */
@@ -509,10 +585,14 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         await service(`${projectPath}/${encodeURIComponent(requestId)}/candidate`);
       const result = await runFirstWebsiteDevicePhaseV1({ mailbox, phase: name, device, binding, signal: workSignal, policy,
         expiresAt: new Date(Math.min(owner.workAt()!, q ? Date.parse(q.expiresAt) : Infinity)).toISOString(),
+        ...(q && device === "desktop" && ["connect","finish","close"].includes(name) ? {
+          capture:(request:B5DeviceRequestV1)=>captureFirstWebsiteDesktopV1({request,host:host!,qualification:q,owner,signal:workSignal}),
+        } : {}),
         onPublished() { if (name === "bindings-ready") bindingsReadyPublishedAt = new Date().toISOString(); } });
       const browser = preflight.rehearsal ? b5ControllerBrowserEventsSchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(
-        join(deviceRoot,"service",`${result.receipt.sequence}.json`),root)).toString("utf8"))) : undefined;
-      actions.push({...result,...(browser ? {browser} : {})}); return result.receipt;
+        join(deviceRoot,"service",`${result.receipt.sequence}.json`),root)).toString("utf8"))) : await mailbox.readServiceEvidence(result.receipt.sequence);
+      if(result.dom) browser.dom=result.dom;
+      actions.push({...result,browser}); return result.receipt;
     };
     // Arm ownership BEFORE publishing an owner install request. An interrupted
     // or uncertain command still requires cancellation, reconciliation/removal.
@@ -644,7 +724,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         await restart(); restarts.push({phase:"final",at:new Date().toISOString()}); s = await status(); await phase("retained", "phone", s);
         await write("controller-observations", { actions, observations, audits, snapshot: await host.proof.readSnapshot({ evidenceOnly: true }), statusChecks: statusChecks.map(check => check.record) });
         wroteObservations = true;
-        const pins: B5QualifiedPinsV1 = { capture: preflight.capture, providers: preflight.providers, toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
+        const pins: B5QualifiedPinsV1 = { realEvidence: preflight.realEvidence, capture: preflight.capture, providers: preflight.providers, toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
           productBase: config.product.baseRevision, productHead: config.product.candidateRevision, uid: preflight.uid,
           digests: { settings: digests.settings!, availability: digests.availability!, authorization: digests.authorization!, qualification: digests.qualification!,
             assembly: digests.assembly!, faultInput: digests.faultInput!, reviewInput: digests.reviewInput! } };
@@ -662,11 +742,9 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
             coldCard=card; return value;
           }, finishTeardown: async () => {
             watching = false; await watcher; cleanupResult = await owner.cleanup(); await host!.close();
-            if(preflight.rehearsal) {
-              need(coldCard,"B5_CARD_UNAVAILABLE");
-              await writeFirstWebsiteControllerEvidenceV1({preflight,projection:p,actions,restarts,receipts,statusChecks,card:coldCard,
-                cleanup:cleanupResult,owned:await host!.proof.inspectOwned(),snapshot,startedAt,cleanupAt});
-            }
+            need(coldCard,"B5_CARD_UNAVAILABLE");
+            await writeFirstWebsiteControllerEvidenceV1({preflight,projection:p,actions,restarts,receipts,statusChecks,card:coldCard,
+              cleanup:cleanupResult,owned:await host!.proof.inspectOwned(),snapshot,startedAt,cleanupAt});
           } });
         break;
       }
@@ -723,13 +801,7 @@ export function assertB5AcceptedIntakeV1(value: unknown) {
   return receipt;
 }
 
-export const b5ControllerBrowserEventsSchemaV1 = z.object({
-  sequence: z.number().int().positive(), events: z.array(z.object({
-    name: z.enum(["intake", "confirm", "start", "answer", "approve-plan", "approve-spec", "finish-phone", "finish-desktop", "retained"]),
-    at: z.string().datetime(), method: z.enum(["GET", "POST"]), path: z.string(), status: z.number().int(),
-    responseDigest: z.string().optional(), recordDigest: z.string().optional(), candidateRevision: z.string().optional(), baseRevision: z.string().optional(),
-  }).strict()), dom: z.object({ candidateRevision:z.string(), baseRevision:z.string(), requestId:z.string() }).strict().optional(),
-}).strict();
+export const b5ControllerBrowserEventsSchemaV1 = b5DeviceServiceEvidenceSchemaV1;
 
 /** Build evidence only from accepted mailbox receipts, successful browser
  * exchanges and the real engine projection. The caller finalizes it after its
@@ -747,6 +819,34 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
   const { preflight:p, projection:run, card, statusChecks, cleanup, owned } = input;
   const root=p.config.scratchRoot, dir=p.evidenceDir, b=card.evidence.binding;
   need(run.cleanup?.state === "complete" && run.finalHead === card.candidateRevision, "B5_JOURNEY_INCOMPLETE");
+  const realSession=p.phoneTransport === "tailscale-serve";
+  let realPins: import("../../tests/helpers/improve-control-room-first-website").B5RealEvidenceQualificationV1 | undefined;
+  let transport: B5TransportQualificationV1 | undefined;
+  if (realSession) {
+    need(!p.rehearsal,"B5_REHEARSAL_PACKET_INVALID");
+    const bytes=await readFirstWebsitePrivateBytesV1(p.config.a2.qualificationEvidence,root);
+    need(b5Bytes(bytes) === p.digests.qualification,"B5_INPUT_CHANGED");
+    const q=z.object({realEvidence:z.unknown(),rehearsal:z.unknown().optional()}).passthrough().parse(parseStrictJsonV1(bytes.toString("utf8")));
+    need(q.rehearsal === undefined,"B5_REHEARSAL_PACKET_INVALID");
+    realPins=qualifyB5RealEvidenceV1(q.realEvidence,p.config,p.digests);
+    need(b5MappingDigestV1(realPins) === b5MappingDigestV1(p.realEvidence)
+      && realPins.recipeDigest === b.recipeDigest && realPins.environmentDigest === b.environmentDigest,"B5_REAL_EVIDENCE_PINS");
+    transport=await loadB5TransportV1(p.config.device.transportQualification,root,p.config.device.origin,p.digests.transport);
+    for(const kind of ["phone","desktop"] as const)
+      need(input.actions.some(a=>a.receipt.device === kind),kind === "phone" ? "B5_PHONE_EVIDENCE_MISSING" : "B5_DESKTOP_EVIDENCE_MISSING");
+    for(const item of input.actions) {
+      assertB5EvidenceSecretFreeV1(item);
+      need(item.receipt.real,"B5_DEVICE_REAL");
+      const r=b5DeviceReceiptSchemaV1.safeParse(item.receipt);
+      need(r.success,"B5_DEVICE_SCHEMA");
+      const inventory=transport.inventory[item.receipt.device];
+      need(item.receipt.origin === transport.origin && item.receipt.browser === `${inventory.browser}/${inventory.browserVersion}`,"B5_DEVICE_BROWSER");
+      const browser=b5ControllerBrowserEventsSchemaV1.safeParse(item.browser);
+      need(browser.success && browser.data.sequence === item.receipt.sequence,"B5_BROWSER_EVIDENCE_MISSING");
+      need(browser.data.events.every(e=>e.responseDigest),"B5_ACTION_EVIDENCE");
+    }
+  } else need(p.rehearsal && p.providers.transport === "scripted","B5_REHEARSAL_PACKET_INVALID");
+
   const saved = new Map<string,string>();
   const save = async (path:string, bytes:Uint8Array|string) => {
     need(/^[a-z0-9][a-z0-9./-]{0,255}$/u.test(path) && !path.includes("..") && Buffer.byteLength(bytes)<=1<<20,"B5_ARTIFACT_BYTES");
@@ -761,7 +861,25 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
   let closePair: typeof input.actions = [];
   for (const item of input.actions) {
     const r=item.receipt, receiptPath=`mailbox/receipts/${r.sequence}.json`;
-    await save(receiptPath, await readFirstWebsitePrivateBytesV1(join(root,"device/receipts",`${r.sequence}.json`),root));
+    const receiptBytes=await readFirstWebsitePrivateBytesV1(join(root,"device/receipts",`${r.sequence}.json`),root).catch(error=>{
+      if(realSession) throw new B5RefusalV1(r.device === "phone" ? "B5_PHONE_EVIDENCE_MISSING" : "B5_DESKTOP_EVIDENCE_MISSING");
+      throw error;
+    });
+    if(realSession) {
+      const original=parseStrictJsonV1(receiptBytes.toString("utf8")); assertB5EvidenceSecretFreeV1(original);
+      // A changed in-memory capture digest must fail correlation before any
+      // stale receipt can be mistaken for accepted evidence.
+      for(const c of r.captures) need(b5Bytes(await readFirstWebsitePrivateBytesV1(join(root,"device",c.path),root)) === c.sha256,"B5_CAPTURE_CORRELATION");
+      need(b5MappingDigestV1(original) === b5MappingDigestV1(r),"B5_DEVICE_RECEIPT_CHANGED");
+      const observation=await readFirstWebsitePrivateBytesV1(join(root,"device/observations",`${r.sequence}.json`),root);
+      need(b5MappingDigestV1(parseStrictJsonV1(observation.toString("utf8"))) === b5MappingDigestV1(r.observation),"B5_CAPTURE_CORRELATION");
+      await save(`mailbox/observations/${r.sequence}.json`,observation);
+      const serviceBytes=await readFirstWebsitePrivateBytesV1(join(root,"device/service",`${r.sequence}.json`),root);
+      const server=b5DeviceServiceEvidenceSchemaV1.safeParse(parseStrictJsonV1(serviceBytes.toString("utf8")));
+      need(server.success && !server.data.dom && b5MappingDigestV1(server.data.events) === b5MappingDigestV1(item.browser?.events),"B5_DEVICE_SERVICE_CHANGED");
+    }
+    await save(receiptPath,receiptBytes);
+    if(item.browser) await json(`mailbox/service/${r.sequence}.json`,item.browser);
     for (const c of r.captures) {
       const bytes=await readFirstWebsitePrivateBytesV1(join(root,"device",c.path),root);
       need(b5Bytes(bytes) === c.sha256,"B5_CAPTURE_CORRELATION"); await save(`mailbox/${c.path}`,bytes);
@@ -851,22 +969,27 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
       findings:(s.findings ?? []).map(f=>{const v=z.object({severity:z.enum(["HIGH","MEDIUM","LOW"]),disposition:z.string()}).passthrough().parse(f);
         return {severity:v.severity,state:v.disposition === "OPEN" ? "open" as const : "fixed" as const,summary:"Details in retained review report"};})});
   }
-  await json("journey.json",b5JourneySchemaV1.parse({schemaVersion:1,phoneCapture:p.capture.phoneCapture,captureQualificationDigest:p.capture.qualificationDigest,
-    restarts:input.restarts,actions,serviceFacts,closed,steps,dom,devices:["phone","desktop"].map(kind=>({kind,real:input.actions.filter(a=>a.receipt.device === kind).every(a=>a.receipt.real),browser:input.actions.find(a=>a.receipt.device === kind)!.receipt.browser}))}));
+  const journey=b5JourneySchemaV1.parse({schemaVersion:1,phoneCapture:p.capture.phoneCapture,captureQualificationDigest:p.capture.qualificationDigest,
+    restarts:input.restarts,actions,serviceFacts,closed,steps,dom,devices:["phone","desktop"].map(kind=>({kind,real:input.actions.filter(a=>a.receipt.device === kind).every(a=>a.receipt.real),browser:input.actions.find(a=>a.receipt.device === kind)!.receipt.browser}))});
+  await json("journey.json",journey);
   await json("database-snapshot.json",input.snapshot); await json("independent-status-check.json",statusChecks.map(c=>c.record));
   const retained=actions.find(a=>a.name === "retained"); need(retained,"B5_ACTION_EVIDENCE");
-  const packet=p.rehearsal;
-  need(packet,"B5_REHEARSAL_PACKET_INVALID");
+  if(realSession) {
+    await save("transport/qualification.json",await readFirstWebsitePrivateBytesV1(p.config.device.transportQualification,root));
+    for(const name of ["removal-request","removal-receipt"])
+      await save(`transport/${name}.json`,await readFirstWebsitePrivateBytesV1(join(root,"device",`${name}.json`),root));
+  }
+  const jobSandboxDigest=realPins?.jobSandboxDigest ?? p.rehearsal!.jobSandboxDigest;
   return finalizeFirstWebsiteEvidenceV1(dir,{
     schemaVersion:1,kind:"b5-first-website-proof",product:{baseRevision:p.config.product.baseRevision,headRevision:p.config.product.candidateRevision,environmentDigest:b.environmentDigest},
-    pins:{a2ToolingRevision:p.config.a2.toolingRevision,schemaDigest:p.config.a2.schemaDigest,jobSandboxDigest:packet.jobSandboxDigest,
+    pins:{a2ToolingRevision:p.config.a2.toolingRevision,schemaDigest:p.config.a2.schemaDigest,jobSandboxDigest,
       qualificationDigest:p.digests.qualification!,recipeDigest:b.recipeDigest,settingsSha256:p.digests.settings!,availabilitySha256:p.digests.availability!,
       faultInputSha256:p.digests.faultInput!,reviewInputSha256:p.digests.reviewInput!,authorizationSha256:p.digests.authorization!,assemblyDigest:p.digests.assembly!,assemblyExport:"createFirstWebsiteHostV1",
       inputBindings:input.receipts.map(r=>({name:r.name as "b5-builder-fault"|"b5-review-instruction",roles:r.roles,sha256:`sha256:${r.sha256}`,path:r.path,revision:r.revision,at:new Date(r.at).toISOString(),receiptDigest:b5Bytes(JSON.stringify(r))}))},
     risk:{categories:p.settings.riskCategories,slots:p.settings.riskSlots},launch:{uid:p.uid,context:"current-session",isolationClaim:"none",consumedRoots:["config","runs","work"]},
     lineage:{requestId:card.requestId,runLinkId:b.runLinkId,loopRunId:b.loopRunId,localVersion:card.localVersion,a2InputVersion:card.a2InputVersion},
     heads:{base:b.baseRevision,rejected:run.rejectedHeads[0]!,final:card.candidateRevision},
-    classification:{website:"real",storage:"real",engine:"real",sendBack:"real",recovery:"real",finish:"real",providers:p.providers.classification,device:"fixture",stimuli:"fixture"},
+    classification:{website:"real",storage:"real",engine:"real",sendBack:"real",recovery:"real",finish:"real",providers:p.providers.classification,device:transport && journey.devices.every(d=>d.real) ? "real" : "fixture",stimuli:"fixture"},
     timestamps:{startedAt:input.startedAt,finishedAt:new Date().toISOString()},
   }, {schemaVersion:1,b3cCleanup:"complete",scratchAbsent:owned.runScratchAbsent,ownedProcesses:owned.processCount,ownedListenersReleased:owned.listenerReleased,
     protectedListenersUntouched:true,postgresStopped:owned.postgresStopped,cleanupAt:input.cleanupAt,

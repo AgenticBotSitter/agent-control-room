@@ -1343,7 +1343,7 @@ test('F04b per-screen HTTP receipts bind distinct envelopes to the authoritative
   await e.write(apply());assert.deepEqual((await e.verify()).reasons,['B5_PROVIDER_FIXTURE']);
 });
 
-test('F04b controller writes complete fixture evidence from accepted receipts after the cold read', async t => {
+for (const realSession of [false, true]) test(realSession ? 'B5 controller writes complete simulated real session evidence after the cold read' : 'F04b controller writes complete fixture evidence from accepted receipts after the cold read', async t => {
   await load(); const e=await evidenceSet(t);await e.write();const setup=await scratch(t);
   const C=await import('../scripts/workflow-journeys/first-website-controller');
   const D=await import('../scripts/workflow-journeys/first-website-device');
@@ -1361,7 +1361,7 @@ test('F04b controller writes complete fixture evidence from accepted receipts af
   // Unit-only source data is explicitly SYNTHETIC. The independent repository
   // checks/real product fixture card below remain the existing test oracle.
   for(const [sequence,r] of [...original].sort(([a],[b])=>a-b)) {
-    r.real=false;r.sequence=sequence*2;r.observation.sequence=r.sequence;
+    r.real=realSession;r.sequence=sequence*2;r.observation.sequence=r.sequence;
     r.captures=r.captures.map(c=>({...c,path:`captures/${r.sequence}.png`,sequence:r.sequence}));
     const path=join(root,`device/receipts/${r.sequence}.json`);await writeFile(path,JSON.stringify(r),{mode:0o600});
     await writeFile(join(root,r.captures[0]!.path.replace('captures/','device/captures/')),png,{mode:0o600});
@@ -1413,16 +1413,87 @@ test('F04b controller writes complete fixture evidence from accepted receipts af
   const receipts=manifest.pins.inputBindings.map(r=>({name:r.name,index:0,path:r.path,sha256:r.sha256.slice(7),size:1,roles:r.roles,source:r.path,at:r.at,input_version:card.a2InputVersion,revision:r.revision,invalidated:[],replaces:null}));
   await rm(dir,{recursive:true,force:true});await mkdir(join(dir,'status-check'),{recursive:true,mode:0o700});await chmod(dir,0o700);
   await writeFile(join(dir,e.p.failed.record.outputPath),e.p.failed.output,{mode:0o600});await writeFile(join(dir,e.p.passed.record.outputPath),e.p.passed.output,{mode:0o600});
-  const preflight={config,uid:e.fixturePins.uid,evidenceDir:dir,digests:e.fixturePins.digests,providers:e.fixturePins.providers,capture:e.fixturePins.capture,
+  const preflight={config,uid:e.fixturePins.uid,evidenceDir:dir,digests:{...e.fixturePins.digests},providers:e.fixturePins.providers,capture:e.fixturePins.capture,
     settings:{riskCategories:manifest.risk.categories,riskSlots:manifest.risk.slots},phoneTransport:'loopback-only' as const,
     rehearsal:{schemaVersion:1 as const,kind:'b5-fixture-provider-rehearsal' as const,root,productRevision:config.product.candidateRevision,toolsRevision:'a'.repeat(40),toolingRevision:config.a2.toolingRevision,
       providerConfigSha256:H.b5Bytes('provider'),corpusSha256:H.b5Bytes('corpus'),fenceSha256:H.b5Bytes('fence'),jobSandboxDigest:H.b5Bytes('sandbox'),browser:{executablePath:null,sha256:null}}};
   const writerInput={preflight,projection,actions:items,restarts:journey.restarts,receipts,statusChecks:[e.p.failed,e.p.passed],card,cleanup:noMappingCleanup(),
     owned:{processCount:0,listenerReleased:true,postgresStopped:true,runScratchAbsent:true},snapshot,startedAt:manifest.timestamps.startedAt,cleanupAt:teardown.cleanupAt};
+  if (realSession) {
+    delete (preflight as {rehearsal?:unknown}).rehearsal;
+    Object.assign(preflight,{phoneTransport:'tailscale-serve'});
+    config.device.origin='https://unit-proof.ts.net:60462';
+    preflight.providers.classification='real';preflight.providers.transport='real-provider';
+    const independent={jobSandboxDigest:H.b5Bytes('independently qualified unit sandbox'),toolingRevision:config.a2.toolingRevision,
+      schemaDigest:config.a2.schemaDigest,productRevision:config.product.candidateRevision,assetsDigest:config.product.assetsDigest,availabilitySha256:preflight.digests.availability,recipeDigest:card.evidence.binding.recipeDigest,environmentDigest:card.evidence.binding.environmentDigest};
+    await mkdir(join(root,'config'),{recursive:true,mode:0o700});
+    config.a2.qualificationEvidence=join(root,'config/qualification.json');
+    const qualification=JSON.stringify({providers:preflight.providers,capture:preflight.capture,realEvidence:independent});
+    await writeFile(config.a2.qualificationEvidence,qualification,{mode:0o600});
+    preflight.digests.qualification=H.b5Bytes(qualification);
+    Object.assign(preflight,{realEvidence:independent});
+    for(const item of items) {
+      item.receipt.origin=config.device.origin;
+      item.receipt.browser='unit-browser/1';
+      item.receipt.captures.forEach(c=>{c.sha256=H.b5Bytes(png);});
+      item.browser!.events.forEach(event=>{event.responseDigest ??= H.b5Bytes('unit successful HTTP response');});
+      await writeFile(join(root,`device/receipts/${item.receipt.sequence}.json`),JSON.stringify(item.receipt),{mode:0o600});
+      await mkdir(join(root,'device/observations'),{recursive:true,mode:0o700});
+      await mkdir(join(root,'device/service'),{recursive:true,mode:0o700});
+      await writeFile(join(root,`device/service/${item.receipt.sequence}.json`),JSON.stringify({sequence:item.receipt.sequence,events:item.browser!.events}),{mode:0o600});
+      await writeFile(join(root,`device/observations/${item.receipt.sequence}.json`),JSON.stringify(item.receipt.observation),{mode:0o600});
+    }
+    const beforeStatus={Future:{keep:true}},installedStatus={...beforeStatus,TCP:{'60462':{HTTPS:true}},Web:{'unit-proof.ts.net:60462':{Handlers:{'/':{Proxy:'http://127.0.0.1:60460'}}}}};
+    const q={schemaVersion:1,kind:'tailscale-serve',origin:config.device.origin,backend:'http://127.0.0.1:60460',actor:'owner',ownerAuthorized:true,
+      authorizedAt:manifest.timestamps.startedAt,expiresAt:new Date(Date.now()+86400000).toISOString(),ownerLogin:'owner@example.invalid',identityPolicy:'exact-owner-login',captureMode:'native-capture-server-correlation',
+      inventory:{phone:{model:'unit',os:'unit',browser:'unit-browser',browserVersion:'1'},desktop:{browser:'unit-browser',browserVersion:'1'},captureMethod:'native-screenshot',fileTransferRoute:'unit'},
+      beforeStatus,installedStatus,beforeDigest:D.b5MappingDigestV1(beforeStatus),installedDigest:D.b5MappingDigestV1(installedStatus)};
+    config.device.transportQualification=join(root,'config/transport.json');const qBytes=JSON.stringify(q);
+    await writeFile(config.device.transportQualification,qBytes,{mode:0o600});
+    preflight.capture.qualificationDigest=H.b5Bytes(qBytes);Object.assign(preflight.digests,{transport:H.b5Bytes(qBytes)});
+    // Re-pin the independent qualification after its capture qualification changed.
+    const bytes=JSON.stringify({providers:preflight.providers,capture:preflight.capture,realEvidence:independent});
+    await writeFile(config.a2.qualificationEvidence,bytes,{mode:0o600});preflight.digests.qualification=H.b5Bytes(bytes);
+    const request={removalNonce:'b'.repeat(32),requestedAt:teardown.cleanupAt};
+    const removal={schemaVersion:1,actor:'owner',removalNonce:request.removalNonce,observedAt:new Date(Date.parse(teardown.cleanupAt)+1000).toISOString(),installSettled:true,installCancelled:false,
+      off:{command:D.B5_DEVICE_OFF_COMMAND_V1,port:60462,exitCode:0},status:{command:D.B5_DEVICE_STATUS_COMMAND_V1,exitCode:0,afterStatus:beforeStatus,afterDigest:q.beforeDigest},beforeDigest:q.beforeDigest,installedDigest:q.installedDigest};
+    await writeFile(join(root,'device/removal-request.json'),JSON.stringify(request),{mode:0o600});
+    await writeFile(join(root,'device/removal-receipt.json'),JSON.stringify(removal),{mode:0o600});
+    Object.assign(writerInput.cleanup,{disposition:'mapping-removed',mappingAttempted:true,comparison:true,beforeDigest:q.beforeDigest,installedDigest:q.installedDigest,afterDigest:q.beforeDigest,removalReceiptDigest:D.b5MappingDigestV1(removal)});
+    // This is entirely in-process unit data, not a native device/provider claim.
+  }
   await C.writeFirstWebsiteControllerEvidenceV1(writerInput);
-  const verdict=await H.verifyFirstWebsiteEvidenceV1(dir,{candidateRepository:e.p.project,pins:e.fixturePins,readCard:async()=>({card,responseDigest:H.b5Bytes('unit cold response')}),
+  const verdict=await H.verifyFirstWebsiteEvidenceV1(dir,{candidateRepository:e.p.project,pins:{...e.fixturePins,digests:preflight.digests,...(realSession ? {realEvidence:(preflight as unknown as {realEvidence:B5Helper.B5RealEvidenceQualificationV1}).realEvidence} : {})},readCard:async()=>({card,responseDigest:H.b5Bytes('unit cold response')}),
     retention:{proofRoot:root,candidateRepository:e.p.project,cleanupTargets:[join(root,'closed-run')]}});
-  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
+  assert.equal(verdict.state,realSession ? 'complete' : 'incomplete');
+  assert.deepEqual(verdict.reasons,realSession ? [] : ['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
+  if(realSession) {
+    const finalized=JSON.parse(await readFile(join(dir,'manifest.json'),'utf8'));
+    assert.equal(finalized.classification.device,'real');
+    assert.equal(finalized.pins.jobSandboxDigest,(preflight as unknown as {realEvidence:{jobSandboxDigest:string}}).realEvidence.jobSandboxDigest);
+    let negative=0;
+    const refuse=async(code:string,change:(value:typeof writerInput)=>void)=>{
+      const bad=structuredClone(writerInput);bad.preflight.evidenceDir=join(root,'refusal-'+code.toLowerCase().replaceAll('_','-')+'-'+negative++);
+      await mkdir(bad.preflight.evidenceDir,{mode:0o700});change(bad);
+      await assert.rejects(C.writeFirstWebsiteControllerEvidenceV1(bad),{code});
+    };
+    await refuse('B5_PHONE_EVIDENCE_MISSING',v=>{v.actions=v.actions.filter(a=>a.receipt.device!=='phone');});
+    await refuse('B5_CAPTURE_CORRELATION',v=>{v.actions[0]!.receipt.captures[0]!.sha256=H.b5Bytes('wrong digest');});
+    await refuse('B5_EVIDENCE_SECRET',v=>{Object.assign(v.actions[0]!.browser!.events[0]!,{cookie:'synthetic forbidden secret'});});
+    await refuse('B5_DEVICE_REAL',v=>{v.actions[0]!.receipt.real=false;});
+    await refuse('B5_REHEARSAL_PACKET_INVALID',v=>{Object.assign(v.preflight,{rehearsal:{jobSandboxDigest:H.b5Bytes('fixture')}});});
+    const phoneReceipt=join(root,`device/receipts/${items.find(a=>a.receipt.device==='phone')!.receipt.sequence}.json`),original=await readFile(phoneReceipt);
+    await rm(phoneReceipt);
+    try {await refuse('B5_PHONE_EVIDENCE_MISSING',()=>{});} finally {await writeFile(phoneReceipt,original,{mode:0o600});}
+    await refuse('B5_REAL_EVIDENCE_PINS',v=>{Object.assign(v.preflight,{realEvidence:{...(v.preflight as unknown as {realEvidence:Record<string,unknown>}).realEvidence,jobSandboxDigest:H.b5Bytes('relabeled sandbox')}});});
+    const savedQualification=await readFile(config.a2.qualificationEvidence);
+    try {
+      const bytes=JSON.stringify({...JSON.parse(savedQualification.toString('utf8')),rehearsal:{packetFile:'unit-only',packetSha256:H.b5Bytes('fixture')}});
+      await writeFile(config.a2.qualificationEvidence,bytes);
+      await refuse('B5_REHEARSAL_PACKET_INVALID',v=>{v.preflight.digests.qualification=H.b5Bytes(bytes);});
+    } finally {await writeFile(config.a2.qualificationEvidence,savedQualification);}
+    console.log('RESULT: PASS simulated real controller finalizes and verifier accepts; missing phone, digest mismatch, retained secret, fixture real and real rehearsal packet refuse typed B5 codes');
+  }
   const model=providerReceipts.get(journey.steps[0]!.n)!;
   const changed=JSON.parse(await readFile(model.path,'utf8'));changed.launcher='different-native-route';
   const changedBody=JSON.stringify(changed);await writeFile(model.path,changedBody);model.sha256=H.b5Bytes(changedBody).slice(7);
@@ -1505,4 +1576,45 @@ test("B5 intake deadline bounds a stalled desk read", { timeout: 2000 }, async (
     accepted: async () => assert.fail(), signal: new AbortController().signal, deadline: Date.now() + 30,
   }), { code: "B5_INTAKE_LINK_TIMEOUT" });
   assert.equal(signal?.aborted, true);
+});
+
+
+test('B5 desktop facts require actual rendered candidate and base at the qualified document', async t => {
+  await load();const e=await evidenceSet(t),C=await import('../scripts/workflow-journeys/first-website-controller');
+  const request={schemaVersion:1 as const,sequence:1,sessionNonce:'a'.repeat(32),phase:'finish' as const,device:'desktop' as const,
+    origin:'https://unit-proof.ts.net:60462',expiresAt:new Date(Date.now()+1000).toISOString(),
+    binding:{requestId:e.card.requestId,runLinkId:e.card.evidence.binding.runLinkId,inputVersion:e.card.localVersion}};
+  const input={request,card:e.card,text:e.card.candidateRevision+' '+e.card.evidence.binding.baseRevision,
+    url:request.origin+'/projects/unit/improvements#request='+encodeURIComponent(e.card.requestId)};
+  assert.deepEqual(C.readB5DesktopFactsV1(input),{candidateRevision:e.card.candidateRevision,baseRevision:e.card.evidence.binding.baseRevision,requestId:e.card.requestId});
+  for(const change of [{text:null},{text:e.card.candidateRevision},{text:e.card.evidence.binding.baseRevision},
+    {url:input.url.replace('unit-proof.ts.net','other.ts.net')},{url:input.url.replace(encodeURIComponent(e.card.requestId),'different-request')}])
+    assert.throws(()=>C.readB5DesktopFactsV1({...input,...change}),{code:'B5_HEAD_BINDING'});
+  console.log('RESULT: PASS desktop facts require rendered final/base revisions, qualified HTTPS origin and exact request document; five mismatches refuse B5_HEAD_BINDING');
+});
+
+
+test('B5 real evidence pins require independent readiness input without rehearsal defaults', async t => {
+  await load();const s=await scratch(t),config=H.firstWebsiteConfigSchemaV1.parse(s.config),digests={availability:H.b5Bytes('availability')};
+  const qualified={jobSandboxDigest:H.b5Bytes('sandbox'),toolingRevision:config.a2.toolingRevision,schemaDigest:config.a2.schemaDigest,
+    productRevision:config.product.candidateRevision,assetsDigest:config.product.assetsDigest,availabilitySha256:digests.availability,
+    recipeDigest:H.b5Bytes('recipe'),environmentDigest:H.b5Bytes('environment')};
+  assert.deepEqual(H.qualifyB5RealEvidenceV1(qualified,config,digests),qualified);
+  for(const value of [undefined,{jobSandboxDigest:qualified.jobSandboxDigest}])
+    assert.throws(()=>H.qualifyB5RealEvidenceV1(value,config,digests),{code:'B5_REAL_EVIDENCE_QUALIFICATION_REQUIRED'});
+  for(const key of ['toolingRevision','schemaDigest','productRevision','assetsDigest','availabilitySha256'] as const)
+    assert.throws(()=>H.qualifyB5RealEvidenceV1({...qualified,[key]:key==='productRevision'?'c'.repeat(40):H.b5Bytes('changed')},config,digests),{code:'B5_REAL_EVIDENCE_PINS'});
+  console.log('RESULT: PASS real readiness pins have no rehearsal default; missing packet and five independent pin mismatches refuse typed B5 codes');
+});
+
+test('B5 evidence finalizer refuses retained codes, cookies and tokens in JSON artifacts', async t => {
+  await load();const e=await evidenceSet(t);await e.write();
+  const manifest=H.b5ManifestSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8')));
+  const teardown=H.b5TeardownSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8')));
+  for(const secret of [{ownerCode:'synthetic disposable code'},{cookie:'synthetic cookie'},{access_token:'synthetic token'},
+    {nested:{headers:{authorization:'synthetic'}}},{value:'Bearer synthetic-forbidden-token'}]) {
+    await writeFile(join(e.dir,'unsafe.json'),JSON.stringify(secret),{mode:0o600});
+    await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'removed-work')]}),{code:'B5_EVIDENCE_SECRET'});
+  }
+  console.log('RESULT: PASS retained owner-code, cookie, access-token, auth-header and bearer-token artifacts refuse B5_EVIDENCE_SECRET');
 });

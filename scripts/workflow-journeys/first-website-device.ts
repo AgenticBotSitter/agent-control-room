@@ -6,6 +6,9 @@ import { lstat, mkdir, open, realpath, rename, link, unlink, rmdir } from "node:
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
+import { readBrowserJson } from "../../src/web/v1/browser-json";
+import { loopBridgeReceiptSchemaV1 } from "../../src/improve-control-room/v1/schemas";
+import { loopCandidateCardSchemaV1 } from "../../src/improve-control-room/v1/loop-candidate-wire";
 import { admitTailscaleRequestV1 } from "../../src/web/v1/mac-local-remote-access";
 
 export class B5DeviceRefusalV1 extends Error {
@@ -153,6 +156,31 @@ export const b5DeviceReceiptSchemaV1 = b5DeviceRequestSchemaV1.extend({ observed
   closeAttestation: z.object({ actor: z.literal("owner"), closedAt: utc, allProofTabsClosed: z.literal(true) }).strict().optional(),
 }).strict();
 export type B5DeviceReceiptV1 = z.infer<typeof b5DeviceReceiptSchemaV1>;
+
+// R3 “No-download device evidence”: allowlisted observations only. Never retain
+// request bodies, headers, session cookies, login exchanges or network bodies.
+export function assertB5EvidenceSecretFreeV1(value: unknown): void {
+  if (typeof value === "string") need(!/(?:control_room_local_owner=|b5_correlation=|\bBearer\s|-----BEGIN .*PRIVATE KEY)/iu.test(value), "B5_EVIDENCE_SECRET");
+  else if (value && typeof value === "object") for (const [key, child] of Object.entries(value)) {
+    need(!/^(?:cookies?|set[-_]?cookie|authorization|headers?|owner[-_]?code|(?:access|refresh)[-_]?token|token|password|secret|storage[-_]?state)$/iu.test(key), "B5_EVIDENCE_SECRET");
+    assertB5EvidenceSecretFreeV1(child);
+  }
+}
+export const b5DeviceServiceEvidenceSchemaV1 = z.object({
+  sequence: z.number().int().positive(), events: z.array(z.object({
+    name: z.enum(["intake", "confirm", "start", "answer", "approve-plan", "approve-spec", "finish-phone", "finish-desktop", "retained"]),
+    at: utc, method: z.enum(["GET", "POST"]), path: z.string().regex(/^\/api\/v1\/projects\/[^/?#]+\/improvements\/loop\/(?:[^/?#]+\/)?(?:intake|confirm|start|answer|approve|candidate)$/u), status: z.number().int(),
+    responseDigest: digest.optional(), recordDigest: digest.optional(), candidateRevision: z.string().regex(/^[a-f0-9]{40}$/u).optional(), baseRevision: z.string().regex(/^[a-f0-9]{40}$/u).optional(),
+  }).strict()).max(16),
+  dom: z.object({candidateRevision:z.string(),baseRevision:z.string(),requestId:z.string()}).strict().optional(),
+}).strict();
+export type B5DeviceServiceEvidenceV1 = z.infer<typeof b5DeviceServiceEvidenceSchemaV1>;
+function expectedServiceActions(request:B5DeviceRequestV1): B5DeviceServiceEvidenceV1["events"][number]["name"][] {
+  return ({prepare:["intake"],"confirm-start":["confirm","start"],question:["answer"],plan:["approve-plan"],spec:["approve-spec"],
+    finish:[request.device === "phone" ? "finish-phone" : "finish-desktop"],retained:["retained"]} as Partial<Record<B5DeviceRequestV1["phase"],B5DeviceServiceEvidenceV1["events"][number]["name"][]>>)[request.phase] ?? [];
+}
+
+
 const phaseActions: Record<B5DeviceRequestV1["phase"], string[]> = { connect: ["connected"], prepare: ["prepared"],
   "bindings-ready": ["bindings-ready-observed"], "confirm-start": ["confirmed", "started"], question: ["answered"],
   plan: ["plan-read", "plan-approved"], spec: ["spec-read", "spec-approved"], close: ["closed"], repair: ["repair-observed"],
@@ -174,16 +202,19 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
   else if (origin !== "http://127.0.0.1:60460") validateB5DeviceOriginV1(origin);
   try { await mkdir(root, { mode: 0o700 }); } catch { throw new B5DeviceRefusalV1("B5_DEVICE_EXISTS"); }
   await mkdir(join(root, "receipts"), { mode: 0o700 }); await mkdir(join(root, "captures"), { mode: 0o700 });
+  if (options.real) await mkdir(join(root, "service"), { mode: 0o700 });
   await mkdir(join(root, "observations"), { mode: 0o700 }); await mkdir(join(root, "inbox"), { mode: 0o700 });
   const identity = await custody(root, scratchRoot, true);
   let challengedSession: string | undefined;
   let sequence = 0, pending: B5DeviceRequestV1 | undefined, observed: z.infer<typeof observationSchema> | undefined, closed = false;
   const sessions = new Map<string, string>(), accepted = new Map<number, string>();
+  const sealedService = new Map<number, string>();
+  let events: B5DeviceServiceEvidenceV1["events"] = [];
   const active = new Set<Promise<unknown>>(); let closing: Promise<void> | undefined;
   async function checked() {
     const s = await custody(root, scratchRoot, true);
     need(s.ino === identity.ino && s.dev === identity.dev, "B5_DEVICE_CUSTODY");
-    for (const dir of ["receipts", "captures", "observations", "inbox"]) await custody(join(root, dir), root, true);
+    for (const dir of ["receipts", "captures", "observations", "inbox", ...(options.real ? ["service"] : [])]) await custody(join(root, dir), root, true);
   }
   function locked<T>(body: () => Promise<T>): Promise<T> {
     const work = (async () => {
@@ -198,6 +229,44 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
   }
 
   const projectPath = `/projects/${encodeURIComponent(options.projectId)}`;
+  const apiPath = `/api/v1/projects/${encodeURIComponent(options.projectId)}/improvements/loop/`;
+  async function observeAction(request: Request, response: Response) {
+    const url = new URL(request.url), current = pending, observation = observed;
+    if (!options.real || closed || !current || !observation || accepted.has(current.sequence) || url.origin !== origin
+      || url.search || !url.pathname.startsWith(apiPath) || !response.ok || now() >= Date.parse(current.expiresAt)) return;
+    const tokens = (request.headers.get("cookie") ?? "").split(";").map(c => c.trim()).filter(c => /^control_room_local_owner=[A-Za-z0-9_-]{43}$/u.test(c));
+    if (tokens.length !== 1 || b5DeviceHashV1(tokens[0]!) !== observation.sessionDigest) return;
+    const suffix = url.pathname.slice(apiPath.length), binding = current.binding;
+    const expected = binding ? encodeURIComponent(binding.requestId) + "/" : "";
+    const allowed = expectedServiceActions(current);
+    const name = allowed?.find(name => suffix === (name === "intake" ? "intake" : expected + (name.startsWith("approve-") ? "approve" : ["finish-phone","finish-desktop","retained"].includes(name) ? "candidate" : name)));
+    if (!name || request.method !== (["finish-phone","finish-desktop","retained"].includes(name) ? "GET" : "POST")) return;
+    const hash = createHash("sha256"), clone = response.clone();
+    if (!clone.body) return;
+    const body = clone.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(chunk, controller) {hash.update(chunk);controller.enqueue(chunk);}}));
+    let value:unknown;
+    try {value = await readBrowserJson(new Response(body,{headers:clone.headers}),1<<20,10_000);}
+    catch {throw new B5DeviceRefusalV1("B5_DEVICE_SERVICE_RESPONSE");}
+    const common = {name:name as B5DeviceServiceEvidenceV1["events"][number]["name"],at:new Date(now()).toISOString(),method:request.method as "GET"|"POST",path:url.pathname,status:response.status,responseDigest:`sha256:${hash.digest("hex")}`};
+    let event: B5DeviceServiceEvidenceV1["events"][number];
+    if (request.method === "POST") {
+      const receipt = loopBridgeReceiptSchemaV1.safeParse(value);
+      if (!receipt.success || receipt.data.state !== "accepted" || binding && (receipt.data.requestId !== binding.requestId || receipt.data.localVersion !== binding.inputVersion)) return;
+      event = common;
+    } else {
+      const card = loopCandidateCardSchemaV1.safeParse((value as {candidate?:unknown})?.candidate);
+      if (!card.success || !binding || card.data.requestId !== binding.requestId || card.data.localVersion !== binding.inputVersion
+        || card.data.evidence.binding.runLinkId !== binding.runLinkId || card.data.projectId !== options.projectId) return;
+      event = {...common,recordDigest:card.data.recordDigest,candidateRevision:card.data.candidateRevision,baseRevision:card.data.evidence.binding.baseRevision};
+    }
+    // A new phase/acceptance cannot steal an in-flight response's correlation.
+    await locked(async () => {
+      need(pending === current && observed === observation && !accepted.has(current.sequence),"B5_DEVICE_STALE");
+      // Preserve the first accepted exchange, which precedes the capture;
+      // background candidate polling must not replace it after the screenshot.
+      if(!events.some(e=>e.name === event.name)) events.push(event);
+    });
+  }
   const mailbox = {
     root, projectPath,
     request(phase: B5DeviceRequestV1["phase"], target: "phone" | "desktop", expiresAt: string, binding?: B5DeviceRequestV1["binding"]) {
@@ -207,13 +276,14 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
         need(Date.parse(expiresAt) > now(), "B5_DEVICE_EXPIRED");
         if (pending) await custody(join(root, "request.json"), root);
         await publish(join(root, "request.json"), request, false);
-        sequence = request.sequence; pending = request; observed = undefined; challengedSession = undefined; return structuredClone(request);
+        sequence = request.sequence; pending = request; events = []; observed = undefined; challengedSession = undefined; return structuredClone(request);
       });
     },
     // Wrap the actual built product handler. Authenticated first read sets the
     // one-use cookie; second read echoes it. No added route or query allowance.
     async handle(request: Request, render: () => Promise<Response>) {
       const response = await render(), url = new URL(request.url);
+      await observeAction(request, response);
       if (closed || response.status !== 200 || request.method !== "GET" || url.origin !== origin || url.pathname !== projectPath || url.search) return response;
       return locked(async () => {
         const current = pending;
@@ -276,9 +346,25 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
           need(bytes.length > 0 && b5DeviceHashV1(bytes) === capture.sha256, "B5_DEVICE_CAPTURE_CHANGED");
           if (options.real) need(isCapture(bytes, capture.path), "B5_DEVICE_CAPTURE_FORMAT");
         }
+        if (options.real) {
+          const service = parse(b5DeviceServiceEvidenceSchemaV1,{sequence:receipt.sequence,events});
+          assertB5EvidenceSecretFreeV1(service);
+          need(expectedServiceActions(pending).every(name=>service.events.some(e=>e.name === name)),"B5_DEVICE_SERVICE_MISSING");
+          need(service.events.every(e=>Date.parse(e.at) >= Date.parse(receipt.observation.observedAt)
+            && receipt.captures.every(c=>Date.parse(e.at) <= Date.parse(c.capturedAt))),"B5_DEVICE_CORRELATION");
+          await publish(join(root,"service",`${receipt.sequence}.json`),service,true);
+          sealedService.set(receipt.sequence,b5DeviceHashV1(JSON.stringify(service)+"\n"));
+        }
         await publish(join(root, "receipts", `${receipt.sequence}.json`), receipt, true);
         accepted.set(receipt.sequence, b5DeviceHashV1(JSON.stringify(receipt) + "\n")); return receipt;
       });
+    },
+    async readServiceEvidence(sequence: number) {
+      need(accepted.has(sequence) && options.real,"B5_DEVICE_STALE");
+      const bytes=await readB5DeviceFileV1(join(root,"service",`${sequence}.json`),root);
+      need(sealedService.get(sequence) === b5DeviceHashV1(bytes),"B5_DEVICE_SERVICE_CHANGED");
+      const value=parseB5DeviceJsonV1(bytes.toString("utf8")); assertB5EvidenceSecretFreeV1(value);
+      return parse(b5DeviceServiceEvidenceSchemaV1,value);
     },
     async readReceipt(sequence: number) {
       need(Number.isSafeInteger(sequence) && sequence > 0, "B5_DEVICE_STALE"); await checked();

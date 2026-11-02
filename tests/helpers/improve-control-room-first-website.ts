@@ -3,7 +3,7 @@
 // retained-evidence verifier. Imports are inert: nothing here opens a listener,
 // database, browser or process until a caller invokes it. This helper never
 // selects a role or model; A2 and the qualified lineup do.
-import { b5MappingDigestV1, b5RemovalReceiptSchemaV1, validateB5TransportV1, compareB5RemovedStatusV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, validateB5DeviceOriginV1 } from "../../scripts/workflow-journeys/first-website-device";
+import { b5TransportQualificationSchemaV1, b5DeviceServiceEvidenceSchemaV1, assertB5EvidenceSecretFreeV1, b5MappingDigestV1, b5RemovalReceiptSchemaV1, validateB5TransportV1, compareB5RemovedStatusV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, validateB5DeviceOriginV1 } from "../../scripts/workflow-journeys/first-website-device";
 import type { B5DeviceMailboxV1 } from "../../scripts/workflow-journeys/first-website-device";
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
@@ -65,6 +65,19 @@ export function qualifyB5ProvidersV1(value: unknown, toolingRevision: string, av
     || p.toolingRevision !== toolingRevision || p.availabilitySha256 !== availabilitySha256)
     refuse("B5_PROVIDER_PROVENANCE_MISMATCH");
   return p;
+}
+/** R3 Stable proof interfaces/F04b: readiness supplies these independently,
+ * never from a rehearsal packet or the manifest being constructed. */
+export const b5RealEvidenceQualificationSchemaV1 = z.object({jobSandboxDigest:sha256,toolingRevision:sha256,schemaDigest:sha256,
+  productRevision:revision,assetsDigest:sha256,availabilitySha256:sha256,recipeDigest:sha256,environmentDigest:sha256}).strict();
+export type B5RealEvidenceQualificationV1 = z.infer<typeof b5RealEvidenceQualificationSchemaV1>;
+export function qualifyB5RealEvidenceV1(value: unknown, config: FirstWebsiteConfigV1, digests: Record<string,string>) {
+  const q=b5RealEvidenceQualificationSchemaV1.safeParse(value);
+  if (!q.success) return refuse("B5_REAL_EVIDENCE_QUALIFICATION_REQUIRED");
+  if (q.data.toolingRevision !== config.a2.toolingRevision || q.data.schemaDigest !== config.a2.schemaDigest
+    || q.data.productRevision !== config.product.candidateRevision || q.data.assetsDigest !== config.product.assetsDigest
+    || q.data.availabilitySha256 !== digests.availability) refuse("B5_REAL_EVIDENCE_PINS");
+  return q.data;
 }
 /** Check 8 strict configuration. Unknown keys refuse. Trusted lead config only. */
 export const firstWebsiteConfigSchemaV1 = z.object({
@@ -174,7 +187,7 @@ async function portFree(port: number) {
 /** The handoff seals Node bytes; its executable location is fixed by staging.
  * Recipe settings cannot nominate another executable or grant their own approval. */
 export async function requireB5RecipesV1(checks: unknown, root: string): Promise<void> {
-  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) refuse("B5_RECIPE_MISMATCH");
+  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) return refuse("B5_RECIPE_MISMATCH");
   let approvedNode: string | undefined;
   const bound = checks.some(check => check?.argv?.[0] !== "node");
   if (bound && checks.some(check => check?.argv?.[0] === "node")) refuse("B5_RECIPE_MISMATCH");
@@ -197,7 +210,7 @@ export async function requireB5RecipesV1(checks: unknown, root: string): Promise
 
 export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
   controllerOwner?: import("../../scripts/workflow-journeys/first-website-controller").B5ControllerOwnerV1;
-  capture:B5CaptureQualificationV1; providers: B5ProviderProvenanceV1; digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only"; rehearsal?: B5RehearsalPacketV1 };
+  capture:B5CaptureQualificationV1; providers: B5ProviderProvenanceV1; digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only"; realEvidence?: B5RealEvidenceQualificationV1; rehearsal?: B5RehearsalPacketV1 };
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
 export async function preflightFirstWebsiteV1(input: { configFile: string; evidenceDir: string; cliFile: string;
@@ -253,7 +266,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   if (!Array.isArray(settings!.roles?.code_reviews) || settings!.roles!.code_reviews.length !== 2) refuse("B5_CODE_REVIEW_SLOTS");
   await requireB5RecipesV1(checks, root);
   // Qualification bytes are independently supplied, confined and hashed above. No default real provider.
-  let qualification: { providers?: unknown; capture?:unknown; rehearsal?: { packetFile: string; packetSha256: string } };
+  let qualification: { providers?: unknown; capture?:unknown; realEvidence?:unknown; rehearsal?: { packetFile: string; packetSha256: string } };
   const providerBytes = await readFirstWebsitePrivateBytesV1(config.a2.qualificationEvidence, root);
   if (b5Bytes(providerBytes) !== digests.qualification) refuse("B5_INPUT_CHANGED");
   try { qualification = JSON.parse(providerBytes.toString("utf8")); }
@@ -272,6 +285,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   }
   const capture = b5CaptureQualificationSchemaV1.safeParse(qualification!.capture);
   if (!capture.success || capture.data.qualificationDigest !== digests.transport) refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
+  if (!loopback && capture.data!.approval !== "approved") refuse("B5_CAPTURE_MODE_UNAPPROVED");
   let rehearsal: B5RehearsalPacketV1 | undefined;
   if (qualification!.rehearsal !== undefined) {
     const r = z.object({ packetFile: absolute, packetSha256: sha256 }).strict().safeParse(qualification!.rehearsal);
@@ -283,6 +297,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     if (rehearsal.root !== root || rehearsal.toolingRevision !== config.a2.toolingRevision
       || rehearsal.productRevision !== config.product.candidateRevision) refuse("B5_REHEARSAL_PACKET_CHANGED");
   }
+  const realEvidence = !loopback ? qualifyB5RealEvidenceV1(qualification!.realEvidence,config,digests) : undefined;
   // Product: the reviewed disposable checkout is clean, at the pinned candidate, descended from BASE, and runs this CLI.
   await canonical(config.product.root, "directory", "B5_PRODUCT_ROOT");
   if (!inside(config.product.root, input.cliFile)) refuse("B5_PRODUCT_ROOT", "cli outside product checkout");
@@ -298,7 +313,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     || ports.some(port => B5_PROTECTED_PORTS.includes(port))) refuse("B5_PORT_RESERVATION");
   for (const port of ports) if (!await (input.probe ?? portFree)(port)) refuse("B5_PORT_BUSY", String(port));
   return { config, uid, evidenceDir, providers, capture:capture.data!, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
-    phoneTransport: loopback ? "loopback-only" : "tailscale-serve", ...(rehearsal ? { rehearsal } : {}) };
+    phoneTransport: loopback ? "loopback-only" : "tailscale-serve", ...(realEvidence ? {realEvidence} : {}), ...(rehearsal ? { rehearsal } : {}) };
 }
 
 /** Lead-qualified, immutable provider stage. This is a test interface, never a
@@ -525,7 +540,7 @@ const bindingRecord = z.object({ name: z.enum(["b5-builder-fault", "b5-review-in
 export const b5ManifestSchemaV1 = z.object({
   schemaVersion: z.literal(1), kind: z.literal("b5-first-website-proof"),
   product: z.object({ baseRevision: revision, headRevision: revision, environmentDigest: sha256 }).strict(),
-  // jobSandboxDigest is recorded for the reviewer; no independent source exists for the verifier to compare it with.
+  // jobSandboxDigest is readiness-attested. Real controller sessions compare its preflight pin; this is not sandbox authentication.
   pins: z.object({ a2ToolingRevision: sha256, schemaDigest: sha256, jobSandboxDigest: sha256, qualificationDigest: sha256, recipeDigest: sha256,
     settingsSha256: sha256, availabilitySha256: sha256, faultInputSha256: sha256, reviewInputSha256: sha256, authorizationSha256: sha256,
     assemblyDigest: sha256, assemblyExport: z.literal(B5_ASSEMBLY_EXPORT), inputBindings: z.array(bindingRecord).length(2) }).strict(),
@@ -607,7 +622,7 @@ export const b5DatabaseSnapshotSchemaV1 = z.object({ schemaVersion: z.literal(1)
 });
 type B5SnapshotV1 = z.infer<typeof b5DatabaseSnapshotSchemaV1>;
 /** The qualified pins preflight validated from the lead's configuration, never read from the manifest. */
-export type B5QualifiedPinsV1 = { capture: B5CaptureQualificationV1;
+export type B5QualifiedPinsV1 = { realEvidence?: B5RealEvidenceQualificationV1; capture: B5CaptureQualificationV1;
   providers: B5ProviderProvenanceV1; toolingRevision: string; schemaDigest: string; productBase: string; productHead: string; uid: number;
   digests: Readonly<Record<"settings" | "availability" | "authorization" | "qualification" | "assembly" | "faultInput" | "reviewInput", string>> };
 export type B5VerdictV1 = { state: "complete" | "incomplete"; reasons: string[];
@@ -657,6 +672,8 @@ export function assertB5ProviderProvenanceV1(manifest: B5ManifestV1, journey: B5
 /** The manifest's recorded pins equal what preflight qualified and what the card binds. */
 export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidateCardV1, journey: B5JourneyV1, pins: B5QualifiedPinsV1) {
   const p = manifest.pins, d = pins.digests, b = card.evidence.binding, bad = (why: string) => refuse("B5_MANIFEST_PINS", why);
+  if (pins.realEvidence && (p.jobSandboxDigest !== pins.realEvidence.jobSandboxDigest
+    || p.recipeDigest !== pins.realEvidence.recipeDigest || manifest.product.environmentDigest !== pins.realEvidence.environmentDigest)) bad("real qualification");
   if (manifest.product.baseRevision !== pins.productBase || manifest.product.headRevision !== pins.productHead) bad("product");
   if (p.settingsSha256 !== d.settings || p.availabilitySha256 !== d.availability || p.authorizationSha256 !== d.authorization
     || p.qualificationDigest !== d.qualification || p.assemblyDigest !== d.assembly || p.faultInputSha256 !== d.faultInput || p.reviewInputSha256 !== d.reviewInput) bad("inputs");
@@ -848,6 +865,44 @@ export function assertB5ActionEvidenceV1(j: B5JourneyV1, card: LoopCandidateCard
       refuse("B5_CAPTURE_CORRELATION");
   }
 }
+/** Additional retained joins for controller real sessions. The qualification
+ * comes from preflight/readiness, never from a self-labelled manifest. */
+function assertB5RealSessionEvidenceV1(journey:B5JourneyV1, artifacts:ReadonlyMap<string,Uint8Array>, pins:B5QualifiedPinsV1) {
+  if (!pins.realEvidence) return;
+  const parse = (path:string) => {
+    try {return JSON.parse(Buffer.from(artifacts.get(path) ?? []).toString("utf8")) as unknown;}
+    catch {return refuse("B5_REAL_EVIDENCE_MISSING");}
+  };
+  const bytes=artifacts.get("transport/qualification.json");
+  if (!bytes || b5Bytes(bytes) !== pins.capture.qualificationDigest) refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
+  const q=b5TransportQualificationSchemaV1.safeParse(parse("transport/qualification.json"));
+  if(!q.success) return refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
+  const qualification=q.data;
+  const paths = new Set([...journey.actions.map(a=>a.receiptPath),...journey.closed.flatMap(c=>c.receipts.map(r=>r.path))]);
+  for (const path of paths) {
+    const receipt=b5DeviceReceiptSchemaV1.safeParse(parse(path));
+    if (!receipt.success) refuse("B5_ACTION_EVIDENCE");
+    const r=receipt.data!;
+    if (!r.real) refuse("B5_DEVICE_REAL");
+    const inventory=qualification.inventory[r.device];
+    if(r.origin !== qualification.origin || r.browser !== `${inventory.browser}/${inventory.browserVersion}`) refuse("B5_DEVICE_BROWSER");
+    if (b5MappingDigestV1(parse(`mailbox/observations/${r.sequence}.json`)) !== b5MappingDigestV1(r.observation)) refuse("B5_CAPTURE_CORRELATION");
+    const service=b5DeviceServiceEvidenceSchemaV1.safeParse(parse(`mailbox/service/${r.sequence}.json`));
+    if(!service.success || service.data.sequence !== r.sequence) return refuse("B5_DEVICE_SERVICE_CHANGED");
+    for(const action of journey.actions.filter(a=>a.receiptPath === path)) {
+      const event=service.data.events.find(e=>e.name === action.name);
+      if(!event?.responseDigest || event.method !== action.method || event.path !== action.path || event.status !== action.status || event.at !== action.at)
+        return refuse("B5_DEVICE_SERVICE_CHANGED");
+      const facts=journey.serviceFacts.find(f=>f.sequence === r.sequence);
+      if(facts && (facts.responseDigest !== event.responseDigest || facts.candidateRevision !== event.candidateRevision)) refuse("B5_CAPTURE_CORRELATION");
+    }
+    if(r.device === "desktop" && r.phase === "finish") {
+      const dom=journey.dom.find(d=>d.screen === "08-finish-desktop");
+      if (!dom || !service.data.dom || dom.requestId !== service.data.dom.requestId || dom.candidateRevision !== service.data.dom.candidateRevision
+        || dom.baseRevision !== service.data.dom.baseRevision) refuse("B5_HEAD_BINDING");
+    }
+  }
+}
 /** Every removed-mapping claim is checked against retained qualification, request
  * and owner receipt bytes. This performs no transport command or owner notification. */
 function b5RemovedMappingEvidenceMatchesV1(cleanup: NonNullable<B5VerdictV1["transportCleanup"]>, manifest:B5ManifestV1,
@@ -921,6 +976,10 @@ export async function finalizeFirstWebsiteEvidenceV1(evidenceDir: string,
       else {
         if ((stat.mode & 0o777) !== 0o600) refuse("B5_ARTIFACT_BYTES");
         const bytes = await readFirstWebsitePrivateBytesV1(file, evidenceDir);
+        if (path.endsWith(".json")) {
+          let value:unknown; try {value=JSON.parse(bytes.toString("utf8"));} catch {refuse("B5_ARTIFACT_BYTES");}
+          assertB5EvidenceSecretFreeV1(value);
+        }
         artifacts.push({ path, sha256:b5Bytes(bytes), bytes:bytes.length });
       }
     }
@@ -989,6 +1048,10 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   for (const entry of manifest.artifacts) {
     const bytes = await load(entry.path);
     if (b5Bytes(bytes) !== entry.sha256 || bytes.length !== entry.bytes || artifacts.has(entry.path)) refuse("B5_ARTIFACT_BYTES", entry.path);
+    if (entry.path.endsWith(".json")) {
+      let value:unknown; try {value=JSON.parse(Buffer.from(bytes).toString("utf8"));} catch {refuse("B5_ARTIFACT_BYTES");}
+      assertB5EvidenceSecretFreeV1(value);
+    }
     artifacts.set(entry.path, bytes);
   }
   for (const path of B5_REQUIRED_ARTIFACTS) if (!artifacts.has(path)) refuse("B5_ARTIFACT_MISSING", path);
@@ -1005,6 +1068,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   assertRejectionRepairV1(manifest, journey);
   assertCleanupRetainedV1(teardown, card, snapshot, manifest.timestamps.finishedAt);
   assertB5ActionEvidenceV1(journey, card, teardown, artifacts, input.pins, http?.responseDigest);
+  assertB5RealSessionEvidenceV1(journey,artifacts,input.pins);
   if (teardown.retention) {
     if (!input.retention || input.retention.candidateRepository !== input.candidateRepository
       || JSON.stringify(teardown.retention) !== JSON.stringify(await qualifyB5RetentionV1(input.retention))) refuse("B5_CLEANUP_RETAINED");

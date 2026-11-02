@@ -623,3 +623,73 @@ test("F04a fix controller drives every phase through the frozen mailbox without 
   assert.deepEqual((await readdir(join(mailbox.root, "inbox"))).sort(), Array.from({ length: 16 }, (_, i) => `${i + 1}.json`).sort());
   console.log("RESULT: PASS F04a fix controller phases=16 through bindings-ready/confirm/question/plan/spec/finish/retained; real mailbox fixture observations; extra-lead-acks=0");
 });
+
+
+test('B5 real mailbox observes accepted owner HTTP actions and retains only correlated digests', async t => {
+  const root=await scratch(t),q=qualification();
+  const mailbox=await createB5DeviceMailboxV1(root,remote,{real:true,projectId:'unit-project',inventory:q.inventory,now:()=>now});
+  t.after(()=>mailbox.close());
+  const r=await mailbox.request('prepare','phone',time(10000));
+  const ownerCookie='control_room_local_owner='+ 's'.repeat(43);
+  for(const cookie of [ownerCookie,ownerCookie+'; b5_correlation='+r.sessionNonce])
+    await mailbox.handle(new Request(remote+mailbox.projectPath,{headers:{cookie}}),async()=>new Response('product document'));
+  const path='/api/v1/projects/unit-project/improvements/loop/intake';
+  const responseBody=JSON.stringify({schemaVersion:1,requestId:'unit-request',localVersion:1,commandId:'unit-command',state:'accepted',replayed:false,engineRevision:1,error:null});
+  const action=(cookie:string,state='accepted')=>mailbox.handle(new Request(remote+path,{method:'POST',headers:{cookie},body:'synthetic private request body'}),async()=>new Response(responseBody.replace('accepted',state),{status:201,headers:{'content-type':'application/json'}}));
+  await action('control_room_local_owner='+ 't'.repeat(43)); // wrong disposable session is never evidence
+  await action(ownerCookie,'uncertain'); // HTTP success alone is insufficient
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+  await writeFile(join(mailbox.root,'captures/unit.png'),png,{mode:0o600});
+  const receipt={...r,real:true,browser:'fixture-browser/fixture-version',observedAt:time(),actions:['prepared'],observation:mailbox.observation()!,
+    captures:[{path:'captures/unit.png',sha256:b5DeviceHashV1(png),device:'phone',sequence:r.sequence,sessionNonce:r.sessionNonce,capturedAt:time()}]};
+  await assert.rejects(mailbox.accept(receipt),{code:'B5_DEVICE_SERVICE_MISSING'});
+  await action(ownerCookie);
+  await mailbox.accept(receipt);
+  const evidence=await mailbox.readServiceEvidence(r.sequence);
+  assert.deepEqual(evidence.events,[{name:'intake',method:'POST',path,status:201,at:time(),responseDigest:b5DeviceHashV1(responseBody)}]);
+  const saved=await readFile(join(mailbox.root,'service',r.sequence+'.json'),'utf8');
+  assert.ok(!saved.includes(ownerCookie) && !saved.includes('synthetic private request body') && !saved.includes('unit-command'));
+  assert.deepEqual(JSON.parse(saved),evidence);
+  await writeFile(join(mailbox.root,'service',r.sequence+'.json'),saved+' ');
+  await assert.rejects(mailbox.readServiceEvidence(r.sequence),{code:'B5_DEVICE_SERVICE_CHANGED'});
+  console.log('RESULT: PASS real mailbox correlates owner HTTP success and exact response digest; wrong session and uncertain success excluded; no bodies or secrets retained; tamper refuses');
+});
+
+test('B5 desktop close captures browser facts and still requires the owner attestation', {timeout:10000}, async t => {
+  const root=await scratch(t),q=qualification();q.inventory.desktop={browser:'chromium',browserVersion:'unit'};
+  const mailbox=await createB5DeviceMailboxV1(root,remote,{real:true,projectId:'unit-project',inventory:q.inventory});
+  const C=await import('../scripts/workflow-journeys/first-website-controller');
+  const owner=C.createFirstWebsiteControllerOwnerV1();
+  t.after(async()=>{await owner.cleanup();owner.dispose();await mailbox.close();});
+  // In-process browser double: no browser process, socket or network is opened.
+  const {chromium}=await import('@playwright/test'),originalLaunch=chromium.launch;
+  let closed=0,projectReads=0;
+  const page={setDefaultTimeout(){},setDefaultNavigationTimeout(){},
+    async goto(url:string){if(url===remote+mailbox.projectPath) {
+      const r=JSON.parse(await readFile(join(mailbox.root,'request.json'),'utf8')) as B5DeviceRequestV1;
+      await mailbox.handle(new Request(url,{headers:{cookie:'control_room_local_owner='+ 'z'.repeat(43)+(++projectReads > 1 ? '; b5_correlation='+r.sessionNonce : '')}}),async()=>new Response('unit product document'));
+    }},getByLabel(){return {async fill(){}};},getByRole(){return {async click(){}};},async waitForURL(){},
+    async screenshot(){return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');}};
+  const browser={browserType:()=>({name:()=> 'chromium'}),version:()=> 'unit',async newContext(){return {async newPage(){return page;}};},async close(){closed++;}};
+  chromium.launch=async()=>browser as unknown as Awaited<ReturnType<typeof originalLaunch>>;
+  try {
+    let release!:()=>void;const captured=new Promise<void>(yes=>{release=yes;});
+    const phase=C.runFirstWebsiteDevicePhaseV1({mailbox,phase:'close',device:'desktop',expiresAt:new Date(Date.now()+5000).toISOString(),signal:owner.signal,
+      binding:{requestId:'unit-request',runLinkId:'unit-link',inputVersion:1},policy:{normalizer:'b5-unicode-v1',sentinel:'UNIT_PRIVATE_CANARY_FOR_CLOSE_6789012345',distinctiveInstructions:['unit distinctive instruction']},
+      capture:async request=>{
+        const result=await C.captureFirstWebsiteDesktopV1({request,qualification:q,owner,signal:owner.signal,
+          host:{proof:{device:mailbox,withOwnerCode:async (use:(code:string)=>Promise<unknown>)=>use('unit disposable code')}} as never});
+        assert.equal(result,undefined);release();return result;
+      }});
+    await Promise.race([captured,phase.then(()=>assert.fail('owner attestation was not supplied'))]);
+    assert.equal(closed,1);assert.deepEqual(await readdir(join(mailbox.root,'receipts')),[]);
+    const facts=JSON.parse(await readFile(join(mailbox.root,'desktop-capture-1.json'),'utf8'));
+    assert.equal(facts.closeAttestation,undefined);assert.equal(facts.actions,undefined);
+    const at=new Date().toISOString();
+    await writeB5DeviceReceiptV1(join(mailbox.root,'inbox/1.json'),{...facts.request,real:true,browser:facts.browser,observation:facts.observation,
+      captures:facts.captures,observedAt:at,actions:['closed'],closeAttestation:{actor:'owner',allProofTabsClosed:true,closedAt:at}});
+    assert.equal((await phase).receipt.closeAttestation?.allProofTabsClosed,true);
+    assert.equal(closed,1);
+  } finally {chromium.launch=originalLaunch;}
+  console.log('RESULT: PASS simulated desktop browser closes before capture handoff; no invented owner attestation; existing inbox receipt completes phase; browser close once');
+});
