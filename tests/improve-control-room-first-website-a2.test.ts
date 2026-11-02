@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
 import { B5RefusalV1 } from "./helpers/improve-control-room-first-website";
 import type { LoopEngineStatusV1 } from "../src/web/v1/improve-control-room-loop-adapter";
+import { readB5RunWithRetryV1 } from "../scripts/workflow-journeys/first-website-controller";
 
 async function scratch(t: test.TestContext) {
   await mkdir(".test-tmp", { recursive: true });
@@ -209,6 +210,100 @@ test("B5 projection detects a changing run and does not use display-only times (
   const f = await projectionFixture(t);
   const input = { ...f.input, readChainStatus: async () => { f.raw.changed = true; await f.save(); return f.emitted; } };
   await assert.rejects(projectB5RunV1(input), /B5_A2_CHANGED/);
+});
+
+test("B5 projection prioritizes a newer chain revision over an appended-step mismatch", async t => {
+  const f = await projectionFixture(t);
+  const input = { ...f.input, readChainStatus: async () => ({ ...f.emitted, revision: 1,
+    steps: [{ n: 1, role: "build", stale: false, state: "running" }] }) };
+  await assert.rejects(projectB5RunV1(input), /^Error: B5_A2_REVISION$/);
+});
+
+async function appendProjectionStep(f: Awaited<ReturnType<typeof projectionFixture>>) {
+  const brief = join(f.work, "step-1.md");
+  await writeFile(brief, "Fixture build brief", { mode: 0o600 });
+  await writeFile(join(f.root, "lead/state/jobs.tsv"), "id\tlog\tstate\tended\nfixture-job\tfixture.log\tRUNNING\t\n", { mode: 0o600 });
+  f.raw.steps.push({ n: 1, role: "build", model: "fixture", brief, log: "fixture.log", input_version: 1,
+    head_at_start: f.input.baseline, started_epoch: 1 });
+  f.emitted.steps.push({ n: 1, role: "build", stale: false, state: "running" });
+  await f.save();
+}
+
+for (const advanceRevision of [true, false]) {
+  test(`B5 controller retries an appended step and succeeds (revision advances: ${advanceRevision})`, async t => {
+    const f = await projectionFixture(t);
+    let reads = 0, pauses = 0;
+    const failures: string[] = [];
+    const input = { ...f.input, readChainStatus: async () => {
+      if (++reads === 1) {
+        await appendProjectionStep(f);
+        if (advanceRevision) {
+          f.status.revision = f.raw.chain.revision = f.emitted.revision = 1;
+          await f.save();
+        }
+      }
+      return f.emitted;
+    } };
+    const projection = await readB5RunWithRetryV1({ signal: new AbortController().signal,
+      read: async () => {
+        try { return await projectB5RunV1(input); }
+        catch (error) { failures.push((error as Error).message); throw error; }
+      }, pause: async () => { pauses++; } });
+    assert.deepEqual(failures, ["B5_A2_CHANGED"]);
+    assert.equal(reads, 2); assert.equal(pauses, 1);
+    assert.equal(projection.steps.length, 1); assert.equal(projection.steps[0].role, "build");
+    assert.equal(projection.engineRevision, advanceRevision ? 1 : 0);
+  });
+}
+
+for (const mismatch of ["count", "number", "role"] as const) {
+  test(`B5 unchanged step ${mismatch} mismatch refuses without retry`, async t => {
+    const f = await projectionFixture(t);
+    await appendProjectionStep(f);
+    if (mismatch === "count") f.emitted.steps = [];
+    if (mismatch === "number") f.emitted.steps[0].n = 2;
+    if (mismatch === "role") f.emitted.steps[0].role = "code-review";
+    const before = await readFile(f.file);
+    let reads = 0, pauses = 0;
+    await assert.rejects(readB5RunWithRetryV1({ signal: new AbortController().signal,
+      read: () => { reads++; return projectB5RunV1(f.input); },
+      pause: async () => { pauses++; } }), /^Error: B5_A2_STEP_JOIN$/);
+    assert.equal(reads, 1); assert.equal(pauses, 0);
+    assert.deepEqual(await readFile(f.file), before);
+  });
+}
+
+for (const failure of ["B5_A2_CHANGED", "B5_A2_REVISION"] as const) {
+  test(`B5 controller persistent ${failure} stops after three projection attempts`, async t => {
+    const f = await projectionFixture(t);
+    let reads = 0, pauses = 0;
+    const input = { ...f.input, readChainStatus: async () => {
+      reads++;
+      if (failure === "B5_A2_CHANGED") {
+        f.raw.chain.revision++;
+        f.status.revision = f.raw.chain.revision;
+        await f.save();
+      }
+      return { ...f.emitted, revision: f.raw.chain.revision + 1,
+        steps: [{ n: 1, role: "build", stale: false, state: "running" }] };
+    } };
+    await assert.rejects(readB5RunWithRetryV1({ signal: new AbortController().signal,
+      read: () => projectB5RunV1(input), pause: async () => { pauses++; } }),
+    { message: failure });
+    assert.equal(reads, 3); assert.equal(pauses, 2);
+  });
+}
+
+test("B5 controller projection retry respects cancellation before and between attempts", async () => {
+  for (const preAborted of [true, false]) {
+    const abort = new AbortController(), reason = new Error("fixture cancelled");
+    let reads = 0, pauses = 0;
+    if (preAborted) abort.abort(reason);
+    await assert.rejects(readB5RunWithRetryV1({ signal: abort.signal,
+      read: async () => { reads++; throw new Error("B5_A2_CHANGED"); },
+      pause: async () => { pauses++; abort.abort(reason); } }), error => error === reason);
+    assert.equal(reads, preAborted ? 0 : 1); assert.equal(pauses, preAborted ? 0 : 1);
+  }
 });
 
 test("B5 loader refuses module bytes before import and refuses missing cleanup (no private tools)", async t => {

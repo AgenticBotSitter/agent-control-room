@@ -187,12 +187,15 @@ export async function projectB5RunV1(input: {
   const raw = rawRunSchema.parse(parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true }).decode(before)));
   const status = await input.adapter.status(input.runId);
   const emitted = emittedSchema.parse(await input.readChainStatus());
+  // The status subprocess can span a step append. Reject a mixed snapshot
+  // before interpreting step counts or membership as a persistent join defect.
+  need(b5RawHash(await bytes(file, input.root)) === b5RawHash(before), "B5_A2_CHANGED");
   for (const step of raw.steps) need(inside(raw.work, step.brief), "B5_A2_BRIEF_PATH");
-  need(emitted.steps.length === raw.steps.length, "B5_A2_STEP_JOIN");
   need(raw.run === input.runId && emitted.run === raw.run && status.run.loopRunId === raw.run
     && status.run.toolingRevision === input.toolingRevision && status.run.adapterId === "adapter:a2-local"
     && status.run.a2SchemaVersion === 1 && link.run.adapterId === status.run.adapterId && link.run.a2SchemaVersion === status.run.a2SchemaVersion, "B5_A2_RUN_JOIN");
   need(raw.chain.revision === status.revision && emitted.revision === status.revision, "B5_A2_REVISION");
+  need(emitted.steps.length === raw.steps.length, "B5_A2_STEP_JOIN");
   need(raw.input_version === status.inputVersion && raw.input_version === input.saved.inputVersion
     && raw.chain.settings_source_sha256 === input.saved.settingsSha256 && status.settingsSha256 === input.saved.settingsSha256
     && status.description === input.saved.description, "B5_A2_INPUT_VERSION");

@@ -39,6 +39,24 @@ export type B5ControllerCleanupV1 = {
   failures: string[]; overrunMs: number;
 };
 const codeOf = (error: unknown) => error instanceof B5RefusalV1 || error instanceof B5DeviceRefusalV1 ? error.code : "B5_CONTROLLER_FAILED";
+
+export async function readB5RunWithRetryV1<T>(input: {
+  read(): Promise<T>; signal: AbortSignal; pause?: (signal: AbortSignal) => Promise<void>;
+}): Promise<T> {
+  // Allow two fresh snapshots after a revision race, but fail persistent churn
+  // without consuming the controller's entire work deadline.
+  const maxAttempts = 3;
+  for (let attempt = 1; ; attempt++) {
+    input.signal.throwIfAborted();
+    try { return await input.read(); }
+    catch (error) {
+      if (attempt >= maxAttempts || !(error instanceof Error)
+        || !["B5_A2_CHANGED", "B5_A2_REVISION"].includes(error.message)) throw error;
+      await (input.pause ?? pause)(input.signal);
+    }
+  }
+}
+
 async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, code: string) {
   const abort = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
   try { return await Promise.race([Promise.resolve().then(() => work(abort.signal)), new Promise<never>((_, no) => {
@@ -638,13 +656,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       observations.push({ operation, commandId: id, at: snapshot.readAt });
     };
     await command("intake", { body: { description: B5_REQUEST_TEXT } });
-    const readRun = async () => {
-      while (true) try { workSignal.throwIfAborted(); return await host!.proof.readRun(runId); }
-      catch (error) {
-        if (!(error instanceof Error) || !["B5_A2_CHANGED", "B5_A2_REVISION"].includes(error.message)) throw error;
-        await pause(workSignal); // retry a read spanning an actual engine revision
-      }
-    };
+    const readRun = () => readB5RunWithRetryV1({ read: () => host!.proof.readRun(runId), signal: workSignal });
     const projection = await readRun();
     const carrierBytes = await readFirstWebsitePrivateBytesV1(config.a2.contractFile, root);
     need(b5Bytes(carrierBytes) === digests.contract, "B5_INPUT_CHANGED");
