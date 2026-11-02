@@ -1377,6 +1377,58 @@ test("B5 working branch: a commit between preflight and switch stays checked out
   } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
 });
 
+for (const commitBranch of ["main", "working"] as const) {
+  test(`B5 working branch: adopting an existing branch refuses a concurrent ${commitBranch} commit and restores main`, async t => {
+    const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
+    const run = `fixture-run-${"f".repeat(32)}`, branch = `cook/loop-${run}`;
+    await r.git("branch", branch);
+    const adapter = { ...f.adapter, reserveRun: () => run };
+    const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+    const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, clock: () => now, loopBridge: bridge });
+    const original = childProcess.execFile;
+    let committed = false, latest = "";
+    const mocked = t.mock.method(childProcess, "execFile", (...args: Parameters<typeof execFile>) => {
+      const argv = args[1] as string[];
+      if (args[0] === "/usr/bin/git" && argv[1] === r.repository && argv.includes("switch") && !committed) {
+        const git = (...command: string[]) => {
+          const result = spawnSync("/usr/bin/git", ["-C", r.repository, "-c", "core.hooksPath=/dev/null",
+            "-c", "commit.gpgsign=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...command], {
+            env: { PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 10000,
+          });
+          assert.equal(result.status, 0, result.stderr.toString());
+          return result.stdout.toString().trim();
+        };
+        if (commitBranch === "working") git("switch", "--quiet", branch);
+        writeFileSync(join(r.repository, "latest.txt"), "Concurrent committed work\n");
+        git("add", "latest.txt"); git("commit", "--quiet", "-m", "Concurrent adoption fixture commit");
+        latest = git("rev-parse", "HEAD");
+        if (commitBranch === "working") git("switch", "--quiet", "main");
+        committed = true;
+      }
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const response = await handler(request(`${f.base}/intake`, "POST", { description }, `working-branch-adopt-race-${commitBranch}-0001`));
+      assert.equal(response.status, 202);
+      const receipt = await response.json() as { requestId: string; state: string };
+      assert.equal(committed, true, "commit lands between the comparison and switch");
+      assert.equal(receipt.state, "refused");
+      const current = await bridge.status(f.identity, f.project.projectId, receipt.requestId);
+      assert.equal(current.display.attention!.code, "REPOSITORY_PREPARATION");
+      assert.equal(current.request.runLink, null); assert.equal(current.display.canStart, false);
+      assert.equal(await r.git("branch", "--show-current"), "main");
+      assert.equal(await r.git("rev-parse", "HEAD"), commitBranch === "main" ? latest : r.baseline);
+      assert.equal(await r.git("rev-parse", branch), commitBranch === "working" ? latest : r.baseline);
+      assert.equal(await r.git("show", `${latest}:latest.txt`), "Concurrent committed work");
+      if (commitBranch === "main") assert.equal(await readFile(join(r.repository, "latest.txt"), "utf8"), "Concurrent committed work\n");
+      assert.equal(await r.git("status", "--porcelain=v1", "--untracked-files=all"), "");
+      await assert.rejects(readFile(join(f.root, "trace.jsonl")), { code: "ENOENT" });
+      assert.deepEqual(await readdir(f.configuration.workRoot), []);
+    } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+  });
+}
+
 test("B5 working branch: ENOBUFS-size untracked tree refuses as dirty before intake", async t => {
   const r = await workingBranchRepository(t), f = await fixture(t, r.repository);
   for (let i = 0; i < 800; i++) await writeFile(join(r.repository, `untracked-${i}-${"x".repeat(100)}.txt`), "Owner work\n");

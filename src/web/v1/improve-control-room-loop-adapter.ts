@@ -270,9 +270,20 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       // No reset, force or stash; Git refuses a branch held by another worktree.
       await git(["switch", "--quiet", "--no-guess", "--no-recurse-submodules",
         ...(existing ? [workingBranch] : ["-c", workingBranch])]);
-      const baseline = await git(["rev-parse", "--verify", "HEAD"]);
-      if (await git(["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]) !== workingBranch
-        || await git(["rev-parse", "--verify", `refs/heads/${workingBranch}`]) !== baseline) refuse("REPOSITORY_PREPARATION");
+      try {
+        const head = await git(["rev-parse", "--verify", "HEAD"]);
+        // Adoption must still match the compared commit on both branches. A
+        // concurrent commit on the original branch must not leave it behind.
+        const baseline = existing || head;
+        if (head !== baseline
+          || await git(["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]) !== workingBranch
+          || await git(["rev-parse", "--verify", `refs/heads/${workingBranch}`]) !== baseline
+          || existing && await git(["rev-parse", "--verify", `refs/heads/${branch}`]) !== baseline) refuse("REPOSITORY_PREPARATION");
+      } catch (error) {
+        // Restore the original checkout without rewriting either branch's ref.
+        if (existing) await git(["switch", "--quiet", "--no-guess", "--no-recurse-submodules", branch]);
+        throw error;
+      }
     } catch (error) {
       if (error instanceof LoopIntakeRefusalV1) throw error;
       refuse("REPOSITORY_PREPARATION");
