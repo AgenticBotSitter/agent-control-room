@@ -351,6 +351,8 @@ test("B5 unlinked draft without a committed intake remains a conflict", async t 
 // CLI uses its disposable Bridge fixture and dry launcher; no provider runs.
 if (process.env.CONTROL_ROOM_A2_TEST_LOOP) test("B1b real CLI intake completes with numbered progress and legacy control", async t => {
   const loop = resolve(process.env.CONTROL_ROOM_A2_TEST_LOOP!);
+  const python = /CR_PYTHON=(\S+)/.exec(await readFile(join(loop, "../bin/lib/python.sh"), "utf8"))?.[1]?.replace(/^["\']|["\']$/g, "");
+  assert.ok(python, "the tools checkout supplies its configured interpreter");
   const module = await import(pathToFileURL(join(loop, "bridge/a2-contract.mjs")).href);
   const driver = String.raw`import json,sys
 sys.path.insert(0,sys.argv[1])
@@ -371,7 +373,7 @@ finally:
 `;
   for (const legacy of [false, true]) await t.test(legacy ? "legacy-label control" : "real numbered progress", async t => {
     const f = await fixture(t);
-    const child = spawn("/usr/bin/python3", ["-B", "-c", driver, loop], {
+    const child = spawn(python, ["-B", "-c", driver, loop], {
       timeout: 60000, env: { PATH: "/usr/bin:/bin", TMPDIR: resolve(".test-tmp"), PYTHONDONTWRITEBYTECODE: "1",
         CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", NODE_ENV: "test" },
     });
@@ -380,7 +382,7 @@ finally:
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await exited; });
     const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
     const settingsLine = await lines.next();
-    assert.equal(settingsLine.done, false, "real CLI fixture supplies settings");
+    assert.equal(settingsLine.done, false, `real CLI fixture supplies settings: ${stderr}`);
     const realSettings = settingsLine.value!;
     const lineage = { ...f.adapter.contract, decodeRunIdentity: (input: unknown) => loopImprovementRunIdentitySchemaV1.parse(input) };
     const contract = module.a2BridgeContractV1(lineage) as LoopAdapterConfigurationV1["contract"];
