@@ -21,6 +21,7 @@ import {
   ProjectWorkspaceProtectedCatalogAuthorityV1,
 } from "../src/project-workspace/v1/catalog-session";
 import { ProjectWorkspaceContractErrorV1 } from "../src/project-workspace/v1/errors";
+import { hmacSha256Tag, sha256Digest } from "../src/security";
 import type { SecurityStore } from "../src/security";
 
 const scopeFixtureTenantId = "tenant:scope-fixture";
@@ -138,6 +139,25 @@ async function rejectsWithProjectWorkspaceCode(promise: Promise<unknown>, code: 
     error instanceof ProjectWorkspaceContractErrorV1 && error.safeCode === code);
 }
 
+/**
+ * The catalog payload the unkeyed digest covers: everything except the digest
+ * and the keyed auth tag, mirroring the production `catalogUnsigned` split.
+ */
+function catalogUnsignedMaterial(catalog: ReturnType<typeof buildScopeFixtureCatalog>) {
+  const { catalogDigest: _digest, catalogAuthTag: _tag, ...material } = catalog;
+  void _digest;
+  void _tag;
+  return material;
+}
+
+/** The checkpoint payload the unkeyed digest covers (production `checkpointUnsigned` split). */
+function checkpointUnsignedMaterial(checkpoint: ReturnType<typeof buildScopeFixtureCheckpoint>) {
+  const { checkpointDigest: _digest, checkpointAuthTag: _tag, ...material } = checkpoint;
+  void _digest;
+  void _tag;
+  return material;
+}
+
 test("project-workspace scope authority: happy path authorizes a valid owner session against a checkpointed catalog", async () => {
   const scope = await validScopeFixtureNow().authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow });
   assert.deepEqual(
@@ -169,7 +189,7 @@ test("project-workspace scope authority: expired owner session is rejected with 
   );
 });
 
-test("project-workspace scope authority: stale catalog behind the checkpoint is rejected with catalog_rollback", async () => {
+test("project-workspace scope authority: catalog that does not match its checkpoint is rejected with catalog_rollback", async () => {
   const keys = scopeFixtureKeys();
   const first = buildProtectedProjectCatalogV1({
     contractVersion: "control-room-project-workspace-catalog/v1",
@@ -271,6 +291,70 @@ test("project-workspace scope authority: tampered checkpoint digest is rejected 
   await rejectsWithProjectWorkspaceCode(
     authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
     "integrity_failed",
+  );
+});
+
+test("project-workspace scope authority: a catalog whose digest is recomputed but whose keyed auth tag is stale is rejected with integrity_failed", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const forged = structuredClone(catalog);
+  forged.entries[0]!.projectId = "project:scope-forged";
+  forged.catalogDigest = sha256Digest(catalogUnsignedMaterial(forged));
+  assert.notEqual(forged.catalogDigest, catalog.catalogDigest, "the unkeyed digest was recomputed over the forged payload");
+  assert.equal(forged.catalogAuthTag, catalog.catalogAuthTag, "the keyed auth tag was left stale");
+  const authority = buildScopeFixtureAuthorities({
+    catalog: forged,
+    checkpoint: buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "integrity_failed",
+  );
+});
+
+test("project-workspace scope authority: a checkpoint whose digest is recomputed but whose keyed auth tag is stale is rejected with integrity_failed", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const checkpoint = buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z");
+  const forged = structuredClone(checkpoint);
+  forged.projects[0]!.projectId = "project:scope-forged";
+  forged.checkpointDigest = sha256Digest(checkpointUnsignedMaterial(forged));
+  assert.notEqual(forged.checkpointDigest, checkpoint.checkpointDigest, "the unkeyed digest was recomputed over the forged payload");
+  assert.equal(forged.checkpointAuthTag, checkpoint.checkpointAuthTag, "the keyed auth tag was left stale");
+  const authority = buildScopeFixtureAuthorities({
+    catalog,
+    checkpoint: forged,
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+    readCheckpointDirectly: true,
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "integrity_failed",
+  );
+});
+
+test("project-workspace scope authority: a checkpoint recorded before its catalog is rejected with catalog_rollback", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const checkpoint = buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z");
+  const backdated = structuredClone(checkpoint);
+  backdated.recordedAt = "2026-09-29T15:57:00.000Z";
+  assert.ok(Date.parse(backdated.recordedAt) < Date.parse(catalog.recordedAt),
+    "the backdated checkpoint really is recorded before the catalog");
+  backdated.checkpointDigest = sha256Digest(checkpointUnsignedMaterial(backdated));
+  backdated.checkpointAuthTag = hmacSha256Tag(scopeFixtureKeys().highWaterKey, {
+    ...checkpointUnsignedMaterial(backdated),
+    checkpointDigest: backdated.checkpointDigest,
+  });
+  assert.notEqual(backdated.checkpointAuthTag, checkpoint.checkpointAuthTag,
+    "the backdated checkpoint is correctly keyed, so only the timestamp guard can refuse it");
+  const authority = buildScopeFixtureAuthorities({
+    catalog,
+    checkpoint: backdated,
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+    readCheckpointDirectly: true,
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "catalog_rollback",
   );
 });
 
