@@ -152,6 +152,13 @@ const intakeRefusalEnvelopeSchema = z.object({ schema_version: z.literal(1), run
   state: z.null(), revision, next: z.null(), attention: z.unknown(), steps: z.array(z.unknown()).max(1000),
   counters: z.record(z.string(), z.unknown()), error: z.object({ code: z.string().regex(/^[A-Z][A-Z0-9_]{1,79}$/) }).passthrough(),
   request: z.null().optional(), clock: z.enum(["ok", "uncertain"]).optional(), deadline: z.null().optional() }).strict();
+// A2 tests stale with Python truthiness; empty JSON lists and dictionaries
+// are false there, even though JavaScript treats both as true.
+function pythonJsonTruthy(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value !== null && typeof value === "object") return Object.keys(value).length > 0;
+  return !!value;
+}
 const unavailable = () => new Error("loop_adapter_unavailable");
 const credentialPath = /(?:^|[/\\])(?:\.env(?:\.[^/]*)?|\.aws|\.codex|\.hermes|auth\.json|credentials|tokens?)(?:[/\\]|$)/i;
 function checkedPath(path: string, root?: string, directory = false) {
@@ -298,7 +305,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     // after a launch fails. Inspect only the latest non-stale step: an earlier
     // failed attempt must not turn a subsequent active attempt into a refusal.
     const step = envelope.steps.filter((value): value is Record<string, unknown> =>
-      !!value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>).stale !== true).at(-1);
+      !!value && typeof value === "object" && !Array.isArray(value) && !pythonJsonTruthy((value as Record<string, unknown>).stale)).at(-1);
     const stepFailed = !["stopped", "finished"].includes(status.state) && step
       && typeof step.state === "string"
       && ["blocked", "failed", "error", "cancelled", "canceled", "timeout", "timed_out", "aborted"].includes(step.state);
@@ -313,9 +320,9 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       const reason = /^launch failed: (?:[A-Z][A-Z0-9_]* )?REFUSED:/.test(detail)
         ? "the launch checks rejected the request."
         : detail.startsWith("launch failed:") ? "the loop engine could not launch it."
-          : "the loop engine reported that the step could not complete.";
+          : "it stopped without a usable result. Ask the lead to check this step before retrying.";
       failureMessage = code && Object.hasOwn(loopIntakeRefusalReasonsV1, code)
-        ? `${prefix}. ${loopIntakeRefusalReasonsV1[code as keyof typeof loopIntakeRefusalReasonsV1]}`
+        ? loopIntakeRefusalReasonsV1[code as keyof typeof loopIntakeRefusalReasonsV1].replace("The request could not be prepared", prefix)
         : `${prefix} because ${reason}`;
       status.state = "refused";
       status.progress = { ...status.progress, attention: "blocked" };

@@ -1481,7 +1481,7 @@ test("B5 real A2 running envelope with terminal step failure is visible after re
   await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
     steps: [{ n: 1, role: "orchestrator", state: "failed", detail: "PRIVATE engine detail /private/scratch/key token=synthetic-secret" }] }));
   const unknown = await f.get(id);
-  assert.match(unknown.display.attention!.message, /could not complete/i);
+  assert.match(unknown.display.attention!.message, /stopped without a usable result/i);
   assert.doesNotMatch(JSON.stringify(unknown), /PRIVATE|scratch|synthetic-secret/);
 });
 
@@ -1489,7 +1489,7 @@ test("B5 active and stale A2 steps retain progress without a false refusal", asy
   const f = await fixture(t), id = await f.intake();
   for (const steps of [
     [{ n: 1, role: "orchestrator", state: "running" }],
-    [{ n: 1, role: "orchestrator", state: "blocked", stale: true }],
+    [{ n: 1, role: "orchestrator", state: "blocked", stale: [{ input_version: 2, reasons: ["answer:build"] }] }],
     [{ n: 1, role: "orchestrator", state: "failed" }, { n: 2, role: "plan", state: "running" }],
   ]) {
     await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", steps, error: null }));
@@ -1516,7 +1516,7 @@ test("B5 later step failure retains Stop authority and uses the plain refusal re
   assert.match(current.display.attention!.message, /current improvement step could not complete/);
   assert.match(current.display.attention!.message, /settings were refused/);
   assert.match(current.display.attention!.nextAction, /Ask the lead/);
-  assert.doesNotMatch(current.display.attention!.message, /first planning|Nothing was changed/);
+  assert.doesNotMatch(current.display.attention!.message, /first planning|Nothing was changed|request could not be prepared/);
   // Explicit terminal run states must remain terminal even with retained failures.
   for (const state of ["stopped", "finished"] as const) {
     const run = current.request.runLink!.loopRunId;
@@ -1537,4 +1537,59 @@ test("B5 accepted intake with an immediate blocked launch keeps its saved admiss
   assert.match(saved.display.attention!.message, /first planning step could not start/);
   assert.equal(saved.display.canStart, false);
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM control_loop_improvement_commands WHERE entry_kind='result'")).rows[0]!.n, 1);
+});
+
+
+// A2 chain_emit retains stale steps until the lead appends the replacement.
+for (const rawState of ["ready", "waiting_owner", "waiting_approval"] as const) {
+  for (const stale of [[{ input_version: 2, reasons: ["answer:build"] }], { input_version: 2, reasons: ["answer:build"] }]) {
+    test(`B5 superseded A2 ${rawState} retains its real gate with stale ${Array.isArray(stale) ? "list" : "dict"}`, async t => {
+      const f = await fixture(t), id = await f.intake(), saved = await f.get(id);
+      const question = rawState === "waiting_owner" ? { questionId: "question:build", inputVersion: 1,
+        reportSha256: "d".repeat(64), owner: true, changesInput: false } : null;
+      const approval = rawState === "waiting_approval" ? { step: "plan" as const, inputVersion: 1,
+        head: "a".repeat(40), reportSha256: "d".repeat(64) } : null;
+      // The synthetic contract reads its decoded state and decision pins from
+      // counters.fixture; top-level fields reproduce the native A2 emission.
+      await f.edit(saved.request.runLink!.loopRunId, { state: rawState === "ready" ? "ready" : "waiting",
+        question, approval, questionText: "Continue with the revised input?" });
+      await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: rawState, next: "build", error: null,
+        steps: [{ n: 1, role: "build", state: "blocked", detail: "STALE superseded input lineage", stale }] }));
+      const current = await f.get(id);
+      assert.equal(current.engine.state, rawState === "ready" ? "ready" : "waiting");
+      assert.equal(current.display.state, rawState === "waiting_owner" ? "waiting_question" : rawState);
+      assert.equal(current.engine.progress.attention, "none");
+      assert.equal(current.decisions?.gate?.kind, rawState === "ready" ? "confirm" : rawState === "waiting_owner" ? "question" : "approve");
+      assert.equal(current.display.canStop, false);
+      assert.notEqual(current.display.attention?.code, "REFUSED");
+    });
+  }
+}
+
+for (const stale of [[], {}, null, false, 0, "", undefined]) {
+  test(`B5 non-stale A2 blocked step stays blocked with stale ${JSON.stringify(stale)}`, async t => {
+    const f = await fixture(t), id = await f.intake();
+    await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
+      steps: [{ n: 1, role: "orchestrator", state: "blocked", detail: "launch failed: SETTINGS", stale }] }));
+    const current = await f.get(id);
+    assert.equal(current.display.state, "blocked");
+    assert.equal(current.engine.state, "refused");
+    assert.equal(current.decisions?.gate?.kind, "blocked");
+  });
+}
+
+test("B5 blocked step keeps actionable monitoring attention", async t => {
+  const f = await fixture(t), id = await f.intake();
+  await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
+    steps: [{ n: 1, role: "orchestrator", state: "blocked", detail: "launch failed: SETTINGS" }] }));
+  const adapter: LoopAdapterV1 = { ...f.adapter, status: async run => ({ ...await f.raw.status(run),
+    monitoring: { reasonCode: "LOGIN_REQUIRED", deadline: null, workerState: "none" } }) };
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
+    { integrityKey: KEY, adapter }, () => now);
+  const current = await bridge.status(f.identity, f.project.projectId, id);
+  assert.equal(current.display.state, "blocked");
+  assert.equal(current.decisions?.gate?.kind, "blocked");
+  assert.equal(current.display.attention?.code, "LOGIN_REQUIRED");
+  assert.match(current.display.attention!.message, /sign-in/);
+  assert.match(current.display.attention!.nextAction, /account setup/);
 });
