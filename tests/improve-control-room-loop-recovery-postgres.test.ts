@@ -61,6 +61,7 @@ test('B3a production login admission journal receipts and pending exact retries'
     const foreignScope=new ImproveControlRoomLoopServiceV1(web.client,{tenantId:'tenant:foreign',workspaceId:pgRecoveryScope.workspaceId},{integrityKey:recoveryKey,adapter});assert.deepEqual((await foreignScope.recoveryPort().scan(null,8)).targets,[]);
     const wrongWorkspace=new ImproveControlRoomLoopServiceV1(web.client,{...pgRecoveryScope,workspaceId:'workspace:foreign'},{integrityKey:recoveryKey,adapter});await assert.rejects(wrongWorkspace.recoveryPort().reconcile(target,signal()));
     identity={...identity,tokenDigest:sha256Digest('SYNTHETIC B3a new authenticated session')};
+    const replayedIntakeRoots:string[]=[];
     for(const operation of ['intake','confirm'] as const){
       const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(owner.client,operation),pgRecoveryScope,{integrityKey:recoveryKey,adapter:e.adapter});
       const intakeBody={description:'SYNTHETIC pending '+operation};
@@ -79,6 +80,7 @@ test('B3a production login admission journal receipts and pending exact retries'
       const replay=await Promise.all([owner.bridge.mutate(identity,pgRecoveryProject,operation==='intake'?null:draft.requestId,operation,body,key),web.bridge.recoveryPort().reconcile(pending,signal())]);assert.equal(replay[0].state,'accepted');
       assert.equal((await owner.bridge.mutate(identity,pgRecoveryProject,operation==='intake'?null:draft.requestId,operation,body,key)).commandId,replay[0].commandId);
       assert.equal((await web.client.query(`SELECT count(*)::int n FROM ${table} WHERE request_id=$1`,[draft.requestId])).rows[0]!.n,1);
+      if(operation==='intake')replayedIntakeRoots.push(draft.requestId);
     }
     const decisionRoots:string[]=[];
     for(const operation of ['approve','answer','stop'] as const){
@@ -98,11 +100,13 @@ test('B3a production login admission journal receipts and pending exact retries'
       assert.equal((await web.client.query('SELECT count(*)::int n FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind=\'result\'',[lost.commandId])).rows[0]!.n,1);
       assert.equal((await e.traces()).filter(v=>v.run===decision.run&&v.op===operation).length,1);
     }
-    const roots=new Set([saved.id,...decisionRoots]);
+    const roots=new Set([saved.id,...decisionRoots,...replayedIntakeRoots]);
     for(let index=1;index<18;index++)roots.add((await seedRecoveryRun({db:owner.client,scope:pgRecoveryScope,identity},e,pgRecoveryProject,Date.now,`b3a-pg-fair-${index}`,false,owner.bridge)).id);
     let cursor=null as import('../src/web/v1/improve-control-room-loop-recovery').LoopRecoveryCursorV1;const seen=new Set<string>();
     for(let pass=0;pass<3;pass++){const scan=await web.bridge.recoveryPort().scan(cursor,8);assert.ok(scan.targets.length<=8);for(const row of scan.targets)seen.add(row.requestId);cursor=scan.nextCursor;}
-    assert.equal(cursor,null);assert.deepEqual(seen,roots,'B3a production scan reaches all twenty-one roots including oldest');
+    assert.equal(cursor,null);assert.equal(roots.size,22);
+    assert.deepEqual(seen,roots,'B3a production scan reaches all twenty-two roots including the replayed unconfirmed intake');
+    console.log('B3a production scan roots=22 pages=3 limit=8 unconfirmed_intakes=1');
     const dropped=recoveryPgWeb(pg.connection('web'),adapter),connection=await dropped.pool.connect();
     const backend=(await connection.query('SELECT pg_backend_pid() AS pid')).rows[0].pid as number;
     await admin.query('SELECT pg_terminate_backend($1)',[backend]);connection.release(true);
