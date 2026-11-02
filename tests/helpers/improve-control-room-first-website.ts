@@ -3,7 +3,7 @@
 // retained-evidence verifier. Imports are inert: nothing here opens a listener,
 // database, browser or process until a caller invokes it. This helper never
 // selects a role or model; A2 and the qualified lineup do.
-import { b5TransportQualificationSchemaV1, b5DeviceServiceEvidenceSchemaV1, assertB5EvidenceSecretFreeV1, b5MappingDigestV1, b5RemovalReceiptSchemaV1, validateB5TransportV1, compareB5RemovedStatusV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, validateB5DeviceOriginV1 } from "../../scripts/workflow-journeys/first-website-device";
+import { b5RetainedTransportQualificationSchemaV1, retainB5TransportQualificationV1, b5DeviceServiceEvidenceSchemaV1, assertB5EvidenceSecretFreeV1, b5MappingDigestV1, b5RemovalReceiptSchemaV1, validateB5TransportV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, validateB5DeviceOriginV1 } from "../../scripts/workflow-journeys/first-website-device";
 import type { B5DeviceMailboxV1 } from "../../scripts/workflow-journeys/first-website-device";
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
@@ -622,7 +622,7 @@ export const b5DatabaseSnapshotSchemaV1 = z.object({ schemaVersion: z.literal(1)
 });
 type B5SnapshotV1 = z.infer<typeof b5DatabaseSnapshotSchemaV1>;
 /** The qualified pins preflight validated from the lead's configuration, never read from the manifest. */
-export type B5QualifiedPinsV1 = { realEvidence?: B5RealEvidenceQualificationV1; capture: B5CaptureQualificationV1;
+export type B5QualifiedPinsV1 = { transportQualification?: import("../../scripts/workflow-journeys/first-website-device").B5TransportQualificationV1; realEvidence?: B5RealEvidenceQualificationV1; capture: B5CaptureQualificationV1;
   providers: B5ProviderProvenanceV1; toolingRevision: string; schemaDigest: string; productBase: string; productHead: string; uid: number;
   digests: Readonly<Record<"settings" | "availability" | "authorization" | "qualification" | "assembly" | "faultInput" | "reviewInput", string>> };
 export type B5VerdictV1 = { state: "complete" | "incomplete"; reasons: string[];
@@ -882,11 +882,7 @@ function assertB5RealSessionEvidenceV1(manifest:B5ManifestV1, journey:B5JourneyV
     try {return JSON.parse(Buffer.from(artifacts.get(path) ?? []).toString("utf8")) as unknown;}
     catch {return refuse("B5_REAL_EVIDENCE_MISSING");}
   };
-  const bytes=artifacts.get("transport/qualification.json");
-  if (!bytes || b5Bytes(bytes) !== pins.capture.qualificationDigest) refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
-  const q=b5TransportQualificationSchemaV1.safeParse(parse("transport/qualification.json"));
-  if(!q.success) return refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
-  const qualification=q.data;
+  const qualification=readB5RetainedTransportV1(parse("transport/qualification.json"),pins,ms(manifest.timestamps.startedAt));
   const paths = new Set([...journey.actions.map(a=>a.receiptPath),...journey.closed.flatMap(c=>c.receipts.map(r=>r.path))]);
   for (const path of paths) {
     const receipt=b5DeviceReceiptSchemaV1.safeParse(parse(path));
@@ -912,15 +908,25 @@ function assertB5RealSessionEvidenceV1(manifest:B5ManifestV1, journey:B5JourneyV
     }
   }
 }
+/** Public projections are matched to independently loaded private qualification,
+ * whose exact hostname/login never become evidence artifacts. */
+function readB5RetainedTransportV1(value:unknown,pins:B5QualifiedPinsV1,now:number) {
+  const raw=pins.transportQualification;
+  if (!raw) return refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
+  validateB5TransportV1(raw,raw.origin,now);
+  const q=b5RetainedTransportQualificationSchemaV1.safeParse(value);
+  if (!q.success || b5MappingDigestV1(q.data) !== b5MappingDigestV1(retainB5TransportQualificationV1(raw,pins.capture.qualificationDigest)))
+    return refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
+  return q.data;
+}
 /** Every removed-mapping claim is checked against retained qualification, request
  * and owner receipt bytes. This performs no transport command or owner notification. */
 function b5RemovedMappingEvidenceMatchesV1(cleanup: NonNullable<B5VerdictV1["transportCleanup"]>, manifest:B5ManifestV1,
   artifacts:ReadonlyMap<string,Uint8Array>, pins:B5QualifiedPinsV1) {
   try {
     const bytes=artifacts.get("transport/qualification.json");
-    if (!bytes || b5Bytes(bytes) !== pins.capture.qualificationDigest) return false;
-    const raw=JSON.parse(Buffer.from(bytes).toString("utf8"));
-    const q=validateB5TransportV1(raw,raw.origin,ms(manifest.timestamps.startedAt));
+    if (!bytes) return false;
+    const q=readB5RetainedTransportV1(JSON.parse(Buffer.from(bytes).toString("utf8")),pins,ms(manifest.timestamps.startedAt));
     const request=z.object({removalNonce:z.string().regex(/^[a-f0-9]{32}$/u),requestedAt:at}).passthrough()
       .parse(JSON.parse(Buffer.from(artifacts.get("transport/removal-request.json") ?? []).toString("utf8")));
     const receipt=b5RemovalReceiptSchemaV1.parse(JSON.parse(Buffer.from(artifacts.get("transport/removal-receipt.json") ?? []).toString("utf8")));
@@ -930,8 +936,11 @@ function b5RemovedMappingEvidenceMatchesV1(cleanup: NonNullable<B5VerdictV1["tra
       && receipt.off.exitCode === 0 && receipt.status.exitCode === 0 && receipt.removalNonce === request.removalNonce
       && ms(request.requestedAt) >= ms(manifest.timestamps.startedAt) && ms(receipt.observedAt) >= ms(request.requestedAt)
       && ms(receipt.observedAt) <= ms(manifest.timestamps.finishedAt)
-      && receipt.status.afterDigest === b5MappingDigestV1(receipt.status.afterStatus)
-      && compareB5RemovedStatusV1(q.beforeStatus,receipt.status.afterStatus,q.origin);
+      // Exact before/after equality also proves that the proof entry is absent.
+      // Raw mapping digests stay private-value commitments; compare the retained
+      // projections separately rather than hashing redacted bytes as raw bytes.
+      && receipt.status.afterDigest === q.beforeDigest
+      && b5MappingDigestV1(receipt.status.afterStatus) === b5MappingDigestV1(q.beforeStatus);
   } catch { return false; }
 }
 /** Publish final teardown first and manifest last, so an interruption cannot yield a valid
@@ -964,6 +973,7 @@ export async function finalizeFirstWebsiteEvidenceV1(evidenceDir: string,
   if (!teardown.transportCleanup) refuse("B5_TRANSPORT_CLEANUP_INCOMPLETE");
   teardown = { ...teardown, retention:await qualifyB5RetentionV1(retention) };
   const publish = async (name: string, value: unknown) => {
+    assertB5EvidenceSecretFreeV1(value);
     const bytes = Buffer.from(JSON.stringify(value) + "\n");
     if (bytes.length > 1 << 20) refuse("B5_ARTIFACT_BYTES");
     const pending = join(evidenceDir, `.pending-${name}`);
@@ -985,6 +995,8 @@ export async function finalizeFirstWebsiteEvidenceV1(evidenceDir: string,
       else {
         if ((stat.mode & 0o777) !== 0o600) refuse("B5_ARTIFACT_BYTES");
         const bytes = await readFirstWebsitePrivateBytesV1(file, evidenceDir);
+        assertB5EvidenceSecretFreeV1(path);
+        if (!/\.(?:png|jpe?g|mp4|mov)$/u.test(path)) assertB5EvidenceSecretFreeV1(bytes.toString("utf8"));
         if (path.endsWith(".json")) {
           let value:unknown; try {value=JSON.parse(bytes.toString("utf8"));} catch {refuse("B5_ARTIFACT_BYTES");}
           assertB5EvidenceSecretFreeV1(value);
@@ -1048,6 +1060,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
     try { return schema.parse(JSON.parse(Buffer.from(bytes).toString("utf8"))); } catch { return refuse(code); }
   };
   const manifestBytes = await load("manifest.json");
+  assertB5EvidenceSecretFreeV1(manifestBytes.toString("utf8"));
   let rawManifest: { classification?: { providers?: unknown } } | undefined;
   try { rawManifest = JSON.parse(Buffer.from(manifestBytes).toString("utf8")); } catch { refuse("B5_MANIFEST_INVALID"); }
   if (rawManifest && rawManifest.classification?.providers === undefined) refuse("B5_PROVIDER_PROVENANCE_MISSING");
@@ -1057,6 +1070,8 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   for (const entry of manifest.artifacts) {
     const bytes = await load(entry.path);
     if (b5Bytes(bytes) !== entry.sha256 || bytes.length !== entry.bytes || artifacts.has(entry.path)) refuse("B5_ARTIFACT_BYTES", entry.path);
+    assertB5EvidenceSecretFreeV1(entry.path);
+    if (!/\.(?:png|jpe?g|mp4|mov)$/u.test(entry.path)) assertB5EvidenceSecretFreeV1(Buffer.from(bytes).toString("utf8"));
     if (entry.path.endsWith(".json")) {
       let value:unknown; try {value=JSON.parse(Buffer.from(bytes).toString("utf8"));} catch {refuse("B5_ARTIFACT_BYTES");}
       assertB5EvidenceSecretFreeV1(value);

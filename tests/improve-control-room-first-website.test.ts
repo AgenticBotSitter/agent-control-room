@@ -318,7 +318,7 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
   for (const a of journey.actions) {
     const sessionNonce = a.sequence.toString(16).padStart(32,"0"), screen = a.name === "finish-phone" ? "07-finish-phone" : a.name === "finish-desktop" ? "08-finish-desktop" : a.name === "retained" ? "09-retained" : "01-prepare";
     const capturePath = `screens/${screen}.png`, captureSourcePath=`captures/${screen}.png`, captureDigest = H.b5Bytes(raw[capturePath]!);
-    files[a.receiptPath] = { schemaVersion:1, sessionNonce, sequence:a.sequence, phase:phases[a.name], origin:"https://proof-fixture.ts.net:60462", device:a.device,
+    files[a.receiptPath] = { schemaVersion:1, sessionNonce, sequence:a.sequence, phase:phases[a.name], origin:"http://127.0.0.1:60460", device:a.device,
       expiresAt:time(50), binding:{requestId,runLinkId:card.evidence.binding.runLinkId,inputVersion:card.localVersion}, observedAt:a.at,
       real:false, browser:"synthetic receipt fixture", actions:[words[a.name]],
       captures:[{path:captureSourcePath,sha256:captureDigest,device:a.device,sessionNonce,sequence:a.sequence,capturedAt:a.at}],
@@ -1233,16 +1233,16 @@ test("F04b removed mapping claims require retained owner receipt and unchanged s
   const request={removalNonce:'a'.repeat(32),requestedAt:'2026-10-30T12:43:00.000Z'};
   const receipt={schemaVersion:1,actor:'owner',removalNonce:request.removalNonce,observedAt:'2026-10-30T12:44:00.000Z',installSettled:true,installCancelled:false,
     off:{command:D.B5_DEVICE_OFF_COMMAND_V1,port:60462,exitCode:0},status:{command:D.B5_DEVICE_STATUS_COMMAND_V1,exitCode:0,afterStatus:beforeStatus,afterDigest:q.beforeDigest},beforeDigest:q.beforeDigest,installedDigest:q.installedDigest};
-  const pins=structuredClone(e.fixturePins);pins.capture.qualificationDigest=H.b5Bytes(JSON.stringify(q));
+  const pins=structuredClone(e.fixturePins);pins.capture.qualificationDigest=H.b5Bytes(JSON.stringify(q));pins.transportQualification=D.b5TransportQualificationSchemaV1.parse(q);
   const write=async (change:(v:Record<string,unknown>)=>void=()=>{})=>{
     await e.write(v=>{(v.files['journey.json'] as {captureQualificationDigest:string}).captureQualificationDigest=pins.capture.qualificationDigest;});
     await mkdir(join(e.dir,'transport'),{mode:0o700});
     const mutable=structuredClone(receipt);change(mutable);
-    for(const [name,value] of [['qualification',q],['removal-request',request],['removal-receipt',mutable]] as const)
-      await writeFile(join(e.dir,`transport/${name}.json`),JSON.stringify(value),{mode:0o600});
+    for(const [name,value] of [['qualification',D.retainB5TransportQualificationV1(pins.transportQualification!,pins.capture.qualificationDigest)],['removal-request',request],['removal-receipt',mutable]] as const)
+      await writeFile(join(e.dir,`transport/${name}.json`),JSON.stringify(D.redactB5EvidenceV1(value,pins.transportQualification!)),{mode:0o600});
     const manifest=JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8')),teardown=JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8'));
     teardown.transportCleanup={...noMappingCleanup(),disposition:'mapping-removed',mappingAttempted:true,comparison:true,
-      beforeDigest:q.beforeDigest,installedDigest:q.installedDigest,afterDigest:D.b5MappingDigestV1(mutable.status.afterStatus),removalReceiptDigest:D.b5MappingDigestV1(mutable)};
+      beforeDigest:q.beforeDigest,installedDigest:q.installedDigest,afterDigest:D.b5MappingDigestV1(mutable.status.afterStatus),removalReceiptDigest:D.b5MappingDigestV1(D.redactB5EvidenceV1(mutable,pins.transportQualification!))};
     await H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'removed-work')]});
   };
   const verify=()=>H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins,
@@ -1478,13 +1478,25 @@ for (const realSession of [false, true]) test(realSession ? 'B5 controller write
     // This is entirely in-process unit data, not a native device/provider claim.
   }
   await C.writeFirstWebsiteControllerEvidenceV1(writerInput);
-  const verdict=await H.verifyFirstWebsiteEvidenceV1(dir,{candidateRepository:e.p.project,pins:{...e.fixturePins,digests:preflight.digests,...(realSession ? {realEvidence:(preflight as unknown as {realEvidence:B5Helper.B5RealEvidenceQualificationV1}).realEvidence} : {})},readCard:async()=>({card,responseDigest:H.b5Bytes('unit cold response')}),
+  const verdict=await H.verifyFirstWebsiteEvidenceV1(dir,{candidateRepository:e.p.project,pins:{...e.fixturePins,digests:preflight.digests,...(realSession ? {realEvidence:(preflight as unknown as {realEvidence:B5Helper.B5RealEvidenceQualificationV1}).realEvidence,transportQualification:D.b5TransportQualificationSchemaV1.parse(JSON.parse(await readFile(config.device.transportQualification,'utf8')))} : {})},readCard:async()=>({card,responseDigest:H.b5Bytes('unit cold response')}),
     retention:{proofRoot:root,candidateRepository:e.p.project,cleanupTargets:[join(root,'closed-run')]}});
   assert.equal(verdict.state,realSession ? 'complete' : 'incomplete');
   assert.deepEqual(verdict.reasons,realSession ? [] : ['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
   if(realSession) {
     const finalized=JSON.parse(await readFile(join(dir,'manifest.json'),'utf8'));
     assert.equal(finalized.classification.device,'real');
+    for (const entry of finalized.artifacts as {path:string}[]) {
+      if (!entry.path.endsWith('.json')) continue;
+      const retained=await readFile(join(dir,entry.path),'utf8');
+      assert.doesNotMatch(retained,/unit-proof\.ts\.net|owner@example\.invalid/iu,entry.path);
+    }
+    const retainedQ=JSON.parse(await readFile(join(dir,'transport/qualification.json'),'utf8'));
+    assert.equal(retainedQ.ownerLogin,undefined);
+    assert.match(retainedQ.origin,/^https:\/\/private-tailnet-1\.invalid:60462$/u);
+    const originalQ=JSON.parse(await readFile(config.device.transportQualification,'utf8'));
+    assert.equal(originalQ.origin,config.device.origin,'exact origin stays in private run data');
+    assert.equal(originalQ.ownerLogin,'owner@example.invalid');
+    console.log('RESULT: PASS retained qualification and receipts exclude private host/login; private qualified packet preserves exact admission values');
     assert.equal(finalized.pins.jobSandboxDigest,(preflight as unknown as {realEvidence:{jobSandboxDigest:string}}).realEvidence.jobSandboxDigest);
     let negative=0;
     const refuse=async(code:string,change:(value:typeof writerInput)=>void)=>{
@@ -1632,4 +1644,28 @@ test('B5 evidence finalizer refuses retained codes, cookies and tokens in JSON a
     await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'removed-work')]}),{code:'B5_EVIDENCE_SECRET'});
   }
   console.log('RESULT: PASS retained owner-code, cookie, access-token, auth-header and bearer-token artifacts refuse B5_EVIDENCE_SECRET');
+});
+
+test('B5 retained evidence refuses private hosts and owner logins in JSON, text and manifest', async t=>{
+  await load(); const e=await evidenceSet(t);
+  for (const sensitive of ['https://unit-private.ts.net:60462','unit-owner@example.invalid']) {
+    for (const path of ['extra.json','extra.txt']) {
+      await e.write();
+      await writeFile(join(e.dir,path),path.endsWith('.json') ? JSON.stringify({nested:sensitive}) : sensitive,{mode:0o600});
+      const manifest=H.b5ManifestSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8')));
+      const teardown=H.b5TeardownSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8')));
+      await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,manifest,teardown,{proofRoot:e.p.dir,candidateRepository:e.p.project,cleanupTargets:[join(e.p.dir,'closed-run')]}),{code:'B5_EVIDENCE_SECRET'});
+      const bytes=await readFile(join(e.dir,path));manifest.artifacts.push({path,bytes:bytes.length,sha256:H.b5Bytes(bytes)});
+      // Rehash teardown from the failed finalization to reach the secret guard.
+      for (const entry of manifest.artifacts) {const b=await readFile(join(e.dir,entry.path));entry.sha256=H.b5Bytes(b);entry.bytes=b.length;}
+      await writeFile(join(e.dir,'manifest.json'),JSON.stringify(manifest));
+      await assert.rejects(e.verify(),{code:'B5_EVIDENCE_SECRET'});
+    }
+    await e.write();
+    const manifest=JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8'));
+    manifest.pins.inputBindings[0].path='/scratch/'+sensitive;
+    await writeFile(join(e.dir,'manifest.json'),JSON.stringify(manifest));
+    await assert.rejects(e.verify(),{code:'B5_EVIDENCE_SECRET'});
+  }
+  console.log('RESULT: PASS finalizer and verifier refuse private host and owner login in retained JSON/text; manifest guard refuses both');
 });

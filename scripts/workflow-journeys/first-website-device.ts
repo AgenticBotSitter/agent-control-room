@@ -48,6 +48,37 @@ export const b5TransportQualificationSchemaV1 = z.object({
   beforeStatus: status, installedStatus: status, beforeDigest: digest, installedDigest: digest,
 }).strict();
 export type B5TransportQualificationV1 = z.infer<typeof b5TransportQualificationSchemaV1>;
+/** R3 transport/identity confinement: exact values stay in private run data.
+ * Retained receipts keep their URL-shaped origin as a non-identifying label.
+ * Labels are stable within the independently qualified packet, never public
+ * hashes of a hostname/login that could be guessed from a small dictionary. */
+export function redactB5EvidenceV1(value: unknown, qualification: B5TransportQualificationV1): unknown {
+  const hosts = [...new Set(JSON.stringify(qualification).toLowerCase().match(/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ts\.net\b/gu) ?? [])].sort();
+  const redact = (v: unknown): unknown => {
+    if (typeof v === "string") return v.replace(/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.ts\.net\b/giu, host=>{
+      const index=hosts.indexOf(host.toLowerCase()); need(index >= 0,"B5_EVIDENCE_SECRET");
+      return `private-tailnet-${index+1}.invalid`;
+    }).replace(/[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*/giu,"redacted-owner");
+    if (Array.isArray(v)) return v.map(redact);
+    if (v && typeof v === "object") {
+      const result: Record<string,unknown> = {};
+      for (const [key,child] of Object.entries(v)) {
+        if (key === "ownerLogin") continue;
+        const safeKey=redact(key) as string;
+        need(!Object.hasOwn(result,safeKey),"B5_EVIDENCE_SECRET");
+        result[safeKey]=redact(child);
+      }
+      return result;
+    }
+    return v;
+  };
+  return redact(value);
+}
+export const b5RetainedTransportQualificationSchemaV1 = b5TransportQualificationSchemaV1.omit({ownerLogin:true})
+  .extend({origin:z.string().regex(/^https:\/\/private-tailnet-[1-9][0-9]*\.invalid:60462$/u),sourceDigest:digest});
+export function retainB5TransportQualificationV1(q:B5TransportQualificationV1, sourceDigest:string) {
+  return b5RetainedTransportQualificationSchemaV1.parse({...redactB5EvidenceV1(q,q) as object,sourceDigest});
+}
 export function validateB5DeviceOriginV1(value: string) {
   try {
     const u = new URL(value);
@@ -160,9 +191,10 @@ export type B5DeviceReceiptV1 = z.infer<typeof b5DeviceReceiptSchemaV1>;
 // R3 “No-download device evidence”: allowlisted observations only. Never retain
 // request bodies, headers, session cookies, login exchanges or network bodies.
 export function assertB5EvidenceSecretFreeV1(value: unknown): void {
-  if (typeof value === "string") need(!/(?:control_room_local_owner=|b5_correlation=|\bBearer\s|-----BEGIN .*PRIVATE KEY)/iu.test(value), "B5_EVIDENCE_SECRET");
+  if (typeof value === "string") need(!/(?:control_room_local_owner=|b5_correlation=|\bBearer\s|-----BEGIN .*PRIVATE KEY|[a-z0-9.-]+\.ts\.net\b|[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*)/iu.test(value), "B5_EVIDENCE_SECRET");
   else if (value && typeof value === "object") for (const [key, child] of Object.entries(value)) {
-    need(!/^(?:cookies?|set[-_]?cookie|authorization|headers?|owner[-_]?code|(?:access|refresh)[-_]?token|token|password|secret|storage[-_]?state)$/iu.test(key), "B5_EVIDENCE_SECRET");
+    need(!/^(?:cookies?|set[-_]?cookie|authorization|headers?|owner[-_]?(?:code|login)|(?:access|refresh)[-_]?token|token|password|secret|storage[-_]?state)$/iu.test(key), "B5_EVIDENCE_SECRET");
+    assertB5EvidenceSecretFreeV1(key);
     assertB5EvidenceSecretFreeV1(child);
   }
 }

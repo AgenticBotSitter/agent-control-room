@@ -12,7 +12,7 @@ import {
   type FirstWebsitePreflightV1, type FirstWebsiteHostV1,
 } from "../../tests/helpers/improve-control-room-first-website";
 import {
-  assertB5EvidenceSecretFreeV1, b5DeviceServiceEvidenceSchemaV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, createB5DeviceCleanupV1, type B5TransportQualificationV1,
+  redactB5EvidenceV1, retainB5TransportQualificationV1, assertB5EvidenceSecretFreeV1, b5DeviceServiceEvidenceSchemaV1, b5DeviceReceiptSchemaV1, B5DeviceRefusalV1, createB5DeviceCleanupV1, type B5TransportQualificationV1,
   loadB5TransportV1, waitB5DeviceJsonV1, writeB5DeviceRequestV1,
   B5_DEVICE_INSTALL_COMMAND_V1, B5_DEVICE_OFF_COMMAND_V1, B5_DEVICE_STATUS_COMMAND_V1, b5MappingDigestV1,
   type B5DeviceRequestV1, type B5DeviceMailboxV1,
@@ -724,7 +724,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         await restart(); restarts.push({phase:"final",at:new Date().toISOString()}); s = await status(); await phase("retained", "phone", s);
         await write("controller-observations", { actions, observations, audits, snapshot: await host.proof.readSnapshot({ evidenceOnly: true }), statusChecks: statusChecks.map(check => check.record) });
         wroteObservations = true;
-        const pins: B5QualifiedPinsV1 = { realEvidence: preflight.realEvidence, capture: preflight.capture, providers: preflight.providers, toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
+        const pins: B5QualifiedPinsV1 = { transportQualification:q, realEvidence: preflight.realEvidence, capture: preflight.capture, providers: preflight.providers, toolingRevision: config.a2.toolingRevision, schemaDigest: config.a2.schemaDigest,
           productBase: config.product.baseRevision, productHead: config.product.candidateRevision, uid: preflight.uid,
           digests: { settings: digests.settings!, availability: digests.availability!, authorization: digests.authorization!, qualification: digests.qualification!,
             assembly: digests.assembly!, faultInput: digests.faultInput!, reviewInput: digests.reviewInput! } };
@@ -835,7 +835,7 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
     for(const kind of ["phone","desktop"] as const)
       need(input.actions.some(a=>a.receipt.device === kind),kind === "phone" ? "B5_PHONE_EVIDENCE_MISSING" : "B5_DESKTOP_EVIDENCE_MISSING");
     for(const item of input.actions) {
-      assertB5EvidenceSecretFreeV1(item);
+      assertB5EvidenceSecretFreeV1(redactB5EvidenceV1(item,transport));
       need(item.receipt.real,"B5_DEVICE_REAL");
       const r=b5DeviceReceiptSchemaV1.safeParse(item.receipt);
       need(r.success,"B5_DEVICE_SCHEMA");
@@ -849,6 +849,11 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
 
   const saved = new Map<string,string>();
   const save = async (path:string, bytes:Uint8Array|string) => {
+    if (transport && path.endsWith(".json")) {
+      const value=redactB5EvidenceV1(parseStrictJsonV1(Buffer.from(bytes).toString("utf8")),transport);
+      assertB5EvidenceSecretFreeV1(value);
+      bytes=JSON.stringify(value)+"\n";
+    }
     need(/^[a-z0-9][a-z0-9./-]{0,255}$/u.test(path) && !path.includes("..") && Buffer.byteLength(bytes)<=1<<20,"B5_ARTIFACT_BYTES");
     if(saved.has(path)) { need(saved.get(path) === b5Bytes(bytes),"B5_ARTIFACT_BYTES"); return; }
     saved.set(path,b5Bytes(bytes));
@@ -866,7 +871,7 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
       throw error;
     });
     if(realSession) {
-      const original=parseStrictJsonV1(receiptBytes.toString("utf8")); assertB5EvidenceSecretFreeV1(original);
+      const original=parseStrictJsonV1(receiptBytes.toString("utf8")); assertB5EvidenceSecretFreeV1(redactB5EvidenceV1(original,transport!));
       // A changed in-memory capture digest must fail correlation before any
       // stale receipt can be mistaken for accepted evidence.
       for(const c of r.captures) need(b5Bytes(await readFirstWebsitePrivateBytesV1(join(root,"device",c.path),root)) === c.sha256,"B5_CAPTURE_CORRELATION");
@@ -974,10 +979,13 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
   await json("journey.json",journey);
   await json("database-snapshot.json",input.snapshot); await json("independent-status-check.json",statusChecks.map(c=>c.record));
   const retained=actions.find(a=>a.name === "retained"); need(retained,"B5_ACTION_EVIDENCE");
+  let retainedCleanup=cleanup;
   if(realSession) {
-    await save("transport/qualification.json",await readFirstWebsitePrivateBytesV1(p.config.device.transportQualification,root));
+    await json("transport/qualification.json",retainB5TransportQualificationV1(transport!,p.capture.qualificationDigest));
     for(const name of ["removal-request","removal-receipt"])
       await save(`transport/${name}.json`,await readFirstWebsitePrivateBytesV1(join(root,"device",`${name}.json`),root));
+    const removal=parseStrictJsonV1((await readFirstWebsitePrivateBytesV1(join(root,"device/removal-receipt.json"),root)).toString("utf8"));
+    retainedCleanup={...cleanup,removalReceiptDigest:b5MappingDigestV1(redactB5EvidenceV1(removal,transport!))};
   }
   const jobSandboxDigest=realPins?.jobSandboxDigest ?? p.rehearsal!.jobSandboxDigest;
   return finalizeFirstWebsiteEvidenceV1(dir,{
@@ -993,7 +1001,7 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
     timestamps:{startedAt:input.startedAt,finishedAt:new Date().toISOString()},
   }, {schemaVersion:1,b3cCleanup:"complete",scratchAbsent:owned.runScratchAbsent,ownedProcesses:owned.processCount,ownedListenersReleased:owned.listenerReleased,
     protectedListenersUntouched:true,postgresStopped:owned.postgresStopped,cleanupAt:input.cleanupAt,
-    retainedRead:{at:retained.at,candidateRevision:card.candidateRevision,receiptDigest:card.recordDigest},transportCleanup:cleanup},
+    retainedRead:{at:retained.at,candidateRevision:card.candidateRevision,receiptDigest:card.recordDigest},transportCleanup:retainedCleanup},
   {proofRoot:root,candidateRepository:run.repository,cleanupTargets:run.cleanup.targets.map(t=>t.source)});
 }
 

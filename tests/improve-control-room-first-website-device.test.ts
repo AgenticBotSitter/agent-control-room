@@ -13,7 +13,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile
 import { join, resolve } from "node:path";
 import { createB5DeviceMailboxV1, b5DeviceHashV1, b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1,
   writeB5DeviceReceiptV1, writeB5DeviceRequestV1, waitB5DeviceJsonV1,
-  parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
+  assertB5EvidenceSecretFreeV1, redactB5EvidenceV1, retainB5TransportQualificationV1, parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
   b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, type B5TransportQualificationV1,
   type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
 
@@ -692,4 +692,25 @@ test('B5 desktop close captures browser facts and still requires the owner attes
     assert.equal(closed,1);
   } finally {chromium.launch=originalLaunch;}
   console.log('RESULT: PASS simulated desktop browser closes before capture handoff; no invented owner attestation; existing inbox receipt completes phase; browser close once');
+});
+
+for (const [name,value] of [
+  ['private hostname','https://fixture.ts.net:60462'],
+  ['owner login','owner@example.invalid'],
+  ['hostname key',{'fixture.ts.net:443':{}}],
+  ['login key',{'owner@example.invalid':'unrelated'}],
+  ['owner field',{ownerLogin:'redacted'}],
+] as const) test(`B5 evidence secret guard refuses ${name} anywhere`,()=>{
+  assert.throws(()=>assertB5EvidenceSecretFreeV1({nested:[value]}),{code:'B5_EVIDENCE_SECRET'});
+});
+test('B5 retained transport projects identifying fields without weakening private admission',()=>{
+  const q=qualification(),retained=retainB5TransportQualificationV1(q,b5DeviceHashV1(JSON.stringify(q)));
+  assertB5EvidenceSecretFreeV1(retained);
+  assert.equal(retained.origin,'https://private-tailnet-1.invalid:60462');
+  assert.ok(!('ownerLogin' in retained));
+  assert.doesNotMatch(JSON.stringify(retained),/fixture\.ts\.net|owner@example\.invalid/iu);
+  assert.deepEqual(retained.beforeStatus,redactB5EvidenceV1(q.beforeStatus,q));
+  assert.equal(retained.beforeDigest,q.beforeDigest);
+  assert.equal(validateB5TransportV1(q,remote,now).ownerLogin,'owner@example.invalid');
+  console.log('RESULT: PASS retained transport labels hide host/login, retain mapping commitments, and preserve exact private admission');
 });
