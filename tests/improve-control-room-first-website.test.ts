@@ -163,6 +163,21 @@ test("B5 preflight accepts only sealed staged recipe runtime and exact recipes",
   assert.equal(await check(bound), "B5_RECIPE_MISMATCH", "symlink cannot grant runtime identity");
 });
 
+for (const bareIndex of [0, 1]) test(`B5 recipes refuse mixed runtime bindings with bare recipe ${bareIndex}`, async t => {
+  await load();
+  const s = await scratch(t), node = join(s.root, "runtime/bin/node");
+  await mkdir(join(s.root, "runtime/bin"), { recursive: true });
+  await writeFile(node, "fixture executable bytes", { mode: 0o700 });
+  await writeFile(join(s.root, "config/b5-handoff.json"),
+    JSON.stringify({ nodeSha256: H.b5Bytes(await readFile(node)).slice(7) }), { mode: 0o600 });
+  const bound = H.B5_RECIPES.map(r => ({ ...r, argv: [node, ...r.argv.slice(1)] }));
+  await H.requireB5RecipesV1(bound, s.root);
+  await H.requireB5RecipesV1(H.B5_RECIPES, s.root);
+  const mixed = bound.map((r, i) => i === bareIndex ? H.B5_RECIPES[i] : r);
+  await assert.rejects(H.requireB5RecipesV1(mixed, s.root),
+    (error: unknown) => error instanceof H.B5RefusalV1 && error.code === "B5_RECIPE_MISMATCH");
+});
+
 test("B5 preflight checks product, ports and identity before any effect", async t => {
   await load();
   const s = await scratch(t), product = join(s.parent, "product");
