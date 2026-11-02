@@ -16,7 +16,8 @@ import { buildProjectPresentationV1 } from "../../src/config/v1/project-presenta
 import { sha256Digest } from "../../src/security";
 import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 import { databaseSqlStateV1 } from "../../src/persistence/database";
-import { loopBridgeBindingSchemaV1, loopImprovementStatusSchemaV1 } from "../../src/improve-control-room/v1/schemas";
+import { loopBridgeBindingSchemaV1 } from "../../src/improve-control-room/v1/schemas";
+import { loopDecisionStatusSchemaV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 import { ImproveControlRoomDeskServiceV1 } from "../../src/improve-control-room/v1/service";
 import { createMacLocalWebProcessV1 } from "../../src/web/v1/mac-local-web-process";
@@ -74,6 +75,9 @@ function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unkn
 // The owner code remains in memory and is available only to a trusted local Node
 // caller, never a route, argument, receipt or diagnostic. This callback is also
 // the native browser's ordinary sign-in channel; it issues no session itself.
+/** The /status route returns the nested decision wrapper; the flat display record is its `display` member. */
+export function parseFirstWebsiteStatusBodyV1(body: unknown) { return loopDecisionStatusSchemaV1.parse(body).display; }
+
 export async function withFirstWebsiteOwnerCodeV1<T>(host: FirstWebsiteHostV1, use: (code: string) => Promise<T>) {
   return host.proof.withOwnerCode(use);
 }
@@ -537,7 +541,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
               const catalog = await get("/api/v1/projects"); await catalog.arrayBuffer();
               need(catalog.status === 200, "B5_HOST_COLD_CATALOG");
               const statusRead = await get(requestPath + "/status"); need(statusRead.status === 200, "B5_HOST_COLD_STATUS");
-              const observed = loopImprovementStatusSchemaV1.parse(await statusRead.json());
+              const observed = parseFirstWebsiteStatusBodyV1(await statusRead.json());
               need(observed.engineRevision === status.revision && observed.startState === "started" && observed.confirmationCurrent
                 && observed.runLinkId === link.id && observed.localVersion === Number(input.version), "B5_HOST_COLD_STATUS");
               // The real status read verifies the unique signed start and its
