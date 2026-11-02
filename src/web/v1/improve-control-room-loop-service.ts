@@ -397,7 +397,7 @@ export class ImproveControlRoomLoopServiceV1 {
         engineRevision: outcome?.revision ?? 0, state: inProgress ? null : "blocked", startState: "not_started", confirmationCurrent: false,
         canStart: false, canStop: false, progress: null, attention: { code, message, nextAction: refused ? "Correct the configuration, then prepare a new request. No work was started."
           : inProgress ? "Wait while the saved request is linked. This status is limited to two minutes from intake."
-          : "Check this saved request before preparing another one." },
+          : "Reload this page to check whether your request is ready. If it is still not linked, use Prepare request to try again." },
         observedAt: new Date(this.clock()).toISOString() });
       const engine: LoopEngineStatusV1 = { run: { adapterId: intakeClaim.binding.adapterId, loopRunId: intakeClaim.binding.loopRunId,
         toolingRevision: intakeClaim.binding.toolingRevision, a2SchemaVersion: 1 }, revision: outcome?.revision ?? 0,

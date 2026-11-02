@@ -689,7 +689,7 @@ for (const pending of [true, false]) test(`B5 unlinked intake renders ${pending 
   const attention = pending ? { code: "INTAKE_IN_PROGRESS", message: "Intake in progress.",
     nextAction: "Wait while the saved request is linked. This status is limited to two minutes from intake." }
     : { code: "INTAKE_TIMEOUT", message: "Intake could not be confirmed within two minutes.",
-      nextAction: "Ask the lead to check this saved request before preparing another one." };
+      nextAction: "Reload this page to check whether your request is ready. If it is still not linked, use Prepare request to try again." };
   const local = { ...saved, request: { ...saved.request, runLink: null, savedAuthorization: false },
     display: { ...saved.display, runLinkId: null, state: pending ? null : "blocked", startState: "not_started",
       confirmationCurrent: false, canStart: false, canStop: false, attention },
@@ -709,6 +709,8 @@ for (const pending of [true, false]) test(`B5 unlinked intake renders ${pending 
   try {
     await settle();
     assert.match(m.text(), pending ? /Intake in progress\./ : /Intake could not be confirmed within two minutes\./);
+    assert.ok(m.text().includes(attention.nextAction));
+    if (!pending) assert.ok(m.button("Prepare request"), "the suggested phone control is present");
     assert.ok([...m.dom.window.document.querySelectorAll(pending ? '[role="status"]' : '[role="alert"]')]
       .some(node => node.textContent?.includes(attention.message)));
     assert.equal(m.button("Start confirmed work"), undefined); assert.equal(m.button("Stop this run"), undefined);
