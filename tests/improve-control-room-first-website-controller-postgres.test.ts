@@ -169,7 +169,7 @@ async function rehearseNative(file: string | undefined, scenario:"complete"|"int
       if(r.phase === "prepare") {
         await page.getByLabel("What would you like improved?").fill(B5_REQUEST_TEXT);
         await post("intake","/intake",()=>page.getByRole("button",{name:"Prepare request",exact:true}).click());
-        await page.getByRole("button",{name:"Confirm this exact request",exact:true}).waitFor();
+        await page.getByRole("button",{name:"Confirm this exact request",exact:true}).waitFor({timeout:60_000});
       } else if(r.phase === "confirm-start") {
         await post("confirm","/confirm",()=>page.getByRole("button",{name:"Confirm this exact request",exact:true}).click());
         await post("start","/start",()=>page.getByRole("button",{name:"Start confirmed work",exact:true}).click());

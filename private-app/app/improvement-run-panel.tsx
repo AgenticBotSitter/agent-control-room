@@ -17,6 +17,21 @@ const matches = (row: LoopImprovementRequestViewV1, status: LoopImprovementStatu
   && status.localVersion === row.currentVersion && status.description === row.description
   && status.requestSha256 === row.requestSha256 && status.settingsSha256 === row.settingsSha256;
 
+// Bound the eager reads to the original intake time, including across desk
+// rebinding, selection changes and reloads. The shared reader still owns
+// visibility, non-overlap and error backoff.
+export function useFirstGatePolling(createdAt: string | undefined, waiting: boolean) {
+  const deadline = createdAt ? Date.parse(createdAt) + 120_000 : 0;
+  const [expired, setExpired] = useState(0);
+  const fast = waiting && Number.isFinite(deadline) && deadline > Date.now() && expired !== deadline;
+  useEffect(() => {
+    if (!fast) return;
+    const timer = setTimeout(() => setExpired(deadline), Math.min(120_000, deadline - Date.now()));
+    return () => clearTimeout(timer);
+  }, [deadline, fast]);
+  return fast;
+}
+
 export function ImprovementRunPanel({ projectId, requests, fresh, refreshDesk }: {
   projectId: string; requests: LoopImprovementRequestViewV1[]; fresh: boolean; refreshDesk?(): void;
 }) {
@@ -58,10 +73,14 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
   const [retry, setRetry] = useState({ start: false, stop: false });
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const [firstGateSeen, setFirstGateSeen] = useState(false);
+  const fast = useFirstGatePolling(row.createdAt, !row.savedAuthorization && !firstGateSeen);
   const identity = binding(row);
   const clearProtected = () => { verifiedRead.current = false; safeRef.current = undefined; setSafe(undefined); actions.current = {}; setRetry({ start: false, stop: false }); setNotices({}); };
   const read = usePolledRead({ key: `loop-status:${identity}:${epoch}`, shareKey: `loop-status:${identity}:${epoch}`,
-    baseIntervalMs: 30_000, enabled: true, dropValueOnError: true,
+    baseIntervalMs: fast ? 2_500 : 30_000, enabled: true, dropValueOnError: true,
+    // A still-pending intake must not stretch its successful reads to 10s.
+    unchanged: fast ? () => false : undefined,
     read: async signal => {
       verifiedRead.current = false;
       const captured = writeEpoch.current;
@@ -73,6 +92,9 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       return status;
     },
     onAccept: status => {
+      if (status.snapshot.decisions?.gate || status.confirmationCurrent || status.startState !== "not_started"
+        || status.snapshot.engine.state !== "draft"
+        || status.attention && status.attention.code !== "INTAKE_IN_PROGRESS") setFirstGateSeen(true);
       const previous = safeRef.current;
       verifiedRead.current = true; safeRef.current = status; setSafe(status);
       if (!previous || previous.engineRevision !== status.engineRevision || previous.state !== status.state)

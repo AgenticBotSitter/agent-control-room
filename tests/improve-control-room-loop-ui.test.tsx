@@ -673,3 +673,73 @@ for (const pending of [true, false]) test(`B5 unlinked intake renders ${pending 
     assert.equal(wire.posts.length, 0);
   } finally { await m.close(); await f.close(); }
 });
+
+// Drive the real workspace and polling hook with an intake snapshot, without
+// waiting two wall-clock minutes or starting an engine/controller process.
+for (const scenario of ["gate", "cap", "unlinked", "link", "settled", "old"] as const) test(`B5 first-gate polling ${scenario}`, async t => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const desk = await (await wire.fetcher(`/api/v1/projects/${f.project.projectId}/improvements/loop/desk`)).json();
+  const start = now;
+  const unlinked = scenario === "unlinked" || scenario === "link";
+  desk.loopRequests = desk.loopRequests.map((row: typeof saved.request) => ({ ...row,
+    createdAt: new Date(start - (scenario === "old" ? 120_001 : 0)).toISOString(),
+    savedAuthorization: scenario === "settled", ...(unlinked ? { runLink: null } : {}) }));
+  let gate = false;
+  const reads: { status: number[]; desk: number[] } = { status: [], desk: [] };
+  const fetcher = (async (input, options) => {
+    assert.equal(options?.method ?? "GET", "GET", "polling never issues a command");
+    const path = String(input);
+    if (path.endsWith("/loop/desk")) { reads.desk.push(Date.now()); return Response.json(desk); }
+    if (path.endsWith("/status")) {
+      reads.status.push(Date.now());
+      return Response.json({ ...saved, request: desk.loopRequests[0],
+        display: { ...saved.display, ...(!desk.loopRequests[0].runLink ? { runLinkId: null } : {}),
+          state: scenario === "settled" ? "ready" : null, confirmationCurrent: scenario === "settled", canStart: false, canStop: false },
+        engine: { ...saved.engine, state: scenario === "settled" ? "ready" : "draft", confirmation: null },
+        decisions: { observedAt: saved.display.observedAt, gate: gate ? { kind: "confirm" } : null } });
+    }
+    return Response.json({}, { status: 404 });
+  }) as typeof fetch;
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: start });
+  const flush = async () => { await act(async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); }); };
+  const tick = async (ms: number) => { await act(async () => { t.mock.timers.tick(ms); }); await flush(); };
+  const m = await mount(f.project.projectId, fetcher, `#request=${encodeURIComponent(f.requestId)}`);
+  try {
+    await flush();
+    assert.ok(reads.status.length > 0, "initial status read accepted");
+    if (scenario === "settled" || scenario === "old") {
+      const before = reads.status.length;
+      await tick(5_000);
+      assert.equal(reads.status.length, before, "settled and old work keep ordinary cadence");
+    } else {
+      const before = reads.status.length;
+      await tick(2_500); await tick(2_500);
+      assert.ok(reads.status.length >= before + 2, "unchanged first-gate status polls every 2.5 seconds");
+      if (scenario === "gate") {
+        gate = true; await tick(2_500);
+        assert.ok(m.button("Confirm this exact request"), "gate appears promptly from status polling");
+        const afterGate = reads.status.length;
+        gate = false; // Later snapshots cannot reopen the first-gate window.
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.status.length, afterGate, "first gate restores ordinary cadence");
+      } else if (scenario === "link") {
+        desk.loopRequests[0].runLink = saved.request.runLink;
+        await tick(2_500);
+        const afterLink = reads.desk.length;
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.desk.length, afterLink, "linked request restores ordinary desk cadence");
+      } else {
+        if (unlinked) assert.ok(reads.desk.length >= 3, "missing link refreshes desk promptly");
+        for (let i = 0; i < 46; i++) await tick(2_500);
+        const afterCap = { status: reads.status.length, desk: reads.desk.length };
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.status.length, afterCap.status, "two-minute cap restores status cadence");
+        assert.equal(reads.desk.length, afterCap.desk, "two-minute cap restores desk cadence");
+        await tick(25_000);
+        assert.ok(reads.status.length > afterCap.status, "ordinary polling continues after cap");
+      }
+    }
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); t.mock.timers.reset(); await f.close(); }
+});
