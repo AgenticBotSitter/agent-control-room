@@ -423,7 +423,9 @@ export class ImproveControlRoomLoopServiceV1 {
       message: startOutcome.error === "INELIGIBLE" ? "Start was refused because the configured lineup is ineligible." : "The saved Start command was refused.",
       nextAction: "Review the saved run and its configuration before requesting further work." }
       : startState === "uncertain" ? { code: "LAUNCH_UNCERTAIN", message: "Start could not be confirmed.", nextAction: "Check status or Stop this owned run." }
-      : state === "blocked" ? { code: "BLOCKED", message: "The saved run is blocked.", nextAction: "Review the saved run before continuing." }
+      : state === "blocked" ? { code: current.decisions?.gate?.kind === "blocked" ? current.decisions.gate.code : "BLOCKED",
+        message: current.decisions?.gate?.kind === "blocked" ? current.decisions.gate.message : "The saved run is blocked.",
+        nextAction: "Review the saved run before continuing." }
       : state?.startsWith("waiting_") ? { code: state.toUpperCase(), message: "The saved run needs attention.", nextAction: "An owner decision is needed before work can continue." } : null;
     let recoveryInputChanged = false;
     let recoveryTerminal = ["stopped", "finished"].includes(current.state);

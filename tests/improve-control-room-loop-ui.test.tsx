@@ -120,6 +120,48 @@ test("B2a confirmed run Start progress Stop", async () => {
   } finally { await m.close(); await f.close(); }
 });
 
+test("B5 phone ready distinguishes pre-Start from started check work", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), /Ready to start/);
+    assert.equal(m.button("Start confirmed work").disabled, false);
+    await act(async () => m.button("Start confirmed work").click()); await settle();
+    f.edit({ state: "ready", revision: f.snapshot().revision + 1,
+      progress: { step: "site-smoke", completed: 3, attention: "none" } });
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.match(m.text(), /Working - checks running/);
+    assert.doesNotMatch(m.text(), /Ready to start/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.equal(m.button("Stop this run").disabled, false);
+  } finally { await m.close(); await f.close(); }
+});
+
+for (const reason of [
+  "TEST_INCOMPLETE: The required check did not produce a complete result.",
+  "The approved plan no longer matches the saved request. Review the request again.",
+]) test(`B5 phone blocked work preserves the engine reason: ${reason}`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    await act(async () => m.button("Start confirmed work").click()); await settle();
+    f.edit({ state: "ready", revision: f.snapshot().revision + 1,
+      progress: { step: "site-smoke", completed: 3, attention: "blocked" },
+      decisions: { gate: { kind: "blocked", code: "UNAVAILABLE", message: reason }, observedAt: new Date(now).toISOString() } });
+    const display = (await f.bridge.status(f.identity, f.project.projectId, f.requestId)).display;
+    assert.equal(display.state, "blocked");
+    assert.equal(display.attention?.code, "UNAVAILABLE");
+    assert.equal(display.attention?.message, reason);
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.match(m.text(), /Work needs attention/);
+    assert.ok(m.text().includes(reason));
+    assert.match(m.text(), /UNAVAILABLE/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+  } finally { await m.close(); await f.close(); }
+});
+
 test("B2a lost Start reply replays frozen action after revision increases and independent Stop", async () => {
   const f = await fixture(), wire = transport(f); let lose = true;
   const m = await mount(f.project.projectId, (async (path, options) => {

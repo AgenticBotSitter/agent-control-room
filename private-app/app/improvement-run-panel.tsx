@@ -154,7 +154,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
         : <p>Confirmation and a linked run are needed before Start.</p>}
     </> : <>
       <p role="status" aria-live="polite">{snapshot?.state ? {
-        ready: "Ready to start", running: "Work is running", waiting_approval: "Waiting for your approval",
+        ready: snapshot.startState === "not_started" ? "Ready to start" : "Working - checks running", running: "Work is running", waiting_approval: "Waiting for your approval",
         waiting_question: "Waiting for an answer", waiting_owner: "Waiting for your decision",
         blocked: "Work needs attention", stopped: "Stopped", candidate_ready: fresh && currentCandidate ? "Finished" : "Completion reported; candidate evidence unavailable",
       }[snapshot.state] : snapshot?.snapshot.engine.state === "draft" && snapshot.snapshot.decisions?.gate?.kind === "confirm"
@@ -166,7 +166,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
         <p>Observed model: {snapshot?.progress?.identityVerified ? snapshot.progress.observedModel ?? "Not reported yet" : "Not verified yet"}</p>
         <p>Attempt: {snapshot?.progress?.attempt ?? "Not reported yet"} · Repairs: {snapshot?.progress?.repairCount ?? "Not reported yet"}</p>
       </details>
-      {snapshot?.attention && <div className="private-notice"><p>{snapshot.attention.message}</p><p>{snapshot.attention.nextAction}</p></div>}
+      {snapshot?.attention && <div className="private-notice"><p><strong>{snapshot.attention.code}</strong>: {snapshot.attention.message}</p><p>{snapshot.attention.nextAction}</p></div>}
       {snapshot && <p>Last checked <time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></p>}
       {(read.error || !fresh) && <p role="alert">Could not refresh saved progress.</p>}
       {read.checking && <p role="status">Checking saved progress…</p>}
