@@ -20,7 +20,8 @@ import { loopBridgeBindingSchemaV1, loopImprovementStatusSchemaV1 } from "../../
 import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 import { ImproveControlRoomDeskServiceV1 } from "../../src/improve-control-room/v1/service";
 import { createMacLocalWebProcessV1 } from "../../src/web/v1/mac-local-web-process";
-import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
+import { createPostgresLocalOwnerSessionStoreV1 } from "../../src/web/v1/local-owner-session-store";
+import { LOCAL_OWNER_SESSION_PROFILE_V1, type LocalOwnerSessionProfileV1 } from "../../src/web/v1/local-owner-session";
 import { bindPrivatePgPool } from "../../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../../src/web/v1/private-pg-options";
 import { createMacLocalNodeService } from "../../src/web/v1/private-serving";
@@ -115,7 +116,8 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     need(c.runRoot === join(root, "runs") && c.workRoot === join(root, "work") && (c.cwd === root || inside(root, c.cwd)) && (c.configRoot === root || inside(root, c.configRoot)), "B5_HOST_A2_ROOTS");
     await regular(c.entrypoint, root);
     need(b5RawHash(await readFile(c.entrypoint)) === c.entrypointSha256, "B5_HOST_A2_PINS");
-    need(loaded.adapter.finalization?.enabled() === true && c.contract.recovery?.enabled() === true, "B5_HOST_CAPABILITY");
+    need(loaded.adapter.finalization?.enabled() === true && c.contract.recovery?.enabled() === true
+      && loaded.adapter.intakeDriver?.enabled() === true, "B5_HOST_CAPABILITY");
     const descriptor = z.record(z.string(), z.string()).parse(await json(join(root, "tools/loop/bridge/cr-entry.json"), root));
     need(descriptor.CR_WORK_ROOT === c.workRoot && descriptor.CR_RUNS === c.runRoot, "B5_HOST_A2_ROOTS");
     const descriptorLayout = { CR_LEAD_ROOT: "lead", CR_RUNS: "runs", CR_WORK_ROOT: "work", CR_LOG_ROOT: "logs",
@@ -383,7 +385,8 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       activeSignal.throwIfAborted();
       need(adapter.toolingRevision === config.a2.toolingRevision && adapter.schemaDigest === config.a2.schemaDigest
         && loaded.configuration.settingsFile === config.settingsFile && loaded.configuration.availabilityFile === config.availabilityFile
-        && adapter.finalization?.enabled() === true && loaded.configuration.contract.recovery?.enabled() === true, "B5_HOST_A2_PINS");
+        && adapter.finalization?.enabled() === true && loaded.configuration.contract.recovery?.enabled() === true
+        && adapter.intakeDriver?.enabled() === true, "B5_HOST_A2_PINS");
       await validateEntryIdentity(loaded.configuration, root, handoff.pythonSha256);
       activeSignal.throwIfAborted();
       web = pool(pg, "web"); coordinator = pool(pg, "coordinator");
@@ -405,10 +408,11 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       const loopBridge: LoopBridgeConfigurationV1 = { integrityKey, adapter, loopCandidates: { integrityKey,
         contract: adapter.contract, schemaDigest: adapter.schemaDigest, source: capability.source, repository: capability.repository } };
       ownerCode = randomBytes(32).toString("base64url");
+      const profile: LocalOwnerSessionProfileV1 = { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: scope.tenantId,
+        provider, subject: ownerId, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: prepared.transport ? 300 : 900,
+        ...(prepared.transport ? { remoteOrigins: [prepared.transport.origin] } : {}) };
       application = createMacLocalWebProcessV1({ origin, workspaceId: scope.workspaceId, database: web,
-        localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: scope.tenantId,
-          provider, subject: ownerId, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: prepared.transport ? 300 : 900,
-          ...(prepared.transport ? { remoteOrigins: [prepared.transport.origin] } : {}) }, loopBridge });
+        localOwnerSession: profile, localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(web.client, profile), loopBridge });
       const recoveryService = new ImproveControlRoomLoopServiceV1(web.client, scope, loopBridge);
       recovery = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
         enabled: () => loaded.configuration.contract.recovery!.enabled() === true || capability.enabled() === true,

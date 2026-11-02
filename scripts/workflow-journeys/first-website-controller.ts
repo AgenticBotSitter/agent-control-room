@@ -75,7 +75,9 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
         afterDigest: null, removalReceiptDigest: null, hostStopped: false, postgresStopped: false, failures: [], overrunMs: 0 };
       if (stopWork) try { await bounded(stopWork, 30_000, "B5_STOP_TIMEOUT"); } catch (error) { result.failures.push(error instanceof B5RefusalV1 || error instanceof B5DeviceRefusalV1 ? error.code : "B5_STOP_FAILED"); }
       const close = async () => {
-        const failures = await Promise.allSettled([Promise.resolve().then(() => closeHost?.()), ...resources.map(f => Promise.resolve().then(f))]);
+        // Resource owners drain and revoke HTTP sessions while serving is live.
+        const failures = await Promise.allSettled(resources.map(f => Promise.resolve().then(f)));
+        failures.push(...await Promise.allSettled([Promise.resolve().then(() => closeHost?.())]));
         if (failures.some(r => r.status === "rejected")) throw new B5RefusalV1("B5_HOST_CLEANUP_FAILED");
       };
       if (mapping) {
@@ -177,30 +179,73 @@ async function pause(signal: AbortSignal) {
   signal.throwIfAborted();
 }
 
-/** Actual current-time local-owner HTTP reads. Cookies stay in memory and are
- * revoked after each exchange. There is no saved browser state or principal. */
-async function exchange(host: FirstWebsiteHostV1, path: string, signal: AbortSignal, body?: unknown,
-  readResponse: (response: Response) => Promise<unknown> = response => readBrowserJson(response, 1 << 20, 10_000)) {
-  return host.proof.withOwnerCode(async ownerCode => {
-    const localSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
-    const issued = await fetch(host.origin + "/api/v1/local-owner-session", { method: "POST", redirect: "error", signal: localSignal,
-      headers: { origin: host.origin, "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) });
-    need(issued.status === 201, "B5_CONTROLLER_SESSION");
-    const cookie = issued.headers.getSetCookie().map(v => v.split(";", 1)[0]).join("; ");
-    need(cookie.length > 0, "B5_CONTROLLER_SESSION");
-    try {
-      const response = await fetch(host.origin + path, { method: body === undefined ? "GET" : "POST", redirect: "error", cache: "no-store", signal: localSignal,
-        headers: { origin: host.origin, cookie, accept: "application/json", "x-requested-with": "XMLHttpRequest",
+/** One in-memory session per serving lifecycle. Exchanges are serialized so
+ * issuance, refresh and revocation cannot race polling or listener teardown. */
+export function createB5ControllerSessionV1(host: FirstWebsiteHostV1, options: {
+  fetch?: typeof fetch; clock?: () => number;
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>;
+} = {}) {
+  const request = options.fetch ?? fetch, clock = options.clock ?? Date.now;
+  const wait = options.wait ?? (async (ms: number, signal: AbortSignal) => {
+    signal.throwIfAborted();
+    await new Promise<void>((yes, no) => {
+      const timer = setTimeout(done, ms);
+      function done() { signal.removeEventListener("abort", aborted); yes(); }
+      function aborted() { clearTimeout(timer); signal.removeEventListener("abort", aborted); no(signal.reason); }
+      signal.addEventListener("abort", aborted, { once: true });
+    });
+  });
+  let session: { cookie: string; expiresAt: number } | undefined;
+  let tail: Promise<unknown> = Promise.resolve(), closing: Promise<void> | undefined;
+  const enqueue = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = tail.then(work); tail = result.catch(() => {}); return result;
+  };
+  async function revoke() {
+    if (!session) return;
+    const deadline = clock() + 30_000, signal = AbortSignal.timeout(30_000);
+    for (let attempt = 0; ; attempt++) {
+      const response = await request(host.origin + "/api/v1/local-owner-session", { method: "DELETE", redirect: "error",
+        headers: { origin: host.origin, cookie: session.cookie }, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
+      if (response.status === 204) { session = undefined; return; }
+      const retryAfter = response.headers.get("retry-after");
+      void response.body?.cancel().catch(() => {});
+      const delay = retryAfter === null ? NaN : /^\d+$/u.test(retryAfter.trim())
+        ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - clock();
+      need(response.status === 429 && attempt < 2 && Number.isFinite(delay)
+        && Math.max(0, delay) < deadline - clock(), "B5_CONTROLLER_SESSION_CLEANUP");
+      await wait(Math.max(0, delay), signal);
+    }
+  }
+  async function exchange(path: string, signal: AbortSignal, body?: unknown,
+    readResponse: (response: Response) => Promise<unknown> = response => readBrowserJson(response, 1 << 20, 10_000)) {
+    need(!closing, "B5_CONTROLLER_SESSION_CLOSED");
+    return enqueue(async () => {
+      signal.throwIfAborted();
+      if (session && session.expiresAt <= clock() + 10_000) await revoke();
+      const localSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+      if (!session) await host.proof.withOwnerCode(async ownerCode => {
+        const issued = await request(host.origin + "/api/v1/local-owner-session", { method: "POST", redirect: "error", signal: localSignal,
+          headers: { origin: host.origin, "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) });
+        need(issued.status === 201, "B5_CONTROLLER_SESSION");
+        const cookie = issued.headers.getSetCookie().map(v => v.split(";", 1)[0]).join("; ");
+        need(cookie.length > 0, "B5_CONTROLLER_SESSION");
+        // Keep the cookie owned even if decoding the expiry fails, so cleanup
+        // can still revoke an issued session.
+        session = { cookie, expiresAt: clock() };
+        const value = await readBrowserJson(issued, 4096, 10_000) as { expiresAt?: unknown };
+        need(typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt))
+          && Date.parse(value.expiresAt) > clock(), "B5_CONTROLLER_SESSION");
+        session.expiresAt = Date.parse(value.expiresAt);
+      });
+      const response = await request(host.origin + path, { method: body === undefined ? "GET" : "POST", redirect: "error", cache: "no-store", signal: localSignal,
+        headers: { origin: host.origin, cookie: session!.cookie, accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json", "idempotency-key": `b5-stop-${randomBytes(16).toString("hex")}` }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       need(response.ok, "B5_CONTROLLER_SERVICE");
-      return await readResponse(response);
-    } finally {
-      const signedOut = await fetch(host.origin + "/api/v1/local-owner-session", { method: "DELETE", redirect: "error",
-        headers: { origin: host.origin, cookie }, signal: AbortSignal.timeout(10_000) });
-      need(signedOut.status === 204, "B5_CONTROLLER_SESSION_CLEANUP");
-    }
-  });
+      return readResponse(response);
+    });
+  }
+  return { exchange, close: () => closing ??= enqueue(revoke) };
 }
 
 /** An owner-only Unix socket is the ephemeral local delivery channel. Code is
@@ -322,8 +367,10 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     const mailbox = host.proof.device, deviceRoot = mailbox.root;
     await ownerChannel(host, root, owner);
     const projectPath = `/api/v1/projects/${encodeURIComponent(host.proof.project.projectId)}/improvements/loop`;
+    let controllerSession = createB5ControllerSessionV1(host);
+    owner.registerResource(() => controllerSession.close());
     const service = async (path: string, body?: unknown, activeSignal = workSignal) => {
-      const value = await exchange(host!, path, activeSignal, body);
+      const value = await controllerSession.exchange(path, activeSignal, body);
       assertB5FaultValueAbsentV1(value, policy); return value;
     };
     let previousObservation: string | undefined;
@@ -397,7 +444,9 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       // Drain the observer's real HTTP exchange before closing the listener.
       // Its expected downtime must not race a read into a false engine failure.
       watching=false; await watcher; workSignal.throwIfAborted();
+      await controllerSession.close(); workSignal.throwIfAborted();
       await host!.proof.restart(workSignal); workSignal.throwIfAborted();
+      controllerSession = createB5ControllerSessionV1(host!);
       watching=true; watcher=observe();
     };
     const phase = async (name: B5DeviceRequestV1["phase"], device: "phone" | "desktop", s?: LoopDecisionStatusV1) => {
@@ -556,7 +605,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         verdict = await verifyFirstWebsiteControllerEvidenceV1(evidenceDir, { candidateRepository: p.repository, pins,
           proofRoot: root, cleanupTargets: p.cleanup.targets.map(target => target.source),
           readCard: async () => {
-            const value = await exchange(host!, `${projectPath}/${encodeURIComponent(requestId!)}/candidate`, workSignal,
+            const value = await controllerSession.exchange(`${projectPath}/${encodeURIComponent(requestId!)}/candidate`, workSignal,
               undefined, readB5CandidateResponseV1) as Awaited<ReturnType<typeof readB5CandidateResponseV1>>;
             assertB5FaultValueAbsentV1(value, policy);
             const card = loopCandidateCardSchemaV1.parse(value.card);

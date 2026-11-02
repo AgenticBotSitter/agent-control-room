@@ -219,10 +219,15 @@ test("B5 loader refuses module bytes before import and refuses missing cleanup (
   const carrier: any = { modulePath: module, moduleSha256: "0".repeat(64), configuration: {
     toolingRevision: `sha256:${"a".repeat(64)}`, interpreter: "/not-read", interpreterSha256: "0".repeat(64),
     toolingManifest: "/not-read", settingsFile: "/not-read", settingsSha256: "0".repeat(64), availabilityFile: "/not-read", availabilitySha256: "0".repeat(64) },
-    finalization: "cleanup", recovery: true, monitoring: true, qualifiedOperations: [] };
+    finalization: "cleanup", recovery: true, monitoring: true, intakeDriver: true, qualifiedOperations: [] };
   const file = join(root, "config/contract-cleanup.json");
   await writeFile(file, JSON.stringify(carrier), { mode: 0o600 });
   await assert.rejects(loadB5A2V1(root, "0".repeat(64)), /B5_A2_MODULE_PIN/);
+  for (const flag of [undefined, false]) {
+    const missing = { ...carrier, intakeDriver: flag };
+    await writeFile(file, JSON.stringify(missing), { mode: 0o600 });
+    await assert.rejects(loadB5A2V1(root, "0".repeat(64)), /intakeDriver/);
+  }
   carrier.finalization = "retain";
   await writeFile(file, JSON.stringify(carrier), { mode: 0o600 });
   await assert.rejects(loadB5A2V1(root, "0".repeat(64)), /cleanup/);
@@ -478,4 +483,29 @@ test("B5 completion/cleanup mapping joins typed receipts, cold card and reposito
   record.cleanup.removedDigest = sha256Digest(moves); sealRecord();
   await writeFile(source, "unexpected remaining source", { mode: 0o600 });
   await assert.rejects(joinB5FinalProjectionV1(input), /B5_A2_CLEANUP_SOURCE_PRESENT/);
+});
+
+test("B5 loader requires an enabled callable intake driver before constructing the adapter", async () => {
+  // Exercise the loader's runtime validation block without importing private tools.
+  const { transpileModule } = await import("typescript");
+  const { z } = await import("zod");
+  const source = await readFile("tests/helpers/improve-control-room-first-website-a2.ts", "utf8");
+  const block = source.slice(source.indexOf("  const configuration = loaded.configuration"), source.indexOf("  const adapter = createImproveControlRoomLoopAdapterV1"));
+  const javascript = transpileModule(block, { compilerOptions: { target: 99 } }).outputText;
+  const validate = new Function("context", `with(context) { ${javascript} }`);
+  const callable = () => true, lineage = b5LineageV1(`sha256:${"a".repeat(64)}`), schemaDigest = `sha256:${"b".repeat(64)}`;
+  const contract = { lineage, schemaDigest, generateRunId: callable, decodeStatus: callable, admissionExpectation: callable,
+    locateApprovalDocument: callable, decodeApprovalSidecar: callable, decisionProjection: { decodeGate: callable },
+    recovery: { enabled: callable, inspect: callable, claimDriver: callable }, monitoring: { enabled: callable, decodeStatus: callable },
+    finalization: { enabled: callable, inspect: callable, retain: callable, cleanup: callable,
+      source: { readVerifiedCompletion: callable }, repository: { observe: callable } } };
+  const run = (intakeDriver: unknown) => validate({ loaded: { configuration: { contract: { ...contract, intakeDriver } } },
+    lineage, c: { toolingRevision: lineage.toolingRevision }, module: { A2_SCHEMA_DIGEST: schemaDigest },
+    digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    carrier: { qualifiedOperations: ["intake", "confirm", "start", "stop", "approve", "answer"] },
+    need: (value: unknown, code: string) => { if (!value) throw new Error(code); } });
+  const valid = { enabled: callable, inspect: callable, advance: callable };
+  for (const invalid of [undefined, {}, { ...valid, inspect: undefined }, { ...valid, advance: undefined },
+    { ...valid, enabled: undefined }, { ...valid, enabled: () => false }]) assert.throws(() => run(invalid), /B5_A2_(CALLABLE|INTAKE_DRIVER)/);
+  assert.doesNotThrow(() => run(valid));
 });

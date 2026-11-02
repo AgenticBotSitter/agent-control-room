@@ -81,7 +81,7 @@ const carrierSchema = z.object({ modulePath: z.string(), moduleSha256: hash,
   configuration: z.object({ toolingRevision: digest, interpreter: z.string(), interpreterSha256: hash,
     toolingManifest: z.string(), settingsFile: z.string(), settingsSha256: hash,
     availabilityFile: z.string(), availabilitySha256: hash }).passthrough(), finalization: z.literal("cleanup"),
-  recovery: z.literal(true), monitoring: z.literal(true), qualifiedOperations: z.array(z.string()),
+  recovery: z.literal(true), monitoring: z.literal(true), intakeDriver: z.literal(true), qualifiedOperations: z.array(z.string()),
 }).strict();
 
 /** Hash before import, then use the real tools loader and product adapter constructor.
@@ -123,11 +123,14 @@ export async function loadB5A2V1(root: string, approvedPythonSha256: string) {
     contract.locateApprovalDocument, contract.decodeApprovalSidecar, contract.decisionProjection?.decodeGate,
     contract.recovery?.enabled, contract.recovery?.inspect, contract.recovery?.claimDriver,
     contract.monitoring?.enabled, contract.monitoring?.decodeStatus,
+    contract.intakeDriver?.enabled, contract.intakeDriver?.inspect, contract.intakeDriver?.advance,
     contract.finalization?.enabled, contract.finalization?.inspect, contract.finalization?.retain,
     contract.finalization?.cleanup, contract.finalization?.source.readVerifiedCompletion,
     contract.finalization?.repository.observe]) need(typeof callable === "function", "B5_A2_CALLABLE");
+  need(contract.intakeDriver?.enabled() === true, "B5_A2_INTAKE_DRIVER");
   need(["intake", "confirm", "start", "stop", "approve", "answer"].every(op => carrier.qualifiedOperations.includes(op)), "B5_A2_OPERATIONS");
   const adapter = createImproveControlRoomLoopAdapterV1(configuration);
+  need(adapter.intakeDriver?.enabled() === true, "B5_A2_INTAKE_DRIVER");
   // The adapter captures lineage into an immutable copy; it is not the outer contract.
   need(adapter.contract.toolingRevision === lineage.toolingRevision && adapter.schemaDigest === contract.schemaDigest, "B5_A2_ADAPTER");
   return { configuration, adapter, carrier, lineage };
