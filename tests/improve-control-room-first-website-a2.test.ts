@@ -234,6 +234,51 @@ test("B5 loader refuses module bytes before import and refuses missing cleanup (
   await assert.rejects(loadB5A2V1(root, "0".repeat(64)), /cleanup/);
 });
 
+test("B5 producer accepts only approved staged recipe bindings", async t => {
+  const parent = await scratch(t);
+  passed(python(`
+import copy, hashlib, json
+root=Path(sys.argv[2])/'acr-b5-recipes'
+(root/'config').mkdir(parents=True)
+node=root/'runtime/bin/node'; node.parent.mkdir(parents=True)
+node.write_bytes(b'fixture executable bytes'); node.chmod(0o700)
+recipes=json.loads(sys.argv[3])
+bound=copy.deepcopy(recipes)
+for recipe in bound: recipe['argv'][0]=str(node)
+b5.recipe_check(recipes,root,recipes)
+try: b5.recipe_check(bound,root,recipes)
+except ValueError as e: assert str(e)=='B5_RECIPE_MISMATCH'
+else: raise AssertionError('unsealed runtime accepted')
+seal=dict(nodeSha256=hashlib.sha256(node.read_bytes()).hexdigest())
+handoff=root/'config/b5-handoff.json'; handoff.write_text(json.dumps(seal))
+b5.recipe_check(bound,root,recipes)
+# Preparation validates before the handoff writer, using its approved input pin.
+handoff.unlink()
+b5.recipe_check(bound,root,recipes,node_sha256=seal['nodeSha256'])
+handoff.write_text(json.dumps(seal))
+mutations=[]
+for patch in (dict(argv=['/unapproved/node',*bound[0]['argv'][1:]]),dict(argv=[str(node),'--test','tests/other.test.mjs']),dict(id='other'),dict(required=False),dict(required=1),dict(parser='other'),dict(extra=True),dict(argv=[]),dict(argv=None)):
+ changed=copy.deepcopy(bound); changed[0].update(patch); mutations.append(changed)
+mutations.extend([bound[1:],bound+[bound[0]],[bound[0],bound[0]]])
+for changed in mutations:
+ try: b5.recipe_check(changed,root,recipes)
+ except ValueError as e: assert str(e)=='B5_RECIPE_MISMATCH'
+ else: raise AssertionError('changed recipe accepted')
+node.write_bytes(b'changed bytes')
+try: b5.recipe_check(bound,root,recipes)
+except ValueError as e: assert str(e)=='B5_RECIPE_MISMATCH'
+else: raise AssertionError('changed runtime accepted')
+alternate=node.with_name('alternate-node')
+alternate.write_bytes(b'fixture executable bytes'); alternate.chmod(0o700)
+node.unlink(); node.symlink_to(alternate)
+assert hashlib.sha256(node.read_bytes()).hexdigest()==seal['nodeSha256']
+try: b5.recipe_check(bound,root,recipes)
+except ValueError as e: assert str(e)=='B5_RECIPE_MISMATCH'
+else: raise AssertionError('same-byte symlink accepted')
+print('RESULT: PASS sealed runtime, bare node and recipe mutation refusals')
+`, [parent, JSON.stringify(B5_RECIPES)]));
+});
+
 const nativeTools = process.env.CONTROL_ROOM_B5_PREP_TOOLS;
 const nativePython = process.env.CONTROL_ROOM_B5_PREP_PYTHON;
 test("B5 native validators require explicit pinned tools and configured interpreter", () => {

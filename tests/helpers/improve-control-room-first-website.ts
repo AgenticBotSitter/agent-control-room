@@ -151,7 +151,7 @@ export const b5Bytes = (bytes: Uint8Array | string) => `sha256:${createHash("sha
 const credential = /(?:^|[/\\])(?:\.env(?:\.[^/\\]*)?|\.aws|\.codex|\.hermes|\.ssh|\.gnupg|\.netrc|\.pgpass|auth\.json|credentials?(?:\.[^/\\]*)?|tokens?(?:\.[^/\\]*)?|keychains?|secrets?(?:\.[^/\\]*)?)(?:[/\\]|$)/iu;
 const inside = (root: string, path: string) => { const r = relative(root, path); return r !== "" && r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r); };
 /** Canonical, non-symlink, noncredential path; every ancestor is checked. */
-async function canonical(path: string, kind: "file" | "directory", code: string) {
+async function canonical(path: string, kind: "file" | "directory", code: string, cap = 1 << 20) {
   if (!isAbsolute(path) || resolve(path) !== path || credential.test(path)) refuse(code, "path");
   for (let part = path; ; part = dirname(part)) {
     const stat = await lstat(part).catch(() => refuse(code, "missing"));
@@ -160,7 +160,7 @@ async function canonical(path: string, kind: "file" | "directory", code: string)
   }
   if (await realpath(path) !== path) refuse(code, "alias");
   const stat = await lstat(path);
-  if (kind === "file" ? !stat.isFile() || stat.size > 1 << 20 : !stat.isDirectory()) refuse(code, kind);
+  if (kind === "file" ? !stat.isFile() || stat.size > cap : !stat.isDirectory()) refuse(code, kind);
   return stat;
 }
 async function portFree(port: number) {
@@ -169,6 +169,28 @@ async function portFree(port: number) {
     server.once("error", () => done(false));
     server.listen({ port, host: "127.0.0.1", exclusive: true }, () => server.close(() => done(true)));
   });
+}
+
+/** The handoff seals Node bytes; its executable location is fixed by staging.
+ * Recipe settings cannot nominate another executable or grant their own approval. */
+export async function requireB5RecipesV1(checks: unknown, root: string): Promise<void> {
+  if (!Array.isArray(checks) || checks.length !== B5_RECIPES.length) refuse("B5_RECIPE_MISMATCH");
+  let approvedNode: string | undefined;
+  if (checks.some(check => check?.argv?.[0] !== "node")) {
+    try {
+      const handoff = JSON.parse((await readFirstWebsitePrivateBytesV1(join(root, "config/b5-handoff.json"), root)).toString("utf8"));
+      if (!/^[a-f0-9]{64}$/u.test(handoff.nodeSha256)) refuse("B5_RECIPE_MISMATCH");
+      approvedNode = join(root, "runtime/bin/node");
+      const stat = await canonical(approvedNode, "file", "B5_RECIPE_MISMATCH", 256 << 20);
+      if (stat.uid !== process.getuid?.() || stat.mode & 0o022 || !(stat.mode & 0o111)
+        || b5Bytes(await readFirstWebsitePrivateBytesV1(approvedNode, root, 256 << 20)).slice(7) !== handoff.nodeSha256) refuse("B5_RECIPE_MISMATCH");
+    } catch { refuse("B5_RECIPE_MISMATCH"); }
+  }
+  for (const [index, recipe] of B5_RECIPES.entries()) {
+    const check = checks[index];
+    const expected = check?.argv?.[0] === "node" ? recipe : { ...recipe, argv: [approvedNode, ...recipe.argv.slice(1)] };
+    if (JSON.stringify(check) !== JSON.stringify(expected)) refuse("B5_RECIPE_MISMATCH", recipe.id);
+  }
 }
 
 export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
@@ -227,10 +249,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   const slotRoles = Array.isArray(slots) ? slots.map(slot => (slot as { role?: unknown })?.role) : [];
   if (!B5_REQUIRED_RISK.slots.every(role => slotRoles.includes(role))) refuse("B5_RISK_SLOTS");
   if (!Array.isArray(settings!.roles?.code_reviews) || settings!.roles!.code_reviews.length !== 2) refuse("B5_CODE_REVIEW_SLOTS");
-  for (const recipe of B5_RECIPES) {
-    const check = Array.isArray(checks) ? checks.find(item => (item as { id?: unknown })?.id === recipe.id) : undefined;
-    if (JSON.stringify(check) !== JSON.stringify(recipe)) refuse("B5_RECIPE_MISMATCH", recipe.id);
-  }
+  await requireB5RecipesV1(checks, root);
   // Qualification bytes are independently supplied, confined and hashed above. No default real provider.
   let qualification: { providers?: unknown; capture?:unknown; rehearsal?: { packetFile: string; packetSha256: string } };
   const providerBytes = await readFirstWebsitePrivateBytesV1(config.a2.qualificationEvidence, root);
@@ -1278,9 +1297,9 @@ export async function readB5ReviewGitSurfacesV1(repository: string, base: string
 
 /** Bounded stable read for actual saved dispatch/report bytes. Never accepts
  * credentials, symlinks or a file outside this disposable root. */
-export async function readFirstWebsitePrivateBytesV1(file: string, root: string) {
+export async function readFirstWebsitePrivateBytesV1(file: string, root: string, cap = 1 << 20) {
   if (!inside(root, file)) refuse("B5_REVIEW_SCAN_PATH");
-  const before = await canonical(file, "file", "B5_REVIEW_SCAN_PATH");
+  const before = await canonical(file, "file", "B5_REVIEW_SCAN_PATH", cap);
   if (before.uid !== process.getuid?.() || before.mode & 0o022) refuse("B5_REVIEW_SCAN_PATH");
   const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -1292,7 +1311,7 @@ export async function readFirstWebsitePrivateBytesV1(file: string, root: string)
       if (!read.bytesRead) break;
       length += read.bytesRead;
     }
-    const after = await fd.stat(), named = await canonical(file, "file", "B5_REVIEW_SCAN_PATH");
+    const after = await fd.stat(), named = await canonical(file, "file", "B5_REVIEW_SCAN_PATH", cap);
     if (length !== before.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs
       || named.ino !== stat.ino || named.dev !== stat.dev) refuse("B5_REVIEW_SCAN_CHANGED");
     return buffer.subarray(0, length);

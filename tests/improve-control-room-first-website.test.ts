@@ -124,6 +124,45 @@ test("B5 proof CLI refuses missing, invalid and unqualified configuration before
   assert.equal(await lstat(join(s.root, "config", "imported.flag")).then(() => true, () => false), false, "B5 assembly is never imported on refusal");
 });
 
+test("B5 preflight accepts only sealed staged recipe runtime and exact recipes", async t => {
+  await load();
+  const s = await scratch(t), node = join(s.root, "runtime/bin/node");
+  await mkdir(join(s.root, "runtime/bin"), { recursive: true });
+  await writeFile(node, "fixture executable bytes", { mode: 0o700 });
+  const handoff = join(s.root, "config/b5-handoff.json");
+  const seal = { nodeSha256: H.b5Bytes(await readFile(node)).slice(7) };
+  const bound = H.B5_RECIPES.map(r => ({ ...r, argv: [node, ...r.argv.slice(1)] }));
+  const check = async (recipes: unknown) => {
+    await writeFile(s.config.settingsFile, JSON.stringify({ ...s.settings, project: { ...s.settings.project, test_checks: recipes } }));
+    return H.preflightFirstWebsiteV1({ configFile: await s.write(s.config), evidenceDir: s.evidence,
+      cliFile: resolve("scripts/workflow-journeys/first-website-proof.ts"), probe: async () => true })
+      .then(() => "PASSED", (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
+  };
+  // Product revision validation follows the recipe boundary in this fixture.
+  const afterRecipes = await check(H.B5_RECIPES);
+  assert.notEqual(afterRecipes, "B5_RECIPE_MISMATCH");
+  assert.equal(await check(bound), "B5_RECIPE_MISMATCH", "path alone grants no approval");
+  await writeFile(handoff, JSON.stringify(seal), { mode: 0o600 });
+  assert.equal(await check(bound), afterRecipes, "sealed runtime reaches the same later validation as bare node");
+  const altered = (index: number, patch: object) => bound.map((r, i) => i === index ? { ...r, ...patch } : r);
+  for (const recipes of [
+    altered(0, { argv: ["/unapproved/node", ...bound[0]!.argv.slice(1)] }),
+    altered(1, { argv: [node, "--test", "tests/other.test.mjs"] }),
+    altered(0, { id: "other" }), altered(0, { required: false }), altered(0, { required: 1 }), altered(0, { parser: "other" }),
+    altered(0, { extra: true }), altered(0, { argv: [] }), altered(0, { argv: null }),
+    bound.slice(1), [...bound, bound[0]], [bound[0], bound[0]],
+  ]) assert.equal(await check(recipes), "B5_RECIPE_MISMATCH");
+  await writeFile(handoff, JSON.stringify({ nodeSha256: "0".repeat(64) }));
+  assert.equal(await check(bound), "B5_RECIPE_MISMATCH", "changed digest refuses");
+  await writeFile(handoff, JSON.stringify(seal));
+  await writeFile(node, "changed executable bytes");
+  assert.equal(await check(bound), "B5_RECIPE_MISMATCH", "changed executable refuses");
+  const alternate = join(s.root, "runtime/bin/alternate-node");
+  await writeFile(alternate, "fixture executable bytes", { mode: 0o700 });
+  await rm(node); await symlink(alternate, node);
+  assert.equal(await check(bound), "B5_RECIPE_MISMATCH", "symlink cannot grant runtime identity");
+});
+
 test("B5 preflight checks product, ports and identity before any effect", async t => {
   await load();
   const s = await scratch(t), product = join(s.parent, "product");
@@ -138,6 +177,14 @@ test("B5 preflight checks product, ports and identity before any effect", async 
   const code = async (value: unknown, extra: Partial<Parameters<typeof B5Helper.preflightFirstWebsiteV1>[0]> = {}) =>
     input(value, extra).then(() => "PASSED", (e: unknown) => e instanceof H.B5RefusalV1 ? e.code : String(e));
   assert.equal(await code(config), "PASSED", "B5 complete preflight passes with the landed A2 input writer");
+  const stagedNode = join(s.root, "runtime/bin/node");
+  await mkdir(join(s.root, "runtime/bin"), { recursive: true });
+  await writeFile(stagedNode, "fixture runtime", { mode: 0o700 });
+  await writeFile(join(s.root, "config/b5-handoff.json"), JSON.stringify({ nodeSha256: H.b5Bytes("fixture runtime").slice(7) }), { mode: 0o600 });
+  await writeFile(config.settingsFile, JSON.stringify({ ...s.settings, project: { ...s.settings.project,
+    test_checks: H.B5_RECIPES.map(r => ({ ...r, argv: [stagedNode, ...r.argv.slice(1)] })) } }));
+  assert.equal(await code(config), "PASSED", "B5 complete preflight accepts approved runtime bindings");
+  await writeFile(config.settingsFile, JSON.stringify(s.settings));
   const ready = await input(config);
   assert.deepEqual([ready.digests.faultInput, ready.digests.reviewInput], [H.b5Bytes("Builder-only first-attempt instruction.\n"), H.b5Bytes("Code-review-only neutral instruction.\n")]);
   assert.equal(await code(config, { uid: 424242 }), "B5_EXECUTION_IDENTITY_MISMATCH");

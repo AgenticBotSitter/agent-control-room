@@ -162,7 +162,34 @@ def roster_check(safety, root, expected, inputs=None):
     require(all(safety.safe_path(p).read_bytes() == expected for p in paths), 'B5_ROSTER_BYTES')
 
 
-def reviewed_settings(settings, availability, root, baseline, python, dry, cr, run_settings, constants):
+def recipe_check(checks, root, recipes, node_sha256=None):
+    """Use the staged handoff pin, or the producer's approved pin before freeze."""
+    require(isinstance(checks, list) and len(checks) == len(recipes), 'B5_RECIPE_MISMATCH')
+    require(all(isinstance(c, dict) and isinstance(c.get('argv'), list) and c['argv']
+                for c in checks), 'B5_RECIPE_MISMATCH')
+    expected = json.loads(json.dumps(recipes))
+    if any(c['argv'][0] != 'node' for c in checks):
+        try:
+            if node_sha256 is None:
+                handoff = path_check(root / 'config/b5-handoff.json')
+                require(handoff.stat().st_uid == os.getuid() and not handoff.stat().st_mode & 0o022,
+                        'B5_RECIPE_MISMATCH')
+                node_sha256 = json.loads(handoff.read_text())['nodeSha256']
+            require(isinstance(node_sha256, str) and HEX.fullmatch(node_sha256), 'B5_RECIPE_MISMATCH')
+            node = path_check(root / 'runtime/bin/node')
+            stat_node = node.stat()
+            require(stat_node.st_uid == os.getuid() and not stat_node.st_mode & 0o022
+                    and stat_node.st_mode & 0o111 and stat_node.st_size <= (256 << 20)
+                    and digest(node) == node_sha256, 'B5_RECIPE_MISMATCH')
+        except (ValueError, OSError, KeyError, TypeError):
+            raise ValueError('B5_RECIPE_MISMATCH') from None
+        for check, recipe in zip(checks, expected):
+            if check['argv'][0] != 'node':
+                recipe['argv'][0] = str(node)
+    require(json.dumps(checks, sort_keys=True) == json.dumps(expected, sort_keys=True), 'B5_RECIPE_MISMATCH')
+
+
+def reviewed_settings(settings, availability, root, baseline, python, dry, cr, run_settings, constants, node_sha256=None):
     dry.settings_paths(settings, root, str(python))
     roster = root / 'tools/loop/models.tsv'
     require(not cr.models_problems(roster, allow_standard_final=True), 'B5_ROSTER_INVALID')
@@ -173,7 +200,7 @@ def reviewed_settings(settings, availability, root, baseline, python, dry, cr, r
         project_recipe=dict(project=dict(repository=str(root / 'work/repo'), base=baseline)))
     project = effective['project']
     require(project['repository'] == str(root / 'work/repo') and project['base'] == baseline, 'B5_REPOSITORY_BASE')
-    require(project['test_checks'] == constants['recipes'], 'B5_RECIPES')
+    recipe_check(project['test_checks'], root, constants['recipes'], node_sha256)
     require(set(project['risk_categories']) == set(constants['risk']['categories']), 'B5_RISK_CATEGORIES')
     require(sorted(s['role'] for s in effective['roles']['risk_reviews']) == sorted(constants['risk']['slots']), 'B5_RISK_SLOTS')
     require(effective['code_review_count'] == 2 and len(effective['roles']['code_reviews']) == 2, 'B5_CODE_REVIEW_SLOTS')
@@ -319,7 +346,7 @@ def produce(args):
     dry = load_module('b5_dry', root / 'tools/loop/i1-dry-run.py')
     cr = load_module('b5_cr', root / 'tools/loop/cr.py')
     run_settings = load_module('run_settings', root / 'tools/loop/run_settings.py')
-    reviewed_settings(settings, availability, root, baseline, python, dry, cr, run_settings, constants)
+    reviewed_settings(settings, availability, root, baseline, python, dry, cr, run_settings, constants, args.node_sha256)
     custody.check()
     interpreter_check(stage, safety, root, args.python, args.python_sha256)
     stage.stage_configuration(root, inputs, settings)
@@ -330,7 +357,7 @@ def produce(args):
     stage.repin(root, python)
     # Producer rewrites are covered by the exact same validators, before any freeze.
     validated = reviewed_settings(safety.read_json(root / 'config/settings.json', root),
-        safety.read_json(root / 'config/availability.json', root), root, baseline, python, dry, cr, run_settings, constants)
+        safety.read_json(root / 'config/availability.json', root), root, baseline, python, dry, cr, run_settings, constants, args.node_sha256)
     roster_check(safety, root, expected_roster)
     interpreter_check(stage, safety, root, args.python, args.python_sha256)
     private_tree(root)
