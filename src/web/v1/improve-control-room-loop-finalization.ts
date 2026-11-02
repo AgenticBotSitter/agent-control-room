@@ -43,6 +43,7 @@ export type LoopFinalizationCapabilityV1 = LoopCandidateDependenciesV1 & {
   retain(binding:Readonly<LoopFinalizationBindingV1>,inventoryDigest:string):Promise<z.infer<typeof loopFinalizationCustodySchemaV1>>;
   /** A2 local close owns its journal and replays safely after a lost append. */
   cleanup?(binding:Readonly<LoopFinalizationBindingV1>,retentionDigest:string):Promise<z.infer<typeof loopFinalizationCleanupSchemaV1>>;
+  /** Returns this run's record from the current or any earlier revision; it is not necessarily the current observation. */
   readRecord(target:Readonly<LoopFinalizationTargetV1>):Promise<LoopFinalizationRecordV1|null>;
   /** Compare-and-append previousDigest, fsync, exact replay; never overwrite. */
   appendRecord(binding:Readonly<LoopFinalizationBindingV1>,record:Readonly<LoopFinalizationRecordV1>):Promise<LoopFinalizationRecordV1>;
@@ -60,7 +61,7 @@ export function verifyFinalizationInspectionV1(raw:unknown,target:LoopFinalizati
 export function verifyFinalizationRecordV1(raw:unknown,target:LoopFinalizationTargetV1){
   const r=loopFinalizationRecordSchemaV1.parse(bounded(raw)),{recordDigest,...material}=r,o=r.observation;
   // Stored records precede the current observation; revision is not run identity.
-  if(sha256Digest(material)!==recordDigest||!same(finalizationTargetV1(r.binding),{...target,expectedRevision:r.binding.expectedRevision})||!same(r.binding,o.binding)
+  if(sha256Digest(material)!==recordDigest||r.binding.expectedRevision>target.expectedRevision||!same(finalizationTargetV1(r.binding),{...target,expectedRevision:r.binding.expectedRevision})||!same(r.binding,o.binding)
     ||(r.sequence===1)!==(r.previousDigest===null))throw unavailable();
   for(const receipt of [r.custody,r.termination,r.cleanup])if(receipt&&(!same(receipt.binding,r.binding)||receipt.inventoryDigest!==o.inventoryDigest))throw unavailable();
   if(r.cleanup&&(!r.custody||r.cleanup.retentionDigest!==r.custody.retentionDigest))throw unavailable();
@@ -123,7 +124,10 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       if(record)record=verifyFinalizationRecordV1(record,target);
       let previousRecord=record;
       if(record&&!same(record.observation,o)){
-        if(record.binding.eventDigest===b.eventDigest)throw unavailable();
+        // A2 inspection reports revision separately; the adapter captures a supplied
+        // eventDigest with no revision-bound guarantee. Equal digests may describe
+        // the same event seen later only when the observation differs by revision alone.
+        if(record.binding.eventDigest===b.eventDigest&&!same({...record.observation,binding:{...record.binding,expectedRevision:b.expectedRevision}},o))throw unavailable();
         // A newly verified event starts with no inherited custody, publication
         // or cleanup authority, while preserving the immutable audit chain.
         record=null;

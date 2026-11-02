@@ -448,6 +448,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   const owner = preflight.controllerOwner ?? createFirstWebsiteControllerOwnerV1(signal);
   const { config, evidenceDir, digests } = preflight, root = config.scratchRoot;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
+  // Error name and message only; may include input fragments, kept inside the run's own evidence.
   let verdict: B5VerdictV1 & { detail?: { name: string; message: string }[] } = { state: "incomplete", reasons: [], transportCleanup:missingB5TransportCleanupV1() }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
   let wroteEvidence = false, wroteObservations = false, watching = true;
   let watcher: Promise<void> | undefined;
@@ -759,7 +760,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   } catch (error) {
     if (error instanceof Error) {
       const detail = { name: error.name, message: error.message };
-      (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-error", detail });
+      (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-error", at: new Date().toISOString(), detail });
     }
     verdict = { ...verdict, state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] };
   }
@@ -776,7 +777,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     } catch (error) {
       if (error instanceof Error) {
         const detail = { name: error.name, message: error.message };
-        (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-cleanup-error", detail });
+        (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-cleanup-error", at: new Date().toISOString(), detail });
       }
       verdict.state = "incomplete"; verdict.reasons.push(codeOf(error));
     }
@@ -797,6 +798,12 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     verdict.state = "incomplete"; verdict.reasons.push("B5_PROVIDER_FIXTURE");
   }
   verdict.reasons = [...new Set(verdict.reasons)];
+  // Preflight can fail before the evidence directory exists. Retain its detail
+  // through the same run-local writers after the shared cleanup.
+  if (!wroteEvidence) try {
+    await mkdir(evidenceDir, { mode: 0o700 }).catch(e => { if (e.code !== "EEXIST") throw e; });
+    await chmod(evidenceDir, 0o700); wroteEvidence = true;
+  } catch { verdict.state = "incomplete"; verdict.reasons.push("B5_VERDICT_WRITE_FAILED"); }
   if (wroteEvidence && !wroteObservations) try {
     await write("controller-observations", { actions, observations, audits, statusChecks: statusChecks.map(check => check.record) });
   } catch { verdict.state = "incomplete"; verdict.reasons.push("B5_OBSERVATIONS_WRITE_FAILED"); }

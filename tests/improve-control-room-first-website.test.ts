@@ -853,8 +853,11 @@ test("F04a real controller refuses unqualified device input before any acquisiti
   assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_DEVICE_QUALIFICATION_REQUIRED','B5_PROVIDER_FIXTURE']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created'); assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.deepEqual(resources,[]); assert.deepEqual(['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal)),counts);
-  assert.equal(await lstat(s.evidence).then(()=>true,()=>false),false);
-  console.log('RESULT: PASS F04a real controller device qualification refusal acquisitions=0 listener-delta=0 mapping-not-created');
+  assert.deepEqual((await readdir(s.evidence)).sort(),['controller-observations.json','controller-verdict.json']);
+  const retained=JSON.parse(await readFile(join(s.evidence,'controller-verdict.json'),'utf8'));
+  assert.deepEqual(retained.reasons,verdict.reasons);
+  assert.equal(retained.detail[0].message,'B5_DEVICE_QUALIFICATION_REQUIRED');
+  console.log('RESULT: PASS F04a real controller device qualification refusal acquisitions=0 listener-delta=0 mapping-not-created diagnostic-retained');
 });
 
 test("F04a owner JSON payload scanning decodes instruction fragments in string values", async () => {
@@ -938,7 +941,7 @@ test("F04a capped controller reserves five minutes and aborts before further acq
   console.log('RESULT: PASS F04a 10-minute cap stops work at minute 5; no-mapping cleanup completed');
 });
 
-test("F04a driver executes native bind capability probe before intake invitation", async t => {
+async function controllerDriverFixture(t: TestContext) {
   await load();const s=await scratch(t),D=await import('../scripts/workflow-journeys/first-website-device');
   const {runFirstWebsiteJourneyV1}=await import('../scripts/workflow-journeys/first-website-controller');
   const {chmod}=await import('node:fs/promises');
@@ -965,6 +968,11 @@ proof:{device:{request(){event('intake-invitation');throw Error('must never invi
   const config=H.firstWebsiteConfigSchemaV1.parse({...s.config,device:{...s.config.device,origin:remote},assembly:{...s.config.assembly,digest:H.b5Bytes(assembly)}});
   const preflight:B5Helper.FirstWebsitePreflightV1={config,uid:process.getuid!(),evidenceDir:s.evidence,providers:{classification:'fixture',transport:'scripted',toolingRevision:config.a2.toolingRevision,availabilitySha256:H.b5Bytes('{}'),lineup:[{role:'build',identity:'fixture',family:'fixture',route:'fixture',grade:'fixture'}]},capture:{phoneCapture:'native-screenshot+server',qualificationDigest:H.b5Bytes('{}'),approval:'pending',approvalEvidenceDigest:null},phoneTransport:'tailscale-serve',settings:{riskCategories:[],riskSlots:[]},
     digests:{qualification:H.b5Bytes(qualification),transport:H.b5Bytes(transport),assembly:H.b5Bytes(assembly),faultInput:H.b5Bytes(packet),reviewInput:H.b5Bytes(neutral)}};
+  return { s, D, runFirstWebsiteJourneyV1, events, beforeStatus, preflight };
+}
+
+test("F04a driver executes native bind capability probe before intake invitation", async t => {
+  const {s,D,runFirstWebsiteJourneyV1,events,beforeStatus,preflight}=await controllerDriverFixture(t);
   const verdict=await runFirstWebsiteJourneyV1(preflight,new AbortController().signal);
   assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_A2_BIND_INPUT_UNAVAILABLE','B5_PROVIDER_FIXTURE']);
   assert.deepEqual((await readFile(events,'utf8')).trim().split('\n'),['factory','probe:bind-input --help','host-close','pg-stop','full-close']);
@@ -972,23 +980,34 @@ proof:{device:{request(){event('intake-invitation');throw Error('must never invi
   assert.equal(verdict.transportCleanup?.beforeDigest,D.b5MappingDigestV1(beforeStatus),'unattempted mapping retains pre-acquisition before-status evidence');
   assert.equal(await lstat(join(s.root,'device/install-request.json')).then(()=>true,()=>false),false);
   console.log('RESULT: PASS F04a actual bind-input --help child refusal before intake/mapping; ordered full cleanup (fixture host)');
+});
 
-  // Exercise the actual controller catch and retained fallback observations.
+test("B5 controller catches retain timestamped error details before and after evidence creation", async t => {
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
-  const controllerOwner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'controller-error-evidence');
-  t.mock.method(controllerOwner,'beginAcquisition',()=>{
-    throw Object.assign(new TypeError('loop_finalization_unavailable'),{settings:'SYNTHETIC private settings',stack:'SYNTHETIC private stack'});
+  for (const phase of ['acquisition','preflight','cleanup'] as const) await t.test(phase, async t => {
+    const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
+    const controllerOwner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'controller-error-evidence');
+    const error=Object.assign(new TypeError('loop_finalization_unavailable'),{settings:'SYNTHETIC private settings',stack:'SYNTHETIC private stack'});
+    const method=phase==='acquisition'?'beginAcquisition':'startDeadline';
+    t.mock.method(controllerOwner,method,()=>{throw error;});
+    if(phase==='cleanup') t.mock.method(controllerOwner,'cleanup',async()=>{throw new RangeError('cleanup input fragment');});
+    assert.equal(await lstat(evidenceDir).then(()=>true,()=>false),false);
+    const failed=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner},new AbortController().signal);
+    const details=[{name:'TypeError',message:'loop_finalization_unavailable'},
+      ...(phase==='cleanup'?[{name:'RangeError',message:'cleanup input fragment'}]:[])];
+    assert.deepEqual(failed.reasons,['B5_CONTROLLER_FAILED',...(phase==='cleanup'?['B5_TRANSPORT_CLEANUP_INCOMPLETE']:[]),'B5_PROVIDER_FIXTURE']);
+    assert.deepEqual((failed as {detail?:unknown}).detail,details,'even a pre-directory throw returns its original diagnostic');
+    const observed=JSON.parse(await readFile(join(evidenceDir,'controller-observations.json'),'utf8'));
+    assert.deepEqual(observed.observations.map(({at,...rest}:{at:string;phase:string;detail:unknown})=>{
+      assert.ok(Number.isFinite(Date.parse(at)),'diagnostic observation carries an ISO timestamp');
+      return rest;
+    }),details.map((detail,index)=>({phase:index===0?'controller-error':'controller-cleanup-error',detail})));
+    assert.doesNotMatch(JSON.stringify(observed),/SYNTHETIC private|stack|settings/);
+    const retainedVerdict=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
+    assert.deepEqual(retainedVerdict.reasons,failed.reasons);assert.deepEqual(retainedVerdict.detail,details);
+    assert.doesNotMatch(JSON.stringify(retainedVerdict),/SYNTHETIC private|stack|settings/);
   });
-  const failed=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner},new AbortController().signal);
-  assert.deepEqual(failed.reasons,['B5_CONTROLLER_FAILED','B5_PROVIDER_FIXTURE']);
-  const observed=JSON.parse(await readFile(join(evidenceDir,'controller-observations.json'),'utf8'));
-  assert.deepEqual(observed.observations,[{phase:'controller-error',detail:{name:'TypeError',message:'loop_finalization_unavailable'}}]);
-  assert.doesNotMatch(JSON.stringify(observed),/SYNTHETIC private|stack|settings/);
-  const retainedVerdict=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
-  assert.deepEqual(retainedVerdict.reasons,failed.reasons);
-  assert.deepEqual(retainedVerdict.detail,[{name:'TypeError',message:'loop_finalization_unavailable'}]);
-  assert.doesNotMatch(JSON.stringify(retainedVerdict),/SYNTHETIC private|stack|settings/);
-  console.log('RESULT: PASS B5_CONTROLLER_FAILED retains original error name/message in verdict/observations; excludes stack/settings');
+  console.log('RESULT: PASS B5 controller/cleanup catches retain timestamped name/message including input fragments; pre-directory verdict persisted');
 });
 
 test("F04a Git scan refuses changed symlinks and preserves whole deleted files", async t => {

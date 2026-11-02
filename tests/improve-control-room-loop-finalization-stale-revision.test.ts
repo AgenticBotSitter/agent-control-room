@@ -7,7 +7,7 @@ import {
   type LoopFinalizationInspectionV1, type LoopFinalizationRecordV1, type LoopFinalizationTargetV1,
 } from "../src/web/v1/improve-control-room-loop-finalization";
 
-function fixture() {
+function fixture(revisionBoundEvent = true) {
   let target: LoopFinalizationTargetV1 = {
     schemaVersion: 1, tenantId: "tenant:test", workspaceId: "workspace:test", projectId: "project:test",
     ownerIdentityId: "owner:test", requestId: "request:test", runLinkId: "run-link:test", localVersion: 1,
@@ -20,8 +20,8 @@ function fixture() {
   const records: LoopFinalizationRecordV1[] = [];
   let outcome: "uncertain" | "stopped" = "uncertain", retains = 0, cleanups = 0;
   const inspect = (): LoopFinalizationInspectionV1 => {
-    const binding = { ...target, eventDigest: sha256Digest({ revision: target.expectedRevision, outcome }) };
-    const inventoryDigest = sha256Digest({ inventory: target.expectedRevision });
+    const binding = { ...target, eventDigest: sha256Digest({ ...(revisionBoundEvent ? { revision: target.expectedRevision } : {}), outcome }) };
+    const inventoryDigest = sha256Digest({ inventory: revisionBoundEvent ? target.expectedRevision : "same-event" });
     const observedAt = "2026-11-02T00:00:00.000Z";
     return { observation: { schemaVersion: 1, binding, outcome, reasonCode: outcome === "uncertain" ? "UNAVAILABLE" : "STOPPED",
       evidenceDigest: sha256Digest("evidence"), completionDigest: null, inventoryDigest, observedAt },
@@ -99,6 +99,71 @@ test("B5 a new observation inherits no custody or cleanup from the earlier revis
   assert.equal(announced?.custody, null); assert.equal(announced?.publication, null); assert.equal(announced?.cleanup, null);
   assert.equal(announced?.termination?.state, "uncertain");
   assert.deepEqual(f.effects, effects);
+});
+
+test("B5 re-observes an uncertain event at a later revision with an equal eventDigest", async () => {
+  const f = fixture(false), old = await f.finalize();
+  f.advance("uncertain");
+  assert.equal((await f.capability.inspect(f.target)).observation.binding.eventDigest, old?.binding.eventDigest);
+  const record = await f.finalize(captureLoopFinalizationCapabilityV1(f.capability)!);
+  assert.equal(record?.phase, "announced"); assert.equal(record?.binding.expectedRevision, 71);
+  assert.equal(record?.previousDigest, old?.recordDigest); assert.equal(record?.sequence, 2);
+  assert.equal(record?.custody, null); assert.equal(record?.publication, null); assert.equal(record?.cleanup, null);
+  assert.deepEqual(f.effects, { retains: 0, cleanups: 0 });
+  assert.deepEqual(await f.finalize(), record, "same-revision replay remains stable");
+});
+
+test("B5 equal eventDigest at a later revision obtains fresh custody and cleanup", async () => {
+  const f = fixture(false); f.stop();
+  const old = await f.finalize(), count = f.records.length;
+  f.advance("stopped");
+  const record = await f.finalize();
+  assert.equal(record?.binding.eventDigest, old?.binding.eventDigest);
+  assert.equal(f.records[count]?.previousDigest, old?.recordDigest);
+  assert.equal(f.records[count]?.phase, "retained");
+  assert.equal(f.records[count]?.termination, null); assert.equal(f.records[count]?.publication, null); assert.equal(f.records[count]?.cleanup, null);
+  assert.equal(record?.custody?.binding.expectedRevision, 71); assert.equal(record?.cleanup?.binding.expectedRevision, 71);
+  assert.notEqual(record?.custody?.retentionDigest, old?.custody?.retentionDigest);
+  assert.deepEqual(f.effects, { retains: 4, cleanups: 2 });
+});
+
+test("B5 equal eventDigest still refuses any observation change beyond revision", async t => {
+  for (const field of ["outcome", "reasonCode", "evidenceDigest", "inventoryDigest", "observedAt"] as const) {
+    for (const laterRevision of [false, true]) await t.test(`${field} laterRevision=${laterRevision}`, async () => {
+      const f = fixture(false); await f.finalize();
+      if (laterRevision) f.advance("uncertain");
+      const inspect = f.capability.inspect;
+      f.capability.inspect = async target => {
+        const value = await inspect(target);
+        if (field === "outcome") value.observation.outcome = "stalled";
+        else if (field === "reasonCode") value.observation.reasonCode = "TERMINATION_UNCERTAIN";
+        else if (field === "observedAt") value.observation.observedAt = "2026-11-02T00:01:00.000Z";
+        else {
+          value.observation[field] = sha256Digest("changed");
+          if (field === "inventoryDigest") value.termination!.inventoryDigest = value.observation.inventoryDigest;
+        }
+        return value;
+      };
+      await assert.rejects(f.finalize(), /loop_finalization_unavailable/);
+      assert.equal(f.records.length, 1); assert.deepEqual(f.effects, { retains: 0, cleanups: 0 });
+    });
+  }
+});
+
+test("B5 refuses a newer stored record before any append or custody", async () => {
+  const f = fixture(); await f.finalize();
+  const olderTarget = { ...f.target, expectedRevision: 5 };
+  assert.throws(() => verifyFinalizationRecordV1(f.records[0], olderTarget), /loop_finalization_unavailable/);
+  await assert.rejects(captureLoopFinalizationCapabilityV1(f.capability)!.readRecord(olderTarget), /loop_finalization_unavailable/);
+  const inspect = f.capability.inspect;
+  const capability = { ...f.capability, inspect: async () => {
+    const value = await inspect(f.target), binding = { ...value.observation.binding, expectedRevision: 5 };
+    return { observation: { ...value.observation, binding }, termination: value.termination && { ...value.termination, binding } };
+  } };
+  await assert.rejects(createImproveControlRoomLoopFinalizerV1({ capability, authorize: async () => olderTarget,
+    signal: new AbortController().signal, publishCompletion: async () => { throw Error("unexpected publication"); },
+  }).finalize(olderTarget), /loop_finalization_unavailable/);
+  assert.equal(f.records.length, 1); assert.deepEqual(f.effects, { retains: 0, cleanups: 0 });
 });
 
 test("B5 an earlier record refuses every foreign target identity before custody", async t => {

@@ -318,6 +318,40 @@ if(ordinary){
     assert.equal(custody,0,"B3c forbidden quiescent admission custody count is zero");
     assert.equal(publications,0);
   });
+  test("B3c a cross-revision record is readable but cannot render as current lifecycle attention",async t=>{
+    const f=await using(t);await f.observe();
+    const prior=(await f.capability.readRecord(f.target))!,revision=f.target.expectedRevision+1;
+    f.editStatus({revision});
+    f.state.target={...f.target,expectedRevision:revision};
+    f.state.observation={...f.state.observation,binding:{...f.state.observation.binding,expectedRevision:revision}};
+    await f.save();
+    // Verification accepts the predecessor; only the service's observation join
+    // must prevent its publication/cleanup from appearing as current attention.
+    assert.deepEqual(verifyFinalizationRecordV1(prior,f.state.target),prior);
+    assert.deepEqual(await f.capability.readRecord(f.state.target),prior);
+    const current=await f.capability.inspect(f.state.target);
+    assert.equal(current.observation.binding.eventDigest,prior.binding.eventDigest);
+    assert.notDeepEqual(current.observation,prior.observation);
+    let reads=0,stored:LoopFinalizationRecordV1|null=prior;
+    const capability={...f.capability,readRecord:async(target:typeof f.target)=>{
+      reads++;assert.deepEqual(target,f.state.target);return stored;
+    }};
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    t.after(()=>bridge.close());
+    const source=await bridge.readAttention(f.identity);
+    assert.equal(reads,1,"service reaches the stored-record observation join");
+    assert.equal(source.state,"available");if(source.state!=="available")throw Error("attention unavailable");
+    assert.equal(source.items.length,1);
+    assert.equal(source.items[0]!.kind,"blocked");
+    assert.deepEqual(source.items[0]!.identity,{kind:"blocked",code:"UNAVAILABLE"});
+    assert.equal("candidate" in source.items[0]!,false);
+    stored=null;
+    const withoutRecord=await bridge.readAttention(f.identity);
+    assert.equal(withoutRecord.state,"available");if(withoutRecord.state!=="available")throw Error("attention unavailable");
+    assert.equal(withoutRecord.items[0]!.kind,"stall","current inspection is renderable without the stale record");
+    assert.deepEqual(await f.capability.readRecord(f.state.target),prior,"GET never updates the predecessor");
+  });
   test("B3c late revoked owner clears lifecycle result",async t=>{
     const f=await using(t);await f.observe();
     const c={...f.capability,readRecord:async(target:typeof f.target)=>{
