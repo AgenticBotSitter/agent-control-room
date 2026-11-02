@@ -358,6 +358,11 @@ export class ImproveControlRoomLoopServiceV1 {
     else if (recoveryUnavailable) attention = { code: 'UNAVAILABLE', message: 'Recovery could not be verified.',
       nextAction: 'Ask the lead to check this saved run before continuing.' };
     if (!recoveryTerminal && !pending && !recoveryInputChanged && current.monitoring) attention = loopMonitoringAttentionV1(current.monitoring) ?? attention;
+    if (current.state === "refused" && current.decisions?.gate?.kind === "blocked" && !pending && !recoveryInputChanged) {
+      attention = { code: "REFUSED", message: current.decisions.gate.message,
+        nextAction: startClaim ? "Ask the lead to check this step before retrying. Refresh status or stop this run if Stop is available."
+          : "Check the project settings, then use Prepare request to retry with a new request. No candidate work was started." };
+    }
     const display = loopImprovementStatusSchemaV1.parse({ schemaVersion: 1, projectId, requestId,
       localVersion: lineage.view.currentVersion, description: lineage.view.description,
       requestSha256: lineage.view.requestSha256, settingsSha256: lineage.view.settingsSha256, runLinkId: lineage.view.runLink?.runLinkId ?? null,
@@ -742,7 +747,11 @@ export class ImproveControlRoomLoopServiceV1 {
       if (outcome.state !== "refused") {
         if (claim.operation === "intake") {
           // Admission comes from the exact durable receipt above; progress is display data.
-          if (status.settingsSha256 !== b.settingsSha256 || !["draft", "waiting"].includes(status.state)) throw conflict();
+          // A saved admission can precede a failed first planning launch. Keep
+          // its run link so reopening the desk can show the blocked-step reason.
+          const blockedLaunch = status.state === "refused" && status.progress.attention === "blocked"
+            && status.decisions?.gate?.kind === "blocked";
+          if (status.settingsSha256 !== b.settingsSha256 || !["draft", "waiting"].includes(status.state) && !blockedLaunch) throw conflict();
           await lineage.recordLoopRunLink({ projectId, requestId: claim.request_id, initialInputVersion: b.localVersion, run: status.run });
         }
         if (claim.operation === "confirm") {

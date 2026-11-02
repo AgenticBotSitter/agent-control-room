@@ -289,8 +289,35 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     }
     // The adapter closure owns this projection; decodeStatus still returns the unchanged engine schema.
     const status: LoopEngineStatusV1 = loopEngineStatusSchemaV1.parse(c.contract.decodeStatus(envelope));
+    // A2 can retain state=running (and the reviewed decoder can report draft)
+    // after a launch fails. Inspect only the latest non-stale step: an earlier
+    // failed attempt must not turn a subsequent active attempt into a refusal.
+    const step = envelope.steps.filter((value): value is Record<string, unknown> =>
+      !!value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>).stale !== true).at(-1);
+    const stepFailed = !["stopped", "finished"].includes(status.state) && step
+      && typeof step.state === "string"
+      && ["blocked", "failed", "error", "cancelled", "canceled", "timeout", "timed_out", "aborted"].includes(step.state);
+    let failureMessage: string | undefined;
+    if (stepFailed) {
+      // Reuse the refusal path's allowlisted plain reasons. Raw detail may
+      // contain paths, provider output or secrets; never interpolate it.
+      const detail = typeof step.detail === "string" ? step.detail : "";
+      const code = /^launch failed: ([A-Z][A-Z0-9_]{1,79})$/.exec(detail)?.[1];
+      const firstPlanning = status.state === "draft" && status.progress.completed === 0;
+      const prefix = firstPlanning ? "The first planning step could not start" : "The current improvement step could not complete";
+      const reason = /^launch failed: (?:[A-Z][A-Z0-9_]* )?REFUSED:/.test(detail)
+        ? "the launch checks rejected the request."
+        : detail.startsWith("launch failed:") ? "the loop engine could not launch it."
+          : "the loop engine reported that the step could not complete.";
+      failureMessage = code && Object.hasOwn(loopIntakeRefusalReasonsV1, code)
+        ? `${prefix}. ${loopIntakeRefusalReasonsV1[code as keyof typeof loopIntakeRefusalReasonsV1]}`
+        : `${prefix} because ${reason}`;
+      status.state = "refused";
+      status.progress = { ...status.progress, attention: "blocked" };
+    }
     status.decisions = loopImprovementDecisionsSchemaV1.parse({ observedAt: new Date().toISOString(),
-      gate: ["stopped", "finished"].includes(status.state) ? null : projection ? projection.decodeGate(envelope, status) : unavailableLoopGate() });
+      gate: failureMessage ? { kind: "blocked", code: "UNAVAILABLE", message: failureMessage }
+        : ["stopped", "finished"].includes(status.state) ? null : projection ? projection.decodeGate(envelope, status) : unavailableLoopGate() });
     if (status.run.loopRunId !== run || status.run.adapterId !== c.adapterId || status.run.toolingRevision !== c.toolingRevision)
       throw unavailable();
     if (monitoring) {

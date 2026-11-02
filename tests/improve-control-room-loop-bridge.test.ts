@@ -92,7 +92,11 @@ def emit(error=None, output='envelope'):
     if output=='malformed': print('unreadable'); return
     if output=='empty': return
     request=dict(input_version=s['inputVersion'],sha256=h(s['description']),text=s['description'],settings_sha256=s['settingsSha256'],confirmation=s['confirmation'],approval=s['approval'],question=s['question'],admissions=s['admissions'][-20:])
-    print(json.dumps(dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=dict(code='OWNER_REQUIRED') if s['state']=='waiting' else None,steps=[],counters=dict(fixture=s),error=dict(code=error) if error else None,request=None if output=='null-request' else request)))
+    envelope=dict(schema_version=1,run=run,state=s['state'],revision=s['revision'],next=None,attention=dict(code='OWNER_REQUIRED') if s['state']=='waiting' else None,steps=[],counters=dict(fixture=s),error=dict(code=error) if error else None,request=None if output=='null-request' else request)
+    override=os.path.join(root,'status-envelope.json')
+    if os.path.exists(override):
+        with open(override) as f: envelope.update(json.load(f))
+    print(json.dumps(envelope))
 def refuse(code): emit(code); sys.exit(2)
 control={}
 refusal=os.path.join(root,'refusal.json')
@@ -1384,3 +1388,87 @@ for (const state of ["same-history", "already-working"] as const) {
     assert.equal(await r.git("status", "--porcelain=v1", "--untracked-files=all"), "");
   });
 }
+
+
+test("B5 real A2 running envelope with terminal step failure is visible after reopen", async t => {
+  const f = await fixture(t), id = await f.intake();
+  const reopened = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter: f.adapter }, () => now);
+  for (const state of ["blocked", "failed", "error", "cancelled", "timed_out", "aborted"]) {
+    // Diagnosis item 5: A2 exits zero, has no top-level error and retains a
+    // running envelope while its first orchestrator step could not launch.
+    await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
+      steps: [{ n: 1, role: "orchestrator", model: "writer", state, stale: null, attempt: 1,
+        detail: "launch failed: B5 REFUSED: B5_IDENTIFIER_RULE_REFUSED",
+        identity: { requested: "writer", observed: null, status: "unverified" } }] }));
+    const current = await reopened.status(f.identity, f.project.projectId, id);
+    assert.equal(current.engine.state, "refused", state);
+    assert.equal(current.display.state, "blocked", state);
+    assert.equal(current.engine.progress.attention, "blocked");
+    assert.equal(current.decisions?.gate?.kind, "blocked");
+    assert.match(current.display.attention!.message, /first planning step could not start/i);
+    assert.match(current.display.attention!.message, /launch checks/i);
+    assert.match(current.display.attention!.nextAction, /Prepare request/);
+    assert.equal(current.display.canStart, false);
+    assert.doesNotMatch(JSON.stringify(current), /B5_IDENTIFIER|B5 REFUSED/);
+  }
+  // Unknown details are never copied to the owner surface.
+  await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
+    steps: [{ n: 1, role: "orchestrator", state: "failed", detail: "PRIVATE engine detail /private/scratch/key token=synthetic-secret" }] }));
+  const unknown = await f.get(id);
+  assert.match(unknown.display.attention!.message, /could not complete/i);
+  assert.doesNotMatch(JSON.stringify(unknown), /PRIVATE|scratch|synthetic-secret/);
+});
+
+test("B5 active and stale A2 steps retain progress without a false refusal", async t => {
+  const f = await fixture(t), id = await f.intake();
+  for (const steps of [
+    [{ n: 1, role: "orchestrator", state: "running" }],
+    [{ n: 1, role: "orchestrator", state: "blocked", stale: true }],
+    [{ n: 1, role: "orchestrator", state: "failed" }, { n: 2, role: "plan", state: "running" }],
+  ]) {
+    await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", steps, error: null }));
+    const current = await f.get(id);
+    assert.equal(current.engine.state, "draft"); // Reviewed fixture decoder's unchanged result.
+    assert.equal(current.engine.progress.attention, "none");
+    assert.notEqual(current.decisions?.gate?.kind, "blocked");
+  }
+});
+
+
+test("B5 later step failure retains Stop authority and uses the plain refusal reason", async t => {
+  const f = await fixture(t), id = await f.intake(), confirmed = await f.confirm(id);
+  const started = await f.post(`${encodeURIComponent(id)}/start`, { expectedVersion: 1,
+    runLinkId: confirmed.request.runLink!.runLinkId, expectedRevision: confirmed.engine.revision });
+  assert.equal((await started.json() as { state: string }).state, "accepted");
+  await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
+    steps: [{ n: 2, role: "build", state: "blocked", detail: "launch failed: SETTINGS" }] }));
+  const current = await f.get(id);
+  assert.equal(current.engine.state, "refused");
+  assert.equal(current.display.state, "blocked");
+  assert.equal(current.display.canStop, true);
+  assert.equal(current.display.canStart, false);
+  assert.match(current.display.attention!.message, /current improvement step could not complete/);
+  assert.match(current.display.attention!.message, /settings were refused/);
+  assert.match(current.display.attention!.nextAction, /Ask the lead/);
+  assert.doesNotMatch(current.display.attention!.message, /first planning|Nothing was changed/);
+  // Explicit terminal run states must remain terminal even with retained failures.
+  for (const state of ["stopped", "finished"] as const) {
+    const run = current.request.runLink!.loopRunId;
+    await f.edit(run, { state });
+    assert.equal((await f.raw.status(run)).state, state);
+  }
+});
+
+
+test("B5 accepted intake with an immediate blocked launch keeps its saved admission", async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.root, "status-envelope.json"), JSON.stringify({ state: "running", error: null,
+    steps: [{ n: 1, role: "orchestrator", state: "blocked", detail: "launch failed: B5 REFUSED: B5_IDENTIFIER_RULE_REFUSED" }] }));
+  const id = await f.intake();
+  const saved = await f.get(id);
+  assert.ok(saved.request.runLink, "accepted intake receipt still links the saved A2 run");
+  assert.equal(saved.display.state, "blocked");
+  assert.match(saved.display.attention!.message, /first planning step could not start/);
+  assert.equal(saved.display.canStart, false);
+  assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM control_loop_improvement_commands WHERE entry_kind='result'")).rows[0]!.n, 1);
+});

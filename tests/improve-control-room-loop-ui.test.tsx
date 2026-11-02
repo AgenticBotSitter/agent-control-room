@@ -590,3 +590,53 @@ test("B2a R3 stopped engine cannot admit its first website Start", async () => {
     assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);
   } finally { await f.close(); }
 });
+
+
+test("B5 failed desk load gives an actionable retry and no endless loading", async () => {
+  const f = await fixture(), wire = transport(f); let fail = true;
+  const m = await mount(f.project.projectId, ((input, options) => fail
+    ? Promise.resolve(Response.json({}, { status: 503 })) : wire.fetcher(input, options)) as typeof fetch);
+  try {
+    await settle();
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+    assert.match(m.text(), /could not be checked/i);
+    assert.ok(m.button("Retry loading desk"));
+    fail = false;
+    await act(async () => m.button("Retry loading desk").click()); await settle();
+    assert.ok(m.button("Start confirmed work"));
+  } finally { await m.close(); await f.close(); }
+});
+
+test("B5 desk loading watchdog bounds a stuck read and recovers on retry", async t => {
+  const f = await fixture(), wire = transport(f);
+  const original = client.readDesk;
+  client.readDesk = async () => new Promise<never>(() => {});
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    assert.match(m.text(), /Loading saved improvement desk/);
+    await act(async () => { t.mock.timers.tick(15_000); });
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+    assert.match(m.text(), /taking too long/i);
+    assert.ok(m.button("Retry loading desk"));
+    client.readDesk = original; t.mock.timers.reset();
+    await act(async () => m.button("Retry loading desk").click()); await settle();
+    assert.ok(m.button("Start confirmed work"));
+  } finally { await m.close(); await f.close(); client.readDesk = original; t.mock.timers.reset(); }
+});
+
+test("B5 refused first planning step renders reason and recovery without Start authority", async () => {
+  const f = await fixture(), wire = transport(f);
+  f.edit({ state: "refused", confirmation: null, progress: { step: "orchestrator", completed: 0, attention: "blocked" },
+    decisions: { observedAt: new Date(now).toISOString(), gate: { kind: "blocked", code: "UNAVAILABLE",
+      message: "The first planning step could not start because the launch checks rejected the request." } } });
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), /first planning step could not start/);
+    assert.match(m.text(), /Check the project settings, then use Prepare request to retry/);
+    assert.match(m.text(), /Prepare request/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+  } finally { await m.close(); await f.close(); }
+});
