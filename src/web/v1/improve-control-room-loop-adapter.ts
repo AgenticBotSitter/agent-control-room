@@ -7,7 +7,7 @@ import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import { loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
+import { loopBridgeBindingSchemaV1, loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1, type LoopImprovementContractV1 } from "../../improve-control-room/v1/schemas";
 import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
 import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, loopProgressSchemaV1, unavailableLoopGate,
@@ -77,9 +77,61 @@ export function captureLoopRecoveryCapabilityV1(value: LoopRecoveryCapabilityV1 
     || Object.keys(value).some(key => !["enabled", "inspect", "claimDriver"].includes(key))) throw unavailable();
   return Object.freeze({ enabled: value.enabled.bind(value), inspect: value.inspect.bind(value), claimDriver: value.claimDriver.bind(value) });
 }
+// New intake claims seal the custody required by the report-only driver.
+// Legacy command bindings remain readable, but cannot authorize this capability.
+export const loopIntakeCustodySchemaV1 = z.object({ tenantId: recoveryId, workspaceId: recoveryId,
+  projectId: recoveryId, requestId: recoveryId, ownerIdentityId: recoveryId,
+  localVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), settingsDigest: z.string().min(1).max(180) }).strict();
+export const loopOwnedIntakeBindingSchemaV1 = loopBridgeBindingSchemaV1.safeExtend(loopIntakeCustodySchemaV1.shape);
+const intakeResultSchema = z.object({ launch_key: z.string().regex(/^[a-f0-9]{32}$/), step: z.number().int().positive(),
+  job_id: z.string().min(1).max(240), ended: z.string().min(1).max(80).refine(v => Number.isFinite(Date.parse(v))),
+  report_sha256: loopEngineStatusSchemaV1.shape.settingsSha256, proposal_sha256: loopEngineStatusSchemaV1.shape.settingsSha256,
+  task_sha256: loopEngineStatusSchemaV1.shape.settingsSha256 }).strict();
+export const loopIntakeDriverBindingSchemaV1 = loopIntakeCustodySchemaV1.extend({ schemaVersion: z.literal(1),
+  runLinkId: recoveryId, run: loopImprovementRunIdentitySchemaV1, expectedRevision: revision, inputVersion: z.number().int().positive(),
+  requestSha256: loopEngineStatusSchemaV1.shape.settingsSha256, settingsSha256: loopEngineStatusSchemaV1.shape.settingsSha256,
+  intakeCommandId: commandIdentity.shape.commandId, intakeBinding: loopOwnedIntakeBindingSchemaV1,
+  intakeBindingDigest: digest, completedResult: intakeResultSchema }).strict();
+export type LoopIntakeDriverBindingV1 = z.infer<typeof loopIntakeDriverBindingSchemaV1>;
+export const loopIntakeDriverReceiptSchemaV1 = z.object({ command_id: commandIdentity.shape.commandId, binding_digest: digest,
+  completed_result: intakeResultSchema, intake_command_id: commandIdentity.shape.commandId, intake_binding: loopOwnedIntakeBindingSchemaV1,
+  custody: loopIntakeCustodySchemaV1.extend({runLinkId:recoveryId}),
+  request_sha256: loopEngineStatusSchemaV1.shape.settingsSha256, settings_sha256: loopEngineStatusSchemaV1.shape.settingsSha256,
+  input_version: z.number().int().positive(), expected_revision: revision, revision,
+  at: z.string().min(1).max(80).refine(v => Number.isFinite(Date.parse(v))),
+  state: z.literal("waiting_owner"), attention: z.literal("REQUEST_UNCONFIRMED") }).strict();
+export const loopIntakeDriverObservationSchemaV1 = z.object({ schemaVersion:z.literal(1),run:loopImprovementRunIdentitySchemaV1,
+  revision,inputVersion:z.number().int().positive(),requestSha256:loopEngineStatusSchemaV1.shape.settingsSha256,
+  settingsSha256:loopEngineStatusSchemaV1.shape.settingsSha256,mode:z.enum(["unavailable","completed","advanced"]),
+  completedResult:intakeResultSchema.nullable(),receipt:loopIntakeDriverReceiptSchemaV1.nullable(),evidenceDigest:digest }).strict()
+  .refine(v => v.mode === "completed" ? v.completedResult !== null && v.receipt === null
+    : v.completedResult === null && (v.mode === "advanced" ? v.receipt !== null : v.receipt === null));
+export type LoopIntakeDriverCapabilityV1 = {
+  enabled():boolean;
+  inspect(run:string):Promise<z.infer<typeof loopIntakeDriverObservationSchemaV1>>;
+  /** Reviewed tools capability owns its bounded command, atomic consumption and saved replay receipt. */
+  advance(binding:Readonly<LoopIntakeDriverBindingV1>):Promise<
+    {kind:"advanced";receipt:z.infer<typeof loopIntakeDriverReceiptSchemaV1>;observation:z.infer<typeof loopIntakeDriverObservationSchemaV1>}
+    | {kind:"refused"|"uncertain";evidenceDigest:string}>;
+};
+export function equalIntakeReceipt(b:LoopIntakeDriverBindingV1,r:z.infer<typeof loopIntakeDriverReceiptSchemaV1>) {
+  const custody=loopIntakeCustodySchemaV1.parse({tenantId:b.tenantId,workspaceId:b.workspaceId,projectId:b.projectId,
+    requestId:b.requestId,ownerIdentityId:b.ownerIdentityId,localVersion:b.localVersion,settingsDigest:b.settingsDigest});
+  return r.revision===b.expectedRevision+1 && r.expected_revision===b.expectedRevision && r.input_version===b.inputVersion
+    && r.request_sha256===b.requestSha256 && r.settings_sha256===b.settingsSha256 && r.intake_command_id===b.intakeCommandId
+    && canonicalJson(r.intake_binding)===canonicalJson(b.intakeBinding) && canonicalJson(r.completed_result)===canonicalJson(b.completedResult)
+    && canonicalJson(r.custody)===canonicalJson({...custody,runLinkId:b.runLinkId});
+}
+function captureIntakeDriver(value:LoopIntakeDriverCapabilityV1|undefined) {
+  if (!value) return undefined;
+  if (["enabled","inspect","advance"].some(k=>typeof value[k as keyof typeof value]!=="function")
+    || Object.keys(value).some(k=>!["enabled","inspect","advance"].includes(k))) throw unavailable();
+  return Object.freeze({enabled:value.enabled.bind(value),inspect:value.inspect.bind(value),advance:value.advance.bind(value)});
+}
 export type LoopAdapterContractV1 = {
   lineage: LoopImprovementContractV1; schemaDigest: string;
   recovery?: LoopRecoveryCapabilityV1;
+  intakeDriver?: LoopIntakeDriverCapabilityV1;
   finalization?: LoopFinalizationCapabilityV1;
   /** Reviewed installation opt-in attests monitoring-safe, no-paid-work logins. */
   monitoring?: { enabled(): boolean; decodeStatus(raw: unknown, status: LoopEngineStatusV1): unknown };
@@ -111,6 +163,7 @@ export interface LoopAdapterV1 {
   readonly adapterId: string; readonly toolingRevision: string; readonly schemaDigest: string;
   readonly settingsText: string; readonly contract: LoopImprovementContractV1;
   readonly finalization?: LoopFinalizationCapabilityV1;
+  readonly intakeDriver?: LoopIntakeDriverCapabilityV1;
   inspectRecovery?(run: string, command?: { commandId: string; bindingDigest: string }): Promise<LoopRecoveryObservationV1>;
   recover?(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1>;
   monitoringTick?(): void;
@@ -181,6 +234,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   const c = { ...input, executionIdentity: { ...input.executionIdentity }, contract: Object.freeze({ ...input.contract,
     lineage: Object.freeze({ ...input.contract.lineage }), qualifiedOperations: Object.freeze([...input.contract.qualifiedOperations]) }) };
   const recovery = captureLoopRecoveryCapabilityV1(c.contract.recovery);
+  const intakeCapability = captureIntakeDriver(c.contract.intakeDriver);
   const finalization = captureLoopFinalizationCapabilityV1(c.contract.finalization);
   const monitoring = c.contract.monitoring ? Object.freeze({ enabled: c.contract.monitoring.enabled.bind(c.contract.monitoring),
     decodeStatus: c.contract.monitoring.decodeStatus.bind(c.contract.monitoring) }) : undefined;
@@ -636,12 +690,42 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         });
       });
     } });
+  const intakeEnabled = () => { try { return !closing && intakeCapability?.enabled() === true; } catch { return false; } };
+  const intakeOperation = <T>(work:()=>Promise<T>) => {
+    const operation=(async()=>{if(!intakeEnabled())throw unavailable();validate();return work();})();
+    pending.add(operation);void operation.finally(()=>pending.delete(operation)).catch(()=>{});return operation;
+  };
+  const intakeDriver:LoopIntakeDriverCapabilityV1|undefined = intakeCapability ? Object.freeze({enabled:intakeEnabled,
+    inspect:(run:string)=>intakeOperation(async()=>{
+      runId(run);const raw=await intakeCapability.inspect(run);
+      if(Buffer.byteLength(JSON.stringify(raw),"utf8")>65536)throw unavailable();
+      const o=loopIntakeDriverObservationSchemaV1.parse(raw);
+      if(o.run.loopRunId!==run||o.run.adapterId!==c.adapterId||o.run.toolingRevision!==c.toolingRevision)throw unavailable();
+      return o;
+    }),
+    advance:(raw:Readonly<LoopIntakeDriverBindingV1>)=>intakeOperation(async()=>{
+      const binding=loopIntakeDriverBindingSchemaV1.parse(raw);
+      if(binding.run.adapterId!==c.adapterId||binding.run.toolingRevision!==c.toolingRevision
+        ||binding.settingsSha256!==c.settingsSha256)throw unavailable();
+      const result=await intakeCapability.advance(binding);
+      if(Buffer.byteLength(JSON.stringify(result),"utf8")>65536)throw unavailable();
+      if(result.kind!=="advanced"){
+        if(!["refused","uncertain"].includes(result.kind)||!digest.safeParse(result.evidenceDigest).success)throw unavailable();
+        return result;
+      }
+      const receipt=loopIntakeDriverReceiptSchemaV1.parse(result.receipt),observation=loopIntakeDriverObservationSchemaV1.parse(result.observation);
+      if(receipt.binding_digest!==sha256Digest(binding)||receipt.command_id!==`loop-command:${sha256Digest(binding).slice(7,39)}`
+        ||!equalIntakeReceipt(binding,receipt)||observation.mode!=="advanced"
+        ||canonicalJson(observation.receipt)!==canonicalJson(receipt)||canonicalJson(observation.run)!==canonicalJson(binding.run))throw unavailable();
+      return {kind:"advanced" as const,receipt,observation};
+    })}) : undefined;
   let closePromise: Promise<void> | undefined;
   return Object.freeze({ adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
     settingsText, contract: c.contract.lineage,
     reserveRun: () => runId(c.contract.generateRunId()), available,
     ...(recovery ? { inspectRecovery, recover } : {}),
     ...(finalization ? { finalization } : {}),
+    ...(intakeDriver ? { intakeDriver } : {}),
     ...(monitor ? { monitoringTick: monitor.tick } : {}),
     intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("intake", id, b, fence, text),
     confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("confirm", id, b, fence),

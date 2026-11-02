@@ -12,7 +12,8 @@ import { loopBridgeBindingSchemaV1, loopBridgeBodiesV1, loopBridgeOperationSchem
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { currentLoopGate, loopAttentionSourceSchemaV1, loopDecisionStatusSchemaV1, loopApprovalDocumentSchemaV1,
   loopImprovementDecisionsSchemaV1, unavailableLoopGate, loopDocumentBinding, type LoopDecisionStatusV1, type LoopAttentionItemV1 } from "./improve-control-room-loop-attention-wire";
-import { LoopIntakeRefusalV1, loopIntakeRefusalEvidenceV1, loopIntakeRefusalReasonsV1, loopRecoveryBindingSchemaV1, loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "./improve-control-room-loop-adapter";
+import { LoopIntakeRefusalV1, loopIntakeRefusalEvidenceV1, loopIntakeRefusalReasonsV1, loopRecoveryBindingSchemaV1, loopOwnedIntakeBindingSchemaV1, loopIntakeCustodySchemaV1,
+  loopIntakeDriverBindingSchemaV1, loopIntakeDriverObservationSchemaV1, equalIntakeReceipt, loopByteHashV1, type LoopAdapterV1, type LoopEngineStatusV1 } from "./improve-control-room-loop-adapter";
 
 import { loopRecoveryCursorSchemaV1, loopRecoveryTargetSchemaV1, type LoopRecoveryPortV1, type LoopRecoveryTargetV1, type LoopRecoveryCursorV1 } from "./improve-control-room-loop-recovery";
 
@@ -98,6 +99,12 @@ export class ImproveControlRoomLoopServiceV1 {
   async #result(tx: DatabaseSession, claim: Row) {
     return this.#verifyResult(await this.#readResult(tx, claim), claim);
   }
+  #intakeEngineBinding(claim:Row) {
+    // Custody is authenticated by the signed journal row. Derive the tools
+    // admission envelope without changing the persisted command schema.
+    return loopOwnedIntakeBindingSchemaV1.parse({...claim.binding,...this.scope,projectId:claim.project_id,
+      requestId:claim.request_id,ownerIdentityId:claim.owner_identity_id,settingsDigest:claim.binding.settingsSha256});
+  }
   #pins(binding: LoopBridgeBindingV1, operation: LoopBridgeOperationV1) {
     if (binding.adapterId !== this.#adapter.adapterId || binding.toolingRevision !== this.#adapter.toolingRevision
       || binding.schemaDigest !== this.#adapter.schemaDigest
@@ -157,7 +164,14 @@ export class ImproveControlRoomLoopServiceV1 {
           OR EXISTS (SELECT 1 FROM control_loop_improvement_commands s WHERE s.tenant_id=c.tenant_id
             AND s.request_id=c.request_id AND s.operation IN ('intake','confirm') AND s.entry_kind='claim'
             AND NOT EXISTS (SELECT 1 FROM control_loop_improvement_commands e WHERE e.tenant_id=s.tenant_id
-              AND e.command_id=s.command_id AND e.entry_kind='result')))
+              AND e.command_id=s.command_id AND e.entry_kind='result'))
+          OR (c.operation='intake' AND EXISTS (SELECT 1 FROM control_loop_improvement_commands e
+            WHERE e.tenant_id=c.tenant_id AND e.command_id=c.command_id AND e.entry_kind='result'
+              AND e.result->>'state'='accepted')
+            AND EXISTS (SELECT 1 FROM control_loop_improvement_run_links l
+              WHERE l.tenant_id=c.tenant_id AND l.request_id=c.request_id)
+            AND NOT EXISTS (SELECT 1 FROM control_loop_improvement_commands a
+              WHERE a.tenant_id=c.tenant_id AND a.request_id=c.request_id AND a.operation IN ('confirm','start','stop'))))
       ORDER BY c.request_id,CASE WHEN c.operation='intake' THEN 0 ELSE 1 END,c.created_at,c.command_id
     ) c WHERE ($3::timestamptz IS NULL OR (c.created_at,c.command_id)>($3::timestamptz,$4::text))
     ORDER BY c.created_at,c.command_id LIMIT 8`,
@@ -204,7 +218,7 @@ export class ImproveControlRoomLoopServiceV1 {
   async #reconcileRecovery(raw: LoopRecoveryTargetV1, signal: AbortSignal): ReturnType<LoopRecoveryPortV1['reconcile']> {
     const target=loopRecoveryTargetSchemaV1.parse(raw);
     const blocked={state:'blocked' as const};
-    if (signal.aborted || !this.#adapter.inspectRecovery || !this.#adapter.recover) return blocked;
+    if (signal.aborted) return blocked;
     let snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));
     for (const claim of snapshot.claims) {
       if (signal.aborted) return blocked;
@@ -212,6 +226,7 @@ export class ImproveControlRoomLoopServiceV1 {
       // Intake/confirm result commits also create lineage. Only authenticated
       // exact replay through #complete may perform that atomic transaction.
       if (claim.operation==='intake' || claim.operation==='confirm') return blocked;
+      if (!this.#adapter.inspectRecovery) return blocked;
       const observation=await this.#adapter.inspectRecovery(claim.binding.loopRunId,{commandId:claim.command_id,bindingDigest:sha256Digest(claim.binding)});
       const receipt=observation.receipt;
       if (!receipt || receipt.commandId!==claim.command_id || receipt.bindingDigest!==sha256Digest(claim.binding)) return blocked;
@@ -230,6 +245,8 @@ export class ImproveControlRoomLoopServiceV1 {
       await this.#releaseCommandFiles(claim);
     }
     snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));
+    if (!snapshot.claims.some(row=>row.operation==='start')) return this.#advanceIntake(target,snapshot,signal);
+    if (!this.#adapter.inspectRecovery || !this.#adapter.recover) return blocked;
     const starts=snapshot.claims.filter(row=>row.operation==='start'),start=starts[0];
     if (starts.length!==1 || !start || snapshot.results.get(start.command_id)?.result?.state!=='accepted'
       || snapshot.claims.some(row=>row.operation==='stop' && !snapshot.results.get(row.command_id))) return blocked;
@@ -261,6 +278,66 @@ export class ImproveControlRoomLoopServiceV1 {
     if (signal.aborted) return blocked;
     const result=await this.#adapter.recover(binding);
     return result.kind==='started'?{state:'started',child:result.child}:{state:result.kind==='busy'?'busy':'blocked'};
+  }
+  async #advanceIntake(target:LoopRecoveryTargetV1,snapshot:{lineage:Lineage;claims:Row[];results:Map<string,Row|undefined>;authorized:()=>boolean},signal:AbortSignal) {
+    const blocked={state:"blocked" as const},driver=this.#adapter.intakeDriver;
+    if(!driver||signal.aborted)return blocked;
+    try{if(driver.enabled()!==true)return blocked;}catch{return blocked;}
+    const local=snapshot.lineage,intakes=snapshot.claims.filter(row=>row.operation==='intake'),claim=intakes[0];
+    if(intakes.length!==1||!claim||snapshot.results.get(claim.command_id)?.result?.state!=="accepted"
+      ||!local.link||local.authorization||snapshot.claims.some(row=>['confirm','start','stop'].includes(row.operation)))return blocked;
+    const parsed=loopOwnedIntakeBindingSchemaV1.safeParse(this.#intakeEngineBinding(claim));
+    if(!parsed.success)return blocked;
+    const b=parsed.data;
+    if(b.tenantId!==this.scope.tenantId||b.workspaceId!==this.scope.workspaceId||b.projectId!==target.projectId
+      ||b.requestId!==target.requestId||b.ownerIdentityId!==target.ownerIdentityId||b.localVersion!==Number(local.input.version)
+      ||b.requestSha256!==local.input.request_sha256||b.settingsSha256!==local.input.settings_sha256
+      ||b.settingsDigest!==b.settingsSha256||b.runLinkId!==null||b.authorizationId!==null
+      ||b.loopRunId!==this.#run(local).loopRunId)return blocked;
+    const status=await this.#adapter.status(b.loopRunId);
+    if(status.state!=="draft"||status.confirmation||status.approval||status.question
+      ||!equal(status.run,this.#run(local))||status.settingsSha256!==b.settingsSha256
+      ||status.settingsDigest!==b.settingsDigest||loopByteHashV1(status.description)!==b.requestSha256
+      ||!status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(b)&&r.state==='accepted'))return blocked;
+    const raw=await driver.inspect(b.loopRunId);
+    if(Buffer.byteLength(JSON.stringify(raw),"utf8")>65536)throw unavailable();
+    const o=loopIntakeDriverObservationSchemaV1.parse(raw);
+    if(!equal(o.run,status.run)||o.revision!==status.revision||!equal(o.inputVersion,status.inputVersion)
+      ||o.requestSha256!==b.requestSha256||o.settingsSha256!==b.settingsSha256)return blocked;
+    if(o.mode==='unavailable')return blocked;
+    const receipt=o.receipt;
+    const binding=loopIntakeDriverBindingSchemaV1.parse({schemaVersion:1,...loopIntakeCustodySchemaV1.parse({
+      ...this.scope,projectId:target.projectId,requestId:target.requestId,ownerIdentityId:target.ownerIdentityId,
+      localVersion:b.localVersion,settingsDigest:b.settingsDigest}),runLinkId:local.link.id,run:status.run,
+      expectedRevision:receipt?.expected_revision??o.revision,inputVersion:o.inputVersion,
+      requestSha256:b.requestSha256,settingsSha256:b.settingsSha256,intakeCommandId:claim.command_id,
+      intakeBinding:b,intakeBindingDigest:sha256Digest(b),completedResult:receipt?.completed_result??o.completedResult});
+    if(receipt){
+      if(!equalIntakeReceipt(binding,receipt)||receipt.binding_digest!==sha256Digest(binding)
+        ||receipt.command_id!==`loop-command:${sha256Digest(binding).slice(7,39)}`||receipt.revision!==o.revision)return blocked;
+      return {state:"idle" as const};
+    }
+    // Serialize with owner Confirm/Stop and competing recovery owners. Tools
+    // independently rechecks its mutation fence and persists receipt + effect.
+    return this.db.transaction(async tx=>{
+      const current=await this.#recoverySnapshot(tx,target);
+      if(signal.aborted||!current.authorized()||!equal(JSON.parse(JSON.stringify(current.lineage)),JSON.parse(JSON.stringify(local)))||!equal(current.claims,snapshot.claims)
+        ||!equal([...current.results],[...snapshot.results])||driver.enabled()!==true)return blocked;
+      // Another owner may have consumed the result while we waited for the
+      // identity lock. Accept only its exact saved receipt; never advance twice.
+      const latest=loopIntakeDriverObservationSchemaV1.parse(await driver.inspect(b.loopRunId));
+      if(latest.mode==='advanced'){
+        const saved=latest.receipt;
+        return saved&&equalIntakeReceipt(binding,saved)&&saved.binding_digest===sha256Digest(binding)
+          &&saved.command_id===`loop-command:${sha256Digest(binding).slice(7,39)}`?{state:"idle" as const}:blocked;
+      }
+      if(latest.mode!=='completed'||!equal(latest,o)||signal.aborted)return blocked;
+      const result=await driver.advance(binding);
+      if(result.kind!=="advanced")return blocked;
+      if(!equalIntakeReceipt(binding,result.receipt)||result.receipt.binding_digest!==sha256Digest(binding)
+        ||!equal(result.observation.receipt,result.receipt)||!equal(result.observation.run,binding.run))throw unavailable();
+      return {state:"idle" as const};
+    });
   }
   viewDesk(identity: VerifiedWebIdentity, projectId: string) {
     if (!id.safeParse(projectId).success) throw new WebAccessError("invalid_request");
@@ -320,7 +397,7 @@ export class ImproveControlRoomLoopServiceV1 {
         engineRevision: outcome?.revision ?? 0, state: inProgress ? null : "blocked", startState: "not_started", confirmationCurrent: false,
         canStart: false, canStop: false, progress: null, attention: { code, message, nextAction: refused ? "Correct the configuration, then prepare a new request. No work was started."
           : inProgress ? "Wait while the saved request is linked. This status is limited to two minutes from intake."
-          : "Ask the lead to check this saved request before preparing another one." },
+          : "Check this saved request before preparing another one." },
         observedAt: new Date(this.clock()).toISOString() });
       const engine: LoopEngineStatusV1 = { run: { adapterId: intakeClaim.binding.adapterId, loopRunId: intakeClaim.binding.loopRunId,
         toolingRevision: intakeClaim.binding.toolingRevision, a2SchemaVersion: 1 }, revision: outcome?.revision ?? 0,
@@ -703,7 +780,7 @@ export class ImproveControlRoomLoopServiceV1 {
       const { claim } = admitted, b = claim.binding;
       let status: LoopEngineStatusV1;
       switch (operation) {
-        case "intake": status = await this.#adapter.intake(claim.command_id, b, body.description as string, beforeSpawn); break;
+        case "intake": status = await this.#adapter.intake(claim.command_id, this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : b, body.description as string, beforeSpawn); break;
         case "confirm": status = await this.#adapter.confirmRequest(claim.command_id, b, beforeSpawn); break;
         case "start": status = await this.#adapter.start(claim.command_id, b, beforeSpawn); break;
         case "stop": status = await this.#adapter.stop(claim.command_id, b, beforeSpawn); break;
@@ -714,13 +791,13 @@ export class ImproveControlRoomLoopServiceV1 {
     } catch (error) {
       const claim = admitted.claim;
       if (operation === "intake" && error instanceof LoopIntakeRefusalV1 && error.commandId === claim.command_id
-        && error.bindingDigest === sha256Digest(claim.binding)
-        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, claim.binding, error.code)) {
+        && error.bindingDigest === sha256Digest(this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : claim.binding)
+        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : claim.binding, error.code)) {
         try {
           this.#pins(claim.binding, "intake");
           const outcome = loopBridgeOutcomeSchemaV1.parse({ state: "refused", revision: 0,
             adapterId: claim.binding.adapterId, loopRunId: claim.binding.loopRunId, toolingRevision: claim.binding.toolingRevision,
-            evidenceDigest: error.evidenceDigest, error: "REFUSED" });
+            evidenceDigest: loopIntakeRefusalEvidenceV1(claim.command_id,claim.binding,error.code), error: "REFUSED" });
           const result = await this.#desk.loopBridgeTransaction(identity, projectId, true, async ({ tx, actor, lineage }) => {
             if (actor.id !== claim.owner_identity_id) throw new WebAccessError("not_found");
             const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
@@ -742,7 +819,8 @@ export class ImproveControlRoomLoopServiceV1 {
     this.#pins(b, claim.operation);
     if (status.run.loopRunId !== b.loopRunId || status.run.adapterId !== b.adapterId || status.run.toolingRevision !== b.toolingRevision)
       throw unavailable();
-    const receipt = status.receipts.find(receipt => receipt.commandId === claim.command_id && receipt.bindingDigest === sha256Digest(b))
+    const receipt = status.receipts.find(receipt => receipt.commandId === claim.command_id && (receipt.bindingDigest === sha256Digest(b) || claim.operation === "intake" && this.#adapter.intakeDriver
+        && receipt.bindingDigest === sha256Digest(this.#intakeEngineBinding(claim))))
       ?? (claim.operation === "stop" && status.state === "stopped" ? { state: "accepted" as const,
         evidenceDigest: sha256Digest({ run: status.run, state: "stopped", revision: status.revision }), error: null } : undefined);
     if (!receipt) return this.#receipt(claim, undefined, replayed);

@@ -315,6 +315,7 @@ test("B5 committed unlinked intake has bounded observational status before its r
     clock = now + 120000;
     const stale = await bridge.status(f.identity, f.project.projectId, id);
     assert.equal(stale.display.attention?.code, "INTAKE_TIMEOUT");
+    assert.equal(stale.display.attention?.nextAction, "Check this saved request before preparing another one.");
     assert.equal(stale.engine.state, "refused"); assert.equal(stale.display.state, "blocked");
     const staleResponse = await read();
     assert.equal(staleResponse.status, 200);
