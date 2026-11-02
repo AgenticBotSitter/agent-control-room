@@ -716,3 +716,50 @@ test('B5 retained transport projects identifying fields without weakening privat
   assert.equal(validateB5TransportV1(q,remote,now).ownerLogin,'owner@example.invalid');
   console.log('RESULT: PASS retained transport labels hide host/login, retain mapping commitments, and preserve exact private admission');
 });
+
+test("B5 real-mode controller device gate survives days before fresh sign-in and accepts its receipt", async t => {
+  const C = await import("../scripts/workflow-journeys/first-website-controller");
+  const root = await scratch(t), q = qualification();
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
+  const mailbox = await createB5DeviceMailboxV1(root, remote, { real: true, projectId: "unit-project", inventory: q.inventory });
+  const owner = C.createFirstWebsiteControllerOwnerV1();
+  try {
+    const started = Date.now(), longWait = 3 * 24 * 3600_000;
+    owner.startDeadline(600_000, { ownerGates: true });
+    const accept: B5DeviceMailboxV1["accept"] = async value => {
+      assert.equal(owner.timing().waitingForOwner, false, "verification consumes active work");
+      t.mock.timers.tick(5); return mailbox.accept(value);
+    };
+    const result = await C.runFirstWebsiteDevicePhaseV1({ mailbox: { ...mailbox, accept }, phase: "connect", device: "phone", signal: owner.signal,
+      expiresAt: new Date(started + longWait + 60_000).toISOString(),
+      policy: { normalizer: "b5-unicode-v1", sentinel: "UNIT_PRIVATE_GATE_CANARY_1234567890", distinctiveInstructions: ["unit gate instruction"] },
+      onPublished() { assert.equal(owner.timing().waitingForOwner, false); },
+      capture: async () => {
+        assert.equal(owner.timing().waitingForOwner, false); t.mock.timers.tick(15); return undefined;
+      },
+      waitForOwner: wait => owner.waitForOwner(async () => {
+        t.mock.timers.tick(longWait); assert.equal(owner.signal.aborted, false);
+        const request = b5DeviceRequestSchemaV1.parse(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")));
+        // Only the product's successful authenticated project response may
+        // establish evidence. No browser, remote transport or login is launched.
+        const token = "u".repeat(43);
+        for (const cookie of [`control_room_local_owner=${token}`, `control_room_local_owner=${token}; b5_correlation=${request.sessionNonce}`])
+          await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie } }), async () => new Response("unit authenticated project"));
+        const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+        await writeFile(join(mailbox.root, "captures/late.png"), png, { mode: 0o600 });
+        const at = new Date().toISOString();
+        await writeB5DeviceReceiptV1(join(mailbox.root, "inbox", `${request.sequence}.json`), { ...request, real: true,
+          browser: "fixture-browser/fixture-version", observedAt: at, actions: ["connected"], observation: mailbox.observation(),
+          captures: [{ path: "captures/late.png", sha256: b5DeviceHashV1(png), device: "phone", sequence: request.sequence, sessionNonce: request.sessionNonce, capturedAt: at }] });
+        return wait();
+      }),
+    });
+    assert.equal(result.receipt.phase, "connect");
+    assert.deepEqual(owner.timing(), { gateWaitMs: longWait, waitingForOwner: false });
+    assert.equal(owner.workAt(), started + 300_000 + longWait);
+    t.mock.timers.tick(299_979); assert.equal(owner.signal.aborted, false, "publication/capture/verification left exactly 299980ms active work");
+    const cleanup = await owner.cleanup();
+    assert.equal(cleanup.hostStopped && cleanup.postgresStopped, true); assert.deepEqual(cleanup.failures, []);
+  } finally { await owner.cleanup(); owner.dispose(); await mailbox.close(); t.mock.timers.reset(); }
+  console.log("RESULT: PASS B5 real-mode device handshake wait=3days fresh initial challenge receipt=accepted capture/verification=20ms active cleanup=complete");
+});

@@ -854,7 +854,9 @@ test("F04a real controller refuses unqualified device input before any acquisiti
   assert.equal(verdict.state,'incomplete'); assert.deepEqual(verdict.reasons,['B5_DEVICE_QUALIFICATION_REQUIRED','B5_PROVIDER_FIXTURE']);
   assert.equal(verdict.transportCleanup?.disposition,'mapping-not-created'); assert.equal(verdict.transportCleanup?.mappingAttempted,false);
   assert.deepEqual(resources,[]); assert.deepEqual(['SIGINT','SIGTERM'].map(signal=>process.listenerCount(signal)),counts);
-  assert.deepEqual((await readdir(s.evidence)).sort(),['controller-observations.json','controller-verdict.json']);
+  assert.deepEqual((await readdir(s.evidence)).sort(),['controller-observations.json','controller-timing.json','controller-verdict.json']);
+  const timing = JSON.parse(await readFile(join(s.evidence,'controller-timing.json'),'utf8'));
+  assert.equal(timing.gateWaitMs,0); assert.equal(timing.waitingForOwner,false); assert.equal(timing.ownerGateWaitExcluded,true);
   assert.deepEqual((await tree(s.parent)).filter(path=>path!==`${s.evidence}/` && !path.startsWith(`${s.evidence}/`)),before,
     'qualification refusal changes no bytes or paths outside its own evidence directory');
   assert.equal((await lstat(s.evidence)).mode & 0o777,0o700);
@@ -1717,4 +1719,110 @@ test('B5 retained evidence refuses private hosts and owner logins in JSON, text 
     await assert.rejects(e.verify(),{code:'B5_EVIDENCE_SECRET'});
   }
   console.log('RESULT: PASS finalizer and verifier refuse private host and owner login in retained JSON/text; manifest guard refuses both');
+});
+
+test("B5 real owner gates exclude days of waiting and finish within the original active allowance", async t => {
+  const { createFirstWebsiteControllerOwnerV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.parse("2026-11-02T00:00:00Z") });
+  const owner = createFirstWebsiteControllerOwnerV1(), events: string[] = [];
+  try {
+    const started = Date.now(), budget = 600_000, longWait = 3 * 24 * 3600_000;
+    owner.registerStopWork(async () => { events.push("stop"); });
+    owner.registerCloseHost(async () => { events.push("host"); });
+    owner.registerStopPostgres(async () => { events.push("postgres"); });
+    owner.startDeadline(budget, { ownerGates: true });
+    t.mock.timers.tick(20_000);
+    for (const gate of ["connect", "prepare", "confirm-start", "question", "plan", "spec", "finish", "close", "re-sign-in"]) {
+      let answer!: () => void;
+      const waiting = owner.waitForOwner(() => new Promise<void>(yes => { answer = yes; }));
+      await Promise.resolve();
+      assert.equal(owner.timing().waitingForOwner, true);
+      t.mock.timers.tick(longWait);
+      assert.equal(owner.signal.aborted, false, gate);
+      assert.equal(owner.workAt(), started + 300_000 + owner.timing().gateWaitMs);
+      assert.throws(() => owner.startDeadline(budget), { code: "B5_DEADLINE_INVALID" }, "start anchors cannot reset while waiting");
+      answer(); await waiting;
+      assert.equal(owner.timing().waitingForOwner, false);
+      t.mock.timers.tick(10_000); // Actual work after each gate still consumes budget.
+    }
+    assert.equal(owner.timing().gateWaitMs, 9 * longWait);
+    assert.equal(owner.capAt(), started + budget + 9 * longWait);
+    assert.equal(owner.signal.aborted, false);
+    const result = await owner.cleanup();
+    assert.deepEqual(events, ["stop", "host", "postgres"]);
+    assert.equal(result.hostStopped && result.postgresStopped, true);
+    assert.deepEqual(result.failures, []); assert.equal(result.overrunMs, 0);
+  } finally { owner.dispose(); t.mock.timers.reset(); }
+  console.log("RESULT: PASS B5 real gate waits=27days active=110s budget=300s finished cleanup=complete");
+});
+
+test("B5 real gates retain cumulative active work and reject overrun between gates", async t => {
+  const { createFirstWebsiteControllerOwnerV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const owner = createFirstWebsiteControllerOwnerV1();
+  try {
+    owner.startDeadline(1000, { ownerGates: true });
+    t.mock.timers.tick(200);
+    await owner.waitForOwner(async () => { t.mock.timers.tick(10_000_000); });
+    t.mock.timers.tick(299); assert.equal(owner.signal.aborted, false);
+    t.mock.timers.tick(1); assert.equal(owner.signal.reason.code, "B5_DEADLINE");
+    let ran = false;
+    await assert.rejects(owner.waitForOwner(async () => { ran = true; }), { code: "B5_DEADLINE" });
+    assert.equal(ran, false); await owner.cleanup();
+  } finally { owner.dispose(); t.mock.timers.reset(); }
+  console.log("RESULT: PASS B5 real active work overrun fails at cumulative 500ms after long gate");
+});
+
+test("B5 real Stop and abort during an owner gate cancel promptly and run full mapping cleanup", async t => {
+  await load();
+  const { createFirstWebsiteControllerOwnerV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  const D = await import("../scripts/workflow-journeys/first-website-device");
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.parse("2026-11-02T00:00:00Z") });
+  try {
+    for (const code of ["B5_OWNER_STOP", "B5_INTERRUPTED"]) {
+      const external = new AbortController(), owner = createFirstWebsiteControllerOwnerV1(external.signal), events: string[] = [];
+      const origin = "https://fixture.ts.net:60462", beforeStatus = {}, beforeDigest = D.b5MappingDigestV1(beforeStatus), installedDigest = D.b5DeviceHashV1("fixture mapping");
+      try {
+        owner.startDeadline(600_000, { ownerGates: true });
+        owner.registerStopWork(async signal => { assert.equal(signal.aborted, false); events.push("stop"); });
+        owner.registerCloseHost(async () => { events.push("host"); });
+        owner.registerStopPostgres(async () => { events.push("postgres"); });
+        owner.armMapping({ origin, beforeStatus, beforeDigest, installedDigest } as never, async (request, signal) => {
+          assert.equal(signal.aborted, false); events.push("remove");
+          return { schemaVersion: 1, actor: "owner", removalNonce: request.removalNonce, observedAt: new Date().toISOString(), installSettled: true, installCancelled: true,
+            off: { command: D.B5_DEVICE_OFF_COMMAND_V1, port: 60462, exitCode: 0 }, beforeDigest, installedDigest,
+            status: { command: D.B5_DEVICE_STATUS_COMMAND_V1, exitCode: 0, afterStatus: {}, afterDigest: beforeDigest } };
+        });
+        const waiting = owner.waitForOwner(() => new Promise<never>(() => {}));
+        const rejected = assert.rejects(waiting, { code });
+        t.mock.timers.tick(48 * 3600_000);
+        if (code === "B5_OWNER_STOP") owner.abort(new H.B5RefusalV1(code));
+        else external.abort(new H.B5RefusalV1(code));
+        await rejected;
+        const result = await owner.cleanup(), waited = owner.timing().gateWaitMs;
+        assert.equal(result.disposition, "mapping-removed"); assert.deepEqual(result.failures, []);
+        assert.deepEqual(events, ["stop", "host", "remove", "postgres"]);
+        t.mock.timers.tick(1000); assert.equal(owner.timing().gateWaitMs, waited, "cleanup must freeze gate accounting");
+      } finally { owner.dispose(); }
+    }
+  } finally { t.mock.timers.reset(); }
+  console.log("RESULT: PASS B5 Stop/abort during long gate cancel wait and clean stop/host/mapping/postgres");
+});
+
+test("B5 rehearsal owner gates keep the original short deadline", async t => {
+  const { createFirstWebsiteControllerOwnerV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const owner = createFirstWebsiteControllerOwnerV1();
+  try {
+    owner.startDeadline(60_000, { ownerGates: false });
+    const waiting = owner.waitForOwner(async () => {
+      t.mock.timers.tick(29_999); assert.equal(owner.signal.aborted, false);
+      t.mock.timers.tick(1); owner.signal.throwIfAborted();
+    });
+    await assert.rejects(waiting, { code: "B5_DEADLINE" });
+    assert.deepEqual(owner.timing(), { gateWaitMs: 0, waitingForOwner: false });
+    assert.equal(owner.workAt(), 31_000); assert.equal(owner.capAt(), 61_000);
+    await owner.cleanup();
+  } finally { owner.dispose(); t.mock.timers.reset(); }
+  console.log("RESULT: PASS B5 rehearsal gate deadline unchanged work=30s total=60s");
 });

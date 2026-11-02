@@ -76,6 +76,23 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
   let qualifiedTransport: B5TransportQualificationV1 | undefined;
   let uncertain = false, closing: Promise<B5ControllerCleanupV1> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined, capAt: number | undefined, workAt: number | undefined, acquisitionStarted = false;
+  // Keep the original deadline anchors. Only published human waits are deducted
+  // from elapsed work; cleanup freezes the deduction before doing any teardown.
+  let ownerGates = false, gateStartedAt: number | undefined, gateWaitMs = 0;
+  const waitedMs = () => gateWaitMs + (gateStartedAt === undefined ? 0 : Math.max(0, Date.now() - gateStartedAt));
+  const workDeadline = () => workAt === undefined ? undefined : workAt + waitedMs();
+  const capDeadline = () => capAt === undefined ? undefined : capAt + waitedMs();
+  function armWorkTimer() {
+    clearTimeout(timer); timer = undefined;
+    if (closing || abort.signal.aborted || gateStartedAt !== undefined || workAt === undefined) return;
+    const remaining = workDeadline()! - Date.now();
+    if (remaining <= 0) abort.abort(new B5RefusalV1("B5_DEADLINE"));
+    else timer = setTimeout(() => abort.abort(new B5RefusalV1("B5_DEADLINE")), remaining);
+  }
+  function finishGate() {
+    if (gateStartedAt === undefined) return;
+    gateWaitMs += Math.max(0, Date.now() - gateStartedAt); gateStartedAt = undefined;
+  }
   const interrupt = () => abort.abort(new B5RefusalV1("B5_INTERRUPTED"));
   const forwarded = () => abort.abort(external?.reason ?? new B5RefusalV1("B5_ABORTED"));
   // Both listeners are present before the PG helper may skip its protection.
@@ -85,6 +102,7 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
   const onAbort = () => { void cleanup().catch(() => {}); };
   abort.signal.addEventListener("abort", onAbort, { once: true });
   function cleanup() {
+    if (!closing) { finishGate(); clearTimeout(timer); }
     return closing ??= Promise.resolve().then(async () => {
       clearTimeout(timer);
       const result: B5ControllerCleanupV1 = { disposition: mapping ? "mapping-outstanding" : "mapping-not-created",
@@ -113,7 +131,7 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
       // Always stop PG, even if serving closure or owner removal failed.
       try { await bounded(async () => { need(stopPg || !acquisitionStarted, "B5_POSTGRES_STOP_UNOBSERVED"); await stopPg?.(); }, 60_000, "B5_POSTGRES_STOP_TIMEOUT"); result.postgresStopped = true; }
       catch (error) { result.failures.push(error instanceof B5RefusalV1 || error instanceof B5DeviceRefusalV1 ? error.code : "B5_POSTGRES_STOP_FAILED"); }
-      result.overrunMs = capAt === undefined ? 0 : Math.max(0, Date.now() - capAt);
+      result.overrunMs = capDeadline() === undefined ? 0 : Math.max(0, Date.now() - capDeadline()!);
       if (result.overrunMs) result.failures.push("B5_CLEANUP_OVERRUN");
       return result;
     });
@@ -122,13 +140,36 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
     registerStopPostgres(stop: () => Promise<void>): void;
     signal: AbortSignal; cleanup: typeof cleanup; abort(reason: B5RefusalV1): void;
     beginAcquisition(): void; capAt(): number | undefined; workAt(): number | undefined;
-    startDeadline(ms: number): void; registerResource(close: () => Promise<void>): void;
+    startDeadline(ms: number, options?: { ownerGates: boolean }): void;
+    waitForOwner<T>(wait: () => Promise<T>): Promise<T>;
+    timing(): { gateWaitMs: number; waitingForOwner: boolean };
+    registerResource(close: () => Promise<void>): void;
     registerStopWork(stop: (signal: AbortSignal) => Promise<void>): void;
     qualifyTransport(q: B5TransportQualificationV1): void;
     armMapping(q: B5TransportQualificationV1, removal: NonNullable<typeof mapping>["requestRemoval"]): void;
     mappingInstalled(): void; dispose(): void;
   } = {
-    signal: abort.signal, cleanup, abort: reason => abort.abort(reason), beginAcquisition() { acquisitionStarted = true; }, capAt: () => capAt, workAt: () => workAt,
+    signal: abort.signal, cleanup, abort: reason => abort.abort(reason), beginAcquisition() { acquisitionStarted = true; }, capAt: capDeadline, workAt: workDeadline,
+    timing: () => ({ gateWaitMs: waitedMs(), waitingForOwner: gateStartedAt !== undefined }),
+    async waitForOwner(wait) {
+      abort.signal.throwIfAborted();
+      if (!ownerGates) return wait();
+      need(!closing && workAt !== undefined && gateStartedAt === undefined, "B5_GATE_STATE");
+      // A late gate cannot forgive work that already exceeded its allowance.
+      armWorkTimer(); abort.signal.throwIfAborted();
+      gateStartedAt = Date.now(); clearTimeout(timer); timer = undefined;
+      let onAbort: () => void = () => {};
+      const cancelled = new Promise<never>((_, no) => {
+        onAbort = () => no(abort.signal.reason);
+        abort.signal.addEventListener("abort", onAbort, { once: true });
+        if (abort.signal.aborted) onAbort();
+      });
+      try { return await Promise.race([cancelled, Promise.resolve().then(wait)]); }
+      finally {
+        abort.signal.removeEventListener("abort", onAbort);
+        finishGate(); armWorkTimer();
+      }
+    },
     registerCloseHost(close) { closeHost = close; }, registerStopPostgres(stop) { stopPg = stop; },
     registerResource(close) { resources.push(close); }, registerStopWork(stop) { stopWork = stop; },
     qualifyTransport(q) {
@@ -142,11 +183,12 @@ export function createFirstWebsiteControllerOwnerV1(external?: AbortSignal) {
       qualifiedTransport ??= qualification; mapping = { qualification, requestRemoval }; uncertain = true;
     },
     mappingInstalled() { if (!mapping || closing) throw new B5RefusalV1("B5_MAPPING_STATE"); uncertain = false; },
-    startDeadline(ms) {
-      if (timer || !Number.isSafeInteger(ms) || ms < 1 || ms > B5_MAX_DURATION_MS) throw new B5RefusalV1("B5_DEADLINE_INVALID");
+    startDeadline(ms, options) {
+      if (workAt !== undefined || closing || !Number.isSafeInteger(ms) || ms < 1 || ms > B5_MAX_DURATION_MS) throw new B5RefusalV1("B5_DEADLINE_INVALID");
       abort.signal.throwIfAborted();
+      ownerGates = options?.ownerGates === true;
       const reserve = Math.min(300_000, Math.floor(ms / 2)); capAt = Date.now() + ms; workAt = capAt - reserve;
-      timer = setTimeout(() => abort.abort(new B5RefusalV1("B5_DEADLINE")), ms - reserve);
+      armWorkTimer();
     },
     dispose() {
       clearTimeout(timer); process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt);
@@ -356,6 +398,7 @@ export async function runFirstWebsiteDevicePhaseV1(input: {
   mailbox: B5DeviceMailboxV1; phase: B5DeviceRequestV1["phase"]; device: B5DeviceRequestV1["device"];
   expiresAt: string; binding?: B5DeviceRequestV1["binding"]; signal: AbortSignal;
   policy: z.infer<typeof b5FaultScanPolicySchemaV1>; onPublished?(): void;
+  waitForOwner?<T>(wait: () => Promise<T>): Promise<T>;
   capture?(request: B5DeviceRequestV1): Promise<{receipt: import("./first-website-device").B5DeviceReceiptV1; dom?: z.infer<typeof b5DeviceServiceEvidenceSchemaV1>["dom"]} | undefined>;
 }) {
   input.signal.throwIfAborted();
@@ -363,7 +406,11 @@ export async function runFirstWebsiteDevicePhaseV1(input: {
   input.onPublished?.();
   assertB5FaultValueAbsentV1(request, input.policy);
   const captured = await input.capture?.(request);
-  const receipt = captured?.receipt ?? await waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root, input.signal, Date.parse(input.expiresAt));
+  const receive = () => waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root, input.signal, Date.parse(input.expiresAt));
+  // Publishing, automatic capture and receipt verification are active work.
+  // Only the pending owner receipt suspends a real controller's work clock.
+  const receipt = captured?.receipt ?? await (input.waitForOwner ? input.waitForOwner(receive) : receive());
+  input.signal.throwIfAborted();
   assertB5FaultValueAbsentV1(receipt, input.policy);
   assertB5FaultValueAbsentV1(captured?.dom ?? null, input.policy);
   const accepted = await input.mailbox.accept(receipt);
@@ -484,7 +531,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     await writeFile(join(evidenceDir, `${name}.json`), bytes, { flag: "wx", mode: 0o600 });
   };
   try {
-    owner.startDeadline(config.maxDurationMs); workSignal.throwIfAborted();
+    owner.startDeadline(config.maxDurationMs, { ownerGates: !preflight.rehearsal }); workSignal.throwIfAborted();
     const faultBytes = await readFirstWebsitePrivateBytesV1(config.faultInputFile, root);
     const neutralBytes = await readFirstWebsitePrivateBytesV1(config.reviewInputFile, root);
     need(b5Bytes(faultBytes) === digests.faultInput && b5Bytes(neutralBytes) === digests.reviewInput, "B5_INPUT_CHANGED");
@@ -506,6 +553,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     await mkdir(evidenceDir, { mode: 0o700 }).catch(e => { if (e.code !== "EEXIST") throw e; });
     await chmod(evidenceDir, 0o700); wroteEvidence = true;
     await write("controller-start", { schemaVersion: 1, startedAt: new Date().toISOString(), preflightDigests: digests,
+      budget: { maxDurationMs: config.maxDurationMs, ownerGateWaitExcluded: !preflight.rehearsal },
       mappingAttempted: false, captureMode: q?.captureMode ?? "fixture-browser-loopback", phoneDomAvailable: false, binaryScan: "lead-visual-check-required" });
     if(preflight.rehearsal) await runFirstWebsiteProviderDenialsV1(preflight,workSignal,owner);
     const create = await loadFirstWebsiteAssemblyV1(config); workSignal.throwIfAborted();
@@ -611,7 +659,12 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       if (requestId && ["repair", "finish", "retained"].includes(name))
         await service(`${projectPath}/${encodeURIComponent(requestId)}/candidate`);
       const result = await runFirstWebsiteDevicePhaseV1({ mailbox, phase: name, device, binding, signal: workSignal, policy,
-        expiresAt: new Date(Math.min(owner.workAt()!, q ? Date.parse(q.expiresAt) : Infinity)).toISOString(),
+        // Transport authorization remains a hard security boundary. There is
+        // no authorized renewal operation in the frozen qualification packet.
+        // Real phases have no work-budget deadline while awaiting the owner.
+        expiresAt: preflight.rehearsal ? new Date(Math.min(owner.workAt()!, q ? Date.parse(q.expiresAt) : Infinity)).toISOString()
+          : q!.expiresAt,
+        waitForOwner: wait => owner.waitForOwner(wait),
         ...(q && device === "desktop" && ["connect","finish","close"].includes(name) ? {
           capture:(request:B5DeviceRequestV1)=>captureFirstWebsiteDesktopV1({request,host:host!,qualification:q,owner,signal:workSignal}),
         } : {}),
@@ -634,7 +687,8 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     await writeB5DeviceRequestV1(join(deviceRoot, "install-request.json"), { schemaVersion: 1, installNonce, requestedAt,
       origin: q.origin, backend: q.backend, port: 60462, beforeDigest: q.beforeDigest, installedDigest: q.installedDigest,
       commands: [B5_DEVICE_INSTALL_COMMAND_V1, B5_DEVICE_STATUS_COMMAND_V1] });
-    const installed = await waitB5DeviceJsonV1(join(deviceRoot, "install-receipt.json"), deviceRoot, workSignal, Date.now() + 120_000) as Record<string, unknown>;
+    const installDeadline = preflight.rehearsal ? Date.now() + 120_000 : Date.parse(q.expiresAt);
+    const installed = await owner.waitForOwner(() => waitB5DeviceJsonV1(join(deviceRoot, "install-receipt.json"), deviceRoot, workSignal, installDeadline)) as Record<string, unknown>;
     need(installed.schemaVersion === 1 && installed.actor === "owner" && installed.installNonce === installNonce
       && installed.command === B5_DEVICE_INSTALL_COMMAND_V1 && installed.statusCommand === B5_DEVICE_STATUS_COMMAND_V1
       && installed.exitCode === 0 && installed.statusExitCode === 0 && typeof installed.observedAt === "string"
@@ -824,7 +878,11 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   if (verdict.reasons.some(reason => !["B5_PROVIDER_FIXTURE","B5_PHONE_EVIDENCE_MISSING","B5_DESKTOP_EVIDENCE_MISSING","B5_CAPTURE_MODE_UNAPPROVED"].includes(reason)))
     verdict.reasons = [...verdict.reasons.filter(reason => reason !== "B5_PROVIDER_FIXTURE"),
       ...verdict.reasons.filter(reason => reason === "B5_PROVIDER_FIXTURE")];
-  if (wroteEvidence) try { await write("controller-verdict", verdict); }
+  if (wroteEvidence) try {
+    await write("controller-timing", { schemaVersion: 1, startedAt, ...owner.timing(),
+      ownerGateWaitExcluded: !preflight.rehearsal, workDeadline: owner.workAt(), cleanupDeadline: owner.capAt() });
+    await write("controller-verdict", verdict);
+  }
   catch { verdict.state = "incomplete"; verdict.reasons.push("B5_VERDICT_WRITE_FAILED"); }
   if (verdict.reasons.some(reason => !["B5_PROVIDER_FIXTURE","B5_PHONE_EVIDENCE_MISSING","B5_DESKTOP_EVIDENCE_MISSING","B5_CAPTURE_MODE_UNAPPROVED"].includes(reason)))
     verdict.reasons = [...verdict.reasons.filter(reason => reason !== "B5_PROVIDER_FIXTURE"),
