@@ -13,9 +13,11 @@ import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1,
 import { createImproveControlRoomLoopAdapterV1, type LoopAdapterConfigurationV1,
   type LoopAdapterV1 } from "../../src/web/v1/improve-control-room-loop-adapter";
 
+import { B5RefusalV1 } from "./improve-control-room-first-website";
+
 const exec = promisify(execFile);
 export const b5RawHash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
-const refuse = (code: string): never => { throw new Error(code); };
+const refuse = (code: string): never => { throw new B5RefusalV1(code); };
 const need: (condition: unknown, code: string) => asserts condition = (condition, code) => { if (!condition) refuse(code); };
 const hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const revision = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -225,9 +227,14 @@ export async function projectB5RunV1(input: {
     need(shown.length === 1 && shown[0].role === step.role, "B5_A2_STEP_JOIN");
     const result = consumed.find(r => r.step === step.n);
     const ledger = lines.map(line => Object.fromEntries(line.split("\t").map((v, i) => [keys[i], v])))
-      .filter(row => row.log === step.log && (!result || row.id === result.job_id));
-    need(ledger.length <= 1, "B5_A2_LEDGER_JOIN");
-    const row = ledger[0];
+      .filter(row => row.log === step.log);
+    // The append-only ledger repeats launch identity at Start/End. Validate
+    // every event for this log before selecting the latest lifecycle state;
+    // filtering by consumed job ID first would hide conflicting launches.
+    const launchKeys = keys.filter(key => !["state", "ended", "exit_code", "exit", "rc"].includes(key));
+    need(ledger.every(event => event.id && launchKeys.every(key => event[key] === ledger[0][key]))
+      && (!result || ledger.length > 0 && ledger[0].id === result.job_id), "B5_A2_LEDGER_JOIN");
+    const row = ledger.at(-1);
     let verdict: string | null = null;
     const sidecarHashes: string[] = [];
     let findings: unknown[] | null = null;

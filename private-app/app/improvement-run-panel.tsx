@@ -157,7 +157,8 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
         ready: "Ready to start", running: "Work is running", waiting_approval: "Waiting for your approval",
         waiting_question: "Waiting for an answer", waiting_owner: "Waiting for your decision",
         blocked: "Work needs attention", stopped: "Stopped", candidate_ready: fresh && currentCandidate ? "Finished" : "Completion reported; candidate evidence unavailable",
-      }[snapshot.state] : "Saved progress could not be checked"}</p>
+      }[snapshot.state] : snapshot?.snapshot.engine.state === "draft" && snapshot.snapshot.decisions?.gate?.kind === "confirm"
+        ? "Request prepared; awaiting your confirmation" : "Saved progress could not be checked"}</p>
       <p>{!snapshot ? "Confirmation could not be checked" : snapshot.confirmationCurrent ? "Confirmation current" : "Confirmation needed"}</p>
       <details><summary>Run details</summary>
         <p>Step: {snapshot?.progress?.stepId ?? "Not reported yet"} · Role: {snapshot?.progress?.role ?? "Not reported yet"}</p>

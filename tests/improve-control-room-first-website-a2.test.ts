@@ -13,6 +13,7 @@ test("B5 producer refuses a non-disposable root before reading sources", () => {
 import { mkdtemp, mkdir, writeFile, readFile, rm, realpath, chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
+import { B5RefusalV1 } from "./helpers/improve-control-room-first-website";
 import type { LoopEngineStatusV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 
 async function scratch(t: test.TestContext) {
@@ -391,7 +392,14 @@ test("B5 later-state fixture joins consumed review, brief, ledger and rejected h
     f.emitted.steps.push({ n, role, stale: false, state: "done" });
   }
   f.raw.chain.rejections = [2];
-  await writeFile(join(f.root, "lead/state/jobs.tsv"), `id\tlog\tstate\tended\nfixture-job-1\tfixture-1.log\tENDED\t${ended}\nfixture-job-2\tfixture-2.log\tENDED\t${ended}\n`, { mode: 0o600 });
+  const ledgerFile = join(f.root, "lead/state/jobs.tsv");
+  const header = "id\tlog\tmodel\tcwd\tstarted\tpid\tstate\tended\texit_code\n";
+  const events = [1, 2].flatMap(n => [
+    `fixture-job-${n}\tfixture-${n}.log\tfixture-model\t${f.work}\t${startedAt}\t${100 + n}\tRUNNING\t\t`,
+    `fixture-job-${n}\tfixture-${n}.log\tfixture-model\t${f.work}\t${startedAt}\t${100 + n}\tENDED\t${ended}\t0`,
+  ]);
+  const saveLedger = (rows: string[]) => writeFile(ledgerFile, header + rows.join("\n") + "\n", { mode: 0o600 });
+  await saveLedger(events);
   await f.save();
   const projected = await projectB5RunV1(f.input);
   assert.equal(projected.steps[1].startedAt, "2026-11-01T07:59:59.000Z");
@@ -401,6 +409,15 @@ test("B5 later-state fixture joins consumed review, brief, ledger and rejected h
   assert.equal(projected.steps[0].headAtStart, f.input.baseline); // never inferred as build output
   assert.equal(projected.steps[1].providerIdentityVerified, false);
   assert.match(projected.steps[1].brief, /fixture code-review instructions/);
+  // Even a consumed job ID must not hide another job using the same log.
+  for (const [field, replacement] of [[0, "different-job"], [2, "other-model"], [3, `${f.work}/other`],
+    [4, "2026-11-01T00:00:00Z"], [5, "999"]] as const) {
+    const changed = events[3].split("\t"); changed[field] = replacement;
+    await saveLedger([...events.slice(0, 3), changed.join("\t")]);
+    await assert.rejects(projectB5RunV1(f.input), (error: unknown) =>
+      error instanceof B5RefusalV1 && error.code === "B5_A2_LEDGER_JOIN");
+  }
+  await saveLedger(events);
   f.raw.steps[0].input_version = 2; await f.save();
   await assert.rejects(projectB5RunV1(f.input), /B5_A2_REJECTION_JOIN/);
   f.raw.steps[0].input_version = 1;
@@ -508,4 +525,25 @@ test("B5 loader requires an enabled callable intake driver before constructing t
   for (const invalid of [undefined, {}, { ...valid, inspect: undefined }, { ...valid, advance: undefined },
     { ...valid, enabled: undefined }, { ...valid, enabled: () => false }]) assert.throws(() => run(invalid), /B5_A2_(CALLABLE|INTAKE_DRIVER)/);
   assert.doesNotThrow(() => run(valid));
+});
+
+test("B5 completed intake before confirmation joins latest lifecycle event without inventing confirmation", async t => {
+  const f = await projectionFixture(t);
+  const brief = join(f.work, "intake.md"), ended = "2026-11-01T00:00:02Z";
+  await writeFile(brief, "fixture intake", { mode: 0o600 });
+  f.raw.steps.push({ n: 1, role: "intake", model: "fixture-model", brief, log: "intake.log", input_version: 1,
+    head_at_start: f.input.baseline, started_epoch: Date.parse("2026-11-01T00:00:00Z") / 1000 });
+  f.emitted.steps.push({ n: 1, role: "intake", stale: false, state: "done" });
+  await f.save();
+  const ledgerFile = join(f.root, "lead/state/jobs.tsv");
+  const ledger = `id\tlog\tmodel\tstate\tended\nintake-job\tintake.log\tfixture-model\tRUNNING\t\nintake-job\tintake.log\tfixture-model\tENDED\t${ended}\n`;
+  await writeFile(ledgerFile, ledger, { mode: 0o600 });
+  const projected = await projectB5RunV1(f.input);
+  assert.equal(projected.steps[0].endedAt, "2026-11-01T00:00:02.000Z");
+  assert.equal(projected.steps[0].verdict, null);
+  assert.equal(f.status.confirmation, null);
+  assert.equal(await readFile(ledgerFile, "utf8"), ledger, "projection leaves the append-only ledger unchanged");
+  await writeFile(ledgerFile, ledger + `another-job\tintake.log\tfixture-model\tENDED\t${ended}\n`);
+  await assert.rejects(projectB5RunV1(f.input), (error: unknown) =>
+    error instanceof B5RefusalV1 && error.code === "B5_A2_LEDGER_JOIN");
 });

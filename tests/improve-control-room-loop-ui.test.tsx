@@ -743,3 +743,31 @@ for (const scenario of ["gate", "cap", "unlinked", "link", "settled", "old"] as 
     assert.equal(wire.posts.length, 0);
   } finally { await m.close(); t.mock.timers.reset(); await f.close(); }
 });
+
+for (const state of ["draft", "failed"] as const) test(`B5 prepared request status text: ${state}`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (!String(path).endsWith("/status")) return wire.fetcher(path, options);
+    if (state === "failed") return Response.json({}, { status: 503 });
+    return Response.json({ ...saved,
+      display: { ...saved.display, state: null, confirmationCurrent: false, canStart: false, canStop: false },
+      engine: { ...saved.engine, state: "draft", confirmation: null },
+      decisions: { observedAt: saved.display.observedAt, gate: { kind: "confirm" } } });
+  }) as typeof fetch);
+  try {
+    await settle();
+    if (state === "draft") {
+      assert.match(m.text(), /Request prepared; awaiting your confirmation/);
+      assert.doesNotMatch(m.text(), /Saved progress could not be checked/);
+      assert.equal(m.button("Confirm this exact request").disabled, false);
+    } else {
+      assert.match(m.text(), /Saved progress could not be checked/);
+      assert.doesNotMatch(m.text(), /Request prepared; awaiting your confirmation/);
+      assert.equal(m.button("Confirm this exact request"), undefined);
+    }
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.equal(m.button("Stop this run").disabled, true);
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); await f.close(); }
+});
