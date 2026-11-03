@@ -15,6 +15,7 @@ import { parseProductConfigurationV1 } from "../../src/config/v1/product-configu
 import { buildProjectPresentationV1 } from "../../src/config/v1/project-presentation";
 import { sha256Digest } from "../../src/security";
 import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { databaseSqlStateV1 } from "../../src/persistence/database";
 import { loopBridgeBindingSchemaV1, loopImprovementStatusSchemaV1 } from "../../src/improve-control-room/v1/schemas";
 import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
@@ -654,7 +655,7 @@ async function main() {
   }); }
   finally { clearTimeout(timer); process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt); }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   // Finish module evaluation before the inert wrapper re-exports this module.
   // Awaiting main at module scope would deadlock that legitimate loader join.
   void main().catch(error => {
