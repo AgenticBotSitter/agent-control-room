@@ -962,6 +962,11 @@ jobs:
       - name: Prove first website journey fixtures
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-first-website-browser
+      - name: B5 host and loop candidate regression fixtures
+        timeout-minutes: 10
+        env:
+          CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
+        run: node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/first-website-host-status-read.test.ts tests/improve-control-room-first-website-long-gates.test.ts tests/improve-control-room-loop-finalization-stale-revision.test.ts tests/improve-control-room-loop-publication-reproduction.test.ts tests/improvement-finish-card-probe.test.tsx
       - name: Inbox phone target geometry
         run: pnpm test:inbox-browser
       - name: Install PostgreSQL 17 from PGDG
