@@ -74,7 +74,7 @@ export type LoopRecoveryCapabilityV1 = {
 export function captureLoopRecoveryCapabilityV1(value: LoopRecoveryCapabilityV1 | undefined) {
   if (!value) return undefined;
   if (typeof value.enabled !== "function" || typeof value.inspect !== "function" || typeof value.claimDriver !== "function"
-    || Object.keys(value).some(key => !["enabled", "inspect", "claimDriver"].includes(key))) throw unavailable();
+    || Object.keys(value).some(key => !["enabled", "inspect", "claimDriver"].includes(key))) throw unavailable("recovery_capability_shape");
   return Object.freeze({ enabled: value.enabled.bind(value), inspect: value.inspect.bind(value), claimDriver: value.claimDriver.bind(value) });
 }
 // New intake claims seal the custody required by the report-only driver.
@@ -125,7 +125,7 @@ export function equalIntakeReceipt(b:LoopIntakeDriverBindingV1,r:z.infer<typeof 
 function captureIntakeDriver(value:LoopIntakeDriverCapabilityV1|undefined) {
   if (!value) return undefined;
   if (["enabled","inspect","advance"].some(k=>typeof value[k as keyof typeof value]!=="function")
-    || Object.keys(value).some(k=>!["enabled","inspect","advance"].includes(k))) throw unavailable();
+    || Object.keys(value).some(k=>!["enabled","inspect","advance"].includes(k))) throw unavailable("intake_capability_shape");
   return Object.freeze({enabled:value.enabled.bind(value),inspect:value.inspect.bind(value),advance:value.advance.bind(value)});
 }
 export type LoopAdapterContractV1 = {
@@ -212,19 +212,27 @@ function pythonJsonTruthy(value: unknown): boolean {
   if (value !== null && typeof value === "object") return Object.keys(value).length > 0;
   return !!value;
 }
-const unavailable = () => new Error("loop_adapter_unavailable");
+/** Internal labels contain only reviewed guard names, never paths or engine output. */
+export class LoopAdapterUnavailableV1 extends Error {
+  readonly code = "loop_adapter_unavailable";
+  constructor(readonly internalReason: string) { super("loop_adapter_unavailable"); }
+}
+export function loopAdapterUnavailableDetailV1(error: unknown) {
+  return error instanceof LoopAdapterUnavailableV1 ? { internalReason: error.internalReason } : {};
+}
+const unavailable = (reason: string) => new LoopAdapterUnavailableV1(reason);
 const credentialPath = /(?:^|[/\\])(?:\.env(?:\.[^/]*)?|\.aws|\.codex|\.hermes|auth\.json|credentials|tokens?)(?:[/\\]|$)/i;
 function checkedPath(path: string, root?: string, directory = false) {
-  if (!isAbsolute(path) || path !== resolve(path) || credentialPath.test(path)) throw unavailable();
+  if (!isAbsolute(path) || path !== resolve(path) || credentialPath.test(path)) throw unavailable("path_invalid");
   if (root && (path === root || relative(root, path).startsWith(`..${sep}`) || relative(root, path) === ".." || isAbsolute(relative(root, path))))
-    throw unavailable();
+    throw unavailable("path_outside_root");
   // Check every ancestor, including configured roots. realpath equality rejects aliases too.
   for (let part = path;; part = dirname(part)) {
-    if (lstatSync(part).isSymbolicLink()) throw unavailable();
+    if (lstatSync(part).isSymbolicLink()) throw unavailable("path_symlink");
     if (part === dirname(part)) break;
   }
   const stat = lstatSync(path);
-  if (realpathSync(path) !== path || (directory ? !stat.isDirectory() : !stat.isFile())) throw unavailable();
+  if (realpathSync(path) !== path || (directory ? !stat.isDirectory() : !stat.isFile())) throw unavailable("path_type_or_alias");
   return path;
 }
 
@@ -247,28 +255,30 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     || !digest.safeParse(c.toolingRevision).success || !digest.safeParse(c.contract.schemaDigest).success
     || c.contract.lineage.toolingRevision !== c.toolingRevision
     || !digest.safeParse(c.executionIdentity.isolationEvidenceDigest).success
-    || !Number.isSafeInteger(c.executionIdentity.uid) || c.executionIdentity.uid !== process.getuid?.()) throw unavailable();
+    || !Number.isSafeInteger(c.executionIdentity.uid) || c.executionIdentity.uid !== process.getuid?.()) throw unavailable("configuration_invalid");
   loopImprovementRunIdentitySchemaV1.parse({ adapterId: c.adapterId, loopRunId: "run:configuration",
     toolingRevision: c.toolingRevision, a2SchemaVersion: 1 });
   const validate = (health = true) => {
     const dynamicHealth = monitoringEnabled();
     const staticHealth = !monitoring || health && !dynamicHealth;
-    if (process.getuid?.() !== c.executionIdentity.uid) throw unavailable();
+    if (process.getuid?.() !== c.executionIdentity.uid) throw unavailable("execution_uid_changed");
     for (const path of [c.runRoot, c.workRoot, c.configRoot, c.cwd]) checkedPath(path, undefined, true);
     checkedPath(c.interpreter); checkedPath(c.entrypoint, c.configRoot); checkedPath(c.toolingManifest, c.configRoot);
     checkedPath(c.settingsFile, c.configRoot);
     if (staticHealth) checkedPath(c.availabilityFile, c.configRoot);
-    if (loopByteHashV1(readFileSync(c.interpreter)) !== c.interpreterSha256
-      || loopByteHashV1(readFileSync(c.entrypoint)) !== c.entrypointSha256
-      || `sha256:${loopByteHashV1(readFileSync(c.toolingManifest))}` !== c.toolingRevision
-      || loopByteHashV1(readFileSync(c.settingsFile)) !== c.settingsSha256
-      || staticHealth && loopByteHashV1(readFileSync(c.availabilityFile)) !== c.availabilitySha256) throw unavailable();
+    for (const [path, expected, reason] of [
+      [c.interpreter, c.interpreterSha256, "interpreter_pin_changed"],
+      [c.entrypoint, c.entrypointSha256, "entrypoint_pin_changed"],
+      [c.toolingManifest, c.toolingRevision.slice(7), "manifest_pin_changed"],
+      [c.settingsFile, c.settingsSha256, "settings_pin_changed"],
+      ...(staticHealth ? [[c.availabilityFile, c.availabilitySha256, "availability_pin_changed"]] : []),
+    ]) if (loopByteHashV1(readFileSync(path!)) !== expected) throw unavailable(reason!);
     if (health && dynamicHealth) monitor?.assertAvailability();
   };
   validate();
   const settingsText = readFileSync(c.settingsFile, "utf8");
   const settings = parseStrictJsonV1(settingsText, { maxBytes: 65536 }) as { project?: { host_adapter?: unknown; repository?: unknown } };
-  if (settings?.project?.host_adapter !== "local-loop") throw unavailable();
+  if (settings?.project?.host_adapter !== "local-loop") throw unavailable("host_adapter_setting");
   let closing = false;
   const children = new Set<ChildProcess>(), pending = new Set<Promise<unknown>>();
   const activeCommands = new Set<string>();
@@ -284,7 +294,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     if (typeof repository !== "string") return refuse("REPOSITORY_PREPARATION");
     try { checkedPath(repository, undefined, true); } catch { refuse("REPOSITORY_PREPARATION"); }
     const git = async (args: string[], allowed = [0]) => {
-      if (closing) throw unavailable();
+      if (closing) throw unavailable("repository_git_closed");
       beforeSpawn();
       const operation = new Promise<string>((fulfill, reject) => {
         const child = execFile("/usr/bin/git", ["-C", repository, "-c", "core.hooksPath=/dev/null",
@@ -295,7 +305,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
           // Any porcelain entry proves dirtiness, including bounded output
           // returned when a large untracked tree exhausts maxBuffer.
           if (args[0] === "status" && stdout.length) fulfill("dirty");
-          else if (error && (!allowed.includes(Number(error.code)) || error.killed || error.signal)) reject(unavailable());
+          else if (error && (!allowed.includes(Number(error.code)) || error.killed || error.signal)) reject(unavailable("repository_git_failed"));
           else fulfill(stdout.trim());
         });
         children.add(child); child.once("close", () => children.delete(child));
@@ -347,7 +357,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     const identity = loopImprovementRunIdentitySchemaV1.parse(c.contract.lineage.decodeRunIdentity({ adapterId: c.adapterId, loopRunId: run,
       toolingRevision: c.toolingRevision, a2SchemaVersion: 1 }));
     if (identity.loopRunId !== run || identity.adapterId !== c.adapterId || identity.toolingRevision !== c.toolingRevision
-      || identity.a2SchemaVersion !== 1) throw unavailable();
+      || identity.a2SchemaVersion !== 1) throw unavailable("run_identity_mismatch");
     return run;
   };
   const decode = (output: string, run: string) => {
@@ -355,7 +365,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     const projection = c.contract.decisionProjection;
     if (projection) {
       const path = projection.questionTextPath;
-      if (!path.length || path.some(part => !part || ["__proto__", "prototype", "constructor"].includes(part))) throw unavailable();
+      if (!path.length || path.some(part => !part || ["__proto__", "prototype", "constructor"].includes(part))) throw unavailable("question_projection_path");
       let parent: unknown = envelope;
       for (const part of path.slice(0, -1)) parent = parent && typeof parent === "object" ? (parent as Record<string, unknown>)[part] : undefined;
       if (parent && typeof parent === "object") {
@@ -396,7 +406,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       gate: failureMessage ? { kind: "blocked", code: "UNAVAILABLE", message: failureMessage }
         : ["stopped", "finished"].includes(status.state) ? null : projection ? projection.decodeGate(envelope, status) : unavailableLoopGate() });
     if (status.run.loopRunId !== run || status.run.adapterId !== c.adapterId || status.run.toolingRevision !== c.toolingRevision)
-      throw unavailable();
+      throw unavailable("status_identity_mismatch");
     if (monitoring) {
       try {
         status.monitoring = monitoringEnabled()
@@ -407,7 +417,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   };
   function execute(args: string[], run: string, beforeSpawn?: () => void,
     command?: { id: string; binding: LoopBridgeBindingV1 }): Promise<LoopEngineStatusV1> {
-    if (closing) return Promise.reject(unavailable());
+    if (closing) return Promise.reject(unavailable("execute_closed"));
     validate(!["status", "stop"].includes(args[0]!)); runId(run);
     beforeSpawn?.();
     const operation = new Promise<LoopEngineStatusV1>((fulfill, reject) => {
@@ -424,7 +434,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       child.on("error", () => { failed = true; });
       child.on("close", async code => {
         clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
-        if (failed || ![0, 2, 3].includes(code ?? -1)) { reject(unavailable()); return; }
+        if (failed || ![0, 2, 3].includes(code ?? -1)) { reject(unavailable("execute_child_failed")); return; }
         try {
           let text: string | undefined;
           try { text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)); } catch { /* Status may recover a saved admission. */ }
@@ -447,17 +457,17 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
           }
           let observed: LoopEngineStatusV1;
           try {
-            if (text === undefined) throw unavailable();
+            if (text === undefined) throw unavailable("execute_output_encoding");
             observed = decode(text, run);
           }
-          catch {
+          catch (error) {
             // A refusal may have no decodable state (for example a busy lock).
             // One independent status read can recover an already saved admission.
-            if (!command || (code !== 2 && code !== 3)) throw unavailable();
+            if (!command || (code !== 2 && code !== 3)) throw error instanceof LoopAdapterUnavailableV1 ? error : unavailable("execute_status_decode");
             observed = await status(run);
           }
           if (code === 2 || code === 3) {
-            if (!command) throw unavailable();
+            if (!command) throw unavailable("execute_refusal_without_command");
             // A saved matching admission survives a later engine refusal.
             if (!observed.receipts.some(saved => saved.commandId === command.id
               && saved.bindingDigest === sha256Digest(command.binding))) {
@@ -468,7 +478,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
             }
           }
           fulfill(observed);
-        } catch (error) { reject(error instanceof LoopIntakeRefusalV1 ? error : unavailable()); }
+        } catch (error) { reject(error instanceof LoopIntakeRefusalV1 || error instanceof LoopAdapterUnavailableV1 ? error : unavailable("execute_result_decode")); }
       });
     });
     pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});
@@ -476,22 +486,22 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   }
   const status = async (run: string) => (await execute(["status", runId(run), "--json"], run))!;
   async function readApprovalDocument(run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>) {
-    if (closing || !c.contract.locateApprovalDocument || !c.contract.decodeApprovalSidecar) throw unavailable();
+    if (closing || !c.contract.locateApprovalDocument || !c.contract.decodeApprovalSidecar) throw unavailable("approval_unavailable");
     validate(false); runId(run);
     const expected = loopApprovalDescriptorSchemaV1.parse(descriptor);
     // A run is one directory, never a locator-supplied path or another run's name.
-    if (run === "." || run === ".." || /[/\\]/u.test(run)) throw unavailable();
+    if (run === "." || run === ".." || /[/\\]/u.test(run)) throw unavailable("approval_run_path");
     const directory = checkedPath(join(c.runRoot, run), c.runRoot, true);
     const names = c.contract.locateApprovalDocument(run, expected);
     async function bounded(name: string, cap: number) {
       if (typeof name !== "string" || !name || isAbsolute(name) || name.split(/[/\\]/u).some(part => !part || part === "." || part === "..")
-        || credentialPath.test(name)) throw unavailable();
+        || credentialPath.test(name)) throw unavailable("approval_document_path");
       const path = checkedPath(resolve(directory, name), directory);
       const before = lstatSync(path);
       const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
         const opened = await handle.stat();
-        if (!opened.isFile() || before.dev !== opened.dev || before.ino !== opened.ino) throw unavailable();
+        if (!opened.isFile() || before.dev !== opened.dev || before.ino !== opened.ino) throw unavailable("approval_document_open_changed");
         const bytes = Buffer.alloc(cap + 1); let count = 0;
         while (count < bytes.length) {
           const read = await handle.read(bytes, count, bytes.length - count, null);
@@ -502,7 +512,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         checkedPath(directory, c.runRoot, true); checkedPath(path, directory);
         const final = lstatSync(path);
         if (count > cap || opened.size !== count || after.dev !== final.dev || after.ino !== final.ino
-          || opened.size !== after.size || opened.mtimeMs !== after.mtimeMs || opened.ctimeMs !== after.ctimeMs) throw unavailable();
+          || opened.size !== after.size || opened.mtimeMs !== after.mtimeMs || opened.ctimeMs !== after.ctimeMs) throw unavailable("approval_document_read_changed");
         return bytes.subarray(0, count);
       } finally { await handle.close(); }
     }
@@ -511,25 +521,25 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     const decoded = loopApprovalDescriptorSchemaV1.parse(c.contract.decodeApprovalSidecar(parseStrictJsonV1(
       new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(sidecar), { maxBytes: 65536 })));
     // B2b document binding: exact bytes and the complete current sealed descriptor.
-    if (loopByteHashV1(bytes) !== expected.reportSha256 || JSON.stringify(decoded) !== JSON.stringify(expected)) throw unavailable();
+    if (loopByteHashV1(bytes) !== expected.reportSha256 || JSON.stringify(decoded) !== JSON.stringify(expected)) throw unavailable("approval_document_pin");
     validate(false); checkedPath(directory, c.runRoot, true);
     return text;
   }
   async function commandFile(commandId: string, name: string, text: string) {
     validate();
-    if (!/^loop-command:[a-f0-9]{32}$/.test(commandId)) throw unavailable();
+    if (!/^loop-command:[a-f0-9]{32}$/.test(commandId)) throw unavailable("command_id_invalid");
     const directory = join(c.workRoot, commandId.replace(":", "-"));
-    try { await mkdir(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw unavailable(); }
+    try { await mkdir(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw unavailable("command_directory_create"); }
     checkedPath(directory, c.workRoot, true);
-    if ((lstatSync(directory).mode & 0o777) !== 0o700) throw unavailable();
+    if ((lstatSync(directory).mode & 0o777) !== 0o700) throw unavailable("command_directory_mode");
     const path = join(directory, name);
     try {
       const handle = await open(path, "wx", 0o600);
       try { await handle.writeFile(text, "utf8"); await handle.sync(); } finally { await handle.close(); }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw unavailable();
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw unavailable("command_file_create");
       checkedPath(path, directory);
-      if ((lstatSync(path).mode & 0o777) !== 0o600 || await readFile(path, "utf8") !== text) throw unavailable();
+      if ((lstatSync(path).mode & 0o777) !== 0o600 || await readFile(path, "utf8") !== text) throw unavailable("command_file_conflict");
     }
     return path;
   }
@@ -540,7 +550,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   };
   async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string) {
     if (!available(operation) || binding.adapterId !== c.adapterId || binding.toolingRevision !== c.toolingRevision
-      || binding.schemaDigest !== c.contract.schemaDigest || operation !== "stop" && binding.settingsSha256 !== c.settingsSha256) throw unavailable();
+      || binding.schemaDigest !== c.contract.schemaDigest || operation !== "stop" && binding.settingsSha256 !== c.settingsSha256) throw unavailable("command_binding_mismatch");
     validate(operation !== "stop"); beforeSpawn();
     const run = runId(binding.loopRunId);
     const apply = async () => {
@@ -567,7 +577,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       return execute(args, run, beforeSpawn, { id: commandId, binding });
     };
     // A2 owns compare-and-admit under its mutation lock.
-    if (activeCommands.has(commandId)) throw unavailable();
+    if (activeCommands.has(commandId)) throw unavailable("command_already_active");
     activeCommands.add(commandId);
     try {
       return await apply();
@@ -578,18 +588,18 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   const recoveryEnabled = () => { try { return !closing && recovery?.enabled() === true; } catch { return false; } };
   async function inspectRecovery(run: string, command?: { commandId: string; bindingDigest: string }) {
     // Opt-in gates mutation; authorized status reads remain observational when disabled.
-    if (closing || !recovery) throw unavailable();
+    if (closing || !recovery) throw unavailable("recovery_inspect_unavailable");
     validate(); runId(run);
     const lookup = command === undefined ? undefined : commandIdentity.parse(command);
     const raw = await recovery!.inspect(run, lookup);
-    if (Buffer.byteLength(JSON.stringify(raw), "utf8") > 65536) throw unavailable();
+    if (Buffer.byteLength(JSON.stringify(raw), "utf8") > 65536) throw unavailable("recovery_inspect_size");
     const observation = loopRecoveryObservationSchemaV1.parse(raw);
     if (observation.run.loopRunId !== run || observation.run.adapterId !== c.adapterId || observation.run.toolingRevision !== c.toolingRevision
-      || observation.receipt && (!lookup || observation.receipt.commandId !== lookup.commandId || observation.receipt.bindingDigest !== lookup.bindingDigest)) throw unavailable();
+      || observation.receipt && (!lookup || observation.receipt.commandId !== lookup.commandId || observation.receipt.bindingDigest !== lookup.bindingDigest)) throw unavailable("recovery_inspect_join");
     return observation;
   }
   async function spawnRecovery(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryChildV1> {
-    if (!recoveryEnabled()) throw unavailable();
+    if (!recoveryEnabled()) throw unavailable("recovery_spawn_disabled");
     validate(); runId(binding.run.loopRunId);
     const args = binding.action === "wait" ? ["wait", binding.run.loopRunId, "--chain", "--hours", "1"]
       : ["advance", binding.run.loopRunId, "--json"];
@@ -606,12 +616,12 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     const done = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((fulfill, reject) => {
       child.once("close", (code, signal) => {
         clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
-        if (failed || signal || !(binding.action === "wait" ? [0, 4] : [0]).includes(code ?? -1)) { reject(unavailable()); return; }
+        if (failed || signal || !(binding.action === "wait" ? [0, 4] : [0]).includes(code ?? -1)) { reject(unavailable("recovery_child_failed")); return; }
         try {
           if (binding.action === "advance") decode(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), binding.run.loopRunId);
-        } catch { reject(unavailable()); return; }
+        } catch (error) { reject(error instanceof LoopAdapterUnavailableV1 ? error : unavailable("recovery_child_output")); return; }
         // Driver exit is never a receipt. Saved state is read independently.
-        void status(binding.run.loopRunId).then(() => fulfill({ code, signal }), () => reject(unavailable()));
+        void status(binding.run.loopRunId).then(() => fulfill({ code, signal }), error => reject(error instanceof LoopAdapterUnavailableV1 ? error : unavailable("recovery_child_status")));
       });
     });
     // A closed driver is reaped even when its exit is uncertain. Never signal a model worker.
@@ -623,11 +633,11 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return tracked;
   }
   async function recover(raw: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1> {
-    if (!recoveryEnabled() || Buffer.byteLength(JSON.stringify(raw), "utf8") > 65536) throw unavailable();
+    if (!recoveryEnabled() || Buffer.byteLength(JSON.stringify(raw), "utf8") > 65536) throw unavailable("recovery_claim_unavailable");
     const binding = loopRecoveryBindingSchemaV1.parse(raw), run = binding.run.loopRunId;
     Object.freeze(binding.run); Object.freeze(binding);
     if (binding.run.adapterId !== c.adapterId || binding.run.toolingRevision !== c.toolingRevision
-      || binding.schemaDigest !== c.contract.schemaDigest || binding.settingsSha256 !== c.settingsSha256) throw unavailable();
+      || binding.schemaDigest !== c.contract.schemaDigest || binding.settingsSha256 !== c.settingsSha256) throw unavailable("recovery_binding_mismatch");
     if (acquisitions.has(run) || recoveryChildren.has(run)) return { kind: "busy", evidenceDigest: sha256Digest({ run, owned: true }) };
     acquisitions.add(run);
     let spawned: LoopRecoveryChildV1 | undefined, spawnPending: Promise<LoopRecoveryChildV1> | undefined, invoked = false, duplicate = false, claimOpen = true;
@@ -637,25 +647,25 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         if (observation.mode !== "runnable" || observation.action !== binding.action || observation.revision !== binding.expectedRevision
           || !["none", "ended"].includes(observation.driver.state)) return { kind: "uncertain" as const, evidenceDigest: observation.evidenceDigest };
         const outcome = await recovery!.claimDriver(Object.freeze(binding), async () => {
-          if (invoked || !claimOpen) { duplicate = true; throw unavailable(); }
+          if (invoked || !claimOpen) { duplicate = true; throw unavailable("recovery_duplicate_spawn"); }
           invoked = true; spawnPending = spawnRecovery(binding); spawned = await spawnPending; return spawned;
         });
         claimOpen = false;
         if (spawnPending) spawned = await spawnPending;
         if (outcome.kind === "started") {
           if (duplicate || !spawned || outcome.child !== spawned || !Number.isSafeInteger(spawned.pid) || spawned.pid <= 0 || !/^[a-f0-9]{32}$/.test(outcome.generation)
-            || Object.keys(outcome).some(key => !["kind", "generation", "child"].includes(key)) || !recoveryEnabled()) throw unavailable();
+            || Object.keys(outcome).some(key => !["kind", "generation", "child"].includes(key)) || !recoveryEnabled()) throw unavailable("recovery_started_claim");
           recoveryChildren.set(run, spawned);
           void spawned.done.finally(() => { if (recoveryChildren.get(run) === spawned) recoveryChildren.delete(run); }).catch(() => {});
           return outcome;
         }
         if (spawned || !["busy", "uncertain"].includes(outcome.kind) || !digest.safeParse(outcome.evidenceDigest).success
-          || Object.keys(outcome).some(key => !["kind", "evidenceDigest"].includes(key))) throw unavailable();
+          || Object.keys(outcome).some(key => !["kind", "evidenceDigest"].includes(key))) throw unavailable("recovery_idle_claim");
         return outcome;
-      } catch {
+      } catch (error) {
         claimOpen = false;
         if (spawnPending) { try { spawned = await spawnPending; } catch { /* Spawn failed without an acquired handle. */ } }
-        await spawned?.close(); throw unavailable();
+        await spawned?.close(); throw error instanceof LoopAdapterUnavailableV1 ? error : unavailable("recovery_claim_failed");
       } finally { claimOpen = false; acquisitions.delete(run); }
     })();
     pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});
@@ -666,7 +676,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       interpreterSha256:c.interpreterSha256,entrypointSha256:c.entrypointSha256,availabilityFile:c.availabilityFile})), clock,
     enabled: () => recoveryEnabled() && monitoring.enabled() === true,
     collect: async (signal, onChild) => {
-      if (closing || signal.aborted || !recoveryEnabled() || monitoring.enabled() !== true) throw unavailable();
+      if (closing || signal.aborted || !recoveryEnabled() || monitoring.enabled() !== true) throw unavailable("monitor_collect_unavailable");
       validate(false);
       const child = spawn(c.interpreter, [c.entrypoint, "logins", "--json"], { cwd: c.cwd, shell: false,
         env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
@@ -685,38 +695,38 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         child.once("close", (code, killed) => {
           exited = true; children.delete(child); clock.clearTimeout(timer); clock.clearTimeout(killTimer);
           signal.removeEventListener("abort",stop);
-          void custody.then(() => { if(failed || killed || signal.aborted) reject(unavailable());
+          void custody.then(() => { if(failed || killed || signal.aborted) reject(unavailable("monitor_collect_failed"));
             else fulfill({bytes:Buffer.concat(output),exitCode:code}); });
         });
       });
     } });
   const intakeEnabled = () => { try { return !closing && intakeCapability?.enabled() === true; } catch { return false; } };
   const intakeOperation = <T>(work:()=>Promise<T>) => {
-    const operation=(async()=>{if(!intakeEnabled())throw unavailable();validate();return work();})();
+    const operation=(async()=>{if(!intakeEnabled())throw unavailable("intake_operation_unavailable");validate();return work();})();
     pending.add(operation);void operation.finally(()=>pending.delete(operation)).catch(()=>{});return operation;
   };
   const intakeDriver:LoopIntakeDriverCapabilityV1|undefined = intakeCapability ? Object.freeze({enabled:intakeEnabled,
     inspect:(run:string)=>intakeOperation(async()=>{
       runId(run);const raw=await intakeCapability.inspect(run);
-      if(Buffer.byteLength(JSON.stringify(raw),"utf8")>65536)throw unavailable();
+      if(Buffer.byteLength(JSON.stringify(raw),"utf8")>65536)throw unavailable("intake_inspect_size");
       const o=loopIntakeDriverObservationSchemaV1.parse(raw);
-      if(o.run.loopRunId!==run||o.run.adapterId!==c.adapterId||o.run.toolingRevision!==c.toolingRevision)throw unavailable();
+      if(o.run.loopRunId!==run||o.run.adapterId!==c.adapterId||o.run.toolingRevision!==c.toolingRevision)throw unavailable("intake_inspect_identity");
       return o;
     }),
     advance:(raw:Readonly<LoopIntakeDriverBindingV1>)=>intakeOperation(async()=>{
       const binding=loopIntakeDriverBindingSchemaV1.parse(raw);
       if(binding.run.adapterId!==c.adapterId||binding.run.toolingRevision!==c.toolingRevision
-        ||binding.settingsSha256!==c.settingsSha256)throw unavailable();
+        ||binding.settingsSha256!==c.settingsSha256)throw unavailable("intake_binding_mismatch");
       const result=await intakeCapability.advance(binding);
-      if(Buffer.byteLength(JSON.stringify(result),"utf8")>65536)throw unavailable();
+      if(Buffer.byteLength(JSON.stringify(result),"utf8")>65536)throw unavailable("intake_result_size");
       if(result.kind!=="advanced"){
-        if(!["refused","uncertain"].includes(result.kind)||!digest.safeParse(result.evidenceDigest).success)throw unavailable();
+        if(!["refused","uncertain"].includes(result.kind)||!digest.safeParse(result.evidenceDigest).success)throw unavailable("intake_refusal_shape");
         return result;
       }
       const receipt=loopIntakeDriverReceiptSchemaV1.parse(result.receipt),observation=loopIntakeDriverObservationSchemaV1.parse(result.observation);
       if(receipt.binding_digest!==sha256Digest(binding)||receipt.command_id!==`loop-command:${sha256Digest(binding).slice(7,39)}`
         ||!equalIntakeReceipt(binding,receipt)||observation.mode!=="advanced"
-        ||canonicalJson(observation.receipt)!==canonicalJson(receipt)||canonicalJson(observation.run)!==canonicalJson(binding.run))throw unavailable();
+        ||canonicalJson(observation.receipt)!==canonicalJson(receipt)||canonicalJson(observation.run)!==canonicalJson(binding.run))throw unavailable("intake_result_join");
       return {kind:"advanced" as const,receipt,observation};
     })}) : undefined;
   let closePromise: Promise<void> | undefined;
@@ -735,7 +745,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("answer", id, b, fence, text),
     releaseCommandFiles: async (commandId: string) => {
       validate();
-      if (!/^loop-command:[a-f0-9]{32}$/.test(commandId) || activeCommands.has(commandId)) throw unavailable();
+      if (!/^loop-command:[a-f0-9]{32}$/.test(commandId) || activeCommands.has(commandId)) throw unavailable("command_release_invalid");
       activeCommands.add(commandId);
       try {
         const directory = join(c.workRoot, commandId.replace(":", "-"));

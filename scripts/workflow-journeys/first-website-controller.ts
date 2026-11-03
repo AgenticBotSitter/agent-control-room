@@ -1,3 +1,4 @@
+import { loopAdapterUnavailableDetailV1 } from "../../src/web/v1/improve-control-room-loop-adapter";
 // Proof-only foreground controller. Imports are inert. Engine commands go
 // through the product website; role input binding uses the qualified A2 entry.
 import { randomBytes } from "node:crypto";
@@ -827,7 +828,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     }
   } catch (error) {
     if (error instanceof Error) {
-      const detail = { name: error.name, message: error.message };
+      const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error) };
       (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-error", at: new Date().toISOString(), detail });
     }
     verdict = { ...verdict, state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] };
@@ -844,7 +845,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
     } catch (error) {
       if (error instanceof Error) {
-        const detail = { name: error.name, message: error.message };
+        const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error) };
         (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-cleanup-error", at: new Date().toISOString(), detail });
       }
       verdict.state = "incomplete"; verdict.reasons.push(codeOf(error));

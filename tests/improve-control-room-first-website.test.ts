@@ -1038,16 +1038,17 @@ test("F04a driver executes native bind capability probe before intake invitation
 
 test("B5 controller catches retain timestamped error details before and after evidence creation", async t => {
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
-  for (const phase of ['acquisition','preflight','cleanup'] as const) await t.test(phase, async t => {
+  for (const phase of ['acquisition','preflight','cleanup','adapter'] as const) await t.test(phase, async t => {
     const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
     const controllerOwner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'controller-error-evidence');
-    const error=Object.assign(new TypeError('loop_finalization_unavailable'),{settings:'SYNTHETIC private settings',stack:'SYNTHETIC private stack'});
-    const method=phase==='acquisition'?'beginAcquisition':'startDeadline';
+    const {LoopAdapterUnavailableV1}=await import('../src/web/v1/improve-control-room-loop-adapter');
+    const error=Object.assign(phase==='adapter'?new LoopAdapterUnavailableV1('entrypoint_pin_changed'):new TypeError('loop_finalization_unavailable'),{settings:'SYNTHETIC private settings',stack:'SYNTHETIC private stack'});
+    const method=phase==='acquisition'||phase==='adapter'?'beginAcquisition':'startDeadline';
     t.mock.method(controllerOwner,method,()=>{throw error;});
     if(phase==='cleanup') t.mock.method(controllerOwner,'cleanup',async()=>{throw new RangeError('cleanup input fragment');});
     assert.equal(await lstat(evidenceDir).then(()=>true,()=>false),false);
     const failed=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner},new AbortController().signal);
-    const details=[{name:'TypeError',message:'loop_finalization_unavailable'},
+    const details=[phase==='adapter'?{name:'Error',message:'loop_adapter_unavailable',internalReason:'entrypoint_pin_changed'}:{name:'TypeError',message:'loop_finalization_unavailable'},
       ...(phase==='cleanup'?[{name:'RangeError',message:'cleanup input fragment'}]:[])];
     assert.deepEqual(failed.reasons,['B5_CONTROLLER_FAILED',...(phase==='cleanup'?['B5_TRANSPORT_CLEANUP_INCOMPLETE']:[]),'B5_PROVIDER_FIXTURE']);
     assert.deepEqual((failed as {detail?:unknown}).detail,details,'even a pre-directory throw returns its original diagnostic');

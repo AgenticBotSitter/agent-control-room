@@ -10,7 +10,7 @@ import { z } from "zod";
 import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1, loopImprovementRunLinkSchemaV1,
   type LoopImprovementContractV1 } from "../../src/improve-control-room/v1/schemas";
-import { createImproveControlRoomLoopAdapterV1, type LoopAdapterConfigurationV1,
+import { createImproveControlRoomLoopAdapterV1, LoopAdapterUnavailableV1, type LoopAdapterConfigurationV1,
   type LoopAdapterV1 } from "../../src/web/v1/improve-control-room-loop-adapter";
 
 import { B5RefusalV1 } from "./improve-control-room-first-website";
@@ -79,6 +79,26 @@ export function b5LineageV1(toolingRevision: string): LoopImprovementContractV1 
   };
 }
 
+/** Translate only the pinned bridge's unavailable error; never retain its raw stack. */
+export function b5A2DiagnosticCallV1<T>(modulePath: string, operation: string, use: () => T): T {
+  const rethrow = (error: unknown): never => {
+    if (error instanceof LoopAdapterUnavailableV1) throw error;
+    if (error instanceof Error && error.message === "loop_adapter_unavailable") {
+      const prefixes = [`${pathToFileURL(modulePath).href}:`, `${modulePath}:`];
+      const guard = (error.stack ?? "").split("\n").find(frame =>
+        prefixes.some(prefix => frame.includes(prefix)) && !/at (?:unavailable|need) \(/u.test(frame));
+      const prefix = prefixes.find(value => guard?.includes(value));
+      const line = prefix && guard?.slice(guard.indexOf(prefix) + prefix.length).match(/^(\d+):/u)?.[1];
+      throw new LoopAdapterUnavailableV1(`b5_a2_${operation.toLowerCase()}${line ? `_line_${line}` : ""}`);
+    }
+    throw error;
+  };
+  try {
+    const value = use();
+    return value instanceof Promise ? value.catch(rethrow) as T : value;
+  } catch (error) { return rethrow(error); }
+}
+
 const carrierSchema = z.object({ modulePath: z.string(), moduleSha256: hash,
   configuration: z.object({ toolingRevision: digest, interpreter: z.string(), interpreterSha256: hash,
     toolingManifest: z.string(), settingsFile: z.string(), settingsSha256: hash,
@@ -115,7 +135,8 @@ export async function loadB5A2V1(root: string, approvedPythonSha256: string) {
   }
   const module = await import(pathToFileURL(carrier.modulePath).href);
   const lineage = b5LineageV1(c.toolingRevision);
-  const loaded = await module.loadA2Carrier(carrierFile, { root, lineage });
+  const loaded = await b5A2DiagnosticCallV1(carrier.modulePath, "carrier_load",
+    () => module.loadA2Carrier(carrierFile, { root, lineage }));
   // This cast follows runtime shape checks and the real carrier validator.
   const configuration = loaded.configuration as LoopAdapterConfigurationV1;
   const contract = configuration.contract;
@@ -131,6 +152,23 @@ export async function loadB5A2V1(root: string, approvedPythonSha256: string) {
     contract.finalization?.repository.observe]) need(typeof callable === "function", "B5_A2_CALLABLE");
   need(contract.intakeDriver?.enabled() === true, "B5_A2_INTAKE_DRIVER");
   need(["intake", "confirm", "start", "stop", "approve", "answer"].every(op => carrier.qualifiedOperations.includes(op)), "B5_A2_OPERATIONS");
+  // Later capability calls can refuse while projecting a finished run, before
+  // the controller reaches restart. Keep the same safe diagnostics there too.
+  const methods = <T extends object>(value: T, names: readonly (keyof T & string)[], scope: string): T => ({
+    ...value, ...Object.fromEntries(names.filter(name => typeof value[name] === "function").map(name =>
+      [name, (...args: unknown[]) => b5A2DiagnosticCallV1(carrier.modulePath, `${scope}_${name}`,
+        () => Reflect.apply(value[name] as (...args: unknown[]) => unknown, value, args))])),
+  });
+  configuration.contract = methods(contract, ["generateRunId", "decodeStatus", "admissionExpectation", "locateApprovalDocument", "decodeApprovalSidecar"], "contract");
+  if (contract.decisionProjection) configuration.contract.decisionProjection = methods(contract.decisionProjection, ["decodeGate"], "decision");
+  if (contract.recovery) configuration.contract.recovery = methods(contract.recovery, ["enabled", "inspect", "claimDriver"], "recovery");
+  if (contract.intakeDriver) configuration.contract.intakeDriver = methods(contract.intakeDriver, ["enabled", "inspect", "advance"], "intake");
+  if (contract.monitoring) configuration.contract.monitoring = methods(contract.monitoring, ["enabled", "decodeStatus"], "monitoring");
+  if (contract.finalization) configuration.contract.finalization = {
+    ...methods(contract.finalization, ["enabled", "inspect", "withFence", "retain", "cleanup", "readRecord", "appendRecord"], "finalization"),
+    source: methods(contract.finalization.source, ["readVerifiedCompletion"], "completion"),
+    repository: methods(contract.finalization.repository, ["observe"], "repository"),
+  };
   const adapter = createImproveControlRoomLoopAdapterV1(configuration);
   need(adapter.intakeDriver?.enabled() === true, "B5_A2_INTAKE_DRIVER");
   // The adapter captures lineage into an immutable copy; it is not the outer contract.

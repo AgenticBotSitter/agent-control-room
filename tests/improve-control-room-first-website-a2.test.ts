@@ -12,7 +12,7 @@ test("B5 producer refuses a non-disposable root before reading sources", () => {
 
 import { mkdtemp, mkdir, writeFile, readFile, rm, realpath, chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
+import { b5A2DiagnosticCallV1, b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
 import { B5RefusalV1 } from "./helpers/improve-control-room-first-website";
 import type { LoopEngineStatusV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { readB5RunWithRetryV1 } from "../scripts/workflow-journeys/first-website-controller";
@@ -659,7 +659,8 @@ test("B5 loader requires an enabled callable intake driver before constructing t
   const run = (intakeDriver: unknown) => validate({ loaded: { configuration: { contract: { ...contract, intakeDriver } } },
     lineage, c: { toolingRevision: lineage.toolingRevision }, module: { A2_SCHEMA_DIGEST: schemaDigest },
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
-    carrier: { qualifiedOperations: ["intake", "confirm", "start", "stop", "approve", "answer"] },
+    carrier: { modulePath: "/fixture/a2-contract.mjs", qualifiedOperations: ["intake", "confirm", "start", "stop", "approve", "answer"] },
+    b5A2DiagnosticCallV1,
     need: (value: unknown, code: string) => { if (!value) throw new Error(code); } });
   const valid = { enabled: callable, inspect: callable, advance: callable };
   for (const invalid of [undefined, {}, { ...valid, inspect: undefined }, { ...valid, advance: undefined },
@@ -686,4 +687,108 @@ test("B5 completed intake before confirmation joins latest lifecycle event witho
   await writeFile(ledgerFile, ledger + `another-job\tintake.log\tfixture-model\tENDED\t${ended}\n`);
   await assert.rejects(projectB5RunV1(f.input), (error: unknown) =>
     error instanceof B5RefusalV1 && error.code === "B5_A2_LEDGER_JOIN");
+});
+
+
+test("B5 A2 diagnostics retain a safe guard for sync and async refusals", async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { LoopAdapterUnavailableV1, loopAdapterUnavailableDetailV1 } = await import("../src/web/v1/improve-control-room-loop-adapter");
+  const modulePath = "/fixture with spaces/tools/loop/bridge/a2-contract.mjs";
+  const location = pathToFileURL(modulePath).href;
+  const error = Object.assign(new Error("loop_adapter_unavailable"), {
+    stack: `Error: loop_adapter_unavailable\n at unavailable (${location}:27:27)\n at need (${location}:28:48)\n at unpack (${location}:668:5)\n at privateCaller (/private/fixture-input:1:1)`,
+  });
+  const check = (value: unknown) => {
+    assert.ok(value instanceof LoopAdapterUnavailableV1);
+    assert.equal(value.message, "loop_adapter_unavailable");
+    assert.equal(value.code, "loop_adapter_unavailable");
+    assert.deepEqual(loopAdapterUnavailableDetailV1(value), { internalReason: "b5_a2_finalization_readrecord_line_668" });
+    assert.doesNotMatch(JSON.stringify(loopAdapterUnavailableDetailV1(value)), /private|fixture|stack|settings/);
+    return true;
+  };
+  assert.throws(() => b5A2DiagnosticCallV1(modulePath, "finalization_readRecord", () => { throw error; }), check);
+  await assert.rejects(b5A2DiagnosticCallV1(modulePath, "finalization_readRecord", async () => { throw error; }), check);
+  const other = new Error("fixture unrelated failure");
+  assert.throws(() => b5A2DiagnosticCallV1(modulePath, "carrier_load", () => { throw other; }), value => value === other);
+  const labeled = new LoopAdapterUnavailableV1("entrypoint_pin_changed");
+  assert.throws(() => b5A2DiagnosticCallV1(modulePath, "carrier_load", () => { throw labeled; }), value => value === labeled);
+  assert.deepEqual(loopAdapterUnavailableDetailV1(Object.assign(new Error("loop_adapter_unavailable"), { internalReason: "untrusted detail" })), {});
+  console.log("RESULT: PASS B5 safe sync/async bridge guard reasons; public code preserved; raw stack excluded");
+});
+
+// Explicit retained-input qualification. Only read the retained root; the real
+// bridge runs against an inert Node fixture child in disposable local scratch.
+// This isolates the historical-record defect without launching a model or PG.
+const retainedFinalizationRoot = process.env.CONTROL_ROOM_B5_RETAINED_ROOT;
+test("B5 retained finished-run finalization bridge guard", {
+  skip: !retainedFinalizationRoot ? "NOT RUN: supply read-only retained root" : false,
+}, async t => {
+  const { readdir } = await import("node:fs/promises");
+  const { pathToFileURL } = await import("node:url");
+  const { verifyFinalizationRecordV1 } = await import("../src/web/v1/improve-control-room-loop-finalization");
+  const retained = retainedFinalizationRoot!;
+  const [run] = await readdir(join(retained, "runs"));
+  assert.ok(run);
+  const state = JSON.parse(await readFile(join(retained, "runs", run, "run.json"), "utf8"));
+  assert.equal(state.chain.state, "candidate_ready");
+  const lines = (await readFile(join(retained, "runs", run, "finalization/records.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(lines.length, 1);
+  const native = JSON.parse(lines[0]!);
+  assert.equal(native.phase, "announced");
+  const modulePath = join(retained, "tools/loop/bridge/a2-contract.mjs");
+  const bridge = await import(pathToFileURL(modulePath).href);
+  const root = await scratch(t);
+  for (const name of ["runs", "work"]) await mkdir(join(root, name), { mode: 0o700 });
+  const entrypoint = join(root, "read-record.mjs");
+  await writeFile(entrypoint, `if (process.argv.slice(2).join(" ") !== ${JSON.stringify(`finalize ${run} read --json`)}) process.exit(2);\nconsole.log(${JSON.stringify(JSON.stringify(native))});\n`, { mode: 0o600 });
+  for (const name of ["settings.json", "availability.json", "manifest.sha256"])
+    await writeFile(join(root, name), await readFile(join(retained, "config", name)), { mode: 0o600 });
+  const interpreter = await realpath(process.execPath);
+  const configuration = { adapterId: native.binding.run.adapterId, runRoot: join(root, "runs"), workRoot: join(root, "work"), configRoot: root, cwd: root,
+    interpreter, interpreterSha256: b5RawHash(await readFile(interpreter)), entrypoint, entrypointSha256: b5RawHash(await readFile(entrypoint)),
+    toolingManifest: join(root, "manifest.sha256"), toolingRevision: native.binding.run.toolingRevision,
+    settingsFile: join(root, "settings.json"), settingsSha256: b5RawHash(await readFile(join(root, "settings.json"))),
+    availabilityFile: join(root, "availability.json"), availabilitySha256: b5RawHash(await readFile(join(root, "availability.json"))),
+    executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"a".repeat(64)}` } };
+  const capability = bridge.a2FinalizationV1(configuration);
+  const { eventDigest: _event, adapterId: _adapter, loopRunId: _run, toolingRevision: _tools, a2SchemaVersion: _schema, ...savedTarget } = native.binding;
+  const saved = await capability.readRecord(savedTarget);
+  const currentTarget = { ...savedTarget, expectedRevision: state.chain.revision };
+  assert.ok(savedTarget.expectedRevision < currentTarget.expectedRevision);
+  assert.equal(verifyFinalizationRecordV1(saved, currentTarget).recordDigest, saved.recordDigest,
+    "the product already accepts an older record from this same authorization");
+  await assert.rejects(b5A2DiagnosticCallV1(modulePath, "finalization_readRecord", () => capability.readRecord(currentTarget)),
+    { message: "loop_adapter_unavailable", internalReason: "b5_a2_finalization_readrecord_line_668" });
+  console.log(`RESULT: PASS retained finished-run bridge refusal reproduced guard=a2-contract.mjs:668 saved_revision=${savedTarget.expectedRevision} current_revision=${currentTarget.expectedRevision}; product verifier accepts historical record`);
+});
+
+
+test("B5 adapter construction and closed calls expose distinct safe guard reasons", async t => {
+  const { createImproveControlRoomLoopAdapterV1 } = await import("../src/web/v1/improve-control-room-loop-adapter");
+  const root = await scratch(t);
+  for (const name of ["runs", "work"]) await mkdir(join(root, name), { mode: 0o700 });
+  const interpreter = await realpath(process.execPath), entrypoint = join(root, "entry.mjs");
+  const toolingManifest = join(root, "manifest.sha256"), settingsFile = join(root, "settings.json"), availabilityFile = join(root, "availability.json");
+  for (const [file, body] of [[entrypoint, "// inert fixture"], [toolingManifest, "fixture manifest"],
+    [settingsFile, JSON.stringify({ project: { host_adapter: "local-loop" } })], [availabilityFile, "{}"]])
+    await writeFile(file!, body!, { mode: 0o600 });
+  const configuration: import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterConfigurationV1 = {
+    adapterId: "adapter:a2-local", interpreter, interpreterSha256: b5RawHash(await readFile(interpreter)),
+    entrypoint, entrypointSha256: b5RawHash(await readFile(entrypoint)), toolingManifest,
+    toolingRevision: `sha256:${b5RawHash(await readFile(toolingManifest))}`, runRoot: join(root, "runs"), workRoot: join(root, "work"), configRoot: root, cwd: root,
+    settingsFile, settingsSha256: b5RawHash(await readFile(settingsFile)), availabilityFile, availabilitySha256: b5RawHash(await readFile(availabilityFile)),
+    executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"a".repeat(64)}` },
+    contract: { lineage: b5LineageV1(`sha256:${b5RawHash(await readFile(toolingManifest))}`), schemaDigest: `sha256:${"b".repeat(64)}`,
+      qualifiedOperations: [], generateRunId: () => "web-fixture", decodeStatus: () => { throw new Error("fixture must not spawn"); } },
+  };
+  assert.throws(() => createImproveControlRoomLoopAdapterV1({ ...configuration, entrypointSha256: "0".repeat(64) }),
+    { message: "loop_adapter_unavailable", internalReason: "entrypoint_pin_changed" });
+  assert.throws(() => createImproveControlRoomLoopAdapterV1({ ...configuration, settingsSha256: "0".repeat(64) }),
+    { message: "loop_adapter_unavailable", internalReason: "settings_pin_changed" });
+  assert.throws(() => createImproveControlRoomLoopAdapterV1({ ...configuration, timeoutMs: 0 }),
+    { message: "loop_adapter_unavailable", internalReason: "configuration_invalid" });
+  const adapter = createImproveControlRoomLoopAdapterV1(configuration);
+  await adapter.close();
+  await assert.rejects(adapter.status("web-fixture"), { message: "loop_adapter_unavailable", internalReason: "execute_closed" });
+  console.log("RESULT: PASS B5 adapter pin/construction/closed guards retain distinct internal reasons without spawning");
 });
