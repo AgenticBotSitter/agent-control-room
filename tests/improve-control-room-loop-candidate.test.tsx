@@ -1170,3 +1170,65 @@ test("B5 publisher rejects invalid selection on either read and changed custody"
   await assert.rejects(verifyLoopCandidateCompletionV1(deps, "run:wire", digest), /loop_candidate_unavailable/);
   assert.equal(deps.reads(), 2);
 });
+
+// Bypass the service wire parser: SQL must enforce these bounds independently.
+test("B5 SQL review identity rejects unknown keys and invalid optional values",async()=>{
+  const f=await syntheticFixture();
+  try {
+    await f.desk.prepareLoopCandidateCompletion(f.runLinkId);
+    const original=f.evidence();
+    const {loopCandidateEvidenceSchemaV1}=await import("../src/improve-control-room/v1/loop-candidate-wire");
+    const invalid:Record<string,unknown>[]=[
+      {selectedModel:"model",identityBasis:"selected",extra:true}, {selectedModel:null}, {selectedModel:42}, {selectedModel:true},
+      {selectedModel:[]}, {selectedModel:{}}, {selectedModel:""}, {selectedModel:" \t\n"},
+      {selectedModel:"\u00a0\ufeff"}, {selectedModel:"x".repeat(241)}, {selectedModel:"😀".repeat(121)},
+      {selectedModel:"/"+"Users/fixture/model"}, {selectedModel:"/"+"home/fixture/model"},
+      {selectedModel:"/"+"Volumes/fixture/model"}, {selectedModel:"C:"+String.fromCharCode(92)+"model"},
+      {identityBasis:null}, {identityBasis:42}, {identityBasis:true}, {identityBasis:[]},
+      {identityBasis:{}}, {identityBasis:""}, {identityBasis:"invented"}, {identityBasis:"SELECTED"},
+    ];
+    for(const fields of invalid){
+      f.edit(e=>{e.reviews=structuredClone(original.reviews);Object.assign(e.reviews[0]!,fields);});
+      assert.equal(loopCandidateEvidenceSchemaV1.safeParse(f.evidence()).success,false,JSON.stringify(fields));
+      await assert.rejects(rawCandidateInsert(f),{code:"23514",message:"loop candidate reviews shape rejected"},JSON.stringify(fields));
+    }
+    for(const fields of [{},{selectedModel:"x".repeat(240)}, {selectedModel:"😀".repeat(120)},
+      {selectedModel:"  model  "}, {selectedModel:"model",identityBasis:"selected"}, {identityBasis:"observed"}]){
+      f.edit(e=>{e.reviews=structuredClone(original.reviews);Object.assign(e.reviews[0]!,fields);});
+      assert.equal(loopCandidateEvidenceSchemaV1.safeParse(f.evidence()).success,true,JSON.stringify(fields));
+      await f.db.exec("BEGIN");
+      try{await rawCandidateInsert(f);}finally{await f.db.exec("ROLLBACK");}
+    }
+    assert.equal((await f.db.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,0);
+    console.log("RESULT: PASS SQL independently rejects 23 malformed identity/extra-key cases and accepts six valid optional identity shapes");
+  }finally{await f.close();}
+});
+
+test("B5 review identity migration down restores 0305 and re-up preserves retained rows",async()=>{
+  const f=await syntheticFixture();
+  try{
+    const {readFile}=await import("node:fs/promises");
+    const migrate=async(direction:"migrations"|"down")=>{
+      await f.db.exec("BEGIN");
+      try{await f.db.exec("SET LOCAL ROLE control_room_schema_owner");
+        await f.db.exec(await readFile(`db/${direction}/0307_control_loop_candidate_review_identity.sql`,"utf8"));
+        await f.db.exec("COMMIT");
+      }catch(error){await f.db.exec("ROLLBACK");throw error;}
+    };
+    f.edit(e=>{for(const review of e.reviews)Object.assign(review,{selectedModel:"SYNTHETIC selected",identityBasis:"selected"});});
+    const receipt=await f.publish();assert.equal(receipt.state,"recorded");
+    const before=(await f.client.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows;
+    await migrate("down");
+    const restored=(await f.db.query<{body:string}>("SELECT prosrc body FROM pg_proc WHERE proname='guard_control_loop_update_candidate_insert'")).rows[0]!.body;
+    const original=await readFile("db/migrations/0305_control_loop_candidate_unavailable_sections.sql","utf8");
+    assert.equal(restored,original.split("AS $$")[1]!.split("$$;")[0]);
+    await assert.rejects(rawCandidateInsert(f),{code:"23514",message:"loop candidate reviews shape rejected"});
+    assert.deepEqual((await f.client.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows,before);
+    // Existing records can still be read while the writer is rolled back.
+    assert.deepEqual((await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate?.evidence.reviews,f.evidence().reviews);
+    await migrate("migrations");
+    assert.equal((await f.publish()).state,"replayed");
+    assert.deepEqual((await f.client.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows,before);
+    console.log("RESULT: PASS 0307 down restores exact 0305 body, rejects new identity writes and preserves retained rows; re-up replays publication");
+  }finally{await f.close();}
+});

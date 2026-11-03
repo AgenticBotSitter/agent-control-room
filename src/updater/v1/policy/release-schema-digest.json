@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "074e7298647a5f8963c21257eb070810d9653d3d55482ad3d173f5b945c26e24",
-  "note": "Measured in PGlite with every migration through the 0305 Unavailable-section candidate check and guard. Native PostgreSQL17 and updater digest equality remain required release qualification; this pin alone is not that proof."
+  "digest": "3448fa44ef3ad086d46139684ba078f6af8ad43f6eee18af1342f095ed126529",
+  "note": "Measured in PGlite and native PostgreSQL17 through 0307 review identity validation; the updater query produces the same digest. Compiled release pins must match this policy before release qualification."
 }

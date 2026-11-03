@@ -8,7 +8,7 @@ import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/
 import { LoopCandidatePublisherV1 } from "../src/improve-control-room/v1/loop-candidate-publisher";
 import { loopCandidateEvidenceSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
 import { loopImprovementObservationSchemaV1, loopImprovementRunIdentitySchemaV1 } from "../src/improve-control-room/v1/schemas";
-import { loopFinalizationErrorDiagnosticV1 } from "../src/web/v1/improve-control-room-loop-finalization";
+import { createImproveControlRoomLoopFinalizerV1, verifyFinalizationRecordV1 } from "../src/web/v1/improve-control-room-loop-finalization";
 import { loopByteHashV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 
 // Optional retained evidence stays outside the repository. No bridge, subprocess,
@@ -74,23 +74,38 @@ test("B5 run-24 mapped completion publishes against signed proof-style database 
   const publisher = new LoopCandidatePublisherV1(desk,config);
   const input = { runLinkId:b.runLinkId,completionDigest:evidence.completionDigest };
   const stages:string[]=[];
-  await assert.rejects(publisher.publishCompletion(input,stage=>stages.push(stage)),error=>{
-    assert.ok(error instanceof Error);
-    assert.equal((error as Error&{code:string}).code,"23514");
-    assert.deepEqual(loopFinalizationErrorDiagnosticV1(error),[error.constructor.name,"loop candidate reviews shape rejected"]);
-    return true;
-  });
-  assert.deepEqual(stages,["prepare","verify","record"]);
-  const forbidden=["selectedModel","identityBasis"];
-  for(const review of evidence.reviews)for(const field of forbidden)assert.ok(field in review);
-  const rows=await f.client.query("SELECT payload FROM control_loop_update_candidates");
-  assert.equal(rows.rows.length,0);
-  console.log("RESULT: PASS run-24 original mapped bytes reproduce SQLSTATE 23514 reviews shape rejected at record; prepare and verify pass, no candidate recorded");
+  const receipt = await publisher.publishCompletion(input, stage => stages.push(stage));
+  assert.equal(receipt.state, "recorded");
+  assert.deepEqual(stages, ["prepare", "verify", "record"]);
+  assert.equal((await publisher.publishCompletion(input)).state, "replayed");
+  const rows = await f.client.query<{payload:typeof evidence}>("SELECT payload FROM control_loop_update_candidates");
+  assert.equal(rows.rows.length, 1);
+  assert.deepEqual(rows.rows[0]!.payload, evidence);
+  assert.deepEqual((await desk.readLoopCandidate(f.identity,b.projectId,b.requestId)).candidate?.evidence.reviews,evidence.reviews);
+  // A synthetic envelope exercises the product's private verifyPublication via
+  // its exported record verifier, using the actual newly persisted receipt.
+  const target={schemaVersion:1 as const,...scope,projectId:b.projectId,requestId:b.requestId,ownerIdentityId:"identity:web",
+    runLinkId:b.runLinkId,localVersion:b.localVersion,authorizationId,startCommandId:`loop-command:${"1".repeat(32)}`,
+    startBindingDigest:sha256Digest(binding),run:{adapterId:b.adapterId,loopRunId:b.loopRunId,toolingRevision:b.toolingRevision,a2SchemaVersion:1 as const},
+    inputVersion:b.a2InputVersion,requestSha256:b.requestSha256,settingsSha256:b.settingsSha256,
+    settingsDigest:b.settingsSha256,expectedRevision:b.engineRevision,schemaDigest};
+  const finalBinding={...target,eventDigest:sha256Digest("SYNTHETIC run-24 finalization envelope")};
+  const inventoryDigest=sha256Digest("SYNTHETIC run-24 retained inventory");
+  const material={schemaVersion:1,binding:finalBinding,sequence:1,previousDigest:null,phase:"published",
+    observation:{schemaVersion:1,binding:finalBinding,outcome:"candidate_ready",reasonCode:"FINISHED",evidenceDigest:sha256Digest(evidence),
+      completionDigest:evidence.completionDigest,inventoryDigest,observedAt:at},
+    custody:{schemaVersion:1,binding:finalBinding,inventoryDigest,retentionDigest:evidence.retentionDigest,verifiedAt:at},
+    termination:{schemaVersion:1,binding:finalBinding,inventoryDigest,state:"already-ended",ownershipDigest:inventoryDigest,observedAt:at},
+    publication:receipt,cleanup:null,recordedAt:at};
+  assert.equal(verifyFinalizationRecordV1({...material,recordDigest:sha256Digest(material)},target).publication?.state,"recorded");
+  const wrongReceipt={...material,publication:{...receipt,engineRevision:receipt.engineRevision+1}};
+  assert.throws(()=>verifyFinalizationRecordV1({...wrongReceipt,recordDigest:sha256Digest(wrongReceipt)},target),/loop_finalization_unavailable/);
+  console.log("RESULT: PASS run-24 original mapped bytes publish through record, replay and verifyPublication; stored reviews and owner detail preserve both identity fields");
 });
 
-test("B5 selected review identity reproduces SQL contract mismatch at record",async t=>{
-  const {syntheticCandidateFixture}=await import("./helpers/improve-control-room-loop-finalization");
-  const f=await syntheticCandidateFixture();t.after(f.close);
+test("B5 selected review identity publishes through record and finalization receipt verification",async t=>{
+  const {finalizationFixture}=await import("./helpers/improve-control-room-loop-finalization");
+  const f=await finalizationFixture();t.after(f.close);
   f.edit(e=>{for(const review of e.reviews)Object.assign(review,{selectedModel:"Fixture selected model",identityBasis:"selected"});});
   const otherSchema=sha256Digest("Fixture mismatched schema");
   const mismatched={...f.config,schemaDigest:otherSchema,source:{...f.config.source,schemaDigest:otherSchema}};
@@ -105,14 +120,27 @@ test("B5 selected review identity reproduces SQL contract mismatch at record",as
   await assert.rejects(f.publisher.publishCompletion({runLinkId:f.runLinkId,completionDigest:f.evidence().completionDigest},stage=>verifying.push(stage)),
     /SYNTHETIC dirty repository/);
   assert.deepEqual(verifying,["prepare","verify"]);f.dirty(false);
+  // Refresh the sealed synthetic finalization observation after adding identity fields.
+  const evidence=f.evidence();
+  f.state.retentionDigest=evidence.retentionDigest;
+  f.state.observation={...f.state.observation,completionDigest:evidence.completionDigest,
+    binding:{...f.state.observation.binding,eventDigest:sha256Digest({outcome:"candidate_ready",completionDigest:evidence.completionDigest})}};
+  const {join}=await import("node:path");
+  for(const name of Object.keys(f.state.corpus))f.state.corpus[name]=sha256Digest([...await readFile(join(f.retained,name))]);
+  f.state.observation.inventoryDigest=sha256Digest(f.state.corpus);await f.save();
   const stages:string[]=[];
-  await assert.rejects(f.publisher.publishCompletion({runLinkId:f.runLinkId,completionDigest:f.evidence().completionDigest},stage=>stages.push(stage)),
-    {code:"23514",message:"loop candidate reviews shape rejected"});
+  const record=await createImproveControlRoomLoopFinalizerV1({capability:f.capability,
+    authorize:async()=>f.target,signal:new AbortController().signal,
+    publishCompletion:(input,onStage)=>f.publisher.publishCompletion(input,stage=>{stages.push(stage);onStage?.(stage);}),
+  }).finalize(f.target);
+  assert.equal(record?.phase,"cleanup");assert.ok(record.publication);
   assert.deepEqual(stages,["prepare","verify","record"]);
-  assert.equal((await f.client.query("SELECT id FROM control_loop_update_candidates")).rows.length,0);
-  // Positive control isolates the SQL exact-key mismatch. This only changes the
-  // synthetic fixture, never the run-24 evidence or the product mapping.
-  f.edit(e=>{for(const review of e.reviews){delete review.selectedModel;delete review.identityBasis;}});
-  assert.equal((await f.publish()).state,"recorded");
-  console.log("RESULT: PASS synthetic prepare/verify/record stage probes; review identity SQL mismatch isolated by successful positive control");
+  assert.equal((await f.publish()).state,"replayed");
+  const rows=await f.client.query<{payload:typeof evidence}>("SELECT payload FROM control_loop_update_candidates");
+  assert.equal(rows.rows.length,1);assert.deepEqual(rows.rows[0]!.payload.reviews,evidence.reviews);
+  const card=(await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate!;
+  assert.deepEqual(card.evidence.reviews,evidence.reviews);
+  const page=await f.desk.readLoopCandidates(f.identity);
+  assert.deepEqual(page.candidates[0]!.evidence.reviews,evidence.reviews);
+  console.log("RESULT: PASS synthetic identity publication reaches record, verifyPublication, published and announced; detail and owner list readers preserve identity");
 });

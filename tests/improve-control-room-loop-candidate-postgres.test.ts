@@ -246,11 +246,12 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  await admin.query(await readFile("db/down/0307_control_loop_candidate_review_identity.sql","utf8"));
   await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -348,17 +349,18 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   assert.ok(files.includes("db/migrations/0302_control_loop_improvement_commands.sql"));assert.ok(!files.includes("db/migrations/0303_control_loop_update_candidates.sql"));
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
+   await admin.query(await readFile("db/down/0307_control_loop_candidate_review_identity.sql","utf8"));
    await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
    await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
   const tables=["control_loop_improvement_requests","control_loop_improvement_inputs","control_loop_improvement_run_links","control_loop_improvement_authorizations","control_loop_improvement_commands"];
   const snapshot=async()=>JSON.stringify(await Promise.all(tables.map(async table=>({table,rows:(await sql(pg,`SELECT row_to_json(t)::text bytes FROM ${table} t ORDER BY created_at,record_digest`)).rows}))));
   const before=await snapshot();
-  const upgraded=await migrateRoot(pg,resolve("."));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0303_control_loop_update_candidates.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0304_control_loop_candidate_start_authorization.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0305_control_loop_candidate_unavailable_sections.sql")));
+  const upgraded=await migrateRoot(pg,resolve("."));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0303_control_loop_update_candidates.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0304_control_loop_candidate_start_authorization.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0305_control_loop_candidate_unavailable_sections.sql")));assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0307_control_loop_candidate_review_identity.sql")));
   const {readMacGrantCatalogV1,desiredMacGrantsV1,diffMacGrantsV1,applyMacGrantDiffV1}=await import("../scripts/mac-local/database-upgrade-grants.mjs");
   const roleFiles=["private_web_roles.sql","task_coordinator_roles.sql","native_queue_producer_roles.sql","native_results_roles.sql","local_result_publisher_roles.sql","native_queue_worker_roles.sql","agent_reviewer_roles.sql","fleet_gateway_roles.sql"];
   const sources=Object.fromEntries(await Promise.all(roleFiles.map(async name=>[name,await readFile(join("db/roles",name),"utf8")])));
@@ -438,3 +440,40 @@ test("B4 inherited fixture preparation measures 253 tables and preserves refusal
  assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=253/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
  console.log("B4 native inherited_fixture_cases=4 prepared_catalog=253 ownership_and_nonempty_refusals=true");
 });
+
+test("B5 PostgreSQL review identity SQL bounds and 0307 down re-up",async()=>run(async pg=>{
+ await seed(pg);const w=web(pg),f=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
+ const admin=new Client(pg.admin());await admin.connect();
+ try{
+  await f.desk.prepareLoopCandidateCompletion(f.runLinkId);
+  for(const fields of [{selectedModel:"model",identityBasis:"selected",extra:true},{selectedModel:null},{selectedModel:42},{selectedModel:""},{selectedModel:" \t"},
+   {selectedModel:"\u00a0\ufeff"},{selectedModel:"x".repeat(241)},{selectedModel:"😀".repeat(121)},
+   {selectedModel:"/"+"Users/fixture/model"},{selectedModel:"/"+"home/fixture/model"},
+   {selectedModel:"/"+"Volumes/fixture/model"},{selectedModel:"C:"+String.fromCharCode(92)+"model"},
+   {identityBasis:null},{identityBasis:1},{identityBasis:"unknown"}]){
+   const e=f.evidence();Object.assign(e.reviews[0]!,fields);
+   await assert.rejects(rawCandidateInsert(w.client,e),{sqlState:"23514"},JSON.stringify(fields));
+  }
+  f.edit(e=>{for(const r of e.reviews)Object.assign(r,{selectedModel:"😀".repeat(120),identityBasis:"selected"});});
+  assert.equal((await f.publish()).state,"recorded");
+  const reviews=(await f.desk.readLoopCandidate(identity,project,f.requestId)).candidate!.evidence.reviews;
+  assert.deepEqual(reviews,f.evidence().reviews);
+  await admin.query(await readFile("db/down/0307_control_loop_candidate_review_identity.sql","utf8"));
+  await assert.rejects(rawCandidateInsert(w.client,f.evidence()),{sqlState:"23514"});
+  assert.deepEqual((await f.desk.readLoopCandidate(identity,project,f.requestId)).candidate!.evidence.reviews,reviews);
+  // Reconstruct the old 0305 ledger after the down, then use the production
+  // applier to append 0307. Prior checksums and retained rows must survive.
+  const before=(await admin.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows;
+  const removed=(await admin.query("DELETE FROM control_room_schema_migrations WHERE filename='db/migrations/0307_control_loop_candidate_review_identity.sql' RETURNING ledger_order")).rows[0].ledger_order;
+  for(const row of (await admin.query("SELECT filename,ledger_order FROM control_room_schema_migrations WHERE ledger_order>$1 ORDER BY ledger_order",[removed])).rows)
+    await admin.query("UPDATE control_room_schema_migrations SET ledger_order=$1 WHERE filename=$2",[Number(row.ledger_order)-1,row.filename]);
+  const upgraded=await migrateRoot(pg,resolve("."));
+  assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0307_control_loop_candidate_review_identity.sql")));
+  assert.deepEqual((await admin.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows,before);
+  assert.equal((await f.publish()).state,"replayed");
+  const measured=await readPrivateWebSchemaDigest(w.client);
+  assert.equal(digestReleaseSchemaRowsV1((await w.client.query(await readFile("src/updater/v1/pg/release-schema-digest.sql","utf8"))).rows),measured);
+  assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json","utf8")).digest,measured);
+  console.log("RESULT: PASS native PostgreSQL identity bounds, detail reader, down and production upgrade from 0305, schema digest equality");
+ }finally{await admin.end();await f.close();}
+}));
