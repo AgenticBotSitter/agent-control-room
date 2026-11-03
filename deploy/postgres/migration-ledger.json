@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "40ebb7ea0550e86502efe8c2e936b7330f045a32b3396b653408c7ed2539db59",
+  "digest": "ffb76e36307220a51b4dd7d865af3acac806f7520d80bad4dd9f21ec099254b1",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -1037,7 +1037,7 @@
     {
       "file": "db/migrations/0305_control_loop_candidate_unavailable_sections.sql",
       "order": 173,
-      "sha256": "298601c536bed474be0a613a8917e38275102c3a5630b80b51cf64c81f6107f6",
+      "sha256": "02b43871bebe8b0b3c141989fb7f28cb8393fd7838aa7457ab346ee3a6f42033",
       "kind": "migrate"
     },
     {
