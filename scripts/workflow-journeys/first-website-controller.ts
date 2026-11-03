@@ -403,21 +403,31 @@ export async function runFirstWebsiteDevicePhaseV1(input: {
   capture?(request: B5DeviceRequestV1): Promise<{receipt: import("./first-website-device").B5DeviceReceiptV1; dom?: z.infer<typeof b5DeviceServiceEvidenceSchemaV1>["dom"]} | undefined>;
 }) {
   input.signal.throwIfAborted();
-  const request = await input.mailbox.request(input.phase, input.device, input.expiresAt, input.binding);
+  let request = await input.mailbox.request(input.phase, input.device, input.expiresAt, input.binding);
   input.onPublished?.();
   assertB5FaultValueAbsentV1(request, input.policy);
-  const captured = await input.capture?.(request);
-  const receive = () => waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root, input.signal, Date.parse(input.expiresAt));
-  // Publishing, automatic capture and receipt verification are active work.
-  // Only the pending owner receipt suspends a real controller's work clock.
-  const receipt = captured?.receipt ?? await (input.waitForOwner ? input.waitForOwner(receive) : receive());
-  input.signal.throwIfAborted();
-  assertB5FaultValueAbsentV1(receipt, input.policy);
-  assertB5FaultValueAbsentV1(captured?.dom ?? null, input.policy);
-  const accepted = await input.mailbox.accept(receipt);
-  // Binary frames still need the lead's visual check under the capture
-  // contract. It does not define a second per-phase acknowledgement mailbox.
-  return { receipt: accepted, ...(captured?.dom ? {dom:captured.dom} : {}) };
+  for (;;) {
+    try {
+      const captured = await input.capture?.(request);
+      const receive = () => waitB5DeviceJsonV1(join(input.mailbox.root, "inbox", `${request.sequence}.json`), input.mailbox.root,
+        input.signal, Date.parse(input.expiresAt), () => input.mailbox.currentRequest()?.sequence !== request.sequence);
+      // Publishing, automatic capture and verification consume active work.
+      const receipt = captured?.receipt ?? await (input.waitForOwner ? input.waitForOwner(receive) : receive());
+      input.signal.throwIfAborted();
+      assertB5FaultValueAbsentV1(receipt, input.policy);
+      assertB5FaultValueAbsentV1(captured?.dom ?? null, input.policy);
+      const accepted = await input.mailbox.accept(receipt);
+      return { receipt: accepted, ...(captured?.dom ? {dom:captured.dom} : {}) };
+    } catch (error) {
+      const next = input.mailbox.currentRequest();
+      if (!(error instanceof B5DeviceRefusalV1) || !["B5_DEVICE_REPUBLISHED", "B5_DEVICE_STALE"].includes(error.code)
+        || !next || next.sequence === request.sequence) throw error;
+      need(next.phase === request.phase && next.device === request.device && next.origin === request.origin
+        && next.expiresAt === request.expiresAt && JSON.stringify(next.binding) === JSON.stringify(request.binding), "B5_DEVICE_REQUEST_CHANGED");
+      assertB5FaultValueAbsentV1(next, input.policy);
+      request = next;
+    }
+  }
 }
 
 /** Validate facts read from the rendered desktop article and its document URL. */

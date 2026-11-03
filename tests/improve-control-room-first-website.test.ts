@@ -1956,7 +1956,7 @@ test('B5 real journey continues through every long owner gate and both restarts'
     if (receipt.phase === 'plan') { stage = 'spec'; command('approve', approval('plan')); }
     if (receipt.phase === 'spec') { stage = 'finished'; state = 'finished'; command('approve', approval('spec')); }
     return receipt;
-  }, readServiceEvidence: async () => ({ events: [] }) };
+  }, currentRequest: () => pending, readServiceEvidence: async () => ({ events: [] }) };
   const owned = { processCount: 0, listenerReleased: true, postgresStopped: true, runScratchAbsent: true };
   const owner = C.createFirstWebsiteControllerOwnerV1(), realWait = owner.waitForOwner.bind(owner);
   const host = { startup: { isReady: () => true }, origin: 'http://127.0.0.1:60460', a2Entry: {}, close: async () => {}, proof: {

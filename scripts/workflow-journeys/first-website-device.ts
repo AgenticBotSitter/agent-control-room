@@ -235,6 +235,7 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
   try { await mkdir(root, { mode: 0o700 }); } catch { throw new B5DeviceRefusalV1("B5_DEVICE_EXISTS"); }
   await mkdir(join(root, "receipts"), { mode: 0o700 }); await mkdir(join(root, "captures"), { mode: 0o700 });
   if (options.real) await mkdir(join(root, "service"), { mode: 0o700 });
+  if (options.real) await mkdir(join(root, "abandoned"), { mode: 0o700 });
   await mkdir(join(root, "observations"), { mode: 0o700 }); await mkdir(join(root, "inbox"), { mode: 0o700 });
   const identity = await custody(root, scratchRoot, true);
   let challengedSession: string | undefined;
@@ -242,32 +243,50 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
   const sessions = new Map<string, string>(), accepted = new Map<number, string>();
   const sealedService = new Map<number, string>();
   let events: B5DeviceServiceEvidenceV1["events"] = [];
+  const mayHaveActed = new Set<number>();
+  // A sign-in must not overtake a command whose service mutation is in flight.
+  let exchanges: Promise<unknown> = Promise.resolve(), operations: Promise<unknown> = Promise.resolve();
+  const postActionReason = "sign-in expired after you acted; press Stop and the lead restarts the run";
+  async function recordPostActionWait(current: B5DeviceRequestV1) {
+    if (pending !== current || accepted.has(current.sequence) || !mayHaveActed.has(current.sequence)) return;
+    await publish(join(root, "session-wait.json"), { sequence: current.sequence, reason: postActionReason }, false);
+  }
   const active = new Set<Promise<unknown>>(); let closing: Promise<void> | undefined;
   async function checked() {
     const s = await custody(root, scratchRoot, true);
     need(s.ino === identity.ino && s.dev === identity.dev, "B5_DEVICE_CUSTODY");
-    for (const dir of ["receipts", "captures", "observations", "inbox", ...(options.real ? ["service"] : [])]) await custody(join(root, dir), root, true);
+    for (const dir of ["receipts", "captures", "observations", "inbox", ...(options.real ? ["service", "abandoned"] : [])]) await custody(join(root, dir), root, true);
   }
   function locked<T>(body: () => Promise<T>): Promise<T> {
-    const work = (async () => {
+    const run = async () => {
       try {
         need(!closed, "B5_DEVICE_CLOSED"); await checked();
         const lock = join(root, ".lock");
         try { await mkdir(lock, { mode: 0o700 }); } catch { throw new B5DeviceRefusalV1("B5_DEVICE_SEQUENCE_RACE"); }
         try { return await body(); } finally { await rmdir(lock); }
       } catch (error) { throw error instanceof B5DeviceRefusalV1 ? error : new B5DeviceRefusalV1("B5_DEVICE_IO"); }
-    })();
+    };
+    // Receipt acceptance and a sign-in replacement share the same state lock.
+    // Queue trusted in-process callers; retain the file lock against outsiders.
+    const work = options.real ? operations.then(run) : run();
+    if (options.real) operations = work.catch(() => {});
     active.add(work); void work.finally(() => active.delete(work)).catch(() => {}); return work;
   }
 
   const projectPath = `/projects/${encodeURIComponent(options.projectId)}`;
   const apiPath = `/api/v1/projects/${encodeURIComponent(options.projectId)}/improvements/loop/`;
-  async function observeAction(request: Request, response: Response) {
-    const url = new URL(request.url), current = pending, observation = observed;
-    if (!options.real || closed || !current || !observation || accepted.has(current.sequence) || url.origin !== origin
+  function isOwnerCommand(request: Request, current: B5DeviceRequestV1) {
+    const url = new URL(request.url), suffix = url.pathname.slice(apiPath.length);
+    return request.method === "POST" && url.origin === origin && !url.search && url.pathname.startsWith(apiPath)
+      && (suffix === "intake" || (current.binding ? suffix.startsWith(encodeURIComponent(current.binding.requestId) + "/") : true)
+        && /^[^/]+\/(?:confirm|start|answer|approve)$/u.test(suffix));
+  }
+  async function observeAction(request: Request, response: Response, current: B5DeviceRequestV1 | undefined) {
+    const url = new URL(request.url), observation = observed;
+    if (!options.real || closed || !current || pending !== current || accepted.has(current.sequence) || url.origin !== origin
       || url.search || !url.pathname.startsWith(apiPath) || !response.ok || now() >= Date.parse(current.expiresAt)) return;
     const tokens = (request.headers.get("cookie") ?? "").split(";").map(c => c.trim()).filter(c => /^control_room_local_owner=[A-Za-z0-9_-]{43}$/u.test(c));
-    if (tokens.length !== 1 || b5DeviceHashV1(tokens[0]!) !== observation.sessionDigest) return;
+    if (tokens.length !== 1) return;
     const suffix = url.pathname.slice(apiPath.length), binding = current.binding;
     const expected = binding ? encodeURIComponent(binding.requestId) + "/" : "";
     const allowed = expectedServiceActions(current);
@@ -284,6 +303,8 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
     if (request.method === "POST") {
       const receipt = loopBridgeReceiptSchemaV1.safeParse(value);
       if (!receipt.success || receipt.data.state !== "accepted" || binding && (receipt.data.requestId !== binding.requestId || receipt.data.localVersion !== binding.inputVersion)) return;
+      // This guard also covers commands accepted before a document observation.
+      mayHaveActed.add(current.sequence);
       event = common;
     } else {
       const card = loopCandidateCardSchemaV1.safeParse((value as {candidate?:unknown})?.candidate);
@@ -291,6 +312,7 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
         || card.data.evidence.binding.runLinkId !== binding.runLinkId || card.data.projectId !== options.projectId) return;
       event = {...common,recordDigest:card.data.recordDigest,candidateRevision:card.data.candidateRevision,baseRevision:card.data.evidence.binding.baseRevision};
     }
+    if (!observation || b5DeviceHashV1(tokens[0]!) !== observation.sessionDigest) return;
     // A new phase/acceptance cannot steal an in-flight response's correlation.
     await locked(async () => {
       need(pending === current && observed === observation && !accepted.has(current.sequence),"B5_DEVICE_STALE");
@@ -313,39 +335,88 @@ export async function createB5DeviceMailboxV1(scratchRoot: string, origin: strin
     },
     // Wrap the actual built product handler. Authenticated first read sets the
     // one-use cookie; second read echoes it. No added route or query allowance.
-    async handle(request: Request, render: () => Promise<Response>) {
-      const response = await render(), url = new URL(request.url);
-      await observeAction(request, response);
-      if (closed || response.status !== 200 || request.method !== "GET" || url.origin !== origin || url.pathname !== projectPath || url.search) return response;
-      return locked(async () => {
-        const current = pending;
-        if (!current || accepted.has(current.sequence) || Date.parse(current.expiresAt) <= now()) return response;
-        const cookies = request.headers.get("cookie") ?? "";
-        const tokens = cookies.split(";").map(x => x.trim()).filter(x => /^control_room_local_owner=[A-Za-z0-9_-]{43}$/u.test(x));
-        if (tokens.length !== 1) return response;
-        const sessionDigest = b5DeviceHashV1(tokens[0]!);
-        need(!sessions.has(sessionDigest) || sessions.get(sessionDigest) === current.device, "B5_DEVICE_SESSION");
-        need(!challengedSession || challengedSession === sessionDigest, "B5_DEVICE_SESSION");
-        challengedSession = sessionDigest; sessions.set(sessionDigest, current.device);
-        const challenges = cookies.split(";").map(x => x.trim()).filter(x => x.startsWith("b5_correlation="));
-        const headers = new Headers(response.headers);
-        if (challenges.length === 1 && challenges[0] === `b5_correlation=${current.sessionNonce}`) {
-          need(!observed, "B5_DEVICE_DUPLICATE");
-          observed = { sessionDigest, routeClass: "project-document", method: "GET", status: 200, observedAt: new Date(now()).toISOString(),
-            sessionNonce: current.sessionNonce, sequence: current.sequence, device: current.device };
-          await checked();
-          await publish(join(root, "observations", `${current.sequence}.json`), observed, true);
-          headers.append("set-cookie", "b5_correlation=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + (origin.startsWith("https:") ? "; Secure" : ""));
-        } else headers.append("set-cookie", `b5_correlation=${current.sessionNonce}; Path=/; HttpOnly; SameSite=Strict` + (origin.startsWith("https:") ? "; Secure" : ""));
-        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-      }).catch(error => {
-        // Reloads can race the single evidence observation. Keep the refusal on
-        // the HTTP path without replacing evidence or throwing into the product.
-        if (error instanceof B5DeviceRefusalV1 && ["B5_DEVICE_DUPLICATE", "B5_DEVICE_SEQUENCE_RACE"].includes(error.code))
-          return new Response(error.code, { status: 409, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
-        throw error;
-      });
+    handle(request: Request, render: () => Promise<Response>): Promise<Response> {
+      const exchange = async () => {
+        need(!closed, "B5_DEVICE_CLOSED");
+        const attempt = pending, url = new URL(request.url);
+        const command = options.real && attempt && !accepted.has(attempt.sequence) && isOwnerCommand(request, attempt);
+        const alreadyActed = attempt && mayHaveActed.has(attempt.sequence);
+        // A lost/malformed success response cannot prove that a mutation did not happen.
+        if (command) mayHaveActed.add(attempt.sequence);
+        const response = await render();
+        if (command && !alreadyActed && response.status >= 400 && response.status < 500) mayHaveActed.delete(attempt.sequence);
+        if (options.real && !closed && pending && !accepted.has(pending.sequence) && url.origin === origin && !url.search) {
+          const current = pending, cookie = request.headers.get("cookie") ?? "";
+          if ((response.status === 401 || response.status === 303 && response.headers.get("location")?.startsWith("/session"))
+            && mayHaveActed.has(pending.sequence) && challengedSession
+            && cookie.split(";").some(c => b5DeviceHashV1(c.trim()) === challengedSession))
+            await locked(() => recordPostActionWait(current));
+          // Only an actual successful product issuance can authorize replacement.
+          if (request.method === "POST" && url.pathname === "/api/v1/local-owner-session" && response.status === 201) {
+            const issued = response.headers.getSetCookie().filter(c => /^control_room_local_owner=[A-Za-z0-9_-]{43};/u.test(c));
+            if (issued.length === 1) await locked(async () => {
+              const current = pending!;
+              const nextSession = b5DeviceHashV1(issued[0]!.split(";")[0]!);
+              if (current !== attempt || accepted.has(current.sequence) || now() >= Date.parse(current.expiresAt)) return;
+              if (mayHaveActed.has(current.sequence)) { await recordPostActionWait(current); return; }
+              if (!challengedSession || challengedSession === nextSession) return;
+              need(!sessions.has(nextSession) || sessions.get(nextSession) === current.device, "B5_DEVICE_SESSION");
+              const next = { ...current, sequence: sequence + 1, sessionNonce: randomBytes(16).toString("hex") };
+              const abandoned = { schemaVersion: 1, request: current, ...(observed ? { observation: observed } : {}),
+                events, abandonedAt: new Date(now()).toISOString(), reason: "session-replaced-before-owner-command", counted: false };
+              // Append-only audit seal precedes replacement. Old observations remain intact.
+              await publish(join(root, "abandoned", `${current.sequence}.json`), abandoned, true);
+              await custody(join(root, "request.json"), root);
+              await publish(join(root, "request.json"), next, false);
+              sequence = next.sequence; pending = next; observed = undefined; events = [];
+              challengedSession = nextSession; sessions.set(nextSession, next.device);
+            });
+          }
+        }
+        await observeAction(request, response, attempt);
+        if (closed || response.status !== 200 || request.method !== "GET" || url.origin !== origin || url.pathname !== projectPath || url.search) return response;
+        return locked(async () => {
+          const current = pending;
+          if (!current || accepted.has(current.sequence) || Date.parse(current.expiresAt) <= now()) return response;
+          const cookies = request.headers.get("cookie") ?? "";
+          const tokens = cookies.split(";").map(x => x.trim()).filter(x => /^control_room_local_owner=[A-Za-z0-9_-]{43}$/u.test(x));
+          if (tokens.length !== 1) return response;
+          const sessionDigest = b5DeviceHashV1(tokens[0]!);
+          need(!sessions.has(sessionDigest) || sessions.get(sessionDigest) === current.device, "B5_DEVICE_SESSION");
+          need(!challengedSession || challengedSession === sessionDigest, "B5_DEVICE_SESSION");
+          challengedSession = sessionDigest; sessions.set(sessionDigest, current.device);
+          const challenges = cookies.split(";").map(x => x.trim()).filter(x => x.startsWith("b5_correlation="));
+          const headers = new Headers(response.headers);
+          if (challenges.length === 1 && challenges[0] === `b5_correlation=${current.sessionNonce}`) {
+            need(!observed, "B5_DEVICE_DUPLICATE");
+            observed = { sessionDigest, routeClass: "project-document", method: "GET", status: 200, observedAt: new Date(now()).toISOString(),
+              sessionNonce: current.sessionNonce, sequence: current.sequence, device: current.device };
+            await checked();
+            await publish(join(root, "observations", `${current.sequence}.json`), observed, true);
+            headers.append("set-cookie", "b5_correlation=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + (origin.startsWith("https:") ? "; Secure" : ""));
+          } else headers.append("set-cookie", `b5_correlation=${current.sessionNonce}; Path=/; HttpOnly; SameSite=Strict` + (origin.startsWith("https:") ? "; Secure" : ""));
+          return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }).catch(error => {
+          // Reloads can race the single evidence observation. Keep the refusal on
+          // the HTTP path without replacing evidence or throwing into the product.
+          if (error instanceof B5DeviceRefusalV1 && ["B5_DEVICE_DUPLICATE", "B5_DEVICE_SEQUENCE_RACE"].includes(error.code))
+            return new Response(error.code, { status: 409, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+          throw error;
+        });
+      };
+      const url = new URL(request.url);
+      const ordered = options.real && url.origin === origin && !url.search
+        && (request.method === "GET" && url.pathname === projectPath || request.method === "POST"
+          && (url.pathname === "/api/v1/local-owner-session" || url.pathname.startsWith(apiPath)
+            && /(?:^|\/)(?:intake|confirm|start|answer|approve)$/u.test(url.pathname.slice(apiPath.length))));
+      // Stop and ordinary reads must remain available during a slow command.
+      if (!ordered) return exchange();
+      const work = exchanges.then(exchange);
+      exchanges = work.catch(() => {});
+      active.add(work); void work.finally(() => active.delete(work)).catch(() => {});
+      return work;
     },
+    currentRequest() { return pending ? structuredClone(pending) : undefined; },
     observation() { return observed ? structuredClone(observed) : undefined; },
     accept(value: unknown) {
       return locked(async () => {
@@ -467,9 +538,10 @@ export function createB5DeviceCleanupV1(q: B5TransportQualificationV1, ports: {
 
 /** Bounded owner mailbox waits. The lead writes observations; no callback can
  * choose engine commands. Caller interruption only applies to non-cleanup waits. */
-export async function waitB5DeviceJsonV1(file: string, root: string, signal: AbortSignal, deadline: number) {
+export async function waitB5DeviceJsonV1(file: string, root: string, signal: AbortSignal, deadline: number, superseded?: () => boolean) {
   while (Date.now() < deadline) {
     signal.throwIfAborted();
+    need(!superseded?.(), "B5_DEVICE_REPUBLISHED");
     const exists = await lstat(file).then(() => true, e => { if (e.code === "ENOENT") return false; throw e; });
     if (exists) return parseB5DeviceJsonV1((await readB5DeviceFileV1(file, root)).toString("utf8"));
     await new Promise<void>(yes => { const timer = setTimeout(done, 100); function done() { clearTimeout(timer); signal.removeEventListener("abort", done); yes(); } signal.addEventListener("abort", done, { once: true }); });

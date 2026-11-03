@@ -381,14 +381,27 @@ for (const real of [false, true]) test(`F03b exact port remote composition prove
   assert.notEqual(freshCookie, cookie);
   assert.equal(Date.parse(JSON.parse(fresh.body).expiresAt), clock.now + 300_000);
   assert.equal((await go("/api/v1/projects", ["Cookie", freshCookie])).status, 200, "fresh session itself authenticates");
-  assert.equal((await go(mailbox.projectPath, ["Cookie", freshCookie])).status, 503,
-    "baseline: the node handler maps the mailbox's different-session refusal to service_unavailable");
+  if (real) {
+    const restarted = mailbox.currentRequest()!;
+    assert.equal(restarted.sequence, request.sequence + 1);
+    assert.notEqual(restarted.sessionNonce, request.sessionNonce);
+    assert.equal((await go(mailbox.projectPath, ["Cookie", cookie])).status, 303, "expired project reads redirect to sign-in");
+    assert.equal((await go(mailbox.projectPath, ["Cookie", freshCookie])).status, 200);
+    assert.equal((await go(mailbox.projectPath, ["Cookie", `${freshCookie}; b5_correlation=${restarted.sessionNonce}`])).status, 200);
+    assert.equal(mailbox.observation()!.sequence, restarted.sequence);
+    const abandoned = JSON.parse(await readFile(join(mailbox.root, "abandoned/1.json"), "utf8"));
+    assert.equal(abandoned.counted, false);
+    assert.deepEqual(abandoned.observation, JSON.parse(observationBytes));
+  } else {
+    assert.equal((await go(mailbox.projectPath, ["Cookie", freshCookie])).status, 503,
+      "rehearsal retains the different-session refusal");
+    assert.equal(mailbox.currentRequest()!.sequence, request.sequence);
+  }
   assert.equal(await readFile(join(mailbox.root, "observations/1.json"), "utf8"), observationBytes);
-  assert.equal(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")).sequence, request.sequence);
   assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
   const safe = JSON.stringify(mailbox.observation());
   assert.doesNotMatch(safe, new RegExp(ownerCode + "|" + cookie.split("=")[1]! + "|" + q.ownerLogin));
-  console.log(`RESULT: PASS F03b in-memory product real=${real} expired=401 fresh-signin=201 fresh-auth=200 midstep-project=503 unchanged-300s-session immutable-observation`);
+  console.log(`RESULT: PASS F03b in-memory product real=${real} expired=401 fresh-signin=201 fresh-auth=200 preaction=${real ? "republished" : "refused"} unchanged-300s-session immutable-observation`);
 });
 
 test("F03b capture attestation refuses swapped device/challenge/sequence and stale capture time", async t => {
@@ -834,8 +847,214 @@ test("B5 diagnostic challenge reset cannot count an earlier session's accepted C
   console.log("RESULT: PASS diagnostic reset old-session receipt=STALE mixed-session observation=CORRELATION old Confirm plus fresh Start=SERVICE_MISSING; no accepted receipt");
 });
 
+async function restartFixture(t: { after(fn: () => Promise<void>): void }) {
+  const clock = { now: Date.now() }, q = qualification();
+  const mailbox = await createB5DeviceMailboxV1(await scratch(t), remote,
+    { real: true, projectId: "unit-project", inventory: q.inventory, now: () => clock.now });
+  t.after(() => mailbox.close());
+  const observe = async (request: B5DeviceRequestV1, token: string) => {
+    for (const cookie of [`control_room_local_owner=${token}`, `control_room_local_owner=${token}; b5_correlation=${request.sessionNonce}`])
+      await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie } }), async () => new Response("synthetic authenticated project"));
+    return mailbox.observation()!;
+  };
+  const signIn = (token: string) => mailbox.handle(new Request(remote + "/api/v1/local-owner-session", { method: "POST" }),
+    async () => new Response(null, { status: 201, headers: { "set-cookie": `control_room_local_owner=${token}; HttpOnly; Path=/; Max-Age=300; Secure` } }));
+  const action = (request: B5DeviceRequestV1, token: string, name: string, render?: () => Promise<Response>) =>
+    mailbox.handle(new Request(remote + `/api/v1/projects/unit-project/improvements/loop/${name === "intake" ? "intake" : "unit-request/" + name}`, {
+      method: "POST", headers: { cookie: `control_room_local_owner=${token}` } }), render ?? (async () => Response.json({ schemaVersion: 1,
+      requestId: request.binding?.requestId ?? "unit-request", localVersion: 1, commandId: "unit-command", state: "accepted", replayed: false,
+      engineRevision: 1, error: null }, { status: 201 })));
+  const receipt = async (request: B5DeviceRequestV1, actions: string[]) => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+    const path = `captures/attempt-${request.sequence}.png`, at = new Date(clock.now).toISOString();
+    await writeFile(join(mailbox.root, path), png, { mode: 0o600 });
+    return { ...request, real: true, browser: "fixture-browser/fixture-version", observedAt: at, actions, observation: mailbox.observation(),
+      captures: [{ path, sha256: b5DeviceHashV1(png), device: request.device, sequence: request.sequence, sessionNonce: request.sessionNonce, capturedAt: at }] };
+  };
+  return { mailbox, clock, observe, signIn, action, receipt };
+}
 
-for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline mid-step replacement keeps the owner wait interruptible by ${termination}`, async t => {
+for (const [phase, commands, actions] of [
+  ["prepare", ["intake"], ["prepared"]],
+  ["confirm-start", ["confirm", "start"], ["confirmed", "started"]],
+  ["question", ["answer"], ["answered"]],
+  ["plan", ["approve"], ["plan-read", "plan-approved"]],
+  ["spec", ["approve"], ["spec-read", "spec-approved"]],
+] as const) test(`B5 pre-action ${phase} expires repeatedly, republishes, completes and continues`, async t => {
+  const C = await import("../scripts/workflow-journeys/first-website-controller");
+  const f = await restartFixture(t), { mailbox } = f, owner = C.createFirstWebsiteControllerOwnerV1();
+  const policy = { normalizer: "b5-unicode-v1" as const, sentinel: "UNIT_PRIVATE_GATE_CANARY_1234567890", distinctiveInstructions: ["unit gate instruction"] };
+  const binding = { requestId: "unit-request", runLinkId: "unit-run", inputVersion: 1 };
+  let published!: () => void;
+  const ready = new Promise<void>(yes => { published = yes; });
+  owner.startDeadline(600_000, { ownerGates: true });
+  const pending = C.runFirstWebsiteDevicePhaseV1({ mailbox, phase, device: "phone", binding,
+    expiresAt: new Date(f.clock.now + 3600_000).toISOString(), signal: owner.signal, policy,
+    waitForOwner: wait => owner.waitForOwner(() => { published(); return wait(); }) });
+  const outcome = pending.then(value => ({ value, error: undefined }), error => ({ value: undefined, error }));
+  try {
+    await ready;
+    const original = mailbox.currentRequest()!;
+    let current = original, token = "a".repeat(43);
+    await f.observe(current, token);
+    const oldReceipt = await f.receipt(current, [...actions]);
+    for (const letter of ["b", "c"]) {
+      const old = current, oldObservation = mailbox.observation();
+      f.clock.now += 301_000;
+      assert.equal((await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: `control_room_local_owner=${token}` } }),
+        async () => new Response(null, { status: 401 }))).status, 401);
+      const bytes = await readFile(join(mailbox.root, `observations/${old.sequence}.json`), "utf8");
+      token = letter.repeat(43);
+      await f.signIn(token);
+      current = mailbox.currentRequest()!;
+      assert.deepEqual({ ...current, sequence: old.sequence, sessionNonce: old.sessionNonce }, old);
+      assert.notEqual(current.sessionNonce, old.sessionNonce);
+      assert.equal(current.sequence, old.sequence + 1);
+      assert.equal(mailbox.observation(), undefined);
+      const audit = JSON.parse(await readFile(join(mailbox.root, `abandoned/${old.sequence}.json`), "utf8"));
+      assert.equal(audit.counted, false); assert.deepEqual(audit.observation, oldObservation); assert.deepEqual(audit.events, []);
+      assert.equal((await lstat(join(mailbox.root, `abandoned/${old.sequence}.json`))).mode & 0o777, 0o600);
+      assert.equal(await readFile(join(mailbox.root, `observations/${old.sequence}.json`), "utf8"), bytes);
+      // The issued session is pinned even before its first project read.
+      await assert.rejects(mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: `control_room_local_owner=${"a".repeat(43)}` } }),
+        async () => new Response("old authenticated session")), { code: "B5_DEVICE_SESSION" });
+      await assert.rejects(mailbox.accept(oldReceipt), { code: "B5_DEVICE_STALE" });
+      await f.observe(current, token);
+    }
+    const auditBytes = await readFile(join(mailbox.root, "abandoned/1.json"), "utf8");
+    for (const command of commands) await f.action(current, token, command);
+    const receipt = await f.receipt(current, [...actions]);
+    await assert.rejects(mailbox.accept({ ...receipt, observation: oldReceipt.observation }), { code: "B5_DEVICE_CORRELATION" });
+    // A stale inbox file must not fail the controller or supply accepted evidence.
+    await writeB5DeviceReceiptV1(join(mailbox.root, "inbox", `${original.sequence}.json`), oldReceipt);
+    await writeB5DeviceReceiptV1(join(mailbox.root, "inbox", `${current.sequence}.json`), receipt);
+    const completed = await outcome;
+    assert.equal(completed.error, undefined); assert.equal(completed.value!.receipt.sequence, current.sequence);
+    assert.equal((await mailbox.readServiceEvidence(current.sequence)).events.length, commands.length);
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), [`${current.sequence}.json`]);
+    assert.equal(await readFile(join(mailbox.root, "abandoned/1.json"), "utf8"), auditBytes);
+    assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), ["1.json", "2.json"]);
+    const next = await C.runFirstWebsiteDevicePhaseV1({ mailbox, phase: "bindings-ready", device: "phone", binding,
+      expiresAt: current.expiresAt, signal: owner.signal, policy, capture: async request => {
+        await f.observe(request, token);
+        return { receipt: b5DeviceReceiptSchemaV1.parse(await f.receipt(request, ["bindings-ready-observed"])) };
+      } });
+    assert.equal(next.receipt.sequence, current.sequence + 1);
+  } finally { owner.abort(new Error("fixture complete")); await outcome; await owner.cleanup(); owner.dispose(); }
+});
+
+test("B5 sign-in waits for an in-flight accepted Confirm before deciding against restart", async t => {
+  const f = await restartFixture(t), { mailbox } = f;
+  const request = await mailbox.request("confirm-start", "phone", new Date(f.clock.now + 3600_000).toISOString(),
+    { requestId: "unit-request", runLinkId: "unit-run", inputVersion: 1 });
+  await f.observe(request, "a".repeat(43));
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(yes => { entered = yes; }), barrier = new Promise<void>(yes => { release = yes; });
+  const command = f.action(request, "a".repeat(43), "confirm", async () => {
+    entered(); await barrier;
+    return Response.json({ schemaVersion: 1, requestId: "unit-request", localVersion: 1, commandId: "unit-command", state: "accepted",
+      replayed: false, engineRevision: 1, error: null }, { status: 201 });
+  });
+  await started;
+  // A slow mutation cannot put Stop or ordinary polling behind sign-in ordering.
+  for (const [path, method] of [["unit-request/stop", "POST"], ["unit-request/status", "GET"]] as const) {
+    const response = await mailbox.handle(new Request(remote + "/api/v1/projects/unit-project/improvements/loop/" + path,
+      { method }), async () => new Response(null, { status: 200 }));
+    assert.equal(response.status, 200);
+  }
+  let signedIn = false;
+  const fresh = f.signIn("b".repeat(43)).then(r => { signedIn = true; return r; });
+  await Promise.resolve(); assert.equal(signedIn, false);
+  release(); await command; await fresh;
+  assert.equal(mailbox.currentRequest()!.sequence, request.sequence);
+  assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+  assert.equal(JSON.parse(await readFile(join(mailbox.root, "session-wait.json"), "utf8")).reason,
+    "sign-in expired after you acted; press Stop and the lead restarts the run");
+});
+
+test("B5 failed or malformed sign-in cannot reset a challenge; pre-observation accepted command prevents restart", async t => {
+  const f = await restartFixture(t), { mailbox } = f;
+  const request = await mailbox.request("confirm-start", "phone", new Date(f.clock.now + 3600_000).toISOString(),
+    { requestId: "unit-request", runLinkId: "unit-run", inputVersion: 1 });
+  await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: `control_room_local_owner=${"a".repeat(43)}` } }),
+    async () => new Response("synthetic authenticated project"));
+  for (const [status, cookie] of [[401, `control_room_local_owner=${"b".repeat(43)}; Path=/`], [201, "unrelated=ignored"], [200, ""]] as const) {
+    await mailbox.handle(new Request(remote + "/api/v1/local-owner-session", { method: "POST" }),
+      async () => new Response(null, { status, headers: { "set-cookie": cookie } }));
+    assert.equal(mailbox.currentRequest()!.sequence, request.sequence);
+  }
+  await f.action(request, "a".repeat(43), "confirm");
+  await f.signIn("b".repeat(43));
+  assert.equal(mailbox.currentRequest()!.sequence, request.sequence);
+  assert.equal(mailbox.observation(), undefined);
+  assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+  assert.match(await readFile(join(mailbox.root, "session-wait.json"), "utf8"), /sign-in expired after you acted/u);
+});
+
+for (const kind of ["before-observation", "uncertain-response", "rejected-command", "challenge-only"] as const)
+  test(`B5 pre-action restart admission handles ${kind}`, async t => {
+    const f = await restartFixture(t), { mailbox } = f;
+    const request = await mailbox.request("confirm-start", "phone", new Date(f.clock.now + 3600_000).toISOString(),
+      { requestId: "unit-request", runLinkId: "unit-run", inputVersion: 1 });
+    if (kind !== "before-observation") await mailbox.handle(new Request(remote + mailbox.projectPath,
+      { headers: { cookie: `control_room_local_owner=${"a".repeat(43)}` } }), async () => new Response("synthetic authenticated project"));
+    if (kind === "before-observation") await f.action(request, "a".repeat(43), "confirm");
+    if (kind === "uncertain-response") await f.action(request, "a".repeat(43), "confirm", async () => Response.json({ unknown: true }, { status: 201 }));
+    if (kind === "rejected-command") await f.action(request, "a".repeat(43), "confirm", async () => new Response(null, { status: 409 }));
+    await f.signIn("b".repeat(43));
+    const restarts = kind === "rejected-command" || kind === "challenge-only";
+    assert.equal(mailbox.currentRequest()!.sequence, request.sequence + Number(restarts));
+    assert.equal(mailbox.observation(), undefined);
+    if (restarts) {
+      const audit = JSON.parse(await readFile(join(mailbox.root, "abandoned/1.json"), "utf8"));
+      assert.equal(audit.counted, false); assert.equal(audit.observation, undefined);
+      await f.observe(mailbox.currentRequest()!, "b".repeat(43));
+    } else {
+      assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+      assert.match(await readFile(join(mailbox.root, "session-wait.json"), "utf8"), /sign-in expired after you acted/u);
+    }
+  });
+
+test("B5 receipt acceptance and pre-action sign-in serialize without a partial reset", async t => {
+  const f = await restartFixture(t), { mailbox } = f;
+  const request = await mailbox.request("connect", "phone", new Date(f.clock.now + 3600_000).toISOString());
+  await f.observe(request, "a".repeat(43));
+  const receipt = await f.receipt(request, ["connected"]);
+  const results = await Promise.allSettled([f.signIn("b".repeat(43)), mailbox.accept(receipt)]);
+  assert.equal(results[0]!.status, "fulfilled");
+  const accepted = results[1]!;
+  if (accepted.status === "fulfilled") {
+    assert.equal(mailbox.currentRequest()!.sequence, request.sequence);
+    assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), ["1.json"]);
+  } else {
+    assert.equal(accepted.reason.code, "B5_DEVICE_STALE");
+    assert.equal(mailbox.currentRequest()!.sequence, request.sequence + 1);
+    assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), ["1.json"]);
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+  }
+});
+
+test("B5 controller follows replacement after reading an old receipt", async t => {
+  const C = await import("../scripts/workflow-journeys/first-website-controller");
+  const f = await restartFixture(t);
+  let captures = 0;
+  const result = await C.runFirstWebsiteDevicePhaseV1({ mailbox: f.mailbox, phase: "connect", device: "phone",
+    expiresAt: new Date(f.clock.now + 3600_000).toISOString(), signal: new AbortController().signal,
+    policy: { normalizer: "b5-unicode-v1", sentinel: "UNIT_PRIVATE_GATE_CANARY_1234567890", distinctiveInstructions: ["unit gate instruction"] },
+    capture: async request => {
+      await f.observe(request, (++captures === 1 ? "a" : "b").repeat(43));
+      const receipt = b5DeviceReceiptSchemaV1.parse(await f.receipt(request, ["connected"]));
+      if (captures === 1) await f.signIn("b".repeat(43));
+      return { receipt };
+    } });
+  assert.equal(captures, 2);
+  assert.equal(result.receipt.sequence, 2);
+  assert.deepEqual(await readdir(join(f.mailbox.root, "receipts")), ["2.json"]);
+});
+
+
+for (const acted of [false, true]) for (const termination of ["Stop", "external abort"] as const) test(`B5 ${acted ? "post-action wait" : "pre-action restart"} remains interruptible by ${termination}`, async t => {
   const C = await import("../scripts/workflow-journeys/first-website-controller");
   const { B5RefusalV1 } = await import("./helpers/improve-control-room-first-website");
   const mailbox = await createB5DeviceMailboxV1(await scratch(t), remote,
@@ -849,7 +1068,8 @@ for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline
     owner.registerStopPostgres(async () => { events.push("postgres"); });
     let entered!: () => void, settled = false;
     const waiting = new Promise<void>(yes => { entered = yes; });
-    const phase = C.runFirstWebsiteDevicePhaseV1({ mailbox, phase: "connect", device: "phone", signal: owner.signal,
+    const phase = C.runFirstWebsiteDevicePhaseV1({ mailbox, phase: "confirm-start", device: "phone", signal: owner.signal,
+      binding: { requestId: "unit-request", runLinkId: "unit-run", inputVersion: 1 },
       expiresAt: time(24 * 3600_000),
       policy: { normalizer: "b5-unicode-v1", sentinel: "UNIT_PRIVATE_GATE_CANARY_1234567890", distinctiveInstructions: ["unit gate instruction text"] },
       waitForOwner: wait => owner.waitForOwner(() => { entered(); return wait(); }) });
@@ -860,6 +1080,9 @@ for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline
     for (const cookie of [oldCookie, `${oldCookie}; b5_correlation=${request.sessionNonce}`])
       await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie } }), async () => new Response("synthetic authenticated project"));
     const original = mailbox.observation();
+    if (acted) await mailbox.handle(new Request(remote + "/api/v1/projects/unit-project/improvements/loop/unit-request/confirm", {
+      method: "POST", headers: { cookie: oldCookie } }), async () => Response.json({ schemaVersion: 1, requestId: "unit-request", localVersion: 1,
+        commandId: "unit-command", state: "accepted", replayed: false, engineRevision: 1, error: null }, { status: 201 }));
     t.mock.timers.tick(301_000);
     const expired = await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: oldCookie } }),
       async () => new Response(null, { status: 401 }));
@@ -868,10 +1091,19 @@ for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline
     const fresh = await mailbox.handle(new Request(remote + "/api/v1/local-owner-session", { method: "POST" }),
       async () => new Response(null, { status: 201, headers: { "set-cookie": freshCookie + "; HttpOnly; Path=/; Max-Age=300" } }));
     assert.equal(fresh.status, 201);
-    await assert.rejects(mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: freshCookie } }),
-      async () => new Response("synthetic authenticated project")), { code: "B5_DEVICE_SESSION" });
-    assert.equal(settled, false, "session replacement refuses the HTTP observation while the controller still awaits its original receipt");
-    assert.deepEqual(mailbox.observation(), original);
+    if (acted) {
+      await assert.rejects(mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: freshCookie } }),
+        async () => new Response("synthetic authenticated project")), { code: "B5_DEVICE_SESSION" });
+      assert.deepEqual(mailbox.observation(), original);
+      assert.equal(mailbox.currentRequest()!.sequence, request.sequence);
+      assert.equal(JSON.parse(await readFile(join(mailbox.root, "session-wait.json"), "utf8")).reason,
+        "sign-in expired after you acted; press Stop and the lead restarts the run");
+    } else {
+      assert.equal(mailbox.currentRequest()!.sequence, request.sequence + 1);
+      assert.equal(mailbox.observation(), undefined);
+      assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "abandoned/1.json"), "utf8")).observation, original);
+    }
+    assert.equal(settled, false, "both branches retain an interruptible owner wait");
     assert.deepEqual(owner.timing(), { gateWaitMs: 301_000, waitingForOwner: true });
     const reason = new B5RefusalV1(termination === "Stop" ? "B5_OWNER_STOP" : "B5_ABORTED");
     if (termination === "Stop") owner.abort(reason); else external.abort(reason);
@@ -881,7 +1113,7 @@ for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline
     assert.deepEqual(owner.timing(), { gateWaitMs: 301_000, waitingForOwner: false });
     assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
   } finally { await owner.cleanup(); owner.dispose(); await mailbox.close(); t.mock.timers.reset(); }
-  console.log(`RESULT: PASS baseline midstep expiry/replacement controller=waiting owner-wait=301000ms ${termination}=clean-stop no accepted receipt`);
+  console.log(`RESULT: PASS ${acted ? "post-action wait" : "pre-action restart"} controller=waiting owner-wait=301000ms ${termination}=clean-stop no accepted receipt`);
 });
 
 test("B5 transport accepts an explicit four-day run approval and enforces its exact expiry without a duration cap", () => {

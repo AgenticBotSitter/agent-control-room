@@ -75,13 +75,34 @@ GET 200, one issuance for eight concurrent return polls, and durable revocation
 of both sessions at cleanup. A second test covers failed durable revocation and
 unissued cookies. This is composed product coverage without a listener; it does
 not claim independent PostgreSQL connections or real phone qualification.
-Sign-in before a
-phase's first evidence challenge works. After correlation, the mailbox requires
-the same session and an immutable observation for that phase. Mid-phase fresh
-sign-in after expiry needs a reviewed renewed-challenge protocol; mixed-session
-evidence is still rejected. Unlimited document-reading/reauthentication within
-one phase is therefore also blocked. No authentication or evidence policy is
-weakened here.
+Sign-in before a phase's first evidence challenge works. In real mode, a
+successful fresh product sign-in can restart a pending phase only before any
+owner command for that phase has been accepted. The mailbox first seals
+`device/abandoned/<sequence>.json` as an exclusive-create audit record containing
+the old request, optional observation, events and abandonment time, with
+`counted: false`. The original observation remains immutable. It then republishes
+the same phase, device, binding and expiry with a new sequence and nonce, pinned
+to the newly issued session digest. The controller follows the new sequence and
+the owner repeats the step from the start; repeated pre-action restarts are
+allowed. Only accepted receipts and their matching service evidence count.
+Old receipts and old-session project reads cannot satisfy the new attempt, and
+mixed-session evidence remains rejected. The challenged-session guard and
+300-second session lifetime remain unchanged. Rehearsal keeps its original
+same-session behavior.
+
+Real mailbox sign-in, project-challenge and owner-mutation exchanges are
+serialized so fresh sign-in cannot overtake an in-flight accepted command
+response. Stop and ordinary reads bypass this queue. Mailbox state changes queue behind the
+same lock, so receipt acceptance cannot race abandonment into a partial reset.
+An uncertain command response keeps restart blocked as well: loss of a response
+does not prove that the service did not act. An accepted command also blocks restart if
+it preceded the document observation. Once any command is accepted, expiry or
+replacement keeps the original step waiting and records `device/session-wait.json`
+with the reason: "sign-in expired after you acted; press Stop and the lead
+restarts the run". Stop and external abort retain the same cleanup path in both
+cases. Fresh sign-in does not authorize replay of already consumed decisions.
+Transport expiry still applies to every republished request; restart does not
+renew the transport packet or its security limits.
 
 Republishing only a fresh challenge is insufficient if an owner action already
 succeeded in the old attempt. A `confirm-start` receipt requires both Confirm
@@ -95,7 +116,8 @@ instruction, and the current UI loses its in-memory replay action on fresh
 navigation or protected-authority clearing. A complete restart needs a reviewed
 owner replay/recollection flow for already accepted actions. Counting old-session
 actions or substituting saved status would change the proof rules; neither is
-implemented. A restart limited to pre-action expiry would not cover this case.
+implemented. The pre-action restart leaves this case waiting with the reason
+above.
 
 The owner-action replay extension is stopped at its owner UI boundary. An
 optional versioned packet list of opaque command references would locate
@@ -117,8 +139,8 @@ the existing authorized command route. Service support must make the original
 sealed document available after consumption under current lineage authority.
 Fresh HTTP replay successes and captures must be collected in the new attempt;
 abandoned observations/events remain immutable audit only. This requires UI
-work beyond the permitted replay-build files; no restart, packet extension or
-proof-policy change is implemented here.
+work beyond the permitted replay-build files. Post-action restart and its packet
+extension remain parked; the pre-action restart adds no proof-policy change.
 
 Controller-owned hosts disable their standalone work timer when `signalOwner`
 is supplied (`first-website-host.ts`); standalone CLI bounds remain unchanged.
