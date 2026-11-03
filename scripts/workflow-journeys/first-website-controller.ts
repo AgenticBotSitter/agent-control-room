@@ -34,6 +34,11 @@ const exec = promisify(execFile);
 const need: (v: unknown, code: string) => asserts v = (v, code) => { if (!v) throw new B5RefusalV1(code); };
 
 /** Public start diagnostic keeps digest commitments without credential-shaped keys. */
+/** Bounded refusal detail for the retained verdict: fixed short tokens only (no paths, URLs or free text). */
+export function b5RefusalDetailV1(error: unknown): { refusalDetail?: string } {
+  return error instanceof B5RefusalV1 && error.code !== "B5_A2_FINALIZATION_TIMEOUT" && /^[A-Za-z0-9][A-Za-z0-9 ._:-]{0,63}$/u.test(error.detail)
+    ? { refusalDetail: error.detail } : {};
+}
 export function projectB5ControllerStartV1(input: {
   digests: Readonly<Record<string, string>>; startedAt: string; maxDurationMs: number; rehearsal: boolean; captureMode: string;
 }) {
@@ -864,7 +869,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     }
   } catch (error) {
     if (error instanceof Error) {
-      const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error),
+      const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error), ...b5RefusalDetailV1(error),
         ...(error instanceof B5RefusalV1 && error.code === "B5_A2_FINALIZATION_TIMEOUT"
           ? { finalizationReasonCode: loopFinalizationFailureReasonSchemaV1.catch("UNAVAILABLE").parse(error.detail) } : {}) };
       (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-error", at: new Date().toISOString(), detail });

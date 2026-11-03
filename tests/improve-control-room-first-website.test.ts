@@ -2171,6 +2171,20 @@ test('B5 real journey continues through every long owner gate and both restarts'
   console.log('RESULT: PASS B5 exported real journey 17 gates x2h; intake/approval bounds, observer, two restarts, session renewal, timing artifact and cleanup; offline fixture only');
 });
 
+test("B5 controller keeps a bounded refusal detail in the retained verdict",async t=>{
+  const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  for(const [detail,expected] of [["card checks","card checks"],["dom 08-finish-desktop","dom 08-finish-desktop"],
+    ["/private/scratch/path.txt",undefined],["PRIVATE free text with a path /x",undefined],["",undefined]]){
+    const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
+    const owner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'refusal-detail-evidence');
+    t.mock.method(owner,'beginAcquisition',()=>{throw new H.B5RefusalV1("B5_HEAD_BINDING",detail);});
+    const verdict=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner:owner},new AbortController().signal);
+    const saved=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
+    assert.ok(verdict.reasons.includes("B5_HEAD_BINDING"));
+    assert.deepEqual(saved.detail,[{name:"Error",message:"B5_HEAD_BINDING",...(expected?{refusalDetail:expected}:{})}]);
+    assert.doesNotMatch(JSON.stringify(saved),/private|scratch|PRIVATE/);
+  }
+});
 test("B5 controller persists a bounded finalization reason in timeout verdict detail",async t=>{
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
   for(const [detail,expected] of [["PUBLICATION_UNAVAILABLE","PUBLICATION_UNAVAILABLE"],
