@@ -37,7 +37,7 @@ if (ordinary) test("B3c terminal run reaches shared attention without a browser 
 
 import { finalizationFixture, persistentFinalizationCapability, ownedCleanupCapability, KEY, type FixtureState } from "./helpers/improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopFinalizerV1, captureLoopFinalizationCapabilityV1, verifyFinalizationRecordV1,
-  readLoopFinalizationFailureV1,
+  readLoopFinalizationFailureV1, rememberLoopFinalizationFailureV1, effectiveLoopFinalizationReasonV1, loopFinalizationFailureReasonSchemaV1,
   type LoopFinalizationCapabilityV1, type LoopFinalizationRecordV1 } from "../src/web/v1/improve-control-room-loop-finalization";
 import { loopAttentionKey, loopAttentionComplete, loopAttentionItemSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { readFile, writeFile, rm } from "node:fs/promises";
@@ -797,3 +797,30 @@ if(ordinary) for(const [stage,reason] of [["inspect","UNAVAILABLE"],["retain","R
     assert.ok(!JSON.stringify(attention).includes("PRIVATE"));
   });
 }
+
+if(ordinary) test("B5 finalization durable publication wins over a stale cached failure in attention",async t=>{
+  const f=await using(t);
+  const capability={...f.capability,cleanup:async()=>{throw new Error("PRIVATE cleanup failure");}} as LoopFinalizationCapabilityV1;
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+    adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+  await assert.rejects(bridge.finalizationPort().observe(f.internalTarget,signal()),{reasonCode:"CLEANUP_UNCERTAIN"});
+  const record=await f.capability.readRecord(f.target);
+  assert.equal(record?.phase,"announced");assert.ok(record.publication);assert.equal(record.cleanup,null);
+  // Stale earlier-stage failure left in the process-local cache after publication is durable.
+  rememberLoopFinalizationFailureV1(f.target,"PUBLICATION_UNAVAILABLE");
+  assert.equal(effectiveLoopFinalizationReasonV1(f.target,record),null);
+  const attention=await f.service().readAttention(f.identity);
+  assert.equal(attention.state,"available");
+  if(attention.state!=="available")throw new Error("missing attention");
+  assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,"FINISHED");
+  assert.equal(attention.items[0]!.kind,"finish");
+  // A cached failure that is at least as late as the durable stage still shows.
+  rememberLoopFinalizationFailureV1(f.target,"CLEANUP_UNCERTAIN");
+  assert.equal(effectiveLoopFinalizationReasonV1(f.target,record),"CLEANUP_UNCERTAIN");
+  rememberLoopFinalizationFailureV1(f.target,null);
+});
+
+if(ordinary) test("B5 finalization failure code schema is exactly the four finalization codes",()=>{
+  assert.deepEqual([...loopFinalizationFailureReasonSchemaV1.options].sort(),["CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","RETENTION_FAILED","UNAVAILABLE"]);
+  assert.equal(loopFinalizationFailureReasonSchemaV1.catch("UNAVAILABLE").parse("FINISHED"),"UNAVAILABLE");
+});

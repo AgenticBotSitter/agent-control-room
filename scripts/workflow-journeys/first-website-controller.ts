@@ -25,7 +25,8 @@ import { chmod } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loopImprovementDeskViewSchemaV1, loopBridgeReceiptSchemaV1 } from "../../src/improve-control-room/v1/schemas";
-import { loopDecisionStatusSchemaV1, loopFinalizationReasonSchemaV1, type LoopDecisionStatusV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
+import { loopFinalizationFailureReasonSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
+import { loopDecisionStatusSchemaV1, type LoopDecisionStatusV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopCandidateCardSchemaV1 } from "../../src/improve-control-room/v1/loop-candidate-wire";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
@@ -855,7 +856,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     if (error instanceof Error) {
       const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error),
         ...(error instanceof B5RefusalV1 && error.code === "B5_A2_FINALIZATION_TIMEOUT"
-          ? { finalizationReasonCode: loopFinalizationReasonSchemaV1.catch("UNAVAILABLE").parse(error.detail) } : {}) };
+          ? { finalizationReasonCode: loopFinalizationFailureReasonSchemaV1.catch("UNAVAILABLE").parse(error.detail) } : {}) };
       (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-error", at: new Date().toISOString(), detail });
     }
     verdict = { ...verdict, state: "incomplete", reasons: [...new Set([workSignal.aborted ? codeOf(workSignal.reason) : codeOf(error), codeOf(error)])] };

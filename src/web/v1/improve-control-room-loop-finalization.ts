@@ -50,7 +50,9 @@ export type LoopFinalizationCapabilityV1 = LoopCandidateDependenciesV1 & {
 };
 // Diagnostic state is bounded, process-local and scoped to the complete authorized
 // revision. Durable receipts remain the authority after restart or supersession.
-export type LoopFinalizationFailureReasonV1 = "UNAVAILABLE"|"RETENTION_FAILED"|"PUBLICATION_UNAVAILABLE"|"CLEANUP_UNCERTAIN";
+export const loopFinalizationFailureReasonSchemaV1 = z.enum(["UNAVAILABLE","RETENTION_FAILED","PUBLICATION_UNAVAILABLE","CLEANUP_UNCERTAIN"]);
+export type LoopFinalizationFailureReasonV1 = z.infer<typeof loopFinalizationFailureReasonSchemaV1>;
+// Codes name the stage in flight when the attempt stopped, not a proven failing operation.
 const failures=new Map<string,LoopFinalizationFailureReasonV1>();
 export class LoopFinalizationFailureV1 extends Error {
   constructor(readonly reasonCode:LoopFinalizationFailureReasonV1){super("loop_finalization_unavailable");}
@@ -67,6 +69,14 @@ export function readLoopFinalizationFailureV1(target:LoopFinalizationTargetV1){
 }
 export function pendingLoopFinalizationReasonV1(record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1{
   return record?.publication?"CLEANUP_UNCERTAIN":record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
+}
+const failureRank:Record<LoopFinalizationFailureReasonV1,number>={UNAVAILABLE:0,RETENTION_FAILED:1,PUBLICATION_UNAVAILABLE:2,CLEANUP_UNCERTAIN:3};
+/** Durable receipts win: a cached failure is used only when it is at least as far along as the
+ * stage the saved record implies, and never once cleanup is recorded. */
+export function effectiveLoopFinalizationReasonV1(target:LoopFinalizationTargetV1,record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1|null{
+  const cached=readLoopFinalizationFailureV1(target);
+  if(!cached||record?.cleanup)return null;
+  return failureRank[cached]>=failureRank[pendingLoopFinalizationReasonV1(record)]?cached:null;
 }
 const unavailable=()=>new Error("loop_finalization_unavailable");
 const same=(a:unknown,b:unknown)=>canonicalJson(a)===canonicalJson(b);

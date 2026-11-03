@@ -19,7 +19,7 @@ import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 import { databaseSqlStateV1, type DatabaseClient } from "../../src/persistence/database";
 import { loopBridgeBindingSchemaV1 } from "../../src/improve-control-room/v1/schemas";
 import { loopDecisionStatusSchemaV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
-import { loopFinalizationTargetSchemaV1, verifyFinalizationRecordV1, readLoopFinalizationFailureV1, pendingLoopFinalizationReasonV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
+import { loopFinalizationTargetSchemaV1, verifyFinalizationRecordV1, readLoopFinalizationFailureV1, effectiveLoopFinalizationReasonV1, pendingLoopFinalizationReasonV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 import { ImproveControlRoomDeskServiceV1 } from "../../src/improve-control-room/v1/service";
 import { createMacLocalWebProcessV1 } from "../../src/web/v1/mac-local-web-process";
 import { createPostgresLocalOwnerSessionStoreV1 } from "../../src/web/v1/local-owner-session-store";
@@ -63,7 +63,8 @@ function need(value: unknown, code: string): asserts value { if (!value) throw n
  * active-work signal as the controller; this is never an owner gate. */
 export async function readB5FinishedProjectionV1(input: Parameters<typeof joinB5FinalProjectionV1>[0], signal: AbortSignal) {
   need(input.finalization && input.target, "B5_A2_LATER_PHASE_EVIDENCE_REQUIRED");
-  let reasonCode = readLoopFinalizationFailureV1(input.target) ?? "UNAVAILABLE";
+  let reasonCode: ReturnType<typeof pendingLoopFinalizationReasonV1> = "UNAVAILABLE";
+  try { reasonCode = readLoopFinalizationFailureV1(input.target) ?? "UNAVAILABLE"; } catch { /* keep the bounded default */ }
   const check = () => {
     if (signal.aborted && signal.reason instanceof B5RefusalV1 && signal.reason.code === "B5_DEADLINE")
       throw new B5RefusalV1("B5_A2_FINALIZATION_TIMEOUT", reasonCode);
@@ -72,9 +73,10 @@ export async function readB5FinishedProjectionV1(input: Parameters<typeof joinB5
   for (;;) {
     check();
     const raw = await input.finalization.readRecord(input.target);
+    check();
     const record = raw === null ? null : verifyFinalizationRecordV1(raw, input.target);
     const current = record?.binding.expectedRevision === input.target.expectedRevision ? record : null;
-    reasonCode = readLoopFinalizationFailureV1(input.target) ?? pendingLoopFinalizationReasonV1(current);
+    reasonCode = effectiveLoopFinalizationReasonV1(input.target, current) ?? pendingLoopFinalizationReasonV1(current);
     check();
     // readRecord may return an earlier observation, including an old refusal.
     if (record?.binding.expectedRevision === input.target.expectedRevision && record.phase === "cleanup") {
