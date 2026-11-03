@@ -1273,6 +1273,15 @@ test("F04b finalization preserves shared retained repository and hashes only run
   assert.ok(emptyFinal.artifacts.some(a=>a.path==='teardown.json'),'F04b empty cleanup target list (local close retained nothing to move) finalizes');
   const emptyVerdict = await H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins:e.fixturePins,retention:empty});
   assert.equal(emptyVerdict.state,'incomplete');
+  assert.deepEqual(emptyVerdict.reasons,['B5_PROVIDER_FIXTURE','B5_PHONE_EVIDENCE_MISSING','B5_DESKTOP_EVIDENCE_MISSING']);
+  assert.ok(!emptyVerdict.reasons.includes('B5_CLEANUP_RETAINED'));
+  const emptyTeardown = JSON.parse(await readFile(join(e.dir,'teardown.json'),'utf8'));
+  assert.deepEqual(emptyTeardown.retention.targets,[]);
+  assert.equal(emptyTeardown.retention.targetsDigest,H.b5Bytes('[]'));
+  const dup = join(e.p.dir,'dup-work');
+  await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,{...retention,cleanupTargets:[dup,dup]}),/B5_CLEANUP_RETAINED/u,'duplicate target');
+  const real = join(e.p.dir,'real-parent'); await mkdir(real); await symlink(real,join(e.p.dir,'link-parent'));
+  await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,{...retention,cleanupTargets:[join(e.p.dir,'link-parent','child')]}),/B5_CLEANUP_RETAINED/u,'symlinked parent');
   await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,{...empty,candidateRepository:e.p.dir}),/B5_CLEANUP_RETAINED/u);
   assert.deepEqual(await tree(e.p.project),before);
   console.log('RESULT: PASS F04b two runs preserve one no-remote retained repo; independent cleanup-target digests verified; no deletion by finalizer');

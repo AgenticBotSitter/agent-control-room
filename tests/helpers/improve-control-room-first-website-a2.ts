@@ -406,10 +406,17 @@ export async function joinB5FinalProjectionV1(input: Parameters<typeof projectB5
   need(`sha256:${b5RawHash(await bytes(join(retained, "SEALED.json"), input.root))}` === record.custody.retentionDigest, "B5_A2_RETENTION_PIN");
   const close = z.object({ state: z.literal("closed"), local: z.literal(true), clone_kept: z.string(), head: revision,
     moves: z.array(z.object({ source: z.string(), destination: z.string(), sha256: hash.nullable().optional(), state: z.literal("done") }).passthrough()).max(1000),
+    logs_retained: z.array(z.object({ path: z.string().min(1) }).passthrough()).max(10000).optional(),
   }).passthrough().parse(raw.close);
   need(close.clone_kept === projection.repository && close.head === binding.candidateRevision, "B5_A2_CLOSE_JOIN");
   const targets = close.moves.map(m => ({ source: m.source, destination: m.destination, sha256: m.sha256 ?? null, state: m.state }));
   need(sha256Digest(targets) === record.cleanup.removedDigest, "B5_A2_CLEANUP_DIGEST");
+  if (targets.length === 0) { // an empty move list is only credible when every retained log is still present under root
+    need(Array.isArray(close.logs_retained), "B5_CLEANUP_RETAINED");
+    for (const log of close.logs_retained ?? []) {
+      need(inside(input.root, log.path) && resolve(log.path) === log.path && (await lstat(log.path).catch(() => null)) !== null, "B5_CLEANUP_RETAINED");
+    }
+  }
   for (const move of targets) {
     need(inside(input.root, move.source) && move.source !== projection.repository && resolve(move.source) === move.source,
       "B5_A2_CLEANUP_TARGET");

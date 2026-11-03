@@ -593,7 +593,8 @@ export const b5TransportCleanupSchemaV1 = z.object({
   removalReceiptDigest:sha256.nullable(), hostStopped:z.boolean(), postgresStopped:z.boolean(), failures:z.array(z.string().min(1)), overrunMs:z.number().int().nonnegative(),
 }).strict();
 const retentionSchema = z.object({ repositoryDigest:sha256,
-  targets:z.array(z.object({pathDigest:sha256,absent:z.literal(true)}).strict()).min(0), targetsDigest:sha256 }).strict();
+  targets:z.array(z.object({pathDigest:sha256,absent:z.literal(true)}).strict()), // an empty list is deliberate: a local close may retain every log
+  targetsDigest:sha256 }).strict();
 export const b5TeardownSchemaV1 = z.object({
   schemaVersion: z.literal(1), b3cCleanup: z.enum(["complete", "refused", "uncertain", "missing"]), scratchAbsent: z.boolean(),
   ownedProcesses: z.number().int().nonnegative(), ownedListenersReleased: z.boolean(), protectedListenersUntouched: z.boolean(),
