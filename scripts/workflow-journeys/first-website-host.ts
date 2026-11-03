@@ -15,7 +15,7 @@ import { parseProductConfigurationV1 } from "../../src/config/v1/product-configu
 import { buildProjectPresentationV1 } from "../../src/config/v1/project-presentation";
 import { sha256Digest } from "../../src/security";
 import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
-import { databaseSqlStateV1 } from "../../src/persistence/database";
+import { databaseSqlStateV1, type DatabaseClient } from "../../src/persistence/database";
 import { loopBridgeBindingSchemaV1 } from "../../src/improve-control-room/v1/schemas";
 import { loopDecisionStatusSchemaV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
@@ -43,6 +43,19 @@ const assemblyWrapper = 'export { createFirstWebsiteHostV1 } from "../product/sc
 const scope = Object.freeze({ tenantId: "tenant:b5", workspaceId: "workspace:b5" });
 const manualAdapterId = `adapter:manual:${sha256Digest(scope).slice(7, 39)}`;
 const projectId = "project:b5-website", ownerId = "identity:b5-owner", provider = "b5-local";
+
+/** Shared with offline composed-host tests so renewal exercises the actual B5
+ * session profile and durable store, including the remote run's 300 s expiry. */
+export function createB5HostSessionOptionsV1(input: {
+  origin: string; tenantId: string; provider: string; subject: string; ownerCode: string;
+  database: DatabaseClient; remoteOrigin?: string;
+}) {
+  const profile: LocalOwnerSessionProfileV1 = { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: input.origin,
+    tenantId: input.tenantId, provider: input.provider, subject: input.subject,
+    ownerCodeDigest: sha256Digest({ ownerCode: input.ownerCode }), sessionSeconds: input.remoteOrigin ? 300 : 900,
+    ...(input.remoteOrigin ? { remoteOrigins: [input.remoteOrigin] } : {}) };
+  return { localOwnerSession: profile, localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(input.database, profile) };
+}
 function need(value: unknown, code: string): asserts value { if (!value) throw new B5RefusalV1(code); }
 const inside = (root: string, file: string) => { const r = relative(root, file); return r !== "" && r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r); };
 const credential = /(?:^|[/\\])(?:\.env(?:\.[^/\\]*)?|\.codex|\.hermes|\.aws|\.ssh|\.gnupg|\.netrc|\.pgpass|auth\.json|tokens?(?:\.[^/\\]*)?|credentials?(?:\.[^/\\]*)?|passwords?|keychains?|secrets?(?:\.[^/\\]*)?)(?:[/\\]|$)/iu;
@@ -420,11 +433,9 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
       const loopBridge: LoopBridgeConfigurationV1 = { integrityKey, adapter, loopCandidates: { integrityKey,
         contract: adapter.contract, schemaDigest: adapter.schemaDigest, source: capability.source, repository: capability.repository } };
       ownerCode = randomBytes(32).toString("base64url");
-      const profile: LocalOwnerSessionProfileV1 = { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: scope.tenantId,
-        provider, subject: ownerId, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: prepared.transport ? 300 : 900,
-        ...(prepared.transport ? { remoteOrigins: [prepared.transport.origin] } : {}) };
       application = createMacLocalWebProcessV1({ origin, workspaceId: scope.workspaceId, database: web,
-        localOwnerSession: profile, localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(web.client, profile), loopBridge });
+        ...createB5HostSessionOptionsV1({ origin, tenantId: scope.tenantId, provider, subject: ownerId, ownerCode,
+          database: web.client, ...(prepared.transport ? { remoteOrigin: prepared.transport.origin } : {}) }), loopBridge });
       const recoveryService = new ImproveControlRoomLoopServiceV1(web.client, scope, loopBridge);
       recovery = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
         enabled: () => loaded.configuration.contract.recovery!.enabled() === true || capability.enabled() === true,

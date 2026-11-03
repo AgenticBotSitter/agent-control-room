@@ -45,20 +45,36 @@ The controller budget has no separate owner-response deadline in real mode.
 The existing transport authorization still expires. Its immutable packet is
 checked on every remote request and pinned across host restarts, with no renewal
 operation. Real device requests therefore retain the packet's `expiresAt` as a
-security boundary, rather than using the active-work deadline. This amendment
-does not authorize ignoring or extending that expiry. Unlimited remote waits
-remain blocked until a reviewed run-lifetime authorization or renewal policy
-exists. A real wait reaching that expiry still refuses and cleans up.
+security boundary, rather than using the active-work deadline. **PROVEN (R302):**
+the product already accepts an explicit run-length approval of four days. There
+is no transport duration cap to raise or add: `validateB5TransportV1` compares
+the current time with the packet's `authorizedAt` and `expiresAt`, and real
+controller phases use that exact expiry. The test `B5 transport accepts an
+explicit four-day run approval and enforces its exact expiry without a duration
+cap` in `tests/improve-control-room-first-website-device.test.ts` accepts four
+days (and five days to guard against adding a cap), refuses before authorization,
+and refuses at exact expiry. The owner must approve an expiry covering the
+intended run; the product never renews or extends the packet itself. Open risk
+**TRANSPORT_APPROVAL_EXHAUSTED:** a real wait reaching that explicit expiry still
+refuses and cleans up. An unlimited run remains unsupported.
 
 Remote browser sessions remain 300 seconds. Owners sign in fresh on return.
-`createB5ControllerSessionV1` independently revokes an expired loopback session
-and issues a fresh one before its next exchange. The offline journey test covers
-this client behavior across repeated two-hour gates, and the session test covers
-a three-day idle gap. Multi-day renewal against the composed host and durable
-session store remains **unverified**: before relying on it, the lead must leave a
-real composed controller idle across expiry and verify expired-session revocation,
-fresh issuance, a successful authenticated read and cleanup revocation. The
-client fixtures do not prove server acceptance after a multi-day absence.
+**PROVEN after fix:** `createB5ControllerSessionV1` revokes an expired loopback
+session and issues a fresh one before its next exchange. Previously the composed
+server refused revocation of its own expired cookie, aborting renewal with
+`B5_CONTROLLER_SESSION_CLEANUP`. `LocalOwnerSessionServiceV1.revoke` now durably
+revokes the exact locally issued expired session before removing it from memory;
+an expired cookie remains unauthorized for protected reads, and storage failures
+remain visible. `B5 composed controller renews across four days with durable
+expired-session and cleanup revocation` in
+`tests/improve-control-room-first-website-session.test.ts` uses the production
+B5 session-profile/store factory, actual Mac-local HTTP application, PostgreSQL
+session-store adapter and migrated disposable PGlite database. At a fake 96-hour
+idle gap it checks expired GET 401, DELETE 204, fresh POST 201, successful protected
+GET 200, one issuance for eight concurrent return polls, and durable revocation
+of both sessions at cleanup. A second test covers failed durable revocation and
+unissued cookies. This is composed product coverage without a listener; it does
+not claim independent PostgreSQL connections or real phone qualification.
 Sign-in before a
 phase's first evidence challenge works. After correlation, the mailbox requires
 the same session and an immutable observation for that phase. Mid-phase fresh
@@ -83,17 +99,36 @@ implemented. A restart limited to pre-action expiry would not cover this case.
 
 Controller-owned hosts disable their standalone work timer when `signalOwner`
 is supplied (`first-website-host.ts`); standalone CLI bounds remain unchanged.
-Reclamation after the recovery driver's `--chain --hours 1` exit by the nominal
-5-second recovery scan is **unverified** across a long owner gate. Before relying
-on it, the lead must observe the driver exit, a later scan reclaiming the same
-durable run, and progression after the owner answers without duplicate dispatch.
+**PROVEN (product recovery path):** `B5 long gate reclaims an exited one-hour
+driver through durable scan without duplicate Start` in
+`tests/improve-control-room-first-website-long-gates.test.ts` composes the real
+5-second interval cycle, recovery worker, service SQL scan/reconciliation and
+adapter subprocess ownership. A synthetic external engine's actual
+`wait --chain --hours 1` child exits with code 4 at a fake hour; the next scheduled
+scan acquires a new generation for the same durable run. Later scans retain the
+live replacement. A fresh owner session answers a question through the service
+and adapter; the saved engine revision advances and Start remains a single
+journal claim and invocation. Cleanup reaps the replacement and cancels the
+cycle. The external engine and its exclusive driver capability are explicit
+fixtures. Open risk **ENGINE_RECOVERY_UNAVAILABLE:** the real installation must
+still attest an ended driver and runnable unchanged input; a live, uncertain,
+changed-input or unavailable capability cannot be reclaimed on a time threshold.
 
-Availability collection across a long gate is also **unverified**. The claimed
-50-minute refresh and 1-hour freshness behavior are not established by the
-journey test. Before relying on them, the lead must observe refreshes during a
-multi-hour gate and inspect the actual admission freshness decision after return,
-including collector failure or a stale sample. No active-budget change renews
-an availability qualification.
+**PROVEN (product availability admission):** `B5 long gate refresh reaches real
+adapter admission and fails closed on stale collection` in the same long-gates
+test file composes the production interval cycle and recovery `onTick` callback
+with the real adapter, collector subprocess, monitor schedule and owned files.
+A fake clock advances a four-hour gate through four 50-minute refreshes, with
+no foreground browser activity. Admission via the adapter's real `available`
+check stays true on return. A failed collection and its five-minute retry retain
+the previous bytes; exactly one hour remains fresh, one millisecond beyond it
+refuses Start, Stop remains available, and a later successful collection
+restores admission. The external `logins --json` CLI supplies synthetic health
+only; no native provider is contacted. Open risk **COLLECTOR_OUTAGE:** failed
+collection can exhaust the ten-minute freshness margin and intentionally block
+new work until a fresh successful sample exists. Availability of actual routes
+remains the external engine's admission decision. No active-budget change
+renews an availability qualification.
 
 Saved intake/link progress keeps its fixed 120-second machine bound after
 prepare. The observer polls an unlinked saved intake during prepare without

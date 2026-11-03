@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { transpileModule } from "typescript";
 import * as controller from "../scripts/workflow-journeys/first-website-controller";
-import { LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
-import { createPostgresLocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
-import { sha256Digest } from "../src/security";
+import { LocalOwnerSessionServiceV1 } from "../src/web/v1/local-owner-session";
 import type { FirstWebsiteHostV1 } from "./helpers/improve-control-room-first-website";
+import { createB5HostSessionOptionsV1 } from "../scripts/workflow-journeys/first-website-host";
+import type { DatabaseClient } from "../src/persistence/database";
 
 const origin = "http://127.0.0.1:60460";
 const signal = () => new AbortController().signal;
@@ -99,22 +99,19 @@ test("B5 controller session renews after a three-day idle gap before reading", a
   assert.deepEqual(f.calls.slice(2, 5).map(c => c.method), ["DELETE", "POST", "GET"]);
   assert.ok(f.calls.slice(4).every(c => c.cookie === "local-owner=fixture-2"));
   await f.session.close(); assert.deepEqual(f.counts(), { posts: 2, deletes: 2 });
-  console.log("RESULT: PASS B5 client session 72h idle renews once before concurrent reads; cleanup revokes; composed-host renewal unverified");
+  console.log("RESULT: PASS B5 client session 72h idle renews once before concurrent reads; cleanup revokes; client-only fixture");
 });
 
-async function hostOptions(db: unknown) {
-  const source = await readFile("scripts/workflow-journeys/first-website-host.ts", "utf8");
-  const body = source.slice(source.indexOf('      ownerCode = randomBytes(32)'), source.indexOf('      const recoveryService ='));
-  assert.ok(body.includes("createMacLocalWebProcessV1"));
-  const javascript = transpileModule(body, { compilerOptions: { target: 99 } }).outputText;
-  let options: Parameters<typeof createMacLocalWebProcessV1>[0] | undefined;
-  const compose = new Function("context", `with(context) { ${javascript} }`);
-  compose({ ownerCode: "", application: undefined, randomBytes: () => ({ toString: () => "synthetic-owner-code-for-session-tests" }),
-    origin, scope: { tenantId: "tenant:b5", workspaceId: "workspace:b5" }, provider: "b5-local", ownerId: "identity:b5-owner",
-    web: { client: db }, prepared: {}, LOCAL_OWNER_SESSION_PROFILE_V1, sha256Digest, loopBridge: undefined,
-    createPostgresLocalOwnerSessionStoreV1, createMacLocalWebProcessV1: (value: Parameters<typeof createMacLocalWebProcessV1>[0]) => { options = value; } });
-  assert.ok(options);
-  return options;
+async function hostOptions(db: unknown, context: {
+  scope: { tenantId: string; workspaceId: string }; provider: string; ownerId: string;
+  prepared: { transport?: { origin: string } };
+} = {
+  scope: { tenantId: "tenant:b5", workspaceId: "workspace:b5" }, provider: "b5-local", ownerId: "identity:b5-owner", prepared: {},
+}) {
+  return { origin, workspaceId: context.scope.workspaceId,
+    ...createB5HostSessionOptionsV1({ origin, tenantId: context.scope.tenantId,
+      provider: context.provider, subject: context.ownerId, ownerCode: "synthetic-owner-code-for-session-tests",
+      database: db as DatabaseClient, remoteOrigin: context.prepared.transport?.origin }) };
 }
 
 test("B5 host composition durably registers a fresh session before any status read", async () => {
@@ -190,4 +187,66 @@ test("B5 host fresh session is durable under real web-role grants before any aut
     } finally { await app.close(); }
   }, { port: 60536, allowedPorts: [60536], pgBin: process.env.PG_BIN, boundMs: 600_000 });
   assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []);
+});
+
+import { fixture as sessionDatabase, now as sessionNow, trust as sessionTrust } from "./helpers/web-foundation";
+
+test("B5 composed controller renews across four days with durable expired-session and cleanup revocation", async t => {
+  let now = sessionNow;
+  const f = await sessionDatabase(() => now);
+  t.after(() => f.db.close());
+  const options = await hostOptions(f.client, { scope: { tenantId: "tenant:web", workspaceId: "workspace:web" },
+    provider: sessionTrust.issuer, ownerId: "test-owner", prepared: { transport: { origin: "https://fixture.ts.net:60462" } } });
+  assert.equal(options.localOwnerSession.sessionSeconds, 300, "use the host's real remote-run session profile");
+  const app = createMacLocalWebProcessV1({ ...options, clock: () => now,
+    database: { client: f.client, close: async () => {}, isAvailable: () => true } });
+  t.after(() => app.close());
+  const exchanges: { method: string; status: number; cookie: string }[] = [];
+  const session = controller.createB5ControllerSessionV1(host, { clock: () => now,
+    fetch: async (url, init) => {
+      const request = new Request(String(url), init);
+      const response = await app.handle(request, () => new Response("unexpected", { status: 500 }));
+      exchanges.push({ method: request.method, status: response.status, cookie: request.headers.get("cookie") ?? "" });
+      return response;
+    } });
+  t.after(() => session.close());
+  const rows = () => f.client.query<{ token_digest: string; revoked_at: string | null }>(
+    "SELECT token_digest,revoked_at FROM control_web_sessions ORDER BY issued_at");
+  await session.exchange("/api/v1/projects", signal());
+  assert.equal((await rows()).rows.length, 1);
+  const oldCookie = exchanges[1]!.cookie;
+  now += 4 * 24 * 3600_000;
+  const expired = await app.handle(new Request(origin + "/api/v1/projects", { headers: { cookie: oldCookie } }), () => new Response("unexpected"));
+  assert.equal(expired.status, 401, "expired cookies remain unauthorized after the idle gap");
+  await Promise.all(Array.from({ length: 8 }, () => session.exchange("/api/v1/projects", signal())));
+  assert.deepEqual(exchanges.slice(2, 5).map(e => [e.method, e.status]), [["DELETE", 204], ["POST", 201], ["GET", 200]]);
+  assert.equal(exchanges.filter(e => e.method === "POST").length, 2, "serialized return polls issue only one fresh session");
+  assert.notEqual(exchanges[4]!.cookie, oldCookie);
+  assert.ok(exchanges.slice(4).every(e => e.cookie === exchanges[4]!.cookie && e.status === 200));
+  const renewed = (await rows()).rows;
+  assert.equal(renewed.length, 2);
+  assert.ok(renewed[0]!.revoked_at, "expired session must be durably revoked before issuance");
+  assert.equal(renewed[1]!.revoked_at, null);
+  await session.close();
+  assert.ok((await rows()).rows.every(row => row.revoked_at), "cleanup durably revokes every controller session");
+  console.log("RESULT: PASS B5 composed host + SQL session store renew at 96h; expired GET=401 DELETE=204 POST=201 GET=200; cleanup revoked=2");
+});
+
+test("B5 expired-session revocation preserves durable failures and rejects unissued cookies", async () => {
+  let now = sessionNow, failing = true, revokes = 0;
+  const options = await hostOptions({ query() {} });
+  const service = new LocalOwnerSessionServiceV1(options.localOwnerSession, {
+    save: async () => {}, load: async () => { throw Error("SYNTHETIC unavailable store"); },
+    revoke: async () => { revokes++; if (failing) throw Error("SYNTHETIC revocation failed"); },
+  });
+  const request = (cookie?: string) => new Request(origin, { headers: { origin, ...(cookie ? { cookie } : {}) } });
+  const issued = await service.issue(request(), "synthetic-owner-code-for-session-tests", now);
+  const cookie = issued.cookie.split(";", 1)[0]!;
+  now += 4 * 24 * 3600_000;
+  await assert.rejects(service.revoke(request(cookie), now), /SYNTHETIC revocation failed/);
+  assert.throws(() => service.verify(request(cookie), now), /authentication_required/);
+  failing = false; await service.revoke(request(cookie), now);
+  assert.equal(revokes, 2, "failed durable revocation retains ownership for a later retry");
+  await assert.rejects(service.revoke(request("control_room_local_owner=" + "a".repeat(43)), now), /authentication_required/);
+  assert.equal(revokes, 2, "an unknown cookie cannot revoke an issued session");
 });

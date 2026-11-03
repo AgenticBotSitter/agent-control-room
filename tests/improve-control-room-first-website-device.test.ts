@@ -883,3 +883,15 @@ for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline
   } finally { await owner.cleanup(); owner.dispose(); await mailbox.close(); t.mock.timers.reset(); }
   console.log(`RESULT: PASS baseline midstep expiry/replacement controller=waiting owner-wait=301000ms ${termination}=clean-stop no accepted receipt`);
 });
+
+test("B5 transport accepts an explicit four-day run approval and enforces its exact expiry without a duration cap", () => {
+  for (const days of [4, 5]) {
+    const expires = days * 24 * 3600_000;
+    const packet = { ...qualification(), authorizedAt: time(), expiresAt: time(expires) };
+    assert.equal(validateB5TransportV1(packet, remote, now).expiresAt, packet.expiresAt);
+    assert.equal(validateB5TransportV1(packet, remote, now + expires - 1).expiresAt, packet.expiresAt);
+    assert.throws(() => validateB5TransportV1(packet, remote, now + expires), { code: "B5_DEVICE_EXPIRED" });
+    assert.throws(() => validateB5TransportV1(packet, remote, now - 1), { code: "B5_DEVICE_EXPIRED" });
+  }
+  console.log("RESULT: PASS B5 transport run approval accepts 4d; 5d confirms no duration cap; before authorization and exact expiry refuse");
+});

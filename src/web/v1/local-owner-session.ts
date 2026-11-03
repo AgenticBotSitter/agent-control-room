@@ -264,6 +264,19 @@ async revoke(request: Request, nowMs: number): Promise<void> {
       this.sessions.delete(identity.tokenDigest);
       return;
     } catch (error) {
+      // Expiry ends authentication, but this installation still owns the
+      // session's revocation. A controller returning after a long owner gate
+      // must be able to revoke that exact issued cookie before signing in again.
+      if (error instanceof WebAccessError && error.code === "authentication_required") {
+        const token = oneCookie(request), tokenDigest = sha256Digest({ token,
+          installationBindingDigest: this.installationBindingDigest });
+        const expired = this.sessions.get(tokenDigest);
+        if (expired && Date.parse(expired.issuedAt) <= nowMs && Date.parse(expired.expiresAt) <= nowMs) {
+          await this.store?.revoke(tokenDigest, new Date(nowMs).toISOString());
+          this.sessions.delete(tokenDigest);
+          return;
+        }
+      }
       // Only a cookie that this installation's own store says is already gone
       // counts as finished. Anything else -- a wrong cookie, a malformed one,
       // a store that failed -- keeps failing visibly.
