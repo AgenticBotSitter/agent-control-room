@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHook } from "node:async_hooks";
 import { B5RefusalV1, requireFirstWebsiteRehearsalPart2V1, firstWebsiteConfigSchemaV1, readFirstWebsitePrivateBytesV1, B5_REQUEST_TEXT, b5Bytes, b5ManifestSchemaV1, b5JourneySchemaV1 } from "./helpers/improve-control-room-first-website";
-import { assertB5AcceptedIntakeV1, b5ControllerBrowserEventsSchemaV1, projectB5ControllerStartV1 } from "../scripts/workflow-journeys/first-website-controller";
+import { assertB5AcceptedIntakeV1, b5ControllerBrowserEventsSchemaV1, b5ProviderDenialRoutesV1, projectB5ControllerStartV1 } from "../scripts/workflow-journeys/first-website-controller";
 import { b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1, writeB5DeviceReceiptV1 } from "../scripts/workflow-journeys/first-website-device";
 import { loopBridgeReceiptSchemaV1 } from "../src/improve-control-room/v1/schemas";
 import { loopCandidateCardSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
@@ -13,6 +13,16 @@ import { createConnection } from "node:net";
 import { z } from "zod";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
+
+test("B5 provider denial routes retain all three pinned probes without a local alias", () => {
+  const probes={"codex-job":{},"claude-job":{},"local-job":{}};
+  assert.deepEqual(b5ProviderDenialRoutesV1({probes}),Object.keys(probes));
+  for(const configuration of [{}, {probes:{}}, {probes:{"codex-job":{},"claude-job":{}}},
+    {probes:{...probes,"extra-job":{}}}, {probes:{...probes,"local-job":undefined,"../escape-job":{}}},
+    ...["nvidia-job","opencode-job","ollama-job"].map(route=>({probes:{"codex-job":{},"claude-job":{},[route]:{}}}))]) {
+    assert.throws(()=>b5ProviderDenialRoutesV1(configuration),{code:"B5_DENIAL_NOT_PROVEN"});
+  }
+});
 
 test("B5 controller-postgres missing qualification refuses before acquisition", async () => {
   let acquisitions = 0;
@@ -278,7 +288,10 @@ async function rehearseNative(file: string | undefined, scenario:"complete"|"int
     assert.equal(verdict.transportCleanup.disposition,"mapping-not-created");assert.equal(verdict.transportCleanup.hostStopped,true);assert.equal(verdict.transportCleanup.postgresStopped,true);assert.deepEqual(verdict.transportCleanup.failures,[]);
     const manifest=b5ManifestSchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(join(evidence,"manifest.json"),root)).toString("utf8")));
     for(const artifact of manifest.artifacts) {const bytes=await readFirstWebsitePrivateBytesV1(join(evidence,artifact.path),root);assert.equal(bytes.length,artifact.bytes);assert.equal(b5Bytes(bytes),artifact.sha256);}
-    for(const route of ["codex-job","claude-job","marvin-job"]) assert.ok(manifest.artifacts.some(a=>a.path === `b5-real-exec-denial-${route}.json`));
+    const providerConfiguration=JSON.parse((await readFirstWebsitePrivateBytesV1(join(root,"config/b5-provider.json"),root)).toString("utf8"));
+    const denialRoutes=Object.keys(providerConfiguration.probes);
+    assert.equal(denialRoutes.length,3);
+    for(const route of denialRoutes) assert.ok(manifest.artifacts.some(a=>a.path === `b5-real-exec-denial-${route}.json`));
     const journey=b5JourneySchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(join(evidence,"journey.json"),root)).toString("utf8")));
     assert.deepEqual(journey.restarts.map(r=>r.phase),["waiting","final"]);assert.equal(journey.closed.length,2);
     assert.ok(journey.steps.some(s=>s.verdict === "NEEDS-FIX"));assert.ok(journey.steps.some(s=>s.role === "final" && s.verdict === "CLEAN"));

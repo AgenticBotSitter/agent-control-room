@@ -49,6 +49,7 @@ const FIXED_BUNDLE_INPUTS = Object.freeze([
   // reviewed set, and two enumerated exceptions are reviewable together while a
   // directory is not.
   "src/pg-runtime/v1/pg-cluster-layout.ts",
+  "src/pg-runtime/v1/pg-path-quoting.mjs",
   // The shared entry guard, staged for the same reason as the layout above: the
   // builder reads it from the SOURCE tree by path
   // (`join(source, "src/installer/shared/is-main-module.mjs")`) and places it

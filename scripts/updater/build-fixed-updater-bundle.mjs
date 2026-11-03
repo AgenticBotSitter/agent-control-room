@@ -223,6 +223,9 @@ export async function buildFixedUpdaterBundleV1(input) {
     const layoutTarget = join(layoutRoot, "v1", "pg-cluster-layout.ts");
     await mkdir(dirname(layoutTarget), { recursive: true, mode: 0o700 });
     await copyFile(layoutSource, layoutTarget);
+    // Both the layout and updater postmaster custody import this shared helper.
+    await copyFile(join(source, "src/pg-runtime/v1/pg-path-quoting.mjs"),
+      join(dirname(layoutTarget), "pg-path-quoting.mjs"));
     // THE BACKUP-RECENCY READER, crossed in exactly the way the layout is, and
     // for the same reason: it is a zero-dependency module `updater.mjs` reaches
     // across a directory boundary for.

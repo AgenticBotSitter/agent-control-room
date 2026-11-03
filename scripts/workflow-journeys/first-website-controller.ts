@@ -1163,6 +1163,17 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
   {proofRoot:root,candidateRepository:run.repository,cleanupTargets:run.cleanup.targets.map(t=>t.source)});
 }
 
+export function b5ProviderDenialRoutesV1(configuration: unknown): string[] {
+  // Route labels belong to the pinned provider configuration, as launcher labels
+  // in native receipts do. Keep all three denial proofs without copying a local alias.
+  const parsed=z.object({probes:z.record(z.string().regex(/^[a-z][a-z0-9-]{0,63}-job$/u),z.unknown())}).passthrough().safeParse(configuration);
+  need(parsed.success,"B5_DENIAL_NOT_PROVEN");
+  const routes=Object.keys(parsed.data.probes);
+  need(routes.length === 3 && ["codex-job","claude-job"].every(route=>routes.includes(route))
+    && !routes.some(route=>["nvidia-job","opencode-job","ollama-job"].includes(route)),"B5_DENIAL_NOT_PROVEN");
+  return routes;
+}
+
 /** B is independent of engine intake. The tools helper owns launcher groups and
  * reaps them before returning; interruption cannot cancel that safety close. */
 export async function runFirstWebsiteProviderDenialsV1(preflight:FirstWebsitePreflightV1, signal:AbortSignal, owner:B5ControllerOwnerV1) {
@@ -1177,7 +1188,7 @@ export async function runFirstWebsiteProviderDenialsV1(preflight:FirstWebsitePre
   signal.throwIfAborted();
   const configuration=JSON.parse((await readFirstWebsitePrivateBytesV1(join(root,"config/b5-provider.json"),root)).toString("utf8"));
   need(configuration.python === entry.interpreter,"B5_HOST_INTERPRETER_PIN");
-  for(const route of ["codex-job","claude-job","marvin-job"]) {
+  for(const route of b5ProviderDenialRoutesV1(configuration)) {
     signal.throwIfAborted();
     const name=`b5-real-exec-denial-${route}.json`,trace=join(preflight.evidenceDir,name);
     const result=await exec(entry.interpreter,["-I","-B",join(root,"tools/loop/bridge/b5-provider.py"),"denial-probe",root,join(root,"config/b5-provider.json"),route,trace],
