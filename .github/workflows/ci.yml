@@ -375,8 +375,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # These five need no dependencies, so they report in seconds, before the
-      # install that the type checks require.
+      # These checks need no dependencies, so they report before installation.
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
@@ -387,6 +386,8 @@ jobs:
         run: node --test tests/affected-tests.test.mjs
       - name: Test CI keep-going and unchanged unit selection
         run: node --test tests/run-scripts-keep-going.test.mjs
+      - name: Install the frozen dependency graph
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the generic VPS front-door installer
         run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
@@ -412,7 +413,6 @@ jobs:
         env:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
-      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the fleet gateway refusal tolerance
         env:
           CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1'
@@ -439,6 +439,8 @@ jobs:
       - name: Test hygiene guards
         run: pnpm run test:hygiene
       - name: Type check contributor demo
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run check:demo
       - name: Type check server build
         run: pnpm run check

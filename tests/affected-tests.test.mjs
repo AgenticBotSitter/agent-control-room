@@ -302,7 +302,7 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
 });
 
 test("every skipped-test exemption names an existing file and non-empty reason", () => {
-  assert.equal(skippedTestExemptions.size, 29, "the documented exemption list must stay deliberately bounded");
+  assert.equal(skippedTestExemptions.size, 33, "the documented exemption list must stay deliberately bounded");
   assert.ok(skippedTestExemptions.has("tests/gateway-rollback-reboot.test.mjs"),
     "the gateway rollback/reboot exemption must remain explicitly accounted for");
   for (const [file, reason] of skippedTestExemptions) {
@@ -310,6 +310,22 @@ test("every skipped-test exemption names an existing file and non-empty reason",
     assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);
     assert.ok(reason.trim().length > 0, `exemption reason must not be empty: ${file}`);
   }
+});
+
+test("B5 preparation skips are explicit lead-gated exemptions and failures still fail", () => {
+  const file = "tests/improve-control-room-first-website-a2.test.ts";
+  const reason = skippedTestExemptions.get(file);
+  for (const name of ["CONTROL_ROOM_B5_PREP_REQUIRE_REAL", "CONTROL_ROOM_B5_PREP_TOOLS", "CONTROL_ROOM_B5_PREP_TOOLS_PIN", "CONTROL_ROOM_B5_PREP_PYTHON"]) {
+    assert.ok(reason?.includes(name), `the exemption must name its qualification input: ${name}`);
+  }
+  const root = fixture({ [file]: "", "tests/capability.test.mjs": "import test from 'node:test'; test('lead gate', { skip: true }, () => {});" });
+  try {
+    assert.equal(runAffectedTests([file], [file], root, () => 0, () => true,
+      (command, args, cwd, env) => executePlainFixture(command, [...args.slice(0, -1), "tests/capability.test.mjs"], cwd, env)), 0);
+    assert.equal(runAffectedTests([file], [file], root, () => 0, () => true,
+      () => ({ status: 1, output: "# skipped 1\n" })), 1,
+      "an explicit skip exemption must never excuse a test failure");
+  } finally { rmSync(root, { recursive: true }); }
 });
 
 test("native plist validation has a macOS CI home before PostgreSQL installation", () => {

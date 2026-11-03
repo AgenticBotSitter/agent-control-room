@@ -100,12 +100,15 @@ test('B3a production login admission journal receipts and pending exact retries'
       assert.equal((await web.client.query('SELECT count(*)::int n FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind=\'result\'',[lost.commandId])).rows[0]!.n,1);
       assert.equal((await e.traces()).filter(v=>v.run===decision.run&&v.op===operation).length,1);
     }
+    // The accepted intake retry above has a run link but no confirm/start/stop;
+    // it is independently eligible for recovery along with the started roots.
     const roots=new Set([saved.id,...decisionRoots,...replayedIntakeRoots]);
     for(let index=1;index<18;index++)roots.add((await seedRecoveryRun({db:owner.client,scope:pgRecoveryScope,identity},e,pgRecoveryProject,Date.now,`b3a-pg-fair-${index}`,false,owner.bridge)).id);
     let cursor=null as import('../src/web/v1/improve-control-room-loop-recovery').LoopRecoveryCursorV1;const seen=new Set<string>();
     for(let pass=0;pass<3;pass++){const scan=await web.bridge.recoveryPort().scan(cursor,8);assert.ok(scan.targets.length<=8);for(const row of scan.targets)seen.add(row.requestId);cursor=scan.nextCursor;}
-    assert.equal(cursor,null);assert.equal(roots.size,22);
-    assert.deepEqual(seen,roots,'B3a production scan reaches all twenty-two roots including the replayed unconfirmed intake');
+    assert.equal(roots.size,22,'twenty-one started roots plus the accepted intake retry');
+    assert.equal(cursor,null);
+    assert.deepEqual(seen,roots,'B3a production scan reaches all twenty-two roots including oldest and replayed unconfirmed intake');
     console.log('B3a production scan roots=22 pages=3 limit=8 unconfirmed_intakes=1');
     const dropped=recoveryPgWeb(pg.connection('web'),adapter),connection=await dropped.pool.connect();
     const backend=(await connection.query('SELECT pg_backend_pid() AS pid')).rows[0].pid as number;

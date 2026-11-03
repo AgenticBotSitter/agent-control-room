@@ -1423,7 +1423,7 @@ test("B5 working branch: a commit between preflight and switch stays checked out
       for (const command of [["add", "latest.txt"], ["commit", "--quiet", "-m", "Concurrent fixture commit"]]) {
         const result = spawnSync("/usr/bin/git", ["-C", r.repository, "-c", "core.hooksPath=/dev/null",
           "-c", "commit.gpgsign=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...command], {
-          env: { PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 10000,
+          env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 10000,
         });
         assert.equal(result.status, 0, result.stderr.toString());
       }
@@ -1459,7 +1459,7 @@ for (const commitBranch of ["main", "working"] as const) {
         const git = (...command: string[]) => {
           const result = spawnSync("/usr/bin/git", ["-C", r.repository, "-c", "core.hooksPath=/dev/null",
             "-c", "commit.gpgsign=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...command], {
-            env: { PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 10000,
+            env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 10000,
           });
           assert.equal(result.status, 0, result.stderr.toString());
           return result.stdout.toString().trim();

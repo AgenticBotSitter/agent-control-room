@@ -125,7 +125,10 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 // 0234 down. Measured on PostgreSQL 17: removing 0302 gives 9b00f067..., then
 // removing 0301 recovers the prior pin 2725341d... exactly. Reapplying each
 // restores those same intermediate and full-stack digests.
-const PRE_0234_DIGEST = "b016362fabbb9d89ced5b59f40481dbbd1bd25c6617318735eb1d8706c94f788";
+// 12.0303-0305 add and refine retained loop candidates after 0234. Measured on
+// PostgreSQL 17: removing only 0305, 0304 and 0303 after 0234's down recovers
+// the previous b016362f... pin exactly; replaying them recovers this value.
+const PRE_0234_DIGEST = "e07286aaeeb8c4e334260f584989c9a7369895c6c6e31aaec652a65154f50cde";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
