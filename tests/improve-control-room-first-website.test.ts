@@ -2171,18 +2171,52 @@ test('B5 real journey continues through every long owner gate and both restarts'
   console.log('RESULT: PASS B5 exported real journey 17 gates x2h; intake/approval bounds, observer, two restarts, session renewal, timing artifact and cleanup; offline fixture only');
 });
 
-test("B5 controller keeps a bounded refusal detail in the retained verdict",async t=>{
+test("B5 controller keeps only known refusal detail labels in the retained verdict",async t=>{
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
-  for(const [detail,expected] of [["card checks","card checks"],["dom 08-finish-desktop","dom 08-finish-desktop"],
-    ["/private/scratch/path.txt",undefined],["PRIVATE free text with a path /x",undefined],["",undefined]]){
+  const known=["json","name","scratch owner","git","must be <scratchRoot>/evidence","not empty","location","fault and review inputs must differ",
+    "cli outside product checkout","head","base","run","stage exists","briefs","card tooling","manifest pins","snapshot candidate",
+    "snapshot lineage","card head","card","diagnostic heads","diagnostic results","card checks","path","retained read","cleanup",
+    "real qualification","product","inputs","card binding","risk","uid","lineage","confirmation","remote","ancestry","changed paths",
+    "protected tests","rejected page","final page","rejection","original builder repair","fresh code reviews",
+    "steps outside a closed-browser interval","chronology","open finding","revision",
+    "assembly","contract","qualification","settings","availability","authorization","transport","faultInput","reviewInput",
+    "b5-builder-fault","b5-review-instruction","binding b5-builder-fault","binding b5-review-instruction",
+    "dom 07-finish-phone","dom 08-finish-desktop","dom 09-retained"];
+  const secretShaped="AbCdEf0123456789_-AbCdEf012";
+  const cases:[string,string,Record<string,unknown>][]=[
+    ...known.map(l=>["B5_HEAD_BINDING",l,{refusalDetail:l}] as [string,string,Record<string,unknown>]),
+    ["B5_INPUT_BINDING_REFUSED","b5-builder-fault:PRIVATE free text",{refusalDetail:"b5-builder-fault"}],
+    ["B5_INPUT_BINDING_REFUSED","b5-review-instruction:unknown",{refusalDetail:"b5-review-instruction"}],
+    ["B5_INPUT_BINDING_REFUSED","PRIVATE free text:unknown",{refusalDetailOmitted:true}],
+    ["B5_HEAD_BINDING","PRIVATE free text",{refusalDetailOmitted:true}],
+    ["B5_HEAD_BINDING",secretShaped,{refusalDetailOmitted:true}],
+    ["B5_HEAD_BINDING","/private/scratch/path.txt",{refusalDetailOmitted:true}],
+    ["B5_HEAD_BINDING","PRIVATE free text with a path /x",{refusalDetailOmitted:true}],
+    ["B5_HEAD_BINDING","card checks extra",{refusalDetailOmitted:true}],
+    ["B5_HEAD_BINDING","",{}]];
+  for(const [code,detail,extra] of cases){
     const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
     const owner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'refusal-detail-evidence');
-    t.mock.method(owner,'beginAcquisition',()=>{throw new H.B5RefusalV1("B5_HEAD_BINDING",detail);});
+    t.mock.method(owner,'beginAcquisition',()=>{throw new H.B5RefusalV1(code,detail);});
     const verdict=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner:owner},new AbortController().signal);
     const saved=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
-    assert.ok(verdict.reasons.includes("B5_HEAD_BINDING"));
-    assert.deepEqual(saved.detail,[{name:"Error",message:"B5_HEAD_BINDING",...(expected?{refusalDetail:expected}:{})}]);
-    assert.doesNotMatch(JSON.stringify(saved),/private|scratch|PRIVATE/);
+    assert.ok(verdict.reasons.includes(code));
+    assert.deepEqual(saved.detail,[{name:"Error",message:code,...extra}],detail);
+    assert.doesNotMatch(JSON.stringify(saved),/PRIVATE|AbCdEf|\/private|\/x/);
+  }
+});
+test("B5 controller applies the same refusal detail rule to a cleanup failure",async t=>{
+  const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  for(const [detail,extra] of [["cleanup",{refusalDetail:"cleanup"}],["PRIVATE free text",{refusalDetailOmitted:true}]] as const){
+    const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
+    const owner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'refusal-detail-evidence');
+    t.mock.method(owner,'beginAcquisition',()=>{throw new H.B5RefusalV1("B5_HEAD_BINDING");});
+    t.mock.method(owner,'cleanup',async()=>{throw new H.B5RefusalV1("B5_OWNED_CLEANUP_INCOMPLETE",detail);});
+    const verdict=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner:owner},new AbortController().signal);
+    const saved=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
+    assert.ok(verdict.reasons.includes("B5_OWNED_CLEANUP_INCOMPLETE"));
+    assert.deepEqual(saved.detail,[{name:"Error",message:"B5_HEAD_BINDING"},{name:"Error",message:"B5_OWNED_CLEANUP_INCOMPLETE",...extra}]);
+    assert.doesNotMatch(JSON.stringify(saved),/PRIVATE/);
   }
 });
 test("B5 controller persists a bounded finalization reason in timeout verdict detail",async t=>{

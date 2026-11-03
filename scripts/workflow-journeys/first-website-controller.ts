@@ -33,12 +33,25 @@ import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 const exec = promisify(execFile);
 const need: (v: unknown, code: string) => asserts v = (v, code) => { if (!v) throw new B5RefusalV1(code); };
 
-/** Public start diagnostic keeps digest commitments without credential-shaped keys. */
-/** Bounded refusal detail for the retained verdict: fixed short tokens only (no paths, URLs or free text). */
-export function b5RefusalDetailV1(error: unknown): { refusalDetail?: string } {
-  return error instanceof B5RefusalV1 && error.code !== "B5_A2_FINALIZATION_TIMEOUT" && /^[A-Za-z0-9][A-Za-z0-9 ._:-]{0,63}$/u.test(error.detail)
-    ? { refusalDetail: error.detail } : {};
+/** Fixed labels the B5 helpers pass as B5RefusalV1 detail; any other detail text is never copied into the retained verdict. */
+const b5KnownRefusalDetailsV1: ReadonlySet<string> = new Set([
+  "json", "name", "scratch owner", "git", "must be <scratchRoot>/evidence", "not empty", "location", "fault and review inputs must differ",
+  "cli outside product checkout", "head", "base", "run", "stage exists", "briefs", "card tooling", "manifest pins", "snapshot candidate",
+  "snapshot lineage", "card head", "card", "diagnostic heads", "diagnostic results", "card checks", "path", "retained read", "cleanup",
+  "real qualification", "product", "inputs", "card binding", "risk", "uid", "lineage", "confirmation", "remote", "ancestry", "changed paths",
+  "protected tests", "rejected page", "final page", "rejection", "original builder repair", "fresh code reviews",
+  "steps outside a closed-browser interval", "chronology", "open finding", "revision",
+  "assembly", "contract", "qualification", "settings", "availability", "authorization", "transport", "faultInput", "reviewInput",
+  "b5-builder-fault", "b5-review-instruction", "binding b5-builder-fault", "binding b5-review-instruction",
+  "dom 07-finish-phone", "dom 08-finish-desktop", "dom 09-retained",
+]);
+/** Retained refusal detail: only a known fixed label (the input-binding refusal keeps just its binding name); anything else is marked omitted. */
+function b5RefusalDetailV1(error: unknown): { refusalDetail?: string; refusalDetailOmitted?: true } {
+  if (!(error instanceof B5RefusalV1) || error.code === "B5_A2_FINALIZATION_TIMEOUT" || !error.detail) return {};
+  const label = error.code === "B5_INPUT_BINDING_REFUSED" ? error.detail.split(":", 1)[0]! : error.detail;
+  return b5KnownRefusalDetailsV1.has(label) ? { refusalDetail: label } : { refusalDetailOmitted: true };
 }
+/** Public start diagnostic keeps digest commitments without credential-shaped keys. */
 export function projectB5ControllerStartV1(input: {
   digests: Readonly<Record<string, string>>; startedAt: string; maxDurationMs: number; rehearsal: boolean; captureMode: string;
 }) {
@@ -550,7 +563,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   const { config, evidenceDir, digests } = preflight, root = config.scratchRoot;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
   // Error name and message only; may include input fragments, kept inside the run's own evidence.
-  let verdict: B5VerdictV1 & { detail?: { name: string; message: string }[] } = { state: "incomplete", reasons: [], transportCleanup:missingB5TransportCleanupV1() }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
+  let verdict: B5VerdictV1 & { detail?: { name: string; message: string; refusalDetail?: string; refusalDetailOmitted?: true; finalizationReasonCode?: string }[] } = { state: "incomplete", reasons: [], transportCleanup:missingB5TransportCleanupV1() }, requestId: string | undefined, bindingsReadyPublishedAt: string | undefined;
   let wroteEvidence = false, wroteObservations = false, watching = true;
   let watcher: Promise<void> | undefined;
   const workSignal = owner.signal;
@@ -888,7 +901,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
     } catch (error) {
       if (error instanceof Error) {
-        const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error) };
+        const detail = { name: error.name, message: error.message, ...loopAdapterUnavailableDetailV1(error), ...b5RefusalDetailV1(error) };
         (verdict.detail ??= []).push(detail); observations.push({ phase: "controller-cleanup-error", at: new Date().toISOString(), detail });
       }
       verdict.state = "incomplete"; verdict.reasons.push(codeOf(error));
