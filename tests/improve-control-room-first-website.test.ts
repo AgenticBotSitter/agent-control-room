@@ -2173,21 +2173,17 @@ test('B5 real journey continues through every long owner gate and both restarts'
 
 test("B5 controller keeps only known refusal detail labels in the retained verdict",async t=>{
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
-  const known=["json","name","scratch owner","git","must be <scratchRoot>/evidence","not empty","location","fault and review inputs must differ",
-    "cli outside product checkout","head","base","run","stage exists","briefs","card tooling","manifest pins","snapshot candidate",
-    "snapshot lineage","card head","card","diagnostic heads","diagnostic results","card checks","path","retained read","cleanup",
-    "real qualification","product","inputs","card binding","risk","uid","lineage","confirmation","remote","ancestry","changed paths",
-    "protected tests","rejected page","final page","rejection","original builder repair","fresh code reviews",
-    "steps outside a closed-browser interval","chronology","open finding","revision",
-    "assembly","contract","qualification","settings","availability","authorization","transport","faultInput","reviewInput",
-    "b5-builder-fault","b5-review-instruction","binding b5-builder-fault","binding b5-review-instruction",
-    "dom 07-finish-phone","dom 08-finish-desktop","dom 09-retained"];
+  const {b5KnownRefusalDetailsV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  const known=[...b5KnownRefusalDetailsV1];
   const secretShaped="AbCdEf0123456789_-AbCdEf012";
   const cases:[string,string,Record<string,unknown>][]=[
     ...known.map(l=>["B5_HEAD_BINDING",l,{refusalDetail:l}] as [string,string,Record<string,unknown>]),
     ["B5_INPUT_BINDING_REFUSED","b5-builder-fault:PRIVATE free text",{refusalDetail:"b5-builder-fault"}],
     ["B5_INPUT_BINDING_REFUSED","b5-review-instruction:unknown",{refusalDetail:"b5-review-instruction"}],
     ["B5_INPUT_BINDING_REFUSED","PRIVATE free text:unknown",{refusalDetailOmitted:true}],
+    ["B5_BRIEF_SCOPE","build:b5-builder-fault",{refusalDetail:"build"}],
+    ["B5_BRIEF_SCOPE","PRIVATE role:b5-builder-fault",{refusalDetailOmitted:true}],
+    ["B5_BRIEF_SCOPE","briefs",{refusalDetail:"briefs"}],
     ["B5_HEAD_BINDING","PRIVATE free text",{refusalDetailOmitted:true}],
     ["B5_HEAD_BINDING",secretShaped,{refusalDetailOmitted:true}],
     ["B5_HEAD_BINDING","/private/scratch/path.txt",{refusalDetailOmitted:true}],
@@ -2204,6 +2200,33 @@ test("B5 controller keeps only known refusal detail labels in the retained verdi
     assert.deepEqual(saved.detail,[{name:"Error",message:code,...extra}],detail);
     assert.doesNotMatch(JSON.stringify(saved),/PRIVATE|AbCdEf|\/private|\/x/);
   }
+});
+test("B5 refusal detail label set covers every literal detail the producers pass",async()=>{
+  const {b5KnownRefusalDetailsV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  const sources=await Promise.all(["tests/helpers/improve-control-room-first-website.ts","scripts/workflow-journeys/first-website-controller.ts"].map(f=>readFile(new URL(`../${f}`,import.meta.url),'utf8')));
+  // refuse(code, <detail>) / new B5RefusalV1(code, <detail>) and the helper wrappers bad(<detail>) / broken(<detail>) that forward to refuse.
+  const call=/\b(?:refuse|B5RefusalV1)\(\s*[^,()]+,\s*(["`])((?:\\.|(?!\1)[^\\])*)\1|\b(?:bad|broken)\(\s*(["`])((?:\\.|(?!\3)[^\\])*)\3/gu;
+  const literals=new Set<string>(),templates=new Set<string>();
+  for(const source of sources)for(const m of source.matchAll(call)){
+    const quote=m[1]??m[3],text=(m[2]??m[4])!;
+    (quote==="`"?templates:literals).add(text);
+  }
+  // canonical() passes its `kind` parameter as the detail; its string-literal union is the set of values.
+  const kinds=sources.join("\n").match(/function canonical\([^)]*?\bkind: ((?:"[a-z]+"(?: \| )?)+)/u);
+  assert.ok(kinds,"canonical kind union not found");
+  for(const k of kinds![1]!.matchAll(/"([a-z]+)"/gu))literals.add(k[1]!);
+  assert.ok(literals.size>=50,`extraction found only ${literals.size} literal details`);
+  assert.deepEqual([...literals].filter(l=>!b5KnownRefusalDetailsV1.has(l)),[],"literal refusal detail missing from b5KnownRefusalDetailsV1");
+  // Template details are dynamic; each is listed here with what the verdict keeps. A new template detail fails until it is listed.
+  const knownDynamic:Record<string,string>={
+    "${binding.name}:${typeof envelope.error === \"string\" ? envelope.error : \"unknown\"}":"B5_INPUT_BINDING_REFUSED keeps only the text before the first colon (the binding name)",
+    "${brief.role}:${receipt.name}":"B5_BRIEF_SCOPE keeps only the text before the first colon (the role)",
+    "dom ${screen}":"kept only when equal to a listed dom screen label",
+    "binding ${binding.name}":"kept only when equal to a listed binding label",
+    "fresh ${role}":"kept only when equal to a listed fresh-review role label",
+    "review ${review.stepId}":"never listed, so always omitted"};
+  assert.deepEqual([...templates].sort(),Object.keys(knownDynamic).sort(),"template refusal detail not listed as known-dynamic");
+  for(const label of ["dom 07-finish-phone","dom 08-finish-desktop","dom 09-retained","binding b5-builder-fault","binding b5-review-instruction","build","code-review","fresh attack-review","fresh ui-review","fresh ci-review","fresh final"])assert.ok(b5KnownRefusalDetailsV1.has(label),label);
 });
 test("B5 controller applies the same refusal detail rule to a cleanup failure",async t=>{
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');

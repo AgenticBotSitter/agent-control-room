@@ -33,8 +33,9 @@ import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 const exec = promisify(execFile);
 const need: (v: unknown, code: string) => asserts v = (v, code) => { if (!v) throw new B5RefusalV1(code); };
 
-/** Fixed labels the B5 helpers pass as B5RefusalV1 detail; any other detail text is never copied into the retained verdict. */
-const b5KnownRefusalDetailsV1: ReadonlySet<string> = new Set([
+/** Fixed labels the B5 helpers pass as B5RefusalV1 detail; any other detail text is never copied into the retained verdict.
+ * A drift test extracts every literal detail from the producer sources and requires it here. */
+export const b5KnownRefusalDetailsV1: ReadonlySet<string> = new Set([
   "json", "name", "scratch owner", "git", "must be <scratchRoot>/evidence", "not empty", "location", "fault and review inputs must differ",
   "cli outside product checkout", "head", "base", "run", "stage exists", "briefs", "card tooling", "manifest pins", "snapshot candidate",
   "snapshot lineage", "card head", "card", "diagnostic heads", "diagnostic results", "card checks", "path", "retained read", "cleanup",
@@ -44,11 +45,14 @@ const b5KnownRefusalDetailsV1: ReadonlySet<string> = new Set([
   "assembly", "contract", "qualification", "settings", "availability", "authorization", "transport", "faultInput", "reviewInput",
   "b5-builder-fault", "b5-review-instruction", "binding b5-builder-fault", "binding b5-review-instruction",
   "dom 07-finish-phone", "dom 08-finish-desktop", "dom 09-retained",
+  "missing", "symlink", "alias", "file", "directory", "build", "code-review",
+  "fresh attack-review", "fresh ui-review", "fresh ci-review", "fresh final",
 ]);
-/** Retained refusal detail: only a known fixed label (the input-binding refusal keeps just its binding name); anything else is marked omitted. */
+const B5_PREFIX_DETAIL_CODES: ReadonlySet<string> = new Set(["B5_INPUT_BINDING_REFUSED", "B5_BRIEF_SCOPE"]);
+/** Retained refusal detail: only a known fixed label (codes whose detail is "<name>:<free text>" keep just the name); anything else is marked omitted. */
 function b5RefusalDetailV1(error: unknown): { refusalDetail?: string; refusalDetailOmitted?: true } {
   if (!(error instanceof B5RefusalV1) || error.code === "B5_A2_FINALIZATION_TIMEOUT" || !error.detail) return {};
-  const label = error.code === "B5_INPUT_BINDING_REFUSED" ? error.detail.split(":", 1)[0]! : error.detail;
+  const label = B5_PREFIX_DETAIL_CODES.has(error.code) ? error.detail.split(":", 1)[0]! : error.detail;
   return b5KnownRefusalDetailsV1.has(label) ? { refusalDetail: label } : { refusalDetailOmitted: true };
 }
 /** Public start diagnostic keeps digest commitments without credential-shaped keys. */
