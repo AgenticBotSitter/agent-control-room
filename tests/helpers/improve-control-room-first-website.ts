@@ -549,7 +549,8 @@ export const b5ManifestSchemaV1 = z.object({
     consumedRoots: z.array(z.string().min(1)).min(1) }).strict(),
   lineage: z.object({ requestId: z.string().min(1), runLinkId: z.string().min(1), loopRunId: z.string().min(1), localVersion: z.number().int().positive(),
     a2InputVersion: z.union([z.string(), z.number()]) }).strict(),
-  heads: z.object({ base: revision, rejected: revision, final: revision }).strict(),
+  // rejected is the first head for retained v1 evidence; new controllers also save the complete ordered list.
+  heads: z.object({ base: revision, rejected: revision, rejectedHeads: z.array(revision).min(1).optional(), final: revision }).strict(),
   classification: z.object({ website: real, storage: real, engine: real, sendBack: real, recovery: real, finish: real,
     providers: z.enum(["real", "fixture"]), device: z.enum(["real", "fixture"]), stimuli: z.literal("fixture") }).strict(),
   timestamps: z.object({ startedAt: at, finishedAt: at }).strict(),
@@ -689,18 +690,29 @@ export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidate
     if (!r || JSON.stringify(r.roles) !== JSON.stringify(binding.roles) || r.sha256 !== d[binding.input] || ms(r.at) >= Math.min(...confirm)) bad(`binding ${binding.name}`);
   }
 }
+/** Legacy one-rejection manifests have only `rejected`; new evidence records every distinct rejected head. */
+export const b5RejectedHeadsV1 = (heads: B5ManifestV1["heads"]) => heads.rejectedHeads ?? [heads.rejected];
+/** Independent records cover the rejected heads in order, then the final head; never A2 receipts. */
+export function assertB5DiagnosticRecordsV1(heads: B5ManifestV1["heads"], checks: B5StatusCheckRecordV1[]) {
+  const expected = [...b5RejectedHeadsV1(heads), heads.final], passed = checks.at(-1);
+  if (checks.length !== expected.length || checks.some((check, i) => check.head !== expected[i])) refuse("B5_HEAD_BINDING", "diagnostic heads");
+  if (checks.slice(0, -1).some(check => check.exitCode === 0 || check.failed < 1)
+    || passed!.exitCode !== 0 || passed!.completed < 1 || passed!.passed !== passed!.completed
+    || passed!.failed !== 0 || passed!.skipped !== 0 || checks.some((check, i) => check.protectedTestsDigest !== passed!.protectedTestsDigest
+      || i > 0 && ms(checks[i - 1]!.endedAt) > ms(check.startedAt))) refuse("B5_HEAD_BINDING", "diagnostic results");
+}
 /** (b) Rejected/final heads, the finish-card DOM, the card's checks and every artifact byte bind to the saved card. */
 export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCheckRecordV1[], outputs: ReadonlyMap<string, Uint8Array>,
   card: LoopCandidateCardV1, journey: B5JourneyV1) {
   const { base, rejected, final } = manifest.heads, b = card.evidence.binding;
   if (card.candidateRevision !== final) refuse("B5_HEAD_BINDING", "card head");
-  if (new Set([base, rejected, final]).size !== 3 || b.baseRevision !== base
+  const rejectedHeads = b5RejectedHeadsV1(manifest.heads), heads = [base, ...rejectedHeads, final];
+  if (rejectedHeads[0] !== rejected || new Set(heads).size !== heads.length || b.baseRevision !== base
     || manifest.lineage.requestId !== card.requestId || manifest.lineage.runLinkId !== b.runLinkId) refuse("B5_HEAD_BINDING", "card");
-  const failed = checks.find(check => check.head === rejected), passed = checks.find(check => check.head === final);
-  if (!failed || !passed || checks.length !== 2) refuse("B5_HEAD_BINDING", "diagnostic heads");
-  if (failed!.exitCode === 0 || failed!.failed < 1 || passed!.exitCode !== 0 || passed!.completed < 1 || passed!.passed !== passed!.completed
-    || passed!.failed !== 0 || passed!.skipped !== 0 || failed!.protectedTestsDigest !== passed!.protectedTestsDigest
-    || ms(failed!.endedAt) > ms(passed!.startedAt)) refuse("B5_HEAD_BINDING", "diagnostic results");
+  assertB5DiagnosticRecordsV1(manifest.heads, checks);
+  const rejectingReviews = card.evidence.reviews.filter(r => r.role === "code-review" && r.verdict === "NEEDS-FIX");
+  if (rejectedHeads.some(head => !rejectingReviews.some(r => r.candidateRevision === head))
+    || rejectingReviews.some(r => !rejectedHeads.includes(r.candidateRevision))) refuse("B5_HEAD_BINDING", "rejected reviews");
   for (const screen of journey.phoneCapture === "approved-dom" ? finishScreens : B5_DOM_SCREENS) {
     const dom = journey.dom.find(x => x.screen === screen);
     if (!dom || dom.candidateRevision !== card.candidateRevision || dom.baseRevision !== base || dom.requestId !== card.requestId) refuse("B5_HEAD_BINDING", `dom ${screen}`);
@@ -723,11 +735,12 @@ export async function readCandidateRepositoryV1(repository: string, heads: B5Man
     { encoding: "utf8", timeout: 30_000, env: GIT_ENV }).then(() => true, () => false);
   const protectedDigest = async (rev: string) => b5ProtectedTestsDigest(Object.fromEntries(await Promise.all(
     Object.keys(B5_PROTECTED_TESTS).map(async name => [name, await git(["show", `${rev}:${name}`])]))));
+  const rejectedHeads = b5RejectedHeadsV1(heads), ordered = [heads.base, ...rejectedHeads, heads.final];
   return { remotes: (await git(["remote"])).trim(), head: (await git(["rev-parse", "HEAD"])).trim(), clean: await git(["status", "--porcelain=v1", "--untracked-files=all"]) === "",
-    ancestry: await ancestor(heads.base, heads.rejected) && await ancestor(heads.rejected, heads.final),
+    ancestry: (await Promise.all(ordered.slice(1).map((head, i) => ancestor(ordered[i]!, head)))).every(Boolean),
     changed: (await git(["diff", "--name-only", heads.base, heads.final])).split("\n").filter(Boolean),
-    pages: { rejected: await git(["show", `${heads.rejected}:index.html`]), final: await git(["show", `${heads.final}:index.html`]) },
-    protectedTests: [await protectedDigest(heads.base), await protectedDigest(heads.rejected), await protectedDigest(heads.final)] };
+    pages: { rejected: await Promise.all(rejectedHeads.map(head => git(["show", `${head}:index.html`]))), final: await git(["show", `${heads.final}:index.html`]) },
+    protectedTests: await Promise.all(ordered.map(protectedDigest)) };
 }
 /** (b) continued: final repository HEAD and clean tracked/untracked state equal the card's
  * candidate; only index.html changed; protected tests untouched at every head; the rejected
@@ -740,25 +753,41 @@ export function assertCandidateRepositoryV1(facts: Awaited<ReturnType<typeof rea
   if (!facts.ancestry) bad("ancestry");
   if (JSON.stringify(facts.changed) !== JSON.stringify(["index.html"]) || card.evidence.changedAreas && !card.evidence.changedAreas.includes("index.html")) bad("changed paths");
   if (new Set(facts.protectedTests).size !== 1 || checks.some(check => check.protectedTestsDigest !== facts.protectedTests[0])) bad("protected tests");
-  const rejected = statusTag(facts.pages.rejected), final = statusTag(facts.pages.final);
+  const final = statusTag(facts.pages.final);
   const title = (html: string) => /<title>Proof site<\/title>/u.test(html);
-  if (!title(facts.pages.rejected) || !rejected || !/\bReady\b/u.test(rejected[3]!) || /\brole="status"/u.test(rejected[2]!)) bad("rejected page");
+  for (const html of facts.pages.rejected) {
+    const rejected = statusTag(html);
+    if (!title(html) || !rejected || !/\bReady\b/u.test(rejected[3]!) || /\brole="status"/u.test(rejected[2]!)) bad("rejected page");
+  }
   if (!title(facts.pages.final) || !final || !/\bReady\b/u.test(final[3]!) || !/\brole="status"/u.test(final[2]!)) bad("final page");
 }
 /** (c) Real reviewer rejection while the browser was closed, original-builder repair, fresh reviews. */
 export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5JourneyV1) {
-  const { rejected, final } = manifest.heads, steps = [...journey.steps].sort((a, b) => a.n - b.n);
+  const { final } = manifest.heads, rejectedHeads = b5RejectedHeadsV1(manifest.heads);
+  const steps = [...journey.steps].sort((a, b) => a.n - b.n);
   const closed = (s: z.infer<typeof step>) => journey.closed.some(c => ms(c.from) <= ms(s.startedAt) && ms(s.endedAt) <= ms(c.to));
   const broken = (why: string) => refuse("B5_REJECTION_REPAIR", why);
   const qualified = (s: z.infer<typeof step>) => s.verified || s.identityBasis === "selected";
-  const defective = steps.find(s => s.role === "build" && s.head === rejected);
-  const rejection = steps.find(s => s.role === "code-review" && s.head === rejected && s.verdict === "NEEDS-FIX" && s.diagnostic === "FAIL"
-    && s.findings.some(f => f.severity === "MEDIUM"));
-  if (!defective || !rejection || rejection.n < defective.n || rejection.family === defective.family || !qualified(rejection)) broken("rejection");
-  const repair = steps.find(s => s.role === "build" && s.n > rejection!.n && s.head === final);
-  if (!repair || repair.identity !== defective!.identity || repair.family !== defective!.family) broken("original builder repair");
-  const after = steps.filter(s => s.n > repair!.n);
-  const fresh = (role: string) => after.filter(s => s.role === role && s.head === final && s.verdict === "CLEAN" && qualified(s) && s.family !== repair!.family);
+  const rejections = steps.filter(s => s.role === "code-review" && s.verdict === "NEEDS-FIX");
+  const observedHeads = [...new Set(rejections.map(s => s.head))];
+  if (JSON.stringify(observedHeads) !== JSON.stringify(rejectedHeads)) broken("rejection heads");
+  const defective = steps.find(s => s.role === "build" && s.head === rejectedHeads[0]);
+  if (!defective) broken("rejection");
+  const repairs: z.infer<typeof step>[] = [];
+  for (const [i, head] of rejectedHeads.entries()) {
+    const build = steps.find(s => s.role === "build" && s.head === head);
+    const rejecting = rejections.filter(s => s.head === head);
+    if (!build || !rejecting.length || rejecting.some(s => s.n <= build.n || s.family === build.family || !qualified(s)
+      || s.diagnostic !== "FAIL" || !s.findings.some(f => f.severity === "MEDIUM"))) broken("rejection");
+    const lastRejection = Math.max(...rejecting.map(s => s.n));
+    const repair = steps.find(s => s.role === "build" && s.n > lastRejection);
+    if (!repair || repair.head !== (rejectedHeads[i + 1] ?? final)
+      || repair.identity !== defective!.identity || repair.family !== defective!.family) broken("original builder repair");
+    repairs.push(repair!);
+  }
+  const repair = repairs.at(-1)!;
+  const after = steps.filter(s => s.n > repair.n);
+  const fresh = (role: string) => after.filter(s => s.role === role && s.head === final && s.verdict === "CLEAN" && qualified(s) && s.family !== repair.family);
   const codes = fresh("code-review");
   if (codes.length < 2 || new Set(codes.map(s => s.family)).size < 2 || codes.some(s => s.diagnostic !== "PASS")) broken("fresh code reviews");
   for (const role of ["attack-review", "ui-review", "ci-review", "final"]) if (!fresh(role).length) broken(`fresh ${role}`);
@@ -770,7 +799,7 @@ export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5Journ
     const owner = journey.actions.map(a => ms(a.at)).filter(t => t <= ms(c.from));
     return (owner.length ? Math.max(...owner) : ms(c.from)) <= ms(s.startedAt) && ms(s.endedAt) <= ms(c.to);
   });
-  if (!fromHandoff(defective!) || ![rejection!, repair!, ...codes].every(closed)) broken("steps outside a closed-browser interval");
+  if (!fromHandoff(defective!) || ![...rejections, ...repairs, ...codes].every(closed)) broken("steps outside a closed-browser interval");
   for (let i = 1; i < steps.length; i++) if (ms(steps[i]!.startedAt) < ms(steps[i - 1]!.endedAt)) broken("chronology");
   if (steps.some(s => s.findings.some(f => (f.severity === "HIGH" || f.severity === "MEDIUM") && f.state === "open") && s.n > repair!.n)) broken("open finding");
 }
