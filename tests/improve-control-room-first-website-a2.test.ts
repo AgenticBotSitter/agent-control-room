@@ -15,7 +15,8 @@ import { join } from "node:path";
 import { b5A2DiagnosticCallV1, b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
 import { B5RefusalV1 } from "./helpers/improve-control-room-first-website";
 import type { LoopEngineStatusV1 } from "../src/web/v1/improve-control-room-loop-adapter";
-import { readB5RunWithRetryV1 } from "../scripts/workflow-journeys/first-website-controller";
+import { readB5FinishedProjectionV1 } from "../scripts/workflow-journeys/first-website-host";
+import { readB5RunWithRetryV1, createFirstWebsiteControllerOwnerV1 } from "../scripts/workflow-journeys/first-website-controller";
 
 async function scratch(t: test.TestContext) {
   await mkdir(".test-tmp", { recursive: true });
@@ -568,8 +569,9 @@ test("B5 later-state fixture joins consumed review, brief, ledger and rejected h
 import { sha256Digest } from "../src/security";
 import type { LoopFinalizationTargetV1, LoopFinalizationCapabilityV1 } from "../src/web/v1/improve-control-room-loop-finalization";
 
-test("B5 completion/cleanup mapping joins typed receipts, cold card and repository observations (fixture ports only)", async t => {
+async function completionFixture(t: test.TestContext, revision = 0) {
   const f = await projectionFixture(t), d = `sha256:${"d".repeat(64)}`, head = "c".repeat(40), at = "2026-10-31T00:00:00.000Z";
+  f.raw.chain.revision = f.status.revision = f.emitted.revision = revision;
   f.raw.clone = join(f.root, "work/repo"); f.raw.base_sha = f.input.baseline;
   f.raw.chain.inputs = { entries: { candidate: { head } } };
   const source = join(f.root, "logs/job.log"), destination = join(f.root, ".cr-trash/2026-10-31/job.log");
@@ -587,10 +589,10 @@ test("B5 completion/cleanup mapping joins typed receipts, cold card and reposito
     projectId: f.input.runLink.projectId, ownerIdentityId: "owner:fixture", requestId: f.input.saved.requestId, runLinkId: f.input.saved.runLinkId,
     localVersion: 1, authorizationId: "authorization:fixture", startCommandId: `loop-command:${"a".repeat(32)}`, startBindingDigest: d,
     run: f.status.run, inputVersion: 1, requestSha256: f.input.saved.requestSha256, settingsSha256: f.input.saved.settingsSha256,
-    settingsDigest: f.input.saved.settingsSha256, expectedRevision: 0, schemaDigest: d };
+    settingsDigest: f.input.saved.settingsSha256, expectedRevision: revision, schemaDigest: d };
   const binding = { ...target, eventDigest: d };
   const evidence: any = { schemaVersion: 1, binding: { projectId: target.projectId, requestId: target.requestId, runLinkId: target.runLinkId,
-    localVersion: 1, ...target.run, a2InputVersion: 1, engineRevision: 0, requestSha256: target.requestSha256, settingsSha256: target.settingsSha256,
+    localVersion: 1, ...target.run, a2InputVersion: 1, engineRevision: revision, requestSha256: target.requestSha256, settingsSha256: target.settingsSha256,
     baseRevision: f.input.baseline, candidateRevision: head, inputsDigest: d, recipeDigest: d, environmentDigest: d },
     summary: "fixture completion", changedAreas: ["index.html"], databaseChanges: { kind: "none" },
     checks: [{ id: "fixture-check", required: true, commandLabel: "fixture check", receiptDigest: d, outputDigest: d,
@@ -608,7 +610,7 @@ test("B5 completion/cleanup mapping joins typed receipts, cold card and reposito
     custody: { schemaVersion: 1, binding, inventoryDigest: d, retentionDigest, verifiedAt: at },
     termination: { schemaVersion: 1, binding, inventoryDigest: d, state: "already-ended", ownershipDigest: d, observedAt: at },
     publication: { schemaVersion: 1, state: "recorded", projectId: target.projectId, requestId: target.requestId, runLinkId: target.runLinkId,
-      localVersion: 1, a2InputVersion: 1, engineRevision: 0, completionDigest: d, retentionDigest,
+      localVersion: 1, a2InputVersion: 1, engineRevision: revision, completionDigest: d, retentionDigest,
       candidate: { candidateId: card.candidateId, candidateRevision: head, recordDigest: d }, finishedAt: at,
       href: `/projects/${encodeURIComponent(target.projectId)}/improvements#request=${encodeURIComponent(target.requestId)}` },
     cleanup: { schemaVersion: 1, binding, inventoryDigest: d, retentionDigest, state: "complete", removedDigest: sha256Digest(moves),
@@ -624,14 +626,20 @@ test("B5 completion/cleanup mapping joins typed receipts, cold card and reposito
     repository: { observe: async () => ({ baseRevision: f.input.baseline, candidateRevision: observedHead, changedPaths: [], addedPaths: [], commitSubjects: [] }) },
   };
   const input = { ...f.input, finalization, target, readColdCard: async () => structuredClone(card) };
+  return { f, input, record, sealRecord, head, moves, d, source, card,
+    setObservedHead(value: string) { observedHead = value; } };
+}
+
+test("B5 completion/cleanup mapping joins typed receipts, cold card and repository observations (fixture ports only)", async t => {
+  const { f, input, record, sealRecord, head, moves, d, source, card, setObservedHead } = await completionFixture(t);
   const complete = await joinB5FinalProjectionV1(input);
   assert.equal(complete.finalHead, head); assert.equal(complete.cleanup.state, "complete");
   assert.deepEqual(complete.cleanup.targets, moves);
   assert.equal(requireB5FinalProjectionV1(complete), complete);
   assert.equal(complete.repository, f.raw.clone); // retained adopted repo, not an absence target
-  observedHead = "e".repeat(40);
+  setObservedHead("e".repeat(40));
   await assert.rejects(joinB5FinalProjectionV1(input), /B5_A2_GIT_HEAD_JOIN/);
-  observedHead = head;
+  setObservedHead(head);
   card.recordDigest = `sha256:${"0".repeat(64)}`;
   await assert.rejects(joinB5FinalProjectionV1(input), /B5_A2_COLD_CARD_JOIN/);
   card.recordDigest = d;
@@ -791,4 +799,116 @@ test("B5 adapter construction and closed calls expose distinct safe guard reason
   await adapter.close();
   await assert.rejects(adapter.status("web-fixture"), { message: "loop_adapter_unavailable", internalReason: "execute_closed" });
   console.log("RESULT: PASS B5 adapter pin/construction/closed guards retain distinct internal reasons without spawning");
+});
+
+for (const midRunOutcome of ["uncertain", "running"] as const) {
+  test(`B5 finished projection waits for announced ${midRunOutcome} to become cleanup complete`, async t => {
+    const { f, input, record } = await completionFixture(t);
+    f.status.state = "finished";
+    const complete = structuredClone(record);
+    const material = { ...record, phase: "announced", custody: null, publication: null, cleanup: null,
+      observation: { ...record.observation, outcome: midRunOutcome, completionDigest: null } };
+    const { recordDigest: _, ...unsigned } = material;
+    const announced = { ...unsigned, recordDigest: sha256Digest(unsigned) };
+    let stored = announced, reads = 0, coldReads = 0;
+    const delayed = { ...input, finalization: { ...input.finalization, readRecord: async () => { reads++; return structuredClone(stored); } },
+      readColdCard: async () => { coldReads++; return input.readColdCard(); } };
+    await assert.rejects(joinB5FinalProjectionV1(delayed), /B5_A2_CLEANUP_REQUIRED/);
+    reads = 0;
+    const timer = setTimeout(() => { stored = complete; }, 40);
+    t.after(() => clearTimeout(timer));
+    const result = await readB5FinishedProjectionV1(delayed, new AbortController().signal);
+    assert.equal(result.cleanup.state, "complete");
+    assert.ok(reads >= 2, "the stored finalization must be polled");
+    assert.equal(coldReads, 1);
+    console.log(`RESULT: PASS B5 finished waits for ${midRunOutcome} announcement then verified cleanup`);
+  });
+}
+
+for (const cleanupState of ["refused", "uncertain"] as const) {
+  test(`B5 finished projection fails clearly when finalization cleanup is ${cleanupState}`, async t => {
+    const { input, record, sealRecord } = await completionFixture(t);
+    record.cleanup.state = cleanupState;
+    record.cleanup.reasonCode = cleanupState === "refused" ? "CLEANUP_REFUSED" : "CLEANUP_UNCERTAIN";
+    if (cleanupState === "refused") record.cleanup.removedDigest = sha256Digest([]);
+    sealRecord();
+    let coldReads = 0, reads = 0;
+    await assert.rejects(readB5FinishedProjectionV1({ ...input,
+      finalization: { ...input.finalization, readRecord: async () => ++reads === 1 ? null : structuredClone(record) },
+      readColdCard: async () => { coldReads++; return input.readColdCard(); } }, new AbortController().signal),
+    { code: `B5_A2_FINALIZATION_CLEANUP_${cleanupState.toUpperCase()}` });
+    assert.equal(coldReads, 0); assert.equal(reads, 2);
+    console.log(`RESULT: PASS B5 finalization ${cleanupState} remains a clear refusal`);
+  });
+}
+
+test("B5 finished projection polls absent and stale refused records then joins current cleanup", async t => {
+  const { f, input, record } = await completionFixture(t, 1);
+  f.status.state = "finished";
+  const { recordDigest: _, ...material } = structuredClone(record);
+  for (const receipt of [material, material.observation, material.custody, material.termination, material.cleanup])
+    receipt.binding.expectedRevision = 0;
+  material.publication.engineRevision = 0;
+  material.cleanup.state = "refused"; material.cleanup.reasonCode = "CLEANUP_REFUSED";
+  material.cleanup.removedDigest = sha256Digest([]);
+  const stale = { ...material, recordDigest: sha256Digest(material) };
+  let reads = 0;
+  const result = await readB5FinishedProjectionV1({ ...input,
+    finalization: { ...input.finalization, readRecord: async () => {
+      reads++;
+      return reads === 1 ? null : reads === 2 ? stale : structuredClone(record);
+    } } }, new AbortController().signal);
+  assert.equal(result.cleanup.state, "complete");
+  assert.equal(reads, 4, "only current cleanup admits the final join, which rereads its receipt");
+  console.log("RESULT: PASS B5 absent/stale refused receipts wait for current revision and verified cleanup");
+});
+
+for (const reason of ["B5_OWNER_STOP", "B5_INTERRUPTED", "B5_DEADLINE"] as const) {
+  test(`B5 finalization wait cancels with ${reason} and drains controller cleanup`, async t => {
+    const { input } = await completionFixture(t);
+    const owner = createFirstWebsiteControllerOwnerV1(), events: string[] = [];
+    const expected = reason === "B5_DEADLINE" ? "B5_A2_FINALIZATION_TIMEOUT" : reason;
+    try {
+      owner.startDeadline(60_000, { ownerGates: true });
+      owner.registerStopWork(async () => { events.push("stop"); });
+      owner.registerCloseHost(async () => { events.push("host"); });
+      owner.registerStopPostgres(async () => { events.push("postgres"); });
+      let read!: () => void;
+      const readDone = new Promise<void>(yes => { read = yes; });
+      let reads = 0;
+      const waiting = readB5FinishedProjectionV1({ ...input, finalization: { ...input.finalization,
+        readRecord: async () => { reads++; read(); return null; } } }, owner.signal);
+      const rejected = assert.rejects(waiting, { code: expected });
+      await readDone;
+      // Let the host enter its cancellable polling pause before Stop/deadline.
+      await new Promise<void>(yes => setImmediate(yes));
+      owner.abort(new B5RefusalV1(reason));
+      await rejected;
+      const result = await owner.cleanup();
+      assert.deepEqual(events, ["stop", "host", "postgres"]);
+      assert.deepEqual(result.failures, []);
+      assert.equal(result.hostStopped && result.postgresStopped, true);
+      assert.equal(reads, 1);
+      assert.deepEqual(owner.timing(), { gateWaitMs: 0, waitingForOwner: false });
+    } finally { owner.dispose(); }
+    console.log(`RESULT: PASS B5 finalization ${reason} cancels polling and cleans stop/host/postgres`);
+  });
+}
+
+test("B5 finalization wait consumes the existing rehearsal active deadline", async t => {
+  const { input } = await completionFixture(t);
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const owner = createFirstWebsiteControllerOwnerV1();
+  try {
+    owner.startDeadline(60_000, { ownerGates: false });
+    const waiting = readB5FinishedProjectionV1({ ...input, finalization: { ...input.finalization,
+      readRecord: async () => { t.mock.timers.tick(30_000); return null; } } }, owner.signal);
+    await assert.rejects(waiting, { code: "B5_A2_FINALIZATION_TIMEOUT" });
+    assert.equal(owner.signal.reason.code, "B5_DEADLINE");
+    assert.equal(owner.workAt(), 31_000); assert.equal(owner.capAt(), 61_000);
+    assert.deepEqual(owner.timing(), { gateWaitMs: 0, waitingForOwner: false });
+    const result = await owner.cleanup();
+    assert.equal(result.hostStopped && result.postgresStopped, true);
+  } finally { owner.dispose(); t.mock.timers.reset(); }
+  console.log("RESULT: PASS B5 finalization rehearsal deadline unchanged work=30s total=60s");
 });

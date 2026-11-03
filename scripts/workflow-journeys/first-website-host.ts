@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { Client, Pool } from "pg";
 import { z } from "zod";
 import { macLocalBuildSourceV1, captureMacLocalBuildSourceV1 } from "../mac-local/build-source.mjs";
@@ -18,7 +19,7 @@ import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 import { databaseSqlStateV1, type DatabaseClient } from "../../src/persistence/database";
 import { loopBridgeBindingSchemaV1 } from "../../src/improve-control-room/v1/schemas";
 import { loopDecisionStatusSchemaV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
-import { loopFinalizationTargetSchemaV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
+import { loopFinalizationTargetSchemaV1, verifyFinalizationRecordV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 import { ImproveControlRoomDeskServiceV1 } from "../../src/improve-control-room/v1/service";
 import { createMacLocalWebProcessV1 } from "../../src/web/v1/mac-local-web-process";
 import { createPostgresLocalOwnerSessionStoreV1 } from "../../src/web/v1/local-owner-session-store";
@@ -57,6 +58,32 @@ export function createB5HostSessionOptionsV1(input: {
   return { localOwnerSession: profile, localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(input.database, profile) };
 }
 function need(value: unknown, code: string): asserts value { if (!value) throw new B5RefusalV1(code); }
+
+/** Recovery owns finalization. Wait only on its saved receipts, using the same
+ * active-work signal as the controller; this is never an owner gate. */
+export async function readB5FinishedProjectionV1(input: Parameters<typeof joinB5FinalProjectionV1>[0], signal: AbortSignal) {
+  need(input.finalization && input.target, "B5_A2_LATER_PHASE_EVIDENCE_REQUIRED");
+  const check = () => {
+    if (signal.aborted && signal.reason instanceof B5RefusalV1 && signal.reason.code === "B5_DEADLINE")
+      throw new B5RefusalV1("B5_A2_FINALIZATION_TIMEOUT");
+    signal.throwIfAborted();
+  };
+  for (;;) {
+    check();
+    const raw = await input.finalization.readRecord(input.target);
+    check();
+    const record = raw === null ? null : verifyFinalizationRecordV1(raw, input.target);
+    // readRecord may return an earlier observation, including an old refusal.
+    if (record?.binding.expectedRevision === input.target.expectedRevision && record.phase === "cleanup") {
+      need(record.cleanup?.state === "complete", record.cleanup?.state === "refused"
+        ? "B5_A2_FINALIZATION_CLEANUP_REFUSED" : "B5_A2_FINALIZATION_CLEANUP_UNCERTAIN");
+      // Keep all custody, publication, candidate and cleanup joins authoritative.
+      return joinB5FinalProjectionV1(input);
+    }
+    try { await delay(250, undefined, { signal }); }
+    catch (error) { check(); throw error; }
+  }
+}
 const inside = (root: string, file: string) => { const r = relative(root, file); return r !== "" && r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r); };
 const credential = /(?:^|[/\\])(?:\.env(?:\.[^/\\]*)?|\.codex|\.hermes|\.aws|\.ssh|\.gnupg|\.netrc|\.pgpass|auth\.json|tokens?(?:\.[^/\\]*)?|credentials?(?:\.[^/\\]*)?|passwords?|keychains?|secrets?(?:\.[^/\\]*)?)(?:[/\\]|$)/iu;
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -574,9 +601,9 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
                 startCommandId: start.command_id, startBindingDigest: sha256Digest(binding), run: status.run, inputVersion: status.inputVersion,
                 requestSha256: input.request_sha256, settingsSha256: input.settings_sha256, settingsDigest: status.settingsDigest,
                 expectedRevision: status.revision, schemaDigest: active.adapter.schemaDigest });
-              const joined = await joinB5FinalProjectionV1({ ...projectionInput, finalization: active.adapter.finalization, target,
+              const joined = await readB5FinishedProjectionV1({ ...projectionInput, finalization: active.adapter.finalization, target,
                 readColdCard: async () => { const card = await get(requestPath + "/candidate");
-                  need(card.status === 200, "B5_HOST_COLD_CARD"); return (await card.json() as {candidate:unknown}).candidate; } });
+                  need(card.status === 200, "B5_HOST_COLD_CARD"); return (await card.json() as {candidate:unknown}).candidate; } }, signal);
               need(current === active && !closing, "B5_HOST_GENERATION_CHANGED"); return joined;
             } finally {
               const signedOut = await fetch(origin + "/api/v1/local-owner-session", { method: "DELETE", headers: { origin, cookie },
