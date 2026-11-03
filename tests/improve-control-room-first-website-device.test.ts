@@ -222,6 +222,20 @@ test("F03b cookie correlation binds device, session and exact authenticated read
   }
 });
 
+test("B5 baseline/rehearsal fresh sign-in cannot replace an in-progress challenged session", async t => {
+  const { mailbox, request, receipt } = await ready(t);
+  t.after(() => mailbox.close());
+  const before = await readFile(join(mailbox.root, "observations/1.json"), "utf8");
+  const fresh = await mailbox.handle(new Request(local + "/api/v1/local-owner-session", { method: "POST" }),
+    async () => new Response(null, { status: 201, headers: { "set-cookie": `control_room_local_owner=${"b".repeat(43)}; HttpOnly; Path=/; Max-Age=300` } }));
+  assert.equal(fresh.status, 201);
+  await assert.rejects(correlated(mailbox, request, "b".repeat(43)), { code: "B5_DEVICE_SESSION" });
+  assert.deepEqual(mailbox.observation(), receipt.observation);
+  assert.equal(await readFile(join(mailbox.root, "observations/1.json"), "utf8"), before);
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+  console.log("RESULT: PASS baseline/rehearsal fresh sign-in=201 new session read=B5_DEVICE_SESSION original observation immutable receipt wait unchanged");
+});
+
 function removal(q: B5TransportQualificationV1, request: { removalNonce: string; requestedAt: string }) {
   return { schemaVersion: 1, actor: "owner", removalNonce: request.removalNonce, observedAt: time(), installSettled: true, installCancelled: false,
     off: { command: "tailscale serve --https=60462 off", port: 60462, exitCode: 0 }, status: { command: "tailscale serve status --json", exitCode: 0, afterStatus: q.beforeStatus, afterDigest: q.beforeDigest },
@@ -314,8 +328,8 @@ import { nodeExchange } from "./helpers/web-node";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
-test("F03b exact port remote composition proves product cookie route, auth, CSRF, expiry and Funnel refusal", async t => {
-  const fixture = await privateOwnerBootstrapFixture({ fresh: "b5-device" }); t.after(fixture.close);
+for (const real of [false, true]) test(`F03b exact port remote composition proves product cookie route, auth, CSRF, expiry and Funnel refusal (real=${real})`, async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: `b5-device-${real}` }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
     configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion });
   const clock = { now: conformanceNow }, ownerCode = "fixture-disposable-owner-code-long-enough";
@@ -346,8 +360,9 @@ test("F03b exact port remote composition proves product cookie route, auth, CSRF
   assert.equal(created.status, 201, created.body);
   const project = JSON.parse(created.body).project;
   assert.ok(project.projectId);
-  mailbox = await createB5DeviceMailboxV1(await scratch(t), remote, { real: false, projectId: project.projectId, now: () => clock.now });
-  const request = await mailbox.request("connect", "phone", new Date(clock.now + 60_000).toISOString());
+  mailbox = await createB5DeviceMailboxV1(await scratch(t), remote, { real, projectId: project.projectId, inventory: q.inventory, now: () => clock.now });
+  t.after(() => mailbox!.close());
+  const request = await mailbox.request("connect", "phone", new Date(clock.now + 600_000).toISOString());
   assert.equal((await go(mailbox.projectPath)).status, 303); assert.equal(mailbox.observation(), undefined);
   const first = await go(mailbox.projectPath, ["Cookie", cookie]); assert.equal(first.status, 200);
   assert.match(first.headers.get("set-cookie")!, new RegExp(`b5_correlation=${request.sessionNonce}`));
@@ -356,11 +371,24 @@ test("F03b exact port remote composition proves product cookie route, auth, CSRF
   assert.equal((await go(mailbox.projectPath + "?challenge=" + request.sessionNonce, ["Cookie", cookie])).status, 400, "the real product refuses invented query fields");
   assert.equal((await go("/api/v1/projects", ["Cookie", cookie, "Tailscale-Funnel-Request", "true"])).status, 403);
   assert.equal((await go("/api/v1/projects", ["Cookie", cookie, "Origin", "https://wrong.invalid"], "POST")).status, 403);
+  const observationBytes = await readFile(join(mailbox.root, "observations/1.json"), "utf8");
+  assert.equal(Date.parse(JSON.parse(signedIn.body).expiresAt), clock.now + 300_000);
   clock.now += 300_000;
   assert.equal((await go("/api/v1/projects", ["Cookie", cookie])).status, 401);
+  const fresh = await go("/api/v1/local-owner-session", ["Origin", remote, "Content-Type", "application/json", "Content-Length", String(Buffer.byteLength(signInBody))], "POST", signInBody);
+  assert.equal(fresh.status, 201);
+  const freshCookie = fresh.headers.get("set-cookie")!.split(";")[0]!;
+  assert.notEqual(freshCookie, cookie);
+  assert.equal(Date.parse(JSON.parse(fresh.body).expiresAt), clock.now + 300_000);
+  assert.equal((await go("/api/v1/projects", ["Cookie", freshCookie])).status, 200, "fresh session itself authenticates");
+  assert.equal((await go(mailbox.projectPath, ["Cookie", freshCookie])).status, 503,
+    "baseline: the node handler maps the mailbox's different-session refusal to service_unavailable");
+  assert.equal(await readFile(join(mailbox.root, "observations/1.json"), "utf8"), observationBytes);
+  assert.equal(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")).sequence, request.sequence);
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
   const safe = JSON.stringify(mailbox.observation());
   assert.doesNotMatch(safe, new RegExp(ownerCode + "|" + cookie.split("=")[1]! + "|" + q.ownerLogin));
-  console.log("RESULT: PASS F03b exact HTTPS:60462 existing product/session/gate/correlation composition (in-memory fixture)");
+  console.log(`RESULT: PASS F03b in-memory product real=${real} expired=401 fresh-signin=201 fresh-auth=200 midstep-project=503 unchanged-300s-session immutable-observation`);
 });
 
 test("F03b capture attestation refuses swapped device/challenge/sequence and stale capture time", async t => {
@@ -762,4 +790,96 @@ test("B5 real-mode controller device gate survives days before fresh sign-in and
     assert.equal(cleanup.hostStopped && cleanup.postgresStopped, true); assert.deepEqual(cleanup.failures, []);
   } finally { await owner.cleanup(); owner.dispose(); await mailbox.close(); t.mock.timers.reset(); }
   console.log("RESULT: PASS B5 real-mode device handshake wait=3days fresh initial challenge receipt=accepted capture/verification=20ms active cleanup=complete");
+});
+
+
+test("B5 diagnostic challenge reset cannot count an earlier session's accepted Confirm", async t => {
+  const q = qualification(), mailbox = await createB5DeviceMailboxV1(await scratch(t), remote,
+    { real: true, projectId: "unit-project", inventory: q.inventory, now: () => now });
+  t.after(() => mailbox.close());
+  const binding = { requestId: "unit-request", runLinkId: "unit-link", inputVersion: 1 };
+  const original = await mailbox.request("confirm-start", "phone", time(600_000), binding);
+  const oldCookie = `control_room_local_owner=${"s".repeat(43)}`, freshCookie = `control_room_local_owner=${"t".repeat(43)}`;
+  const observe = async (r: B5DeviceRequestV1, cookie: string) => {
+    for (const value of [cookie, `${cookie}; b5_correlation=${r.sessionNonce}`])
+      await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: value } }), async () => new Response("synthetic authenticated project"));
+    return mailbox.observation()!;
+  };
+  const action = (name: "confirm" | "start", cookie: string) => mailbox.handle(new Request(remote +
+    `/api/v1/projects/unit-project/improvements/loop/unit-request/${name}`, { method: "POST", headers: { cookie } }),
+    async () => Response.json({ schemaVersion: 1, requestId: binding.requestId, localVersion: 1,
+      commandId: "unit-command", state: "accepted", replayed: false, engineRevision: 1, error: null }, { status: 201 }));
+  const oldObservation = await observe(original, oldCookie);
+  await action("confirm", oldCookie);
+  // Diagnostic only: explicitly publish a fresh attempt using the existing API.
+  // This does not implement automatic restart or retain an abandoned audit.
+  const restarted = await mailbox.request("confirm-start", "phone", original.expiresAt, binding);
+  assert.notEqual(restarted.sessionNonce, original.sessionNonce);
+  const observation = await observe(restarted, freshCookie);
+  await assert.rejects(mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: oldCookie } }),
+    async () => new Response("synthetic authenticated project")), { code: "B5_DEVICE_SESSION" });
+  await action("start", freshCookie);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  const path = "captures/restarted.png";
+  await writeFile(join(mailbox.root, path), png, { mode: 0o600 });
+  const receipt = { ...restarted, real: true, browser: "fixture-browser/fixture-version", observedAt: time(),
+    actions: ["confirmed", "started"], observation,
+    captures: [{ path, sha256: b5DeviceHashV1(png), device: "phone", sequence: restarted.sequence, sessionNonce: restarted.sessionNonce, capturedAt: time() }] };
+  await assert.rejects(mailbox.accept({ ...receipt, ...original, observation: oldObservation }), { code: "B5_DEVICE_STALE" });
+  await assert.rejects(mailbox.accept({ ...receipt, observation: oldObservation }), { code: "B5_DEVICE_CORRELATION" });
+  await assert.rejects(mailbox.accept(receipt), { code: "B5_DEVICE_SERVICE_MISSING" });
+  assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+  assert.deepEqual(await readdir(join(mailbox.root, "service")), []);
+  assert.equal(await readFile(join(mailbox.root, "observations/1.json"), "utf8"), JSON.stringify(oldObservation) + "\n");
+  console.log("RESULT: PASS diagnostic reset old-session receipt=STALE mixed-session observation=CORRELATION old Confirm plus fresh Start=SERVICE_MISSING; no accepted receipt");
+});
+
+
+for (const termination of ["Stop", "external abort"] as const) test(`B5 baseline mid-step replacement keeps the owner wait interruptible by ${termination}`, async t => {
+  const C = await import("../scripts/workflow-journeys/first-website-controller");
+  const { B5RefusalV1 } = await import("./helpers/improve-control-room-first-website");
+  const mailbox = await createB5DeviceMailboxV1(await scratch(t), remote,
+    { real: true, projectId: "unit-project", inventory: qualification().inventory, now: () => Date.now() });
+  const external = new AbortController(), owner = C.createFirstWebsiteControllerOwnerV1(external.signal), events: string[] = [];
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
+  try {
+    owner.startDeadline(600_000, { ownerGates: true });
+    owner.registerStopWork(async () => { events.push("stop"); });
+    owner.registerCloseHost(async () => { events.push("host"); await mailbox.close(); });
+    owner.registerStopPostgres(async () => { events.push("postgres"); });
+    let entered!: () => void, settled = false;
+    const waiting = new Promise<void>(yes => { entered = yes; });
+    const phase = C.runFirstWebsiteDevicePhaseV1({ mailbox, phase: "connect", device: "phone", signal: owner.signal,
+      expiresAt: time(24 * 3600_000),
+      policy: { normalizer: "b5-unicode-v1", sentinel: "UNIT_PRIVATE_GATE_CANARY_1234567890", distinctiveInstructions: ["unit gate instruction text"] },
+      waitForOwner: wait => owner.waitForOwner(() => { entered(); return wait(); }) });
+    const outcome = phase.then(value => { settled = true; return { value, error: undefined }; }, error => { settled = true; return { value: undefined, error }; });
+    await waiting;
+    const request = b5DeviceRequestSchemaV1.parse(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")));
+    const oldCookie = `control_room_local_owner=${"u".repeat(43)}`;
+    for (const cookie of [oldCookie, `${oldCookie}; b5_correlation=${request.sessionNonce}`])
+      await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie } }), async () => new Response("synthetic authenticated project"));
+    const original = mailbox.observation();
+    t.mock.timers.tick(301_000);
+    const expired = await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: oldCookie } }),
+      async () => new Response(null, { status: 401 }));
+    assert.equal(expired.status, 401);
+    const freshCookie = `control_room_local_owner=${"v".repeat(43)}`;
+    const fresh = await mailbox.handle(new Request(remote + "/api/v1/local-owner-session", { method: "POST" }),
+      async () => new Response(null, { status: 201, headers: { "set-cookie": freshCookie + "; HttpOnly; Path=/; Max-Age=300" } }));
+    assert.equal(fresh.status, 201);
+    await assert.rejects(mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: freshCookie } }),
+      async () => new Response("synthetic authenticated project")), { code: "B5_DEVICE_SESSION" });
+    assert.equal(settled, false, "session replacement refuses the HTTP observation while the controller still awaits its original receipt");
+    assert.deepEqual(mailbox.observation(), original);
+    assert.deepEqual(owner.timing(), { gateWaitMs: 301_000, waitingForOwner: true });
+    const reason = new B5RefusalV1(termination === "Stop" ? "B5_OWNER_STOP" : "B5_ABORTED");
+    if (termination === "Stop") owner.abort(reason); else external.abort(reason);
+    assert.equal((await outcome).error, reason);
+    const cleanup = await owner.cleanup();
+    assert.deepEqual(events, ["stop", "host", "postgres"]); assert.deepEqual(cleanup.failures, []);
+    assert.deepEqual(owner.timing(), { gateWaitMs: 301_000, waitingForOwner: false });
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+  } finally { await owner.cleanup(); owner.dispose(); await mailbox.close(); t.mock.timers.reset(); }
+  console.log(`RESULT: PASS baseline midstep expiry/replacement controller=waiting owner-wait=301000ms ${termination}=clean-stop no accepted receipt`);
 });

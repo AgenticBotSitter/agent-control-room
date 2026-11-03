@@ -507,6 +507,47 @@ test("B5 binds the builder fault and the review instruction through A2 bind-inpu
   assert.equal(await code(bind()), "B5_INPUT_CHANGED");
 });
 
+test("B5 consumed owner actions require the original replay key after a challenge restart", async t => {
+  await load();
+  const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
+  const project = f.project.projectId;
+  await f.bridge.mutate(f.identity, project, null, "intake", { description: H.B5_REQUEST_TEXT }, "restart-intake-original");
+  const requestId = (await f.desk.viewLoopDesk(f.identity, project)).loopRequests[0]!.requestId;
+  const current = () => f.bridge.status(f.identity, project, requestId);
+  const check = async (operation: "confirm" | "start" | "answer" | "approve", body: Record<string, unknown>, label: string = operation) => {
+    const originalKey = `restart-${label}-original`;
+    const first = await f.bridge.mutate(f.identity, project, requestId, operation, body, originalKey);
+    assert.equal(first.state, "accepted");
+    const calls = f.calls.length;
+    // Refresh revision/version so this exercises consumed gates rather than
+    // merely refusing a stale pre-action snapshot after a fresh sign-in.
+    const after = await current(), freshBody = { ...body, expectedVersion: after.request.currentVersion, expectedRevision: after.engine.revision };
+    await assert.rejects(f.bridge.mutate(f.identity, project, requestId, operation, freshBody, `restart-${label}-fresh`),
+      { code: "conflict" });
+    if (operation === "approve") await assert.rejects(f.bridge.readApprovalDocument(f.identity, project, requestId), { code: "conflict" });
+    const replay = await f.bridge.mutate(f.identity, project, requestId, operation, body, originalKey);
+    assert.equal(replay.state, "accepted"); assert.equal(replay.replayed, true);
+    assert.equal(f.calls.length, calls, "exact replay never repeats the engine action");
+  };
+  let s = await current();
+  await check("confirm", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
+    requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 });
+  s = await current();
+  assert.equal(s.display.confirmationCurrent, true);
+  await check("start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId });
+  s = await current(); assert.equal(s.display.canStart, false); assert.equal(s.display.startState, "started");
+  assert.equal(await f.tick(), "question"); s = await current();
+  await check("answer", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
+    questionId: f.question.questionId, inputVersion: f.question.inputVersion, questionReportSha256: f.question.reportSha256, text: "Amber." });
+  assert.equal((await current()).engine.question, null);
+  for (const step of ["plan", "spec"] as const) {
+    assert.equal(await f.tick(), `${step}-waiting`); s = await current();
+    await check("approve", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, ...s.engine.approval! }, `approve-${step}`);
+    assert.equal((await current()).engine.approval, null);
+  }
+  console.log("RESULT: PASS consumed Confirm/Start/Answer/plan/spec new-key=conflict exact-original-key=accepted-replay engine-actions-not-repeated");
+});
+
 test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent restart, and records the finish card", async t => {
   await load();
   const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());

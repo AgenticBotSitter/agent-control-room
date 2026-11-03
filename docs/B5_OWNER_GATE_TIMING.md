@@ -56,6 +56,20 @@ evidence is still rejected. Unlimited document-reading/reauthentication within
 one phase is therefore also blocked. No authentication or evidence policy is
 weakened here.
 
+Republishing only a fresh challenge is insufficient if an owner action already
+succeeded in the old attempt. A `confirm-start` receipt requires both Confirm
+and Start service successes under its observation; dropping an old-session
+Confirm and recording only a fresh-session Start must still refuse with
+`B5_DEVICE_SERVICE_MISSING`. Answers and approvals likewise consume their
+current gates. A new UI action key cannot repeat those consumed decisions.
+The service supports exact idempotent replay with the original body and key,
+but the device request packet carries neither a replay reference nor a recovery
+instruction, and the current UI loses its in-memory replay action on fresh
+navigation or protected-authority clearing. A complete restart needs a reviewed
+owner replay/recollection flow for already accepted actions. Counting old-session
+actions or substituting saved status would change the proof rules; neither is
+implemented. A restart limited to pre-action expiry would not cover this case.
+
 Controller-owned hosts already disable their standalone work timer. Recovery
 uses durable status and an existing 5-second scan: the bounded one-hour wait
 driver can exit and be reclaimed on a later scan. Its command bounds remain
