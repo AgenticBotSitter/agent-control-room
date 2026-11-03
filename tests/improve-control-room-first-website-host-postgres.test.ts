@@ -66,7 +66,7 @@ test("B5 host-postgres qualification guard-off mutation fails the ordinary refus
     await exec("git", ["-c", "core.hooksPath=/dev/null", "clone", "--local", "--no-hardlinks", "--quiet", root, copy], { timeout: 60_000 });
     await symlink(join(root, "node_modules"), join(copy, "node_modules"), "dir");
     // Test the current working bytes, including before the fix is committed.
-    for (const path of [file, lane, "scripts/workflow-journeys/first-website-device.ts", "tests/helpers/improve-control-room-first-website.ts"]) await writeFile(join(copy, path), await readFile(join(root, path)));
+    for (const path of [file, lane, "src/web/v1/improve-control-room-loop-finalization.ts", "src/web/v1/improve-control-room-loop-recovery.ts", "src/web/v1/improve-control-room-loop-service.ts", "scripts/workflow-journeys/first-website-device.ts", "tests/helpers/improve-control-room-first-website.ts"]) await writeFile(join(copy, path), await readFile(join(root, path)));
     const cmd = [process.execPath, "scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",
       "--test-name-pattern=^B5 host-postgres missing qualification refuses before acquisition$", lane];
     const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;

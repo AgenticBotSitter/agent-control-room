@@ -912,3 +912,14 @@ test("B5 finalization wait consumes the existing rehearsal active deadline", asy
   } finally { owner.dispose(); t.mock.timers.reset(); }
   console.log("RESULT: PASS B5 finalization rehearsal deadline unchanged work=30s total=60s");
 });
+
+test("B5 finalization timeout carries only the bounded publication reason",async t=>{
+  const {input,record}=await completionFixture(t);
+  const {recordDigest:_,...material}=structuredClone(record);
+  material.phase="terminated";material.publication=null;material.cleanup=null;
+  const terminated={...material,recordDigest:sha256Digest(material)};
+  const abort=new AbortController();
+  const waiting=readB5FinishedProjectionV1({...input,finalization:{...input.finalization,
+    readRecord:async()=>{setImmediate(()=>abort.abort(new B5RefusalV1("B5_DEADLINE")));return terminated;}}},abort.signal);
+  await assert.rejects(waiting,{code:"B5_A2_FINALIZATION_TIMEOUT",detail:"PUBLICATION_UNAVAILABLE"});
+});

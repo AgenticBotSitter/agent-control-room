@@ -37,6 +37,7 @@ if (ordinary) test("B3c terminal run reaches shared attention without a browser 
 
 import { finalizationFixture, persistentFinalizationCapability, ownedCleanupCapability, KEY, type FixtureState } from "./helpers/improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopFinalizerV1, captureLoopFinalizationCapabilityV1, verifyFinalizationRecordV1,
+  readLoopFinalizationFailureV1,
   type LoopFinalizationCapabilityV1, type LoopFinalizationRecordV1 } from "../src/web/v1/improve-control-room-loop-finalization";
 import { loopAttentionKey, loopAttentionComplete, loopAttentionItemSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { readFile, writeFile, rm } from "node:fs/promises";
@@ -749,3 +750,50 @@ if(process.env.CONTROL_ROOM_B3C_LOAD==="1")test("B3c 24 finalizers retain once a
     console.log(`B3c load hosts=24 losing_paths=23 retained_corpora=1 publications=1 publication_requests=2 announcements=1 signals=0 removals=0 elapsed_ms=${Date.now()-began}`);
   }finally{await Promise.all([...children].map(close));}
 });
+
+if(ordinary) test("B5 finalization sweep maps publish refusal to bounded attention across services and retries",async t=>{
+  const f=await using(t), warnings:unknown[][]=[];
+  const warn=t.mock.method(console,"warn",(...args:unknown[])=>{warnings.push(args);});
+  const failing={...f.config,repository:{observe:async()=>{throw new Error("PRIVATE raw refusal /scratch/private");}}};
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,adapter:f.adapter,loopCandidates:failing},()=>now);
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,observe:bridge.finalizationPort().observe,
+    port:{scan:async()=>({targets:[f.internalTarget],nextCursor:null}),reconcile:async()=>({state:"blocked"})},
+    createCycle:()=>({tick(){},close:async()=>{}})});
+  t.after(()=>worker.close());
+  await worker.tick();await worker.tick();
+  const record=await f.capability.readRecord(f.target);
+  assert.equal(record?.phase,"terminated");assert.equal(record.sequence,2);
+  const attention=await f.service().readAttention(f.identity);
+  assert.equal(attention.state,"available");
+  if(attention.state!=="available")throw new Error("missing attention");
+  assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,"PUBLICATION_UNAVAILABLE");
+  assert.deepEqual(warnings,Array.from({length:2},()=>["loop_finalization_sweep_failed","PUBLICATION_UNAVAILABLE"]));
+  assert.ok(!JSON.stringify(attention).includes("PRIVATE"));warn.mock.restore();
+  await f.observe();
+  assert.equal((await f.capability.readRecord(f.target))?.phase,"cleanup");
+  assert.equal(readLoopFinalizationFailureV1(f.target),undefined,"successful sweep clears the diagnostic");
+});
+
+if(ordinary) for(const [stage,reason] of [["inspect","UNAVAILABLE"],["retain","RETENTION_FAILED"],["cleanup","CLEANUP_UNCERTAIN"]] as const){
+  test(`B5 finalization ${stage} refusal reaches bounded current attention`,async t=>{
+    const f=await using(t);
+    let fail=true;
+    const capability={...f.capability,[stage]:async(...args:unknown[])=>{
+      if(fail)throw new Error("PRIVATE stage failure /scratch/private");
+      return Reflect.apply(f.capability.inspect,f.capability,args);
+    }} as LoopFinalizationCapabilityV1;
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    await assert.rejects(bridge.finalizationPort().observe(f.internalTarget,signal()),{message:"loop_finalization_unavailable",reasonCode:reason});
+    assert.equal(readLoopFinalizationFailureV1(f.target),reason);
+    assert.equal(readLoopFinalizationFailureV1({...f.target,expectedRevision:f.target.expectedRevision+1}),undefined);
+    // Inspection can recover before the next sweep; attention still reports the
+    // failed stage without echoing any exception fields or starting effects.
+    fail=false;
+    const attention=await f.service().readAttention(f.identity);
+    assert.equal(attention.state,"available");
+    if(attention.state!=="available")throw new Error("missing attention");
+    assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,reason);
+    assert.ok(!JSON.stringify(attention).includes("PRIVATE"));
+  });
+}

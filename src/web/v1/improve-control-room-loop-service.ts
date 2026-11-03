@@ -1,5 +1,6 @@
 import { LoopCandidatePublisherV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createImproveControlRoomLoopFinalizerV1, finalizationEnabledV1, loopFinalizationTargetSchemaV1,
+  rememberLoopFinalizationFailureV1, readLoopFinalizationFailureV1, loopFinalizationFailureReasonV1, LoopFinalizationFailureV1,
   verifyFinalizationInspectionV1, verifyFinalizationRecordV1, type LoopFinalizationPortV1, type LoopFinalizationTargetV1 } from "./improve-control-room-loop-finalization";
 import { loopMonitoringAttentionV1, type LoopMonitoringStatusV1 } from "./improve-control-room-loop-monitoring";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -497,8 +498,15 @@ export class ImproveControlRoomLoopServiceV1 {
       const operationSignal=AbortSignal.any([signal,AbortSignal.timeout(60000)]);
       const authorize=()=>this.#finalizationTarget(target);
       const binding=await authorize();
-      await createImproveControlRoomLoopFinalizerV1({capability,authorize,signal:operationSignal,
-        publishCompletion:input=>this.#publisher.publishCompletion(input)}).finalize(binding);
+      try{
+        await createImproveControlRoomLoopFinalizerV1({capability,authorize,signal:operationSignal,
+          publishCompletion:input=>this.#publisher.publishCompletion(input)}).finalize(binding);
+        rememberLoopFinalizationFailureV1(binding,null);
+      }catch(error){
+        const reason=loopFinalizationFailureReasonV1(error);
+        rememberLoopFinalizationFailureV1(binding,reason);
+        throw new LoopFinalizationFailureV1(reason);
+      }
     }});
   }
   async #lifecycleAttention(identity:VerifiedWebIdentity,projectId:string,requestId:string,current:LoopEngineStatusV1):Promise<LoopAttentionItemV1|null>{
@@ -530,6 +538,8 @@ export class ImproveControlRoomLoopServiceV1 {
       if(record?.publication&&["announced","cleanup"].includes(record.phase)){kind="finish";reasonCode="FINISHED";}
       else reasonCode=record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
     }
+    const failure=readLoopFinalizationFailureV1(binding);
+    if(failure&&!record?.cleanup)reasonCode=failure;
     if(["CLEANUP_REFUSED","CLEANUP_UNCERTAIN","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"].includes(reasonCode))kind="stall";
     const labels:Record<typeof reasonCode,[string,string,string]>={
       FINISHED:["Finished candidate","A finished candidate and its retained evidence are available.","Review finished candidate"],

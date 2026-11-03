@@ -48,6 +48,26 @@ export type LoopFinalizationCapabilityV1 = LoopCandidateDependenciesV1 & {
   /** Compare-and-append previousDigest, fsync, exact replay; never overwrite. */
   appendRecord(binding:Readonly<LoopFinalizationBindingV1>,record:Readonly<LoopFinalizationRecordV1>):Promise<LoopFinalizationRecordV1>;
 };
+// Diagnostic state is bounded, process-local and scoped to the complete authorized
+// revision. Durable receipts remain the authority after restart or supersession.
+export type LoopFinalizationFailureReasonV1 = "UNAVAILABLE"|"RETENTION_FAILED"|"PUBLICATION_UNAVAILABLE"|"CLEANUP_UNCERTAIN";
+const failures=new Map<string,LoopFinalizationFailureReasonV1>();
+export class LoopFinalizationFailureV1 extends Error {
+  constructor(readonly reasonCode:LoopFinalizationFailureReasonV1){super("loop_finalization_unavailable");}
+}
+export function loopFinalizationFailureReasonV1(error:unknown):LoopFinalizationFailureReasonV1{
+  return error instanceof LoopFinalizationFailureV1?error.reasonCode:"UNAVAILABLE";
+}
+export function rememberLoopFinalizationFailureV1(target:LoopFinalizationTargetV1,reason:LoopFinalizationFailureReasonV1|null){
+  const key=canonicalJson(loopFinalizationTargetSchemaV1.parse(target));failures.delete(key);
+  if(reason!==null){failures.set(key,reason);if(failures.size>128)failures.delete(failures.keys().next().value!);}
+}
+export function readLoopFinalizationFailureV1(target:LoopFinalizationTargetV1){
+  return failures.get(canonicalJson(loopFinalizationTargetSchemaV1.parse(target)));
+}
+export function pendingLoopFinalizationReasonV1(record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1{
+  return record?.publication?"CLEANUP_UNCERTAIN":record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
+}
 const unavailable=()=>new Error("loop_finalization_unavailable");
 const same=(a:unknown,b:unknown)=>canonicalJson(a)===canonicalJson(b);
 function bounded(value:unknown){if(Buffer.byteLength(JSON.stringify(value),"utf8")>65536)throw unavailable();return value;}
@@ -111,12 +131,14 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
   authorize:()=>Promise<LoopFinalizationTargetV1>;signal:AbortSignal}){
   const c=input.capability;
   return {async finalize(target:LoopFinalizationTargetV1){
+    let failureReason:LoopFinalizationFailureReasonV1="UNAVAILABLE";
+    try{
     const active=async()=>{if(input.signal.aborted||!finalizationEnabledV1(c)||!same(await input.authorize(),target))throw unavailable();};
     await active();
     const first=verifyFinalizationInspectionV1(await c.inspect(target),target);
     await active();
     if(["running","owner_gate"].includes(first.observation.outcome))return;
-    return c.withFence(first.observation.binding,async()=>{
+    return await c.withFence(first.observation.binding,async()=>{
       await active();
       const inspected=verifyFinalizationInspectionV1(await c.inspect(target),target),o=inspected.observation,b=o.binding;
       if(!same(first,inspected))throw unavailable();
@@ -150,6 +172,7 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
         if(!record)await append("announced",{termination:inspected.termination});return record;
       }
       const retain=async()=>{
+        failureReason="RETENTION_FAILED";
         await active();const custody=loopFinalizationCustodySchemaV1.parse(bounded(await c.retain(b,o.inventoryDigest)));await active();
         if(!same(custody.binding,b)||custody.inventoryDigest!==o.inventoryDigest||record?.custody&&custody.retentionDigest!==record.custody.retentionDigest)throw unavailable();
         const current=verifyFinalizationInspectionV1(await c.inspect(target),target);await active();if(!same(current,inspected))throw unavailable();
@@ -160,6 +183,7 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       if(record!.phase==="retained")await append("terminated",{termination:inspected.termination});
       if(record!.phase==="terminated"&&o.outcome==="candidate_ready"){
         await retain();await active();
+        failureReason="PUBLICATION_UNAVAILABLE";
         const publication=verifyPublication(await input.publishCompletion({runLinkId:b.runLinkId,completionDigest:o.completionDigest!}),o,custody.retentionDigest);
         await active();await append("published",{publication});
       }
@@ -168,6 +192,7 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
         let cleanup:z.infer<typeof loopFinalizationCleanupSchemaV1>;
         if(c.cleanup){
           await retain();await active();
+          failureReason="CLEANUP_UNCERTAIN";
           cleanup=loopFinalizationCleanupSchemaV1.parse(bounded(await c.cleanup(b,custody.retentionDigest)));await active();
           if(!same(cleanup.binding,b)||cleanup.inventoryDigest!==o.inventoryDigest||cleanup.retentionDigest!==custody.retentionDigest)throw unavailable();
         }else cleanup={schemaVersion:1,binding:b,inventoryDigest:o.inventoryDigest,retentionDigest:custody.retentionDigest,
@@ -176,5 +201,6 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       }
       return record;
     });
+    }catch{throw new LoopFinalizationFailureV1(failureReason);}
   }};
 }

@@ -76,7 +76,7 @@ test("B5 device qualification guard-off mutation fails its intended assertion", 
   try {
     await exec("git", ["-c", "core.hooksPath=/dev/null", "clone", "--local", "--no-hardlinks", "--quiet", root, copy], { timeout: 60_000 });
     const { symlink } = await import("node:fs/promises"); await symlink(join(root, "node_modules"), join(copy, "node_modules"), "dir");
-    for (const path of [file, lane, "scripts/workflow-journeys/first-website-host.ts", "tests/helpers/improve-control-room-first-website.ts",
+    for (const path of [file, lane, "src/web/v1/improve-control-room-loop-finalization.ts", "src/web/v1/improve-control-room-loop-recovery.ts", "src/web/v1/improve-control-room-loop-service.ts", "scripts/workflow-journeys/first-website-host.ts", "tests/helpers/improve-control-room-first-website.ts",
       "tests/support/attack-kit/real-postgres.ts", "tests/improve-control-room-first-website-device.test.ts"])
       await writeFile(join(copy, path), await readFile(join(root, path)));
     const cmd = [process.execPath, "scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test",

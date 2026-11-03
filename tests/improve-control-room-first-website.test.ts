@@ -2033,3 +2033,17 @@ test('B5 real journey continues through every long owner gate and both restarts'
   } finally { owner.dispose(); t.mock.timers.reset(); }
   console.log('RESULT: PASS B5 exported real journey 17 gates x2h; intake/approval bounds, observer, two restarts, session renewal, timing artifact and cleanup; offline fixture only');
 });
+
+test("B5 controller persists a bounded finalization reason in timeout verdict detail",async t=>{
+  const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  for(const [detail,expected] of [["PUBLICATION_UNAVAILABLE","PUBLICATION_UNAVAILABLE"],["PRIVATE /scratch/unknown","UNAVAILABLE"]]){
+    const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
+    const owner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'finalization-timeout-evidence');
+    t.mock.method(owner,'beginAcquisition',()=>{throw new H.B5RefusalV1("B5_A2_FINALIZATION_TIMEOUT",detail);});
+    const verdict=await runFirstWebsiteJourneyV1({...preflight,evidenceDir,controllerOwner:owner},new AbortController().signal);
+    const saved=JSON.parse(await readFile(join(evidenceDir,'controller-verdict.json'),'utf8'));
+    assert.ok(verdict.reasons.includes("B5_A2_FINALIZATION_TIMEOUT"));
+    assert.deepEqual(saved.detail,[{name:"Error",message:"B5_A2_FINALIZATION_TIMEOUT",finalizationReasonCode:expected}]);
+    assert.doesNotMatch(JSON.stringify(saved),/PRIVATE|scratch\/unknown/);
+  }
+});
