@@ -650,6 +650,18 @@ test("B5 completion/cleanup mapping joins typed receipts, cold card and reposito
   await assert.rejects(joinB5FinalProjectionV1(input), /B5_A2_CLEANUP_SOURCE_PRESENT/);
 });
 
+test("B5 empty cleanup moves require every retained log to be present under root", async t => {
+  const { f, input, record, sealRecord } = await completionFixture(t);
+  const present = join(f.root, "logs/kept.log"); await writeFile(present, "kept", { mode: 0o600 });
+  f.raw.close.moves = []; record.cleanup.removedDigest = sha256Digest([]); sealRecord();
+  f.raw.close.logs_retained = [{ path: present }]; await f.save();
+  assert.deepEqual((await joinB5FinalProjectionV1(input)).cleanup.targets, [], "present retained log accepts an empty move list");
+  f.raw.close.logs_retained = [{ path: present }, { path: join(f.root, "logs/missing.log") }]; await f.save();
+  await assert.rejects(joinB5FinalProjectionV1(input), /B5_CLEANUP_RETAINED/, "absent retained log refuses");
+  f.raw.close.logs_retained = [{ path: present }]; delete f.raw.close.logs_retained; await f.save();
+  await assert.rejects(joinB5FinalProjectionV1(input), /B5_CLEANUP_RETAINED/, "missing logs_retained refuses");
+});
+
 test("B5 loader requires an enabled callable intake driver before constructing the adapter", async () => {
   // Exercise the loader's runtime validation block without importing private tools.
   const { transpileModule } = await import("typescript");
