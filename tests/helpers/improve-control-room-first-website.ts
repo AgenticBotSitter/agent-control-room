@@ -593,7 +593,7 @@ export const b5TransportCleanupSchemaV1 = z.object({
   removalReceiptDigest:sha256.nullable(), hostStopped:z.boolean(), postgresStopped:z.boolean(), failures:z.array(z.string().min(1)), overrunMs:z.number().int().nonnegative(),
 }).strict();
 const retentionSchema = z.object({ repositoryDigest:sha256,
-  targets:z.array(z.object({pathDigest:sha256,absent:z.literal(true)}).strict()).min(1), targetsDigest:sha256 }).strict();
+  targets:z.array(z.object({pathDigest:sha256,absent:z.literal(true)}).strict()).min(0), targetsDigest:sha256 }).strict();
 export const b5TeardownSchemaV1 = z.object({
   schemaVersion: z.literal(1), b3cCleanup: z.enum(["complete", "refused", "uncertain", "missing"]), scratchAbsent: z.boolean(),
   ownedProcesses: z.number().int().nonnegative(), ownedListenersReleased: z.boolean(), protectedListenersUntouched: z.boolean(),
@@ -949,7 +949,7 @@ export type B5RetentionV1 = { proofRoot:string; candidateRepository:string; clea
 async function qualifyB5RetentionV1(input: B5RetentionV1) {
   await canonical(input.proofRoot,"directory","B5_CLEANUP_RETAINED");
   await canonical(input.candidateRepository,"directory","B5_CLEANUP_RETAINED");
-  if (!inside(input.proofRoot,input.candidateRepository) || input.cleanupTargets.length === 0
+  if (!inside(input.proofRoot,input.candidateRepository)
     || new Set(input.cleanupTargets).size !== input.cleanupTargets.length) refuse("B5_CLEANUP_RETAINED");
   const targets = [];
   for (const target of input.cleanupTargets) {

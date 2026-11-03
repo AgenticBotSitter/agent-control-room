@@ -1268,6 +1268,12 @@ test("F04b finalization preserves shared retained repository and hashes only run
   await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,{...retention,cleanupTargets:[e.p.project]}),/B5_CLEANUP_RETAINED/u);
   await mkdir(retention.cleanupTargets[0]!);
   await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,retention),/B5_CLEANUP_RETAINED/u,'F04b live cleanup target cannot be reported absent');
+  const empty = {...retention,cleanupTargets:[] as string[]};
+  const emptyFinal = await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,empty);
+  assert.ok(emptyFinal.artifacts.some(a=>a.path==='teardown.json'),'F04b empty cleanup target list (local close retained nothing to move) finalizes');
+  const emptyVerdict = await H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins:e.fixturePins,retention:empty});
+  assert.equal(emptyVerdict.state,'incomplete');
+  await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,{...empty,candidateRepository:e.p.dir}),/B5_CLEANUP_RETAINED/u);
   assert.deepEqual(await tree(e.p.project),before);
   console.log('RESULT: PASS F04b two runs preserve one no-remote retained repo; independent cleanup-target digests verified; no deletion by finalizer');
 });
