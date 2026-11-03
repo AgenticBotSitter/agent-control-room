@@ -1547,6 +1547,49 @@ test('F04b R295 selected review identities join without claiming observation', a
   assert.doesNotThrow(()=>H.assertRealChainV1(manifest,card,snapshot,journey,e.fixturePins));
 });
 
+const closedIntervalFixture = async (t: Parameters<typeof evidenceSet>[0]) => {
+  await load(); const e=await evidenceSet(t);await e.write();
+  const manifest=H.b5ManifestSchemaV1.parse(JSON.parse(await readFile(join(e.dir,'manifest.json'),'utf8')));
+  const journey=H.b5JourneySchemaV1.parse(JSON.parse(await readFile(join(e.dir,'journey.json'),'utf8')));
+  // Fixture minutes: approve-spec 6, defective build 14-15, rejection 16-17, closed[1] 6.5-38.
+  const at=(minute:number)=>new Date(Date.UTC(2026,9,30,12)+minute*60_000).toISOString();
+  const variant=(edit:(j:typeof journey)=>void)=>{const j=structuredClone(journey);edit(j);return j;};
+  return {manifest,journey,at,variant};
+};
+const closedIntervalRefused={code:'B5_REJECTION_REPAIR',detail:'steps outside a closed-browser interval'};
+
+test('B5 closed interval 1: the defective build may straddle the interval start (the spec approval starts it)', async t => {
+  const {manifest,journey,variant,at}=await closedIntervalFixture(t);
+  assert.doesNotThrow(()=>H.assertRejectionRepairV1(manifest,journey),'baseline fixture');
+  assert.doesNotThrow(()=>H.assertRejectionRepairV1(manifest,variant(j=>{j.closed[1]!.from=at(14.5);})));
+});
+
+test('B5 closed interval 2: the defective build may end before the interval start, as in run 28', async t => {
+  const {manifest,variant,at}=await closedIntervalFixture(t);
+  assert.doesNotThrow(()=>H.assertRejectionRepairV1(manifest,variant(j=>{j.closed[1]!.from=at(15.5);})));
+});
+
+test('B5 closed interval 3-6: refusals stay, each next to its green sibling', async t => {
+  const {manifest,journey,variant,at}=await closedIntervalFixture(t);
+  const ok=(edit:(j:ReturnType<typeof variant> extends infer J ? J : never)=>void,why:string)=>assert.doesNotThrow(()=>H.assertRejectionRepairV1(manifest,variant(edit)),why);
+  const no=(edit:(j:ReturnType<typeof variant> extends infer J ? J : never)=>void,why:string)=>assert.throws(()=>H.assertRejectionRepairV1(manifest,variant(edit)),closedIntervalRefused,why);
+  const early=(j:ReturnType<typeof variant>)=>{j.closed[1]!.from=at(15.5);};
+  // 3: the owner acts while the build runs, so the build is not the approval's own start. Sibling: case 2.
+  ok(early,'case 2 sibling');
+  no(j=>{early(j);j.actions.find(a=>a.name==='approve-spec')!.at=at(14.5);},'owner acts during the build');
+  // 4: a non-build step (the rejection starts at 16) keeps the strict test. Sibling: from 15.5 passes.
+  no(j=>{j.closed[1]!.from=at(16.5);},'rejection starts before from');
+  // 5: a fresh review ending after the interval is an open-browser step. Sibling: case 2 with the original `to`.
+  const codeEnds=journey.steps.filter(x=>x.role==='code-review'&&x.verdict==='CLEAN').map(x=>Date.parse(x.endedAt));
+  assert.ok(codeEnds.length>=2);
+  no(j=>{early(j);j.closed[1]!.to=new Date(Math.max(...codeEnds)-1000).toISOString();},'fresh review ends after to');
+  // 5b: the build itself must still end at or before `to`.
+  no(j=>{early(j);j.closed[1]!.to=at(14.8);},'build ends after to');
+  // 6: no closed interval at all. Sibling: the unedited fixture passes.
+  ok(()=>{},'unedited sibling');
+  no(j=>{j.closed=[];},'no interval');
+});
+
 test('F04b per-screen HTTP receipts bind distinct envelopes to the authoritative cold card', async t => {
   await load(); const e=await evidenceSet(t);
   const apply=(bad=false)=>(v:Parameters<NonNullable<Parameters<typeof e.write>[0]>>[0])=>{

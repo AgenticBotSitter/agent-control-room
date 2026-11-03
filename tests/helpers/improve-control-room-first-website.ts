@@ -762,8 +762,15 @@ export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5Journ
   const codes = fresh("code-review");
   if (codes.length < 2 || new Set(codes.map(s => s.family)).size < 2 || codes.some(s => s.diagnostic !== "PASS")) broken("fresh code reviews");
   for (const role of ["attack-review", "ui-review", "ci-review", "final"]) if (!fresh(role).length) broken(`fresh ${role}`);
-  const reviewed = [defective!, rejection!, repair!, ...codes];
-  if (!reviewed.every(closed)) broken("steps outside a closed-browser interval");
+  // The defective build is special: the owner's spec approval starts it, and the browser-close handshake
+  // finishes after the engine has begun. Its interval therefore begins at the owner's latest action at or
+  // before `from` (`from` itself when there is none), so no owner action can fall inside the build; it must
+  // still end by `to`. Rejection, repair and fresh reviews keep the strict closed test.
+  const fromHandoff = (s: z.infer<typeof step>) => journey.closed.some(c => {
+    const owner = journey.actions.map(a => ms(a.at)).filter(t => t <= ms(c.from));
+    return (owner.length ? Math.max(...owner) : ms(c.from)) <= ms(s.startedAt) && ms(s.endedAt) <= ms(c.to);
+  });
+  if (!fromHandoff(defective!) || ![rejection!, repair!, ...codes].every(closed)) broken("steps outside a closed-browser interval");
   for (let i = 1; i < steps.length; i++) if (ms(steps[i]!.startedAt) < ms(steps[i - 1]!.endedAt)) broken("chronology");
   if (steps.some(s => s.findings.some(f => (f.severity === "HIGH" || f.severity === "MEDIUM") && f.state === "open") && s.n > repair!.n)) broken("open finding");
 }
