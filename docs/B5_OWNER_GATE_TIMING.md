@@ -97,6 +97,29 @@ owner replay/recollection flow for already accepted actions. Counting old-sessio
 actions or substituting saved status would change the proof rules; neither is
 implemented. A restart limited to pre-action expiry would not cover this case.
 
+The owner-action replay extension is stopped at its owner UI boundary. An
+optional versioned packet list of opaque command references would locate
+accepted actions without retaining bodies or session material in evidence,
+but the current owner page cannot consume those references. Its decision
+component clears the original body/key on a gate change or authentication
+failure and only renders current gates; the run panel disables Start after
+acceptance. Neither a packet field nor a browser-client change can add the
+missing explicit owner replay control. The existing approval-document HTTP
+route returns conflict after approval consumption, and current status no
+longer contains an answered question. Exact replay with the original key also
+refuses a changed body; a fresh key cannot replace a consumed gate.
+
+Completing recovery requires an owner recovery surface in `private-app/**`
+which, under a fresh sign-in and challenge, resolves the pending attempt's
+opaque references, displays the exact saved request/document and original
+answer where applicable, and explicitly submits the original body/key through
+the existing authorized command route. Service support must make the original
+sealed document available after consumption under current lineage authority.
+Fresh HTTP replay successes and captures must be collected in the new attempt;
+abandoned observations/events remain immutable audit only. This requires UI
+work beyond the permitted replay-build files; no restart, packet extension or
+proof-policy change is implemented here.
+
 Controller-owned hosts disable their standalone work timer when `signalOwner`
 is supplied (`first-website-host.ts`); standalone CLI bounds remain unchanged.
 **PROVEN (product recovery path):** `B5 long gate reclaims an exited one-hour

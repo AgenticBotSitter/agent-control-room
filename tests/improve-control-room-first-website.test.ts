@@ -511,7 +511,13 @@ test("B5 consumed owner actions require the original replay key after a challeng
   await load();
   const f = await H.syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
   const project = f.project.projectId;
-  await f.bridge.mutate(f.identity, project, null, "intake", { description: H.B5_REQUEST_TEXT }, "restart-intake-original");
+  const intakeBody = { description: H.B5_REQUEST_TEXT }, intakeKey = "restart-intake-original";
+  await f.bridge.mutate(f.identity, project, null, "intake", intakeBody, intakeKey);
+  const intakeCalls = f.calls.length;
+  await assert.rejects(f.bridge.mutate(f.identity, project, null, "intake",
+    { description: H.B5_REQUEST_TEXT + " Changed request." }, intakeKey), { code: "conflict" });
+  assert.equal((await f.bridge.mutate(f.identity, project, null, "intake", intakeBody, intakeKey)).replayed, true);
+  assert.equal(f.calls.length, intakeCalls, "changed-body intake refused and exact replay does not create another run");
   const requestId = (await f.desk.viewLoopDesk(f.identity, project)).loopRequests[0]!.requestId;
   const current = () => f.bridge.status(f.identity, project, requestId);
   const check = async (operation: "confirm" | "start" | "answer" | "approve", body: Record<string, unknown>, label: string = operation) => {
@@ -524,7 +530,17 @@ test("B5 consumed owner actions require the original replay key after a challeng
     const after = await current(), freshBody = { ...body, expectedVersion: after.request.currentVersion, expectedRevision: after.engine.revision };
     await assert.rejects(f.bridge.mutate(f.identity, project, requestId, operation, freshBody, `restart-${label}-fresh`),
       { code: "conflict" });
-    if (operation === "approve") await assert.rejects(f.bridge.readApprovalDocument(f.identity, project, requestId), { code: "conflict" });
+    const changedBody = operation === "confirm" ? { ...body, requestSha256: "f".repeat(64) }
+      : operation === "start" ? { ...body, runLinkId: "run-link:other" }
+        : operation === "answer" ? { ...body, text: "A different answer." }
+          : { ...body, reportSha256: "f".repeat(64) };
+    await assert.rejects(f.bridge.mutate(f.identity, project, requestId, operation, changedBody, originalKey),
+      { code: "conflict" }, "original key cannot authorize a changed command body");
+    if (operation === "approve") {
+      await assert.rejects(f.bridge.readApprovalDocument(f.identity, project, requestId), { code: "conflict" });
+      const document = await f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/approval-document`));
+      assert.equal(document.status, 409, "normal owner HTTP document route cannot re-read the consumed approval");
+    }
     const replay = await f.bridge.mutate(f.identity, project, requestId, operation, body, originalKey);
     assert.equal(replay.state, "accepted"); assert.equal(replay.replayed, true);
     assert.equal(f.calls.length, calls, "exact replay never repeats the engine action");
@@ -539,13 +555,15 @@ test("B5 consumed owner actions require the original replay key after a challeng
   assert.equal(await f.tick(), "question"); s = await current();
   await check("answer", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
     questionId: f.question.questionId, inputVersion: f.question.inputVersion, questionReportSha256: f.question.reportSha256, text: "Amber." });
-  assert.equal((await current()).engine.question, null);
+  const answered = await current();
+  assert.equal(answered.engine.question, null);
+  assert.equal(answered.decisions?.gate, null, "fresh current status cannot supply the consumed question for owner re-reading");
   for (const step of ["plan", "spec"] as const) {
     assert.equal(await f.tick(), `${step}-waiting`); s = await current();
     await check("approve", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, ...s.engine.approval! }, `approve-${step}`);
     assert.equal((await current()).engine.approval, null);
   }
-  console.log("RESULT: PASS consumed Confirm/Start/Answer/plan/spec new-key=conflict exact-original-key=accepted-replay engine-actions-not-repeated");
+  console.log("RESULT: PASS intake/Confirm/Start/Answer/plan/spec changed-body-original-key=conflict consumed-new-key=conflict exact-original=accepted-replay consumed-document-HTTP=409 consumed-question-absent engine-actions-not-repeated");
 });
 
 test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent restart, and records the finish card", async t => {
