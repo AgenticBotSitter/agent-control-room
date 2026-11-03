@@ -227,7 +227,7 @@ test("B5 preflight checks product, ports and identity before any effect", async 
 
 /** Seeds the proof site, commits a defective then a repaired page, and runs the
  * diagnostic independently at both heads. The page content is generic test data. */
-async function proofSite(t: Pick<TestContext, "after">) {
+async function proofSite(t: Pick<TestContext, "after">, twoRejections = false) {
   const dir = await owned(t, "b5-site-"), project = join(dir, "project");
   const seeded = await H.seedProofSiteV1(project);
   const page = (badge: string) => `<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Proof site</title></head>\n<body>\n<main><h1>Proof site</h1>${badge}<p>A small page for the first website proof.</p></main>\n</body>\n</html>\n`;
@@ -235,10 +235,16 @@ async function proofSite(t: Pick<TestContext, "after">) {
   await git(project, ["commit", "--quiet", "-am", "Add Ready badge"]); const rejected = await git(project, ["rev-parse", "HEAD"]);
   const smoke = await run(process.execPath, ["--test", "tests/site-smoke.test.mjs"], { cwd: project, encoding: "utf8", env: GIT_ENV });
   const failed = await H.runIndependentStatusCheckV1(project, "status-check/rejected.txt");
+  let second: { head: string; record: B5StatusCheckRecordV1; output: string } | undefined;
+  if (twoRejections) {
+    await writeFile(join(project, "index.html"), page(`<span id="status" style="background:#fbbf24">Ready</span>`));
+    await git(project, ["commit", "--quiet", "-am", "First repair still lacks status semantics"]);
+    second = { head: await git(project, ["rev-parse", "HEAD"]), ...await H.runIndependentStatusCheckV1(project, "status-check/rejected-2.txt") };
+  }
   await writeFile(join(project, "index.html"), page(`<span id="status" role="status" style="background:#f59e0b">Ready</span>`));
   await git(project, ["commit", "--quiet", "-am", "Announce the Ready badge"]); const final = await git(project, ["rev-parse", "HEAD"]);
   const passed = await H.runIndependentStatusCheckV1(project, "status-check/final.txt");
-  return { dir, project, seeded, rejected, final, smoke, failed, passed };
+  return { dir, project, seeded, rejected, final, smoke, failed, passed, second };
 }
 test("B5 proof site planted omission passes smoke and fails the named diagnostic", async t => {
   await load();
@@ -261,14 +267,21 @@ test("B5 proof site planted omission passes smoke and fails the named diagnostic
  * handler returned, over a proof-site repository whose diagnostics actually ran. The
  * engine is SYNTHETIC, so `fixturePins` qualify its tooling only to exercise the guards;
  * `qualifiedPins` stand for a real configuration that the fixture's card cannot meet. */
-async function evidenceSet(t: Pick<TestContext, "after">) {
-  const p = await proofSite(t), dir = join(p.dir, "evidence"), base = p.seeded.head;
+async function evidenceSet(t: Pick<TestContext, "after">, twoRejections = false) {
+  const p = await proofSite(t, twoRejections), dir = join(p.dir, "evidence"), base = p.seeded.head;
   const f = await H.syntheticFirstWebsiteFixtureV1({ heads: { base, rejected: p.rejected, final: p.final } }); t.after(() => f.close());
   const project = f.project.projectId;
   const { requestId } = await H.driveSyntheticFirstWebsiteV1(f, f.bridge, f.identity, project, "b5-verify");
   assert.equal((await f.publish()).state, "recorded");
-  const readCard = async () => f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/candidate`));
-  const card = (await (await readCard()).json()).candidate as LoopCandidateCardV1;
+  const savedCard = async () => f.handle(webRequest(`/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(requestId)}/candidate`));
+  const card = (await (await savedCard()).json()).candidate as LoopCandidateCardV1;
+  if (p.second) {
+    const old = card.evidence.reviews.find(r => !r.current)!;
+    card.evidence.reviews.push({ ...old, stepId: "review:code-1-repair", attempt: 2, candidateRevision: p.second.head });
+    card.evidence.rounds = { ...card.evidence.rounds, attempts: 3, reviewRejections: 2, repairs: 2 };
+  }
+  // The two-round variant extends the synthetic card; no real engine or signed-card proof is claimed.
+  const readCard = p.second ? async () => new Response(JSON.stringify({ candidate: card }), { headers: { "content-type": "application/json" } }) : savedCard;
   const responseDigest = H.b5Bytes(new Uint8Array(await (await readCard()).arrayBuffer()));
   const rows: { table: string; sha256: string; row: Record<string, unknown> }[] = [];
   for (const table of H.B5_SNAPSHOT_TABLES) for (const value of (await f.client.query<Record<string, unknown>>(`SELECT ${H.B5_SNAPSHOT_COLUMNS[table].join(",")} FROM ${table}`)).rows) {
@@ -288,8 +301,10 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
   const reviews = card.evidence.reviews, old = reviews.find(r => !r.current)!, current = reviews.filter(r => r.current);
   const steps = [step(1, "plan", "writer-p", "family-p", base, "DONE", {startedAt:time(3.5),endedAt:time(4.5)}), step(2, "build", "writer-b", "family-b", p.rejected, "DONE"),
     step(3, old.role, old.observedModel!, old.family!, old.candidateRevision, old.verdict, { diagnostic: "FAIL", findings: [{ severity: "MEDIUM", state: "open", summary: "status element lacks role=status" }] }),
-    step(4, "build", "writer-b", "family-b", p.final, "DONE"),
-    ...current.map((r, i) => step(5 + i, r.role, r.observedModel!, r.family!, r.candidateRevision, r.verdict, r.role === "code-review" ? { diagnostic: "PASS" } : {}))];
+    ...(p.second ? [step(4, "build", "writer-b", "family-b", p.second.head, "DONE"),
+      step(5, old.role, old.observedModel!, old.family!, p.second.head, "NEEDS-FIX", { diagnostic: "FAIL", findings: [{ severity: "MEDIUM", state: "open", summary: "first repair still lacks role=status" }] })] : []),
+    step(p.second ? 6 : 4, "build", "writer-b", "family-b", p.final, "DONE"),
+    ...current.map((r, i) => step((p.second ? 7 : 5) + i, r.role, r.observedModel!, r.family!, r.candidateRevision, r.verdict, r.role === "code-review" ? { diagnostic: "PASS" } : {}))];
   fixturePins.providers.lineup = steps.map(s => ({ role: s.role, identity: s.identity, family: s.family, route: "fixture", grade: "fixture" }));
   const dom = ["07-finish-phone", "08-finish-desktop", "09-retained"].map(screen => ({ screen, candidateRevision: card.candidateRevision, baseRevision: base, requestId }));
   const files: Record<string, unknown> = {
@@ -306,11 +321,12 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
       { label: "after spec approval", from: time(6.5), to: time(38),receipts:[{device:"phone",sequence:9,path:"receipts/9.json"},{device:"desktop",sequence:10,path:"receipts/10.json"}] }], steps, dom,
     devices: [{ kind: "phone", real: false, browser: "phone browser" }, { kind: "desktop", real: false, browser: "desktop browser" }] },
     "database-snapshot.json": { schemaVersion: 1, readAt: time(43), rows },
-    "independent-status-check.json": [p.failed.record, p.passed.record],
+    "independent-status-check.json": [p.failed.record, ...(p.second ? [p.second.record] : []), p.passed.record],
     "teardown.json": { transportCleanup:noMappingCleanup(), schemaVersion: 1, b3cCleanup: "complete", scratchAbsent: true, ownedProcesses: 0, ownedListenersReleased: true, protectedListenersUntouched: true,
       postgresStopped: true, cleanupAt: time(41), retainedRead: { at: time(42), candidateRevision: card.candidateRevision, receiptDigest: card.recordDigest } },
   };
   const raw: Record<string, string | Uint8Array> = { "status-check/rejected.txt": p.failed.output, "status-check/final.txt": p.passed.output };
+  if (p.second) raw["status-check/rejected-2.txt"] = p.second.output;
   for (const n of ["01-prepare", "02-confirm-start", "03-question", "04-plan", "05-spec", "06-repair", "07-finish-phone", "08-finish-desktop", "09-retained"]) raw[`screens/${n}.png`] = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXf8AAAAASUVORK5CYII=","base64");
   const journey = files["journey.json"] as { actions: {name: string; sequence: number; device: string; at: string; receiptPath: string}[]; serviceFacts: unknown[] };
   const words: Record<string,string> = { intake:"prepared", confirm:"confirmed", start:"started", answer:"answered", "approve-plan":"plan-approved", "approve-spec":"spec-approved", "finish-phone":"finished", "finish-desktop":"finished", retained:"retained-read" };
@@ -349,7 +365,7 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
       risk: { categories: ["code", "owner_visible", "ci"], slots: ["attack-review", "ui-review", "ci-review"] },
       launch: { uid: 501, context: "current-session", isolationClaim: "none", consumedRoots: ["runs", "work", "config"] },
       lineage: { requestId, runLinkId: b.runLinkId, loopRunId: b.loopRunId, localVersion: card.localVersion, a2InputVersion: card.a2InputVersion },
-      heads: { base, rejected: p.rejected, final: p.final },
+      heads: { base, rejected: p.rejected, ...(p.second ? { rejectedHeads: [p.rejected, p.second.head] } : {}), final: p.final },
       classification: { website: "real", storage: "real", engine: "real", sendBack: "real", recovery: "real", finish: "real", device: "fixture", providers: "fixture", stimuli: "fixture" },
       timestamps: { startedAt: time(0), finishedAt: time(45) } };
     const v = { files: structuredClone(files), manifest }; change(v);
@@ -367,6 +383,84 @@ async function evidenceSet(t: Pick<TestContext, "after">) {
     teardown: (v: Files) => v.files["teardown.json"] as Record<string, unknown>,
     snapshot: (v: Files) => v.files["database-snapshot.json"] as { rows: { table: string; sha256: string; row: Record<string, unknown> }[] } };
 }
+test("B5 two-rejection journey reaches the fixture end after both original-builder repairs", async t => {
+  await load(); const e = await evidenceSet(t, true); await e.write();
+  assert.equal(await refusalAt(e), INCOMPLETE);
+});
+test("B5 two-rejection evidence refuses a missing or passing record at either rejected head", async t => {
+  await load(); const e = await evidenceSet(t, true);
+  for (const i of [0, 1]) {
+    await e.write(v => { (v.files["independent-status-check.json"] as B5StatusCheckRecordV1[]).splice(i, 1); });
+    assert.equal(await refusalAt(e), "B5_HEAD_BINDING:diagnostic heads", `missing rejection ${i + 1}`);
+    await e.write(v => { Object.assign((v.files["independent-status-check.json"] as B5StatusCheckRecordV1[])[i]!, { exitCode: 0, failed: 0, passed: 1 }); });
+    assert.equal(await refusalAt(e), "B5_HEAD_BINDING:diagnostic results", `passing rejection ${i + 1}`);
+  }
+  await e.write(); assert.equal(await refusalAt(e), INCOMPLETE, "all records restored");
+});
+test("B5 two-rejection evidence refuses out-of-order records and manifest heads", async t => {
+  await load(); const e = await evidenceSet(t, true);
+  await e.write(v => {
+    const records = v.files["independent-status-check.json"] as B5StatusCheckRecordV1[];
+    [records[0], records[1]] = [records[1]!, records[0]!];
+  });
+  assert.equal(await refusalAt(e), "B5_HEAD_BINDING:diagnostic heads");
+  // Even consistently reordering the manifest and records cannot reverse actual Git ancestry.
+  await e.write(v => {
+    const heads = v.manifest.heads as { rejected: string; rejectedHeads: string[] };
+    heads.rejectedHeads.reverse(); heads.rejected = heads.rejectedHeads[0]!;
+    const records = v.files["independent-status-check.json"] as B5StatusCheckRecordV1[];
+    [records[0], records[1]] = [records[1]!, records[0]!];
+    // Keep diagnostic timestamps chronological, so repository ancestry decides this case.
+    const first = { startedAt: records[1]!.startedAt, endedAt: records[1]!.endedAt };
+    Object.assign(records[1]!, { startedAt: records[0]!.startedAt, endedAt: records[0]!.endedAt });
+    Object.assign(records[0]!, first);
+  });
+  assert.equal(await refusalAt(e), "B5_CANDIDATE_REPOSITORY:ancestry");
+});
+test("B5 two-rejection journey refuses either missing repair and every passing rejection sidecar", async t => {
+  await load(); const e = await evidenceSet(t, true);
+  for (const n of [4, 6]) {
+    await e.write(v => { e.journey(v).steps = e.journey(v).steps.filter(s => s.n !== n); });
+    assert.equal(await refusalAt(e), "B5_REJECTION_REPAIR:original builder repair", `missing repair ${n}`);
+  }
+  for (const n of [3, 5]) {
+    await e.write(v => { e.journey(v).steps.find(s => s.n === n)!.diagnostic = "PASS"; });
+    assert.equal(await refusalAt(e), "B5_REJECTION_REPAIR:rejection", `passing rejection sidecar ${n}`);
+  }
+  await e.write(v => { e.journey(v).steps.find(s => s.n === 7)!.diagnostic = "FAIL"; });
+  assert.equal(await refusalAt(e), "B5_REJECTION_REPAIR:fresh code reviews");
+  await e.write(); assert.equal(await refusalAt(e), INCOMPLETE);
+});
+test("B5 two-rejection closed interval covers every rejection and repair with only the initial handoff exception", async t => {
+  await load(); const e = await evidenceSet(t, true); await e.write();
+  const manifest = H.b5ManifestSchemaV1.parse(JSON.parse(await readFile(join(e.dir, "manifest.json"), "utf8")));
+  const journey = H.b5JourneySchemaV1.parse(JSON.parse(await readFile(join(e.dir, "journey.json"), "utf8")));
+  assert.doesNotThrow(() => H.assertRejectionRepairV1(manifest, journey));
+  for (const n of [3, 4, 5, 6, 7, 8]) {
+    const j = structuredClone(journey), target = j.steps.find(s => s.n === n)!;
+    const interval = j.closed[1]!;
+    j.closed.splice(1, 1, { ...interval, to: target.startedAt },
+      { ...interval, from: new Date(Date.parse(target.startedAt) + 1).toISOString() });
+    assert.throws(() => H.assertRejectionRepairV1(manifest, j),
+      { code: "B5_REJECTION_REPAIR", detail: "steps outside a closed-browser interval" }, `step ${n} crosses the close receipt`);
+  }
+});
+test("B5 two-rejection evidence requires every head on the card and in the journey", async t => {
+  await load(); const e = await evidenceSet(t, true);
+  const card = structuredClone(e.card);
+  card.evidence.reviews = card.evidence.reviews.filter(r => r.candidateRevision !== e.p.second!.head);
+  const body = JSON.stringify({ candidate: card });
+  await e.write();
+  assert.equal(await refusalAt(e, { readCard: async () => new Response(body, { headers: { "content-type": "application/json" } }) }),
+    "B5_HEAD_BINDING:rejected reviews");
+  await e.write(v => {
+    // Matching the record count to an omitted round cannot hide the journey's extra rejection.
+    delete (v.manifest.heads as { rejectedHeads?: string[] }).rejectedHeads;
+    (v.files["independent-status-check.json"] as B5StatusCheckRecordV1[]).splice(1, 1);
+  });
+  assert.equal(await refusalAt(e), "B5_HEAD_BINDING:rejected reviews");
+  await e.write(); assert.equal(await refusalAt(e), INCOMPLETE);
+});
 test("B5 verifier accepts fixture evidence only as incomplete", async t => {
   await load();
   const e = await evidenceSet(t);
