@@ -26,14 +26,19 @@ function humanDuration(durationMs: number) {
   if (seconds || !parts.length) parts.push(`${seconds} second${seconds === 1 ? "" : "s"}`);
   return parts.join(" ");
 }
+/** Optional-capability probe: a host without the loop candidate feature answers 404 once.
+ * That is final for this page lifetime (module state resets on a full page load), so
+ * nothing re-requests it, whether by polling, focus, remount or the refresh button. */
+let loopCandidatesAbsent = false;
 export function ImprovementFinishCard(props: FinishProps) {
   return <FinishRead key={JSON.stringify([props.projectId,props.requestId,props.binding])} {...props} />;
 }
 function FinishRead({ projectId, requestId, binding = "", enabled = true, onCurrentCandidateChange }: FinishProps) {
+  const [absent,setAbsent] = useState(loopCandidatesAbsent);
   const [epoch,setEpoch] = useState(0), generation = useRef(0), verified = useRef(false);
   const [retained,setRetained] = useState<Read>();
   const key = JSON.stringify(["loop-candidates",projectId,requestId,binding,epoch]);
-  const read = usePolledRead({ key,shareKey:key,baseIntervalMs:30_000,enabled,dropValueOnError:true,
+  const read = usePolledRead({ key,shareKey:key,baseIntervalMs:30_000,enabled:enabled && !absent && !loopCandidatesAbsent,dropValueOnError:true,
     read: async signal => {
       verified.current = false; const captured = generation.current;
       const value = await client.read(signal,projectId,requestId);
@@ -42,6 +47,7 @@ function FinishRead({ projectId, requestId, binding = "", enabled = true, onCurr
     },
     onAccept: value => { verified.current = true; setRetained(value); },
     onFailure: error => { verified.current = false;
+      if (error instanceof LoopCandidateReadErrorV1 && error.status === 404) { loopCandidatesAbsent = true; setAbsent(true); }
       if (error instanceof LoopCandidateReadErrorV1 && error.protectedFailure) { generation.current++; setRetained(undefined); } },
   });
   const value = read.value ?? retained, fresh = enabled && verified.current && !!read.value && !read.error && !read.loading && !read.checking;
@@ -50,6 +56,7 @@ function FinishRead({ projectId, requestId, binding = "", enabled = true, onCurr
   useEffect(() => { onCurrentCandidateChange?.(hasCurrentCandidate); }, [hasCurrentCandidate,onCurrentCandidateChange]);
   useEffect(() => () => onCurrentCandidateChange?.(false), [onCurrentCandidateChange]);
   const invalidate = () => { verified.current = false; generation.current++; setEpoch(generation.current); read.clear(); };
+  if (!projectId && (absent || loopCandidatesAbsent)) return null;
   if (!projectId && !value && !read.error) return null;
   if (!projectId && read.error instanceof LoopCandidateReadErrorV1 && read.error.status === 404) return null;
   return <section className="private-panel" aria-label="Loop finished candidates" style={{ minWidth:0,overflowWrap:"anywhere" }}>
