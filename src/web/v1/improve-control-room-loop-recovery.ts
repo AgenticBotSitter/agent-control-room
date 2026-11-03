@@ -1,4 +1,4 @@
-import { loopFinalizationFailureReasonV1 } from "./improve-control-room-loop-finalization";
+import { loopFinalizationFailureReasonV1, loopFinalizationErrorDiagnosticV1 } from "./improve-control-room-loop-finalization";
 import { z } from "zod";
 import type { LoopRecoveryChildV1 } from "./improve-control-room-loop-adapter";
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/);
@@ -35,7 +35,7 @@ export function createImproveControlRoomLoopRecoveryV1(input:{port:LoopRecoveryP
         if(!enabled())break;
         // Terminal observation shares this scan and its four asynchronous slots,
         // even when all four driver slots are occupied.
-        if(input.observe)try{await input.observe(target,abort.signal);}catch(error){console.warn("loop_finalization_sweep_failed",loopFinalizationFailureReasonV1(error));}
+        if(input.observe)try{await input.observe(target,abort.signal);}catch(error){console.warn("loop_finalization_sweep_failed",loopFinalizationFailureReasonV1(error),...loopFinalizationErrorDiagnosticV1(error));}
         if(!enabled()||abort.signal.aborted)break;
         if(children.has(key)||children.size+reserved>=4)continue;
         reserved++;

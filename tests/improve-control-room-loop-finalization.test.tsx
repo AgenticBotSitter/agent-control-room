@@ -52,7 +52,7 @@ import type { TestContext } from "node:test";
 async function using(t:TestContext){const f=await finalizationFixture();t.after(f.close);return f;}
 const signal=()=>new AbortController().signal;
 async function direct(f:Awaited<ReturnType<typeof finalizationFixture>>,capability:LoopFinalizationCapabilityV1=f.capability,
-  publish=f.publish,authorize=async()=>f.target){
+  publish:Parameters<typeof createImproveControlRoomLoopFinalizerV1>[0]["publishCompletion"]=f.publish,authorize=async()=>f.target){
   return createImproveControlRoomLoopFinalizerV1({capability,publishCompletion:publish,authorize,signal:signal()}).finalize(f.target);
 }
 if(ordinary){
@@ -766,8 +766,12 @@ if(ordinary) test("B5 finalization sweep maps publish refusal to bounded attenti
   const attention=await f.service().readAttention(f.identity);
   assert.equal(attention.state,"available");
   if(attention.state!=="available")throw new Error("missing attention");
-  assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,"PUBLICATION_UNAVAILABLE");
-  assert.deepEqual(warnings,Array.from({length:2},()=>["loop_finalization_sweep_failed","PUBLICATION_UNAVAILABLE"]));
+  assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,"PUBLICATION_VERIFY_FAILED");
+  assert.deepEqual(warnings,Array.from({length:2},()=>[
+    ["loop_finalization_failed","PUBLICATION_VERIFY_FAILED","Error","unclassified_error"],
+    ["loop_finalization_sweep_failed","PUBLICATION_VERIFY_FAILED","Error","unclassified_error"],
+  ]).flat());
+  assert.doesNotMatch(JSON.stringify(warnings),/PRIVATE|scratch/);
   assert.ok(!JSON.stringify(attention).includes("PRIVATE"));warn.mock.restore();
   await f.observe();
   assert.equal((await f.capability.readRecord(f.target))?.phase,"cleanup");
@@ -820,7 +824,45 @@ if(ordinary) test("B5 finalization durable publication wins over a stale cached 
   rememberLoopFinalizationFailureV1(f.target,null);
 });
 
-if(ordinary) test("B5 finalization failure code schema is exactly the four finalization codes",()=>{
-  assert.deepEqual([...loopFinalizationFailureReasonSchemaV1.options].sort(),["CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","RETENTION_FAILED","UNAVAILABLE"]);
+if(ordinary) test("B5 finalization failure code schema accepts only bounded finalization stages",()=>{
+  assert.deepEqual([...loopFinalizationFailureReasonSchemaV1.options].sort(),["CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","RETENTION_FAILED","UNAVAILABLE",
+    "PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED",
+    "PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"].sort());
   assert.equal(loopFinalizationFailureReasonSchemaV1.catch("UNAVAILABLE").parse("FINISHED"),"UNAVAILABLE");
+});
+
+const publicationStageReasons = {
+  prepare:"PUBLICATION_PREPARE_FAILED", verify:"PUBLICATION_VERIFY_FAILED", record:"PUBLICATION_RECORD_FAILED",
+} as const;
+if(ordinary) for(const stage of ["prepare","verify","record"] as const) test(`B5 publication ${stage} failure preserves stage and bounded cause`,async t=>{
+  const f=await using(t), warnings:unknown[][]=[];
+  t.mock.method(console,"warn",(...args:unknown[])=>warnings.push(args));
+  const cause=new Error("loop_candidate_integrity_failed");
+  await assert.rejects(direct(f,f.capability,async(_input,onStage)=>{
+    onStage?.(stage);throw cause;
+  }),{reasonCode:publicationStageReasons[stage],cause});
+  assert.deepEqual(warnings,[["loop_finalization_failed",publicationStageReasons[stage],"Error","loop_candidate_integrity_failed"]]);
+});
+if(ordinary) for(const stage of ["verifyPublication","published-append","announced-append"] as const) test(`B5 publication ${stage} failure has its own bounded code`,async t=>{
+  const f=await using(t), warnings:unknown[][]=[];
+  t.mock.method(console,"warn",(...args:unknown[])=>warnings.push(args));
+  const codes={verifyPublication:"PUBLICATION_VERIFY_PUBLICATION_FAILED","published-append":"PUBLICATION_PUBLISHED_APPEND_FAILED","announced-append":"PUBLICATION_ANNOUNCED_APPEND_FAILED"};
+  const capability={...f.capability,appendRecord:async(binding:Parameters<typeof f.capability.appendRecord>[0],record:Parameters<typeof f.capability.appendRecord>[1])=>{
+    if(record.phase===(stage==="published-append"?"published":stage==="announced-append"?"announced":"never"))throw new Error("PRIVATE /scratch/private");
+    return f.capability.appendRecord(binding,record);
+  }};
+  const publish=async()=>{const receipt=await f.publish();return stage==="verifyPublication"?{...receipt,engineRevision:receipt.engineRevision+1}:receipt;};
+  await assert.rejects(direct(f,capability,publish),{reasonCode:codes[stage]});
+  assert.equal(warnings.length,1);assert.equal(warnings[0]![1],codes[stage]);
+  assert.doesNotMatch(JSON.stringify(warnings),/PRIVATE|scratch/);
+});
+
+if(ordinary) test("B5 diagnostic logging bounds unknown errors and preserves fixed causes",async()=>{
+  const {loopFinalizationErrorDiagnosticV1,LoopFinalizationFailureV1}=await import("../src/web/v1/improve-control-room-loop-finalization");
+  class UntrustedClass extends Error {}
+  for(const error of [new UntrustedClass("PRIVATE /scratch/private"),"PRIVATE /scratch/private",null])
+    assert.deepEqual(loopFinalizationErrorDiagnosticV1(error),["UnknownError","unclassified_error"]);
+  const cause=new Error("loop_adapter_unavailable");
+  const wrapped=new LoopFinalizationFailureV1("PUBLICATION_RECORD_FAILED",cause);
+  assert.deepEqual(loopFinalizationErrorDiagnosticV1(wrapped),["Error","loop_adapter_unavailable"]);
 });

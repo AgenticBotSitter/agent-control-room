@@ -2036,7 +2036,10 @@ test('B5 real journey continues through every long owner gate and both restarts'
 
 test("B5 controller persists a bounded finalization reason in timeout verdict detail",async t=>{
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
-  for(const [detail,expected] of [["PUBLICATION_UNAVAILABLE","PUBLICATION_UNAVAILABLE"],["PRIVATE /scratch/unknown","UNAVAILABLE"]]){
+  for(const [detail,expected] of [["PUBLICATION_UNAVAILABLE","PUBLICATION_UNAVAILABLE"],
+    ...["PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED",
+      "PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"].map(code=>[code,code]),
+    ["PRIVATE /scratch/unknown","UNAVAILABLE"]]){
     const {s,preflight,runFirstWebsiteJourneyV1}=await controllerDriverFixture(t);
     const owner=createFirstWebsiteControllerOwnerV1(),evidenceDir=join(s.root,'finalization-timeout-evidence');
     t.mock.method(owner,'beginAcquisition',()=>{throw new H.B5RefusalV1("B5_A2_FINALIZATION_TIMEOUT",detail);});

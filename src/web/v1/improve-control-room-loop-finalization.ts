@@ -2,7 +2,7 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
 import { loopRecoveryBindingSchemaV1 } from "./improve-control-room-loop-adapter";
 import { loopCandidateCompletionReceiptSchemaV1, type LoopCandidateCompletionReceiptV1 } from "../../improve-control-room/v1/loop-candidate-wire";
-import type { LoopCandidateDependenciesV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import type { LoopCandidateDependenciesV1, LoopCandidatePublicationStageV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import type { LoopRecoveryTargetV1 } from "./improve-control-room-loop-recovery";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -50,15 +50,29 @@ export type LoopFinalizationCapabilityV1 = LoopCandidateDependenciesV1 & {
 };
 // Diagnostic state is bounded, process-local and scoped to the complete authorized
 // revision. Durable receipts remain the authority after restart or supersession.
-export const loopFinalizationFailureReasonSchemaV1 = z.enum(["UNAVAILABLE","RETENTION_FAILED","PUBLICATION_UNAVAILABLE","CLEANUP_UNCERTAIN"]);
+export const loopFinalizationFailureReasonSchemaV1 = z.enum(["UNAVAILABLE","RETENTION_FAILED","PUBLICATION_UNAVAILABLE","CLEANUP_UNCERTAIN","PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED","PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"]);
 export type LoopFinalizationFailureReasonV1 = z.infer<typeof loopFinalizationFailureReasonSchemaV1>;
 // Codes name the stage in flight when the attempt stopped, not a proven failing operation.
 const failures=new Map<string,LoopFinalizationFailureReasonV1>();
 export class LoopFinalizationFailureV1 extends Error {
-  constructor(readonly reasonCode:LoopFinalizationFailureReasonV1){super("loop_finalization_unavailable");}
+  constructor(readonly reasonCode:LoopFinalizationFailureReasonV1,cause?:unknown){super("loop_finalization_unavailable",{cause});}
 }
 export function loopFinalizationFailureReasonV1(error:unknown):LoopFinalizationFailureReasonV1{
   return error instanceof LoopFinalizationFailureV1?error.reasonCode:"UNAVAILABLE";
+}
+/** Log only exact, fixed codes. Zod/driver and adapter errors may carry raw
+ * evidence or paths, so neither arbitrary messages nor class names may escape. */
+export function loopFinalizationErrorDiagnosticV1(error:unknown):readonly [string,string]{
+  for(let depth=0;depth<8&&error instanceof LoopFinalizationFailureV1&&error.cause!==undefined;depth++)error=error.cause;
+  if(!(error instanceof Error))return ["UnknownError","unclassified_error"];
+  // PGlite bundles its DatabaseError constructor under the fixed name C.
+  const classes=["C","Error","TypeError","RangeError","WebAccessError","ZodError","DatabaseError","LoopCandidateStaleCompletionV1"];
+  const messages=["loop_candidate_unavailable","loop_candidate_integrity_failed","loop_candidate_stale",
+    "loop_adapter_unavailable","loop_bridge_contract_unavailable","loop_finalization_unavailable",
+    "loop_command_integrity_failed","loop_improvement_integrity_failed","loop_contract_unavailable",
+    "conflict","not_found","loop candidate reviews shape rejected"];
+  return [classes.includes(error.constructor.name)?error.constructor.name:"UnknownError",
+    messages.includes(error.message)?error.message:"unclassified_error"];
 }
 export function rememberLoopFinalizationFailureV1(target:LoopFinalizationTargetV1,reason:LoopFinalizationFailureReasonV1|null){
   const key=canonicalJson(loopFinalizationTargetSchemaV1.parse(target));failures.delete(key);
@@ -70,7 +84,7 @@ export function readLoopFinalizationFailureV1(target:LoopFinalizationTargetV1){
 export function pendingLoopFinalizationReasonV1(record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1{
   return record?.publication?"CLEANUP_UNCERTAIN":record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
 }
-const failureRank:Record<LoopFinalizationFailureReasonV1,number>={UNAVAILABLE:0,RETENTION_FAILED:1,PUBLICATION_UNAVAILABLE:2,CLEANUP_UNCERTAIN:3};
+const failureRank:Record<LoopFinalizationFailureReasonV1,number>={UNAVAILABLE:0,RETENTION_FAILED:1,PUBLICATION_UNAVAILABLE:2,CLEANUP_UNCERTAIN:3,PUBLICATION_PREPARE_FAILED:2,PUBLICATION_VERIFY_FAILED:2,PUBLICATION_RECORD_FAILED:2,PUBLICATION_VERIFY_PUBLICATION_FAILED:2,PUBLICATION_PUBLISHED_APPEND_FAILED:3,PUBLICATION_ANNOUNCED_APPEND_FAILED:3};
 /** Durable receipts win: a cached failure is used only when it is at least as far along as the
  * stage the saved record implies, and never once cleanup is recorded. */
 export function effectiveLoopFinalizationReasonV1(target:LoopFinalizationTargetV1,record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1|null{
@@ -137,7 +151,7 @@ export type LoopFinalizationPortV1={observe(target:LoopRecoveryTargetV1,signal:A
 /** Service admission is rechecked at every asynchronous boundary. All writes
  * happen under the installation's same-run fence; GET never calls this code. */
 export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFinalizationCapabilityV1;
-  publishCompletion:(input:{runLinkId:string;completionDigest:string})=>Promise<LoopCandidateCompletionReceiptV1>;
+  publishCompletion:(input:{runLinkId:string;completionDigest:string},onStage?:(stage:LoopCandidatePublicationStageV1)=>void)=>Promise<LoopCandidateCompletionReceiptV1>;
   authorize:()=>Promise<LoopFinalizationTargetV1>;signal:AbortSignal}){
   const c=input.capability;
   return {async finalize(target:LoopFinalizationTargetV1){
@@ -179,7 +193,7 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
         if(!same(proposed,saved))throw unavailable();record=saved;previousRecord=saved;await active();
       };
       if(!["candidate_ready","failed","stopped"].includes(o.outcome)||inspected.termination?.state!=="already-ended"){
-        if(!record)await append("announced",{termination:inspected.termination});return record;
+        if(!record){failureReason="PUBLICATION_ANNOUNCED_APPEND_FAILED";await append("announced",{termination:inspected.termination});}return record;
       }
       const retain=async()=>{
         failureReason="RETENTION_FAILED";
@@ -194,10 +208,15 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       if(record!.phase==="terminated"&&o.outcome==="candidate_ready"){
         await retain();await active();
         failureReason="PUBLICATION_UNAVAILABLE";
-        const publication=verifyPublication(await input.publishCompletion({runLinkId:b.runLinkId,completionDigest:o.completionDigest!}),o,custody.retentionDigest);
+        const receipt=await input.publishCompletion({runLinkId:b.runLinkId,completionDigest:o.completionDigest!},stage=>{
+          failureReason=({prepare:"PUBLICATION_PREPARE_FAILED",verify:"PUBLICATION_VERIFY_FAILED",record:"PUBLICATION_RECORD_FAILED"} as const)[stage];
+        });
+        failureReason="PUBLICATION_VERIFY_PUBLICATION_FAILED";
+        const publication=verifyPublication(receipt,o,custody.retentionDigest);
+        failureReason="PUBLICATION_PUBLISHED_APPEND_FAILED";
         await active();await append("published",{publication});
       }
-      if(["terminated","published"].includes(record!.phase))await append("announced");
+      if(["terminated","published"].includes(record!.phase)){failureReason="PUBLICATION_ANNOUNCED_APPEND_FAILED";await append("announced");}
       if(record!.phase==="announced"){
         let cleanup:z.infer<typeof loopFinalizationCleanupSchemaV1>;
         if(c.cleanup){
@@ -211,6 +230,9 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       }
       return record;
     });
-    }catch{throw new LoopFinalizationFailureV1(failureReason);}
+    }catch(error){
+      console.warn("loop_finalization_failed",failureReason,...loopFinalizationErrorDiagnosticV1(error));
+      throw new LoopFinalizationFailureV1(failureReason,error);
+    }
   }};
 }

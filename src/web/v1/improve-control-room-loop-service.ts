@@ -500,12 +500,12 @@ export class ImproveControlRoomLoopServiceV1 {
       const binding=await authorize();
       try{
         await createImproveControlRoomLoopFinalizerV1({capability,authorize,signal:operationSignal,
-          publishCompletion:input=>this.#publisher.publishCompletion(input)}).finalize(binding);
+          publishCompletion:(input,onStage)=>this.#publisher.publishCompletion(input,onStage)}).finalize(binding);
         rememberLoopFinalizationFailureV1(binding,null);
       }catch(error){
         const reason=loopFinalizationFailureReasonV1(error);
         rememberLoopFinalizationFailureV1(binding,reason);
-        throw new LoopFinalizationFailureV1(reason);
+        throw error instanceof LoopFinalizationFailureV1?error:new LoopFinalizationFailureV1(reason,error);
       }
     }});
   }
@@ -540,7 +540,7 @@ export class ImproveControlRoomLoopServiceV1 {
     }
     const failure=effectiveLoopFinalizationReasonV1(binding,record);
     if(failure)reasonCode=failure;
-    if(["CLEANUP_REFUSED","CLEANUP_UNCERTAIN","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"].includes(reasonCode))kind="stall";
+    if(["CLEANUP_REFUSED","CLEANUP_UNCERTAIN","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE","PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED","PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"].includes(reasonCode))kind="stall";
     const labels:Record<typeof reasonCode,[string,string,string]>={
       FINISHED:["Finished candidate","A finished candidate and its retained evidence are available.","Review finished candidate"],
       FAILED:["Saved run failed","The saved run failed.","Inspect saved run"],
@@ -549,6 +549,12 @@ export class ImproveControlRoomLoopServiceV1 {
       CLEANUP_UNCERTAIN:["Run cleanup could not be confirmed","Evidence is retained; check the trash.","Check the trash with the lead"],
       RETENTION_FAILED:["Evidence retention failed","Complete retained evidence could not be verified. Originals remain in place.","Ask the lead to check retained evidence"],
       PUBLICATION_UNAVAILABLE:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      PUBLICATION_PREPARE_FAILED:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      PUBLICATION_VERIFY_FAILED:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      PUBLICATION_RECORD_FAILED:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      PUBLICATION_VERIFY_PUBLICATION_FAILED:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      PUBLICATION_PUBLISHED_APPEND_FAILED:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
+      PUBLICATION_ANNOUNCED_APPEND_FAILED:["Candidate publication unavailable","Retained evidence is available but candidate publication could not be verified.","Ask the lead to check retained evidence"],
       TERMINATION_UNCERTAIN:["Run termination uncertain","Already-ended writers could not be verified. Originals remain in place.","Ask the lead to reconcile this run"],
       LAUNCH_UNCERTAIN:["Run launch uncertain","The saved run launch could not be verified.","Ask the lead to reconcile this run"],
       INPUT_CHANGED:["Saved inputs changed","Changed inputs require renewed confirmation and approvals through the lead.","Ask the lead to reconcile this run"],

@@ -644,3 +644,16 @@ test('B5 tools intake contract consumes the product admission envelope and repla
   assert.deepEqual((await bridge.status(f.identity,projectId,intake.requestId)).decisions?.gate,{kind:'confirm'});
   console.log('RESULT B5 tools contract product_envelope=true claims=1 restart_advances=0 gate=confirm model_launches=0');
 });
+
+test('B5 recovery sweep logs the original bounded publication cause once',async t=>{
+  const {LoopFinalizationFailureV1}=await import('../src/web/v1/improve-control-room-loop-finalization');
+  const warnings:unknown[][]=[];
+  t.mock.method(console,'warn',(...args:unknown[])=>warnings.push(args));
+  const target={projectId:'project:diagnostic',requestId:'request:diagnostic',ownerIdentityId:'owner:diagnostic'};
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,
+    observe:async()=>{throw new LoopFinalizationFailureV1('PUBLICATION_RECORD_FAILED',new Error('conflict'));},
+    port:{scan:async()=>({targets:[target],nextCursor:null}),reconcile:async()=>({state:'blocked'})},
+    createCycle:()=>({tick(){},close:async()=>{}})});
+  try{await worker.tick();}finally{await worker.close();}
+  assert.deepEqual(warnings,[['loop_finalization_sweep_failed','PUBLICATION_RECORD_FAILED','Error','conflict']]);
+});
