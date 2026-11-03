@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { chmod, cp, copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -1022,6 +1022,69 @@ test('R5SD: direct child stand-ins exit and are reaped when the parent pipe clos
   } finally { await f.stop(); }
 });
 
+// Signature controls: real installed apps whose signature the check must classify.
+// Apple apps are required everywhere. Third-party apps (Chrome, VS Code) are
+// environmental on hosted macOS CI VMs and become a named diagnostic there.
+const SIGNATURE_CONTROLS = [
+  { path: '/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal', bundle: '/System/Applications/Utilities/Terminal.app', id: 'com.apple.Terminal', apple: true },
+  { path: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', bundle: '/Applications/Google Chrome.app', id: 'com.google.Chrome', team: 'EQHXZ8M8AV' },
+  { path: '/System/Applications/TextEdit.app/Contents/MacOS/TextEdit', bundle: '/System/Applications/TextEdit.app', id: 'com.apple.TextEdit', apple: true },
+  { path: '/Applications/Visual Studio Code.app/Contents/MacOS/Electron', bundle: '/Applications/Visual Studio Code.app', id: 'com.microsoft.VSCode', team: 'UBF8T346G9' },
+];
+
+// Re-runs the product check's conditions from the test side (same codesign
+// commands, injectable run port) and names the first one that fails.
+// Returns undefined when every condition holds. Never changes the product check.
+async function diagnoseSignatureControl(control, run = runFile) {
+  const firstLine = failure => `${failure?.stderr ?? failure?.message ?? failure}`.split('\n').find(line => line.trim()) ?? '(no output)';
+  const requirement = control.apple ? '=anchor apple' : `=anchor apple generic and certificate leaf[subject.OU] = "${control.team}"`;
+  const verify = async (label, target) => {
+    try { await run('/usr/bin/codesign', ['--verify', '--strict', '--all-architectures', '-R', requirement, target], { encoding: 'utf8' }); return undefined; }
+    catch (failure) { return `codesign verify of ${label} failed (exit ${failure?.code ?? failure?.signal ?? 'unknown'}): ${firstLine(failure)}`; }
+  };
+  const display = async (label, target) => {
+    try { const result = await run('/usr/bin/codesign', ['-d', '--verbose=4', target], { encoding: 'utf8' }); return { text: `${result.stdout ?? ''}\n${result.stderr ?? ''}` }; }
+    catch (failure) { return { reason: `codesign display of ${label} failed (exit ${failure?.code ?? failure?.signal ?? 'unknown'}): ${firstLine(failure)}` }; }
+  };
+  const plist = `${control.bundle}/Contents/Info.plist`;
+  try { if (!statSync(plist).isFile()) return `Info.plist stamp: ${plist} is not a regular file`; }
+  catch (failure) { return `Info.plist stamp: cannot stat ${plist}: ${firstLine(failure)}`; }
+  const bundleVerify = await verify('bundle', control.bundle); if (bundleVerify) return bundleVerify;
+  const root = await display('bundle', control.bundle); if (root.reason) return root.reason;
+  if (!root.text.split('\n').includes(`Identifier=${control.id}`)) return `bundle Identifier is not ${control.id} (saw ${/^Identifier=(.*)$/mu.exec(root.text)?.[1] ?? 'none'})`;
+  const binaryVerify = await verify('binary', control.path); if (binaryVerify) return binaryVerify;
+  const binary = await display('binary', control.path); if (binary.reason) return binary.reason;
+  const id = /^Identifier=(.+)$/mu.exec(binary.text)?.[1];
+  if (id !== control.id && !id?.startsWith(`${control.id}.`)) return `binary Identifier is not ${control.id} (saw ${id ?? 'none'})`;
+  if (!control.apple) {
+    for (const [label, text] of [['bundle', root.text], ['binary', binary.text]]) {
+      if (!text.split('\n').includes(`TeamIdentifier=${control.team}`)) return `${label} TeamIdentifier is not ${control.team} (saw ${/^TeamIdentifier=(.*)$/mu.exec(text)?.[1] ?? 'none'})`;
+    }
+  }
+  return undefined;
+}
+
+// Classifies one control with the product check. A failing Apple control always
+// fails. A failing third-party control fails on SIP-enabled Macs and is a named
+// diagnostic on hosted VMs. Every failure names the condition that failed.
+async function checkSignatureControl(t, control, {
+  classify = async () => {
+    const inode = String(statSync(control.path, { bigint: true }).ino);
+    return trustedExecutableV1({ executable: control.path, inode });
+  },
+  diagnose = () => diagnoseSignatureControl(control),
+  hostedVm = sipDisabledHost,
+} = {}) {
+  const name = basename(control.path), kind = await classify();
+  if (['app', 'terminal'].includes(kind)) { t.diagnostic(`SIGNATURE CONTROL verified: ${name}`); return 'verified'; }
+  const reason = (await diagnose()) ?? 'every codesign, Identifier, TeamIdentifier and Info.plist condition passed in diagnosis; the product check still returned no app/terminal (inode or stamp change?)';
+  if (!control.apple && await hostedVm()) {
+    t.diagnostic(`SIGNATURE CONTROL unverifiable on hosted VM: ${name}: ${reason}`);
+    return 'unverifiable';
+  }
+  assert.fail(`${name}: trustedExecutableV1 returned ${kind}, not app/terminal; failing condition: ${reason}`);
+}
+
 test('R5SD: real system signature controls work and the default scan refuses when ps is sandbox-blocked', async t => {
   const stat = (await import('node:fs')).statSync('/bin/sleep', { bigint: true });
   assert.equal(await trustedExecutableV1({ executable: '/bin/sleep', inode: String(stat.ino) }), 'system');
@@ -1030,13 +1093,9 @@ test('R5SD: real system signature controls work and the default scan refuses whe
     const inode = String((await import('node:fs')).statSync(path, { bigint: true }).ino);
     assert.equal(await trustedExecutableV1({ executable: path, inode }), 'system', path);
   }
-  for (const path of ['/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/System/Applications/TextEdit.app/Contents/MacOS/TextEdit',
-    '/Applications/Visual Studio Code.app/Contents/MacOS/Electron']) {
-    if (!existsSync(path)) { t.diagnostic(`SIGNATURE CONTROL absent: ${basename(path)}`); continue; }
-    const inode = String((await import('node:fs')).statSync(path, { bigint: true }).ino);
-    assert.ok(['app', 'terminal'].includes(await trustedExecutableV1({ executable: path, inode })), basename(path));
-    t.diagnostic(`SIGNATURE CONTROL verified: ${basename(path)}`);
+  for (const control of SIGNATURE_CONTROLS) {
+    if (!existsSync(control.path)) { t.diagnostic(`SIGNATURE CONTROL absent: ${basename(control.path)}`); continue; }
+    await checkSignatureControl(t, control);
   }
   const pg = '/opt/homebrew/opt/postgresql@17/bin/postgres';
   if (existsSync(pg)) {
@@ -1056,6 +1115,48 @@ test('R5SD: real system signature controls work and the default scan refuses whe
     assert.equal(error.code, 'bot_check_command_refused');
     t.diagnostic('LIVE DEFAULT PATH: refused; ps is sandbox-blocked. No ambient PASS claimed.');
   }
+});
+
+test('R5SD: a failing third-party signature control is a named diagnostic only on a hosted VM; SIP-enabled Macs and Apple controls still fail', async t => {
+  const chrome = SIGNATURE_CONTROLS.find(item => item.id === 'com.google.Chrome'), terminal = SIGNATURE_CONTROLS.find(item => item.apple);
+  const notices = [], recorder = { diagnostic: line => notices.push(line) };
+  const failing = { classify: async () => undefined, diagnose: async () => 'codesign verify of binary failed (exit 3): fixture' };
+  // Hosted VM (injected detection): third-party control becomes a diagnostic.
+  assert.equal(await checkSignatureControl(recorder, chrome, { ...failing, hostedVm: async () => true }), 'unverifiable');
+  assert.deepEqual(notices, ['SIGNATURE CONTROL unverifiable on hosted VM: Google Chrome: codesign verify of binary failed (exit 3): fixture']);
+  // SIP-enabled Mac (injected detection): the same failure still fails and names the condition.
+  await assert.rejects(checkSignatureControl(recorder, chrome, { ...failing, hostedVm: async () => false }),
+    /Google Chrome: trustedExecutableV1 returned undefined, not app\/terminal; failing condition: codesign verify of binary failed \(exit 3\): fixture/u);
+  // Apple controls stay required even on a hosted VM.
+  await assert.rejects(checkSignatureControl(recorder, terminal, { ...failing, hostedVm: async () => true }), /Terminal: trustedExecutableV1 returned undefined/u);
+  assert.equal(notices.length, 1, 'only the hosted-VM third-party case produced a diagnostic');
+  // A passing classification never consults the diagnosis or the detection.
+  assert.equal(await checkSignatureControl(recorder, chrome, { classify: async () => 'app', diagnose: async () => assert.fail('unused'), hostedVm: async () => assert.fail('unused') }), 'verified');
+  t.diagnostic('hosted-VM branch proven with injected classify, diagnose and detection; no shipped flag');
+});
+
+test('R5SD: signature control diagnosis names the failing condition through the injectable run port', async () => {
+  const chrome = SIGNATURE_CONTROLS.find(item => item.id === 'com.google.Chrome');
+  const display = (id, team = chrome.team) => `Identifier=${id}\nTeamIdentifier=${team}\n`;
+  const port = ({ verifyFail, root = display(chrome.id), binary = display(`${chrome.id}.helper`) } = {}) => async (file, args) => {
+    assert.equal(file, '/usr/bin/codesign');
+    if (args[0] === '--verify') {
+      const target = args.at(-1);
+      if (verifyFail === target) throw Object.assign(new Error('failed'), { code: 3, stderr: `${target}: invalid signature\nsecond line` });
+      return { stdout: '', stderr: '' };
+    }
+    return { stdout: '', stderr: args.at(-1) === chrome.bundle ? root : binary };
+  };
+  const diagnose = options => diagnoseSignatureControl(chrome, port(options));
+  const plist = existsSync(`${chrome.bundle}/Contents/Info.plist`);
+  if (!plist) { assert.match(await diagnose(), /^Info\.plist stamp: cannot stat /u); return; }
+  assert.equal(await diagnose(), undefined);
+  assert.match(await diagnose({ verifyFail: chrome.bundle }), /^codesign verify of bundle failed \(exit 3\): .*invalid signature$/u);
+  assert.match(await diagnose({ root: display('com.other.App') }), /^bundle Identifier is not com\.google\.Chrome \(saw com\.other\.App\)/u);
+  assert.match(await diagnose({ verifyFail: chrome.path }), /^codesign verify of binary failed \(exit 3\)/u);
+  assert.match(await diagnose({ binary: display('com.other.App') }), /^binary Identifier is not com\.google\.Chrome \(saw com\.other\.App\)/u);
+  assert.match(await diagnose({ root: display(chrome.id, 'AAAAAAAAAA') }), /^bundle TeamIdentifier is not EQHXZ8M8AV \(saw AAAAAAAAAA\)/u);
+  assert.match(await diagnose({ binary: display(chrome.id, 'BBBBBBBBBB') }), /^binary TeamIdentifier is not EQHXZ8M8AV \(saw BBBBBBBBBB\)/u);
 });
 
 test('R5SD: CLI keeps the STOP heading, names unknown programs and preserves folders without printing argv', async t => {
