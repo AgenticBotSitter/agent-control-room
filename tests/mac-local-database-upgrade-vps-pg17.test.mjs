@@ -9,6 +9,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,7 +100,7 @@ while True:
 sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))`;
 
 function upgrade(args, { tty = true, env = {}, answers = [], testRoot = true } = {}) {
-  const base = { ...process.env, CR_UPGRADE_TEST_ROOT: state.vps, CR_UPGRADE_TEST_STORE: state.store,
+  const base = { ...process.env, HOME: state.pnpmHome, CR_UPGRADE_TEST_ROOT: state.vps, CR_UPGRADE_TEST_STORE: state.store,
     CR_UPGRADE_TEST_PG_BIN: PG_BIN, CR_UPGRADE_TEST_PG_TARGET: operator(), ...env };
   if (!testRoot) delete base.CR_UPGRADE_TEST_ROOT;
   const child = tty ? spawn("python3", ["-c", ptyRelay, wrapper, ...args], { env: base })
@@ -230,10 +231,36 @@ before(async () => {
   }
   execFileSync("git", ["clone", "--quiet", "--no-local", state.upstream, join(state.vps, "source")]);
   state.store = execFileSync("pnpm", ["store", "path"], { cwd: repoRoot, encoding: "utf8" }).trim();
+  // The refresh-cache case exercises online policy verification using local
+  // metadata and already-cached tarballs. It must not depend on public DNS or
+  // registry availability. Unknown requests (including tarballs) are refused.
+  const toolLock = await readFile(join(repoRoot, "deploy/vps/upgrade-tool/pnpm-lock.yaml"), "utf8");
+  const packages = new Map([...toolLock.matchAll(/^  ([^\s@]+)@([^:\s]+):\n    resolution: \{integrity: ([^}]+)\}/gmu)]
+    .map(([, name, version, integrity]) => [name, { version, integrity }]));
+  assert.ok(packages.size >= 2, "local metadata covers the pinned tools");
+  state.registry = createHttpServer((request, response) => {
+    const name = request.url.slice(1), entry = packages.get(name);
+    if (!entry) { response.writeHead(404).end(); return; }
+    const { version, integrity } = entry;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ name, "dist-tags": { latest: version },
+      versions: { [version]: { name, version, dist: { integrity,
+        tarball: `http://127.0.0.1:${state.registry.address().port}/${name}/-/${name}-${version}.tgz` } } },
+      time: { [version]: "2020-01-01T00:00:00.000Z" } }));
+  });
+  await new Promise((resolve, reject) => {
+    state.registry.once("error", reject);
+    state.registry.listen(0, "127.0.0.1", resolve);
+  });
+  state.pnpmHome = join(state.root, "pnpm-home");
+  const config = join(state.pnpmHome, process.platform === "darwin" ? "Library/Preferences/pnpm" : ".config/pnpm");
+  await mkdir(config, { recursive: true });
+  await writeFile(join(config, "config.yaml"), `registry: http://127.0.0.1:${state.registry.address().port}/\n`);
 });
 
 after(async () => {
   if (skip) return;
+  if (state.registry) await new Promise(resolve => state.registry.close(resolve));
   try { await state.client?.end(); } catch {}
   try { await state.teardown?.stop(); } finally { await rm(state.root, { recursive: true, force: true }); }
 });
@@ -265,6 +292,15 @@ test("the offline upgrade tools are pinned to exactly the app's pg and pg-boss",
     .match(/integrity: sha512-[A-Za-z0-9+/=]+/gu);
   assert.ok(pins.length >= 2);
   for (const pin of pins) assert.ok(appLock.includes(pin), `${pin} is the same tarball the app installs`);
+  const source = await readFile(wrapper, "utf8");
+  const fetch = source.match(/^\s*pinned_pnpm fetch [^\n]+/mu)?.[0];
+  const install = source.match(/^if ! pinned_pnpm install [^\n]+/mu)?.[0];
+  assert.ok(fetch && install, "both dependency paths remain explicit");
+  assert.doesNotMatch(fetch, /--trust-lockfile/u, "online cache refresh still verifies supply-chain policy");
+  assert.match(install, /--offline --frozen-lockfile --ignore-scripts --trust-lockfile/u,
+    "offline materialization uses the already-verified, frozen graph without registry metadata");
+  assert.doesNotMatch(source.match(/pinned_pnpm\(\) \{[^}]+\}/u)?.[0] ?? "", /--trust-lockfile/u,
+    "trust is scoped to the offline call, never the shared pnpm function");
 });
 
 test("database code from main runs only through the postgres account", async () => {

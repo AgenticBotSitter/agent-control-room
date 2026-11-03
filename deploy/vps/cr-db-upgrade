@@ -139,7 +139,11 @@ if [ -n "$refresh" ]; then
   printf 'Upgrade tools cached. Now run: cr-db-upgrade %s\n' "$short"
   exit 0
 fi
-if ! pinned_pnpm install --offline --frozen-lockfile --ignore-scripts >"$stage/install.log" 2>&1; then
+# The reviewed, frozen lockfile and cached tarballs were verified when fetched.
+# Reapplying pnpm 11's release-age/trust metadata checks needs the registry even
+# with --offline. Trust that lockfile here; keep verification on --refresh-cache.
+# Store integrity checks and the frozen dependency graph still apply.
+if ! pinned_pnpm install --offline --frozen-lockfile --ignore-scripts --trust-lockfile >"$stage/install.log" 2>&1; then
   if grep -q 'NO_OFFLINE' "$stage/install.log"; then
     refuse upgrade_dependency_cache_missing dependencies \
       "Refused: the pinned upgrade tools are not cached. Run once: cr-db-upgrade --refresh-cache $short"
