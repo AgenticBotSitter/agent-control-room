@@ -246,12 +246,12 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
   await admin.query(await readFile("db/down/0307_control_loop_candidate_review_identity.sql","utf8"));
   await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -353,7 +353,7 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
    await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
    await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
@@ -462,13 +462,15 @@ test("B5 PostgreSQL review identity SQL bounds and 0307 down re-up",async()=>run
   await assert.rejects(rawCandidateInsert(w.client,f.evidence()),{sqlState:"23514"});
   assert.deepEqual((await f.desk.readLoopCandidate(identity,project,f.requestId)).candidate!.evidence.reviews,reviews);
   // Reconstruct the old 0305 ledger after the down, then use the production
-  // applier to append 0307. Prior checksums and retained rows must survive.
+  // applier to append 0307 and 0308. Prior checksums and retained rows must survive.
   const before=(await admin.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows;
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename='db/migrations/0308_validate_control_loop_update_candidates_check.sql'");
   const removed=(await admin.query("DELETE FROM control_room_schema_migrations WHERE filename='db/migrations/0307_control_loop_candidate_review_identity.sql' RETURNING ledger_order")).rows[0].ledger_order;
   for(const row of (await admin.query("SELECT filename,ledger_order FROM control_room_schema_migrations WHERE ledger_order>$1 ORDER BY ledger_order",[removed])).rows)
-    await admin.query("UPDATE control_room_schema_migrations SET ledger_order=$1 WHERE filename=$2",[Number(row.ledger_order)-1,row.filename]);
+    await admin.query("UPDATE control_room_schema_migrations SET ledger_order=$1 WHERE filename=$2",[Number(row.ledger_order)-2,row.filename]);
   const upgraded=await migrateRoot(pg,resolve("."));
   assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0307_control_loop_candidate_review_identity.sql")));
+  assert.ok(upgraded.applied!.some(e=>e.file.endsWith("0308_validate_control_loop_update_candidates_check.sql")));
   assert.deepEqual((await admin.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows,before);
   assert.equal((await f.publish()).state,"replayed");
   const measured=await readPrivateWebSchemaDigest(w.client);
