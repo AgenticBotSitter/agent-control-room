@@ -33,6 +33,17 @@ import { parseStrictJsonV1 } from "../../src/installer/shared/strict-json.mjs";
 const exec = promisify(execFile);
 const need: (v: unknown, code: string) => asserts v = (v, code) => { if (!v) throw new B5RefusalV1(code); };
 
+/** Public start diagnostic keeps digest commitments without credential-shaped keys. */
+export function projectB5ControllerStartV1(input: {
+  digests: Readonly<Record<string, string>>; startedAt: string; maxDurationMs: number; rehearsal: boolean; captureMode: string;
+}) {
+  const { authorization, ...otherDigests } = input.digests;
+  return { schemaVersion: 1, startedAt: input.startedAt,
+    preflightDigests: { ...otherDigests, authorizationSha256: authorization },
+    budget: { maxDurationMs: input.maxDurationMs, ownerGateWaitExcluded: !input.rehearsal },
+    mappingAttempted: false, captureMode: input.captureMode, phoneDomAvailable: false, binaryScan: "lead-visual-check-required" };
+}
+
 export type B5ControllerCleanupV1 = {
   disposition: "mapping-not-created" | "mapping-removed" | "mapping-outstanding";
   mappingAttempted: boolean; mappingUncertain: boolean; comparison: boolean | null;
@@ -573,9 +584,8 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     if(q) owner.qualifyTransport(q);
     await mkdir(evidenceDir, { mode: 0o700 }).catch(e => { if (e.code !== "EEXIST") throw e; });
     await chmod(evidenceDir, 0o700); wroteEvidence = true;
-    await write("controller-start", { schemaVersion: 1, startedAt: new Date().toISOString(), preflightDigests: digests,
-      budget: { maxDurationMs: config.maxDurationMs, ownerGateWaitExcluded: !preflight.rehearsal },
-      mappingAttempted: false, captureMode: q?.captureMode ?? "fixture-browser-loopback", phoneDomAvailable: false, binaryScan: "lead-visual-check-required" });
+    await write("controller-start", projectB5ControllerStartV1({ digests, startedAt: new Date().toISOString(),
+      maxDurationMs: config.maxDurationMs, rehearsal: !!preflight.rehearsal, captureMode: q?.captureMode ?? "fixture-browser-loopback" }));
     if(preflight.rehearsal) await runFirstWebsiteProviderDenialsV1(preflight,workSignal,owner);
     const create = await ports.loadAssembly(config); workSignal.throwIfAborted();
     owner.beginAcquisition();

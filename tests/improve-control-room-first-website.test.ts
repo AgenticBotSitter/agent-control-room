@@ -1242,6 +1242,22 @@ test("F04b private artifacts refuse traversal, symlinks, truncation, duplicate p
   assert.equal(await e.refusal(), 'B5_CANDIDATE_REPOSITORY', 'F04b retained candidate must have no remote');
 });
 
+test("B5 controller-start projection preserves commitments and both secret-scan branches", async () => {
+  const { projectB5ControllerStartV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  const { assertB5EvidenceSecretFreeV1: scan } = await import("../scripts/workflow-journeys/first-website-device");
+  const digests = { authorization: "sha256:" + "a".repeat(64), qualification: "sha256:" + "b".repeat(64) };
+  const old = { preflightDigests: digests };
+  scan(JSON.stringify(old));
+  assert.throws(() => scan(old), { code: "B5_EVIDENCE_SECRET" });
+  const start = projectB5ControllerStartV1({ digests, startedAt: "2026-11-03T00:00:00.000Z", maxDurationMs: 60_000,
+    rehearsal: true, captureMode: "fixture-browser-loopback" });
+  scan(JSON.stringify(start)); scan(JSON.parse(JSON.stringify(start)));
+  assert.deepEqual(start.preflightDigests, { qualification: digests.qualification, authorizationSha256: digests.authorization });
+  assert.deepEqual(digests, { authorization: "sha256:" + "a".repeat(64), qualification: "sha256:" + "b".repeat(64) });
+  assert.throws(() => scan({ start, nested: { authorization: "synthetic credential" } }), { code: "B5_EVIDENCE_SECRET" });
+  assert.throws(() => scan(JSON.stringify({ nested: "Bearer synthetic" })), { code: "B5_EVIDENCE_SECRET" });
+});
+
 const noMappingCleanup = () => ({disposition:'mapping-not-created' as const,mappingAttempted:false,mappingUncertain:false,comparison:null,
   beforeDigest:null,installedDigest:null,afterDigest:null,removalReceiptDigest:null,hostStopped:true,postgresStopped:true,failures:[] as string[],overrunMs:0});
 
@@ -1269,7 +1285,14 @@ test("F04b finalization preserves shared retained repository and hashes only run
   await mkdir(retention.cleanupTargets[0]!);
   await assert.rejects(H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,retention),/B5_CLEANUP_RETAINED/u,'F04b live cleanup target cannot be reported absent');
   const empty = {...retention,cleanupTargets:[] as string[]};
+  const { projectB5ControllerStartV1 } = await import("../scripts/workflow-journeys/first-website-controller");
+  const start = projectB5ControllerStartV1({ digests: e.fixturePins.digests, startedAt: "2026-11-03T00:00:00.000Z", maxDurationMs: 60_000,
+    rehearsal: true, captureMode: "fixture-browser-loopback" });
+  const startBytes = JSON.stringify(start) + "\n";
+  await writeFile(join(e.dir,'controller-start.json'),startBytes,{mode:0o600});
   const emptyFinal = await H.finalizeFirstWebsiteEvidenceV1(e.dir,original,teardown,empty);
+  assert.equal(emptyFinal.artifacts.find(a=>a.path==='controller-start.json')?.sha256,H.b5Bytes(startBytes));
+  assert.equal(start.preflightDigests.authorizationSha256,e.fixturePins.digests.authorization);
   assert.ok(emptyFinal.artifacts.some(a=>a.path==='teardown.json'),'F04b empty cleanup target list (local close retained nothing to move) finalizes');
   const emptyVerdict = await H.verifyFirstWebsiteEvidenceV1(e.dir,{readCard:e.readCard,candidateRepository:e.p.project,pins:e.fixturePins,retention:empty});
   assert.equal(emptyVerdict.state,'incomplete');

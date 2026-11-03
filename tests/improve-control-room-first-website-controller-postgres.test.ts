@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHook } from "node:async_hooks";
 import { requireFirstWebsiteRehearsalPart2V1, firstWebsiteConfigSchemaV1, readFirstWebsitePrivateBytesV1, B5_REQUEST_TEXT, b5Bytes, b5ManifestSchemaV1, b5JourneySchemaV1 } from "./helpers/improve-control-room-first-website";
-import { assertB5AcceptedIntakeV1, b5ControllerBrowserEventsSchemaV1 } from "../scripts/workflow-journeys/first-website-controller";
+import { assertB5AcceptedIntakeV1, b5ControllerBrowserEventsSchemaV1, projectB5ControllerStartV1 } from "../scripts/workflow-journeys/first-website-controller";
 import { b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1, writeB5DeviceReceiptV1 } from "../scripts/workflow-journeys/first-website-device";
 import { loopBridgeReceiptSchemaV1 } from "../src/improve-control-room/v1/schemas";
 import { loopCandidateCardSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
@@ -285,7 +285,7 @@ async function nativeEvidenceNegatives(root:string, config:z.infer<typeof firstW
   const manifest=H.b5ManifestSchemaV1.parse(await json("manifest.json")),journey=H.b5JourneySchemaV1.parse(await json("journey.json"));
   const teardown=H.b5TeardownSchemaV1.parse(await json("teardown.json"));
   const snapshot=H.b5DatabaseSnapshotSchemaV1.parse(await json("database-snapshot.json"));
-  const digests=(await json("controller-start.json")).preflightDigests;
+  const digests=readControllerStartDigests((await json("controller-start.json")).preflightDigests);
   const pins:import("./helpers/improve-control-room-first-website").B5QualifiedPinsV1={productBase:config.product.baseRevision,productHead:config.product.candidateRevision,
     toolingRevision:config.a2.toolingRevision,schemaDigest:config.a2.schemaDigest,uid:process.getuid!(),digests,
     providers:H.qualifyB5ProvidersV1(qualification.providers,config.a2.toolingRevision,digests.availability),capture:H.b5CaptureQualificationSchemaV1.parse(qualification.capture)};
@@ -344,4 +344,20 @@ test("B5 browser intake requires accepted state even for HTTP 202", () => {
       new RegExp(state === "refused" ? "B5_ENGINE_REFUSED" : "B5_INTAKE_UNCERTAIN"));
   }
   console.log("RESULT: PASS B5 browser intake rejects HTTP-success uncertain/refused/waiting states");
+});
+
+// Evidence projection maps back to the internal pin names only after parsing.
+function readControllerStartDigests(value: unknown): Record<string, string> {
+  const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+  const { authorizationSha256, ...otherDigests } = z.object({ authorizationSha256: digest }).catchall(digest).parse(value);
+  return { ...otherDigests, authorization: authorizationSha256 };
+}
+
+test("B5 controller-start consumer restores every internal preflight pin", () => {
+  const digests = Object.fromEntries(["authorization", "settings", "availability", "qualification", "assembly", "faultInput", "reviewInput", "transport"]
+    .map(name => [name, b5Bytes(`synthetic ${name}`)]));
+  const start = projectB5ControllerStartV1({ digests, startedAt: "2026-11-03T00:00:00.000Z", maxDurationMs: 60_000,
+    rehearsal: true, captureMode: "fixture-browser-loopback" });
+  assert.deepEqual(readControllerStartDigests(JSON.parse(JSON.stringify(start)).preflightDigests), digests);
+  assert.throws(() => readControllerStartDigests(digests), z.ZodError);
 });
