@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHook } from "node:async_hooks";
-import { requireFirstWebsiteRehearsalPart2V1, firstWebsiteConfigSchemaV1, readFirstWebsitePrivateBytesV1, B5_REQUEST_TEXT, b5Bytes, b5ManifestSchemaV1, b5JourneySchemaV1 } from "./helpers/improve-control-room-first-website";
+import { B5RefusalV1, requireFirstWebsiteRehearsalPart2V1, firstWebsiteConfigSchemaV1, readFirstWebsitePrivateBytesV1, B5_REQUEST_TEXT, b5Bytes, b5ManifestSchemaV1, b5JourneySchemaV1 } from "./helpers/improve-control-room-first-website";
 import { assertB5AcceptedIntakeV1, b5ControllerBrowserEventsSchemaV1, projectB5ControllerStartV1 } from "../scripts/workflow-journeys/first-website-controller";
 import { b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1, writeB5DeviceReceiptV1 } from "../scripts/workflow-journeys/first-website-device";
 import { loopBridgeReceiptSchemaV1 } from "../src/improve-control-room/v1/schemas";
 import { loopCandidateCardSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 
 test("B5 controller-postgres missing qualification refuses before acquisition", async () => {
   let acquisitions = 0;
@@ -82,6 +83,35 @@ if (process.env.CONTROL_ROOM_B5_REHEARSAL_REQUIRE_A2 === "1") {
     await rehearseNative(process.env[`CONTROL_ROOM_B5_REHEARSAL_${scenario.toUpperCase()}_PACKET`],scenario);
   });
 }
+const pauseRehearsal = (signal: AbortSignal) => delay(50, undefined, { signal });
+
+// Only the mutable request pathname retries a stable-reader publication race.
+// Dispatches, observations and retained evidence keep their immutable-read policy.
+async function pollRehearsalRequest(input: {
+  file: string; root: string; origin: string; lastSequence: number; signal: AbortSignal; deadline: number;
+  finished: () => boolean; pause: () => Promise<void>;
+}) {
+  while (!input.finished() && Date.now() < input.deadline) {
+    input.signal.throwIfAborted();
+    let bytes: Buffer;
+    try { bytes = await readFirstWebsitePrivateBytesV1(input.file, input.root); }
+    catch (error) {
+      if (!(error instanceof B5RefusalV1) || error.code !== "B5_REVIEW_SCAN_CHANGED") throw error;
+      await input.pause();
+      continue;
+    }
+    input.signal.throwIfAborted();
+    if (Date.now() >= input.deadline) break;
+    const request = b5DeviceRequestSchemaV1.parse(JSON.parse(bytes.toString("utf8")));
+    assert.equal(request.origin, input.origin);
+    if (request.sequence !== input.lastSequence) assert.equal(request.sequence, input.lastSequence + 1);
+    return request;
+  }
+  input.signal.throwIfAborted();
+  if (Date.now() >= input.deadline) throw new Error("B5_REHEARSAL_DEADLINE");
+  return undefined;
+}
+
 // This body uses the built product and its native engine carrier. Neither API
 // responses nor engine state are routed, mocked, replayed or written by this test.
 async function rehearseNative(file: string | undefined, scenario:"complete"|"interrupt"|"deadline"|"stop"="complete") {
@@ -134,9 +164,10 @@ async function rehearseNative(file: string | undefined, scenario:"complete"|"int
       const requestFile=join(root,"device/request.json");
       const exists=await lstat(requestFile).then(()=>true,e=>{if(e.code === "ENOENT")return false;throw e;});
       if(!exists){await sleep();continue;}
-      const r=b5DeviceRequestSchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(requestFile,root)).toString("utf8")));
+      const r=await pollRehearsalRequest({file:requestFile,root,origin,lastSequence,signal:abort.signal,deadline,finished:()=>finished,pause:()=>pauseRehearsal(abort.signal)});
+      if(!r)break;
       if(r.sequence === lastSequence){await sleep();continue;}
-      assert.equal(r.sequence,lastSequence+1);assert.equal(r.origin,origin);lastSequence=r.sequence;events.length=0;
+      lastSequence=r.sequence;events.length=0;
       if((scenario === "interrupt" || scenario === "deadline") && r.phase === "prepare") {
         triggered=true;
         if(scenario === "interrupt")child.kill("SIGINT");
@@ -360,4 +391,81 @@ test("B5 controller-start consumer restores every internal preflight pin", () =>
     rehearsal: true, captureMode: "fixture-browser-loopback" });
   assert.deepEqual(readControllerStartDigests(JSON.parse(JSON.stringify(start)).preflightDigests), digests);
   assert.throws(() => readControllerStartDigests(digests), z.ZodError);
+});
+
+async function requestPollFixture(t: test.TestContext) {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const root = await realpath(await mkdtemp(resolve(".test-tmp/b5-request-poll-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, "request.json"), pending = join(root, "pending.json"), abort = new AbortController();
+  const generation = (sequence: number) => ({ schemaVersion: 1, sessionNonce: "a".repeat(32), sequence, phase: "close",
+    origin: "http://127.0.0.1:60460", device: "desktop", expiresAt: "2026-11-03T01:00:00.000Z" });
+  await writeFile(file, JSON.stringify(generation(1)), { mode: 0o600 });
+  const handle = await open(file, "r"), prototype = Object.getPrototypeOf(handle), read = handle.read;
+  await handle.close();
+  let replacements = 0, armed = false;
+  // Real descriptor read, then a real atomic replacement before the final pathname check.
+  t.mock.method(prototype, "read", async function (this: typeof handle, ...args: unknown[]) {
+    const result = await Reflect.apply(read, this, args);
+    if (armed) { armed = false; await rename(pending, file); replacements++; }
+    return result;
+  });
+  const replaceDuringRead = async (next: unknown = generation(2)) => {
+    await writeFile(file, JSON.stringify(generation(1)), { mode: 0o600 });
+    await writeFile(pending, typeof next === "string" ? next : JSON.stringify(next), { mode: 0o600 });
+    armed = true;
+  };
+  const input = { file, root, origin: generation(1).origin, lastSequence: 1, signal: abort.signal,
+    deadline: Date.now() + 60_000, finished: () => false, pause: async () => {} };
+  return { file, root, abort, generation, replaceDuringRead, input, replacements: () => replacements };
+}
+
+test("B5 request poll retries an atomic publication and revalidates the next generation", async t => {
+  const f = await requestPollFixture(t);
+  await f.replaceDuringRead();
+  await assert.rejects(readFirstWebsitePrivateBytesV1(f.file, f.root), { code: "B5_REVIEW_SCAN_CHANGED" });
+  await f.replaceDuringRead();
+  let pauses = 0;
+  const request = await pollRehearsalRequest({ ...f.input, pause: async () => { pauses++; } });
+  assert.deepEqual(request, f.generation(2)); assert.equal(pauses, 1); assert.equal(f.replacements(), 2);
+  for (const next of [{ ...f.generation(2), origin: "http://127.0.0.1:60461" }, { ...f.generation(2), sequence: 3 }]) {
+    await f.replaceDuringRead(next);
+    await assert.rejects(pollRehearsalRequest(f.input), { code: "ERR_ASSERTION" });
+  }
+});
+
+test("B5 request poll obeys cancellation and the existing deadline during publication retry", async t => {
+  const f = await requestPollFixture(t);
+  const stopped = new Error("synthetic cancellation");
+  await f.replaceDuringRead();
+  await assert.rejects(pollRehearsalRequest({ ...f.input, pause: async () => {
+    const paused = pauseRehearsal(f.abort.signal); f.abort.abort(stopped); await paused;
+  } }), { name: "AbortError" });
+  await assert.rejects(pollRehearsalRequest(f.input), stopped);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  await f.replaceDuringRead();
+  const input = { ...f.input, signal: new AbortController().signal, deadline: Date.now() + 10,
+    pause: async () => { t.mock.timers.tick(11); } };
+  const before = f.replacements();
+  await assert.rejects(pollRehearsalRequest(input), /B5_REHEARSAL_DEADLINE/u);
+  assert.equal(f.replacements(), before + 1, "expired retry never reopens the next generation");
+});
+
+test("B5 request poll propagates pathname, symlink, custody, parse and schema errors", async t => {
+  const f = await requestPollFixture(t);
+  let pauses = 0;
+  const input = { ...f.input, pause: async () => { pauses++; } };
+  await assert.rejects(pollRehearsalRequest({ ...input, file: resolve(f.root, "../outside.json") }), { code: "B5_REVIEW_SCAN_PATH" });
+  const link = join(f.root, "link.json"); await symlink(f.file, link);
+  await assert.rejects(pollRehearsalRequest({ ...input, file: link }), { code: "B5_REVIEW_SCAN_PATH" });
+  const { chmod } = await import("node:fs/promises"); await chmod(f.file, 0o666);
+  await assert.rejects(pollRehearsalRequest(input), { code: "B5_REVIEW_SCAN_PATH" }); await chmod(f.file, 0o600);
+  // Also reject malformed and schema-invalid *replacement* generations after a retry.
+  await f.replaceDuringRead("{");
+  await assert.rejects(pollRehearsalRequest(input), SyntaxError);
+  await f.replaceDuringRead({ ...f.generation(2), phase: "invalid" });
+  await assert.rejects(pollRehearsalRequest(input), z.ZodError);
+  assert.equal(pauses, 2, "only the two actual publication races paused");
+  await rm(f.file);
+  await assert.rejects(pollRehearsalRequest(input), { code: "B5_REVIEW_SCAN_PATH" });
 });
