@@ -71,8 +71,6 @@ ALTER TABLE control_loop_update_candidates ADD CONSTRAINT control_loop_update_ca
     AND jsonb_typeof(payload->'timing')='object'
     AND jsonb_typeof(payload->'overrides')='object'
   ) IS TRUE) NOT VALID;
-ALTER TABLE control_loop_update_candidates
-  VALIDATE CONSTRAINT control_loop_update_candidates_check;
 CREATE OR REPLACE FUNCTION guard_control_loop_update_candidate_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE item jsonb;
