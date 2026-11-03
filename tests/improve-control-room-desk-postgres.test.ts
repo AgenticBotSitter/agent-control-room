@@ -867,6 +867,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0304_control_loop_candidate_start_authorization.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0305_control_loop_candidate_unavailable_sections.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0307_control_loop_candidate_review_identity.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0308_validate_control_loop_update_candidates_check.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/roles/production_table_grants.sql", "utf8"), [], pg.database, "migrator");
     await applyB1aRoles(pg, resolve("."), pg.database);
     const f = await b1aLinked(pg), web = b1aWeb(pg);

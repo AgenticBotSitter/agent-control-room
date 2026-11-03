@@ -391,7 +391,9 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
     'db/migrations/0302_control_loop_improvement_commands.sql',
     'db/migrations/0303_control_loop_update_candidates.sql',
     'db/migrations/0304_control_loop_candidate_start_authorization.sql',
-    'db/migrations/0305_control_loop_candidate_unavailable_sections.sql'],
+    'db/migrations/0305_control_loop_candidate_unavailable_sections.sql',
+    'db/migrations/0307_control_loop_candidate_review_identity.sql',
+    'db/migrations/0308_validate_control_loop_update_candidates_check.sql'],
     'upgrade appends exactly the migrations added since the real earlier ledger, in order');
    assert.deepEqual(await rows(),[
     {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},
