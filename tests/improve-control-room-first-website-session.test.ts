@@ -90,6 +90,18 @@ test("B5 controller refreshes an expiring session and keeps service failures vis
   await failed.session.close(); assert.deepEqual(failed.counts(), { posts: 1, deletes: 1 });
 });
 
+test("B5 controller session renews after a three-day idle gap before reading", async () => {
+  const f = fixture();
+  await f.session.exchange("/status", signal());
+  f.advance(3 * 24 * 3600_000);
+  await Promise.all(Array.from({ length: 8 }, () => f.session.exchange("/status", signal())));
+  assert.deepEqual(f.counts(), { posts: 2, deletes: 1 });
+  assert.deepEqual(f.calls.slice(2, 5).map(c => c.method), ["DELETE", "POST", "GET"]);
+  assert.ok(f.calls.slice(4).every(c => c.cookie === "local-owner=fixture-2"));
+  await f.session.close(); assert.deepEqual(f.counts(), { posts: 2, deletes: 2 });
+  console.log("RESULT: PASS B5 client session 72h idle renews once before concurrent reads; cleanup revokes; composed-host renewal unverified");
+});
+
 async function hostOptions(db: unknown) {
   const source = await readFile("scripts/workflow-journeys/first-website-host.ts", "utf8");
   const body = source.slice(source.indexOf('      ownerCode = randomBytes(32)'), source.indexOf('      const recoveryService ='));

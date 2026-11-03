@@ -1868,3 +1868,150 @@ test("B5 rehearsal owner gates keep the original short deadline", async t => {
   } finally { owner.dispose(); t.mock.timers.reset(); }
   console.log("RESULT: PASS B5 rehearsal gate deadline unchanged work=30s total=60s");
 });
+
+// Exercise the exported journey, not a list of gate names against its clock.
+// Native host/browser/model and evidence qualification are offline boundaries;
+// receipt polling, owner accounting, HTTP sessions, observer and restarts are real.
+test('B5 real journey continues through every long owner gate and both restarts', { timeout: 30_000 }, async t => {
+  const { s, D, preflight } = await controllerDriverFixture(t);
+  const C = await import('../scripts/workflow-journeys/first-website-controller');
+  const e = await evidenceSet(t), started = Date.now(), hours = 2 * 3600_000;
+  const transport = JSON.parse(await readFile(s.config.device.transportQualification, 'utf8'));
+  transport.expiresAt = new Date(started + 7 * 24 * 3600_000).toISOString();
+  await writeFile(s.config.device.transportQualification, JSON.stringify(transport), { mode: 0o600 });
+  const deviceRoot = join(s.root, 'device'), workRoot = join(s.root, 'work');
+  await mkdir(join(deviceRoot, 'inbox'), { recursive: true, mode: 0o700 });
+  await chmod(deviceRoot, 0o700); await mkdir(workRoot);
+  const carrier = JSON.stringify({ configuration: { workRoot } });
+  await writeFile(s.config.a2.contractFile, carrier);
+  await mkdir(join(s.root, 'runs', 'run:long'), { recursive: true });
+  await writeFile(join(s.root, 'runs', 'run:long', 'run.json'), JSON.stringify({ steps: [] }));
+  const requestId = e.card.requestId, projectId = e.card.projectId, runLinkId = e.card.evidence.binding.runLinkId;
+  const hash = H.b5Bytes('long gate fixture').slice(7), toolingRevision = preflight.config.a2.toolingRevision;
+  let saved = false, linked = false, state = 'draft', stage = 'draft', sequence = 0, restarts = 0, sessionPosts = 0, sessionDeletes = 0;
+  let confirmationAt: string | null = null, pending: Record<string, unknown> | undefined;
+  const gates: string[] = [], commands: Record<string, unknown>[] = [], accepted: string[] = [];
+  const iso = () => new Date().toISOString();
+  const question = { questionId: 'question:long', inputVersion: 1, reportSha256: hash, owner: true, changesInput: false };
+  const approval = (step: string) => ({ step, inputVersion: 1, head: e.p.final, reportSha256: hash });
+  const request = () => ({ requestId, projectId, currentVersion: 1, description: H.B5_REQUEST_TEXT,
+    requestSha256: H.b5Bytes(H.B5_REQUEST_TEXT).slice(7), settingsSha256: hash,
+    runLink: linked ? { runLinkId, loopRunId: 'run:long', adapterId: 'adapter:long', toolingRevision,
+      a2SchemaVersion: 1, initialInputVersion: 1 } : null,
+    savedAuthorization: true, createdAt: new Date(started).toISOString(), startsWork: false, grantsDeployAuthority: false });
+  const status = () => ({ schemaVersion: 1, request: request(), display: {
+    schemaVersion: 1, projectId, requestId, localVersion: 1, description: H.B5_REQUEST_TEXT,
+    requestSha256: H.b5Bytes(H.B5_REQUEST_TEXT).slice(7), settingsSha256: hash, runLinkId,
+    engineRevision: 1, state: null, startState: confirmationAt ? 'started' : 'not_started',
+    confirmationCurrent: !!confirmationAt, canStart: false, canStop: !!confirmationAt,
+    progress: null, attention: null, observedAt: iso(),
+  }, engine: { revision: 1, state, draft: H.B5_REQUEST_TEXT, requestSha256: hash, settingsSha256: hash, inputVersion: 1,
+    confirmation: confirmationAt ? { sha256: hash, at: confirmationAt, who: 'owner', inputVersion: 1 } : null,
+    progress: { step: null, completed: 0, attention: 'none' }, identity: 'unverified',
+    question: stage === 'question' ? question : null, approval: ['plan', 'spec'].includes(stage) ? approval(stage) : null,
+  }, decisions: { gate: stage === 'question' ? { kind: 'question', text: 'Which color?' }
+    : ['plan', 'spec'].includes(stage) ? { kind: 'approve' } : null, observedAt: iso() } });
+  function command(operation: string, body: Record<string, unknown>) {
+    const binding = { schemaVersion: 1, body, localVersion: 1, adapterId: 'adapter:long', loopRunId: 'run:long',
+      toolingRevision, a2SchemaVersion: 1, schemaDigest: preflight.config.a2.schemaDigest,
+      requestSha256: hash, settingsSha256: hash, runLinkId, authorizationId: null, inputVersion: 1, expectedRevision: 1, evidence: null };
+    const commandId = `command:${commands.length}`;
+    for (const entry_kind of ['claim', 'result']) commands.push({ command_id: commandId, request_id: requestId, operation,
+      entry_kind, binding, created_at: iso(), ...(entry_kind === 'result' ? { result: { state: 'accepted', revision: 1,
+        adapterId: 'adapter:long', loopRunId: 'run:long', toolingRevision, evidenceDigest: H.b5Bytes('accepted'), error: null } } : {}) });
+  }
+  const receipts = H.B5_INPUT_BINDINGS.map((b, i) => ({ name: b.name, roles: [...b.roles], path: join(workRoot, b.name),
+    sha256: preflight.digests[b.input]!.slice(7), input_version: 1, revision: i + 1 } as B5BindInputReceiptV1));
+  for (const [i, b] of H.B5_INPUT_BINDINGS.entries()) await writeFile(receipts[i]!.path, await readFile(preflight.config[b.input === 'faultInput' ? 'faultInputFile' : 'reviewInputFile']));
+  const projection = () => ({ repository: e.p.project, workDir: workRoot, rejectedHeads: [], finalHead: e.p.final,
+    cleanup: { state: 'complete', targets: [] }, steps: ['build', 'code-review', 'code-review'].map((role, i) => ({ n: i + 1, role,
+      headAtStart: e.p.final, inputVersion: 1, startedAt: iso(), brief: `Additional supplied input (read in full): ${receipts[role === 'build' ? 0 : 1]!.path} (SHA256 ${receipts[role === 'build' ? 0 : 1]!.sha256})` })) });
+  const mailbox = { root: deviceRoot, request: async (phase: string, device: string, expiresAt: string, binding: unknown) => {
+    pending = { schemaVersion: 1, sequence: ++sequence, sessionNonce: 'a'.repeat(32), phase, device, origin: transport.origin, expiresAt, ...(binding ? { binding } : {}) };
+    if (phase === 'prepare') saved = true; // Saved intake can precede its committed link and owner receipt.
+    return pending;
+  }, accept: async (receipt: { phase: string; device: string }) => {
+    accepted.push(`${receipt.phase}:${receipt.device}`);
+    if (receipt.phase === 'prepare') { linked = true; command('intake', { description: H.B5_REQUEST_TEXT }); }
+    if (receipt.phase === 'confirm-start') { confirmationAt = iso(); state = 'waiting'; stage = 'question'; command('confirm', {}); command('start', {}); }
+    if (receipt.phase === 'question') { stage = 'plan'; command('answer', { questionId: question.questionId, questionReportSha256: hash, text: 'Amber' }); }
+    if (receipt.phase === 'plan') { stage = 'spec'; command('approve', approval('plan')); }
+    if (receipt.phase === 'spec') { stage = 'finished'; state = 'finished'; command('approve', approval('spec')); }
+    return receipt;
+  }, readServiceEvidence: async () => ({ events: [] }) };
+  const owned = { processCount: 0, listenerReleased: true, postgresStopped: true, runScratchAbsent: true };
+  const owner = C.createFirstWebsiteControllerOwnerV1(), realWait = owner.waitForOwner.bind(owner);
+  const host = { startup: { isReady: () => true }, origin: 'http://127.0.0.1:60460', a2Entry: {}, close: async () => {}, proof: {
+    device: mailbox, project: { projectId, repository: e.p.project, baseRevision: e.p.seeded.head },
+    withOwnerCode: async (use: (value: string) => unknown) => use('synthetic-offline-code'),
+    readRun: async () => projection(), readSnapshot: async () => ({ schemaVersion: 1, readAt: iso(), rows: commands.map(row => ({ table: 'control_loop_improvement_commands', row, sha256: H.b5Bytes(JSON.stringify(row)) })) }),
+    restart: async () => { restarts++; }, inspectOwned: async () => owned,
+  } } as unknown as B5Helper.FirstWebsiteHostV1;
+  t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => {
+    const path = new URL(url).pathname;
+    if (path === '/api/v1/local-owner-session') {
+      if (init.method === 'DELETE') { sessionDeletes++; return new Response(null, { status: 204 }); }
+      return Response.json({ expiresAt: new Date(Date.now() + 300_000).toISOString() }, { status: 201, headers: { 'set-cookie': `local-owner=offline-${++sessionPosts}` } });
+    }
+    if (path.endsWith('/desk')) return Response.json({ legacy: { projectId, templates: [], requests: [], startsWork: false, grantsDeployAuthority: false }, loopRequests: saved ? [request()] : [] });
+    if (path.endsWith('/status')) return Response.json(status());
+    if (path.endsWith('/candidate')) return e.readCard();
+    if (path.endsWith('/approval-document')) return Response.json({});
+    throw new Error(`unexpected offline route: ${path}`);
+  });
+  const drain = async () => { for (let i = 0; i < 20; i++) await new Promise<void>(yes => setImmediate(yes)); };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: started });
+  let inGate = false;
+  t.mock.method(owner, 'waitForOwner', <T>(receive: () => Promise<T>) => realWait(async () => {
+    inGate = true;
+    const label = pending ? `${pending.phase}:${pending.device}` : 'install'; gates.push(label);
+    try {
+      await drain(); t.mock.timers.tick(1000); await drain();
+      t.mock.timers.tick(hours); await drain();
+      assert.equal(owner.signal.aborted, false, `still alive during ${label}`);
+      if (!pending) {
+        const install = JSON.parse(await readFile(join(deviceRoot, 'install-request.json'), 'utf8'));
+        await writeFile(join(deviceRoot, 'install-receipt.json'), JSON.stringify({ schemaVersion: 1, actor: 'owner',
+          installNonce: install.installNonce, command: D.B5_DEVICE_INSTALL_COMMAND_V1, statusCommand: D.B5_DEVICE_STATUS_COMMAND_V1,
+          exitCode: 0, statusExitCode: 0, observedAt: iso(), statusDigest: transport.installedDigest, status: transport.installedStatus }), { mode: 0o600 });
+      } else await writeFile(join(deviceRoot, 'inbox', `${pending.sequence}.json`), JSON.stringify(pending), { mode: 0o600 });
+      return await receive();
+    } finally { inGate = false; }
+  }));
+  // Removal is machine cleanup, not another owner wait to exclude.
+  const realArm = owner.armMapping.bind(owner);
+  t.mock.method(owner, 'armMapping', (q: typeof transport) => realArm(q, async r => ({ schemaVersion: 1, actor: 'owner',
+    removalNonce: r.removalNonce, observedAt: iso(), installSettled: true, installCancelled: true,
+    off: { command: D.B5_DEVICE_OFF_COMMAND_V1, port: 60462, exitCode: 0 }, beforeDigest: q.beforeDigest, installedDigest: q.installedDigest,
+    status: { command: D.B5_DEVICE_STATUS_COMMAND_V1, exitCode: 0, afterStatus: q.beforeStatus, afterDigest: q.beforeDigest } })));
+  let verified = false, settled = false;
+  try {
+    const journey = C.runFirstWebsiteJourneyV1({ ...preflight, controllerOwner: owner,
+      config: { ...preflight.config, maxDurationMs: 600_000 }, digests: { ...preflight.digests, contract: H.b5Bytes(carrier),
+        settings: `sha256:${hash}`, transport: H.b5Bytes(JSON.stringify(transport)) } }, new AbortController().signal, {
+      loadAssembly: async () => async () => { owner.registerCloseHost(async () => {}); owner.registerStopPostgres(async () => {}); return host; },
+      probeBind: async () => {}, bindInputs: async () => receipts, ownerChannel: async () => {}, captureDesktop: async () => undefined,
+      diagnosticSnapshot: async () => e.p.passed,
+      verifyEvidence: async (_dir, input) => { await input.readCard(); verified = true; return { state: 'incomplete', reasons: ['B5_PROVIDER_FIXTURE'], transportCleanup: H.missingB5TransportCleanupV1() }; },
+    }).finally(() => { settled = true; });
+    // Allow filesystem and HTTP promise turns to settle; tick machine pauses only
+    // outside the explicit hours-long owner waits. No real sleeps or services.
+    for (let i = 0; !settled && i < 5000; i++) { await drain(); if (!inGate) t.mock.timers.tick(1000); }
+    if (!settled) owner.abort(new H.B5RefusalV1('B5_TEST_STALLED'));
+    const verdict = await journey;
+    assert.equal(verified, true, JSON.stringify(verdict));
+    assert.deepEqual(verdict.reasons, ['B5_PROVIDER_FIXTURE']);
+    assert.deepEqual(gates, ['install', 'connect:phone', 'connect:desktop', 'prepare:phone', 'bindings-ready:phone', 'confirm-start:phone',
+      'close:phone', 'close:desktop', 'question:phone', 'plan:phone', 'spec:phone', 'close:phone', 'close:desktop',
+      'repair:phone', 'finish:phone', 'finish:desktop', 'retained:phone']);
+    assert.deepEqual(accepted, gates.slice(1)); assert.equal(restarts, 2);
+    const timing = JSON.parse(await readFile(join(s.evidence, 'controller-timing.json'), 'utf8'));
+    assert.equal(timing.gateWaitMs, gates.length * (hours + 1000));
+    assert.equal(timing.workDeadline, started + 300_000 + timing.gateWaitMs);
+    assert.equal(timing.cleanupDeadline, started + 600_000 + timing.gateWaitMs);
+    assert.equal(timing.waitingForOwner, false); assert.equal(timing.ownerGateWaitExcluded, true);
+    assert.equal(verdict.transportCleanup.disposition, 'mapping-removed'); assert.deepEqual(verdict.transportCleanup.failures, []);
+    assert.ok(sessionPosts >= gates.length, 'session renewed after hours-long waits'); assert.equal(sessionDeletes, sessionPosts);
+  } finally { owner.dispose(); t.mock.timers.reset(); }
+  console.log('RESULT: PASS B5 exported real journey 17 gates x2h; intake/approval bounds, observer, two restarts, session renewal, timing artifact and cleanup; offline fixture only');
+});

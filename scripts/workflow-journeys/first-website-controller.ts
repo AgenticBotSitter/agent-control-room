@@ -510,7 +510,15 @@ export async function verifyFirstWebsiteControllerEvidenceV1(evidenceDir: string
 /** Foreground F04a driver. It collects actual observations and delegates the
  * final publication/provenance verdict to the retained-evidence verifier.
  * No fixture identity, mailbox assertion or manifest can substitute for it. */
-export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV1, signal: AbortSignal): Promise<B5VerdictV1> {
+// Boundary ports let offline journey tests keep the controller, observer, receipt
+// waits and deadline accounting intact without launching a host or a browser.
+const journeyPorts = {
+  loadAssembly: loadFirstWebsiteAssemblyV1, probeBind: probeBindInputCapabilityV1,
+  bindInputs: bindFirstWebsiteInputsV1, ownerChannel, captureDesktop: captureFirstWebsiteDesktopV1,
+  diagnosticSnapshot, verifyEvidence: verifyFirstWebsiteControllerEvidenceV1,
+};
+export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV1, signal: AbortSignal,
+  ports: typeof journeyPorts = journeyPorts): Promise<B5VerdictV1> {
   const owner = preflight.controllerOwner ?? createFirstWebsiteControllerOwnerV1(signal);
   const { config, evidenceDir, digests } = preflight, root = config.scratchRoot;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
@@ -550,6 +558,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     assertB5FaultTextAbsentV1(neutralBytes, policy);
     need(preflight.phoneTransport === "tailscale-serve" || preflight.rehearsal && preflight.providers.transport === "scripted", "B5_DEVICE_QUALIFICATION_REQUIRED");
     const q = preflight.phoneTransport === "tailscale-serve" ? await loadB5TransportV1(config.device.transportQualification, root, config.device.origin, digests.transport) : undefined;
+    if (!preflight.rehearsal) need(q, "B5_DEVICE_QUALIFICATION_REQUIRED");
     if(q) owner.qualifyTransport(q);
     await mkdir(evidenceDir, { mode: 0o700 }).catch(e => { if (e.code !== "EEXIST") throw e; });
     await chmod(evidenceDir, 0o700); wroteEvidence = true;
@@ -557,14 +566,14 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       budget: { maxDurationMs: config.maxDurationMs, ownerGateWaitExcluded: !preflight.rehearsal },
       mappingAttempted: false, captureMode: q?.captureMode ?? "fixture-browser-loopback", phoneDomAvailable: false, binaryScan: "lead-visual-check-required" });
     if(preflight.rehearsal) await runFirstWebsiteProviderDenialsV1(preflight,workSignal,owner);
-    const create = await loadFirstWebsiteAssemblyV1(config); workSignal.throwIfAborted();
+    const create = await ports.loadAssembly(config); workSignal.throwIfAborted();
     owner.beginAcquisition();
     acquiring = create(config, workSignal, { signalOwner: owner });
     host = await acquiring; workSignal.throwIfAborted();
     need(host.startup.isReady() && host.proof.device, "B5_HOST_NOT_READY");
-    await probeBindInputCapabilityV1(host.a2Entry, workSignal); workSignal.throwIfAborted(); // before ANY intake invitation
+    await ports.probeBind(host.a2Entry, workSignal); workSignal.throwIfAborted(); // before ANY intake invitation
     const mailbox = host.proof.device, deviceRoot = mailbox.root;
-    await ownerChannel(host, root, owner);
+    await ports.ownerChannel(host, root, owner);
     const projectPath = `/api/v1/projects/${encodeURIComponent(host.proof.project.projectId)}/improvements/loop`;
     let controllerSession = createB5ControllerSessionV1(host);
     owner.registerResource(() => controllerSession.close());
@@ -619,16 +628,21 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     });
     const observe = () => (async () => {
       while (watching && !workSignal.aborted) {
-        if (!requestId) {
+        // Before prepare is acknowledged, a saved intake may still have no
+        // committed link. Poll it without starting the machine link timer in
+        // the background of an hours-long owner gate. The foreground status()
+        // after prepare retains the full, fixed 120-second machine bound.
+        let canObserveStatus = intakeLinkReady;
+        if (!intakeLinkReady) {
           const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
           need(desk.loopRequests.length <= 1, "B5_REQUEST_JOIN");
           if (desk.loopRequests.length) {
             const saved = desk.loopRequests[0];
             need(saved.description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN"); requestId = saved.requestId;
-            intakeLinkDeadline ??= Math.min(Date.now() + 120_000, owner.workAt()!);
+            canObserveStatus = !!saved.runLink;
           }
         }
-        if (requestId) {
+        if (requestId && canObserveStatus) {
           const current = await status();
           if (current.engine.state === "stopped") owner.abort(new B5RefusalV1("B5_OWNER_STOP"));
           if (current.engine.state === "refused") owner.abort(new B5RefusalV1("B5_ENGINE_REFUSED"));
@@ -659,15 +673,17 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         await service(`${projectPath}/${encodeURIComponent(s.request.requestId)}/approval-document`);
       if (requestId && ["repair", "finish", "retained"].includes(name))
         await service(`${projectPath}/${encodeURIComponent(requestId)}/candidate`);
+      let expiresAt: string;
+      if (preflight.rehearsal) expiresAt = new Date(Math.min(owner.workAt()!, q ? Date.parse(q.expiresAt) : Infinity)).toISOString();
+      else { need(q, "B5_DEVICE_QUALIFICATION_REQUIRED"); expiresAt = q.expiresAt; }
       const result = await runFirstWebsiteDevicePhaseV1({ mailbox, phase: name, device, binding, signal: workSignal, policy,
         // Transport authorization remains a hard security boundary. There is
         // no authorized renewal operation in the frozen qualification packet.
         // Real phases have no work-budget deadline while awaiting the owner.
-        expiresAt: preflight.rehearsal ? new Date(Math.min(owner.workAt()!, q ? Date.parse(q.expiresAt) : Infinity)).toISOString()
-          : q!.expiresAt,
+        expiresAt,
         waitForOwner: wait => owner.waitForOwner(wait),
         ...(q && device === "desktop" && ["connect","finish","close"].includes(name) ? {
-          capture:(request:B5DeviceRequestV1)=>captureFirstWebsiteDesktopV1({request,host:host!,qualification:q,owner,signal:workSignal}),
+          capture:(request:B5DeviceRequestV1)=>ports.captureDesktop({request,host:host!,qualification:q,owner,signal:workSignal}),
         } : {}),
         onPublished() { if (name === "bindings-ready") bindingsReadyPublishedAt = new Date().toISOString(); } });
       const browser = preflight.rehearsal ? b5ControllerBrowserEventsSchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(
@@ -701,7 +717,6 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
     need(desk.loopRequests.length === 1 && desk.loopRequests[0].description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN");
     requestId = desk.loopRequests[0].requestId;
-    intakeLinkDeadline ??= Math.min(Date.now() + 120_000, owner.workAt()!);
     let s = await status();
     need(s.engine.state === "draft" && !s.engine.confirmation && !s.display.confirmationCurrent && s.display.startState === "not_started", "B5_INPUT_BINDING_LATE");
     const runId = s.request.runLink!.loopRunId;
@@ -720,7 +735,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     const carrier = z.object({ configuration: z.object({ workRoot: z.string() }).passthrough() }).passthrough().parse(parseStrictJsonV1(carrierBytes.toString("utf8")));
     const workRoot = carrier.configuration.workRoot, part = relative(root, workRoot);
     need(part && part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part), "B5_INPUT_BINDING");
-    const receipts = await bindFirstWebsiteInputsV1({ entry: host.a2Entry, loopRunId: runId,
+    const receipts = await ports.bindInputs({ entry: host.a2Entry, loopRunId: runId,
       stageDir: join(workRoot, `b5-supplied-${randomBytes(16).toString("hex")}`),
       files: { faultInput: config.faultInputFile, reviewInput: config.reviewInputFile }, digests, runWorkDir: projection.workDir, signal: workSignal });
     s = await status();
@@ -769,7 +784,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         audits.push(audit); scanned.add(key);
       }
       for (const head of p.rejectedHeads) if (!diagnosticHeads.has(head)) {
-        statusChecks.push(await diagnosticSnapshot(p.repository, evidenceDir, head, "rejected")); diagnosticHeads.add(head);
+        statusChecks.push(await ports.diagnosticSnapshot(p.repository, evidenceDir, head, "rejected")); diagnosticHeads.add(head);
       }
       const gate = s.decisions?.gate;
       if (gate?.kind === "question") {
@@ -794,7 +809,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       } else if (s.engine.state === "finished") {
         need(questionSeen && planSeen && specSeen && p.finalHead && p.cleanup?.state === "complete", "B5_JOURNEY_INCOMPLETE");
         assertRoleScopedBriefsV1(p.steps.map(step => ({ role: step.role, text: step.brief })), receipts);
-        statusChecks.push(await diagnosticSnapshot(p.repository, evidenceDir, p.finalHead, "final"));
+        statusChecks.push(await ports.diagnosticSnapshot(p.repository, evidenceDir, p.finalHead, "final"));
         const cleanupAt=new Date().toISOString();
         await phase("repair", "phone", s); await phase("finish", "phone", s); await phase("finish", "desktop", s);
         await restart(); restarts.push({phase:"final",at:new Date().toISOString()}); s = await status(); await phase("retained", "phone", s);
@@ -806,7 +821,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
             assembly: digests.assembly!, faultInput: digests.faultInput!, reviewInput: digests.reviewInput! } };
         const snapshot=await host.proof.readSnapshot({evidenceOnly:true});
         let coldCard: import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1 | undefined;
-        verdict = await verifyFirstWebsiteControllerEvidenceV1(evidenceDir, { candidateRepository: p.repository, pins,
+        verdict = await ports.verifyEvidence(evidenceDir, { candidateRepository: p.repository, pins,
           proofRoot: root, cleanupTargets: p.cleanup.targets.map(target => target.source),
           readCard: async () => {
             const value = await controllerSession.exchange(`${projectPath}/${encodeURIComponent(requestId!)}/candidate`, workSignal,
