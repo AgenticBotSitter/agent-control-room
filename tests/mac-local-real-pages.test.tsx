@@ -152,6 +152,10 @@ const OPTIONAL_CAPABILITY_PROBES: ReadonlyMap<string, string> = new Map([
   // `{ state: "not_configured" }`. Mounted only with `options.updaterOwnerUi`,
   // which the installed updater supplies and this page-journey fixture does not.
   ["/api/v1/updater-owner-ui", "readUpdaterOwnerUiV1 returns state: not_configured"],
+  // private-app/app/improvement-finish-card.tsx -- the Home card returns null
+  // on 404. This fixture supplies neither loopCandidates nor loopBridge, so
+  // mac-local-web-process.ts deliberately leaves the candidate route unmounted.
+  ["/api/v1/loop-update-candidates", "ImprovementFinishCard hides the unconfigured Home card on 404"],
 ]);
 
 async function journeyFixture(t: TestContext): Promise<Journey> {
@@ -226,8 +230,8 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
     const response = await app.handle(new Request(url, { method: source.method, headers,
       body: ["GET", "HEAD"].includes(source.method) ? undefined : source.body, duplex: source.body ? "half" : undefined,
       signal: source.signal } as RequestInit), () => new Response("page"));
-    // A 404 is a legitimate answer on an OPTIONAL capability, and the two the
-    // product ships both read the route on mount precisely to find out whether the
+    // A 404 is a legitimate answer on an OPTIONAL capability. These components
+    // read the route on mount precisely to find out whether the
     // installation has it, then hide themselves when it does not:
     //
     //  - `/api/v1/fleet` (FleetOfferControl) checks `response.ok`. The route is
@@ -240,7 +244,7 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
     //
     // What this guard is FOR is everything else: a page that fetches a route the
     // installation does serve, or that gets a 500, is a hidden failure. The
-    // exemption is exactly these two paths, read-only, and only for 404 -- a typo
+    // exemption is exactly the documented paths, read-only, and only for 404 -- a typo
     // in any other path, or a 500 on either of these, still trips it.
     const optionalCapabilityProbe = OPTIONAL_CAPABILITY_PROBES.has(url.pathname)
       && ["GET", "HEAD"].includes(source.method);
