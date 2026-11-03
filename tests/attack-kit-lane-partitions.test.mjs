@@ -209,7 +209,8 @@ test("CR-E081 routes all eight partitions through the package lane and example",
   // The example carries script commands in its allowedScripts map.
   assert.equal(example.allowedScripts["test:attack-kit"], command, "example mirrors the exact package command");
   const files = command.split(/\s+/u).filter(word => word.startsWith("tests/"));
-  for (const path of [...Object.keys(partitions), "tests/attack-kit-lane-partitions.test.mjs"])
+  for (const path of [...Object.keys(partitions), "tests/attack-kit-lane-partitions.test.mjs",
+    "tests/owner-web-push-subscribe-grant-postgres.test.ts", "tests/owner-web-push-subscribe-grant-postgres-concurrency.test.ts"])
     assert.equal(files.filter(file => file === path).length, 1, `lane routes ${path} exactly once`);
 });
 
