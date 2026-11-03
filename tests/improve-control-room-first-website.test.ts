@@ -417,6 +417,62 @@ test("B5 verifier binds rejected and final heads to the saved card", async t => 
   assert.equal(await e.refusal({ readCard: async () => stale }), "B5_HEAD_BINDING", "B5 stale card head is refused by the head guard");
   await e.write(v => { e.journey(v).dom[1]!.candidateRevision = e.p.rejected; }); assert.equal(await e.refusal(), "B5_HEAD_BINDING", "B5 finish DOM must show the card head");
 });
+/** The saved card with its check rows changed, served as a real HTTP response. The retained
+ * capture facts bind the response digest, so `patch` re-binds them to the changed bytes. */
+function cardVariant(e: Awaited<ReturnType<typeof evidenceSet>>, change: (checks: Record<string, unknown>[]) => Record<string, unknown>[]) {
+  const card = structuredClone(e.card) as unknown as { evidence: { checks: Record<string, unknown>[] } };
+  card.evidence.checks = change(card.evidence.checks);
+  const body = JSON.stringify({ candidate: card }), responseDigest = H.b5Bytes(body);
+  return { readCard: async () => new Response(body, { headers: { "content-type": "application/json" } }),
+    patch: (v: { files: Record<string, unknown> }) => { for (const f of (v.files["journey.json"] as { serviceFacts: { responseDigest: string }[] }).serviceFacts) f.responseDigest = responseDigest; } };
+}
+const INCOMPLETE = "incomplete";
+/** The refusal code with its detail, so a test can tell which guard refused. */
+const refusalAt = (e: Awaited<ReturnType<typeof evidenceSet>>, o: Parameters<typeof e.verify>[0] = {}) =>
+  e.verify(o).then(v => v.state, (err: unknown) => err instanceof H.B5RefusalV1 ? `${err.code}:${err.detail}` : String(err));
+const withoutStatus = (checks: Record<string, unknown>[]) => checks.filter(c => c.id !== "site-status");
+/** A wire-valid site-status row (the passing site-smoke row under another id). */
+const withStatus = (required: boolean) => (checks: Record<string, unknown>[]) =>
+  [...withoutStatus(checks), { ...checks.find(c => c.id === "site-smoke")!, id: "site-status", commandLabel: "SYNTHETIC site-status", required }];
+test("B5 verifier accepts the card a real run produces: a site-smoke row and no site-status row", async t => {
+  await load();
+  const e = await evidenceSet(t);
+  const realRun = cardVariant(e, withoutStatus);
+  await e.write(realRun.patch);
+  // Fixture evidence is never complete, so the accepted outcome is the same incomplete verdict.
+  assert.equal(await refusalAt(e, { readCard: realRun.readCard }), INCOMPLETE, "B5 a card without the optional site-status row is not refused as card checks");
+});
+test("B5 verifier keeps the site-status card row optional", async t => {
+  await load();
+  const e = await evidenceSet(t);
+  // site-status is the controller's independent diagnostic (independent records + review sidecar). A card row, if A2
+  // carries one, is accepted only as optional; refusing a required row is a policy proxy.
+  const optional = cardVariant(e, withStatus(false)), required = cardVariant(e, withStatus(true));
+  await e.write(optional.patch);
+  assert.equal(await refusalAt(e, { readCard: optional.readCard }), INCOMPLETE, "B5 a valid optional site-status row is still accepted");
+  await e.write(required.patch);
+  assert.equal(await refusalAt(e, { readCard: required.readCard }), "B5_HEAD_BINDING:card checks", "B5 a wire-valid REQUIRED site-status row is refused");
+});
+test("B5 an optional site-status PASS cannot mask a failing required site-smoke", async t => {
+  await load();
+  const e = await evidenceSet(t);
+  const masked = cardVariant(e, checks => withStatus(false)(checks).map(c => c.id === "site-smoke"
+    ? { ...c, status: "FAIL", exitCode: 1, passed: 0, failed: 1 } : c));
+  await e.write(masked.patch);
+  // The wire parse refuses a required check that is not a clean PASS before the head guard is reached.
+  assert.equal(await refusalAt(e, { readCard: masked.readCard }), "B5_CARD_UNAVAILABLE:");
+});
+test("B5 an optional site-status PASS cannot rescue a failing independent diagnostic record", async t => {
+  await load();
+  const e = await evidenceSet(t);
+  const optional = cardVariant(e, withStatus(false));
+  await e.write(v => { optional.patch(v); });
+  assert.equal(await refusalAt(e, { readCard: optional.readCard }), INCOMPLETE, "B5 control: unchanged records are accepted with this card");
+  await e.write(v => { optional.patch(v); (v.files["independent-status-check.json"] as B5StatusCheckRecordV1[])[1]!.exitCode = 1; });
+  assert.equal(await refusalAt(e, { readCard: optional.readCard }), "B5_HEAD_BINDING:diagnostic results", "B5 a failing final independent record is refused");
+  await e.write(v => { optional.patch(v); v.files["independent-status-check.json"] = (v.files["independent-status-check.json"] as B5StatusCheckRecordV1[]).slice(0, 1); });
+  assert.equal(await refusalAt(e, { readCard: optional.readCard }), "B5_HEAD_BINDING:diagnostic heads", "B5 a missing final independent record is refused");
+});
 test("B5 verifier re-reads the candidate repository and its page facts", async t => {
   await load();
   const e = await evidenceSet(t);

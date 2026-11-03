@@ -705,10 +705,12 @@ export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCh
     const dom = journey.dom.find(x => x.screen === screen);
     if (!dom || dom.candidateRevision !== card.candidateRevision || dom.baseRevision !== base || dom.requestId !== card.requestId) refuse("B5_HEAD_BINDING", `dom ${screen}`);
   }
-  // The card's required recipe really ran at the final head; the diagnostic stays labelled optional.
+  // The card's required recipe really ran at the final head. site-status is the controller's independent diagnostic
+  // (the independent records above plus the review sidecar); a card row, if A2 carries one, must stay optional.
+  // Refusing a required row is a policy proxy: the verifier cannot see the pinned recipe's flags.
   const smoke = card.evidence.checks.find(c => c.id === "site-smoke"), status = card.evidence.checks.find(c => c.id === "site-status");
   if (!smoke || !smoke.required || smoke.status !== "PASS" || smoke.candidateRevision !== card.candidateRevision || smoke.completed < 1 || smoke.failed !== 0
-    || smoke.skipped !== 0 || status?.required !== false) refuse("B5_HEAD_BINDING", "card checks");
+    || smoke.skipped !== 0 || status?.required === true) refuse("B5_HEAD_BINDING", "card checks");
   for (const check of checks) if (b5Bytes(outputs.get(check.outputPath) ?? "") !== check.outputSha256) refuse("B5_ARTIFACT_BYTES", check.outputPath);
 }
 const statusTag = (html: string) => /<([a-z][a-z0-9]*)\b([^>]*\bid="status"[^>]*)>([^<]*)</iu.exec(html);
@@ -1188,7 +1190,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
         a2InputVersion: saved!.inputVersion, engineRevision: saved!.revision, requestSha256: loopByteHashV1(saved!.description), settingsSha256: loopByteHashV1(settingsText),
         baseRevision: base, candidateRevision: final, inputsDigest: d, recipeDigest: d, environmentDigest: d },
       summary: "SYNTHETIC Ready status badge", changedAreas: ["index.html"], databaseChanges: { kind: "none" },
-      checks: [check("site-smoke", true), check("site-status", false)],
+      checks: [check("site-smoke", true)],
       reviews: [review("review:code-1", "code-review", "synthetic-a"), review("review:code-2", "code-review", "synthetic-b"),
         review("review:attack", "attack-review", "synthetic-a"), review("review:ui", "ui-review", "synthetic-b"),
         review("review:ci", "ci-review", "synthetic-a"), review("review:final", "final", "synthetic-c"),
