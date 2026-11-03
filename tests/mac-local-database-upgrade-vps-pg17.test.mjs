@@ -64,10 +64,26 @@ const sql = async (text, values) => (await state.client.query(text, values)).row
 
 // A pty in front of the wrapper, so `[ -t 0 ]` is really true and answers are
 // typed only after their prompt appears, exactly as an operator would.
-const ptyRelay = `import os, pty, select, sys
+const ptyRelay = `import os, pty, select, signal, sys, time
 pid, fd = pty.fork()
 if pid == 0:
     os.execv(sys.argv[1], sys.argv[1:])
+def stop(signum, frame):
+    # pty.fork gives the wrapper its own session. Killing only this relay
+    # leaves the wrapper holding upgrade.lock and poisons every later case.
+    try: os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError: pass
+    for attempt in range(100):
+        try: waited, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError: break
+        if waited: break
+        time.sleep(0.02)
+    try: os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    try: os.waitpid(pid, 0)
+    except ChildProcessError: pass
+    sys.exit(128 + signum)
+signal.signal(signal.SIGTERM, stop)
 inputs = [fd, 0]
 while True:
     ready = select.select(inputs, [], [])[0]
@@ -90,12 +106,18 @@ function upgrade(args, { tty = true, env = {}, answers = [], testRoot = true } =
     : spawn(wrapper, args, { env: base });
   if (!tty) child.stdin.end();
   return new Promise((resolvePromise, rejectPromise) => {
-    const reject = error => { child.kill("SIGKILL"); rejectPromise(error); };
+    let failure, killTimer;
+    const reject = error => {
+      if (failure) return;
+      failure = error;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    };
     const timer = setTimeout(() => reject(new Error(`wrapper still running; output so far:\n${output}`)), 120_000);
     let output = "", seen = 0, busy = false;
     const pending = [...answers];
     const answer = async () => {
-      if (busy || !pending.length || !pending[0][0].test(output.slice(seen))) return;
+      if (failure || busy || !pending.length || !pending[0][0].test(output.slice(seen))) return;
       busy = true;
       const [, text, hook] = pending.shift();
       seen = output.length;
@@ -108,7 +130,11 @@ function upgrade(args, { tty = true, env = {}, answers = [], testRoot = true } =
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
     child.on("error", reject);
-    child.on("close", code => { clearTimeout(timer); child.stdin.destroy(); resolvePromise({ code, output: output.replaceAll("\r", "") }); });
+    child.on("close", code => {
+      clearTimeout(timer); clearTimeout(killTimer); child.stdin.destroy();
+      if (failure) rejectPromise(failure);
+      else resolvePromise({ code, output: output.replaceAll("\r", "") });
+    });
   });
 }
 
