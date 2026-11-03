@@ -12,7 +12,7 @@ test("B5 producer refuses a non-disposable root before reading sources", () => {
 
 import { mkdtemp, mkdir, writeFile, readFile, rm, realpath, chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { b5A2DiagnosticCallV1, b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
+import { assertB5CleanupLogsRetainedV1, b5A2DiagnosticCallV1, b5LineageV1, b5RawHash, loadB5A2V1, projectB5RunV1, requireB5FinalProjectionV1, joinB5FinalProjectionV1 } from "./helpers/improve-control-room-first-website-a2";
 import { B5RefusalV1 } from "./helpers/improve-control-room-first-website";
 import type { LoopEngineStatusV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { readB5FinishedProjectionV1 } from "../scripts/workflow-journeys/first-website-host";
@@ -650,16 +650,34 @@ test("B5 completion/cleanup mapping joins typed receipts, cold card and reposito
   await assert.rejects(joinB5FinalProjectionV1(input), /B5_A2_CLEANUP_SOURCE_PRESENT/);
 });
 
-test("B5 empty cleanup moves require every retained log to be present under root", async t => {
+test("B5 empty cleanup moves require a nonempty complete canonical retained-log set", async t => {
   const { f, input, record, sealRecord } = await completionFixture(t);
   const present = join(f.root, "logs/kept.log"); await writeFile(present, "kept", { mode: 0o600 });
   f.raw.close.moves = []; record.cleanup.removedDigest = sha256Digest([]); sealRecord();
+  // completionFixture has no steps; completeness over actual step logs is exercised below.
   f.raw.close.logs_retained = [{ path: present }]; await f.save();
-  assert.deepEqual((await joinB5FinalProjectionV1(input)).cleanup.targets, [], "present retained log accepts an empty move list");
-  f.raw.close.logs_retained = [{ path: present }, { path: join(f.root, "logs/missing.log") }]; await f.save();
-  await assert.rejects(joinB5FinalProjectionV1(input), /B5_CLEANUP_RETAINED/, "absent retained log refuses");
-  f.raw.close.logs_retained = [{ path: present }]; delete f.raw.close.logs_retained; await f.save();
-  await assert.rejects(joinB5FinalProjectionV1(input), /B5_CLEANUP_RETAINED/, "missing logs_retained refuses");
+  assert.deepEqual((await joinB5FinalProjectionV1(input)).cleanup.targets, []);
+  for (const logs of [[], undefined, [{ path: present }, { path: join(f.root, "logs/missing.log") }]]) {
+    f.raw.close.logs_retained = logs; await f.save();
+    await assert.rejects(joinB5FinalProjectionV1(input), { code: "B5_CLEANUP_RETAINED" });
+  }
+  await assert.rejects(assertB5CleanupLogsRetainedV1(f.root, [{ log: join(f.root, "logs/omitted.log") }], [{ path: present }]),
+    { code: "B5_CLEANUP_RETAINED" }, "omitting a deleted step log must refuse");
+  const outside = join(f.root, "../outside.log"), link = join(f.root, "logs/link.log");
+  await writeFile(resolve(outside), "outside retained root", { mode: 0o600 });
+  t.after(() => rm(resolve(outside), { force: true }));
+  await symlink(present, link);
+  const linkedParent = join(f.root, "linked-logs"); await symlink(join(f.root, "logs"), linkedParent);
+  const dangling = join(f.root, "logs/dangling.log"); await symlink(join(f.root, "logs/absent.log"), dangling);
+  for (const path of [outside, resolve(f.root, "../outside.log"), `${f.root}/logs/../logs/kept.log`, link, dangling,
+    join(linkedParent, "kept.log"), join(f.root, "logs")]) {
+    await assert.rejects(assertB5CleanupLogsRetainedV1(f.root, [], [{ path }]), { code: "B5_CLEANUP_RETAINED" });
+  }
+  const logs = Array.from({ length: 15 }, (_, n) => ({ path: join(f.root, `logs/step-${n}.log`) }));
+  for (const log of logs) await writeFile(log.path, "retained step", { mode: 0o600 });
+  await assertB5CleanupLogsRetainedV1(f.root, logs.map(({ path }) => ({ log: path })), logs);
+  await assert.rejects(assertB5CleanupLogsRetainedV1(f.root, logs.map(({ path }) => ({ log: path })), logs.slice(1)),
+    { code: "B5_CLEANUP_RETAINED" });
 });
 
 test("B5 loader requires an enabled callable intake driver before constructing the adapter", async () => {

@@ -363,6 +363,17 @@ import { verifyFinalizationRecordV1, type LoopFinalizationCapabilityV1,
   type LoopFinalizationTargetV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 import { canonicalJson, sha256Digest } from "../../src/security";
 
+/** Empty cleanup moves must account for every step log as a retained regular file. */
+export async function assertB5CleanupLogsRetainedV1(root: string, steps: { log: string }[], logs: { path: string }[] | undefined) {
+  need(logs && logs.length > 0, "B5_CLEANUP_RETAINED");
+  const retained = new Set(logs.map(log => log.path));
+  need(steps.every(step => retained.has(step.log)), "B5_CLEANUP_RETAINED");
+  for (const log of logs) {
+    try { await canonical(log.path, root); }
+    catch { refuse("B5_CLEANUP_RETAINED"); }
+  }
+}
+
 /** Optional later-state read-only join. This never calls retain/cleanup or starts
  * a service: its ports must be the loaded capability and an actual cold service
  * read. Merely parsing a saved manifest/card does not qualify those ports.
@@ -411,12 +422,7 @@ export async function joinB5FinalProjectionV1(input: Parameters<typeof projectB5
   need(close.clone_kept === projection.repository && close.head === binding.candidateRevision, "B5_A2_CLOSE_JOIN");
   const targets = close.moves.map(m => ({ source: m.source, destination: m.destination, sha256: m.sha256 ?? null, state: m.state }));
   need(sha256Digest(targets) === record.cleanup.removedDigest, "B5_A2_CLEANUP_DIGEST");
-  if (targets.length === 0) { // an empty move list is only credible when every retained log is still present under root
-    need(Array.isArray(close.logs_retained), "B5_CLEANUP_RETAINED");
-    for (const log of close.logs_retained ?? []) {
-      need(inside(input.root, log.path) && resolve(log.path) === log.path && (await lstat(log.path).catch(() => null)) !== null, "B5_CLEANUP_RETAINED");
-    }
-  }
+  if (targets.length === 0) await assertB5CleanupLogsRetainedV1(input.root, raw.steps, close.logs_retained);
   for (const move of targets) {
     need(inside(input.root, move.source) && move.source !== projection.repository && resolve(move.source) === move.source,
       "B5_A2_CLEANUP_TARGET");
