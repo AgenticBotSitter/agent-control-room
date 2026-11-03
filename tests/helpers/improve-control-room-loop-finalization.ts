@@ -136,11 +136,14 @@ import { open, readFile, writeFile, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { canonicalJson, hmacSha256Tag } from "../../src/security";
-import { createImproveControlRoomLoopFinalizerV1, verifyFinalizationRecordV1, type LoopFinalizationBindingV1,
+import { createImproveControlRoomLoopFinalizerV1, verifyFinalizationRecordV1, LoopFinalizationFailureV1, type LoopFinalizationBindingV1,
   type LoopFinalizationCapabilityV1, type LoopFinalizationTargetV1, type LoopFinalizationObservationV1, type LoopFinalizationRecordV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 export type FixtureState = {target:LoopFinalizationTargetV1;observation:LoopFinalizationObservationV1;ended:boolean;
   retentionDigest:string;corpus:Record<string,string>};
 const fixturePurpose="SYNTHETIC B3c finalization record";
+class FixtureFenceBusyError extends Error {
+  constructor(){super("SYNTHETIC fence busy");}
+}
 async function durable(path:string,value:unknown){
   const f=await open(path+".next","w");try{await f.writeFile(JSON.stringify(value));await f.sync();}finally{await f.close();}
   await rename(path+".next",path);
@@ -161,7 +164,7 @@ export async function persistentFinalizationCapability(root:string,dependencies:
     },
     withFence:async(_binding,work)=>{
       const db=new DatabaseSync(fencePath);try{
-        try{db.exec("BEGIN IMMEDIATE");}catch{throw new Error("SYNTHETIC fence busy");}
+        try{db.exec("BEGIN IMMEDIATE");}catch{throw new FixtureFenceBusyError();}
         await hooks.acquired?.();return await work();
       }finally{try{db.exec("ROLLBACK");}catch{/* acquisition did not succeed */}db.close();}
     },
@@ -258,7 +261,12 @@ async function host(mode:string,root:string){
       authorize:async()=>(JSON.parse(await readFile(join(root,"finalization-state.json"),"utf8")) as FixtureState).target,
       publishCompletion:async input=>{const reply=wait("publication");process.send?.({kind:"publish",input});return (await reply as {receipt:import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCompletionReceiptV1}).receipt;}}).finalize(state.target);
     process.send?.({kind:"done",digest:record?.recordDigest});
-  }catch(error){process.send?.({kind:error instanceof Error&&error.message==="SYNTHETIC fence busy"?"busy":"error"});}
+  }catch(error){
+    // The finalizer reports its bounded stage and preserves the fence refusal
+    // as its cause. Only our fixture's own refusal counts as a losing host.
+    const cause=error instanceof LoopFinalizationFailureV1?error.cause:error;
+    process.send?.({kind:cause instanceof FixtureFenceBusyError?"busy":"error"});
+  }
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href&&process.argv[2]==="--fixture-host"){
   await host(process.argv[3]!,process.argv[4]!);

@@ -17,7 +17,8 @@ const probes=[
     pattern:"B5 verifier re-reads the candidate repository and its page facts",assertion:"B5 dirty candidate repository is refused"},
   {name:"artifact byte binding",find:"if (b5Bytes(bytes) !== entry.sha256 || bytes.length !== entry.bytes || artifacts.has(entry.path))",replace:"if (artifacts.has(entry.path))",
     pattern:"B5 verifier accepts fixture evidence only as incomplete",assertion:"B5 changed retained bytes are refused"},
-  {name:"closed-browser rejection and original-builder repair",find:"if (!repair || repair.identity !== defective!.identity || repair.family !== defective!.family)",replace:"if (!repair)",
+  {name:"closed-browser rejection and original-builder repair",find:`if (!repair || repair.head !== (rejectedHeads[i + 1] ?? final)
+      || repair.identity !== defective!.identity || repair.family !== defective!.family)`,replace:"if (!repair || repair.head !== (rejectedHeads[i + 1] ?? final))",
     pattern:"B5 verifier requires closed-browser rejection and original-builder repair",assertion:"B5 repair by a different writer is refused by the repair guard"},
   {name:"full cleanup and retained corpus",find:`if (teardown.b3cCleanup !== "complete" || !teardown.scratchAbsent || `,replace:"if (",
     pattern:"B5 verifier requires full cleanup before the retained read-back",assertion:"B5 refused cleanup is refused by the cleanup guard"},

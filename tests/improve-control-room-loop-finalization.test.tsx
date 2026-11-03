@@ -691,7 +691,10 @@ if(process.env.CONTROL_ROOM_B3C_LOAD==="1")test("B3c 24 finalizers retain once a
   let publications=0;
   const waitFor=async(predicate:()=>boolean)=>{
     const deadline=Date.now()+60000;
-    while(!predicate()){assert.ok(Date.now()<deadline,"B3c measured host barrier reached");await new Promise(r=>setTimeout(r,10));}
+    while(!predicate()){
+      assert.equal(events.filter(e=>["error","host-error","publisher-error"].includes(e.kind)).length,0,"B3c hosts report no unexpected errors before the barrier");
+      assert.ok(Date.now()<deadline,"B3c measured host barrier reached");await new Promise(r=>setTimeout(r,10));
+    }
   };
   const start=()=>{
     const child=spawn(process.execPath,["--import","tsx",join(process.cwd(),"tests/helpers/improve-control-room-loop-finalization.ts"),"--fixture-host","finalizer-host",f.retained],

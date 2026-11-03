@@ -102,11 +102,18 @@ if(ordinary){
   });
   test('B3b normal cadence and one bounded retry',async t=>{
     const f=await fixture(t);await f.tick();assert.equal(f.calls(),1);f.monitor.assertAvailability();
-    f.advance(2999999);await f.tick();assert.equal(f.calls(),1,'B3b premature collection count remains one');
+    // tick() admits work asynchronously. An absent lock at this instant does
+    // not prove that a premature collector will not be admitted just afterwards.
+    const assertNoCollection=async(count:number,message:string)=>{
+      const deadline=Date.now()+500;
+      do{await new Promise<void>(r=>setTimeout(r,10));assert.equal(f.calls(),count,message);}while(Date.now()<deadline);
+      await f.idle();assert.equal(f.calls(),count,message);
+    };
+    f.advance(2999999);await f.tick();await assertNoCollection(1,'B3b premature collection count remains one');
     f.advance(1);f.fail(true);const old=await readFile(f.file);await f.tick();assert.equal(f.calls(),2);assert.deepEqual(await readFile(f.file),old);
-    assert.equal((await f.schedule()).nextKind,'retry');f.advance(299999);await f.tick();assert.equal(f.calls(),2);
+    assert.equal((await f.schedule()).nextKind,'retry');f.advance(299999);await f.tick();await assertNoCollection(2,'B3b retry waits for its due time');
     f.advance(1);await f.tick();assert.equal(f.calls(),3);assert.equal((await f.schedule()).nextKind,'normal');
-    f.advance(2999999);await f.tick();assert.equal(f.calls(),3);f.fail(false);f.advance(1);await f.tick();assert.equal(f.calls(),4);f.monitor.assertAvailability();
+    f.advance(2999999);await f.tick();await assertNoCollection(3,'B3b exhausted retry waits for normal cadence');f.fail(false);f.advance(1);await f.tick();assert.equal(f.calls(),4);f.monitor.assertAvailability();
   });
   test('B3b three hours retain the freshness margin and recovery retry',async t=>{
     const f=await fixture(t);f.latency(31000);await f.tick();
