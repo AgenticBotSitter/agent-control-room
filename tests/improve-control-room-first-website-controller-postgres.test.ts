@@ -391,10 +391,10 @@ test("B5 browser intake requires accepted state even for HTTP 202", () => {
 });
 
 // Evidence projection maps back to the internal pin names only after parsing.
-function readControllerStartDigests(value: unknown): Record<string, string> {
+function readControllerStartDigests(value: unknown): import("./helpers/improve-control-room-first-website").B5QualifiedPinsV1["digests"] {
   const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
   const { authorizationSha256, ...otherDigests } = z.object({ authorizationSha256: digest }).catchall(digest).parse(value);
-  return { ...otherDigests, authorization: authorizationSha256 };
+  return { ...otherDigests, authorization: authorizationSha256 } as import("./helpers/improve-control-room-first-website").B5QualifiedPinsV1["digests"];
 }
 
 test("B5 controller-start consumer restores every internal preflight pin", () => {

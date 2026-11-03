@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { firstWebsiteConfigSchemaV1 } from "./helpers/improve-control-room-first-website";
+import { B5RefusalV1, firstWebsiteConfigSchemaV1 } from "./helpers/improve-control-room-first-website";
 
 test("F03b device actor is the owner", () => {
   const schema = firstWebsiteConfigSchemaV1.shape.device;
@@ -940,7 +940,7 @@ for (const [phase, commands, actions] of [
         return { receipt: b5DeviceReceiptSchemaV1.parse(await f.receipt(request, ["bindings-ready-observed"])) };
       } });
     assert.equal(next.receipt.sequence, current.sequence + 1);
-  } finally { owner.abort(new Error("fixture complete")); await outcome; await owner.cleanup(); owner.dispose(); }
+  } finally { owner.abort(new B5RefusalV1("fixture complete")); await outcome; await owner.cleanup(); owner.dispose(); }
 });
 
 test("B5 sign-in waits for an in-flight accepted Confirm before deciding against restart", async t => {
