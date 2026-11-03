@@ -1035,7 +1035,9 @@ const SIGNATURE_CONTROLS = [
 // Re-runs the product check's conditions from the test side (same codesign
 // commands, injectable run port) and names the first one that fails.
 // Returns undefined when every condition holds. Never changes the product check.
-async function diagnoseSignatureControl(control, run = runFile) {
+async function diagnoseSignatureControl(control, run = runFile, resolve = realpathSync) {
+  // Diagnose the realpath'd executable, as the product check does.
+  let executable; try { executable = resolve(control.path); } catch { executable = control.path; }
   const firstLine = failure => `${failure?.stderr ?? failure?.message ?? failure}`.split('\n').find(line => line.trim()) ?? '(no output)';
   const requirement = control.apple ? '=anchor apple' : `=anchor apple generic and certificate leaf[subject.OU] = "${control.team}"`;
   const verify = async (label, target) => {
@@ -1052,8 +1054,8 @@ async function diagnoseSignatureControl(control, run = runFile) {
   const bundleVerify = await verify('bundle', control.bundle); if (bundleVerify) return bundleVerify;
   const root = await display('bundle', control.bundle); if (root.reason) return root.reason;
   if (!root.text.split('\n').includes(`Identifier=${control.id}`)) return `bundle Identifier is not ${control.id} (saw ${/^Identifier=(.*)$/mu.exec(root.text)?.[1] ?? 'none'})`;
-  const binaryVerify = await verify('binary', control.path); if (binaryVerify) return binaryVerify;
-  const binary = await display('binary', control.path); if (binary.reason) return binary.reason;
+  const binaryVerify = await verify('binary', executable); if (binaryVerify) return binaryVerify;
+  const binary = await display('binary', executable); if (binary.reason) return binary.reason;
   const id = /^Identifier=(.+)$/mu.exec(binary.text)?.[1];
   if (id !== control.id && !id?.startsWith(`${control.id}.`)) return `binary Identifier is not ${control.id} (saw ${id ?? 'none'})`;
   if (!control.apple) {
@@ -1064,21 +1066,32 @@ async function diagnoseSignatureControl(control, run = runFile) {
   return undefined;
 }
 
+// A positive hosted signal is required: GitHub Actions AND a host that reports
+// SIP not fully enabled. A real Mac with SIP off, or where csrutil cannot be
+// read, has no GITHUB_ACTIONS and so is never treated as a hosted VM.
+const hostedVmHost = async (env = process.env, sipOff = sipDisabledHost) => env.GITHUB_ACTIONS === 'true' && await sipOff();
+
+// Only a diagnosis that names an environmental condition may be downgraded.
+const ENVIRONMENTAL_CONDITION = /^(?:codesign verify of (?:bundle|binary) failed|Info\.plist stamp: cannot stat|(?:bundle|binary) Identifier is not|(?:bundle|binary) TeamIdentifier is not)/u;
+
 // Classifies one control with the product check. A failing Apple control always
-// fails. A failing third-party control fails on SIP-enabled Macs and is a named
-// diagnostic on hosted VMs. Every failure names the condition that failed.
+// fails. A failing third-party control is a named diagnostic only on a hosted VM
+// and only when the diagnosis names an environmental condition; when every
+// diagnosed condition passes the product check is suspect and it fails everywhere.
 async function checkSignatureControl(t, control, {
   classify = async () => {
-    const inode = String(statSync(control.path, { bigint: true }).ino);
-    return trustedExecutableV1({ executable: control.path, inode });
+    const executable = realpathSync(control.path);
+    const inode = String(statSync(executable, { bigint: true }).ino);
+    return trustedExecutableV1({ executable, inode });
   },
   diagnose = () => diagnoseSignatureControl(control),
-  hostedVm = sipDisabledHost,
+  hostedVm = hostedVmHost,
 } = {}) {
   const name = basename(control.path), kind = await classify();
   if (['app', 'terminal'].includes(kind)) { t.diagnostic(`SIGNATURE CONTROL verified: ${name}`); return 'verified'; }
-  const reason = (await diagnose()) ?? 'every codesign, Identifier, TeamIdentifier and Info.plist condition passed in diagnosis; the product check still returned no app/terminal (inode or stamp change?)';
-  if (!control.apple && await hostedVm()) {
+  const diagnosis = await diagnose();
+  const reason = diagnosis ?? 'every codesign, Identifier, TeamIdentifier and Info.plist condition passed in diagnosis; the product check still returned no app/terminal (inode or stamp change?)';
+  if (!control.apple && ENVIRONMENTAL_CONDITION.test(diagnosis ?? '') && await hostedVm()) {
     t.diagnostic(`SIGNATURE CONTROL unverifiable on hosted VM: ${name}: ${reason}`);
     return 'unverifiable';
   }
@@ -1135,6 +1148,34 @@ test('R5SD: a failing third-party signature control is a named diagnostic only o
   t.diagnostic('hosted-VM branch proven with injected classify, diagnose and detection; no shipped flag');
 });
 
+test('R5SD: hosted-VM relaxation needs GITHUB_ACTIONS and SIP off; an all-conditions-pass failure fails everywhere', async () => {
+  const chrome = SIGNATURE_CONTROLS.find(item => item.id === 'com.google.Chrome');
+  const notices = [], recorder = { diagnostic: line => notices.push(line) };
+  const codesignFailure = { classify: async () => undefined, diagnose: async () => 'codesign verify of binary failed (exit 3): fixture' };
+  const hosted = (env, sipOff) => () => hostedVmHost(env, async () => sipOff);
+  // (a) hosted (GITHUB_ACTIONS=true + SIP off) + codesign failure -> diagnostic.
+  assert.equal(await checkSignatureControl(recorder, chrome, { ...codesignFailure, hostedVm: hosted({ GITHUB_ACTIONS: 'true' }, true) }), 'unverifiable');
+  assert.equal(notices.length, 1);
+  // (b) SIP off or unreadable without GITHUB_ACTIONS -> fails (also a non-'true' value).
+  for (const env of [{}, { GITHUB_ACTIONS: 'false' }, { GITHUB_ACTIONS: '1' }]) {
+    await assert.rejects(checkSignatureControl(recorder, chrome, { ...codesignFailure, hostedVm: hosted(env, true) }), /codesign verify of binary failed/u);
+  }
+  // (c) hosted + every diagnosed condition passes but the product returns undefined -> fails.
+  await assert.rejects(checkSignatureControl(recorder, chrome, { classify: async () => undefined, diagnose: async () => undefined, hostedVm: hosted({ GITHUB_ACTIONS: 'true' }, true) }),
+    /Google Chrome: trustedExecutableV1 returned undefined.*every codesign, Identifier, TeamIdentifier and Info\.plist condition passed/u);
+  // (d) GITHUB_ACTIONS=true but SIP enabled + failure -> fails.
+  await assert.rejects(checkSignatureControl(recorder, chrome, { ...codesignFailure, hostedVm: hosted({ GITHUB_ACTIONS: 'true' }, false) }), /codesign verify of binary failed/u);
+  // A non-environmental diagnosis (codesign display failure) is not downgraded.
+  await assert.rejects(checkSignatureControl(recorder, chrome, { classify: async () => undefined, diagnose: async () => 'codesign display of binary failed (exit 1): x', hostedVm: hosted({ GITHUB_ACTIONS: 'true' }, true) }), /codesign display of binary failed/u);
+  // Each environmental condition the diagnosis can name is downgraded when hosted.
+  for (const reason of ['Info.plist stamp: cannot stat /x: ENOENT', 'codesign verify of bundle failed (exit 3): x', 'bundle Identifier is not a (saw b)', 'binary Identifier is not a (saw b)', 'bundle TeamIdentifier is not A (saw B)', 'binary TeamIdentifier is not A (saw B)']) {
+    assert.equal(await checkSignatureControl(recorder, chrome, { classify: async () => undefined, diagnose: async () => reason, hostedVm: hosted({ GITHUB_ACTIONS: 'true' }, true) }), 'unverifiable', reason);
+  }
+  // The default detection really requires the env signal.
+  assert.equal(await hostedVmHost({}, async () => true), false);
+  assert.equal(await hostedVmHost({ GITHUB_ACTIONS: 'true' }, async () => true), true);
+});
+
 test('R5SD: signature control diagnosis names the failing condition through the injectable run port', async () => {
   const chrome = SIGNATURE_CONTROLS.find(item => item.id === 'com.google.Chrome');
   const display = (id, team = chrome.team) => `Identifier=${id}\nTeamIdentifier=${team}\n`;
@@ -1147,7 +1188,7 @@ test('R5SD: signature control diagnosis names the failing condition through the 
     }
     return { stdout: '', stderr: args.at(-1) === chrome.bundle ? root : binary };
   };
-  const diagnose = options => diagnoseSignatureControl(chrome, port(options));
+  const diagnose = options => diagnoseSignatureControl(chrome, port(options), value => value);
   const plist = existsSync(`${chrome.bundle}/Contents/Info.plist`);
   if (!plist) { assert.match(await diagnose(), /^Info\.plist stamp: cannot stat /u); return; }
   assert.equal(await diagnose(), undefined);
