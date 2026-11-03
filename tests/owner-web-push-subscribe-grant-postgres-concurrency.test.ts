@@ -71,6 +71,21 @@ function binding(pg: RealPostgres, max?: number) {
   const config = { host: "127.0.0.1", port: c.port, database: c.database, username: c.user, password: c.password, majorVersion: 17 as const };
   const options = privatePgOptions(config);
   const pool = new Pool({ ...options, host: c.host, ...(max === undefined ? {} : { max }) });
+  // Observe the server error before the production driver sanitizes it. Keep
+  // the original rejection and admission counts; never retry a failed write.
+  pool.on("connect", session => {
+    const query = session.query.bind(session);
+    session.query = (async (statement: string, params?: unknown[]) => {
+      try { return await query(statement, params); }
+      catch (error) {
+        const pgError = error as { code?: string; table?: string; constraint?: string; detail?: string };
+        if (pgError.code === "23505") console.error("CR-E075 PostgreSQL unique violation " + JSON.stringify({
+          code: pgError.code, table: pgError.table, constraint: pgError.constraint, detail: pgError.detail,
+        }));
+        throw error;
+      }
+    }) as typeof session.query;
+  });
   const db = bindPrivatePgPool(pool);
   return { db, pool, config, store: new PostgresOwnerPushStoreV1(db.client) };
 }
