@@ -58,7 +58,7 @@ const requiredDatabaseLogins = Object.freeze([
 // line moves this pin, and `tests/updater-ledger-pin.test.mjs` is what refuses a run
 // that forgot: a stale pin answers `nightly_backup_configuration_refused` at parse time.
 export const RELEASE_MIGRATION_LEDGER_DIGEST_V1 =
-  `sha256:b328d22c0769d2a48232586848ba2382b92bc47a54db076b2e33169ce7132731`;
+  `sha256:40ebb7ea0550e86502efe8c2e936b7330f045a32b3396b653408c7ed2539db59`;
 
 const refuse = code => { throw Object.assign(new Error(code), { code }); };
 const exactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)

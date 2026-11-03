@@ -42,6 +42,7 @@
 // own lanes, which have covered them since long before this stream.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
@@ -185,6 +186,23 @@ test("every login's startup preflight ACCEPTS a full install carrying 0204-0205,
           await profile.run(pool.client, pool.config as never, Date.now());
         } finally { await pool.close(); }
       }
+      // The web startup must also distinguish the 0307 review validator from
+      // the previous 0305 body, even when every grant and ledger row is intact.
+      const web = login(postgres, "web");
+      const preflight = () => PROFILES[0]!.run(web.client, web.config as never, Date.now());
+      try {
+        await preflight();
+        await admin.query("SET ROLE control_room_schema_owner");
+        await admin.query(await readFile("db/down/0307_control_loop_candidate_review_identity.sql", "utf8"));
+        await admin.query("RESET ROLE");
+        await assert.rejects(preflight, /private_database_preflight_failed/u,
+          "web startup accepted the old validator without 0307");
+        await admin.query("SET ROLE control_room_schema_owner");
+        await admin.query(await readFile("db/migrations/0307_control_loop_candidate_review_identity.sql", "utf8"));
+        await admin.query("RESET ROLE");
+        await preflight();
+        console.log("RESULT: PASS web startup accepts fresh 0307, refuses missing 0307, accepts restored 0307");
+      } finally { await web.close(); }
       // AND THE FUNCTION THE REFUSAL IS ABOUT EXISTS AND IS DEFiner, so the
       // refusal above cannot be an unrelated one.
       const guard = (await admin.query<{ prosecdef: boolean; prorettype: string }>(

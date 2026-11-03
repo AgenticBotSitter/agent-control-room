@@ -91,7 +91,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // candidate guard that binds Start lineage to the signed authorization id, and 0305's
 // null-tolerant payload check/guard for Unavailable final-report sections. The previous
 // value was `16521bab...`.
-export const privateWebSchemaDigest = "074e7298647a5f8963c21257eb070810d9653d3d55482ad3d173f5b945c26e24";
+export const privateWebSchemaDigest = "3448fa44ef3ad086d46139684ba078f6af8ad43f6eee18af1342f095ed126529";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
