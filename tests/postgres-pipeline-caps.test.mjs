@@ -103,6 +103,9 @@ before(async () => {
   data = await mkdtemp(join(tmpdir(), "cr-s7b-pg-"));
   socket = join(data, "sock");
   const env = { PATH: "/usr/bin:/bin:/opt/homebrew/bin", LC_ALL: "C", TMPDIR: data, NODE_ENV: "test" };
+  // Migration 0307 requires UTF8: under LC_ALL=C the default SQL_ASCII
+  // cluster fails with "conversion between UTF8 and SQL_ASCII is not supported".
+  // Pin the cluster encoding here so the application database inherits UTF8.
   await exec(join(BIN, "initdb"), ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject", "--encoding=UTF8"], { env });
   await mkdir(socket, { recursive: true });
   await exec(join(BIN, "pg_ctl"), ["-D", data, "-o", `-k ${socket} -p ${PORT} -c fsync=off -c full_page_writes=off`,
@@ -114,6 +117,8 @@ before(async () => {
     // postgres, as on the documented Mac cluster.
     await bootstrap.query("CREATE ROLE postgres SUPERUSER LOGIN");
     await bootstrap.query(`CREATE DATABASE ${DB}`);
+    const encoding = await bootstrap.query("SELECT pg_encoding_to_char(encoding) AS encoding FROM pg_database WHERE datname = $1", [DB]);
+    assert.equal(encoding.rows[0]?.encoding, "UTF8", "caps application database must use UTF8 before migrations");
   } finally { await bootstrap.end(); }
   await applyMigrations({ target: fixtureOptions(), bootstrapTarget: fixtureOptions(),
     migrateTarget: migratorOptions(), rootDir: ROOT, env: { ...process.env, ...passwords } });

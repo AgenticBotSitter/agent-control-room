@@ -217,7 +217,8 @@ jobs:
   mutation-checks-lineage:
     name: Mutation checks (lineage and attention)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 44 minutes of bounded proofs plus 6 minutes for setup and aggregation.
+    timeout-minutes: 50
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
     steps:
@@ -253,7 +254,8 @@ jobs:
         continue-on-error: true
         run: pnpm run test:improve-control-room-loop-lineage-mutations
       - name: Prove authorized loop bridge guards
-        timeout-minutes: 10
+        # 900s measured parent + 60s runner cleanup + 60s step headroom.
+        timeout-minutes: 17
         run: pnpm run test:improve-control-room-loop-bridge-mutations
       - name: Prove saved loop website guards
         timeout-minutes: 5
@@ -351,6 +353,8 @@ jobs:
           fetch-depth: 0
       - name: Provide the macOS /private/tmp path on Linux
         # Protected updater mutation baselines require a real sticky directory.
+        # Production updater locking is macOS-only (lockf). Linux configuration
+        # fixtures use flock compatibility and do not prove that production spawn.
         run: test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - name: Find this branch's mutation manifest
         id: manifest

@@ -86,10 +86,14 @@ const probes=[
     find:'loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);',replace:'true;',
     pattern:"^B1b split loop and legacy",assertion:"hosted composition refuses a split loop key",postgres:false},
 ];
-test("B1b guard-off proofs with restored green checks",{timeout:550000,concurrency:2},async t=>{
+// Saved CI exhausted 550s during probe 25; its serial non-PG group needs
+// about 24 * 28s = 672s. A 900s parent leaves 228s (34%) over that estimate.
+// R13's complete local run took 283.2s, so local speed is not the CI budget.
+// package.json allows 960s, and CI allows 17 minutes, for teardown headroom.
+test("B1b guard-off proofs with restored green checks",{timeout:900000,concurrency:2},async t=>{
   await mkdir(resolve(".test-tmp"),{recursive:true});const copies:string[]=[];
   try{
-    // PostgreSQL setup dominates this lane. Each group owns an independent
+    // The serial non-PG group dominates the saved CI run. Each group owns an independent
     // clean copy; every baseline, mutation and restored check is preserved.
     const groups=await Promise.allSettled([false,true].map(async postgres=>{
     const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));copies.push(copy);
