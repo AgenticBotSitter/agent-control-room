@@ -11,8 +11,8 @@ import type { DatabaseClient } from "../src/persistence/database";
 const origin = "http://127.0.0.1:60460";
 const signal = () => new AbortController().signal;
 const host = { origin, proof: { withOwnerCode: async (use: (code: string) => unknown) => use("synthetic-owner-code-for-session-tests") } } as FirstWebsiteHostV1;
-function fixture(options: { retryAfter?: string; failure?: boolean; deleteStatus?: number; alwaysLimited?: boolean } = {}) {
-  let now = Date.parse("2026-01-01T00:00:00Z"), posts = 0, deletes = 0;
+function fixture(options: { retryAfter?: string; failure?: boolean; deleteStatus?: number; alwaysLimited?: boolean; nowMs?: number; retryAfters?: string[] } = {}) {
+  let now = options.nowMs ?? Date.parse("2026-01-01T00:00:00Z"), posts = 0, deletes = 0;
   const calls: { method: string; cookie: string | null; at: number }[] = [];
   const waits: number[] = [];
   const request = async (_url: unknown, init: RequestInit = {}) => {
@@ -22,8 +22,10 @@ function fixture(options: { retryAfter?: string; failure?: boolean; deleteStatus
       { status: 201, headers: { "set-cookie": `local-owner=fixture-${++posts}; HttpOnly; Max-Age=300` } });
     if (method === "DELETE") {
       deletes++;
-      if (options.retryAfter && (deletes === 1 || options.alwaysLimited)) return Response.json({ error: "owner_attempt_limit" },
-        { status: 429, headers: { "retry-after": options.retryAfter } });
+      const retryAfter = options.retryAfters?.[deletes - 1]
+        ?? ((deletes === 1 || options.alwaysLimited) ? options.retryAfter : undefined);
+      if (retryAfter !== undefined) return Response.json({ error: "owner_attempt_limit" },
+        { status: 429, headers: { "retry-after": retryAfter } });
       return new Response(null, { status: options.deleteStatus ?? 204 });
     }
     return Response.json({ ok: true }, { status: options.failure ? 500 : 200 });
@@ -73,6 +75,63 @@ test("B5 controller cleanup retains failure for missing Retry-After and persiste
     await assert.rejects(f.session.close(), /B5_CONTROLLER_SESSION_CLEANUP/);
     assert.equal(f.counts().deletes, options.alwaysLimited ? 3 : 1);
   }
+});
+
+async function cleanupBoundary(options: Parameters<typeof fixture>[0], expected: {
+  refused: boolean; deletes: number; waits: number[];
+}) {
+  const f = fixture(options);
+  await f.session.exchange("/status", signal());
+  const closing = f.session.close();
+  assert.strictEqual(f.session.close(), closing, "cleanup shares the original close promise");
+  await assert.rejects(f.session.exchange("/status", signal()), /B5_CONTROLLER_SESSION_CLOSED/);
+  if (expected.refused) {
+    let failure: unknown;
+    await assert.rejects(closing, error => {
+      assert.match(String(error), /B5_CONTROLLER_SESSION_CLEANUP/, "deadline or attempt refusal");
+      failure = error; return true;
+    }, "cleanup must refuse the retry at its deadline or attempt boundary");
+    assert.strictEqual(f.session.close(), closing, "failed cleanup reuses its close promise");
+    await assert.rejects(f.session.close(), error => error === failure, "cleanup retains the same failure");
+  } else {
+    await closing;
+    assert.strictEqual(f.session.close(), closing, "successful cleanup reuses its close promise");
+    await f.session.close();
+  }
+  assert.deepEqual(f.counts(), { posts: 1, deletes: expected.deletes }, "cleanup has exact DELETE attempts and no new issuance");
+  assert.ok(f.counts().deletes <= 3, "cleanup must never exceed three DELETE attempts");
+  assert.deepEqual(f.waits, expected.waits, "cleanup waits use exact nonnegative bounded delays");
+  assert.deepEqual(f.calls.map(c => c.method), ["POST", "GET", ...Array(expected.deletes).fill("DELETE")],
+    "no request follows a cleanup refusal or reuses a completed lifecycle");
+}
+
+// HTTP-date serialisation truncates milliseconds. Keep the header on an exact
+// second and offset the injected clock by +1/0/-1 ms to obtain 29999/30000/30001.
+for (const [offset, delay] of [[1, 29999], [0, 30000], [-1, 30001]]) {
+  test(`B5 session cleanup boundary HTTP-date delay ${delay}ms`, async () => {
+    await cleanupBoundary({ nowMs: Date.parse("2026-01-01T00:00:00Z") + offset,
+      retryAfter: "Thu, 01 Jan 2026 00:00:30 GMT" },
+    { refused: delay >= 30000, deletes: delay < 30000 ? 2 : 1, waits: delay < 30000 ? [delay] : [] });
+  });
+}
+
+for (const seconds of [29, 30, 31]) test(`B5 session cleanup boundary integer Retry-After ${seconds}s`, async () => {
+  await cleanupBoundary({ retryAfter: String(seconds) },
+    { refused: seconds >= 30, deletes: seconds < 30 ? 2 : 1, waits: seconds < 30 ? [seconds * 1000] : [] });
+});
+
+for (const retryAfter of ["0", "Wed, 31 Dec 2025 23:59:59 GMT"]) {
+  test(`B5 session cleanup boundary zero-clamped delay ${retryAfter}`, async () => {
+    await cleanupBoundary({ retryAfter }, { refused: false, deletes: 2, waits: [0] });
+  });
+}
+
+for (const second of ["20", "21"]) test(`B5 session cleanup boundary second retry ${second}s meets or exceeds remaining budget`, async () => {
+  await cleanupBoundary({ retryAfters: ["10", second] }, { refused: true, deletes: 2, waits: [10000] });
+});
+
+test("B5 session cleanup boundary persistent limits allow exactly three DELETE attempts", async () => {
+  await cleanupBoundary({ retryAfter: "1", alwaysLimited: true }, { refused: true, deletes: 3, waits: [1000, 1000] });
 });
 
 test("B5 controller does not issue a session for aborted work or an unused lifecycle", async () => {
