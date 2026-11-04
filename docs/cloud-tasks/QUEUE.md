@@ -4,6 +4,11 @@ Scheduled cloud workers read this file from branch `cloud/queue`. Each line belo
 
 <!-- tasks -->
 b8-paid-cap-mechanism cloud-base/b8-paid-cap-mechanism
+b8-selection-to-start cloud-base/b8-selection-to-start
+b8-saved-selections cloud-base/b8-saved-selections
+b8-named-presets cloud-base/b8-named-presets
+b8-default-start cloud-base/b8-default-start
+b8-all-provider-choice cloud-base/b8-all-provider-choice
 release-fixture-cleanup cloud-base/release-fixture-cleanup
 candidate-null-down cloud-base/candidate-null-down
 b5-refusal-inventory cloud-base/b5-refusal-inventory
