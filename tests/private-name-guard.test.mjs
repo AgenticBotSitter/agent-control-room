@@ -303,3 +303,16 @@ test("README status guard refuses missing boundaries and audited stale claims", 
     assert.match(findings[0], /^stale /u);
   }
 });
+
+test("guard matches content whose case differs from both the term and its lowercase", () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, "safe.txt"), "prefix SYNTHETICPRIVATETERM suffix\n");
+    git(root, ["add", "."]);
+    const result = spawnSync(process.execPath, [guard], {
+      cwd: root, encoding: "utf8", env: { CONTROL_ROOM_PRIVATE_NAMES: "SyntheticPrivateTerm\n" },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /safe\.txt:1: private name <redacted>/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
