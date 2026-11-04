@@ -2,16 +2,20 @@ import assert from "node:assert/strict";
 import test, { type TestContext, type TestOptions } from "node:test";
 
 // Keep the names checked at module load identical to the names registered with Node.
-export function mutationLane(expectedParents: number) {
+// A lane gated by an environment flag still declares its parents when disabled, so a
+// name pattern that selects it without the flag fails instead of exiting green.
+export function mutationLane(expectedParents: number, { enabled = true }: { enabled?: boolean } = {}) {
   const parents: string[] = [];
   const registrations: (() => Promise<void>)[] = [];
   return {
     parents,
     expectedParents,
+    enabled,
     register() { for (const register of registrations) void register(); },
     test(name: string, expectedProbes: number, options: TestOptions,
       run: (t: TestContext, probe: () => void) => Promise<void>) {
       parents.push(name);
+      if (!enabled) return;
       registrations.push(() => test(name, options, async t => {
         let selected = 0;
         await run(t, () => { selected++; });
@@ -32,9 +36,16 @@ export function assertMutationLaneSelection(lanes: ReturnType<typeof mutationLan
   const pattern = process.execArgv.find(arg => arg.startsWith("--test-name-pattern="))?.slice("--test-name-pattern=".length);
   if (pattern !== undefined) {
     const selected = lanes.map(lane => lane.parents.filter(name => new RegExp(pattern).test(name)).length);
-    assert.equal(selected.filter(count => count > 0).length, 1, "mutation lane must select exactly one registered lane");
     for (let index = 0; index < lanes.length; index++) {
-      if (selected[index]) assert.equal(selected[index], lanes[index]!.expectedParents, "mutation lane must select every expected parent");
+      if (selected[index]) assert.equal(lanes[index]!.enabled, true, "mutation lane selected without its enabling flag");
+    }
+    // A pattern aimed at ordinary tests of a file whose only lanes are disabled
+    // selects no lane and is not a lane run; every armed or selected run is.
+    if (lanes.some(lane => lane.enabled) || selected.some(count => count > 0)) {
+      assert.equal(selected.filter(count => count > 0).length, 1, "mutation lane must select exactly one registered lane");
+      for (let index = 0; index < lanes.length; index++) {
+        if (selected[index]) assert.equal(selected[index], lanes[index]!.expectedParents, "mutation lane must select every expected parent");
+      }
     }
   }
   for (const lane of lanes) lane.register();

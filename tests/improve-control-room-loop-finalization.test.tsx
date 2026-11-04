@@ -686,8 +686,8 @@ if(process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE==="1")test("B3c reviewed ret
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-const loadLane=mutationLane(1);
-if(process.env.CONTROL_ROOM_B3C_LOAD==="1")loadLane.test("B3c 24 finalizers retain once and refuse destruction",24,{timeout:150000},async(t,probeStarted)=>{
+const loadLane=mutationLane(1,{enabled:process.env.CONTROL_ROOM_B3C_LOAD==="1"});
+loadLane.test("B3c 24 finalizers retain once and refuse destruction",24,{timeout:150000},async(t,probeStarted)=>{
   const f=await using(t),other=await using(t),children=new Set<ChildProcess>();
   const events:{child:ChildProcess;kind:string;[key:string]:unknown}[]=[];
   let publications=0;
@@ -872,4 +872,4 @@ if(ordinary) test("B5 diagnostic logging bounds unknown errors and preserves fix
   assert.deepEqual(loopFinalizationErrorDiagnosticV1(wrapped),["Error","loop_adapter_unavailable"]);
 });
 
-if(process.env.CONTROL_ROOM_B3C_LOAD==="1")assertMutationLaneSelection([loadLane]);
+assertMutationLaneSelection([loadLane]);

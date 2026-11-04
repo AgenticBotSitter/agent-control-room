@@ -248,8 +248,8 @@ if(ordinary){
     assert.equal((await readFile(join(f.root,'collectors'),'utf8')).trim().split('\n').length,2);recovered.send('close');await new Promise<void>(r=>recovered.once('exit',()=>r()));
   });
 }
-const loadLane=mutationLane(1);
-if(!ordinary)loadLane.test('B3b product collector contention',24,{},async(t,probeStarted)=>{
+const loadLane=mutationLane(1,{enabled:!ordinary});
+loadLane.test('B3b product collector contention',24,{},async(t,probeStarted)=>{
   const db=await taskFixture();t.after(()=>db.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const saved=await seedRecoveryRun({...db,db:db.client,scope},e,db.project.projectId,()=>webNow,'b3b-load-stop');
   const bridge=new ImproveControlRoomLoopServiceV1(db.client,scope,{integrityKey:recoveryKey,adapter:e.adapter},()=>webNow);
@@ -272,7 +272,7 @@ if(!ordinary)loadLane.test('B3b product collector contention',24,{},async(t,prob
   f.advance(300000);await f.tick(retry);assert.equal((await f.schedule()).nextKind,'normal');assert.equal(calls,3);await retry.close();
 });
 
-if(!ordinary)assertMutationLaneSelection([loadLane]);
+assertMutationLaneSelection([loadLane]);
 
 import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
