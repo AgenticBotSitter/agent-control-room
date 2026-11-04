@@ -200,7 +200,7 @@ test("P71 commit recheck detects equal-bytes version drift, authority expiry and
 });
 
 // Missing qualified tools is a failing prerequisite, never a green skip.
-test("P71 real settings check", async t => {
+async function realSettingsFixture(t: TestContext) {
   assert.ok(process.env.CONTROL_ROOM_A2_TEST_LOOP, 'P71-7 requires qualified pinned CONTROL_ROOM_A2_TEST_LOOP; fixtures cannot substitute');
   const loop=resolve(process.env.CONTROL_ROOM_A2_TEST_LOOP!);
   assert.doesNotMatch(loop,/(?:^|[/\\])(?:\.codex|\.hermes|\.aws|\.env|auth\.json|tokens?)(?:[/\\]|$)/i);
@@ -211,7 +211,7 @@ test("P71 real settings check", async t => {
   const f=await checkerFixture(t);await f.adapter.close();
   // Reuse the repository's established real Bridge fixture, whose launcher is dry.
   // It supplies engine-valid settings and availability without a live installation.
-  const bootstrap=String.raw`import sys,json
+  const bootstrap=String.raw`import sys,json,shutil
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 from test_a2_bridge import Bridge
@@ -220,15 +220,21 @@ try:
  p,_=d.prepare_intake()
  args=list(d.intake_args(p))
  availability=Path(args[args.index('--availability')+1]).read_text()
- print(json.dumps(dict(settings=d.settings_path.read_text(),availability=availability)))
+ # Preserve the repository under the adapter's confined work root before cleanup.
+ repository=Path(sys.argv[2])/'work/repo'
+ shutil.copytree(d.root/'repo',repository)
+ settings=json.loads(d.settings_path.read_text())
+ settings['project']['repository']=str(repository)
+ print(json.dumps(dict(settings=json.dumps(settings),availability=availability,roster=d.roster.read_text())))
 finally:
  d.doCleanups()
 `;
-  const {stdout}=await promisify(execFile)(interpreter,['-B','-c',bootstrap,loop],{cwd:f.root,timeout:30000,maxBuffer:131072,
+  const {stdout}=await promisify(execFile)(interpreter,['-B','-c',bootstrap,loop,f.root],{cwd:f.root,timeout:30000,maxBuffer:131072,
     env:{PATH:'/usr/bin:/bin',TMPDIR:f.root,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1',PYTHONDONTWRITEBYTECODE:'1',NODE_ENV:'test'}});
-  const fixture=JSON.parse(stdout) as {settings:string;availability:string};
+  const fixture=JSON.parse(stdout) as {settings:string;availability:string;roster:string};
   await cp(loop,join(f.root,'tools/loop'),{recursive:true,filter:path=>!path.includes('__pycache__')&&!/(?:^|[/\\])(?:\.git|\.env(?:\.[^/]*)?|\.codex|\.hermes|\.aws|auth\.json|tokens?)(?:[/\\]|$)/i.test(path)});
   await cp(join(dirname(loop),'bin/lib'),join(f.root,'tools/bin/lib'),{recursive:true,filter:path=>!path.includes('__pycache__')&&!/(?:^|[/\\])(?:\.env(?:\.[^/]*)?|\.codex|\.hermes|\.aws|auth\.json|tokens?)(?:[/\\]|$)/i.test(path)});
+  await writeFile(join(f.root,'tools/loop/models.tsv'),fixture.roster);
   await writeFile(join(f.root,'settings.json'),fixture.settings);await writeFile(join(f.root,'availability.json'),fixture.availability);
   const entrypoint=join(f.root,'tools/loop/bridge/cr-entry.py');
   const manifest=JSON.stringify({cr:sha(await readFile(join(f.root,'tools/loop/cr.py'),'utf8')),bridge:sha(await readFile(entrypoint,'utf8'))});
@@ -238,7 +244,14 @@ finally:
     entrypointSha256:loopByteHashV1(await readFile(entrypoint)),settingsSha256:sha(fixture.settings),availabilitySha256:sha(fixture.availability),
     toolingRevision,contract:{...f.configuration.contract,lineage:{...f.configuration.contract.lineage,toolingRevision}}});
   t.after(()=>adapter.close());
-  assert.equal((await adapter.checkSettings!(fixture.settings)).eligible,true,'real cr accepts its qualified fixture defaults');
+  return {adapter,settingsText:fixture.settings,root:f.root};
+}
+
+test("P71 real settings check", async t => {
+  const {adapter,settingsText}=await realSettingsFixture(t);
+  const fixture={settings:settingsText};
+  const initialCheck=await adapter.checkSettings!(fixture.settings);
+  assert.equal(initialCheck.eligible,true,`real cr accepts its qualified fixture defaults: ${JSON.stringify(initialCheck.reasons)}`);
   const composed=composeLoopSettingsV1({defaultsText:fixture.settings,project:'{}',selection:'{}',runEdits:'{}'});
   assert.equal((await adapter.checkSettings!(composed.text)).eligible,true,'real cr accepts deterministic merged encoding');
   const unknown=JSON.parse(fixture.settings) as Record<string,unknown>;
@@ -280,6 +293,13 @@ with open(settings) as f: candidate=json.load(f)
 with open(os.path.join(root,'trace.jsonl'),'a') as f:
  f.write(json.dumps(dict(args=args,settingsText=open(settings).read(),fileMode=os.stat(settings).st_mode&0o777,directoryMode=os.stat(os.path.dirname(settings)).st_mode&0o777,env=dict(os.environ),bytecode=sys.dont_write_bytecode))+'\n')
 mode=candidate.get('mode','ok')
+if mode=='envelope' or mode.startswith('envelope-bad-'):
+ result=dict(schema_version=1,eligible=True,slots={},candidates={},reasons=[],reserved_final=None,fallback=False,roster_digest=None,availability_digest=None)
+ if mode=='envelope-bad-type': result['fallback']='false'
+ if mode=='envelope-bad-field': result['unexpected']=True
+ if mode=='envelope-bad-slot': result['slots']={'build':True}
+ if mode=='envelope-bad-reason': result.update(eligible=False,reasons=[dict(code='REFUSED',explanation='Refused',waived='false')])
+ print(json.dumps(result));sys.exit(0 if result['eligible'] else 3)
 if mode=='timeout': time.sleep(10)
 if mode=='large': print('x'*70000);sys.exit(0)
 if mode=='malformed': print('no json');sys.exit(0)
@@ -323,7 +343,7 @@ test("P71 direct settings checker bounds argv, files, JSON, refusals, timeout an
   assert.equal(trace.args[5], join(f.root,'availability.json')); assert.equal(trace.args[6], '--json');
   assert.equal(trace.settingsText, '{}'); assert.equal(trace.fileMode, 0o600); assert.equal(trace.directoryMode, 0o700);
   assert.equal(trace.bytecode, true, '-B prevents bytecode writes into the pinned tools tree');
-  assert.deepEqual(Object.keys(trace.env).filter(key => key !== '__CF_USER_TEXT_ENCODING').sort(), ['LANG','LC_ALL','NODE_ENV']);
+  assert.deepEqual(Object.keys(trace.env).filter(key => key !== '__CF_USER_TEXT_ENCODING').sort(), ['CR_CONFIG_ROOT','CR_RUNS','CR_SKILLS','CR_WORK_ROOT','LANG','LC_ALL','NODE_ENV']);
   assert.deepEqual(await readdir(join(f.root,'work')), []);
   assert.deepEqual(await f.adapter.checkSettings!('{"mode":"refuse"}'), { eligible: false,
     reasons: [{ code: 'SYNTHETIC_UNKNOWN_MODEL', explanation: 'Model unavailable' }] });
@@ -348,4 +368,52 @@ test('P71 commit reauthorizes revoked owner and compares exact defaults hash des
   f.setCheck(async()=>{f.tools.settingsText=JSON.stringify(JSON.parse(defaults));return{eligible:true,reasons:[]};});
   assert.equal((await f.put('project',body)).status,409,'equivalent defaults with different pinned bytes invalidate the preflight');
   assert.equal(await f.count(),0);assert.equal((await f.db.query('SELECT * FROM control_loop_policy_layers')).rows.length,0);
+});
+
+
+test('P71 direct checker projects the pinned lineup envelope and refuses unexpected shapes', async t => {
+ const f=await checkerFixture(t);
+ assert.deepEqual(await f.adapter.checkSettings!('{"mode":"envelope"}'),{eligible:true,reasons:[]});
+ for(const mode of ['type','field','slot','reason'])
+  await assert.rejects(f.adapter.checkSettings!(JSON.stringify({mode:`envelope-bad-${mode}`})),/unavailable/,mode);
+});
+
+
+test('P71 real provider settings check',async t=>{
+ const real=await realSettingsFixture(t),f=await policyFixture(t);
+ assert.equal((await real.adapter.checkSettings!(real.settingsText)).eligible,true,'same fixture defaults must pass before adding providerRoute');
+ const {LoopProviderServiceV1}=await import('../src/web/v1/loop-provider-service');
+ const providers=new LoopProviderServiceV1(f.client,scope,{availability:async()=>{throw new Error('no credential probe');}},()=>now);
+ await f.db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+ VALUES('tenant:web','writer',1,'codex','','','','','','','','on','','','','identity:web',$1)`,[new Date(now).toISOString()]);
+ for(const [i,id] of ['provider-one','provider-two'].entries())await providers.upsert(f.identity,id,{expectedVersion:i,provider:{
+  provider_id:id,display_name:id,base_url:'https://example.com/api',billing_kind:'subscription',secret_ref:{kind:'launcher',launcher:'codex'},
+  models:[{roster_name:'writer',launcher:'codex',served_model_id:`served/${id}`}],credit_amount_nano_usd:null,credit_expires_on:null,credit_note:'',price_source_url:null,price_source_format:null}},key());
+ let checked=0;
+ const tools={settingsText:real.settingsText,checkSettings:async(text:string)=>{
+  assert.deepEqual(JSON.parse(text).providerRoute,{providerId:'provider-two',model:'writer'},'real cr must see the exact route');
+  const result=await real.adapter.checkSettings!(text);checked++;
+  console.log(`P71 providerRoute real cr eligible=${result.eligible} reasons=${result.reasons.map(r=>r.code).join(',')}`);
+  return result;
+ }};
+ const policy=new LoopPolicyServiceV1(f.client,scope,tools,()=>now);
+ const handler=createLoopPolicyHttpHandlerV1({origin,trust,service:policy,clock:()=>now});
+ const route={providerId:'provider-two',model:'writer'};
+ const response=await handler(request(`${f.path}/selection`,'PUT',{expectedVersion:0,settings:JSON.stringify({providerRoute:route})},key()));
+ const body=await response.clone().text();
+ if(response.status!==201){
+  assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,0);
+  assert.equal((await f.db.query('SELECT * FROM control_loop_policy_layers')).rows.length,0);
+  console.log('P71 refused providerRoute leaves layers=0 events=0');
+ }
+ assert.equal(checked,1);assert.equal(response.status,201,body);
+ assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,1);
+ assert.equal((await f.db.query('SELECT * FROM control_loop_policy_layers')).rows.length,1);
+ const snapshot=await f.client.transaction(tx=>policy.snapshot(tx,f.project.projectId));
+ const {ImproveControlRoomDeskServiceV1}=await import('../src/improve-control-room/v1/service');
+ const desk=new ImproveControlRoomDeskServiceV1(f.client,scope,new Uint8Array(32).fill(65),undefined,()=>now);
+ const saved=await desk.saveLoopDraft(f.identity,f.project.projectId,{description:'Synthetic provider choice',settingsText:snapshot.text},key());
+ const input=(await f.db.query<{settings_text:string;settings_sha256:string;auth_tag:string}>('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[saved.request.requestId])).rows[0]!;
+ assert.deepEqual(JSON.parse(input.settings_text).providerRoute,route);assert.equal(input.settings_sha256,sha(input.settings_text));assert.match(input.auth_tag,/^hmac-sha256:/);
+ console.log('P71 real provider selection PUT: cr exit=0 eligible=true layers=1 events=1 signed route=provider-two/writer');
 });

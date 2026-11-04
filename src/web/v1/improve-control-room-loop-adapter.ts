@@ -664,7 +664,9 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         return await new Promise<LoopPolicyCheckV1>((fulfill, reject) => {
           const child = spawn(c.interpreter, ["-B", crScript, "check", "lineup", "--settings", file,
             "--availability", c.availabilityFile, "--json"], { cwd: c.cwd, shell: false,
-            env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
+            env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8",
+              CR_CONFIG_ROOT: c.configRoot, CR_WORK_ROOT: c.workRoot, CR_RUNS: c.runRoot,
+              CR_SKILLS: join(c.configRoot, "skills") }, stdio: ["ignore", "pipe", "pipe"] });
           children.add(child);
           const output: Buffer[] = [];
           let bytes = 0, failed = false, killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -677,9 +679,29 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
             clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
             try {
               if (failed || signal || ![0, 3].includes(code ?? -1)) throw unavailable();
-              const result = z.object({ eligible: z.boolean(), reasons: z.array(z.object({
-                code: z.string().min(1).max(100), explanation: z.string().min(1).max(1000) }).strict()).max(100) }).strict()
-                .parse(parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), { maxBytes: 65536 }));
+              // Pinned lineup.py documents a versioned envelope, including waived reasons.
+              // Validate that contract before projecting the policy service's smaller view.
+              const label = z.string().min(1).max(1000);
+              const reason = z.object({ code: z.string().min(1).max(100), explanation: label,
+                waived: z.boolean(), slot: label.optional(), model: label.optional() }).strict();
+              const selection = { model: label, route: label, effort: label };
+              const legacy = z.object({ eligible: z.boolean(), reasons: z.array(z.object({
+                code: z.string().min(1).max(100), explanation: label }).strict()).max(100) }).strict();
+              const envelope = z.object({ schema_version: z.literal(1), eligible: z.boolean(),
+                reasons: z.array(reason).max(100), reserved_final: label.nullable(), fallback: z.boolean(),
+                roster_digest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+                availability_digest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+                slots: z.record(z.string(), z.object({ ...selection, role: label, requested_effort: label,
+                  eligible: z.boolean(), reasons: z.array(reason).max(100), chain_eligible: z.boolean(), fallback: z.boolean() }).strict()),
+                candidates: z.record(z.string(), z.array(z.object({ ...selection, provider: z.string().max(1000),
+                  family: z.string().max(1000), class: label, eligible: z.boolean(), reasons: z.array(reason).max(100),
+                  recommended: z.boolean(), fallback: z.boolean() }).strict()).max(1000)),
+                same_family_warnings: z.array(z.object({ code: z.literal("same-family-accepted"), rule: z.literal("R296"),
+                  run: label, accepted_at: label, conflicts: z.array(label).max(100), explanation: label }).strict()).max(100).optional(),
+              }).strict();
+              const parsed = z.union([legacy, envelope]).parse(parseStrictJsonV1(
+                new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), { maxBytes: 65536 }));
+              const result = { eligible: parsed.eligible, reasons: parsed.reasons.map(({ code, explanation }) => ({ code, explanation })) };
               if (result.eligible !== (code === 0) || result.eligible && result.reasons.length || !result.eligible && !result.reasons.length) throw unavailable();
               assertNoSecretMaterial(result);
               for (const reason of result.reasons) {
