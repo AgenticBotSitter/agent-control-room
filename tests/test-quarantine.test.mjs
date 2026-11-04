@@ -65,3 +65,7 @@ test("CI reports quarantine failures without adding them to the merge gate", asy
 test("a quarantine entry dated tomorrow is refused as a future date", () => {
   assert.match(validateQuarantine([{ ...valid, added: "2026-09-29" }], today).join("\n"), /future added date/u);
 });
+
+test("a quarantine entry with an extra key is refused", () => {
+  assert.match(validateQuarantine([{ ...valid, expires: "2027-01-01" }], today).join("\n"), /exactly test, issue, added, and owner/u);
+});
