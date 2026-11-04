@@ -69,3 +69,9 @@ test("a quarantine entry dated tomorrow is refused as a future date", () => {
 test("a quarantine entry with an extra key is refused", () => {
   assert.match(validateQuarantine([{ ...valid, expires: "2027-01-01" }], today).join("\n"), /exactly test, issue, added, and owner/u);
 });
+
+test("an issue must be exactly #<positive number>", () => {
+  for (const issue of ["see #12", "#12 later", "#0"]) {
+    assert.match(validateQuarantine([{ ...valid, issue }], today).join("\n"), /GitHub issue/u, issue);
+  }
+});
