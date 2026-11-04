@@ -24,3 +24,6 @@ b5-start-digest-schema cloud-base/b5-start-digest-schema
 b5-session-cleanup-boundary cloud-base/b5-session-cleanup-boundary
 ci-preinstall-import-isolation cloud-base/ci-preinstall-import-isolation
 bridge-shared-synthetic-fixture cloud-base/bridge-shared-synthetic-fixture
+monitor-contention-observed-lock cloud-base/monitor-contention-observed-lock
+b5-repeat-evidence-custody cloud-base/b5-repeat-evidence-custody
+cluster-quit-oracle-diagnostics cloud-base/cluster-quit-oracle-diagnostics
