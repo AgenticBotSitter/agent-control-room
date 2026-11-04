@@ -65,6 +65,14 @@ test("the growing improvement lane runs alone without extending the component ti
   assert.equal(components["timeout-minutes"], 90);
 });
 
+test("the affected PGlite lanes run one file at a time with process isolation", () => {
+  for (const lane of ["test:results", "test:improve-control-room"]) {
+    assert.match(scripts[lane], /(?:^|\s)--test-concurrency=1(?:\s|$)/u, `${lane}: bound simultaneous WASM heaps`);
+    assert.doesNotMatch(scripts[lane], /--test-isolation=none/u, `${lane}: release each file's WASM heap on exit`);
+    assert.doesNotMatch(scripts[lane], /--test-(?:skip|name)-pattern/u, `${lane}: retain the full test selection`);
+  }
+});
+
 test("component shards cover every baseline command and environment exactly once", () => {
   assertCoverage();
 });
