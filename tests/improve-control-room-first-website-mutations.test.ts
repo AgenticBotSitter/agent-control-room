@@ -63,7 +63,22 @@ const probes=[
   {name:"controller missing qualification",find:'  if (packet === undefined) refuse("B5_A2_QUALIFICATION_REQUIRED");',replace:"",
     lane:"tests/improve-control-room-first-website-controller-postgres.test.ts",pattern:"B5 controller-postgres missing qualification refuses before acquisition",assertion:"B5 controller-postgres missing qualification guard"},
 ];
-for (const partition of [1,2]) test(`B5 verifier guard mutations partition ${partition} bite independently and restore green`,{timeout:600000},async t=>{
+const partitions=[1,2].map(partition=>({
+  name:`B5 verifier guard mutations partition ${partition} bite independently and restore green`,
+  probes:probes.filter((_,index)=>index % 2 === partition - 1),
+}));
+assert.equal(probes.length,26,"B5 shared probe list has all 26 guards");
+assert.equal(new Set(probes.map(p=>p.name)).size,26,"B5 probe names are unique");
+for(const part of partitions)assert.equal(part.probes.length,13,"B5 each partition selects exactly 13 probes");
+assert.equal(new Set(partitions.flatMap(part=>part.probes)).size,26,"B5 partitions are disjoint and cover all 26 probes");
+// Node exits green when a name pattern matches nothing. Refuse that at module load,
+// before Node can skip the parent and silently discard all of its mutation probes.
+const namePattern=process.execArgv.find(arg=>arg.startsWith("--test-name-pattern="))?.split("=").slice(1).join("=");
+if(namePattern!==undefined)assert.equal(partitions.filter(part=>new RegExp(namePattern).test(part.name)).length,1,
+  "B5 lane must select exactly one 13-probe partition");
+for (const partition of partitions) test(partition.name,{timeout:600000},async t=>{
+  assert.equal(partition.probes.length,13,"B5 selected exactly 13 probes");
+  let selected=0;
   await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b5-mutations-"));
   try{
     execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -71,7 +86,8 @@ for (const partition of [1,2]) test(`B5 verifier guard mutations partition ${par
     // Exercise current uncommitted bytes; never accidentally test only the clone's old HEAD.
     for (const path of [file,"src/web/v1/improve-control-room-loop-finalization.ts","src/web/v1/improve-control-room-loop-recovery.ts","src/web/v1/improve-control-room-loop-service.ts","scripts/workflow-journeys/first-website-device.ts","scripts/workflow-journeys/first-website-controller.ts","scripts/workflow-journeys/first-website-host.ts","tests/improve-control-room-first-website.test.ts","tests/improve-control-room-first-website-controller-postgres.test.ts"])
       await writeFile(join(copy,path),await readFile(join(root,path)));
-    for(const [index,p] of probes.entries())if(index % 2 === partition - 1)await t.test(p.name,async()=>{
+    for(const p of partition.probes)await t.test(p.name,async()=>{
+      selected++;
       const cmd=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=^${p.pattern}$`,p.lane ?? "tests/improve-control-room-first-website.test.ts"];
       const target=("target" in p ? p.target : undefined) ?? file;
       const original=await readFile(join(copy,target),"utf8");
@@ -86,5 +102,7 @@ for (const partition of [1,2]) test(`B5 verifier guard mutations partition ${par
       assert.match(restored.stdout,/# pass 1/u);assert.match(restored.stdout,/# fail 0/u);assert.doesNotMatch(restored.stdout,/# skipped [1-9]|# tests 0/u);
       console.log(`B5 mutation ${p.name}: baseline=true loaded=true intended_assertion=true restored=true green=true`);
     });
+    assert.equal(selected,13,"B5 partition executed exactly 13 probes");
+    console.log(`B5 partition: selected=${selected}/13 total=26 overlap=0 complete=true`);
   }finally{await rm(copy,{recursive:true,force:true});}
 });

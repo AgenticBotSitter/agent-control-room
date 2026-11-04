@@ -198,8 +198,6 @@ export interface WithRealPostgresOptions {
   port: number;
   /** Override the database name. */
   database?: string;
-  /** Skip the queue construction and the four queue-dependent role files. */
-  withoutQueue?: boolean;
   /** Extra role files to apply after the standard set. */
   extraRoleFiles?: readonly string[];
   /** Override the PostgreSQL bin directory (must contain initdb + postgres). */
@@ -1035,13 +1033,10 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       throw new Error("attack_kit_migrations_not_applied");
     }
 
-    if (!options.withoutQueue) await buildQueues(adminOptions(database));
+    await buildQueues(adminOptions(database));
 
     const databaseAdmin = adminOptions(database);
-    const roleFiles = ROLE_FILES.filter(file => options.withoutQueue
-      ? !/queue/.test(file)
-      : true);
-    for (const file of [...roleFiles, ...(options.extraRoleFiles ?? [])]) {
+    for (const file of [...ROLE_FILES, ...(options.extraRoleFiles ?? [])]) {
       const sql = await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8");
       await oneShot(databaseAdmin, sql);
     }

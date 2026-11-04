@@ -334,10 +334,6 @@ test("B2b CI registrations stay unconditional and separate",async()=>{
   const manifest=JSON.parse(await readFile("package.json","utf8")),workflow=await readFile(".github/workflows/ci.yml","utf8");
   const jobs=assertMutationLaneCoverage(manifest.scripts,workflow);
   const browser=workflow.slice(workflow.indexOf("  owner-browser-journey:"),workflow.indexOf("\n  full-gate:"));
-  const lineage=jobs["mutation-checks-lineage"];
-  const attention=lineage.steps.find(step=>step.run==="pnpm run test:improve-control-room-loop-attention-mutations");
-  assert.equal(attention["timeout-minutes"],10);
-  assert.ok(lineage.steps.findIndex(step=>step.run==="pnpm run test:improve-control-room-loop-ui-mutations")<lineage.steps.indexOf(attention));
   for(const key of Object.keys(jobs)){
     const conditional=key==="mutation-checks"
       ? workflow.replace("    if: ${{ always() }}", "    if: false")

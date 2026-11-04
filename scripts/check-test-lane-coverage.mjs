@@ -83,25 +83,32 @@ export function findUncoveredTests(repositoryRoot = process.cwd()) {
   return listTestFiles(repositoryRoot).filter(file => !reached.has(file));
 }
 
-// Pin the mutation lanes independently of the workflow so a missing partition
-// cannot hide behind file-level reachability through another partition.
+// One shared shape for all six workflow guards: ordered lanes and explicit bounds.
+const loop = "test:improve-control-room-loop-";
+const website = "test:improve-control-room-first-website-mutations";
+export const mutationLaneShape = {
+  "mutation-checks-lineage": { bound: 45, lanes: [
+    [loop + "lineage-mutations", 12], [loop + "bridge-mutations", 10],
+    [loop + "ui-mutations", 5], [loop + "attention-mutations", 10],
+  ] },
+  "mutation-checks-candidate": { bound: 45, lanes: [
+    [loop + "recovery-mutations", 5], [loop + "monitoring-mutations", 5], [loop + "monitoring-load", 3],
+    ...["source", "ui", "sql-consumption", "sql-decision-immutability", "sql-binding", "sql-checks",
+      "sql-authority", "sql-candidate-immutability", "sql-grants"].map(part => [`${loop}candidate-mutations:${part}`, 5]),
+  ] },
+  "mutation-checks": { bound: 45, lanes: [
+    [loop + "finalization-mutations", 5], [loop + "finalization-load", 3],
+    [website + ":part-1", 5], [website + ":part-2", 5],
+  ] },
+};
 export function assertMutationLaneCoverage(scripts, source) {
   const require = createRequire(import.meta.resolve("eslint"));
-  const { jobs } = require("js-yaml").load(source);
-  const loop = "test:improve-control-room-loop-";
-  const website = "test:improve-control-room-first-website-mutations";
-  const candidateParts = ["source", "ui", "sql-consumption", "sql-decision-immutability",
-    "sql-binding", "sql-checks", "sql-authority", "sql-candidate-immutability", "sql-grants"];
-  const expected = {
-    "mutation-checks-lineage": ["lineage-mutations", "bridge-mutations", "ui-mutations", "attention-mutations"].map(s => loop + s),
-    "mutation-checks-candidate": ["recovery-mutations", "monitoring-mutations", "monitoring-load"].map(s => loop + s)
-      .concat(candidateParts.map(part => `${loop}candidate-mutations:${part}`)),
-    "mutation-checks": [loop + "finalization-mutations", loop + "finalization-load", website + ":part-1", website + ":part-2"],
-  };
+  const jobs = typeof source === "string" ? require("js-yaml").load(source).jobs : source;
+  const expected = mutationLaneShape;
   assert.deepEqual(Object.keys(jobs).filter(key => /^mutation-checks(?:-|$)/u.test(key)).sort(), Object.keys(expected).sort());
-  for (const [key, names] of Object.entries(expected)) {
+  for (const [key, { bound, lanes }] of Object.entries(expected)) {
     const job = jobs[key];
-    assert.equal(job["timeout-minutes"], 45, `${key}: retain the job bound`);
+    assert.equal(job["timeout-minutes"], bound, `${key}: retain the job bound`);
     assert.equal(job["continue-on-error"], undefined);
     assert.equal(job.strategy, undefined);
     assert.equal(job.if, key === "mutation-checks" ? "${{ always() }}" : undefined);
@@ -109,17 +116,17 @@ export function assertMutationLaneCoverage(scripts, source) {
     assert.equal(job.env.PG_BIN, "/usr/lib/postgresql/17/bin");
     assert.ok(job.steps.some(step => step.run === "pnpm install --frozen-lockfile --ignore-scripts"));
     assert.ok(job.steps.some(step => step.name === "Install PostgreSQL 17 from PGDG"));
-    for (const step of job.steps) assert.equal(step.if, undefined, `${key}: ${step.name ?? step.uses} must be unconditional`);
+    for (const step of job.steps) {
+      assert.equal(step.if, undefined, `${key}: ${step.name ?? step.uses} must be unconditional`);
+      assert.equal(step["continue-on-error"], step.run === `pnpm run ${loop}lineage-mutations` ? true : undefined);
+    }
     const checks = job.steps.filter(step => /^pnpm run test:/u.test(step.run ?? ""));
-    assert.deepEqual(checks.map(step => step.run), names.map(name => `pnpm run ${name}`), `${key}: every suite/partition exactly once`);
-    for (const step of checks) {
-      const name = step.run.slice("pnpm run ".length);
+    assert.deepEqual(checks.map(step => step.run), lanes.map(([name]) => `pnpm run ${name}`), `${key}: every suite/partition exactly once`);
+    for (const [index, step] of checks.entries()) {
+      const [name, stepBound] = lanes[index];
       assert.equal(typeof scripts[name], "string", `${name}: executable package lane required`);
       assert.match(scripts[name], /node scripts\/run-tests-with-quarantine\.mjs .*--test/u);
-      const bound = name.endsWith("lineage-mutations") ? 12
-        : /(?:bridge|attention)-mutations$/u.test(name) ? 10 : name.endsWith("-load") ? 3 : 5;
-      assert.equal(step["timeout-minutes"], bound, `${name}: retain the step bound`);
-      assert.equal(step["continue-on-error"], name.endsWith("lineage-mutations") ? true : undefined);
+      assert.equal(step["timeout-minutes"], stepBound, `${name}: retain the step bound`);
       if (name.includes("candidate-mutations:") || name.startsWith(website + ":")) assert.match(scripts[name], /--test-name-pattern=/u);
     }
   }

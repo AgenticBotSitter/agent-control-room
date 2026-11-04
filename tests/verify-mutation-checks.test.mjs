@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { assertMutationLaneCoverage } from "../scripts/check-test-lane-coverage.mjs";
 
 const verifier = resolve("scripts/ci/verify-mutation-checks.mjs");
 const workflow = readFileSync(resolve(".github/workflows/ci.yml"), "utf8");
@@ -1039,13 +1040,7 @@ test("the CI job gates verification on a branch manifest and joins the merge gat
   function check(parsed) {
     const job = parsed["mutation-checks"], gate = parsed["merge-gate"];
     assert.match(job.name, /^Mutation checks/u);
-    assert.equal(job.if, "${{ always() }}");
-    assert.deepEqual(job.needs, ["mutation-checks-lineage", "mutation-checks-candidate"]);
-    assert.equal(job["continue-on-error"], undefined);
-    for (const step of job.steps) {
-      assert.equal(step.if, undefined, `${step.name ?? step.uses} must be unconditional`);
-      assert.equal(step["continue-on-error"], undefined);
-    }
+    assertMutationLaneCoverage(JSON.parse(readFileSync("package.json", "utf8")).scripts, parsed);
     assert.equal(job.steps.find(step => step.uses?.startsWith("actions/checkout@")).with["fetch-depth"], 0);
     const selection = job.steps.find(step => step.id === "manifest");
     assert.match(selection.run, /scripts\/ci\/check-mutation-manifest-branch\.sh/u);

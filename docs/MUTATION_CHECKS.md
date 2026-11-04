@@ -64,7 +64,10 @@ the same checkout at once.
 
 ## CI behavior and security boundary
 
-For pull requests, the **Mutation checks** job verifies every manifest added or modified
+Mutation checks run in three jobs: **Mutation checks (lineage and attention)**,
+**Mutation checks (recovery and candidates)**, and **Mutation checks (finalization and website)**.
+The last job depends on both peers and combines their results; the required **merge-gate** checks
+that combined result. For pull requests, the finalization and website job verifies every manifest added or modified
 against the test merge's first parent when its second parent matches the event PR head SHA.
 Otherwise selection falls back to the event PR base SHA. This excludes manifests introduced
 by main after the PR fork. Selection also includes the branch-derived manifest when it exists

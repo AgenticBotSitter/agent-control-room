@@ -342,9 +342,7 @@ test("B1a mutation lane is unconditional and isolated from components", async ()
     assert.ok(![...visit(ordinary)].some(name => scripts[name]?.includes("tests/improve-control-room-loop-lineage-mutations.test.ts")));
   }
   const workflow = await readFile(join(root, ".github/workflows/ci.yml"), "utf8");
-  const jobs = assertMutationLaneCoverage(scripts, workflow);
-  const job = jobs["mutation-checks-lineage"];
-  assert.ok(job.steps.some(step => step.run === `pnpm run ${dedicated}`));
+  assertMutationLaneCoverage(scripts, workflow);
   for (const part of [1, 2]) {
     const removed = workflow.replace(`        run: pnpm run test:improve-control-room-first-website-mutations:part-${part}\n`, "");
     assert.notEqual(removed, workflow);

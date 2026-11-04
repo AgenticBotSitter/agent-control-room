@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequire } from 'node:module';
 import { createPrivateTaskBootstrap } from '../src/web/v1/private-task-startup';
 import { taskStartupFixture } from './helpers/task-startup';
 import { syntheticRecoveryEngine, seedRecoveryRun, recoveryKey } from './helpers/improve-control-room-loop-recovery';
@@ -161,7 +160,7 @@ import { createImproveControlRoomHttpHandlerV1 } from '../src/web/v1/improve-con
 import { origin,trust,request } from './helpers/web-foundation';
 import { readFile,writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { reachableTests,workflowCommands } from '../scripts/check-test-lane-coverage.mjs';
+import { assertMutationLaneCoverage,reachableTests,workflowCommands } from '../scripts/check-test-lane-coverage.mjs';
 
 test('B3a pending intake and confirm remain owner exact retries',async t=>{
   const f=await taskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
@@ -282,24 +281,10 @@ test('B3a registration reaches ordinary Pg and unconditional mutation lanes',asy
   const ordinary='tests/improve-control-room-loop-recovery.test.ts',pg='tests/improve-control-room-loop-recovery-postgres.test.ts',mutation='tests/improve-control-room-loop-recovery-mutations.test.ts';
   const reached=reachableTests(scripts,workflowCommands(workflow));for(const name of [ordinary,pg,mutation])assert.ok(reached.has(name));
   const components=reachableTests(scripts,['pnpm test:components']);assert.ok(components.has(ordinary));assert.ok(components.has(pg));assert.ok(!components.has(mutation));
-  type Step={name?:string;run?:string;if?:unknown;'continue-on-error'?:boolean;'timeout-minutes'?:number};
-  type Job={steps:Step[];if?:unknown;needs?:string[];'continue-on-error'?:boolean;'timeout-minutes'?:number};
-  const {jobs}:{jobs:Record<string,Job>}=createRequire(import.meta.resolve('eslint'))('js-yaml').load(workflow);
-  function check(job:Job){
-    assert.equal(job.if,undefined);assert.equal(job.needs,undefined);assert.equal(job['continue-on-error'],undefined);
-    assert.equal(job['timeout-minutes'],45);
-    for(const step of job.steps){assert.equal(step.if,undefined,`${step.name} must be unconditional`);assert.equal(step['continue-on-error'],undefined);}
-    const step=job.steps.find(step=>step.name==='Prove interrupted loop recovery guards')!;
-    assert.equal(step['timeout-minutes'],5);
-    assert.equal(step.run,'pnpm run test:improve-control-room-loop-recovery-mutations');
-  }
-  check(jobs['mutation-checks-candidate']!);
-  // Independent peers have no execution order; the final job depends on both.
-  assert.deepEqual(jobs['mutation-checks']!.needs,['mutation-checks-lineage','mutation-checks-candidate']);
-  assert.equal(jobs['mutation-checks']!.if,'${{ always() }}');
-  const broken=structuredClone(jobs['mutation-checks-candidate']!);
-  broken.steps.find(step=>step.name==='Prove interrupted loop recovery guards')!.if=false;
-  assert.throws(()=>check(broken),/must be unconditional/,'a conditional recovery step is rejected');
+  const jobs=assertMutationLaneCoverage(scripts,workflow);
+  const broken=structuredClone(jobs);
+  broken['mutation-checks-candidate'].steps.find(step=>step.name==='Prove interrupted loop recovery guards').if=false;
+  assert.throws(()=>assertMutationLaneCoverage(scripts,broken),/must be unconditional/,'a conditional recovery step is rejected');
   console.log('B3a negative proof: conditional recovery step rejected; final job dependency accepted');
   assert.match(scripts['test:improve-control-room-loop-attention-browser'],/tests\/browser\/improve-control-room-loop-attention.spec.ts$/);
 });

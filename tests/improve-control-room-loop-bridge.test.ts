@@ -22,7 +22,8 @@ import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
 import { WebProjectService } from "../src/web/v1/project-service";
 import { parseStrictJsonV1 } from "../src/installer/shared/strict-json.mjs";
-import { createRequire, syncBuiltinESMExports } from "node:module";
+import { syncBuiltinESMExports } from "node:module";
+import { assertMutationLaneCoverage } from "../scripts/check-test-lane-coverage.mjs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { loopApprovalDescriptorSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { canonicalJson, hmacSha256Tag, sha256Digest } from "../src/security";
@@ -46,37 +47,25 @@ const description = "Show the exact saved improvement.";
 
 test("B1b mutation steps have separate budgets and retain lineage failures", async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
-  type Step = { name?: string; id?: string; run?: string; if?: unknown;
-    'timeout-minutes'?: number; 'continue-on-error'?: boolean; env?: Record<string, string> };
-  type Job = { steps: Step[]; if?: unknown; needs?: string[]; 'continue-on-error'?: boolean };
-  const { jobs }: { jobs: Record<string, Job> } = createRequire(import.meta.resolve('eslint'))('js-yaml').load(workflow);
-  function check(job: Job) {
-    assert.equal(job.if, undefined); assert.equal(job.needs, undefined);
-    assert.equal(job['continue-on-error'], undefined);
-    // Inspect actual steps, so another job's condition cannot masquerade as a step condition.
-    for (const step of job.steps) assert.equal(step.if, undefined, `${step.name} must be unconditional`);
-    const lineage = job.steps.find(step => step.name === 'Prove saved loop lineage guards')!;
-    const bridge = job.steps.find(step => step.name === 'Prove authorized loop bridge guards')!;
-    const required = job.steps.find(step => step.name === 'Require saved loop lineage guards to pass')!;
-    assert.equal(lineage['timeout-minutes'], 12); assert.equal(lineage['continue-on-error'], true);
-    assert.equal(lineage.id, 'lineage-guards');
-    assert.equal(lineage.run, 'pnpm run test:improve-control-room-loop-lineage-mutations');
-    assert.equal(bridge['timeout-minutes'], 10); assert.equal(bridge['continue-on-error'], undefined);
-    assert.equal(bridge.run, 'pnpm run test:improve-control-room-loop-bridge-mutations');
-    assert.ok(job.steps.indexOf(lineage) < job.steps.indexOf(bridge));
+  const scripts = JSON.parse(await readFile('package.json', 'utf8')).scripts;
+  const jobs = assertMutationLaneCoverage(scripts, workflow);
+  function check(parsed: typeof jobs) {
+    assertMutationLaneCoverage(scripts, parsed);
+    const job = parsed['mutation-checks-lineage'];
+    assert.equal(job.steps.find(step => step.run === 'pnpm run test:improve-control-room-loop-lineage-mutations').id, 'lineage-guards');
+    const bridge = job.steps.find(step => step.run === 'pnpm run test:improve-control-room-loop-bridge-mutations');
+    const required = job.steps.find(step => step.name === 'Require saved loop lineage guards to pass');
     assert.ok(job.steps.indexOf(bridge) < job.steps.indexOf(required));
-    assert.equal(required['continue-on-error'], undefined);
     assert.equal(required.env?.LINEAGE_OUTCOME, '${{ steps.lineage-guards.outcome }}');
     for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
       const result = spawnSync('/bin/sh', ['-ec', required.run!], { env: { ...process.env, LINEAGE_OUTCOME: outcome } });
       assert.equal(result.status, outcome === 'success' ? 0 : 1, `lineage ${outcome} remains a required verdict`);
     }
   }
-  const job = jobs['mutation-checks-lineage']!;
-  check(job);
+  check(jobs);
   for (const name of ['Prove saved loop lineage guards', 'Prove authorized loop bridge guards', 'Require saved loop lineage guards to pass']) {
-    const broken = structuredClone(job);
-    broken.steps.find(step => step.name === name)!.if = false;
+    const broken = structuredClone(jobs);
+    broken['mutation-checks-lineage'].steps.find(step => step.name === name)!.if = false;
     assert.throws(() => check(broken), /must be unconditional/u, `${name}: conditional skip rejected`);
   }
   console.log('B1b negative proof: conditional lineage, bridge and lineage verdict steps rejected');

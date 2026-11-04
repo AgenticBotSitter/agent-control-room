@@ -1022,10 +1022,10 @@ test("B4 decision URL and body candidate IDs must agree",async()=>{
 test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
  const {readFile}=await import("node:fs/promises");
  const workflow=await readFile(".github/workflows/ci.yml","utf8"),manifest=JSON.parse(await readFile("package.json","utf8"));
- const {assertMutationLaneCoverage}=await import("../scripts/check-test-lane-coverage.mjs");
+ const {assertMutationLaneCoverage,mutationLaneShape}=await import("../scripts/check-test-lane-coverage.mjs");
  assertMutationLaneCoverage(manifest.scripts,workflow);
- for(const part of ["source","ui","sql-consumption","sql-decision-immutability","sql-binding","sql-checks","sql-authority","sql-candidate-immutability","sql-grants"]){
-  const script=`test:improve-control-room-loop-candidate-mutations:${part}`;
+ for(const [script] of mutationLaneShape["mutation-checks-candidate"].lanes.filter(([name])=>name.includes("candidate-mutations:"))){
+  const part=script.split(":").at(-1);
   const removed=workflow.replace(`        run: pnpm run ${script}\n`,"");
   assert.notEqual(removed,workflow);
   assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,removed),{name:"AssertionError"},`B4 missing partition ${part} must fail coverage`);
