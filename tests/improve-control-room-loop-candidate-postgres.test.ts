@@ -479,3 +479,65 @@ test("B5 PostgreSQL review identity SQL bounds and 0307 down re-up",async()=>run
   console.log("RESULT: PASS native PostgreSQL identity bounds, detail reader, down and production upgrade from 0305, schema digest equality");
  }finally{await admin.end();await f.close();}
 }));
+
+// Test-local SQL-input seam, used only by the deliberate scratch negative control: when set,
+// the override must name a scratch file under .test-tmp/. Unset, the real tracked down is read.
+async function nullDown0305Input(){
+ const real="db/down/0305_control_loop_candidate_unavailable_sections.sql",override=process.env.B4_NULL_DOWN_0305_SCRATCH_SQL;
+ if(!override)return {source:real,sql:await readFile(real,"utf8")};
+ const file=resolve(override);
+ assert.ok(file.startsWith(resolve(".test-tmp")+"/"),"B4 scratch 0305 down input must live under .test-tmp/");
+ return {source:"scratch:"+file.slice(resolve(".").length+1),sql:await readFile(file,"utf8")};
+}
+
+// LOW-1 on a native cluster: the real 0305 down, run by the schema owner in one session with
+// no outer transaction, must refuse a retained null-section candidate and leave the signed row,
+// the validated tolerant CHECK and the 0305 insert guard exactly as captured beforehand.
+test("B4 native retained null sections refuse 0305 down atomically",async()=>run(async pg=>{
+ await seed(pg);const w=web(pg),f=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
+ const admin=new Client(pg.admin()),schemaOwner=new Client(pg.connection("migrator")),fresh=web(pg);
+ await admin.connect();await schemaOwner.connect();
+ try{
+  f.edit(e=>{e.summary=null;e.changedAreas=null;e.databaseChanges=null;e.assumptions=null;e.validations=null;e.rounds.repairs=null;});
+  const receipt=await f.publish();assert.equal(receipt.state,"recorded","B4 native null-section candidate is stored through the real publisher");
+  // Start from the true 0305 insert guard: roll 0307 down with its real file, as the 0307 test does.
+  await admin.query(await readFile("db/down/0307_control_loop_candidate_review_identity.sql","utf8"));
+  const guardBody=(await readFile("db/migrations/0305_control_loop_candidate_unavailable_sections.sql","utf8")).split("AS $$")[1]!.split("$$;")[0];
+  const capture=async(c:Client)=>({
+   rows:(await c.query("SELECT row_to_json(c)::text bytes FROM control_loop_update_candidates c ORDER BY id")).rows,
+   signed:(await c.query("SELECT id,payload::text payload,record_digest,auth_tag FROM control_loop_update_candidates ORDER BY id")).rows,
+   check:(await c.query(`SELECT pg_get_constraintdef(oid) def,convalidated FROM pg_constraint
+     WHERE conrelid='control_loop_update_candidates'::regclass AND conname='control_loop_update_candidates_check'`)).rows,
+   guard:(await c.query("SELECT pg_get_functiondef(oid) def,prosrc,proowner::regrole::text owner FROM pg_proc WHERE proname='guard_control_loop_update_candidate_insert'")).rows,
+   triggers:(await c.query(`SELECT tgname,tgenabled,tgfoid::regprocedure::text fn FROM pg_trigger
+     WHERE tgrelid='control_loop_update_candidates'::regclass AND NOT tgisinternal ORDER BY tgname`)).rows,
+  });
+  assert.deepEqual((await schemaOwner.query("SELECT current_user,pg_has_role(current_user,(SELECT relowner FROM pg_class WHERE oid='control_loop_update_candidates'::regclass),'USAGE') owns")).rows,
+   [{current_user:"control_room_migrator",owns:true}],"B4 down runs as the schema owner");
+  const before=await capture(schemaOwner);
+  assert.equal(before.signed.length,1);
+  const stored=JSON.parse(before.signed[0].payload);
+  for(const key of ["summary","changedAreas","databaseChanges","assumptions","validations"])assert.equal(stored[key],null,`B4 native retained ${key} is null`);
+  assert.equal(stored.rounds.repairs,null);
+  assert.equal(before.check.length,1);assert.equal(before.check[0].convalidated,true,"B4 native tolerant CHECK starts validated");
+  assert.match(before.check[0].def,/WHEN 'null'::text THEN true/u,"B4 native starting CHECK is the tolerant one");
+  assert.equal(before.guard.map((g:{prosrc:string})=>g.prosrc).join(),guardBody,"B4 native starting guard is the exact 0305 body");
+  const down=await nullDown0305Input();console.log(`B4 native 0305 down input=${down.source}`);
+  let refused:unknown;
+  try{await schemaOwner.query(down.sql);}catch(error){refused=error;}
+  finally{await schemaOwner.query("ROLLBACK");}
+  assert.equal((refused as {code?:string}|undefined)?.code,"23514","B4 native real 0305 down refuses a retained null-section candidate with 23514");
+  assert.deepEqual(await capture(schemaOwner),before,"B4 native refused down preserves row, validated tolerant CHECK and 0305 guard");
+  // A fresh production session is usable and still verifies and replays the retained candidate.
+  assert.deepEqual((await fresh.client.query("SELECT current_user")).rows,[{current_user:"control_room_web"}]);
+  const {ImproveControlRoomDeskServiceV1}=await import("../src/improve-control-room/v1/service");
+  const desk=new ImproveControlRoomDeskServiceV1(fresh.client,scope,KEY,undefined,()=>now,f.config.contract,f.config);
+  const card=(await desk.readLoopCandidate(identity,project,f.requestId)).candidate!;
+  assert.equal(card.candidateId,receipt.candidate.candidateId);
+  for(const key of ["summary","changedAreas","databaseChanges","assumptions","validations"] as const)assert.equal(card.evidence[key],null);
+  assert.equal((await f.publish()).state,"replayed");
+  const second=new Client(pg.admin());await second.connect();
+  try{assert.deepEqual(await capture(second),before);}finally{await second.end();}
+  console.log("RESULT: PASS native 0305 down refused 23514 with retained null sections; row, validated tolerant CHECK and 0305 guard unchanged; fresh session usable");
+ }finally{await schemaOwner.end();await admin.end();await fresh.close();await f.close();}
+}));

@@ -1233,3 +1233,68 @@ test("B5 review identity migration down restores 0305 and re-up preserves retain
     console.log("RESULT: PASS 0307 down restores exact 0305 body, rejects new identity writes and preserves retained rows; re-up replays publication");
   }finally{await f.close();}
 });
+
+// Test-local SQL-input seam, used only by the deliberate scratch negative control: when set,
+// the override must name a scratch file under .test-tmp/. Unset, the real tracked down is read.
+const nullDown0305Input=async()=>{
+  const {readFile}=await import("node:fs/promises"),path=await import("node:path");
+  const real="db/down/0305_control_loop_candidate_unavailable_sections.sql",override=process.env.B4_NULL_DOWN_0305_SCRATCH_SQL;
+  if(!override)return {source:real,sql:await readFile(real,"utf8")};
+  const file=path.resolve(override);
+  assert.ok(file.startsWith(path.resolve(".test-tmp")+path.sep),"B4 scratch 0305 down input must live under .test-tmp/");
+  return {source:"scratch:"+path.relative(process.cwd(),file),sql:await readFile(file,"utf8")};
+};
+
+// LOW-1: a retained candidate with null sections must make the real 0305 down refuse (its
+// strict CHECK is added validated inside the file's own transaction) and leave the retained
+// signed row, the tolerant validated CHECK and the 0305 insert guard exactly as they were.
+test("B4 retained null sections refuse 0305 down atomically",async()=>{
+  const f=await syntheticFixture();
+  try{
+    const {readFile}=await import("node:fs/promises");
+    f.edit(e=>{e.summary=null;e.changedAreas=null;e.databaseChanges=null;e.assumptions=null;e.validations=null;e.rounds.repairs=null;});
+    const receipt=await f.publish();assert.equal(receipt.state,"recorded","B4 null-section candidate is stored through the real publisher");
+    // Start from the true 0305 insert guard: roll 0307 down with its real file, as the 0307 test does.
+    await f.db.exec("BEGIN");
+    try{await f.db.exec("SET LOCAL ROLE control_room_schema_owner");
+      await f.db.exec(await readFile("db/down/0307_control_loop_candidate_review_identity.sql","utf8"));
+      await f.db.exec("COMMIT");
+    }catch(error){await f.db.exec("ROLLBACK");throw error;}
+    const guardBody=(await readFile("db/migrations/0305_control_loop_candidate_unavailable_sections.sql","utf8")).split("AS $$")[1]!.split("$$;")[0];
+    const capture=async()=>({
+      rows:(await f.db.query("SELECT row_to_json(c)::text bytes FROM control_loop_update_candidates c ORDER BY id")).rows,
+      signed:(await f.db.query("SELECT id,payload,record_digest,auth_tag FROM control_loop_update_candidates ORDER BY id")).rows,
+      check:(await f.db.query(`SELECT pg_get_constraintdef(oid) def,convalidated FROM pg_constraint
+        WHERE conrelid='control_loop_update_candidates'::regclass AND conname='control_loop_update_candidates_check'`)).rows,
+      guard:(await f.db.query("SELECT pg_get_functiondef(oid) def,prosrc FROM pg_proc WHERE proname='guard_control_loop_update_candidate_insert'")).rows,
+      triggers:(await f.db.query(`SELECT tgname,tgenabled,tgfoid::regprocedure::text fn FROM pg_trigger
+        WHERE tgrelid='control_loop_update_candidates'::regclass AND NOT tgisinternal ORDER BY tgname`)).rows,
+    });
+    const before=await capture();
+    assert.equal(before.signed.length,1);
+    const stored=(before.signed[0] as {payload:Record<string,unknown>&{rounds:{repairs:unknown}}}).payload;
+    for(const key of ["summary","changedAreas","databaseChanges","assumptions","validations"])assert.equal(stored[key],null,`B4 retained ${key} is null`);
+    assert.equal(stored.rounds.repairs,null);
+    assert.equal(before.check.length,1);
+    const check=before.check[0] as {def:string;convalidated:boolean};
+    assert.equal(check.convalidated,true,"B4 tolerant CHECK starts validated");assert.match(check.def,/WHEN 'null'::text THEN true/u,"B4 starting CHECK is the tolerant one");
+    assert.equal((before.guard as {prosrc:string}[]).map(g=>g.prosrc).join(),guardBody,"B4 starting guard is the exact 0305 body");
+    const down=await nullDown0305Input();console.log(`B4 0305 down input=${down.source}`);
+    // Same session, no outer transaction: atomicity must come from the down file itself.
+    let refused:unknown;
+    await f.db.exec("SET ROLE control_room_schema_owner");
+    try{await f.db.exec(down.sql);}catch(error){refused=error;}
+    finally{await f.db.exec("ROLLBACK");await f.db.exec("RESET ROLE");}
+    const code=(refused as {code?:string;sqlState?:string}|undefined)?.code??(refused as {sqlState?:string}|undefined)?.sqlState;
+    assert.equal(code,"23514","B4 real 0305 down refuses a retained null-section candidate with 23514");
+    assert.deepEqual(await capture(),before,"B4 refused down preserves row, validated tolerant CHECK and 0305 guard");
+    // The recovered session is usable and the retained candidate still verifies and replays.
+    assert.equal((await f.db.query<{ok:number}>("SELECT 1 ok")).rows[0]!.ok,1);
+    const card=(await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate!;
+    assert.equal(card.candidateId,receipt.candidate.candidateId);
+    for(const key of ["summary","changedAreas","databaseChanges","assumptions","validations"] as const)assert.equal(card.evidence[key],null);
+    assert.equal((await f.publish()).state,"replayed");
+    assert.deepEqual(await capture(),before);
+    console.log("RESULT: PASS 0305 down refused 23514 with retained null sections; row, validated tolerant CHECK and 0305 guard unchanged; session recovered");
+  }finally{await f.close();}
+});
