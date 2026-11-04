@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { validateQuarantine } from "../scripts/check-test-quarantine.mjs";
+import { runGate, runQuarantined } from "../scripts/run-tests-with-quarantine.mjs";
 import { runtimeAssemblyMemoryGuardArgs } from "../scripts/run-runtime-assembly-memory-guard.mjs";
 
 const today = new Date("2026-09-28T12:00:00.000Z");
@@ -105,4 +106,8 @@ test("the quarantine runner refuses to run tests under an invalid list", async t
   const result = spawnSync(process.execPath, [runner, "--test", "tests/sample.test.mjs"], { cwd: root, encoding: "utf8" });
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stderr, /GitHub issue/u);
+});
+
+test("the quarantined-test report fails when a quarantined test fails", () => {
+  assert.equal(runQuarantined([valid], () => ({ status: 1 })), 1);
 });
