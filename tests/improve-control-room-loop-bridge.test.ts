@@ -188,11 +188,22 @@ const admissionRecords = z.array(z.discriminatedUnion("operation", [
   z.object({...recordBase,operation:z.literal("answer"),evidence:z.object({question_id:z.string().min(1),input_version:version,report_sha256:rawHash,answer_sha256:rawHash}).strict()}).strict(),
 ])).max(20).refine(records=>new Set(records.map(r=>r.command_id)).size===records.length);
 
+// node:test retains completed after hooks. A hook that closes over the fixture
+// keeps its closed PGlite/WASM heap (and sibling closures) alive for the file.
+// Keep ownership in a separate scope and release it even when close rejects.
+function closeAfter(t: TestContext, resource: { close(): Promise<void> }) {
+  let owned: typeof resource | undefined = resource;
+  t.after(async () => {
+    try { await owned?.close(); }
+    finally { owned = undefined; }
+  });
+}
+
 async function synthetic(t: TestContext, repository?: string) {
   const configuredSettings = repository ? JSON.stringify({ project: { host_adapter: "local-loop", repository }, fixture: "SYNTHETIC" }) : settingsText;
   await mkdir(resolve(".test-tmp"), { recursive: true });
   const root = await mkdtemp(resolve(".test-tmp/b1b-fixture-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(rm.bind(null, root, { recursive: true, force: true }));
   for (const dir of ["runs", "work"]) await mkdir(join(root, dir));
   await writeFile(join(root, "engine.py"), executable);
   await writeFile(join(root, "tooling.json"), JSON.stringify({ fixture: "SYNTHETIC", revision: 1 }));
@@ -266,7 +277,7 @@ async function synthetic(t: TestContext, repository?: string) {
         await beforeAdmission?.();return expected;
       } } };
   raw = createImproveControlRoomLoopAdapterV1(configuration);
-  t.after(() => raw.close());
+  closeAfter(t, raw);
   const adapter = raw;
   const edit = async (run: string, changes: Partial<LoopEngineStatusV1> & {questionText?:unknown;blockedCode?:"QUESTION_LIMIT"|"INPUT_CHANGED"}) => {
     const path = join(root, "runs", `${run}.json`), saved = JSON.parse(await readFile(path, "utf8"));
@@ -277,7 +288,7 @@ async function synthetic(t: TestContext, repository?: string) {
   return { root, adapter, raw, configuration, edit, traces, clearObservations:()=>observations.clear(), setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
 }
 async function fixture(t: TestContext, repository?: string) {
-  const f = await taskFixture(); t.after(() => f.db.close());
+  const f = await taskFixture(); closeAfter(t, f.db);
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const engine = await synthetic(t, repository);
@@ -604,7 +615,7 @@ test("B1b configured execution/path fence, missing qualification and pin drift",
   assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,settingsFile:link}),/unavailable/,"B1b configured symlink refusal");
   assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,entrypoint:join(f.root,"..","engine.py")}),/unavailable/);
   assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,executionIdentity:{...f.configuration.executionIdentity,uid:-1}}),/unavailable/);
-  const unqualified=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,qualifiedOperations:[],admissionExpectation:undefined}});t.after(()=>unqualified.close());
+  const unqualified=createImproveControlRoomLoopAdapterV1({...f.configuration,contract:{...f.configuration.contract,qualifiedOperations:[],admissionExpectation:undefined}});closeAfter(t, unqualified);
   const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter:unqualified},()=>now);
   await assert.rejects(bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},"b1b-unqualified-0001"),/unavailable/);
   assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_commands")).rows.length,0);
@@ -1216,13 +1227,13 @@ test("B1b split loop and legacy pipeline integrity keys refuse both web composit
 
 test("B1b startup capture refuses a split loop and pipelines integrity key", async t => {
   const engine = await synthetic(t), other = new Uint8Array(32).fill(65);
-  const composition = await privateAgentTaskCompositionFixture(); t.after(composition.close);
+  const composition = await privateAgentTaskCompositionFixture(); closeAfter(t, composition);
   const scenario = composition.scenario();
   const startup = (pipelineKey: Uint8Array) => validatePrivateTaskStartupConfiguration({ ...scenario.configuration,
     loopBridge: { integrityKey: KEY, adapter: engine.configuration },
     coordinator: { ...scenario.configuration.coordinator, pipelines: { integrityKey: pipelineKey, selectionAuthority: { assertCurrent: () => true } } } } as never);
   assert.throws(() => startup(other), /private_task_startup_config_invalid/, 'startup refuses a split loop key');
-  const captured = startup(Uint8Array.from(KEY)); t.after(() => captured.loopBridge!.adapter.close());
+  const captured = startup(Uint8Array.from(KEY)); closeAfter(t, captured.loopBridge!.adapter);
   assert.deepEqual(captured.loopBridge!.integrityKey, KEY);
 });
 
