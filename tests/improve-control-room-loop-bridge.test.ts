@@ -31,6 +31,7 @@ import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1,
   type LoopBridgeBindingV1, type LoopBridgeOperationV1 } from "../src/improve-control-room/v1/schemas";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
 import { createImproveControlRoomLoopAdapterV1, loopByteHashV1, loopEngineStatusSchemaV1,
+  parseLoopProviderSnapshotV1, loopProviderRouteSchemaV1, type LoopProviderSnapshotV1,
   type LoopAdapterV1, type LoopEngineStatusV1, type LoopAdapterConfigurationV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
 import { taskFixture } from "./helpers/web-task";
@@ -1440,4 +1441,175 @@ test('P71 intake rollback maps deadlock/serialization SQLSTATEs without repeatin
       assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length,0,'rollback leaves no partial '+table);
     await assert.rejects(readFile(join(f.root,'trace.jsonl')),{code:'ENOENT'},'rolled-back admission never dispatches');
   }
+});
+
+// F10c uses only installation-owned synthetic callbacks; resolving never starts the engine.
+test("F10c invalid provider route capabilities refuse construction", async t => {
+  const f = await synthetic(t);
+  assert.equal(f.adapter.providerRoutes, undefined, "historical omission grants no capability");
+  for (const supplied of [null, {}, { schemaVersion: 2, resolveStartRoute() {} },
+    { schemaVersion: 1, resolveStartRoute: "invalid" },
+    { schemaVersion: 1, resolveStartRoute() {}, paidExecutionReady: true }]) {
+    assert.throws(() => createImproveControlRoomLoopAdapterV1({ ...f.configuration,
+      contract: { ...f.configuration.contract, providerRoutes: supplied } } as unknown as LoopAdapterConfigurationV1),
+    /loop_adapter_unavailable/, "invalid installation capability must refuse before use");
+  }
+});
+
+const providerSelected = { providerId: "provider-one", model: "plan" };
+const providerSavedSettings = JSON.stringify({ providerRoute: providerSelected });
+function providerTenantDocument(tenantId = "tenant:one"): LoopProviderSnapshotV1 {
+  return { schema: "control-room.loop-provider-snapshot/v1", tenantId, version: 1,
+    providers: ["provider-one", "provider-two"].map(provider_id => ({ provider_id, display_name: "Synthetic only",
+      base_url: "https://example.com/api", billing_kind: "token", secret_ref: { kind: "launcher", launcher: "synthetic" },
+      models: ["plan", "reviewer", "secondary"].map(roster_name => ({ roster_name, launcher: "synthetic", served_model_id: `${tenantId}/${provider_id}/${roster_name}` })),
+      credit_amount_nano_usd: null, credit_expires_on: null, credit_note: "", price_source_url: null, price_source_format: null })) };
+}
+// Stand-in models the future trusted installation boundary, including the whole lineup.
+// The adapter cannot infer membership or trust from a callback's selected-pair echo.
+function providerTenantInterpreter(document: LoopProviderSnapshotV1, trustedTenant: string) {
+  const captured = parseLoopProviderSnapshotV1(JSON.stringify(document), trustedTenant);
+  return { schemaVersion: 1 as const, async resolveStartRoute(text: string) {
+    const settings = parseStrictJsonV1(text) as { providerRoute: unknown; lineup?: { role: string; route: unknown }[] };
+    const selected = loopProviderRouteSchemaV1.parse(settings.providerRoute);
+    const additionalRoutes = (settings.lineup ?? []).map(member => loopProviderRouteSchemaV1.parse(member.route));
+    for (const route of [selected, ...additionalRoutes]) {
+      const provider = captured.providers.find(provider => provider.provider_id === route.providerId);
+      if (!provider?.models.some(model => model.roster_name === route.model)) throw new Error("loop_adapter_unavailable");
+    }
+    return { ...selected, additionalRoutes };
+  } };
+}
+function providerAdapter(t: TestContext, configuration: LoopAdapterConfigurationV1,
+  providerRoutes: NonNullable<LoopAdapterConfigurationV1["contract"]["providerRoutes"]>) {
+  const adapter = createImproveControlRoomLoopAdapterV1({ ...configuration, contract: { ...configuration.contract, providerRoutes } });
+  t.after(() => adapter.close());
+  assert.ok(adapter.providerRoutes, "valid installation capability exposes resolver");
+  return adapter;
+}
+const providerUnavailable = (error: unknown) => error instanceof Error && error.message === "loop_adapter_unavailable";
+const providerInvalid = (error: unknown) => error instanceof Error && error.message === "invalid_request";
+
+test("F10c provider routes capture bind exact bytes and normalize whole lineup without execution", async t => {
+  const f = await synthetic(t), document = providerTenantDocument(), interpreter = providerTenantInterpreter(document, "tenant:one");
+  const extras = [{ providerId: "provider-two", model: "secondary" }, { providerId: "provider-one", model: "reviewer" },
+    { providerId: "provider-two", model: "plan" }, providerSelected, { providerId: "provider-one", model: "reviewer" }];
+  const text = '  { "providerRoute": ' + JSON.stringify(providerSelected) + ', "lineup": ' + JSON.stringify(extras.map(route => ({ role: "reviewer", route }))) + ' }\n';
+  const seen: string[] = [];
+  const capability = { schemaVersion: 1 as const,
+    async resolveStartRoute(this: { schemaVersion: 1 }, input: string) {
+      assert.equal(this, capability, "installation method keeps its receiver"); seen.push(input);
+      return interpreter.resolveStartRoute(input);
+    } };
+  const adapter = providerAdapter(t, f.configuration, capability), routes = adapter.providerRoutes!;
+  capability.resolveStartRoute = async () => { throw new Error("replacement must not run"); };
+  document.providers.length = 0; // callback already captured its immutable tenant snapshot
+  const result = await routes.resolveStartRoute(text);
+  assert.deepEqual(seen, [text], "original settings bytes go unchanged to installation interpreter");
+  assert.deepEqual(result, { ...providerSelected, additionalRoutes: [
+    { providerId: "provider-one", model: "reviewer" }, { providerId: "provider-two", model: "plan" }, { providerId: "provider-two", model: "secondary" }] });
+  assert.ok(Object.isFrozen(routes) && Object.isFrozen(result) && Object.isFrozen(result.additionalRoutes) && Object.isFrozen(result.additionalRoutes[0]));
+  assert.equal(routes.paidExecutionReady, false);
+  assert.throws(() => { result.additionalRoutes.push(providerSelected); }, TypeError);
+  await assert.rejects(readFile(join(f.root, "trace.jsonl")), { code: "ENOENT" });
+  assert.deepEqual(await readdir(f.configuration.workRoot), [], "resolution creates no engine command files");
+});
+
+test("F10c provider route absence differs from malformed present route", async t => {
+  const f = await synthetic(t); let calls = 0;
+  const adapter = providerAdapter(t, f.configuration, { schemaVersion: 1, async resolveStartRoute() {
+    calls++; return { ...providerSelected, additionalRoutes: [] };
+  } });
+  await assert.rejects(adapter.providerRoutes!.resolveStartRoute("{}"), providerUnavailable);
+  for (const providerRoute of [null, {}, { ...providerSelected, model: "" }, { ...providerSelected, extra: true },
+    { ...providerSelected, model: "Bearer " + "synthetic".repeat(3) }])
+    await assert.rejects(adapter.providerRoutes!.resolveStartRoute(JSON.stringify({ providerRoute })), providerInvalid);
+  for (const text of ["null", "[]", "{", '{"providerRoute":null,"providerRoute":null}',
+    JSON.stringify({ providerRoute: providerSelected, password: "synthetic-only" })])
+    await assert.rejects(adapter.providerRoutes!.resolveStartRoute(text), providerInvalid);
+  assert.equal(calls, 0, "settings refusals occur before interpretation");
+});
+
+test("F10c provider route result guard", async t => {
+  const f = await synthetic(t);
+  const adapter = providerAdapter(t, f.configuration, { schemaVersion: 1, async resolveStartRoute() {
+    return { providerId: "provider-two", model: "plan", additionalRoutes: [] };
+  } });
+  await assert.rejects(adapter.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable,
+    "selected provider result must equal the independently saved route");
+});
+
+test("F10c provider route malformed secret extra and failed results refuse neutrally", async t => {
+  const f = await synthetic(t);
+  for (const value of [null, {}, { ...providerSelected }, { ...providerSelected, additionalRoutes: null },
+    { ...providerSelected, additionalRoutes: [], billing_kind: "token" },
+    { ...providerSelected, additionalRoutes: [], served_model_id: "served/plan" },
+    { ...providerSelected, additionalRoutes: [], credit_note: "Tenant private note" },
+    { ...providerSelected, additionalRoutes: [{ ...providerSelected, extra: true }] },
+    { ...providerSelected, additionalRoutes: [], password: "synthetic-only" },
+    { ...providerSelected, model: "Bearer " + "synthetic".repeat(3), additionalRoutes: [] },
+    { ...providerSelected, model: "reviewer", additionalRoutes: [] },
+    { ...providerSelected, additionalRoutes: Array.from({ length: 257 }, () => providerSelected) }]) {
+    const adapter = providerAdapter(t, f.configuration, { schemaVersion: 1, async resolveStartRoute() { return value; } });
+    await assert.rejects(adapter.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable);
+    await adapter.close();
+  }
+  const failed = providerAdapter(t, f.configuration, { schemaVersion: 1, async resolveStartRoute() { throw new Error("synthetic private diagnostic"); } });
+  await assert.rejects(failed.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable);
+});
+
+test("F10c tenant interpreter resolves exact selected and additional snapshot pairs", async t => {
+  const f = await synthetic(t), a = providerTenantDocument(), b = providerTenantDocument("tenant:two");
+  b.providers[0]!.models = [{ roster_name: "tenant-two-model", launcher: "synthetic", served_model_id: "tenant-two/served" }];
+  b.providers[0]!.credit_note = "Tenant two only";
+  assert.throws(() => providerTenantInterpreter(b, "tenant:one"), providerUnavailable);
+  const one = providerAdapter(t, f.configuration, providerTenantInterpreter(a, "tenant:one"));
+  const two = providerAdapter(t, f.configuration, providerTenantInterpreter(b, "tenant:two"));
+  assert.equal((await one.providerRoutes!.resolveStartRoute(providerSavedSettings)).model, "plan");
+  await assert.rejects(two.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable);
+  const routeTwo = { providerId: "provider-one", model: "tenant-two-model" };
+  assert.equal((await two.providerRoutes!.resolveStartRoute(JSON.stringify({ providerRoute: routeTwo }))).model, "tenant-two-model");
+  for (const route of [routeTwo, { providerId: "missing-provider", model: "plan" }, { providerId: "provider-one", model: "served/plan" }]) {
+    await assert.rejects(one.providerRoutes!.resolveStartRoute(JSON.stringify({ providerRoute: route })), providerUnavailable);
+    await assert.rejects(one.providerRoutes!.resolveStartRoute(JSON.stringify({ providerRoute: providerSelected, lineup: [{ role: "secondary", route }] })), providerUnavailable);
+  }
+});
+
+test("F10c provider resolution rechecks pins before callback and after await", async t => {
+  const f = await synthetic(t); let calls = 0;
+  const adapter = providerAdapter(t, f.configuration, { schemaVersion: 1, async resolveStartRoute() {
+    calls++; await writeFile(f.configuration.availabilityFile, "changed");
+    return { ...providerSelected, additionalRoutes: [] };
+  } });
+  await assert.rejects(adapter.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable);
+  assert.equal(calls, 1, "post-await pin change refuses the returned result");
+  await assert.rejects(adapter.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable);
+  assert.equal(calls, 1, "pre-call pin change refuses before interpretation");
+});
+
+test("F10c close waits for provider interpretation and refuses its pending result", async t => {
+  const f = await synthetic(t);
+  let release!: () => void, enter!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { enter = resolve; });
+  const adapter = providerAdapter(t, f.configuration, { schemaVersion: 1, async resolveStartRoute() {
+    enter(); await barrier; return { ...providerSelected, additionalRoutes: [] };
+  } });
+  const resolving = adapter.providerRoutes!.resolveStartRoute(providerSavedSettings);
+  const refused = assert.rejects(resolving, providerUnavailable);
+  await entered;
+  let closed = false;
+  const closing = adapter.close().then(() => { closed = true; });
+  await Promise.resolve(); assert.equal(closed, false, "close waits for the pending interpreter");
+  release(); await refused; await closing;
+  assert.equal(closed, true);
+  await assert.rejects(adapter.providerRoutes!.resolveStartRoute(providerSavedSettings), providerUnavailable);
+  await assert.rejects(readFile(join(f.root, "trace.jsonl")), { code: "ENOENT" });
+});
+
+test("F10c registered contract tests have no quarantine replacement", async () => {
+  const manifest = JSON.parse(await readFile("package.json", "utf8")) as { scripts: Record<string, string> };
+  const quarantine = JSON.parse(await readFile("tests/quarantine.json", "utf8"));
+  assert.ok(manifest.scripts["test:improve-control-room"].includes("tests/loop-provider-contract.test.ts"));
+  assert.doesNotMatch(JSON.stringify(quarantine), /tests\/loop-provider-contract\.test\.ts|F10c /,
+    "provider contract and factory tests must run without quarantine replacement");
 });

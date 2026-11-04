@@ -6,6 +6,8 @@ import { createImproveControlRoomLoopMonitorV1, loopMonitoringStatusSchemaV1, un
   loopMonitoringClockV1, type LoopMonitoringStatusV1, type LoopMonitoringClockV1 } from "./improve-control-room-loop-monitoring";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { isIP } from "node:net";
+import { WebAccessError } from "./access-verifier";
 import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -22,6 +24,129 @@ export const loopByteHashV1 = (value: string | Uint8Array) => createHash("sha256
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const scalar = z.union([z.number().int().positive().max(Number.MAX_SAFE_INTEGER), z.string().min(1).max(180)]);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
+const providerId = z.string().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/);
+const providerText = z.string().min(1).max(180).regex(/^[^\x00-\x1f\x7f-\x9f]*$/);
+const providerRefusals = ["base_url", "price_source_url", "roster_mismatch"] as const;
+type ProviderRefusal = typeof providerRefusals[number];
+/** Structural and secret issues take priority over the stable semantic reasons. */
+export function classifyLoopProviderIssuesV1(issues: readonly z.core.$ZodIssue[]): "invalid_request" | ProviderRefusal {
+  const codes = issues.map(issue => issue.code === "custom" ? issue.params?.providerRefusal : undefined);
+  if (!issues.length || codes.some(code => !providerRefusals.includes(code))) return "invalid_request";
+  return providerRefusals.find(code => codes.includes(code))!;
+}
+function providerSecretCheck(value: unknown, ctx: z.RefinementCtx) {
+  try { assertNoSecretMaterial(value); }
+  catch { ctx.addIssue({ code: "custom", message: "invalid_request" }); }
+}
+const providerSecretInput = z.unknown().superRefine(providerSecretCheck);
+function providerUrlHost(text: string): string | undefined {
+  try {
+    if (text.length > 300 || !/^https:\/\/[^/]+(?:\/|$)/i.test(text)
+      || text !== text.trim() || /[\x00-\x20\x7f-\x9f\\?#]/.test(text)) return;
+    const url = new URL(text), host = url.hostname.toLowerCase().replace(/\.+$/, "");
+    if (url.protocol !== "https:" || url.username || url.password || url.port && url.port !== "443"
+      || text.split("/")[2]?.includes("@") || !host || isIP(host.replace(/^\[|\]$/g, ""))
+      || ["localhost", "local", "home.arpa"].some(local => host === local || host.endsWith(`.${local}`))) return;
+    return host;
+  } catch { return; }
+}
+const providerData = z.object({
+  provider_id: providerId, display_name: providerText, base_url: z.string(), billing_kind: z.enum(["subscription", "token"]),
+  secret_ref: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("launcher"), launcher: providerText }).strict(),
+    z.object({ kind: z.literal("macos_keychain"), service: z.literal("control-room.provider"), account: providerId }).strict(),
+    z.object({ kind: z.literal("bitwarden"), item: providerText }).strict(),
+  ]),
+  models: z.array(z.object({ roster_name: providerText, launcher: providerText,
+    served_model_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/) }).strict()).min(1).max(256),
+  credit_amount_nano_usd: z.string().regex(/^(?:0|[1-9][0-9]{0,29})$/).nullable(),
+  credit_expires_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "invalid_request").nullable(),
+  credit_note: z.string().max(1000).regex(/^[^\x00-\x1f\x7f-\x9f]*$/),
+  price_source_url: z.string().nullable(), price_source_format: z.literal("control-room.provider-prices/v1").nullable(),
+}).strict().superRefine((value, ctx) => {
+  const refuse = (path: (string | number)[], code: ProviderRefusal) =>
+    ctx.addIssue({ code: "custom", message: "provider_refused", path, params: { providerRefusal: code } });
+  const baseHost = providerUrlHost(value.base_url);
+  if (!baseHost) refuse(["base_url"], "base_url");
+  if (value.price_source_url !== null) {
+    const sourceHost = providerUrlHost(value.price_source_url);
+    if (!sourceHost || sourceHost !== baseHost) refuse(["price_source_url"], "price_source_url");
+  }
+  if ((value.price_source_url === null) !== (value.price_source_format === null))
+    ctx.addIssue({ code: "custom", message: "invalid_request", path: ["price_source_format"] });
+  const names = new Set<string>(), launcher = value.models[0]?.launcher;
+  value.models.forEach((model, index) => {
+    if (names.has(model.roster_name)) refuse(["models", index, "roster_name"], "roster_mismatch");
+    names.add(model.roster_name);
+    if (model.launcher !== launcher) refuse(["models", index, "launcher"], "roster_mismatch");
+  });
+  if (value.secret_ref.kind === "launcher" && value.secret_ref.launcher !== launcher)
+    refuse(["secret_ref", "launcher"], "roster_mismatch");
+  if (value.secret_ref.kind === "macos_keychain" && value.secret_ref.account !== value.provider_id)
+    ctx.addIssue({ code: "custom", message: "invalid_request", path: ["secret_ref", "account"] });
+});
+export const loopProviderDataSchemaV1 = providerSecretInput.pipe(providerData);
+export type LoopProviderDataV1 = z.infer<typeof loopProviderDataSchemaV1>;
+export const loopProviderSnapshotSchemaV1 = providerSecretInput.pipe(z.object({
+  schema: z.literal("control-room.loop-provider-snapshot/v1"),
+  tenantId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/), version: revision,
+  providers: z.array(loopProviderDataSchemaV1).max(32),
+}).strict().superRefine((value, ctx) => {
+  if (value.version === 0 && value.providers.length)
+    ctx.addIssue({ code: "custom", message: "invalid_request", path: ["version"] });
+  const ids = new Set<string>();
+  value.providers.forEach((provider, index) => {
+    if (ids.has(provider.provider_id)) ctx.addIssue({ code: "custom", message: "invalid_request", path: ["providers", index, "provider_id"] });
+    ids.add(provider.provider_id);
+  });
+}));
+export type LoopProviderSnapshotV1 = z.infer<typeof loopProviderSnapshotSchemaV1>;
+export const loopProviderRouteSchemaV1 = providerSecretInput.pipe(z.object({ providerId, model: providerText }).strict());
+export type LoopProviderRouteV1 = z.infer<typeof loopProviderRouteSchemaV1>;
+export const loopProviderRouteResolutionSchemaV1 = providerSecretInput.pipe(z.object({
+  providerId, model: providerText, additionalRoutes: z.array(loopProviderRouteSchemaV1).max(256),
+}).strict());
+export type LoopProviderRouteResolutionV1 = z.infer<typeof loopProviderRouteResolutionSchemaV1>;
+function freezeProviderValue<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) freezeProviderValue(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+/** Stable named limits shared by the reader and S1's pre-storage writer. */
+export class LoopProviderSnapshotRefusalV1 extends WebAccessError {
+  constructor(readonly reason: "provider_limit" | "snapshot_size") { super("invalid_request"); }
+}
+function checkProviderSnapshotBytes(text: string) {
+  if (Buffer.byteLength(text, "utf8") > 65536) throw new LoopProviderSnapshotRefusalV1("snapshot_size");
+}
+function checkedProviderSnapshot(value: unknown, expectedTenantId: string): LoopProviderSnapshotV1 {
+  try { assertNoSecretMaterial(value); } catch { throw new WebAccessError("invalid_request"); }
+  if (value && typeof value === "object" && "providers" in value && Array.isArray(value.providers) && value.providers.length > 32)
+    throw new LoopProviderSnapshotRefusalV1("provider_limit");
+  const parsed = loopProviderSnapshotSchemaV1.safeParse(value);
+  if (!parsed.success) throw new WebAccessError("invalid_request");
+  if (parsed.data.tenantId !== expectedTenantId) throw new Error("loop_adapter_unavailable");
+  return freezeProviderValue(parsed.data);
+}
+export function parseLoopProviderSnapshotV1(text: string, expectedTenantId: string): LoopProviderSnapshotV1 {
+  if (typeof text !== "string") throw new WebAccessError("invalid_request");
+  checkProviderSnapshotBytes(text);
+  let value: unknown;
+  try { value = parseStrictJsonV1(text, { maxBytes: 65536 }); } catch { throw new WebAccessError("invalid_request"); }
+  return checkedProviderSnapshot(value, expectedTenantId);
+}
+/** S1 must store only the returned bytes, inside its atomic tenant edit. No storage I/O here. */
+export function serializeLoopProviderSnapshotV1(value: unknown, expectedTenantId: string): string {
+  const text = JSON.stringify(checkedProviderSnapshot(value, expectedTenantId));
+  checkProviderSnapshotBytes(text);
+  return text;
+}
 const envelopeSchema = z.object({ schema_version: z.literal(1), run: z.unknown(), state: z.string().min(1).max(64), revision,
   next: z.unknown(), attention: z.unknown(), steps: z.array(z.unknown()).max(1000),
   counters: z.record(z.string(), z.unknown()), error: z.unknown(), request: z.unknown().optional(),
@@ -83,6 +208,8 @@ export function captureLoopRecoveryCapabilityV1(value: LoopRecoveryCapabilityV1 
 }
 export type LoopAdapterContractV1 = {
   lineage: LoopImprovementContractV1; schemaDigest: string;
+  /** Installation interpreter captures one immutable, trusted tenant snapshot per call. */
+  providerRoutes?: { schemaVersion: 1; resolveStartRoute(settingsText: string): Promise<unknown> };
   recovery?: LoopRecoveryCapabilityV1;
   finalization?: LoopFinalizationCapabilityV1;
   /** Reviewed installation opt-in attests monitoring-safe, no-paid-work logins. */
@@ -112,6 +239,8 @@ export type LoopAdapterConfigurationV1 = {
   contract: LoopAdapterContractV1; timeoutMs?: number; monitoringClock?: LoopMonitoringClockV1;
 };
 export interface LoopAdapterV1 {
+  /** Contract-only readiness is false; S4 needs a reviewed extension for paid stand-ins. */
+  readonly providerRoutes?: { resolveStartRoute(settingsText: string): Promise<LoopProviderRouteResolutionV1>; readonly paidExecutionReady: boolean };
   readonly adapterId: string; readonly toolingRevision: string; readonly schemaDigest: string;
   readonly settingsText: string; readonly contract: LoopImprovementContractV1;
   readonly finalization?: LoopFinalizationCapabilityV1;
@@ -157,6 +286,16 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     lineage: Object.freeze({ ...input.contract.lineage }), qualifiedOperations: Object.freeze([...input.contract.qualifiedOperations]) }) };
   const recovery = captureLoopRecoveryCapabilityV1(c.contract.recovery);
   const finalization = captureLoopFinalizationCapabilityV1(c.contract.finalization);
+  const suppliedRoutes = c.contract.providerRoutes;
+  let resolveProviderRoute: ((text: string) => Promise<unknown>) | undefined;
+  if (suppliedRoutes !== undefined) {
+    if (!suppliedRoutes || typeof suppliedRoutes !== "object" || suppliedRoutes.schemaVersion !== 1
+      || typeof suppliedRoutes.resolveStartRoute !== "function"
+      || Reflect.ownKeys(suppliedRoutes).length !== 2
+      || Reflect.ownKeys(suppliedRoutes).some(key => key !== "schemaVersion" && key !== "resolveStartRoute")) throw unavailable();
+    resolveProviderRoute = suppliedRoutes.resolveStartRoute.bind(suppliedRoutes);
+    Object.freeze(resolveProviderRoute);
+  }
   const monitoring = c.contract.monitoring ? Object.freeze({ enabled: c.contract.monitoring.enabled.bind(c.contract.monitoring),
     decodeStatus: c.contract.monitoring.decodeStatus.bind(c.contract.monitoring) }) : undefined;
   if (monitoring) checkedPath(c.availabilityFile, c.configRoot);
@@ -559,8 +698,36 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return operation;
   }
   let closePromise: Promise<void> | undefined;
+  const providerRoutes = resolveProviderRoute ? Object.freeze({ paidExecutionReady: false,
+    resolveStartRoute: (text: string): Promise<LoopProviderRouteResolutionV1> => {
+      const operation = (async () => {
+        try { if (closing) throw unavailable(); validate(); } catch { throw unavailable(); }
+        const settings = parseLoopSettingsV1(text);
+        if (!Object.hasOwn(settings, "providerRoute")) throw unavailable();
+        const selected = loopProviderRouteSchemaV1.safeParse(settings.providerRoute);
+        if (!selected.success) throw new WebAccessError("invalid_request");
+        try {
+          const raw = await resolveProviderRoute!(text);
+          if (closing) throw unavailable();
+          validate();
+          const result = loopProviderRouteResolutionSchemaV1.parse(raw);
+          if (result.providerId !== selected.data.providerId || result.model !== selected.data.model) throw unavailable();
+          const pairs = new Map<string, LoopProviderRouteV1>();
+          for (const route of result.additionalRoutes) {
+            if (route.providerId === result.providerId && route.model === result.model) continue;
+            pairs.set(JSON.stringify([route.providerId, route.model]), route);
+          }
+          result.additionalRoutes = [...pairs.values()].sort((a, b) =>
+            a.providerId < b.providerId ? -1 : a.providerId > b.providerId ? 1 : a.model < b.model ? -1 : a.model > b.model ? 1 : 0);
+          return freezeProviderValue(result);
+        } catch { throw unavailable(); }
+      })();
+      pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});
+      return operation;
+    } }) : undefined;
   return Object.freeze({ roster, adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
     settingsText, checkSettings, contract: c.contract.lineage,
+    ...(providerRoutes ? { providerRoutes } : {}),
     reserveRun: () => runId(c.contract.generateRunId()), available,
     ...(recovery ? { inspectRecovery, recover } : {}),
     ...(finalization ? { finalization } : {}),
