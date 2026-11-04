@@ -6,3 +6,6 @@ Scheduled cloud workers read this file from branch `cloud/queue`. Each line belo
 release-fixture-cleanup cloud-base/release-fixture-cleanup
 candidate-null-down cloud-base/candidate-null-down
 b5-refusal-inventory cloud-base/b5-refusal-inventory
+push-23505-diagnosis cloud-base/push-23505-diagnosis
+b5-repair-guard-isolation cloud-base/b5-repair-guard-isolation
+b5-transport-digest-binding cloud-base/b5-transport-digest-binding
