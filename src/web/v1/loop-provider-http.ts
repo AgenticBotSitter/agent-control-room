@@ -2,7 +2,7 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTru
 import type { LocalOwnerSessionServiceV1 } from './local-owner-session';
 import { LoopProviderRefusedV1, type LoopProviderServiceV1 } from './loop-provider-service';
 import { privateResponseHeaders, readBoundedJson, webFailure } from './http-common';
-export const isLoopProviderRouteV1=(path:string)=>path==='/api/v1/loop-providers'||/^\/api\/v1\/loop-providers\/[a-z0-9][a-z0-9._-]{2,63}(?:\/remove)?$/.test(path);
+export const isLoopProviderRouteV1=(path:string)=>path==='/api/v1/loop-providers'||/^\/api\/v1\/loop-providers\/offers\/[^/]+$/.test(path)||/^\/api\/v1\/loop-providers\/[a-z0-9][a-z0-9._-]{2,63}(?:\/remove)?$/.test(path);
 export function createLoopProviderHttpHandlerV1(options:{origin:string;service:LoopProviderServiceV1;trust?:AccessTrust;gatewayAssertionProfile?:GatewayAssertionProviderProfileV1;clock?:()=>number;localOwnerSession?:LocalOwnerSessionServiceV1}) {
  const local=options.localOwnerSession;
  if(local&&(options.trust||options.gatewayAssertionProfile)||!local&&!options.trust)throw new Error('loop_provider_http_authentication_invalid');
@@ -17,6 +17,13 @@ export function createLoopProviderHttpHandlerV1(options:{origin:string;service:L
    if(url.pathname==='/api/v1/loop-providers'){
     if(request.method!=='GET'||request.body)throw new WebAccessError('invalid_request');
     return Response.json(await options.service.view(identity),{headers:privateResponseHeaders});
+   }
+   const offer=/^\/api\/v1\/loop-providers\/offers\/([^/]+)$/.exec(url.pathname);
+   // POST /offers/remove removes the provider whose valid ID is 'offers'.
+   if(offer&&!(request.method==='POST'&&offer[1]==='remove')){
+    if(request.method!=='GET'||request.body)throw new WebAccessError('invalid_request');
+    let model:string;try{model=decodeURIComponent(offer[1]!);}catch{throw new WebAccessError('invalid_request');}
+    return Response.json(await options.service.offersForModelV1(identity,model),{headers:privateResponseHeaders});
    }
    const refresh=url.pathname==='/api/v1/loop-providers/refresh-prices'&&request.method==='POST';
    const route=/^\/api\/v1\/loop-providers\/([a-z0-9][a-z0-9._-]{2,63})(\/remove)?$/.exec(url.pathname);

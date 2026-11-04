@@ -485,3 +485,123 @@ test('S2 clock crossing exactly 24 hours keeps checked-at and exposes a stale re
   assert.equal(view.prices[0]!.stale,true);assert.equal(view.prices[0]!.checkedAt,new Date(now).toISOString());
   assert.deepEqual(view.fetches,[{providerId:'provider-one',outcome:'failed',reason:'http_status',fetchedAt:new Date(at).toISOString()}]);
 });
+
+test('S3 offers decode one segment, keep every mapping and mark all fresh USD minima',async t=>{
+ const f=await fixture(t,{availability:async()=>{throw new Error('view must not probe credentials');}});
+ for(const [i,id] of ['provider-one','provider-two','provider-three','provider-four','provider-five','provider-six'].entries()){
+  const p=provider({provider_id:id,display_name:id,credit_expires_on:'2020-01-01',...(id==='provider-six'?{secret_ref:{kind:'bitwarden' as const,item:'opaque-item'}}:{})});
+  await f.service.upsert(f.identity,id,{expectedVersion:i,provider:p},key());
+ }
+ const price=async(id:string,input:string,output:string,currency='USD',age=0)=>f.db.query(`INSERT INTO control_loop_provider_prices(tenant_id,provider_id,model,window_key,"window",input_nano_usd_per_token,output_nano_usd_per_token,currency,status,reason,checked_at)
+ VALUES($1,$2,'served/one','all',NULL,$3,$4,$5,$6,'',$7) ON CONFLICT (tenant_id,provider_id,model,window_key) DO UPDATE SET input_nano_usd_per_token=$3,output_nano_usd_per_token=$4`,[scope.tenantId,id,currency==='USD'?input:null,currency==='USD'?output:null,currency,currency==='USD'?'known':'not_comparable',new Date(now-age).toISOString()]);
+ await price('provider-one','10','20');await price('provider-two','10','20');await price('provider-three','1','1','EUR');await price('provider-four','1','1','USD',86400001);
+ await f.db.query(`INSERT INTO control_loop_provider_fetches VALUES('tenant:web','provider-four','failed','http_status',$1)`,[new Date(now).toISOString()]);
+ const get=()=>f.handler(request('/api/v1/loop-providers/offers/synthetic%2Fmodel'));
+ let response=await get();assert.equal(response.status,200,'S3 offers must reach the real service');
+ let body=await response.json();assert.equal(body.offers.length,6);assert.equal(body.cheapestStatus,'minimum');
+ assert.deepEqual(body.offers.filter((o:any)=>o.cheapest).map((o:any)=>o.providerId),['provider-one','provider-two']);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-one').servedModelId,'served/one');assert.equal(body.offers.find((o:any)=>o.providerId==='provider-one').credit.expired,true);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-one').price.input,'10','credit is never deducted');assert.equal(body.offers.find((o:any)=>o.providerId==='provider-four').price.stale,true);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-four').latestFetch.outcome,'failed');assert.equal(body.offers.find((o:any)=>o.providerId==='provider-five').price,null);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-six').available,false);assert.equal(body.offers.find((o:any)=>o.providerId==='provider-six').availabilityReason,'Secret unavailable');
+ await price('provider-two','5','30');body=await (await get()).json();assert.equal(body.cheapestStatus,'no_single_cheapest');assert.ok(body.offers.every((o:any)=>!o.cheapest));
+ await f.db.query("UPDATE control_loop_roster_models SET launcher='changed'");body=await (await get()).json();assert.ok(body.offers.every((o:any)=>!o.available));
+ for(const path of ['/api/v1/loop-providers/offers/synthetic/model','/api/v1/loop-providers/offers/synthetic%252Fmodel']){
+  response=await f.handler(request(path));if(path.includes('%252F')){assert.equal(response.status,200);assert.equal((await response.json()).offers.length,0);}else assert.equal(response.status,404);
+ }
+ assert.equal((await f.handler(request('/api/v1/loop-providers/offers/%ZZ'))).status,400);
+ for(const role of ['operator','lead']){await f.db.query('UPDATE control_role_grants SET role_key=$1',[role]);assert.equal((await get()).status,403);}
+ await f.db.query("UPDATE control_role_grants SET role_key='owner'");
+ await f.db.query("UPDATE control_identities SET actor_type='agent'");assert.equal((await get()).status,403);
+ await f.db.query("UPDATE control_identities SET actor_type='human'");
+ await f.service.remove(f.identity,'provider-one',{expectedVersion:6},key());body=await (await get()).json();assert.equal(body.offers.length,5);
+});
+
+// Explicit native lane: ordinary unit runs do not start a cluster.
+test('S3 PostgreSQL 20 provider selection writers contend as production logins', {skip:process.env.CONTROL_ROOM_S3_NATIVE!=='1'}, async()=>{
+ const {withRealPostgres}=await import('./support/attack-kit/index');
+ const {Client,Pool}=await import('pg');
+ const {bindPrivatePgPool}=await import('../src/web/v1/private-pg-database');
+ const {privatePgOptions}=await import('../src/web/v1/private-pg-options');
+ type Pg=Parameters<Parameters<typeof withRealPostgres>[0]>[0];
+ const scope={tenantId:'tenant:s3',workspaceId:'workspace:s3'},project='project:s3',owner='identity:s3';
+ const at=new Date(now-60000).toISOString(),expires=new Date(now+3600000).toISOString();
+ const identity={provider:'test',subject:owner,tokenDigest:sha256Digest({session:'s3'}),issuedAt:at,expiresAt:expires,verificationExpiresAt:expires};
+ async function sql(pg:Pg,query:string,params:unknown[]=[],role='admin',database=pg.database){
+  const client=new Client(role==='admin'?pg.admin({database}):pg.connection(role,{database}));await client.connect();
+  try{return await client.query(query,params);}finally{await client.end();}
+ }
+async function seed(pg:Pg,database=pg.database){
+  await sql(pg,"INSERT INTO tenants(id,display_name) VALUES($1,'Fixture tenant')",[scope.tenantId],"admin",database);
+  await sql(pg,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Fixture workspace')",[scope.workspaceId,scope.tenantId],"admin",database);
+  await sql(pg,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+    VALUES('adapter:b1b',$1,'control-room-manual','1.0.0','control_room_native','disabled','v1',30)`,[scope.tenantId],"admin",database);
+  await sql(pg,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    VALUES($1,$2,$3,'adapter:b1b',$1,'1','Control Room','planned','manual_project_active','healthy','control_room_native',now(),
+    '{"presentation":{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}}',now())`,[project,scope.tenantId,scope.workspaceId],"admin",database);
+  await sql(pg,"INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at) VALUES($1,$2,'active',1,now(),now())",[scope.tenantId,project],"admin",database);
+  await sql(pg,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES($1,$2,'human','Fixture identity','test',$3,'active',$4,$4)`,[owner,scope.tenantId,sha256Digest({provider:"test",subject:owner}),at],"admin",database);
+  await sql(pg,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:b1b',$1,$2,'owner','["*"]','["*"]','critical',true,false,$3,$3)`,[scope.tenantId,owner,at],"admin",database);
+  await sql(pg,"INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)",[scope.tenantId,identity.tokenDigest,owner,at,expires],"admin",database);
+}
+ const result=await withRealPostgres(async pg=>{
+  await seed(pg);
+  await sql(pg,`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+   VALUES($1,'synthetic/model',1,'synthetic-api','','','','','','','','on','','','',$2,$3)`,[scope.tenantId,owner,at]);
+  const writer=()=>{
+   const login=pg.connection('web');
+   const bound=bindPrivatePgPool(new Pool({...privatePgOptions({host:'127.0.0.1',port:pg.port,database:pg.database,username:login.user,password:login.password!,majorVersion:17}),host:login.host,max:1}));
+   return {...bound,providers:new LoopProviderServiceV1(bound.client,scope,{availability:async()=>{throw new Error('no secret probe');}},()=>now)};
+  };
+  const initial=writer();
+  try{
+   for(const [i,id] of ['provider-one','provider-two'].entries())await initial.providers.upsert(identity,id,{expectedVersion:i,provider:provider({provider_id:id,billing_kind:'subscription'})},key());
+   let reached=0,release!:()=>void;
+   const gate=new Promise<void>(r=>{release=r;});let barrierTimedOut=false;
+   const timer=setTimeout(()=>{barrierTimedOut=true;release();},20000);
+   const tools={settingsText:'{}',checkSettings:async()=>{if(++reached===20)release();await gate;return{eligible:true,reasons:[]};}};
+   const clients=Array.from({length:20},()=>writer());
+   try{
+    const route={providerId:'provider-two',model:'synthetic/model'},settings=JSON.stringify({providerRoute:route});
+    const results=await Promise.allSettled(clients.map((w,i)=>new LoopPolicyServiceV1(w.client,scope,tools,()=>now,w.providers).put(identity,project,'selection',{expectedVersion:0,settings},`s3-native-policy-${String(i).padStart(4,'0')}`)));
+    assert.equal(barrierTimedOut,false,'all 20 callers reach the barrier before its safety timeout');
+    assert.equal(reached,20,'all separate production callers checked before final compare-and-commit');
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    for(const r of results)if(r.status==='rejected')assert.equal(r.reason.code,'conflict');
+    const rows=await sql(pg,'SELECT version,settings_text FROM control_loop_policy_layers');assert.equal(rows.rows.length,1);assert.deepEqual(JSON.parse(rows.rows[0].settings_text).providerRoute,route);
+    assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,1);
+    console.log('S3 PostgreSQL callers=20 checked=20 winners=1 losers=19 layers=1 events=1 barrier_timed_out='+barrierTimedOut);
+   }finally{clearTimeout(timer);release();await Promise.all(clients.map(w=>w.close()));}
+   // Final compare catches a withdrawal while the slow checker holds no DB lock.
+   const slow={settingsText:'{}',checkSettings:async()=>{await initial.providers.remove(identity,'provider-two',{expectedVersion:2},key());return{eligible:true,reasons:[]};}};
+   const policy=new LoopPolicyServiceV1(initial.client,scope,slow,()=>now,initial.providers);
+   await assert.rejects(policy.put(identity,project,'selection',{expectedVersion:1,settings:JSON.stringify({providerRoute:{providerId:'provider-two',model:'synthetic/model'}})},key()),/loop_policy_refused/);
+   assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,1);
+  }finally{await initial.close();}
+ },{port:60580,allowedPorts:[60580],database:'s3_provider_choice',boundMs:180000});
+ assert.equal(result.cleanedUp,true);assert.deepEqual(result.leftovers,[]);
+ console.log('S3 PostgreSQL cleanedUp=true leftovers=0');
+});
+
+test('S3 offers namespace preserves offers as a provider ID for PUT and removal',async t=>{
+ const f=await fixture(t),p=provider({provider_id:'offers'});
+ assert.equal((await f.handler(request('/api/v1/loop-providers/offers','PUT',{expectedVersion:0,provider:p},key()))).status,201);
+ const offers=await f.handler(request('/api/v1/loop-providers/offers/synthetic%2Fmodel'));
+ assert.equal(offers.status,200);assert.equal((await offers.json()).offers[0].providerId,'offers');
+ const removed=await f.handler(request('/api/v1/loop-providers/offers/remove','POST',{expectedVersion:1},key()));
+ assert.equal(removed.status,201,'S3 provider offers must remain removable');
+ assert.equal((await f.service.view(f.identity)).providers.length,0);
+ // GET is still the offers endpoint for the literal roster name "remove".
+ const read=await f.handler(request('/api/v1/loop-providers/offers/remove'));
+ assert.equal(read.status,200);assert.equal((await read.json()).offers.length,0);
+});
+
+test('S3 offers refuses secret-marked model text without reflecting it or writing',async t=>{
+ const f=await fixture(t),marker='Bearer CRMARKER-'+'c'.repeat(32),before=await f.rows();
+ const response=await f.handler(request('/api/v1/loop-providers/offers/'+encodeURIComponent(marker)));
+ assert.equal(response.status,400,'S3 offer model text must use the shared secret boundary');
+ assert.deepEqual(await response.json(),{error:'invalid_request'});
+ assert.deepEqual(await f.rows(),before);
+});

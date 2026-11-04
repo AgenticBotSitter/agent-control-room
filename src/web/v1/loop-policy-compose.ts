@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { parseStrictJsonV1 } from "../../installer/shared/strict-json.mjs";
 import { assertNoSecretMaterial } from "../../security";
 import { WebAccessError } from "./access-verifier";
+import { loopProviderRouteSchemaV1 } from "./improve-control-room-loop-adapter";
 
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): value is ObjectValue => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -22,6 +23,7 @@ export function parseLoopSettingsV1(text: string, layer = false): ObjectValue {
       }
     };
     visit(value); assertNoSecretMaterial(value);
+    if (Object.hasOwn(value, "providerRoute") && !loopProviderRouteSchemaV1.safeParse(value.providerRoute).success) throw invalid();
     return value;
   } catch { throw invalid(); }
 }
@@ -44,6 +46,8 @@ export function composeLoopSettingsV1(input: { defaultsText: string; project?: s
     const text = input[key];
     if (text !== undefined) value = merge(value, parseLoopSettingsV1(text, layer));
   }
+  // Validate the resulting object as well as every independently supplied route.
+  parseLoopSettingsV1(encode(value));
   const text = input.project === undefined && input.selection === undefined && input.runEdits === undefined
     ? input.defaultsText : `${encode(value)}\n`;
   if (Buffer.byteLength(text, "utf8") > 65536) throw invalid();

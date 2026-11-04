@@ -327,8 +327,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
     candidateConfiguration.contract, candidateConfiguration) : undefined;
+  const loopProviders = options.loopBridge?.adapter.roster ? new LoopProviderServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
@@ -340,8 +342,6 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock) : undefined;
   const loopRosterStarted = loopRoster?.start().catch(() => undefined);
-  const loopProviders = loopRosterTools ? new LoopProviderServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopRosterHttp = loopRoster ? createLoopRosterHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: loopRoster, clock }) : undefined;
   const loopPolicyHttp = loopPolicy ? createLoopPolicyHttpHandlerV1({ origin: options.origin,

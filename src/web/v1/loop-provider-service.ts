@@ -1,3 +1,5 @@
+import { LoopPolicyRefusedV1 } from "./loop-policy-service";
+import { parseLoopSettingsV1 } from "./loop-policy-compose";
 import { z } from 'zod';
 import type { DatabaseClient, DatabaseSession } from '../../persistence/database';
 import { withDatabaseOperationSignal } from '../../persistence/operation-signal';
@@ -6,7 +8,7 @@ import { assertNoSecretMaterial } from '../../security/redaction';
 import { NodeSafeCommandRunner, type SafeCommandRunnerV1 } from '../../node-policy/v1/native-key-stores';
 import { WebAccessError, type VerifiedWebIdentity } from './access-verifier';
 import { WebSessionAuthority } from './session-authority';
-import { refreshProviderPricesV1, providerPriceDigestV1, type ProviderPriceV1, type ProviderFetchV1,
+import { refreshProviderPricesV1, providerPriceDigestV1, priceAtV1, type ProviderPriceV1, type ProviderFetchV1,
   type ProviderPriceDependenciesV1, type ProviderPriceViewV1 } from './loop-provider-prices';
 import { loopProviderDataSchemaV1, loopProviderRouteSchemaV1, classifyLoopProviderIssuesV1,
   serializeLoopProviderSnapshotV1, parseLoopProviderSnapshotV1, type LoopProviderDataV1,
@@ -78,6 +80,55 @@ export class LoopProviderServiceV1 {
         checkedAt:new Date(row.checked_at).toISOString()};
       return {...price,stale:this.clock()-Date.parse(price.checkedAt)>24*3600_000,digest:providerPriceDigestV1(price)};
     }),fetches:fetches.map(row=>({providerId:row.provider_id,outcome:row.outcome,reason:row.reason,fetchedAt:new Date(row.fetched_at).toISOString()}))};
+  }
+  /** Caller owns policy/intake authority and its transaction; lock the provider edit mutex
+   * so the final save/copy cannot commit a withdrawn mapping. Never probe credentials here. */
+  async revalidateSettings(tx: DatabaseSession, text: string): Promise<void> {
+    const route = parseLoopSettingsV1(text).providerRoute;
+    if (route === undefined) return;
+    const parsed = loopProviderRouteSchemaV1.safeParse(route);
+    if (!parsed.success) throw new WebAccessError('invalid_request');
+    await tx.query('SELECT version FROM control_loop_provider_state WHERE tenant_id=$1 FOR SHARE', [this.scope.tenantId]);
+    const { snapshot } = await this.#read(tx);
+    const provider = snapshot.providers.find(p => p.provider_id === parsed.data.providerId);
+    const refuse = (code: string, explanation: string): never => { throw new LoopPolicyRefusedV1([{code, explanation}]); };
+    if (!provider) return refuse('PROVIDER_REMOVED', 'Provider removed');
+    if (!provider.models.some(m => m.roster_name === parsed.data.model)) return refuse('PROVIDER_MAPPING_REMOVED', 'Provider model mapping removed');
+    try { await this.#roster(tx, provider); }
+    catch (error) { if (error instanceof LoopProviderRefusedV1) return refuse('PROVIDER_ROSTER_MISMATCH', 'Provider roster mapping changed'); throw error; }
+    const roster = (await tx.query<{on_off:string}>('SELECT on_off FROM control_loop_roster_models WHERE tenant_id=$1 AND name=$2 FOR SHARE', [this.scope.tenantId, parsed.data.model])).rows[0];
+    if (roster?.on_off !== 'on') return refuse('PROVIDER_MODEL_UNAVAILABLE', 'Roster model unavailable');
+    if (provider.secret_ref.kind === 'bitwarden') return refuse('PROVIDER_SECRET_UNAVAILABLE', 'Secret unavailable');
+  }
+  async offersForModelV1(identity: VerifiedWebIdentity, rosterName: string, at: number | Date = this.clock()) {
+    const instant = Number(at);
+    if (!rosterName || rosterName.length > 180 || /[\u0000-\u001f\u007f]/.test(rosterName) || !Number.isFinite(instant)) throw new WebAccessError('invalid_request');
+    try { assertNoSecretMaterial({model:rosterName}); } catch { throw new WebAccessError('invalid_request'); }
+    return this.#authority.authenticated(identity, async (tx, actor) => {
+      actor.require('providers.read', undefined, true);
+      const {snapshot} = await this.#read(tx), view = await this.#priceView(tx);
+      const roster = (await tx.query<{name:string;launcher:string;on_off:string}>('SELECT name,launcher,on_off FROM control_loop_roster_models WHERE tenant_id=$1', [this.scope.tenantId])).rows;
+      const offers = snapshot.providers.flatMap(provider => {
+        const model = provider.models.find(m => m.roster_name === rosterName);
+        if (!model) return [];
+        const mismatch = provider.models.some(m => !roster.some(r => r.name === m.roster_name && r.launcher === m.launcher));
+        const reason = mismatch ? 'Provider roster mapping changed' : !roster.some(r => r.name === rosterName && r.on_off === 'on') ? 'Roster model unavailable'
+          : provider.secret_ref.kind === 'bitwarden' ? 'Secret unavailable' : null;
+        const row = priceAtV1(view.prices.filter(p => p.providerId === provider.provider_id && p.model === model.served_model_id), instant);
+        const price = row ? {...row, stale: instant - Date.parse(row.checkedAt) > 24 * 3600_000} : null;
+        return [{ providerId: provider.provider_id, displayName: provider.display_name, model: rosterName, servedModelId: model.served_model_id,
+          billingKind: provider.billing_kind, price, latestFetch: view.fetches.find(f => f.providerId === provider.provider_id) ?? null,
+          credit: {amountNanoUsd:provider.credit_amount_nano_usd, expiresOn:provider.credit_expires_on, note:provider.credit_note,
+            expired:provider.credit_expires_on !== null && provider.credit_expires_on < new Date(instant).toISOString().slice(0,10)},
+          available:reason === null, availabilityReason:reason, cheapest:false }];
+      });
+      const comparable = offers.filter(o => o.price?.status === 'known' && o.price.currency === 'USD'
+        && !o.price.stale && Date.parse(o.price.checkedAt) <= instant && o.price.input !== null && o.price.output !== null);
+      for (const offer of comparable) offer.cheapest = comparable.every(other => BigInt(offer.price!.input!) <= BigInt(other.price!.input!)
+        && BigInt(offer.price!.output!) <= BigInt(other.price!.output!));
+      return {model:rosterName, at:new Date(instant).toISOString(), version:snapshot.version, offers,
+        cheapestStatus:offers.some(o => o.cheapest) ? 'minimum' as const : comparable.length ? 'no_single_cheapest' as const : 'unknown' as const};
+    }, {repeatableReadSnapshot:true,readOnly:true});
   }
   async refreshPrices(identity:VerifiedWebIdentity,body:unknown,key:string,incoming?:AbortSignal) {
     const parsed=removeBody.safeParse(body);

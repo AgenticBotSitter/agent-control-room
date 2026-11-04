@@ -396,7 +396,7 @@ test('P71 real provider settings check',async t=>{
   console.log(`P71 providerRoute real cr eligible=${result.eligible} reasons=${result.reasons.map(r=>r.code).join(',')}`);
   return result;
  }};
- const policy=new LoopPolicyServiceV1(f.client,scope,tools,()=>now);
+ const policy=new LoopPolicyServiceV1(f.client,scope,tools,()=>now,providers);
  const handler=createLoopPolicyHttpHandlerV1({origin,trust,service:policy,clock:()=>now});
  const route={providerId:'provider-two',model:'writer'};
  const response=await handler(request(`${f.path}/selection`,'PUT',{expectedVersion:0,settings:JSON.stringify({providerRoute:route})},key()));
@@ -410,10 +410,73 @@ test('P71 real provider settings check',async t=>{
  assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,1);
  assert.equal((await f.db.query('SELECT * FROM control_loop_policy_layers')).rows.length,1);
  const snapshot=await f.client.transaction(tx=>policy.snapshot(tx,f.project.projectId));
- const {ImproveControlRoomDeskServiceV1}=await import('../src/improve-control-room/v1/service');
- const desk=new ImproveControlRoomDeskServiceV1(f.client,scope,new Uint8Array(32).fill(65),undefined,()=>now);
- const saved=await desk.saveLoopDraft(f.identity,f.project.projectId,{description:'Synthetic provider choice',settingsText:snapshot.text},key());
- const input=(await f.db.query<{settings_text:string;settings_sha256:string;auth_tag:string}>('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[saved.request.requestId])).rows[0]!;
+ const {ImproveControlRoomLoopServiceV1}=await import('../src/web/v1/improve-control-room-loop-service');
+ const intake=recordedIntakeAdapter(tools);
+ const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:new Uint8Array(32).fill(65),adapter:intake.adapter,policy},()=>now);
+ const saved=await bridge.mutate(f.identity,f.project.projectId,null,'intake',{description:'Synthetic provider choice'},key());
+ assert.equal(saved.state,'accepted');
+ const input=(await f.db.query<{settings_text:string;settings_sha256:string;auth_tag:string}>('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[saved.requestId])).rows[0]!;
  assert.deepEqual(JSON.parse(input.settings_text).providerRoute,route);assert.equal(input.settings_sha256,sha(input.settings_text));assert.match(input.auth_tag,/^hmac-sha256:/);
+ assert.equal(intake.signedText(),input.settings_text,'intake adapter sees the exact signed copy');
  console.log('P71 real provider selection PUT: cr exit=0 eligible=true layers=1 events=1 signed route=provider-two/writer');
 });
+
+test('S3 providerRoute is complete strict non-null in every source and after composition',()=>{
+ const valid={providerId:'provider-two',model:'synthetic/model'};
+ for(const source of ['defaultsText','project','selection','runEdits'] as const){
+  for(const route of [null,{}, {providerId:'provider-two'},{model:'synthetic/model'}, {...valid,extra:true},{...valid,providerId:'UPPER'},{...valid,model:''}])
+   assert.throws(()=>composeLoopSettingsV1({defaultsText:'{}',[source]:JSON.stringify({providerRoute:route})}),refused,`${source} ${JSON.stringify(route)}`);
+ }
+ assert.throws(()=>composeLoopSettingsV1({defaultsText:JSON.stringify({providerRoute:valid}),selection:'{"providerRoute":{"providerId":"provider-one"}}'}),refused,'partial overrides cannot borrow a model');
+ assert.deepEqual(JSON.parse(composeLoopSettingsV1({defaultsText:JSON.stringify({providerRoute:valid}),selection:'{"providerRoute":{"providerId":"provider-one","model":"other/model"}}'}).text).providerRoute,{providerId:'provider-one',model:'other/model'});
+});
+
+test('S3 selection revalidates provider mapping on save snapshot and after external check',async t=>{
+ const f=await policyFixture(t);
+ const {LoopProviderServiceV1}=await import('../src/web/v1/loop-provider-service');
+ const providers=new LoopProviderServiceV1(f.client,scope,{availability:async()=>{throw new Error('no secret probe');}},()=>now);
+ await f.db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+ VALUES('tenant:web','synthetic/model',1,'synthetic-api','','','','','','','','on','','','','identity:web',$1)`,[new Date(now).toISOString()]);
+ for(const [i,id] of ['provider-one','provider-two'].entries())await providers.upsert(f.identity,id,{expectedVersion:i,provider:{provider_id:id,display_name:id,base_url:'https://example.com/api',billing_kind:'subscription',secret_ref:{kind:'launcher',launcher:'synthetic-api'},models:[{roster_name:'synthetic/model',launcher:'synthetic-api',served_model_id:`served/${id}`}],credit_amount_nano_usd:null,credit_expires_on:null,credit_note:'',price_source_url:null,price_source_format:null}},key());
+ // Fifth argument is the provider validator used by both process factories.
+ const policy=new LoopPolicyServiceV1(f.client,scope,f.tools,()=>now,providers);
+ const handler=createLoopPolicyHttpHandlerV1({origin,trust,service:policy,clock:()=>now});
+ const route={providerId:'provider-two',model:'synthetic/model'},settings=JSON.stringify({providerRoute:route});
+ assert.equal((await handler(request(`${f.path}/selection`,'PUT',{expectedVersion:0,settings},key()))).status,201);
+ assert.deepEqual(JSON.parse((await policy.view(f.identity,f.project.projectId)).selection.settingsText).providerRoute,route);
+ const snapshot=await f.client.transaction(tx=>policy.snapshot(tx,f.project.projectId));assert.deepEqual(JSON.parse(snapshot.text).providerRoute,route);
+ const restart=new LoopPolicyServiceV1(f.client,scope,f.tools,()=>now,providers);
+ assert.deepEqual(JSON.parse((await restart.view(f.identity,f.project.projectId)).selection.settingsText).providerRoute,route);
+ for(const invalid of [null,{}, {...route,extra:true}])assert.equal((await handler(request(`${f.path}/selection`,'PUT',{expectedVersion:1,settings:JSON.stringify({providerRoute:invalid})},key()))).status,400);
+ assert.equal((await handler(request(`${f.path}/selection`,'PUT',{expectedVersion:1,settings:JSON.stringify({providerRoute:{...route,model:'served/provider-two'}})},key()))).status,422);
+ const intake=recordedIntakeAdapter(f.tools),{ImproveControlRoomLoopServiceV1}=await import('../src/web/v1/improve-control-room-loop-service');
+ const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:new Uint8Array(32).fill(65),adapter:intake.adapter,policy},()=>now);
+ const receipt=await bridge.mutate(f.identity,f.project.projectId,null,'intake',{description:'Recorded route survives intake'},key());
+ assert.equal(receipt.state,'accepted');
+ const history=(await f.db.query('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[receipt.requestId])).rows;
+ assert.equal(intake.signedText(),snapshot.text);
+
+ f.setCheck(async()=>{await providers.remove(f.identity,'provider-two',{expectedVersion:2},key());return{eligible:true,reasons:[]};});
+ const changed=await handler(request(`${f.path}/selection`,'PUT',{expectedVersion:1,settings},key()));
+ assert.equal(changed.status,422,'mapping withdrawal during check must refuse the commit');assert.match(await changed.text(),/Provider removed/);
+ assert.equal(await f.count(),1);assert.equal((await policy.view(f.identity,f.project.projectId)).selection.version,1);
+ await assert.rejects(f.client.transaction(tx=>policy.snapshot(tx,f.project.projectId)),/loop_policy_refused/);
+ assert.deepEqual((await f.db.query('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[receipt.requestId])).rows,history,'withdrawal does not rewrite signed history');
+});
+
+// Deterministic in-process intake receipt. It cannot execute Start or a provider.
+function recordedIntakeAdapter(tools: {settingsText:string;checkSettings(text:string):Promise<{eligible:boolean;reasons:{code:string;explanation:string}[]}>}) {
+ let signed:string|undefined;
+ const toolingRevision='sha256:'+'a'.repeat(64);
+ const unused=async():Promise<never>=>{throw new Error('unexpected recorded operation');};
+ const adapter:import('../src/web/v1/improve-control-room-loop-adapter').LoopAdapterV1={
+  adapterId:'adapter:s3-recorded',toolingRevision,schemaDigest:'sha256:'+'b'.repeat(64),...tools,
+  contract:{toolingRevision,decodeRunIdentity:v=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:v=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:()=>false},
+  reserveRun:()=>`recorded-run-${++sequence}`,available:operation=>operation==='intake',
+  intake:async(commandId,binding,text,beforeSpawn,settings)=>{
+   beforeSpawn();signed=settings;assert.equal(sha(settings!),binding.settingsSha256);
+   return {run:{adapterId:binding.adapterId,loopRunId:binding.loopRunId,toolingRevision,a2SchemaVersion:1},revision:1,inputVersion:1,state:'draft',description:text,settingsSha256:sha(settings!),settingsDigest:sha(settings!),confirmation:null,approval:null,question:null,progress:{step:'intake',completed:0,attention:'none'},receipts:[{commandId,bindingDigest:(await import('../src/security')).sha256Digest(binding),state:'accepted',error:null,evidenceDigest:'sha256:'+'c'.repeat(64)}]};
+  },confirmRequest:unused,start:unused,stop:unused,approve:unused,answer:unused,status:unused,close:async()=>{},
+ };
+ return {adapter,signedText:()=>signed};
+}

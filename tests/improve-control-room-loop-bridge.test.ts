@@ -270,6 +270,11 @@ async function fixture(t: TestContext) {
 // CLI uses its disposable Bridge fixture and dry launcher; no provider runs.
 if (process.env.CONTROL_ROOM_A2_TEST_LOOP) test("B1b real CLI intake completes with numbered progress and legacy control", async t => {
   const loop = resolve(process.env.CONTROL_ROOM_A2_TEST_LOOP!);
+  // The real CLI enforces executable identity; the host system Python may differ.
+  const pythonShim = await readFile(join(dirname(loop), "bin/lib/python.sh"), "utf8");
+  const pinnedPython = /CR_PYTHON=(\S+)/.exec(pythonShim);
+  assert.ok(pinnedPython, "qualified tools supply their pinned interpreter");
+  const interpreter = realpathSync(pinnedPython[1]!.replace(/^["']|["']$/g, ""));
   const module = await import(pathToFileURL(join(loop, "bridge/a2-contract.mjs")).href);
   const driver = String.raw`import json,sys
 sys.path.insert(0,sys.argv[1])
@@ -290,7 +295,7 @@ finally:
 `;
   for (const legacy of [false, true]) await t.test(legacy ? "legacy-label control" : "real numbered progress", async t => {
     const f = await fixture(t);
-    const child = spawn("/usr/bin/python3", ["-B", "-c", driver, loop], {
+    const child = spawn(interpreter, ["-B", "-c", driver, loop], {
       timeout: 60000, env: { PATH: "/usr/bin:/bin", TMPDIR: resolve(".test-tmp"), PYTHONDONTWRITEBYTECODE: "1",
         CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", NODE_ENV: "test" },
     });

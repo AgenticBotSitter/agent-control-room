@@ -27,7 +27,8 @@ export class LoopPolicyServiceV1 {
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly tools: { readonly settingsText: string; checkSettings?(text: string): Promise<LoopPolicyCheckV1> },
-    clock: () => number = Date.now) { this.#authority = new WebSessionAuthority(db, scope, clock, "loop_policy"); }
+    clock: () => number = Date.now,
+    private readonly providers?: { revalidateSettings(tx: DatabaseSession, text: string): Promise<void> }) { this.#authority = new WebSessionAuthority(db, scope, clock, "loop_policy"); }
 
   async #scope(tx: DatabaseSession, projectId: string, write: boolean) {
     if (write) await tx.query(`SELECT id FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR UPDATE`,
@@ -64,7 +65,14 @@ export class LoopPolicyServiceV1 {
   }
   /** The caller already holds authority, project and head locks in that order. */
   async snapshot(tx: DatabaseSession, projectId: string, runEdits?: string): Promise<LoopPolicySnapshotV1> {
-    return this.#compose(await this.#layers(tx, projectId, true), runEdits);
+    const snapshot = this.#compose(await this.#layers(tx, projectId, true), runEdits);
+    await this.#revalidate(tx, snapshot.text);
+    return snapshot;
+  }
+  async #revalidate(tx: DatabaseSession, text: string) {
+    if (!Object.hasOwn(parseLoopSettingsV1(text), "providerRoute")) return;
+    if (!this.providers) throw new LoopPolicyRefusedV1([{ code: "PROVIDER_UNAVAILABLE", explanation: "Provider validation unavailable" }]);
+    await this.providers.revalidateSettings(tx, text);
   }
   assertSnapshot(before: LoopPolicySnapshotV1, after: LoopPolicySnapshotV1) {
     if (before.defaultsSha256 !== after.defaultsSha256 || before.layerVersions.project !== after.layerVersions.project
@@ -105,7 +113,9 @@ export class LoopPolicyServiceV1 {
       const rows = await this.#layers(tx, projectId, true), again = replay(rows);
       if (again) return { replay: again };
       if (Number(rows[layer]?.version ?? 0) !== body.expectedVersion) throw conflict();
-      return { snapshot: this.#compose(rows, undefined, { layer, settings: body.settings }) };
+      const snapshot = this.#compose(rows, undefined, { layer, settings: body.settings });
+      await this.#revalidate(tx, snapshot.text);
+      return { snapshot };
     });
     const before = await read(); if (before.replay) return before.replay;
     await this.check(before.snapshot!);
@@ -113,7 +123,9 @@ export class LoopPolicyServiceV1 {
       actor.require("loop_policy.manage", projectId, true, "high"); await this.#scope(tx, projectId, true);
       const rows = await this.#layers(tx, projectId, true), again = replay(rows);
       if (again) return again;
-      this.assertSnapshot(before.snapshot!, this.#compose(rows, undefined, { layer, settings: body.settings }));
+      const snapshot = this.#compose(rows, undefined, { layer, settings: body.settings });
+      this.assertSnapshot(before.snapshot!, snapshot);
+      await this.#revalidate(tx, snapshot.text);
       if (Number(rows[layer]?.version ?? 0) !== body.expectedVersion) throw conflict();
       const next = body.expectedVersion + 1, hash = createHash("sha256").update(body.settings).digest("hex");
       const params = [this.scope.tenantId, projectId, layer, next, body.settings, hash, actor.id, actor.now, key, digest];

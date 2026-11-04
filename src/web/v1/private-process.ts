@@ -369,8 +369,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
     candidateConfiguration.contract, candidateConfiguration) : undefined;
+  const loopProviders = options.loopBridge?.adapter.roster ? new LoopProviderServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
   // B6: the roster master and its export. Start seeds or reconciles once; requests wait for it.
@@ -378,8 +380,6 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock) : undefined;
   const loopRosterStarted = loopRoster?.start().catch(() => undefined);
-  const loopProviders = loopRosterTools ? new LoopProviderServiceV1(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
   const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,

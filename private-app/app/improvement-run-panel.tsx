@@ -1,5 +1,6 @@
 "use client";
 
+import { LoopProviderSelection } from "./loop-provider-choice";
 import { useEffect, useRef, useState } from "react";
 import type { LoopImprovementRequestViewV1, LoopImprovementStatusV1 } from "../../src/improve-control-room/v1/schemas";
 import { clearsLoopAuthority, loopImprovementBrowserClient as client, LoopReadError,
@@ -33,6 +34,7 @@ export function ImprovementRunPanel({ projectId, requests, fresh, refreshDesk }:
   const selected = selection === undefined ? requests[0] : requests.find(row => row.requestId === selection);
   return <section className="private-panel" aria-label="Saved loop work" style={{ overflowWrap: "anywhere", minWidth: 0 }}>
     <h2>Saved loop work</h2>
+    <LoopProviderSelection key={projectId} projectId={projectId} enabled={fresh} />
     {requests.length ? <ul className="private-dashboard-list">{requests.map(row => <li key={row.requestId}>
       <a href={`/projects/${encodeURIComponent(projectId)}/improvements#request=${encodeURIComponent(row.requestId)}`}
         onClick={() => setSelection(row.requestId)}>{row.description}</a>
