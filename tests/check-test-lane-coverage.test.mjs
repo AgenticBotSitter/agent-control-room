@@ -97,8 +97,11 @@ for (const [file, flag, parent] of [
 });
 
 const fixtureFile = "tests/fixtures/mutation-lane-selfcheck/lane.ts";
-function runFixture(lanes, pattern) {
-  return runLaneChild(["--import", "tsx", "--test", ...(pattern === undefined ? [] : [`--test-name-pattern=${pattern}`]), fixtureFile],
+// Node accepts both `--test-name-pattern=VALUE` and `--test-name-pattern VALUE`.
+const patternArgs = (pattern, form = "equals") => pattern === undefined ? []
+  : form === "split" ? ["--test-name-pattern", pattern] : [`--test-name-pattern=${pattern}`];
+function runFixture(lanes, pattern, form) {
+  return runLaneChild(["--import", "tsx", "--test", ...patternArgs(pattern, form), fixtureFile],
     { MUTATION_LANE_FIXTURE: JSON.stringify({ lanes }) });
 }
 const parent = (name, probes = 2, expectedProbes = probes) => ({ name, probes, expectedProbes });
@@ -145,4 +148,46 @@ test("mutation lane fixture fails when executed probes drift from the expected c
   assert.equal(run.status, 1, run.tail);
   assert.match(run.output, /lane alpha: executed expected probe count/u, run.tail);
   assert.doesNotMatch(run.output, /Mutation lane: selected=/u, run.tail);
+});
+
+test("mutation lane selectors accept split argv without disarming checks", () => {
+  const grouped = [lane([parent("lane x=1 one"), parent("lane x=1 two", 3)]), lane([parent("lane beta")])];
+  for (const form of ["equals", "split"]) {
+    const run = runFixture(grouped, "^lane x=1 ", form);
+    assert.equal(run.status, 0, `${form}\n${run.tail}`);
+    assert.match(run.output, /Mutation lane: selected=2\/2 parent=lane x=1 one/u, `${form}\n${run.tail}`);
+    assert.match(run.output, /Mutation lane: selected=3\/3 parent=lane x=1 two/u, `${form}\n${run.tail}`);
+    assert.doesNotMatch(run.output, /parent=lane beta/u, `${form}\n${run.tail}`);
+  }
+  const refusals = [
+    ["zero matching parents", [lane([parent("lane x=1 one")])], "^lane x=2 one$", /mutation lane must select exactly one registered lane/u],
+    ["partial grouped selection", grouped, "^lane x=1 one$", /mutation lane must select every expected parent/u],
+    ["cross-lane selection", grouped, "^lane (x=1 one|x=1 two|beta)$", /mutation lane must select exactly one registered lane/u],
+    ["enabling flag absent", [lane([parent("lane x=1 one")], { enabled: false })], "^lane x=1 one$",
+      /mutation lane selected without its enabling flag/u],
+  ];
+  for (const [label, lanes, pattern, diagnostic] of refusals) {
+    for (const form of ["equals", "split"]) {
+      const run = runFixture(lanes, pattern, form);
+      assert.equal(run.status, 1, `${label} (${form}) must exit 1, got ${run.status}\n${run.tail}`);
+      assert.match(run.output, diagnostic, `${label} (${form})\n${run.tail}`);
+      assert.doesNotMatch(run.output, /Mutation lane: selected=/u, `${label} (${form})\n${run.tail}`);
+    }
+  }
+  // Node unions repeated patterns; a later split occurrence must not escape the check.
+  assertSelectionRefused(runLaneChild(["--import", "tsx", "--test", "--test-name-pattern=^lane x=1 one$",
+    "--test-name-pattern", "^lane beta$", fixtureFile], { MUTATION_LANE_FIXTURE: JSON.stringify({ lanes: grouped }) }),
+    /mutation lane must select exactly one registered lane/u);
+  // Node itself rejects a pattern flag with no value before any test module loads.
+  const missing = spawnSync(process.execPath, ["--test-name-pattern"], { encoding: "utf8", timeout: 60000 });
+  assert.notEqual(missing.status, 0, "node refuses a pattern flag without a value");
+  assert.match(missing.stderr, /--test-name-pattern requires an argument/u);
+  for (const [file, parentName] of [
+    ["tests/improve-control-room-loop-monitoring.test.tsx", "B3b product collector contention"],
+    ["tests/improve-control-room-loop-finalization.test.tsx", "B3c 24 finalizers retain once and refuse destruction"],
+  ]) {
+    assertSelectionRefused(runLaneChild(["scripts/run-tests-with-quarantine.mjs", "--import", "tsx", "--test", "--test-concurrency=1",
+      "--test-timeout=600000", ...patternArgs(`^${parentName}$`, "split"), file], {}, 300000),
+    /mutation lane selected without its enabling flag/u);
+  }
 });

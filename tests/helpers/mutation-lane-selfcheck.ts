@@ -33,9 +33,18 @@ export function assertMutationLaneSelection(lanes: ReturnType<typeof mutationLan
   }
   // Node exits green when a name pattern matches no parent. Refuse this before
   // Node can skip the parent, and refuse partial selections of a grouped lane.
-  const pattern = process.execArgv.find(arg => arg.startsWith("--test-name-pattern="))?.slice("--test-name-pattern=".length);
-  if (pattern !== undefined) {
-    const selected = lanes.map(lane => lane.parents.filter(name => new RegExp(pattern).test(name)).length);
+  // Node accepts `--test-name-pattern=VALUE` and `--test-name-pattern VALUE`, and
+  // runs a test matching any of several occurrences.
+  const patterns: string[] = [];
+  const flag = "--test-name-pattern";
+  for (let index = 0; index < process.execArgv.length; index++) {
+    const arg = process.execArgv[index]!;
+    if (arg.startsWith(`${flag}=`)) patterns.push(arg.slice(flag.length + 1));
+    else if (arg === flag && index + 1 < process.execArgv.length) patterns.push(process.execArgv[++index]!);
+  }
+  if (patterns.length > 0) {
+    const matches = (name: string) => patterns.some(pattern => new RegExp(pattern).test(name));
+    const selected = lanes.map(lane => lane.parents.filter(matches).length);
     for (let index = 0; index < lanes.length; index++) {
       if (selected[index]) assert.equal(lanes[index]!.enabled, true, "mutation lane selected without its enabling flag");
     }
