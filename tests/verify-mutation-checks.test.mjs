@@ -1135,3 +1135,13 @@ test("a surviving second entry fails the manifest after a caught first entry", (
     assert.match(output(result), /second entry survives: mutation survived/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("maintenance audit passes when every entry is caught", () => {
+  const root = fixture();
+  try {
+    manifest(root);
+    const result = run(root, "--audit-all");
+    assert.equal(result.status, 0, output(result));
+    assert.match(result.stdout, /AUDIT: .*"status":"caught"/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
