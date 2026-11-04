@@ -1,0 +1,6 @@
+# b8-paid-cap-mechanism progress
+2026-11-04T14:20Z start PLAN; base cloud-base/b8-paid-cap-mechanism d0a1c8a3895d5dc283c8fdf2b01ed41f14790d9b; deadline 16:20Z.
+2026-11-04T14:21Z setup: npm ci exit 1 (no package-lock; repo uses pnpm); pnpm install --frozen-lockfile exit 0. PostgreSQL: only 16 present; PG17 not needed for PLAN (no DB work).
+2026-11-04T14:22Z inputs read: task, playbook, usage-cost.ts, usage-price-table-loader.ts, loop-provider-prices.ts, loop-provider-service.ts, loop adapter, loop service; spec helper (Explore) mapped harness seams; key citations verified.
+2026-11-04T14:27Z spec r1, decisions, owner questions drafted; Claude spec-review helper running.
+2026-11-04T14:28Z evidence commands run (all exit 0 except intended grep count exit 1); private-name list not configured.
