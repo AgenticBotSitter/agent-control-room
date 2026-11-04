@@ -1,3 +1,5 @@
+import { LoopSelectionServiceV1 } from "../src/web/v1/loop-selection-service";
+import { createLoopSelectionHttpHandlerV1 } from "../src/web/v1/loop-selection-http";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMacLocalNodeHandler, createPrivateNodeHandler, createLocalSetupNodeHandler } from "../src/web/v1/private-node-handler";
@@ -109,3 +111,53 @@ test('P71 read-only setup transport continues to refuse policy and provider PUT'
     assert.equal(calls, 0);
   } finally { await transport.close(); }
 });
+
+for (const mode of ['private', 'Mac-local'] as const) {
+  test(`U81 T13-project ${mode} preview uses actual no-listener Node transport and refuses unsafe requests`, async t => {
+    const f = await taskFixture(); t.after(() => f.db.close());
+    await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"templateId":"control-room"}'::jsonb) WHERE id=$1`, [f.project.projectId]);
+    await f.db.query(`UPDATE control_role_grants SET allowed_actions='["loop_selection.read"]'::jsonb`);
+    const origin = mode === 'private' ? privateOrigin : 'http://127.0.0.1:54321';
+    const policy = new LoopPolicyServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' }, { settingsText: '{}' }, () => now);
+    const service = new LoopSelectionServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' }, policy, undefined, () => now);
+    const ownerCode = 'synthetic-selection-owner-code-0001';
+    const local = mode === 'Mac-local' ? new LocalOwnerSessionServiceV1({ schema: LOCAL_OWNER_SESSION_PROFILE_V1,
+      origin, tenantId: 'tenant:web', provider: trust.issuer, subject: 'test-owner', ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 }) : undefined;
+    const cookie = local ? (await local.issue(new Request(`${origin}/api/v1/local-owner-session`,
+      { method: 'POST', headers: { origin } }), ownerCode, now)).cookie.split(';')[0]! : undefined;
+    const handler = createLoopSelectionHttpHandlerV1({ origin, service, clock: () => now, ...(local ? { localOwnerSession: local } : { trust }) });
+    let calls = 0;
+    const transport = (mode === 'private' ? createPrivateNodeHandler : createMacLocalNodeHandler)({ origin,
+      application: { isReady: () => true, close: async () => {} }, assets: { count: 0, digest: 'fixture', respond: () => undefined },
+      handler: req => { calls++; return handler(req); } });
+    const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/loop-selection/preview`;
+    const slot = { model: 'fixture-model', route: 'fixture-launcher', effort: 'default' };
+    const body = { selection: { roles: { plan: slot, spec: slot, build: slot, final: slot, plan_reviews: [], spec_reviews: [], code_reviews: [slot] },
+      plan_review_count: 0, spec_review_count: 0, code_review_count: 1 }, overrides: { reviewFamily: false, standardFinal: false } };
+    const exchange = async (options: { method?: string; path?: string; origin?: string; contentType?: string; anonymous?: boolean; text?: string } = {}) => {
+      const text = options.text ?? JSON.stringify(body), headers = ['Origin', options.origin ?? origin, 'Content-Type', options.contentType ?? 'application/json',
+        'Content-Length', String(Buffer.byteLength(text))];
+      if (!options.anonymous) headers.push(...(cookie ? ['Cookie', cookie] : ['Cf-Access-Jwt-Assertion', token()]));
+      const e = nodeExchange({ method: options.method ?? 'POST', path: options.path ?? path, body: text, headers });
+      e.input.rawHeaders[1] = new URL(origin).host;
+      try { await transport.handle(e.input, e.output); return { status: e.output.statusCode, body: e.body() }; }
+      finally { e.input.destroy(); e.output.destroy(); }
+    };
+    try {
+      const first = await exchange(); assert.equal(first.status, 200);
+      assert.deepEqual(JSON.parse(first.body), { available: false, reason: { code: 'selection_snapshot_unavailable', explanation: 'The selection snapshot is unavailable.' } });
+      assert.equal((await exchange({ origin: 'https://foreign.example.invalid' })).status, 403);
+      assert.equal((await exchange({ anonymous: true })).status, 401);
+      assert.equal((await exchange({ contentType: 'text/plain' })).status, 400);
+      assert.equal((await exchange({ path: `${path}?x=1` })).status, 400);
+      assert.equal((await exchange({ method: 'PUT' })).status, 405);
+      assert.equal((await exchange({ method: 'DELETE' })).status, mode === 'private' ? 405 : 400);
+      assert.equal((await exchange({ text: '{"selection":{},"selection":{}}' })).status, 400);
+      const before = calls;
+      assert.equal((await exchange({ text: JSON.stringify({ large: 'x'.repeat(8200) }) })).status, 413);
+      assert.equal(calls, before, 'outer budget rejects before the service');
+      for (const table of ['control_loop_policy_layers', 'control_loop_policy_events', 'control_loop_policy_input_sources',
+        'control_loop_improvement_requests', 'control_loop_improvement_commands']) assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
+    } finally { await transport.close(); }
+  });
+}

@@ -130,4 +130,12 @@ Options: double subtraction / admission evidence in foundation; one deadline and
 Why: the nonzero-preparation success case now has slack; the foundation can prove its own stop boundary. Cancellation and DB work must fit the stated implementation allowance or require a narrower lead continuation. Frozen encoder/merger signatures and approved B8 selection spec R4 remain unchanged.
 Affected spec item: 4.2, 8.1, T12-P/T12; MEDIUM-1, MEDIUM-2, LOW-1.
 
-Status: PLAN-READY
+## D20 — U81-A BUILD seam and review LOW-1 labels
+
+Lead continuation authorizes only U81-A at reviewed r5 head 936cef0483ce0a151ff17591ae5c97c697ee4de1. T13-project means the project selection/preview route through both no-listener outer Node handlers; U81-A owns it. T13-saved means the saved-target preview route plus full process wiring; U81-C owns it. T10 is the preview/readiness assertion in U81-A; it does not supply admission evidence to U81-B. This records the round-3 LOW-1 label clarification without editing the reviewed spec. LOW-2 is respected by deferring all U81-B work.
+
+The foundation projection is a product contract exercised only with scripted checkers and snapshot ports. No tools schema/revision/digest, availability producer or admission reader is invented; the installed legacy checker lacks the projection and fails selection preview unavailable. T-TOOLS/T-SNAPSHOT remain mandatory before dependent integration.
+
+The completed foundation preserves non-B8 P71 role members in run-edit projections and resets both switches even for overrides-only new-run edits. It validates requested-slot coverage and checker-attested preview digests without adding a second family policy. The exact tools projection pin and physical admission snapshot reader remain unreleased; no admission authority is created by preview. Build implementation is complete; remaining environment/commit gates are reported in evidence and status.
+
+Status: BLOCKED: required environment and committed-HEAD gates incomplete

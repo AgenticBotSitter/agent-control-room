@@ -5,8 +5,14 @@ import { sha256Digest } from "../../security";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { composeLoopSettingsV1, parseLoopSettingsV1 } from "./loop-policy-compose";
+import { normalizeSelectionRunEditsV1, type LoopSelectionProjectionV1 } from "./loop-selection-wire";
+import type { LoopBridgeBindingV1 } from "../../improve-control-room/v1/schemas";
 
 export type LoopPolicyCheckV1 = { eligible: boolean; reasons: { code: string; explanation: string }[] };
+export type LoopSelectionCheckContextV1 = Readonly<{ mode: "preview"; sameFamilyIntent: boolean }>
+  | Readonly<{ mode: "admission"; binding: LoopBridgeBindingV1; commandId: string }>;
+export type LoopSelectionCheckExecutionV1 = Readonly<{ signal: AbortSignal; timeoutMs: number }>;
+export type LoopPolicyCheckWithV1 = LoopPolicyCheckV1 & { projection?: LoopSelectionProjectionV1 };
 export class LoopPolicyRefusedV1 extends Error {
   constructor(readonly reasons: LoopPolicyCheckV1["reasons"]) { super("loop_policy_refused"); }
 }
@@ -26,7 +32,7 @@ export function rethrowLoopPolicyErrorV1(error: unknown): never {
 export class LoopPolicyServiceV1 {
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    private readonly tools: { readonly settingsText: string; checkSettings?(text: string): Promise<LoopPolicyCheckV1> },
+    private readonly tools: { readonly settingsText: string; checkSettings?(text: string, context?: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> },
     clock: () => number = Date.now) { this.#authority = new WebSessionAuthority(db, scope, clock, "loop_policy"); }
 
   async #scope(tx: DatabaseSession, projectId: string, write: boolean) {
@@ -55,6 +61,7 @@ export class LoopPolicyServiceV1 {
     return rows;
   }
   #compose(rows: Partial<Record<Layer, LayerRow>>, runEdits?: string, replacement?: { layer: Layer; settings: string }): LoopPolicySnapshotV1 {
+    if (runEdits !== undefined) runEdits = normalizeSelectionRunEditsV1(runEdits);
     const defaultsText = this.tools.settingsText;
     const composed = composeLoopSettingsV1({ defaultsText,
       project: replacement?.layer === "project" ? replacement.settings : rows.project?.settings_text,
@@ -65,6 +72,14 @@ export class LoopPolicyServiceV1 {
   /** The caller already holds authority, project and head locks in that order. */
   async snapshot(tx: DatabaseSession, projectId: string, runEdits?: string): Promise<LoopPolicySnapshotV1> {
     return this.#compose(await this.#layers(tx, projectId, true), runEdits);
+  }
+  /** Caller supplies a consistent read transaction; no layer write locks for preview. */
+  async snapshotRead(tx: DatabaseSession, projectId: string, runEdits?: string): Promise<LoopPolicySnapshotV1> {
+    return this.#compose(await this.#layers(tx, projectId, false), runEdits);
+  }
+  async checkWith(text: string, context: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> {
+    if (!this.tools.checkSettings) throw new Error("loop_policy_check_unavailable");
+    return this.tools.checkSettings(text, context, execution);
   }
   assertSnapshot(before: LoopPolicySnapshotV1, after: LoopPolicySnapshotV1) {
     if (before.defaultsSha256 !== after.defaultsSha256 || before.layerVersions.project !== after.layerVersions.project
