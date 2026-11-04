@@ -79,3 +79,7 @@ test("an issue must be exactly #<positive number>", () => {
 test("a test quarantined twice is refused as a duplicate", () => {
   assert.match(validateQuarantine([valid, { ...valid }], today).join("\n"), /duplicates tests\/example\.test\.mjs::flaky path/u);
 });
+
+test("a blank owner is refused", () => {
+  assert.match(validateQuarantine([{ ...valid, owner: "   " }], today).join("\n"), /must name an owner role/u);
+});
