@@ -55,3 +55,17 @@ Options: broaden the D01a preset regex to cover /default; add DELETE for clear.
 Why: The narrowest change. Clear is PUT null, so DELETE is never needed. The worst-case body (about 5.6 KiB) fits the 8 KiB default.
 Affected spec item: 6 (§5)
 ```
+
+```text
+Choice D9: Version-0 Save as default inserts state (pointer NULL) first, then the preset, then sets the pointer; the FK stays NOT DEFERRABLE.
+Options: DEFERRABLE INITIALLY DEFERRED FK; insert preset before state.
+Why: D01a's presets→state FK and the new state→presets FK form a cycle. Ordering the statements satisfies both FKs immediately and keeps the RESTRICT checks immediate, so raw deletes refuse at the statement. Probe G10 proves the order is the guard. (Helper finding H1.)
+Affected spec item: 2, 3 (§4 Atomic)
+```
+
+```text
+Choice D10: Uncertain intake reconciliation resends the identical frozen action with the same idempotency key; no new lookup route.
+Options: NEW lookup-by-key route.
+Why: The existing claim lookup keyed by (owner, idempotency_key) already gives an exact replay or a 409. A new route would widen the transport and authority surface for no gain. (Helper finding M5.)
+Affected spec item: 5 (§6.8)
+```

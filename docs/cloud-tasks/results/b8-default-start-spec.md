@@ -7,7 +7,7 @@ This document is a proposal for the Sol spec gate. It authorizes no implementati
 ## Revision history
 
 - r1 (PLAN): initial specification.
-- r1.1 (PLAN): plan-review helper findings folded in. See `b8-default-start-evidence.md` §4.
+- r1.1 (PLAN): plan-review helper findings H1, M1–M6 and L1–L4 folded in. See `b8-default-start-evidence.md` §4.
 
 ## 0. Goal, owner musts and approved exclusions
 
@@ -103,21 +103,33 @@ ALTER TABLE control_loop_selection_preset_state
   FOREIGN KEY (tenant_id,project_id,default_preset_id)
   REFERENCES control_loop_selection_presets(tenant_id,project_id,preset_id)
   ON DELETE RESTRICT;   -- MATCH SIMPLE: NULL pointer is unchecked, so "unset" needs no row
--- Widen only the result grammar (see 3.2). The constraint name is the one D01a lands,
--- re-read at BUILD (pred). It is dropped and re-added in the same statement list.
-ALTER TABLE control_loop_selection_preset_state DROP CONSTRAINT <d01a_last_result_check>;
-ALTER TABLE control_loop_selection_preset_state ADD CONSTRAINT <d01a_last_result_check> CHECK (( <3.2 predicate> ) IS TRUE);
+-- Widen only the result grammar (see 3.2). D01a's CHECK is unnamed, so PostgreSQL names it
+-- control_loop_selection_preset_state_last_result_check. BUILD re-reads the landed name (pred).
+ALTER TABLE control_loop_selection_preset_state DROP CONSTRAINT control_loop_selection_preset_state_last_result_check;
+ALTER TABLE control_loop_selection_preset_state ADD CONSTRAINT control_loop_selection_preset_state_last_result_check CHECK ((
+    octet_length(last_result::text) <= 4096 AND jsonb_typeof(last_result)='object'
+    AND last_result ?& ARRAY['operation','presetId','version']
+    AND last_result - 'operation' - 'presetId' - 'version' = '{}'::jsonb
+    AND last_result->>'operation' IN ('create','update','delete','set_default','save_default')
+    AND ((jsonb_typeof(last_result->'presetId')='string' AND last_result->>'presetId' ~ '^preset:[a-f0-9]{32}$')
+      OR (jsonb_typeof(last_result->'presetId')='null' AND last_result->>'operation'='set_default'))
+    AND jsonb_typeof(last_result->'version')='number'
+    AND (last_result->>'version')::numeric BETWEEN 1 AND 9007199254740991
+    AND (last_result->>'version')::numeric = trunc((last_result->>'version')::numeric)) IS TRUE) NOT VALID;
+ALTER TABLE control_loop_selection_preset_state VALIDATE CONSTRAINT control_loop_selection_preset_state_last_result_check;
 ```
 
 Properties:
 - **Cross-project pointer is impossible.** The FK reuses the state row's own `(tenant_id, project_id)`, so a pointer can only name a preset of the same tenant and project. A direct SQL attempt to point at another project's preset ID fails with 23503.
 - **Raw referenced delete refuses.** `DELETE FROM control_loop_selection_presets` on the default row fails with 23503 because of `RESTRICT`.
 - **Settings are never copied into state.** The state row keeps only catalog version and replay metadata plus the pointer. Selection bytes stay in the preset row.
-- **The `ADD COLUMN` is nullable with no default,** so it is a metadata-only change on PG17. The `ADD CONSTRAINT … FOREIGN KEY` validates existing rows, which are all NULL. This matches the non-blocking-shape rules in `docs/MIGRATION_NON_BLOCKING_SHAPES.md`. BUILD rechecks against that document; if it requires `NOT VALID` plus a separate validate migration, BUILD follows the 0306/0307 pattern and the lead allocates two IDs.
+- **The `ADD COLUMN` is nullable with no default,** so it is a metadata-only change on PG17. The FK validates existing rows, which are all NULL.
+- **The replaced CHECK is added `NOT VALID` and then validated,** following `docs/MIGRATION_NON_BLOCKING_SHAPES.md:75-80`. If BUILD's recheck of that document needs the FK as `NOT VALID` too, or the validate in a separate migration, BUILD follows the 0306/0307 pattern and the lead allocates two IDs.
+- **The FK is NOT DEFERRABLE.** With D01a's presets→state FK this makes a cycle. §4 fixes the statement order that keeps both satisfied.
 
 ### 3.2 Result grammar (state `last_result`)
 
-The widened CHECK, written as one predicate:
+The widened CHECK is the predicate in §3.1. It requires:
 - exactly the keys `operation`, `presetId`, `version`;
 - `operation IN ('create','update','delete','set_default','save_default')`;
 - `version` is an integer number from 1 to 9007199254740991;
@@ -131,7 +143,7 @@ Before this migration, D01a's CHECK still refuses `set_default` and `save_defaul
 ```sql
 BEGIN;
 SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '5s';
-LOCK TABLE control_loop_selection_preset_state IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE control_loop_selection_preset_state, control_loop_selection_presets IN ACCESS EXCLUSIVE MODE;  -- fixed order; dropping the FK touches both
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM control_loop_selection_preset_state
              WHERE default_preset_id IS NOT NULL
@@ -139,8 +151,8 @@ DO $$ BEGIN
     RAISE EXCEPTION 'loop selection default retained' USING ERRCODE = '23514';
   END IF;
 END $$;
-ALTER TABLE control_loop_selection_preset_state DROP CONSTRAINT <d01a_last_result_check>;
-ALTER TABLE control_loop_selection_preset_state ADD CONSTRAINT <d01a_last_result_check> CHECK (( <D01a predicate verbatim> ) IS TRUE);
+ALTER TABLE control_loop_selection_preset_state DROP CONSTRAINT control_loop_selection_preset_state_last_result_check;
+ALTER TABLE control_loop_selection_preset_state ADD CONSTRAINT control_loop_selection_preset_state_last_result_check CHECK (( <D01a predicate, copied verbatim from the landed D01a migration> ) IS TRUE);
 ALTER TABLE control_loop_selection_preset_state DROP CONSTRAINT control_loop_selection_default_fk;
 ALTER TABLE control_loop_selection_preset_state DROP COLUMN default_preset_id;
 COMMIT;
@@ -157,7 +169,7 @@ D01a's `POST …/presets/:id/remove` runs under the one state-row lock. After th
 2. Then `DELETE` the preset.
 3. One version increment. Result `{operation:'delete', presetId:id, version}`.
 
-The UPDATE runs before the DELETE, so RESTRICT is satisfied. A failure at any step rolls back pointer, preset and state together (P8 fault injection).
+The UPDATE runs before the DELETE, so RESTRICT is satisfied. Probe G9 swaps the order and expects 23503. A failure at any step rolls back pointer, preset and state together (P8 fault injection).
 
 ## 4. Exact default API and atomic Save
 
@@ -174,14 +186,24 @@ Rules:
 - **POST with `presetId`** updates that existing preset's `selection_text` and `selection_sha256` **without renaming**, then sets the pointer to it. An unknown or other-project `presetId` gives `not_found` with zero writes.
 - **POST with `name`** creates a new preset with ID `preset:<32 hex>` from `randomBytes(16)`. It then sets the pointer to it. A case-insensitive name collision gives `conflict` (`name_conflict`) with zero writes.
 - **PUT with a `presetId`** points at an existing same-project preset, otherwise `not_found`. **PUT with `null`** clears. Clearing when already unset is still a versioned write: version+1, result `presetId:null`. That keeps replay semantics uniform (decision D4).
-- **Atomic.** Each request has one transaction and one state-row lock. Preset write and pointer write happen in one `UPDATE` of state (`version=version+1, default_preset_id=$p, last_*`). The rowcount must be 1 and the `WHERE` must include `version=$expected`. If the pointer write fails, the preset write rolls back too.
+- **Atomic.** Each request runs in one transaction with one state-row lock. The preset write and the pointer write are separate statements in that transaction. A failure in either rolls back both. The statement order depends on the version:
+  - **Version ≥ 1.**
+    1. Lock the state row `FOR UPDATE`.
+    2. Write the preset (INSERT for `name`, UPDATE for `presetId`; none for PUT).
+    3. `UPDATE state SET version=version+1, default_preset_id=$p, last_* … WHERE … AND version=$expected`. The rowcount must be 1.
+  - **Version 0, first ever write (follows D01a §3.3).**
+    1. `INSERT state (version=1, default_preset_id=NULL, last_result=<final result>, last_*) ON CONFLICT DO NOTHING RETURNING`. If no row comes back, the request lost the race: run replay and version checks against the winner's row and return 409 or a replay.
+    2. INSERT the preset (POST `name` only). It now satisfies its FK to state.
+    3. `UPDATE state SET default_preset_id=$id WHERE … AND version=1 AND last_idempotency_key=$key`. The rowcount must be 1.
+  - At version 0 there are no presets, so PUT set and POST `presetId` give `not_found`. PUT `null` is an insert with the pointer NULL.
+  - The FK is never made DEFERRABLE. Probe G10 swaps steps 1 and 2 at version 0 and expects 23503.
 - **Two transactions, same as D01a (pred §4.4).**
   - A read-only preflight runs `loop_selection.manage` (owner, high), scope, replay check, version check and existence/name pre-check.
   - The commit transaction repeats all of them under the state reservation or lock (D01a §3.3 `INSERT … ON CONFLICT DO NOTHING` for version 0), writes, and re-checks authority before commit.
   - No checker spawn and no roster read on writes.
-  - Authority actions are U81's `loop_selection.read/manage` (pred). D01b adds no new action.
+  - Authority actions are D01a's `loop_selection.read/manage` (pred, D01a §4.1). The U81 spec does **not** define these actions; it uses `tasks.propose` through `loopBridgeTransaction`. This is an **unresolved prerequisite**: if no released predecessor provides owner-only, high-risk `loop_selection.manage`, BUILD is blocked until the lead assigns the authority definition. D01b adds no action of its own. Probe G2 depends on it.
 - **Idempotency.** `Idempotency-Key` is required, with syntax `^[A-Za-z0-9:_-]{16,100}$`. The digest is `sha256Digest({operation, projectId, presetId|null, body})`. Here `operation` is `set_default` or `save_default`, and `presetId` is the body target, or `null` for clear and for name-create. Behaviour:
-  - Same latest key and same digest: return the stored `last_result` with `replayed:true` and HTTP 200, including after a later preset delete.
+  - Same latest key and same digest: return the stored `last_result` with `replayed:true` and HTTP 200, also after a pool or process reopen. Any later write, including a delete, replaces the latest key. After that, the older key's retry gets 409 from the version check. Only the latest write is remembered, as in D01a.
   - Same latest key, different digest: 409.
   - An older key is not remembered. Its retry goes through the version check, which gives 409.
   - New writes return 201.
@@ -212,11 +234,11 @@ State machine (draft is local; nothing persists until an explicit save):
 3. **Edit.** Any change returns the form to `editing`, which clears preview, the prepared hash and acceptance. It never mutates a preset or the default.
 4. **Save** (D01a update or create) and **Save as default** (POST `/default`) are explicit buttons. Save as default offers "update <picked preset>", which uses `presetId`, or "save as new preset <name>", which uses `name`. On success the form keeps its values, and the catalog and default views refresh.
 5. **Policy locks.** If the P71 view or R62/P72 lock data (an integration prerequisite, see §10) marks a member locked, that control is read-only. A pick that conflicts with a lock is stale (`policy_locked`), and Prepare is disabled. Without released lock data the UI shows nothing extra and claims no enforcement.
-6. **Prepare / Confirm / Start.** This is the U81 flow. Prepare is enabled only when the preview is eligible with no blockers, or when the only conflict is an acknowledgeable review-family conflict and the box is ticked. Prepare sends intake with `settingsEdits = encodeSelectionEditsV1(form) + freshRunOverrideEditsV1()` (U81/U82). Confirm sends `acceptSameFamilyRisk` only when required. Start is a separate button (existing `start`).
+6. **Prepare / Confirm / Start.** This is the U81 flow. Prepare is enabled only when the preview is eligible with no blockers, or when the only conflict is an acknowledgeable review-family conflict and the box is ticked. Prepare sends intake whose `settingsEdits` is one canonical JSON text. It is the deep merge of `encodeSelectionEditsV1(form)` (U81) and `freshRunOverrideEditsV1()` (U82), with overrides applied last. It is never string concatenation. BUILD uses the released U81/U82 combinator if one exists. Otherwise D01b adds a pure `composeFreshRunEditsV1(form)` to the selection wire module that parses both with `parseLoopSettingsV1(text, false)` and encodes with the P71 sorted-key encoder. That function is tested in T7. Confirm sends `acceptSameFamilyRisk` only when required. Start is a separate button (existing `start`).
 7. **Revision after prepare.** An edit after a prepared request leaves the old request untouched. Preparing again creates a **new** intake (new key, new request ID). That requires a new Confirm and fresh acceptance. A default change never rewrites an existing request or run.
 8. **Late, retried and uncertain responses.**
    - Each panel request carries a sequence number. A response older than the latest applied catalog version or sequence is discarded.
-   - Before creating a replacement after a timeout or uncertainty, the client re-reads the **exact** command by its stored idempotency key through the existing status path. If the command turns out to be accepted, the UI shows that request and never opens a duplicate.
+   - **Timeout or uncertainty before a replacement.** An uncertain intake has no request ID yet, and the only existing status route is `/loop/:requestId/status`. So the client resends the **identical frozen action** with the **same idempotency key**. The existing claim lookup by `(owner, idempotency_key)` (`improve-control-room-loop-service.ts:526-534`, `558-567`) returns the original result as a replay, or refuses with 409 if the body changed. It never creates a second request. The UI creates a replacement intake only after that replay resolves. For Confirm and Start the request ID is known, so the client reads `/loop/:requestId/status` and resends with the same key. No new lookup route is added.
    - Receipt `LAUNCH_UNCERTAIN` blocks Start and replacement until status resolves it.
 9. **Layout.** At 390×844 touch and at 1280×850: no horizontal overflow, targets of at least 44 px, focus moved to the error or result, and a readable explanation on every disabled action.
 
@@ -291,7 +313,8 @@ NEW tests (unregistered until the lead registers them):
   - foreign scope.
   GET never calls `checkSettings` and never calls an adapter operation (spy counts 0).
 - **T6 replay.**
-  - Same key and same body after a later preset delete replays the stored result (200).
+  - Same key and same body replays the stored result (200), immediately and after a pool reopen. A replay of a D01a remove that cleared the default returns its stored `delete` result.
+  - After a later write, the earlier key gets 409.
   - Same key with an altered body gives 409.
   - An older key gives 409 from the version check.
   - A stale `expectedVersion` gives 409.
@@ -307,6 +330,7 @@ NEW tests (unregistered until the lead registers them):
   - PUT in setup transport;
   - DELETE `/default`. Production returns 405 from transport. Mac-local refuses in the inner handler.
   A body over 8192 bytes gets 413.
+- **N2b.** Contributor demo mode (`private-node-handler.ts:63`, `allowPost:true`, `allowDelete:false`) admits PUT `/default` through the shared `requestHead` and refuses DELETE with 405. Test it with the same N2 matrix.
 - **N3.** The existing P71, provider and D01a transport tests still pass unchanged.
 
 ### 9.3 PostgreSQL 17 (`tests/loop-selection-default-postgres.test.ts`, NEW; production login `control_room_private_web`; disposable cluster helper)
@@ -318,10 +342,13 @@ NEW tests (unregistered until the lead registers them):
 - **P5.** Service delete of the default clears the pointer and deletes the preset, with exactly one version increment and result `delete`.
 - **P6 persistence.** Save as default, close the pool, start a new process or pool, then GET default and GET presets: same ID, version and selection bytes. Then edit locally and confirm nothing changed in the DB. Then replace, clear and verify again after a reopen.
 - **P7 races.**
-  - Twenty callers behind a barrier, spread over at least 4 owner identities, because identity rows serialize writers. This follows D01a P11. Run once at version 0 and once at version N, mixing PUT set, PUT clear and POST save.
-  - Expected: exactly one 201, nineteen 409, state version +1, and pointer, preset count and `last_result` consistent with the single winner.
+  - Twenty callers behind a barrier, spread over at least 4 owner identities, because identity rows serialize writers. This follows D01a P11.
+  - **Version 0:** only PUT `null` and POST `name` with distinct names. At version 0 no preset exists, so the other forms would be 404.
+  - **Version N:** mix PUT set, PUT clear, POST `presetId` and POST `name`.
+  - Expected in both runs: exactly one 201, nineteen 409, state version +1, and pointer, preset count and `last_result` consistent with the single winner.
   - Same-key pair: one 201 and one 200 replay. Same key with an altered body: 409.
-  - A concurrent service delete against PUT set of the same preset: either delete wins and PUT gives 404, or PUT wins and delete clears the pointer. The pointer never dangles.
+  - A concurrent service delete against PUT set of the same preset, both at version N. Exactly one gives 201 and the loser gets 409, because the version check runs before the existence check. A re-read shows either no preset and a NULL pointer, or the preset with the pointer set. The pointer never dangles.
+- **P13 version 0.** POST `name` on a project with no state row creates the state row (version 1), the preset and the pointer in one transaction. Fault injection between the steps leaves no rows behind.
 - **P8 atomic failure.** A fault hook in the test DB wrapper, not in production code:
   - after the preset write and before the state UPDATE;
   - after the state UPDATE and before commit;
@@ -359,6 +386,8 @@ Viewport evidence is not device evidence.
 | G6 | the override reset on pick | B2/T7 sees an inherited override or acknowledgement |
 | G7 | current-route/roster revalidation on pick | B3 Prepare is enabled |
 | G8 | the down refusal | P10 down succeeds with a retained pointer |
+| G9 | delete order (DELETE preset before clearing pointer) | P5 service delete fails with 23503 and nothing changes |
+| G10 | version-0 order (preset INSERT before state INSERT) | P13 first-ever save-by-name fails with 23503 |
 
 ### 9.6 Commands (BUILD records exact output, exit, counts and elapsed time)
 
@@ -383,7 +412,7 @@ npm run test:loop-selection-default:real                        # NEW exact-name
 ```
 
 Expected results:
-- New deciding counts: T1–T7, N1–N3 (two factories each), P1–P12, B1–B6 (two viewports each). Each assertion is derived independently from fixtures, not copied from implementation output.
+- New deciding counts: T1–T7, N1–N3 and N2b (two factories each), P1–P13, B1–B6 (two viewports each). Each assertion is derived independently from fixtures, not copied from implementation output.
 - Broad lanes may skip real-tools cases. A skip is never tools evidence. Each `:real` lane must show at least one deciding pass and zero skipped or quarantined tests, or it is reported NOT RUN (native).
 
 Failing-first:
@@ -401,8 +430,12 @@ DEFAULT-START-GREEN needs all of the following, observed with a **qualified** wo
 Proposed NEW exact-name lane `test:loop-selection-default:real`:
 
 ```
-node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^D01b real default start$' tests/loop-selection-default.test.ts
+CONTROL_ROOM_A2_TEST_LOOP=<qualified tools path> node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^D01b real default start$' tests/loop-selection-default.test.ts
 ```
+
+- The broad runs skip `^D01b real default start$` by an explicit `--test-skip-pattern`, the same as P71 in `test:improve-control-room`. That skip is never tools evidence.
+- The real test itself fails, not skips, when `CONTROL_ROOM_A2_TEST_LOOP` is unset. This follows the existing P71 fail-closed lane pattern in `tests/loop-policy.test.ts:53-66`.
+- The lane passes only with at least 1 pass, 0 skipped and 0 quarantined. These counts are read from the runner summary.
 
 It needs the qualified tools (`CONTROL_ROOM_A2_TEST_LOOP`, same as `test:loop-policy:real`) and a lead-authorized native machine. A real model launch, if the lead authorizes one, is a separate native authorization.
 
@@ -419,5 +452,5 @@ Real-device evidence (phone and desktop hardware) is separate from viewport evid
 ## 11. Cloud scope versus withheld qualification
 
 - **Buildable on a cloud after U81, U82 and D01a are released:** §9.1, §9.2, §9.4 and §9.5, typecheck and build, loader guards, and §9.3 **only if PG17 is present**.
-- **This PLAN machine could not obtain PG17.** The official apt repository and ftp.postgresql.org were both refused by the network proxy, and only Ubuntu 16.15 is present. A later BUILD without PG17 must label P1–P12 **PG17-later**, run them with the commands in §9.6 on a PG17 host, and cannot reach BUILD-READY for DB scope.
+- **This PLAN machine could not obtain PG17.** The official apt repository and ftp.postgresql.org were both refused by the network proxy, and only Ubuntu 16.15 is present. A later BUILD without PG17 must label P1–P13 **PG17-later**, run them with the commands in §9.6 on a PG17 host, and cannot reach BUILD-READY for DB scope.
 - **Withheld:** §10 Q1–Q4; both `:real` lanes; real-device evidence; R62/P72; pinned Node 22 Linux CI parity on the lead's integration candidate; attack and CI reviews (authority, Start, data and migration all change).

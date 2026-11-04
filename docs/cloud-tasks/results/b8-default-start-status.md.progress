@@ -1,0 +1,6 @@
+2026-11-04T15:51:34Z start PLAN. Inputs read: QUEUE.md (cloud/queue), task file, CLOUD-LEAD playbook. Claimed cloud/b8-default-start at 174c5da1 (push exit 0).
+2026-11-04T15:5xZ setup: npm ci exit 1 (no npm lockfile); pnpm install --frozen-lockfile exit 0; postgresql-17 apt exit 100 twice (proxy 403 on PGDG); ftp.postgresql.org curl exit 56. PG17 not obtained, PG16.15 present and unused.
+2026-11-04T15:5xZ inspected P71 compose/service/http, loop service intake/confirm/start, adapter, node transport, migrations 0306–0309, grants, pins, preflight, test helpers, CI PG17 install, package scripts. Read U81/U82/D01a PLAN specs (unreleased) for names.
+2026-11-04T16:0xZ drafted spec r1, decisions, owner questions; committed b9b09640 and pushed.
+2026-11-04T16:0xZ plan-review helper on r1: HIGH 1 / MEDIUM 6 / LOW 4. Claims verified; all dispositioned as fixed in r1.1.
+2026-11-04T16:0xZ checks: git status clean before writes; HEAD 174c5da1; ancestry exit 0; git diff --check exit 0; check-private-names SKIPPED (no list); public-text scan no matches; 27/27 cited paths exist.
