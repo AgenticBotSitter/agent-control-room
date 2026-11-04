@@ -19,7 +19,13 @@ const probes=[
     pattern:"B5 verifier accepts fixture evidence only as incomplete",assertion:"B5 changed retained bytes are refused"},
   {name:"closed-browser rejection and original-builder repair",find:`if (!repair || repair.head !== (rejectedHeads[i + 1] ?? final)
       || repair.identity !== defective!.identity || repair.family !== defective!.family)`,replace:"if (!repair || repair.head !== (rejectedHeads[i + 1] ?? final))",
-    pattern:"B5 verifier requires closed-browser rejection and original-builder repair",assertion:"B5 repair by a different writer is refused by the repair guard"},
+    pattern:"B5 verifier requires closed-browser rejection and original-builder repair",assertion:"B5 repair by a different writer is refused by the repair guard",
+    // The combined deletion above is only a control. Each clause is also removed alone, and its own
+    // self-consistent forged case must refuse; a later provider-provenance refusal cannot kill either.
+    clauses:[{clause:"identity",find:"|| repair.identity !== defective!.identity || repair.family",replace:"|| repair.family",
+      assertion:"B5 repair by a different writer is refused by the repair guard",unrelated:"B5 repair by a different family is refused by the repair guard"},
+    {clause:"family",find:" || repair.family !== defective!.family)",replace:")",
+      assertion:"B5 repair by a different family is refused by the repair guard",unrelated:"B5 repair by a different writer is refused by the repair guard"}]},
   {name:"full cleanup and retained corpus",find:`if (teardown.b3cCleanup !== "complete" || !teardown.scratchAbsent || `,replace:"if (",
     pattern:"B5 verifier requires full cleanup before the retained read-back",assertion:"B5 refused cleanup is refused by the cleanup guard"},
   {name:"mandatory provider discriminator",find:'  if (rawManifest && rawManifest.classification?.providers === undefined) refuse("B5_PROVIDER_PROVENANCE_MISSING");',replace:"",
@@ -91,16 +97,23 @@ for (const partition of partitions) test(partition.name,{timeout:600000},async t
       const cmd=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=^${p.pattern}$`,p.lane ?? "tests/improve-control-room-first-website.test.ts"];
       const target=("target" in p ? p.target : undefined) ?? file;
       const original=await readFile(join(copy,target),"utf8");
-      const result=await assertGuardBites({root:copy,file:target,find:p.find,replace:p.replace,testCmd:cmd,boundMs:40000,allowDirtyTree:true,because:p.assertion});
-      assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
-      assert.ok(result.output.includes(p.assertion),`B5 loaded mutant reached intended assertion: ${p.assertion}`);
-      assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);
-      assert.doesNotMatch(result.output,/SyntaxError|# skipped [1-9]|# tests 0|timed out/iu);
-      assert.equal(await readFile(join(copy,target),"utf8"),original);
-      const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1"};delete env.NODE_TEST_CONTEXT;
-      const restored=await exec(cmd[0]!,cmd.slice(1),{cwd:copy,env,timeout:40000,maxBuffer:4*1024*1024});
-      assert.match(restored.stdout,/# pass 1/u);assert.match(restored.stdout,/# fail 0/u);assert.doesNotMatch(restored.stdout,/# skipped [1-9]|# tests 0/u);
-      console.log(`B5 mutation ${p.name}: baseline=true loaded=true intended_assertion=true restored=true green=true`);
+      const clauses=("clauses" in p ? p.clauses : undefined) ?? [];
+      for(const m of [{clause:"",find:p.find,replace:p.replace,assertion:p.assertion,unrelated:undefined as string|undefined},...clauses]){
+        const result=await assertGuardBites({root:copy,file:target,find:m.find,replace:m.replace,testCmd:cmd,boundMs:40000,allowDirtyTree:true,because:m.assertion});
+        assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
+        assert.ok(result.output.includes(m.assertion),`B5 loaded mutant reached intended assertion: ${m.assertion}`);
+        assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);assert.match(result.output,/# tests 1/u);
+        assert.doesNotMatch(result.output,/SyntaxError|# skipped [1-9]|# tests 0|timed out/iu);
+        if(m.unrelated!==undefined){
+          assert.ok(!result.output.includes(m.unrelated),`B5 ${m.clause}-only mutant did not fail an unrelated assertion`);
+          assert.doesNotMatch(result.output,/B5_PROVIDER_PROVENANCE_MISMATCH/u,`B5 ${m.clause}-only mutant is not killed by provider provenance`);
+        }
+        assert.equal(await readFile(join(copy,target),"utf8"),original);
+        const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1"};delete env.NODE_TEST_CONTEXT;
+        const restored=await exec(cmd[0]!,cmd.slice(1),{cwd:copy,env,timeout:40000,maxBuffer:4*1024*1024});
+        assert.match(restored.stdout,/# pass 1/u);assert.match(restored.stdout,/# fail 0/u);assert.doesNotMatch(restored.stdout,/# skipped [1-9]|# tests 0/u);
+        console.log(`B5 mutation ${p.name}${m.clause ? ` [${m.clause} clause only]` : ""}: baseline=true loaded=true intended_assertion=true restored=true green=true`);
+      }
     });
     assert.equal(selected,13,"B5 partition executed exactly 13 probes");
     console.log(`B5 partition: selected=${selected}/13 total=26 overlap=0 complete=true`);

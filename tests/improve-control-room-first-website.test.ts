@@ -585,8 +585,29 @@ test("B5 verifier re-reads the candidate repository and its page facts", async t
 test("B5 verifier requires closed-browser rejection and original-builder repair", async t => {
   await load();
   const e = await evidenceSet(t);
-  await e.write(v => { e.journey(v).steps[3]!.identity = "writer-other"; });
-  assert.equal(await e.refusal(), "B5_REJECTION_REPAIR", "B5 repair by a different writer is refused by the repair guard");
+  await e.write(); assert.equal(await refusalAt(e), INCOMPLETE, "B5 untouched fixture is accepted only as incomplete before forging");
+  // Each forged repair changes one original-builder field and keeps its admitted provider identity and the
+  // independent qualified lineup consistent with it, so only the original-builder rule can refuse the packet;
+  // a later provider-provenance refusal cannot stand in for a removed identity or family clause.
+  const forged = (field: "identity" | "family", value: string) => {
+    const pins = structuredClone(e.fixturePins), lineup = pins.providers.lineup;
+    assert.deepEqual([lineup[3]!.role, lineup[3]!.identity, lineup[3]!.family], ["build", "writer-b", "family-b"], "B5 lineup slot 3 is the repair build");
+    lineup[3] = { ...lineup[3]!, [field]: value };
+    const change = (v: Parameters<NonNullable<Parameters<typeof e.write>[0]>>[0]) => {
+      const repair = e.journey(v).steps[3]!;
+      assert.deepEqual([repair.n, repair.role, repair.identity, repair.family], [4, "build", "writer-b", "family-b"], "B5 step 3 is the repair build");
+      repair[field] = value;
+      if (field === "identity") (repair.provider as Record<string, unknown>).admittedIdentity = value;
+    };
+    return { pins, change };
+  };
+  const writer = forged("identity", "writer-other");
+  await e.write(writer.change);
+  assert.equal(await refusalAt(e, { pins: writer.pins }), "B5_REJECTION_REPAIR:original builder repair", "B5 repair by a different writer is refused by the repair guard");
+  const family = forged("family", "family-other");
+  await e.write(family.change);
+  assert.equal(await refusalAt(e, { pins: family.pins }), "B5_REJECTION_REPAIR:original builder repair", "B5 repair by a different family is refused by the repair guard");
+  await e.write(); assert.equal(await refusalAt(e), INCOMPLETE, "B5 restored untouched fixture is accepted only as incomplete");
 });
 test("B5 verifier requires full cleanup before the retained read-back", async t => {
   await load();
