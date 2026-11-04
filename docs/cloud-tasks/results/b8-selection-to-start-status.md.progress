@@ -1,0 +1,10 @@
+# b8-selection-to-start status progress
+
+- 15:05 UTC: PLAN start. Claimed `cloud/b8-selection-to-start` from `origin/cloud-base/b8-selection-to-start` `fa673cc8f81ce1dac457ce383b47b2f3ac31f026`; push of the claim exit 0. Deadline 17:05 UTC.
+- Setup: `npm ci` exit 1 (no npm lockfile); `pnpm install --frozen-lockfile` exit 0; PostgreSQL 17 apt exit 100, PGDG key/repo and source tarball blocked by egress proxy (403 / unresolvable); fallback PostgreSQL 16.15 present but no DB checks run in PLAN. Details in evidence.
+- Inputs read: task file, CLOUD-LEAD playbook, loop policy compose/service/http, loop adapter (contract, checker), loop service (mutate/dispatch/complete), schemas, desk loop lineage, migrations 0302/0306/0307 and 0306 down, HTTP routes, process wiring, improvement UI files, package.json lanes, loop-policy tests, B5 helper.
+- Base checks: HEAD = delivery base; ancestry of source base exit 0; 1 commit above source, docs only; `git status --short` clean before writing.
+- Draft r1 written (spec, decisions, owner questions, evidence).
+- Claude plan-review helper on r1: NEEDS-FIX, HIGH 2 / MEDIUM 11 / LOW 8; all dispositioned in r2 (evidence table).
+- r2 written. `check-private-names.mjs` SKIPPED (no denylist configured); bounded public-text scan and `git diff --check` recorded in evidence.
+- 15:18 UTC: status PLAN-READY written; commit and push of `cloud/b8-selection-to-start` only.
