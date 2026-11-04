@@ -61,3 +61,7 @@ test("CI reports quarantine failures without adding them to the merge gate", asy
   assert.match(job, /pnpm run test:quarantined/);
   assert.doesNotMatch(gate.match(/needs: \[([^\]]+)\]/)?.[1] ?? "", /quarantined-tests/);
 });
+
+test("a quarantine entry dated tomorrow is refused as a future date", () => {
+  assert.match(validateQuarantine([{ ...valid, added: "2026-09-29" }], today).join("\n"), /future added date/u);
+});
