@@ -9,11 +9,11 @@ test("F03b device actor is the owner", () => {
   assert.equal(schema.safeParse({ ...device, actor: "reviewer" }).success, false);
 });
 
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createB5DeviceMailboxV1, b5DeviceHashV1, b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1,
   writeB5DeviceReceiptV1, writeB5DeviceRequestV1, waitB5DeviceJsonV1,
-  assertB5EvidenceSecretFreeV1, redactB5EvidenceV1, retainB5TransportQualificationV1, parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
+  assertB5EvidenceSecretFreeV1, redactB5EvidenceV1, retainB5TransportQualificationV1, parseB5DeviceJsonV1, readB5DeviceFileV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
   b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, type B5TransportQualificationV1,
   type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
 
@@ -1126,4 +1126,59 @@ test("B5 transport accepts an explicit four-day run approval and enforces its ex
     assert.throws(() => validateB5TransportV1(packet, remote, now - 1), { code: "B5_DEVICE_EXPIRED" });
   }
   console.log("RESULT: PASS B5 transport run approval accepts 4d; 5d confirms no duration cap; before authorization and exact expiry refuse");
+});
+
+async function privateFile(path: string, bytes: Buffer) {
+  await writeFile(path, bytes); await chmod(path, 0o600);
+  const s = await lstat(path); assert.equal(s.mode & 0o777, 0o600); assert.equal(s.nlink, 1); assert.equal(s.size, bytes.length);
+  return path;
+}
+test("B5 device reader exact size boundary", async t => {
+  const root = await scratch(t);
+  const at32 = Buffer.alloc(32, 0x61), over32 = Buffer.alloc(33, 0x61);
+  const exact = await privateFile(join(root, "exact.json"), at32), over = await privateFile(join(root, "over.json"), over32);
+  assert.deepEqual(await readB5DeviceFileV1(exact, root, 32), at32, "32 bytes at cap=32 must be accepted byte-for-byte");
+  await assert.rejects(readB5DeviceFileV1(over, root, 32), { code: "B5_DEVICE_SIZE" });
+  // cap counts bytes, not UTF-16 code units: 8 four-byte code points are 16 string units but 32 bytes.
+  const text = "\u{1F600}".repeat(8), multibyte = Buffer.from(text, "utf8");
+  assert.equal(multibyte.length, 32); assert.notEqual(text.length, multibyte.length);
+  const mb = await privateFile(join(root, "multibyte.json"), multibyte);
+  assert.deepEqual(await readB5DeviceFileV1(mb, root, 32), multibyte);
+  await assert.rejects(readB5DeviceFileV1(mb, root, text.length), { code: "B5_DEVICE_SIZE" }, "a string-length cap must not admit 32 bytes");
+  const atDefault = await privateFile(join(root, "default.json"), Buffer.alloc(65536, 0x20));
+  const overDefault = await privateFile(join(root, "default-over.json"), Buffer.alloc(65537, 0x20));
+  assert.equal((await readB5DeviceFileV1(atDefault, root)).length, 65536);
+  await assert.rejects(readB5DeviceFileV1(overDefault, root), { code: "B5_DEVICE_SIZE" });
+  for (const file of [exact, over, mb, atDefault, overDefault]) await unlink(file);
+  assert.deepEqual(await readdir(root), []);
+});
+test("B5 device reader refuses hard links and public modes", async t => {
+  const root = await scratch(t), sibling = await scratch(t);
+  const bytes = Buffer.from("synthetic device custody fixture\n");
+  const original = await privateFile(join(root, "original.json"), bytes);
+  assert.deepEqual(await readB5DeviceFileV1(original, root), bytes);
+  const second = join(root, "second-name.json");
+  await link(original, second);
+  try {
+    assert.equal((await lstat(original)).nlink, 2); assert.equal((await lstat(original)).mode & 0o777, 0o600);
+    await assert.rejects(readB5DeviceFileV1(original, root), { code: "B5_DEVICE_CUSTODY" });
+    await assert.rejects(readB5DeviceFileV1(second, root), { code: "B5_DEVICE_CUSTODY" });
+  } finally { await unlink(second).catch(() => {}); }
+  assert.equal((await lstat(original)).nlink, 1);
+  assert.deepEqual(await readB5DeviceFileV1(original, root), bytes, "unchanged original returns to acceptance after the link is removed");
+  const shared = await privateFile(join(root, "mode.json"), bytes);
+  await chmod(shared, 0o644);
+  assert.equal((await lstat(shared)).mode & 0o777, 0o644); assert.equal((await lstat(shared)).nlink, 1);
+  await assert.rejects(readB5DeviceFileV1(shared, root), { code: "B5_DEVICE_CUSTODY" });
+  await chmod(shared, 0o600);
+  assert.deepEqual(await readB5DeviceFileV1(shared, root), bytes);
+  await assert.rejects(readB5DeviceFileV1(join(root, "missing.json"), root), { code: "B5_DEVICE_PATH" });
+  const alias = join(root, "alias.json");
+  await symlink(original, alias);
+  try { await assert.rejects(readB5DeviceFileV1(alias, root), { code: "B5_DEVICE_PATH" }); }
+  finally { await unlink(alias).catch(() => {}); }
+  const outside = await privateFile(join(sibling, "outside.json"), bytes);
+  await assert.rejects(readB5DeviceFileV1(outside, root), { code: "B5_DEVICE_PATH" });
+  for (const file of [original, shared, outside]) await unlink(file);
+  assert.deepEqual(await readdir(root), []); assert.deepEqual(await readdir(sibling), []);
 });
