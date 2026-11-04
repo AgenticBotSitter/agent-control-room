@@ -601,3 +601,12 @@ test("an added report is refused even beside ordinary added files", () => {
     assert.ok(result.errors.includes("stray_report_path"), JSON.stringify(result));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a key nested inside a job is not a CI job reference", () => {
+  const root = fixture();
+  try {
+    const nested = "name: CI\njobs:\n  quick:\n    name: Quick checks\n    steps:\n      - run: true\n";
+    const result = inspect(root, "## Evidence\n\n- Not a job.\n  ci: steps", ["src/server/example.ts"], nested);
+    assert.ok(result.errors.includes("ci_reference_unresolved"), JSON.stringify(result));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
