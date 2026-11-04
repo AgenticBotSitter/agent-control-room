@@ -17,3 +17,7 @@ linux-b5-lanes-verification cloud-base/linux-b5-lanes-verification
 linux-loop-component-soak cloud-base/linux-loop-component-soak
 monitor-umask-diagnosis cloud-base/monitor-umask-diagnosis
 mutation-timeout-diagnosis cloud-base/mutation-timeout-diagnosis
+b5-inventory-own-keys cloud-base/b5-inventory-own-keys
+b5-restart-outcome-matrix cloud-base/b5-restart-outcome-matrix
+b5-mailbox-closed-http cloud-base/b5-mailbox-closed-http
+b5-start-digest-schema cloud-base/b5-start-digest-schema
