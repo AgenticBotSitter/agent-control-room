@@ -665,6 +665,9 @@ export class ImproveControlRoomDeskServiceV1 {
       lineage: ImproveControlRoomDeskServiceV1 }) => Promise<T>) {
     return (mutation ? this.#authority : this.#loopReadAuthority).authenticated(identity, async (tx, actor) => {
       actor.require(mutation ? "tasks.propose" : "projects.read", projectId, true, mutation ? "high" : "low");
+      // All loop mutations take the project mutex before the shared scope/head check.
+      if (mutation) await tx.query(`SELECT id FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR UPDATE`,
+        [this.scope.tenantId, this.scope.workspaceId, projectId]);
       await this.#requireSelfProject(tx, projectId);
       const localDb: DatabaseClient = {
         query: tx.query.bind(tx), transaction: callback => callback(tx),

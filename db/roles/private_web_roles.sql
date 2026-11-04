@@ -318,4 +318,9 @@ GRANT UPDATE (launcher, provider, family, model_class, roles, efforts, default_e
 GRANT UPDATE (version, exported_version, exported_sha256, last_idempotency_key, last_request_digest, updated_at)
   ON control_loop_roster_state TO control_room_private_web;
 
+-- P71: policy copies and audit are append only; only the two layer heads change.
+GRANT SELECT, INSERT ON control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources TO control_room_private_web;
+GRANT UPDATE (version, settings_text, settings_sha256, updated_by, updated_at, last_idempotency_key, last_request_digest)
+  ON control_loop_policy_layers TO control_room_private_web;
+
 COMMIT;

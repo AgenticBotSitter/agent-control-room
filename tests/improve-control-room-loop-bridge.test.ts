@@ -1,3 +1,5 @@
+import { LoopPolicyServiceV1 } from "../src/web/v1/loop-policy-service";
+import { syntheticRecoveryCapability, syntheticRecoveryEngine } from "./helpers/improve-control-room-loop-recovery";
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { z } from "zod";
@@ -62,7 +64,7 @@ test("B1b mutation steps have separate budgets and retain lineage failures", asy
 // Explicit SYNTHETIC executable: no worker/agent/provider is invoked. It records
 // argv/env/cwd and persists only disposable run facts for the seven fixed calls.
 const executable = String.raw`import os,sys,json,hashlib,fcntl
-root=os.path.dirname(os.path.abspath(__file__))
+root=os.path.abspath(os.path.join(os.path.dirname(__file__),'../../..'))
 op,run=sys.argv[1:3]; args=sys.argv[3:]
 path=os.path.join(root,'runs',run+'.json')
 lock=open(path+'.lock','a'); fcntl.flock(lock,fcntl.LOCK_EX)
@@ -74,6 +76,7 @@ if '--expect' in args:
 with open(os.path.join(root,'trace.jsonl'),'a') as f:
     f.write(json.dumps(dict(op=op,run=run,args=args,env=dict(os.environ),cwd=os.getcwd(),expectation=expected,
         expectationText=open(flag('--expect')).read() if expected else None,
+        settingsText=open(flag('--settings')).read() if '--settings' in args else None,
         fileMode=os.stat(flag('--expect')).st_mode & 0o777 if expected else None,
         directoryMode=os.stat(os.path.dirname(flag('--expect'))).st_mode & 0o777 if expected else None))+'\n')
 if op=='intake':
@@ -160,7 +163,9 @@ async function synthetic(t: TestContext) {
   const root = await mkdtemp(resolve(".test-tmp/b1b-fixture-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const dir of ["runs", "work"]) await mkdir(join(root, dir));
-  await writeFile(join(root, "engine.py"), executable);
+  await mkdir(join(root,"tools/loop/bridge"),{recursive:true});
+  await writeFile(join(root,"tools/loop/cr.py"),'import json; print(json.dumps(dict(eligible=True,reasons=[])))\n');
+  await writeFile(join(root, "tools/loop/bridge/engine.py"), executable);
   await writeFile(join(root, "tooling.json"), JSON.stringify({ fixture: "SYNTHETIC", revision: 1 }));
   await writeFile(join(root, "settings.json"), settingsText); await writeFile(join(root, "availability.json"), "{}");
   const toolingRevision = `sha256:${loopByteHashV1(await readFile(join(root, "tooling.json")))}`;
@@ -178,7 +183,7 @@ async function synthetic(t: TestContext) {
   let beforeAdmission: (() => Promise<void>) | undefined;
   const configuration: LoopAdapterConfigurationV1 = { adapterId: "adapter:synthetic", interpreter: realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"),
     interpreterSha256: loopByteHashV1(await readFile(realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"))),
-    entrypointSha256: loopByteHashV1(executable), entrypoint: join(root, "engine.py"), toolingManifest: join(root, "tooling.json"), configRoot: root,
+    entrypointSha256: loopByteHashV1(executable), entrypoint: join(root, "tools/loop/bridge/engine.py"), toolingManifest: join(root, "tooling.json"), configRoot: root,
     workRoot: join(root, "work"), runRoot: join(root, "runs"), cwd: root, settingsFile: join(root, "settings.json"),
     availabilityFile: join(root, "availability.json"), toolingRevision, settingsSha256: loopByteHashV1(settingsText), availabilitySha256: loopByteHashV1("{}"),
     executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"b".repeat(64)}` }, timeoutMs: 1000,
@@ -239,7 +244,7 @@ async function synthetic(t: TestContext) {
     await writeFile(path, JSON.stringify({ ...saved, ...changes, run: saved.run }));
   };
   const traces = async () => (await readFile(join(root, "trace.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)) as
-    {op:string;run:string;args:string[];env:Record<string,string>;cwd:string;expectation:Record<string,unknown>|null;expectationText:string|null;fileMode:number|null;directoryMode:number|null}[];
+    {op:string;run:string;args:string[];env:Record<string,string>;cwd:string;expectation:Record<string,unknown>|null;expectationText:string|null;fileMode:number|null;directoryMode:number|null;settingsText:string|null}[];
   return { root, adapter, raw, configuration, edit, traces, clearObservations:()=>observations.clear(), setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
 }
 async function fixture(t: TestContext) {
@@ -450,8 +455,8 @@ test("B1b website intake confirm start status stop", async t => {
     const { __CF_USER_TEXT_ENCODING: _systemLocale, ...configuredEnv } = trace.env;
     assert.deepEqual(configuredEnv,{LANG:"C.UTF-8",LC_ALL:"C.UTF-8",NODE_ENV:"production"}); }
   const first=traces.find(e=>e.op==="intake")!;
-  assert.deepEqual(first.args.slice(0,1),["--source"]); assert.deepEqual(first.args.slice(2),["--settings",join(f.root,"settings.json"),"--availability",join(f.root,"availability.json"),"--json","--expect",first.args.at(-1)!]);
-  assert.deepEqual(traces.find(e=>e.op==="start")!.args,["--settings",join(f.root,"settings.json"),"--availability",join(f.root,"availability.json"),"--json","--expect",traces.find(e=>e.op==="start")!.args.at(-1)!]);
+  assert.deepEqual(first.args.slice(0,1),["--source"]); assert.deepEqual(first.args.slice(2),["--settings",join(dirname(first.args.at(-1)!),"settings.json"),"--availability",join(f.root,"availability.json"),"--json","--expect",first.args.at(-1)!]);
+  assert.deepEqual(traces.find(e=>e.op==="start")!.args,["--settings",join(dirname(traces.find(e=>e.op==="start")!.args.at(-1)!),"settings.json"),"--availability",join(f.root,"availability.json"),"--json","--expect",traces.find(e=>e.op==="start")!.args.at(-1)!]);
   for(const table of ["pipeline_runs","control_jobs","control_native_task_queue","control_improvement_requests","control_update_candidates"])
     assert.equal((await f.db.query<{n:number}>(`SELECT count(*)::int n FROM ${table}`)).rows[0]!.n,0);
   console.log("B1b SYNTHETIC journey adoption=2 initial=1 starts=1 pipeline_tasks_publication=0 argv_env_cwd=exact");
@@ -1218,4 +1223,223 @@ test("B2b approval document isolation", async t=>{
   const handler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
   assert.equal((await handler(request(path))).status,409,"changed gate/revision drops complete document");
   assert.equal(await journal(),before);console.log("B2b document complete=262144 escaped_budget=1600000 invalid_utf8/hash/seal/path/race=refused writes=0");
+});
+
+test("P71 intake preserves explicit run settings in the signed copy", async t => {
+  const f = await fixture(t);
+  const response = await f.post("intake", { description, settingsEdits: '{"fixture":"RUN"}' });
+  if (response.status !== 202) await f.bridge.mutate(f.identity, f.project.projectId, null, "intake",
+    { description, settingsEdits: '{"fixture":"RUN"}' }, "p71-diagnostic-intake-0001");
+  assert.equal(response.status, 202, "P71 accepts closed intake settingsEdits");
+  const receipt = await response.json() as { requestId: string; state: string };
+  assert.equal(receipt.state, "accepted");
+  const input = (await f.db.query<{ settings_text: string }>("SELECT settings_text FROM control_loop_improvement_inputs WHERE request_id=$1", [receipt.requestId])).rows[0]!;
+  assert.equal(input.settings_text, '{"fixture":"RUN","project":{"host_adapter":"local-loop"}}\n');
+  const s = await f.confirm(receipt.requestId);
+  assert.equal(s.engine.settingsSha256, loopByteHashV1(input.settings_text));
+});
+
+test("P71 adapter rejects wrong signed text before every non-stop operation", async t => {
+  const f = await fixture(t);
+  const run=f.adapter.reserveRun();
+  const binding:LoopBridgeBindingV1={schemaVersion:1,body:{description},localVersion:1,adapterId:f.adapter.adapterId,
+    loopRunId:run,toolingRevision:f.adapter.toolingRevision,a2SchemaVersion:1,schemaDigest:f.adapter.schemaDigest,
+    requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText),runLinkId:null,authorizationId:null,
+    inputVersion:null,expectedRevision:null,evidence:null};
+  // The independently known hash is the defaults hash. The supplied text is wrong.
+  // A fresh intake binding and empty observation cache remove other refusal guards.
+  await assert.rejects(()=>f.raw.intake(`loop-command:${randomBytes(16).toString('hex')}`,binding,description,()=>{},'{}'),
+    /unavailable/,'P71 independent signed-text hash guard');
+  const id=await f.intake(),s=await f.confirm(id),current=await f.raw.status(s.request.runLink!.loopRunId);
+  const b={...binding,loopRunId:current.run.loopRunId,runLinkId:s.request.runLink!.runLinkId,
+    inputVersion:current.inputVersion,expectedRevision:current.revision,body:{runLinkId:s.request.runLink!.runLinkId}};
+  for (const operation of ['confirm', 'start', 'approve', 'answer'] as const) {
+    const command = `loop-command:${randomBytes(16).toString('hex')}`;
+    const before = (await f.traces()).length;
+    const call = operation === 'answer' ? () => f.raw.answer(command, b, 'answer', () => {}, '{}')
+      : operation === 'confirm' ? () => f.raw.confirmRequest(command, b, () => {}, '{}')
+      : () => f.raw[operation](command, b, () => {}, '{}');
+    await assert.rejects(call, /unavailable/, `P71 ${operation} signed-text hash guard`);
+    assert.equal((await f.traces()).length, before, `P71 ${operation} never spawns with wrong text`);
+  }
+});
+
+test('P71 A and B signed copies survive layers, normalized confirmation and restart with distinct settings paths',async t=>{
+  const f=await fixture(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const policy=new LoopPolicyServiceV1(f.client,scope,f.adapter,()=>now);
+  await policy.put(f.identity,f.project.projectId,'project',{expectedVersion:0,settings:'{"fixture":"A"}'},'p71-bridge-layer-a-0001');
+  const a=await f.intake(),aState=await f.get(a),aRun=aState.request.runLink!.loopRunId;
+  const history=(await f.db.query('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[a])).rows;
+  await policy.put(f.identity,f.project.projectId,'selection',{expectedVersion:0,settings:'{"fixture":"B"}'},'p71-bridge-layer-b-0001');
+  const b=await f.intake(),bState=await f.get(b);
+  assert.notEqual(aState.engine.settingsSha256,bState.engine.settingsSha256);
+  await f.edit(aRun,{description:'Engine normalized saved A.',inputVersion:2,revision:2});
+  const confirmed=await f.confirm(a);assert.equal(confirmed.request.currentVersion,2);
+  const restarted=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter:f.adapter,policy},()=>now);
+  const start=await restarted.mutate(f.identity,f.project.projectId,a,'start',{expectedVersion:2,expectedRevision:confirmed.engine.revision,
+    runLinkId:confirmed.request.runLink!.runLinkId},'p71-bridge-restart-start-0001');assert.equal(start.state,'accepted');
+  assert.deepEqual((await f.db.query('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1 AND version=1',[a])).rows,history);
+  const inputs=(await f.db.query<{settings_text:string}>('SELECT settings_text FROM control_loop_improvement_inputs WHERE request_id=$1 ORDER BY version',[a])).rows;
+  assert.deepEqual(inputs.map(i=>i.settings_text),['{"fixture":"A","project":{"host_adapter":"local-loop"}}\n','{"fixture":"A","project":{"host_adapter":"local-loop"}}\n']);
+  const sources=(await f.db.query<{defaults_sha256:string;layer_versions:{project:number;selection:number};waiver_id:null}>('SELECT defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources WHERE request_id=$1 ORDER BY input_version',[a])).rows;
+  assert.equal(sources.length,2);assert.deepEqual(sources[0],sources[1]);assert.deepEqual(sources[0]!.layer_versions,{project:1,selection:0});
+  const traces=(await f.traces()).filter(trace=>trace.run===aRun),intake=traces.find(trace=>trace.op==='intake')!,started=traces.find(trace=>trace.op==='start')!;
+  const settingsPath=(trace:typeof intake)=>trace.args[trace.args.indexOf('--settings')+1];
+  assert.notEqual(settingsPath(intake),settingsPath(started));assert.equal(intake.settingsText,inputs[0]!.settings_text);assert.equal(started.settingsText,intake.settingsText);
+  assert.deepEqual(await readdir(f.configuration.workRoot),[]);
+});
+
+test('P71 altered per-command settings copy fails EEXIST before engine execution',async t=>{
+  const f=await fixture(t),run=f.adapter.reserveRun(),command=`loop-command:${randomBytes(16).toString('hex')}`;
+  const binding:LoopBridgeBindingV1={schemaVersion:1,body:{description},localVersion:1,adapterId:f.adapter.adapterId,loopRunId:run,
+    toolingRevision:f.adapter.toolingRevision,a2SchemaVersion:1,schemaDigest:f.adapter.schemaDigest,requestSha256:loopByteHashV1(description),
+    settingsSha256:loopByteHashV1(settingsText),runLinkId:null,authorizationId:null,inputVersion:null,expectedRevision:null,evidence:null};
+  const directory=join(f.configuration.workRoot,command.replace(':','-'));await mkdir(directory,{mode:0o700});
+  await writeFile(join(directory,'settings.json'),'{}',{mode:0o600});
+  await assert.rejects(()=>f.raw.intake(command,binding,description,()=>{},settingsText),/unavailable/);
+  await assert.rejects(readFile(join(f.root,'trace.jsonl')),{code:'ENOENT'},'EEXIST compares saved bytes before any execute');
+});
+
+test('P71 intake refusal, unavailable check and binding overflow retain no draft/source/claim',async t=>{
+  const f=await fixture(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  for(const [expected,checker] of [[422,async()=>({eligible:false,reasons:[{code:'SYNTHETIC_REFUSAL',explanation:'Unavailable model'}]})],[503,async()=>{throw new Error('unavailable');}]] as const){
+    const adapter={...f.adapter,checkSettings:checker},bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter},()=>now);
+    const http=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
+    const response=await http(request(f.base+'/intake','POST',{description},`p71-check-refusal-${randomBytes(8).toString('hex')}`));
+    assert.equal(response.status,expected);
+    for(const table of ['control_loop_improvement_requests','control_loop_policy_input_sources','control_loop_improvement_commands'])
+      assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length,0);
+  }
+  // Composed settings fit 64 KiB, but serializing the edit text again inside a signed binding does not.
+  const edits=JSON.stringify({x:'"'.repeat(18000)});
+  await assert.rejects(f.bridge.mutate(f.identity,f.project.projectId,null,'intake',{description,settingsEdits:edits},'p71-binding-overflow-0001'),{code:'invalid_request'});
+  for(const table of ['control_loop_improvement_requests','control_loop_policy_input_sources','control_loop_improvement_commands'])assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length,0);
+});
+
+test('P71 direct recovery checks non-default saved hash and inspect/status/claim order, with an atomic capability fence',async t=>{
+  const f=await syntheticRecoveryEngine(t),signed='{"project":{"host_adapter":"local-loop"},"fixture":"NON_DEFAULT"}',run=f.raw.reserveRun();
+  const binding:LoopBridgeBindingV1={schemaVersion:1,body:{description},localVersion:1,adapterId:f.raw.adapterId,loopRunId:run,
+    toolingRevision:f.raw.toolingRevision,a2SchemaVersion:1,schemaDigest:f.raw.schemaDigest,requestSha256:loopByteHashV1(description),
+    settingsSha256:loopByteHashV1(signed),runLinkId:null,authorizationId:null,inputVersion:null,expectedRevision:null,evidence:null};
+  await f.raw.intake(`loop-command:${randomBytes(16).toString('hex')}`,binding,description,()=>{},signed);
+  await f.edit(run,{state:'running',settingsDigest:'canonical-engine-digest'});
+  const saved=await f.raw.status(run),events:string[]=[];
+  const recoveryBinding:import('../src/web/v1/improve-control-room-loop-adapter').LoopRecoveryBindingV1={schemaVersion:1,tenantId:'tenant:web',workspaceId:'workspace:web',
+    projectId:'project:fixture',ownerIdentityId:'identity:web',requestId:'request:fixture',runLinkId:'link:fixture',localVersion:1,
+    authorizationId:'authorization:fixture',startCommandId:`loop-command:${'a'.repeat(32)}`,startBindingDigest:sha256Digest('start'),run:saved.run,
+    inputVersion:saved.inputVersion,requestSha256:binding.requestSha256,settingsSha256:binding.settingsSha256,settingsDigest:saved.settingsDigest,
+    expectedRevision:saved.revision,schemaDigest:f.raw.schemaDigest,action:'wait'};
+  let calls=0,drift=false;
+  const capability={enabled:()=>true,inspect:async()=>{events.push('inspect');return{schemaVersion:1 as const,run:saved.run,revision:saved.revision,
+    mode:'runnable' as const,action:'wait' as const,driver:{state:'ended' as const,generation:null,evidenceDigest:sha256Digest('ended')},receipt:null,evidenceDigest:sha256Digest('inspect')};},
+    claimDriver:async(b:Readonly<typeof recoveryBinding>,spawn:()=>Promise<import('../src/web/v1/improve-control-room-loop-adapter').LoopRecoveryChildV1>)=>{
+      events.push('claimDriver');calls++;
+      // Installation-owned admission re-reads and fences under its own lock, including drift AFTER status.
+      if(drift)await f.edit(run,{settingsSha256:'f'.repeat(64)});
+      const current=await f.raw.status(run);
+      if(current.settingsSha256!==b.settingsSha256||current.revision!==b.expectedRevision||current.settingsDigest!==b.settingsDigest)
+        return{kind:'uncertain' as const,evidenceDigest:sha256Digest('fence refused drift')};
+      return{kind:'started' as const,generation:'a'.repeat(32),child:await spawn()};
+    }};
+  const configuration={...f.configuration,contract:{...f.configuration.contract,recovery:capability,decodeStatus:(value:unknown)=>{
+    events.push('status');return f.configuration.contract.decodeStatus(value);
+  }}};
+  const adapter=createImproveControlRoomLoopAdapterV1(configuration);t.after(()=>adapter.close());
+  const result=await adapter.recover!(recoveryBinding);assert.equal(result.kind,'started');
+  assert.deepEqual(events.slice(0,3),['inspect','status','claimDriver']);
+  if(result.kind==='started'){const done=result.child.done.catch(()=>{});await result.child.close();await done;}
+  events.length=0;drift=true;
+  const before=(await f.traces()).filter(trace=>trace.op==='wait').length;
+  const refused=await adapter.recover!(recoveryBinding);assert.equal(refused.kind,'uncertain');
+  assert.equal((await f.traces()).filter(trace=>trace.op==='wait').length,before,'capability drift fence spawns no recovery driver');
+  assert.equal(calls,2);
+  await f.edit(run,{settingsSha256:binding.settingsSha256});
+  for(const patch of [{settingsSha256:'e'.repeat(64)},{settingsDigest:'wrong-digest'},{revision:saved.revision+1}]){
+    await f.edit(run,{...saved,...patch});
+    await assert.rejects(adapter.recover!(recoveryBinding),/unavailable/);
+    assert.equal(calls,2,'status mismatch refuses before claimDriver');
+    await f.edit(run,saved);
+  }
+  // Status parse failures/unavailable reads also clear the per-run acquisition.
+  for(const decode of [()=>{throw new Error('failed status');},()=>({...saved,settingsSha256:undefined})]){
+    const bad=createImproveControlRoomLoopAdapterV1({...configuration,contract:{...configuration.contract,decodeStatus:decode as unknown as typeof configuration.contract.decodeStatus}});t.after(()=>bad.close());
+    for(let i=0;i<2;i++)await assert.rejects(bad.recover!(recoveryBinding),/unavailable/);
+    assert.equal(calls,2,'failed status never claims and retry is not spuriously busy');
+  }
+});
+
+test('P71 restart sweep removes all five finished operation directories and retains unfinished claims',async t=>{
+  const f=await fixture(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},retained={...f.adapter,releaseCommandFiles:undefined};
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter:retained},()=>now);
+  const intake=await bridge.mutate(f.identity,f.project.projectId,null,'intake',{description},'p71-sweep-intake-0001');assert.equal(intake.state,'accepted');
+  const requestId=intake.requestId,finished=[intake];
+  let s=await bridge.status(f.identity,f.project.projectId,requestId);
+  finished.push(await bridge.mutate(f.identity,f.project.projectId,requestId,'confirm',{expectedVersion:1,expectedRevision:s.engine.revision,
+    requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},'p71-sweep-confirm-0001'));
+  s=await bridge.status(f.identity,f.project.projectId,requestId);
+  finished.push(await bridge.mutate(f.identity,f.project.projectId,requestId,'start',{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},'p71-sweep-start-0001'));
+  const approval={step:'plan' as const,head:'a'.repeat(40),reportSha256:'b'.repeat(64),inputVersion:1};
+  await f.edit(s.request.runLink!.loopRunId,{state:'waiting',approval});s=await bridge.status(f.identity,f.project.projectId,requestId);
+  finished.push(await bridge.mutate(f.identity,f.project.projectId,requestId,'approve',{expectedVersion:1,expectedRevision:s.engine.revision,...approval},'p71-sweep-approve-0001'));
+  const question={questionId:'question:p71-sweep',inputVersion:1,reportSha256:'c'.repeat(64),owner:true,changesInput:false};
+  await f.edit(s.request.runLink!.loopRunId,{state:'waiting',question});s=await bridge.status(f.identity,f.project.projectId,requestId);
+  finished.push(await bridge.mutate(f.identity,f.project.projectId,requestId,'answer',{expectedVersion:1,expectedRevision:s.engine.revision,
+    questionId:question.questionId,inputVersion:1,questionReportSha256:question.reportSha256,text:'Keep the scope.'},'p71-sweep-answer-0001'));
+  assert.ok(finished.every(receipt=>receipt.state==='accepted'));
+  for(const receipt of finished)assert.equal((await readFile(join(f.configuration.workRoot,receipt.commandId.replace(':','-'),'expect.json'),'utf8')).length>0,true);
+  const crashed=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter:{...retained,
+    intake:async(...args:Parameters<LoopAdapterV1['intake']>)=>{await f.adapter.intake(...args);throw new Error('SYNTHETIC crash before result');}}},()=>now);
+  const unfinished=await crashed.mutate(f.identity,f.project.projectId,null,'intake',{description},'p71-sweep-unfinished-0001');assert.equal(unfinished.state,'uncertain');
+  const restarted=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter:f.adapter},()=>now);
+  assert.equal((await restarted.mutate(f.identity,f.project.projectId,null,'intake',{description},'p71-sweep-restart-0001')).state,'accepted');
+  for(const receipt of finished)await assert.rejects(readFile(join(f.configuration.workRoot,receipt.commandId.replace(':','-'),'expect.json')),{code:'ENOENT'});
+  assert.equal(await readFile(join(f.configuration.workRoot,unfinished.commandId.replace(':','-'),'source.txt'),'utf8'),description);
+  assert.deepEqual(await readdir(f.configuration.workRoot),[unfinished.commandId.replace(':','-')]);
+});
+
+test('P71 recovery status timeout and failed read release acquisition without claiming a driver',async t=>{
+  const f=await syntheticRecoveryEngine(t),run=f.raw.reserveRun(),signed=f.raw.settingsText;
+  const b:LoopBridgeBindingV1={schemaVersion:1,body:{description},localVersion:1,adapterId:f.raw.adapterId,loopRunId:run,
+    toolingRevision:f.raw.toolingRevision,a2SchemaVersion:1,schemaDigest:f.raw.schemaDigest,requestSha256:loopByteHashV1(description),
+    settingsSha256:loopByteHashV1(signed),runLinkId:null,authorizationId:null,inputVersion:null,expectedRevision:null,evidence:null};
+  await f.raw.intake(`loop-command:${randomBytes(16).toString('hex')}`,b,description,()=>{},signed);
+  await f.edit(run,{state:'running'});const saved=await f.raw.status(run);
+  const recoveryBinding:import('../src/web/v1/improve-control-room-loop-adapter').LoopRecoveryBindingV1={schemaVersion:1,tenantId:'tenant:web',workspaceId:'workspace:web',
+    projectId:'project:fixture',ownerIdentityId:'identity:web',requestId:'request:fixture',runLinkId:'link:fixture',localVersion:1,authorizationId:'authorization:fixture',
+    startCommandId:`loop-command:${'a'.repeat(32)}`,startBindingDigest:sha256Digest('start'),run:saved.run,inputVersion:saved.inputVersion,
+    requestSha256:b.requestSha256,settingsSha256:b.settingsSha256,settingsDigest:saved.settingsDigest,expectedRevision:saved.revision,schemaDigest:f.raw.schemaDigest,action:'wait'};
+  const file=f.configuration.entrypoint,script=await readFile(file,'utf8');
+  const updated=script.replace("op,run=sys.argv[1:3];args=sys.argv[3:];file=os.path.join(root,'runs',run+'.json')", "op,run=sys.argv[1:3];args=sys.argv[3:];file=os.path.join(root,'runs',run+'.json')\nif op=='status' and os.path.exists(os.path.join(root,'status-hang')): time.sleep(10)");
+  assert.notEqual(updated,script,'the timeout probe is actually loaded');await writeFile(file,updated);
+  let calls=0;
+  const capability={enabled:()=>true,inspect:async()=>({schemaVersion:1 as const,run:saved.run,revision:saved.revision,mode:'runnable' as const,action:'wait' as const,
+    driver:{state:'ended' as const,generation:null,evidenceDigest:sha256Digest('ended')},receipt:null,evidenceDigest:sha256Digest('inspect')}),
+    claimDriver:async()=>{calls++;return{kind:'uncertain' as const,evidenceDigest:sha256Digest('no driver needed')};}};
+  const adapter=createImproveControlRoomLoopAdapterV1({...f.configuration,entrypointSha256:loopByteHashV1(updated),timeoutMs:200,
+    contract:{...f.configuration.contract,recovery:capability}});t.after(()=>adapter.close());
+  await writeFile(join(f.root,'status-hang'),'SYNTHETIC');
+  for(let i=0;i<2;i++)await assert.rejects(adapter.recover!(recoveryBinding),/unavailable/);
+  assert.equal(calls,0,'timed out status never reaches claimDriver');await rm(join(f.root,'status-hang'));
+  const runFile=join(f.root,'runs',run+'.json'),bytes=await readFile(runFile);await rm(runFile);
+  await assert.rejects(adapter.recover!(recoveryBinding),/unavailable/);assert.equal(calls,0);
+  await writeFile(runFile,bytes);assert.equal((await adapter.recover!(recoveryBinding)).kind,'uncertain');assert.equal(calls,1);
+});
+
+test('P71 intake rollback maps deadlock/serialization SQLSTATEs without repeating checks or retaining partial lineage',async t=>{
+  const f=await fixture(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  for(const sqlState of ['40P01','40001']){
+    let checks=0,rollbacks=0;
+    const wrap=(tx:DatabaseSession):DatabaseSession=>({query:(sql,params)=>{
+      if(sql.startsWith('INSERT INTO control_loop_improvement_commands'))throw Object.assign(new Error('SYNTHETIC commit rollback'),{sqlState});
+      return tx.query(sql,params);
+    }});
+    const database:DatabaseClient={query:f.client.query.bind(f.client),transaction:work=>f.client.transaction(tx=>work(wrap(tx))),
+      transactionWithPreCommitCheck:async(work,check)=>{try{return await f.client.transactionWithPreCommitCheck(tx=>work(wrap(tx)),check);}catch(error){rollbacks++;throw error;}}};
+    const bridge=new ImproveControlRoomLoopServiceV1(database,scope,{integrityKey:KEY,adapter:{...f.adapter,checkSettings:async()=>{checks++;return{eligible:true,reasons:[]};}}},()=>now);
+    await assert.rejects(bridge.mutate(f.identity,f.project.projectId,null,'intake',{description},`p71-loop-rollback-${sqlState}-0001`),{code:'conflict'});
+    assert.equal(checks,1,'one external check, no automatic retry');assert.equal(rollbacks,1);
+    for(const table of ['control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_policy_input_sources','control_loop_improvement_commands'])
+      assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length,0,'rollback leaves no partial '+table);
+    await assert.rejects(readFile(join(f.root,'trace.jsonl')),{code:'ENOENT'},'rolled-back admission never dispatches');
+  }
 });

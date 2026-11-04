@@ -32,7 +32,7 @@ const description = "Show the exact saved improvement.";
 // Explicit SYNTHETIC executable: no worker/agent/provider is invoked. It records
 // argv/env/cwd and persists only disposable run facts for the seven fixed calls.
 const executable = String.raw`import os,sys,json,hashlib,fcntl
-root=os.path.dirname(os.path.abspath(__file__))
+root=os.path.abspath(os.path.join(os.path.dirname(__file__),'../../..'))
 op,run=sys.argv[1:3]; args=sys.argv[3:]
 path=os.path.join(root,'runs',run+'.json')
 lock=open(path+'.lock','a'); fcntl.flock(lock,fcntl.LOCK_EX)
@@ -130,7 +130,9 @@ async function synthetic(t: TestContext) {
   const root = await mkdtemp(resolve(".test-tmp/b1b-fixture-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const dir of ["runs", "work"]) await mkdir(join(root, dir));
-  await writeFile(join(root, "engine.py"), executable);
+  await mkdir(join(root,"tools/loop/bridge"),{recursive:true});
+  await writeFile(join(root,"tools/loop/cr.py"),'import json; print(json.dumps(dict(eligible=True,reasons=[])))\n');
+  await writeFile(join(root, "tools/loop/bridge/engine.py"), executable);
   await writeFile(join(root, "tooling.json"), JSON.stringify({ fixture: "SYNTHETIC", revision: 1 }));
   await writeFile(join(root, "settings.json"), settingsText); await writeFile(join(root, "availability.json"), "{}");
   const toolingRevision = `sha256:${loopByteHashV1(await readFile(join(root, "tooling.json")))}`;
@@ -148,7 +150,7 @@ async function synthetic(t: TestContext) {
   let beforeAdmission: (() => Promise<void>) | undefined;
   const configuration: LoopAdapterConfigurationV1 = { adapterId: "adapter:synthetic", interpreter: realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"),
     interpreterSha256: loopByteHashV1(await readFile(realpathSync(process.platform === "darwin" ? "/Library/Developer/CommandLineTools/usr/bin/python3" : "/usr/bin/python3"))),
-    entrypointSha256: loopByteHashV1(executable), entrypoint: join(root, "engine.py"), toolingManifest: join(root, "tooling.json"), configRoot: root,
+    entrypointSha256: loopByteHashV1(executable), entrypoint: join(root, "tools/loop/bridge/engine.py"), toolingManifest: join(root, "tooling.json"), configRoot: root,
     workRoot: join(root, "work"), runRoot: join(root, "runs"), cwd: root, settingsFile: join(root, "settings.json"),
     availabilityFile: join(root, "availability.json"), toolingRevision, settingsSha256: loopByteHashV1(settingsText), availabilitySha256: loopByteHashV1("{}"),
     executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"b".repeat(64)}` }, timeoutMs: 1000,
@@ -531,13 +533,14 @@ test("B1b malicious request bytes stay literal exclusive command-file contents",
 });
 
 test("B1b expired admission never spawns and post-dispatch database failure reconciles",async t=>{
-  const f=await fixture(t);let current=now,expire=true,launches=0,failResult=false;
+  const f=await fixture(t);let current=now,expire=true,launches=0,failResult=false,claimed=false;
   const traced=(tx:import('../src/persistence/database').DatabaseSession)=>({query:async<T>(sql:string,params?:unknown[])=>{
+    if(sql.startsWith('INSERT INTO control_loop_improvement_commands')&&params?.[2]==='claim')claimed=true;
     if(failResult&&sql.startsWith('INSERT INTO control_loop_improvement_commands')&&params?.[2]==='result'){failResult=false;throw new Error('SYNTHETIC DB result loss');}
     return tx.query<T>(sql,params);
   }});
   const db:import('../src/persistence/database').DatabaseClient={query:f.client.query,transaction:callback=>f.client.transaction(tx=>callback(traced(tx))),
-    transactionWithPreCommitCheck:async(callback,check)=>{const value=await f.client.transactionWithPreCommitCheck(tx=>callback(traced(tx)),check);if(expire){expire=false;current+=6000;}return value;}};
+    transactionWithPreCommitCheck:async(callback,check)=>{const value=await f.client.transactionWithPreCommitCheck(tx=>callback(traced(tx)),check);if(expire&&claimed){expire=false;current+=6000;}return value;}};
   const adapter={...f.adapter,intake:async(id:string,b:LoopBridgeBindingV1,text:string,fence:()=>void)=>{launches++;return f.adapter.intake(id,b,text,fence);}};
   const bridge=new ImproveControlRoomLoopServiceV1(db,{tenantId:'tenant:web',workspaceId:'workspace:web'},{integrityKey:KEY,adapter},()=>current);
   const expired=await bridge.mutate(f.identity,f.project.projectId,null,'intake',{description},'b1b-expired-admission-0001');

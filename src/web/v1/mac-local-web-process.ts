@@ -1,3 +1,5 @@
+import { LoopPolicyServiceV1 } from "./loop-policy-service";
+import { createLoopPolicyHttpHandlerV1, isLoopPolicyRouteV1 } from "./loop-policy-http";
 import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
 import { LoopRosterServiceV1 } from "./loop-roster-service";
@@ -323,8 +325,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
     candidateConfiguration.contract, candidateConfiguration) : undefined;
+  const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
@@ -336,6 +340,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopRosterStarted = loopRoster?.start().catch(() => undefined);
   const loopRosterHttp = loopRoster ? createLoopRosterHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: loopRoster, clock }) : undefined;
+  const loopPolicyHttp = loopPolicy ? createLoopPolicyHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: loopPolicy, clock }) : undefined;
   const improvementHttp = improvementDesk || loopBridge ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: improvementDesk, loopBridge, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
@@ -873,6 +879,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (isLoopPolicyRouteV1(url.pathname)) {
+        if (!loopPolicyHttp) throw new WebAccessError("not_found");
+        return loopPolicyHttp(request);
+      }
       if (isLoopRosterRouteV1(url.pathname)) {
         if (!loopRosterHttp) throw new WebAccessError("not_found");
         await loopRosterStarted;

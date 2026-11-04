@@ -1,3 +1,5 @@
+import { LoopPolicyServiceV1 } from "./loop-policy-service";
+import { createLoopPolicyHttpHandlerV1, isLoopPolicyRouteV1 } from "./loop-policy-http";
 import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
 import { LoopRosterServiceV1 } from "./loop-roster-service";
@@ -365,8 +367,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
     candidateConfiguration.contract, candidateConfiguration) : undefined;
+  const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
   // B6: the roster master and its export. Start seeds or reconciles once; requests wait for it.
   const loopRosterTools = options.loopBridge?.adapter.roster;
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,
@@ -960,6 +964,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
+          if (isLoopPolicyRouteV1(url.pathname)) {
+            if (!loopPolicy) throw new WebAccessError("not_found");
+            return createLoopPolicyHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: loopPolicy, clock })(request);
+          }
           if (isLoopRosterRouteV1(url.pathname)) {
             if (!loopRoster) throw new WebAccessError("not_found");
             await loopRosterStarted;

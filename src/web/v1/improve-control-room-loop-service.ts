@@ -1,10 +1,11 @@
+import { LoopPolicyServiceV1, rethrowLoopPolicyErrorV1, type LoopPolicySnapshotV1 } from "./loop-policy-service";
 import { LoopCandidatePublisherV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createImproveControlRoomLoopFinalizerV1, finalizationEnabledV1, loopFinalizationTargetSchemaV1,
   verifyFinalizationInspectionV1, verifyFinalizationRecordV1, type LoopFinalizationPortV1, type LoopFinalizationTargetV1 } from "./improve-control-room-loop-finalization";
 import { loopMonitoringAttentionV1, type LoopMonitoringStatusV1 } from "./improve-control-room-loop-monitoring";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, canonicalJson, hmacSha256Tag, sha256Digest } from "../../security";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1/service";
 import { loopBridgeBindingSchemaV1, loopBridgeBodiesV1, loopBridgeOperationSchemaV1, loopBridgeOutcomeSchemaV1,
@@ -35,7 +36,7 @@ const unavailable = () => new Error("loop_bridge_contract_unavailable");
  * key, so a composition with pipelines must use one key for both. */
 export const loopKeyMatchesLegacyKeyV1 = (loopKey: Uint8Array, legacyKey: Uint8Array) =>
   loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);
-export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; admissionFreshnessMs?: number; loopCandidates?: LoopCandidateConfigurationV1 };
+export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; policy?: LoopPolicyServiceV1; admissionFreshnessMs?: number; loopCandidates?: LoopCandidateConfigurationV1 };
 type Lineage = Awaited<ReturnType<ImproveControlRoomDeskServiceV1["loopBridgeLineage"]>>;
 
 /** Owner authority and an append-only, signed one-attempt journal. A committed
@@ -45,6 +46,7 @@ export class ImproveControlRoomLoopServiceV1 {
   readonly #key: Uint8Array;
   readonly #adapter: LoopAdapterV1;
   readonly #freshness: number;
+  readonly #policy: LoopPolicyServiceV1;
   readonly #publisher: LoopCandidatePublisherV1;
   readonly #monitoring = new WeakMap<LoopDecisionStatusV1, LoopMonitoringStatusV1>();
   readonly #swept = new Set<string>();
@@ -53,6 +55,7 @@ export class ImproveControlRoomLoopServiceV1 {
     configuration: LoopBridgeConfigurationV1, private readonly clock: () => number = Date.now) {
     if (!(configuration.integrityKey instanceof Uint8Array) || configuration.integrityKey.length !== 32) throw unavailable();
     this.#key = Uint8Array.from(configuration.integrityKey); this.#adapter = configuration.adapter;
+    this.#policy = configuration.policy ?? new LoopPolicyServiceV1(db, scope, this.#adapter, clock);
     this.#freshness = configuration.admissionFreshnessMs ?? 5000;
     if (!Number.isSafeInteger(this.#freshness) || this.#freshness < 1 || this.#freshness > 5000) throw unavailable();
     this.#desk = new ImproveControlRoomDeskServiceV1(db, scope, this.#key, undefined, clock, this.#adapter.contract, configuration.loopCandidates);
@@ -98,8 +101,7 @@ export class ImproveControlRoomLoopServiceV1 {
   }
   #pins(binding: LoopBridgeBindingV1, operation: LoopBridgeOperationV1) {
     if (binding.adapterId !== this.#adapter.adapterId || binding.toolingRevision !== this.#adapter.toolingRevision
-      || binding.schemaDigest !== this.#adapter.schemaDigest
-      || operation !== "stop" && binding.settingsSha256 !== loopByteHashV1(this.#adapter.settingsText)) throw unavailable();
+      || binding.schemaDigest !== this.#adapter.schemaDigest) throw unavailable();
   }
   #run(lineage: Lineage) {
     if (!lineage.link) throw conflict();
@@ -111,8 +113,7 @@ export class ImproveControlRoomLoopServiceV1 {
   }
   #current(status: LoopEngineStatusV1, lineage: Lineage, body: Record<string, unknown>, confirmed: boolean, allowStopped = false) {
     if (body.expectedVersion !== Number(lineage.input.version) || body.expectedRevision !== status.revision
-      || status.run.loopRunId !== this.#run(lineage).loopRunId || status.settingsSha256 !== lineage.input.settings_sha256
-      || status.settingsSha256 !== loopByteHashV1(this.#adapter.settingsText)) throw conflict();
+      || status.run.loopRunId !== this.#run(lineage).loopRunId || status.settingsSha256 !== lineage.input.settings_sha256) throw conflict();
     if (confirmed) {
       const authorization = lineage.authorization;
       if (!authorization || !status.confirmation || status.confirmation.who !== "owner"
@@ -507,6 +508,11 @@ export class ImproveControlRoomLoopServiceV1 {
   }
   async mutate(identity: VerifiedWebIdentity, projectId: string, requestId: string | null,
     operation: LoopBridgeOperationV1, input: unknown, idempotencyKey: string) {
+    try { return await this.#mutate(identity, projectId, requestId, operation, input, idempotencyKey); }
+    catch (error) { rethrowLoopPolicyErrorV1(error); }
+  }
+  async #mutate(identity: VerifiedWebIdentity, projectId: string, requestId: string | null,
+    operation: LoopBridgeOperationV1, input: unknown, idempotencyKey: string) {
     if (!id.safeParse(projectId).success || requestId !== null && !id.safeParse(requestId).success
       || !keySchema.safeParse(idempotencyKey).success || (operation === "intake") !== (requestId === null)) throw new WebAccessError("invalid_request");
     const parsed = loopBridgeBodiesV1[operation].safeParse(input);
@@ -514,6 +520,24 @@ export class ImproveControlRoomLoopServiceV1 {
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
     const body = parsed.data as Record<string, unknown>;
     let preflight: LoopEngineStatusV1 | undefined;
+    let policyPreflight: LoopPolicySnapshotV1 | undefined;
+    if (requestId === null) {
+      policyPreflight = await this.#desk.loopBridgeTransaction(identity, projectId, true, async ({ tx, actor, lineage }) => {
+        const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
+          WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3 AND entry_kind='claim'`,
+        [this.scope.tenantId, actor.id, idempotencyKey])).rows[0];
+        if (raw) {
+          const prior = this.#verify(raw);
+          if (prior.project_id !== projectId || prior.operation !== operation || !equal(prior.binding.body, body)) throw conflict();
+          await lineage.loopBridgeLineage(tx, projectId, prior.request_id, actor.id);
+          this.#pins(prior.binding, prior.operation);
+          return undefined;
+        }
+        if (!this.#adapter.available(operation)) throw unavailable();
+        return this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined);
+      });
+      if (policyPreflight) await this.#policy.check(policyPreflight);
+    }
     // Stop needs no observational preflight: its own decoded result verifies
     // the run and receipt. Admission below still locks current authority and
     // verifies the signed lineage, owned Start and exact run link.
@@ -549,9 +573,14 @@ export class ImproveControlRoomLoopServiceV1 {
       let local: Lineage;
       let observed: LoopEngineStatusV1 | undefined;
       if (requestId === null) {
+        if (!policyPreflight) throw conflict();
+        const fresh = await this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined);
+        this.#policy.assertSnapshot(policyPreflight, fresh);
         const draft = await lineage.saveLoopDraft(identity, projectId, { description: body.description,
-          settingsText: this.#adapter.settingsText }, idempotencyKey);
+          settingsText: fresh.text }, idempotencyKey);
         local = await lineage.loopBridgeLineage(tx, projectId, draft.request.requestId, actor.id);
+        await this.#policy.recordInputSources(tx, { requestId: local.root.id, inputVersion: Number(local.input.version),
+          defaultsSha256: fresh.defaultsSha256, layerVersions: fresh.layerVersions, waiverId: null });
       } else {
         local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
         const run = this.#run(local);
@@ -573,9 +602,11 @@ export class ImproveControlRoomLoopServiceV1 {
             if (body.requestSha256 !== loopByteHashV1(observed.description) || body.settingsSha256 !== observed.settingsSha256
               || observed.state === "stopped") throw conflict();
             if (local.input.description !== observed.description) {
-              await lineage.reviseLoopDraft(identity, projectId, { requestId, expectedVersion: Number(local.input.version),
-                description: observed.description, settingsText: this.#adapter.settingsText }, idempotencyKey);
+              const fromVersion = Number(local.input.version);
+              await lineage.reviseLoopDraft(identity, projectId, { requestId, expectedVersion: fromVersion,
+                description: observed.description, settingsText: local.input.settings_text }, idempotencyKey);
               local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
+              await this.#policy.copyInputSources(tx, { requestId, fromVersion, toVersion: Number(local.input.version) });
             }
             const priorConfirmation = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
               WHERE tenant_id=$1 AND request_id=$2 AND operation='confirm' AND entry_kind='claim'
@@ -609,7 +640,7 @@ export class ImproveControlRoomLoopServiceV1 {
           }
         }
       }
-      const binding = loopBridgeBindingSchemaV1.parse({ schemaVersion: 1, body,
+      const parsedBinding = loopBridgeBindingSchemaV1.safeParse({ schemaVersion: 1, body,
         localVersion: Number(local.input.version), adapterId: this.#adapter.adapterId,
         loopRunId: local.link?.loop_run_id ?? this.#adapter.reserveRun(), toolingRevision: this.#adapter.toolingRevision,
         a2SchemaVersion: 1, schemaDigest: this.#adapter.schemaDigest, requestSha256: local.input.request_sha256,
@@ -617,11 +648,16 @@ export class ImproveControlRoomLoopServiceV1 {
         authorizationId: local.authorization?.id ?? null, inputVersion: observed?.inputVersion ?? null,
         expectedRevision: observed?.revision ?? null,
         evidence: operation === "approve" ? sha256Digest(observed!.approval) : operation === "answer" ? sha256Digest(observed!.question) : null });
+      if (!parsedBinding.success) throw new WebAccessError("invalid_request");
+      const binding = parsedBinding.data;
+      // PostgreSQL stores jsonb with separator whitespace; qualify that representation too.
+      const stored = await tx.query<{ bytes: number }>("SELECT octet_length($1::jsonb::text) AS bytes", [JSON.stringify(binding)]);
+      if (Number(stored.rows[0]!.bytes) > 65536) throw new WebAccessError("invalid_request");
       this.#pins(binding, operation); actor.assertTimeCurrent();
       const claim = await this.#insert(tx, { tenant_id: this.scope.tenantId, command_id: `loop-command:${randomBytes(16).toString("hex")}`,
         entry_kind: "claim", request_id: local.root.id, project_id: projectId, owner_identity_id: actor.id, operation,
         idempotency_key: idempotencyKey, binding, result: null, created_at: actor.now });
-      return { claim, result: undefined, replayed: false };
+      return { claim, result: undefined, replayed: false, settingsText: local.input.settings_text };
     });
     // The sweep runs only after this command's dispatch or result, never inside
     // the claim-to-spawn freshness window that a slow cleanup could exhaust.
@@ -629,7 +665,7 @@ export class ImproveControlRoomLoopServiceV1 {
     finally { await this.#sweepCommandFiles(identity, projectId); }
   }
   async #dispatch(identity: VerifiedWebIdentity, projectId: string, operation: LoopBridgeOperationV1,
-    body: Record<string, unknown>, preflight: LoopEngineStatusV1 | undefined, admitted: { claim: Row; result: Row | undefined; replayed: boolean }) {
+    body: Record<string, unknown>, preflight: LoopEngineStatusV1 | undefined, admitted: { claim: Row; result: Row | undefined; replayed: boolean; settingsText?: string }) {
     if (admitted.result) {
       await this.#releaseCommandFiles(admitted.claim);
       return this.#receipt(admitted.claim, admitted.result, true);
@@ -654,15 +690,18 @@ export class ImproveControlRoomLoopServiceV1 {
       const { claim } = admitted, b = claim.binding;
       let status: LoopEngineStatusV1;
       switch (operation) {
-        case "intake": status = await this.#adapter.intake(claim.command_id, b, body.description as string, beforeSpawn); break;
-        case "confirm": status = await this.#adapter.confirmRequest(claim.command_id, b, beforeSpawn); break;
-        case "start": status = await this.#adapter.start(claim.command_id, b, beforeSpawn); break;
+        case "intake": status = await this.#adapter.intake(claim.command_id, b, body.description as string, beforeSpawn, admitted.settingsText!); break;
+        case "confirm": status = await this.#adapter.confirmRequest(claim.command_id, b, beforeSpawn, admitted.settingsText!); break;
+        case "start": status = await this.#adapter.start(claim.command_id, b, beforeSpawn, admitted.settingsText!); break;
         case "stop": status = await this.#adapter.stop(claim.command_id, b, beforeSpawn); break;
-        case "approve": status = await this.#adapter.approve(claim.command_id, b, beforeSpawn); break;
-        case "answer": status = await this.#adapter.answer(claim.command_id, b, body.text as string, beforeSpawn); break;
+        case "approve": status = await this.#adapter.approve(claim.command_id, b, beforeSpawn, admitted.settingsText!); break;
+        case "answer": status = await this.#adapter.answer(claim.command_id, b, body.text as string, beforeSpawn, admitted.settingsText!); break;
       }
       return await this.#complete(identity, projectId, claim, status, false);
-    } catch { return this.#receipt(admitted.claim, undefined, false); }
+    } catch (error) {
+      if (databaseSqlStateIsAnyV1(error, ["40P01", "40001"])) throw error;
+      return this.#receipt(admitted.claim, undefined, false);
+    }
   }
   async #complete(identity: VerifiedWebIdentity, projectId: string, claim: Row, status: LoopEngineStatusV1, replayed: boolean) {
     const b = claim.binding;
@@ -707,15 +746,15 @@ export class ImproveControlRoomLoopServiceV1 {
   async #sweepCommandFiles(identity: VerifiedWebIdentity, projectId: string) {
     // Authorized mutations per owner/project recover the commit-to-cleanup crash
     // window, a bounded page per call until history is exhausted. No result is
-    // reconciled and no command is dispatched here. Only intake and answer write
-    // command folders; other finished claims have nothing to release.
+    // reconciled and no command is dispatched here. Every non-stop operation writes
+    // an expectation file; intake and Start also write their signed settings copy.
     try {
       const finished = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor }) => {
         const key = canonicalJson([projectId, actor.id]);
         if (this.#swept.has(key)) return undefined;
         const rows = (await tx.query<Row>(`SELECT c.* FROM control_loop_improvement_commands c
           WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.owner_identity_id=$3 AND c.entry_kind='claim'
-            AND c.operation IN ('intake','answer') AND c.command_id>$4
+            AND c.operation IN ('intake','confirm','start','approve','answer') AND c.command_id>$4
             AND EXISTS (SELECT 1 FROM control_loop_improvement_commands r
               WHERE r.tenant_id=c.tenant_id AND r.command_id=c.command_id AND r.entry_kind='result')
           ORDER BY c.command_id LIMIT ${sweepLimit}`,

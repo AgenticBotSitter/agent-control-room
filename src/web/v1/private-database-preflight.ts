@@ -87,10 +87,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
-// Current value includes the 0303 retained loop candidate schema and grants, the 0304
-// candidate guard that binds Start lineage to the signed authorization id, and the 0305 B6
-// roster master. The previous value was `16521bab...`.
-export const privateWebSchemaDigest = "8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c";
+// Current value includes the 0306 policy layers, immutable input sources/events and
+// closed intake body extension. Measured with the production applier on native PostgreSQL 17;
+// the updater query and private-web login must agree with this pin.
+export const privateWebSchemaDigest = "20b5066a7d22a83eb8e7739a527b9016874007387a73b6464403fd87db5f499b";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -136,6 +136,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
   "control_loop_update_candidates", "control_loop_update_candidate_decisions",
   "control_loop_roster_models", "control_loop_roster_state",
+  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources",
   // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
   // notice, claim and settle, and holds nothing else on it. Listed here because
   // 0226 grants SELECT on it, and the column audit compares the live grant
@@ -195,7 +196,8 @@ privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.a
 for (const table of ["control_loop_improvement_requests", "control_loop_improvement_inputs",
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
   "control_loop_update_candidates", "control_loop_update_candidate_decisions",
-  "control_loop_roster_models", "control_loop_roster_state"]) privateWebInsertTables.add(table);
+  "control_loop_roster_models", "control_loop_roster_state",
+  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources"]) privateWebInsertTables.add(table);
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // MIG-I: the dispatcher writes the FIRST head for a newly noticed item and
@@ -273,6 +275,7 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   // 0305: roster rows are edited in place; the state row holds version, export marker and replay key.
+  control_loop_policy_layers: ["version", "settings_text", "settings_sha256", "updated_by", "updated_at", "last_idempotency_key", "last_request_digest"],
   control_loop_roster_models: ["launcher", "provider", "family", "model_class", "roles", "efforts", "default_effort", "cost",
     "on_off", "note", "nick", "max_build_grade", "updated_by", "updated_at"],
   control_loop_roster_state: ["version", "exported_version", "exported_sha256", "last_idempotency_key", "last_request_digest", "updated_at"],

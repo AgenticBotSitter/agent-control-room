@@ -1,10 +1,13 @@
+import { assertNoSecretMaterial } from "../../security";
+import { parseLoopSettingsV1 } from "./loop-policy-compose";
+import type { LoopPolicyCheckV1 } from "./loop-policy-service";
 import { captureLoopFinalizationCapabilityV1, type LoopFinalizationCapabilityV1 } from "./improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopMonitorV1, loopMonitoringStatusSchemaV1, unavailableLoopMonitoringV1,
   loopMonitoringClockV1, type LoopMonitoringStatusV1, type LoopMonitoringClockV1 } from "./improve-control-room-loop-monitoring";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { loopImprovementConfirmationSchemaV1, loopImprovementRunIdentitySchemaV1,
@@ -115,15 +118,16 @@ export interface LoopAdapterV1 {
   inspectRecovery?(run: string, command?: { commandId: string; bindingDigest: string }): Promise<LoopRecoveryObservationV1>;
   recover?(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1>;
   monitoringTick?(): void;
+  checkSettings?(text: string): Promise<LoopPolicyCheckV1>;
   reserveRun(): string; available(operation: LoopBridgeOperationV1): boolean;
-  intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
-  confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
-  start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
+  intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
+  confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
+  start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
   status(run: string): Promise<LoopEngineStatusV1>;
   readApprovalDocument?(run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>): Promise<string>;
   stop(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
-  approve(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
-  answer(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
+  approve(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
+  answer(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
   /** Called only after the command's durable result commits. */
   releaseCommandFiles?(commandId: string): Promise<void>;
   /** B6: `<configRoot>/roster`, the tools seed and `cr models check`, behind this adapter's own pin checks. */
@@ -335,9 +339,9 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return !closing && c.contract.qualifiedOperations.includes(operation)
       && (operation === "stop" || typeof c.contract.admissionExpectation === "function");
   };
-  async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string) {
+  async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string, signedSettingsText?: string) {
     if (!available(operation) || binding.adapterId !== c.adapterId || binding.toolingRevision !== c.toolingRevision
-      || binding.schemaDigest !== c.contract.schemaDigest || operation !== "stop" && binding.settingsSha256 !== c.settingsSha256) throw unavailable();
+      || binding.schemaDigest !== c.contract.schemaDigest || operation !== "stop" && (typeof signedSettingsText !== "string" || loopByteHashV1(signedSettingsText) !== binding.settingsSha256)) throw unavailable();
     validate(operation !== "stop"); beforeSpawn();
     const run = runId(binding.loopRunId);
     const apply = async () => {
@@ -351,9 +355,9 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       beforeSpawn();
       let args: string[];
       switch (operation) {
-        case "intake": args = ["intake", run, "--source", await commandFile(commandId, "source.txt", text!), "--settings", c.settingsFile, "--availability", c.availabilityFile, "--json"]; break;
+        case "intake": args = ["intake", run, "--source", await commandFile(commandId, "source.txt", text!), "--settings", await commandFile(commandId, "settings.json", signedSettingsText!), "--availability", c.availabilityFile, "--json"]; break;
         case "confirm": args = ["confirm-request", run, "--sha256", binding.requestSha256, "--json"]; break;
-        case "start": args = ["start", run, "--settings", c.settingsFile, "--availability", c.availabilityFile, "--json"]; break;
+        case "start": args = ["start", run, "--settings", await commandFile(commandId, "settings.json", signedSettingsText!), "--availability", c.availabilityFile, "--json"]; break;
         case "stop": args = ["stop", run, "--json"]; break;
         case "approve": args = ["approve", run, binding.body.step as string, "--json"]; break;
         case "answer": args = ["answer", run, binding.body.questionId as string, "--input-version",
@@ -423,7 +427,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     const binding = loopRecoveryBindingSchemaV1.parse(raw), run = binding.run.loopRunId;
     Object.freeze(binding.run); Object.freeze(binding);
     if (binding.run.adapterId !== c.adapterId || binding.run.toolingRevision !== c.toolingRevision
-      || binding.schemaDigest !== c.contract.schemaDigest || binding.settingsSha256 !== c.settingsSha256) throw unavailable();
+      || binding.schemaDigest !== c.contract.schemaDigest) throw unavailable();
     if (acquisitions.has(run) || recoveryChildren.has(run)) return { kind: "busy", evidenceDigest: sha256Digest({ run, owned: true }) };
     acquisitions.add(run);
     let spawned: LoopRecoveryChildV1 | undefined, spawnPending: Promise<LoopRecoveryChildV1> | undefined, invoked = false, duplicate = false, claimOpen = true;
@@ -432,6 +436,11 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
         const observation = await inspectRecovery(run);
         if (observation.mode !== "runnable" || observation.action !== binding.action || observation.revision !== binding.expectedRevision
           || !["none", "ended"].includes(observation.driver.state)) return { kind: "uncertain" as const, evidenceDigest: observation.evidenceDigest };
+        const saved = await status(run);
+        if (saved.settingsSha256 !== binding.settingsSha256 || saved.run.loopRunId !== run
+          || saved.run.adapterId !== binding.run.adapterId || saved.run.toolingRevision !== binding.run.toolingRevision
+          || saved.run.a2SchemaVersion !== binding.run.a2SchemaVersion || saved.revision !== binding.expectedRevision
+          || saved.settingsDigest !== binding.settingsDigest) throw unavailable();
         const outcome = await recovery!.claimDriver(Object.freeze(binding), async () => {
           if (invoked || !claimOpen) { duplicate = true; throw unavailable(); }
           invoked = true; spawnPending = spawnRecovery(binding); spawned = await spawnPending; return spawned;
@@ -499,19 +508,69 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       pending.add(operation);
       try { return await operation; } finally { pending.delete(operation); }
     } });
+  /** Direct cr.py entry point; its temporary copy never enters the command sweep. */
+  function checkSettings(text: string): Promise<LoopPolicyCheckV1> {
+    if (closing) return Promise.reject(unavailable());
+    parseLoopSettingsV1(text); validate(false);
+    const crScript = checkedPath(join(toolsLoop, "cr.py"), c.configRoot);
+    const operation = (async () => {
+      const directory = await mkdtemp(join(c.workRoot, "policy-check-"));
+      try {
+        checkedPath(directory, c.workRoot, true);
+        if ((lstatSync(directory).mode & 0o777) !== 0o700) throw unavailable();
+        const file = join(directory, "settings.json"), handle = await open(file, "wx", 0o600);
+        try { await handle.writeFile(text, "utf8"); } finally { await handle.close(); }
+        if (closing) throw unavailable();
+        validate(false);
+        return await new Promise<LoopPolicyCheckV1>((fulfill, reject) => {
+          const child = spawn(c.interpreter, ["-B", crScript, "check", "lineup", "--settings", file,
+            "--availability", c.availabilityFile, "--json"], { cwd: c.cwd, shell: false,
+            env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
+          children.add(child);
+          const output: Buffer[] = [];
+          let bytes = 0, failed = false, killTimer: ReturnType<typeof setTimeout> | undefined;
+          const stop = () => { failed = true; child.kill("SIGTERM"); killTimer ??= setTimeout(() => child.kill("SIGKILL"), 1000); };
+          const timer = setTimeout(stop, timeoutMs);
+          child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); else output.push(Buffer.from(chunk)); });
+          child.stderr.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); });
+          child.on("error", () => { failed = true; });
+          child.once("close", (code, signal) => {
+            clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
+            try {
+              if (failed || signal || ![0, 3].includes(code ?? -1)) throw unavailable();
+              const result = z.object({ eligible: z.boolean(), reasons: z.array(z.object({
+                code: z.string().min(1).max(100), explanation: z.string().min(1).max(1000) }).strict()).max(100) }).strict()
+                .parse(parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), { maxBytes: 65536 }));
+              if (result.eligible !== (code === 0) || result.eligible && result.reasons.length || !result.eligible && !result.reasons.length) throw unavailable();
+              assertNoSecretMaterial(result);
+              for (const reason of result.reasons) {
+                // Expose only human explanations, never private paths or raw diagnostics.
+                if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(reason.code) || /[\x00-\x1f]/.test(reason.explanation)
+                  || /(?:^|[\s"'(=])(?:[/\\]|[A-Za-z]:[/\\])|\.\.[/\\]/.test(reason.explanation)
+                  || [c.workRoot, c.runRoot, c.configRoot, c.cwd].some(root => reason.explanation.includes(root))) throw unavailable();
+              }
+              fulfill(result);
+            } catch { reject(unavailable()); }
+          });
+        });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    })();
+    pending.add(operation); void operation.finally(() => pending.delete(operation)).catch(() => {});
+    return operation;
+  }
   let closePromise: Promise<void> | undefined;
   return Object.freeze({ roster, adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
-    settingsText, contract: c.contract.lineage,
+    settingsText, checkSettings, contract: c.contract.lineage,
     reserveRun: () => runId(c.contract.generateRunId()), available,
     ...(recovery ? { inspectRecovery, recover } : {}),
     ...(finalization ? { finalization } : {}),
     ...(monitor ? { monitoringTick: monitor.tick } : {}),
-    intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("intake", id, b, fence, text),
-    confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("confirm", id, b, fence),
-    start: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("start", id, b, fence), status, readApprovalDocument,
+    intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText) => invoke("intake", id, b, fence, text, settings),
+    confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("confirm", id, b, fence, undefined, settings),
+    start: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("start", id, b, fence, undefined, settings), status, readApprovalDocument,
     stop: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("stop", id, b, fence),
-    approve: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("approve", id, b, fence),
-    answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void) => invoke("answer", id, b, fence, text),
+    approve: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("approve", id, b, fence, undefined, settings),
+    answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText) => invoke("answer", id, b, fence, text, settings),
     releaseCommandFiles: async (commandId: string) => {
       validate();
       if (!/^loop-command:[a-f0-9]{32}$/.test(commandId) || activeCommands.has(commandId)) throw unavailable();

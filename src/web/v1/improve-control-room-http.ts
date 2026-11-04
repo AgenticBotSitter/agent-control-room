@@ -1,3 +1,4 @@
+import { LoopPolicyRefusedV1 } from "./loop-policy-service";
 import { privateRequestBudgets } from "./private-request-budgets";
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust,
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
@@ -80,6 +81,10 @@ export function createImproveControlRoomHttpHandlerV1(options: { origin: string;
       const result = await options.service.create(identity, projectId, await readBoundedJson(request.body, privateRequestBudgets.improvement),
         request.headers.get("idempotency-key") ?? "");
       return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
-    } catch (error) { return webFailure(error); }
+    } catch (error) {
+      if (error instanceof LoopPolicyRefusedV1) return Response.json({ error: "policy_refused", reasons: error.reasons },
+        { status: 422, headers: privateResponseHeaders });
+      return webFailure(error);
+    }
   };
 }
