@@ -7,3 +7,4 @@
 2026-11-04T14:34:19Z spec-review helper (Claude, general-purpose) on spec r1 (uncommitted draft; first committed WIP 2538f57): HIGH 2, MEDIUM 6, LOW 7. All verified against code (ci.yml:563, prices :95/:38, usage strict schema, adapter :706-713) and resolved in spec r2; recomputed values all matched.
 2026-11-04T14:34:19Z decisions D4 amendment, D10-D12 added; evidence and status written.
 2026-11-04T14:34:59Z E21 bounded public-text scan (home/root/Users/tmp paths, session/URL trailers, key/secret/password/token patterns, PEM headers, ghp_/sk- tokens, email domains) over all result docs: 0 matches. Private-name full list unavailable (E18): lead gate required.
+2026-11-04T14:35:16Z status written; final line Status: PLAN-READY
