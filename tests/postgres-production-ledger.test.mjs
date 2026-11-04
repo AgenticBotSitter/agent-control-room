@@ -230,3 +230,10 @@ test("ledger collection refuses an empty migration directory", async t => {
   await cp(join(ROOT, "db/roles"), join(run, "db/roles"), { recursive: true });
   await assert.rejects(collectLedgerEntries(run), /migration_ledger_empty/);
 });
+
+test("only files ending in .sql enter the ledger", async t => {
+  const { run, ledgerPath, write, ledger } = await pinnedLedgerCopy(t);
+  await write(ledger());
+  await writeFile(join(run, "db/migrations/9999_backup.sql.orig"), "SELECT 1;");
+  await verifyMigrationLedger({ rootDir: run, ledgerPath });
+});
