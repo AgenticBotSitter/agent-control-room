@@ -214,3 +214,11 @@ test("ledger refuses an unknown ledger version", async t => {
   await write({ ...ledger(), version: 2 });
   await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_version/);
 });
+
+test("ledger refuses a pinned entry whose order number was edited", async t => {
+  const { run, ledgerPath, write, ledger } = await pinnedLedgerCopy(t);
+  const tampered = ledger();
+  tampered.entries[0].order = 99;
+  await write(tampered);
+  await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_order/);
+});
