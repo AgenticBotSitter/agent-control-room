@@ -2466,32 +2466,169 @@ test("B5 controller keeps only known refusal detail labels in the retained verdi
     assert.doesNotMatch(JSON.stringify(saved),/PRIVATE|AbCdEf|\/private|\/x/);
   }
 });
+/** Test-local inventory of every detail the three B5 producer modules hand to B5RefusalV1. Sources are parsed with the pinned
+ * TypeScript compiler and never executed; details are classified by syntax, never by source line numbers or source bytes. */
+const B5_REFUSAL_PRODUCER_FILES_V1={helper:"tests/helpers/improve-control-room-first-website.ts",controller:"scripts/workflow-journeys/first-website-controller.ts",
+  host:"scripts/workflow-journeys/first-website-host.ts"} as const;
+type B5ProducerSourcesV1=Record<keyof typeof B5_REFUSAL_PRODUCER_FILES_V1,string>;
+type B5TypeScriptV1=typeof import("typescript");
+const readB5ProducerSourcesV1=async()=>Object.fromEntries(await Promise.all(Object.entries(B5_REFUSAL_PRODUCER_FILES_V1)
+  .map(async([module,file])=>[module,await readFile(new URL(`../${file}`,import.meta.url),'utf8')]))) as B5ProducerSourcesV1;
+/** Expected inventory, measured once against the published base and reviewed by hand; not derived from the extraction below.
+ * Literal labels per module with their occurrence counts. */
+const B5_EXPECTED_LITERAL_DETAILS_V1:Record<keyof B5ProducerSourcesV1,Record<string,number>>={
+  helper:{"alias":1,"ancestry":1,"base":1,"briefs":1,"card":1,"card binding":1,"card checks":1,"card head":1,"card tooling":1,"changed paths":1,
+    "chronology":1,"cleanup":1,"cli outside product checkout":1,"confirmation":1,"diagnostic heads":1,"diagnostic results":1,
+    "fault and review inputs must differ":1,"final page":1,"fresh code reviews":1,"git":1,"head":2,"inputs":1,"json":2,"lineage":1,"location":2,
+    "manifest pins":1,"missing":1,"must be <scratchRoot>/evidence":1,"name":1,"not empty":1,"open finding":1,"original builder repair":1,"path":2,
+    "product":1,"protected tests":1,"real qualification":1,"rejected page":1,"rejected reviews":1,"rejection":2,"rejection heads":1,"remote":1,
+    "retained read":1,"revision":1,"risk":1,"run":1,"scratch owner":1,"snapshot candidate":1,"snapshot lineage":1,"stage exists":1,
+    "steps outside a closed-browser interval":1,"symlink":1,"uid":1},
+  controller:{},host:{}};
+/** canonical(path, kind, code) forwards its `kind` parameter; this is its string-literal union. */
+const B5_EXPECTED_CANONICAL_KINDS_V1=["file","directory"];
+/** Calls with no detail argument: valid, retained as a bare code, and counted separately. */
+const B5_EXPECTED_NO_DETAIL_V1:Record<string,number>={"helper: refuse":112,"helper: bad":12,"helper: B5RefusalV1":2,"controller: B5RefusalV1":18,"host: B5RefusalV1":9};
+/** Every nonliteral detail as normalized syntax, with what the retained verdict does with it.
+ * forwarded: a wrapper parameter, covered at each wrapper call site. fixed-label: the value comes from a closed set of listed labels.
+ * prefix-label: the code keeps only the text before the first colon, which is a listed label. omitted: arbitrary text, never listed.
+ * reason-code: B5_A2_FINALIZATION_TIMEOUT keeps only a bounded finalizationReasonCode. */
+type B5NonliteralDetailV1={count:number;treatment:"forwarded"|"fixed-label"|"prefix-label"|"omitted"|"reason-code";labels?:readonly string[];examples?:readonly string[]};
+const B5_EXPECTED_NONLITERAL_DETAILS_V1:Record<string,B5NonliteralDetailV1>={
+  "helper: new B5RefusalV1(code, detail)":{count:1,treatment:"forwarded"},
+  "helper: refuse(\"B5_MANIFEST_PINS\", why)":{count:1,treatment:"forwarded"},
+  "helper: refuse(\"B5_CANDIDATE_REPOSITORY\", why)":{count:1,treatment:"forwarded"},
+  "helper: refuse(\"B5_REJECTION_REPAIR\", why)":{count:1,treatment:"forwarded"},
+  "helper: refuse(code, kind)":{count:1,treatment:"fixed-label",labels:B5_EXPECTED_CANONICAL_KINDS_V1},
+  "helper: refuse(\"B5_CONFINEMENT\", name)":{count:1,treatment:"fixed-label",labels:["assembly","contract","qualification","settings","availability","authorization","transport","faultInput","reviewInput"]},
+  "helper: refuse(\"B5_EXECUTION_IDENTITY_MISMATCH\", name)":{count:1,treatment:"fixed-label",labels:["assembly","contract","qualification","settings","availability","authorization","transport","faultInput","reviewInput"]},
+  "helper: refuse(\"B5_INPUT_CHANGED\", binding.input)":{count:1,treatment:"fixed-label",labels:["faultInput","reviewInput"]},
+  "helper: refuse(\"B5_INPUT_BINDING_REFUSED\", binding.name)":{count:1,treatment:"fixed-label",labels:["b5-builder-fault","b5-review-instruction"]},
+  "helper: refuse(\"B5_INPUT_BINDING_RECEIPT\", binding.name)":{count:2,treatment:"fixed-label",labels:["b5-builder-fault","b5-review-instruction"]},
+  "helper: refuse(\"B5_INPUT_BINDING_LATE\", binding.name)":{count:1,treatment:"fixed-label",labels:["b5-builder-fault","b5-review-instruction"]},
+  "helper: refuse(\"B5_INPUT_BINDING_COPY\", binding.name)":{count:1,treatment:"fixed-label",labels:["b5-builder-fault","b5-review-instruction"]},
+  "helper: bad(`binding ${binding.name}`)":{count:1,treatment:"fixed-label",labels:["binding b5-builder-fault","binding b5-review-instruction"]},
+  "helper: refuse(\"B5_HEAD_BINDING\", `dom ${screen}`)":{count:1,treatment:"fixed-label",labels:["dom 07-finish-phone","dom 08-finish-desktop","dom 09-retained"]},
+  "helper: broken(`fresh ${role}`)":{count:1,treatment:"fixed-label",labels:["fresh attack-review","fresh ui-review","fresh ci-review","fresh final"]},
+  "helper: refuse(\"B5_INPUT_BINDING_REFUSED\", `${binding.name}:${typeof envelope.error === \"string\" ? envelope.error : \"unknown\"}`)":{count:1,treatment:"prefix-label",labels:["b5-builder-fault","b5-review-instruction"]},
+  "helper: refuse(\"B5_BRIEF_SCOPE\", `${brief.role}:${receipt.name}`)":{count:1,treatment:"prefix-label",labels:["build","code-review"]},
+  "helper: refuse(\"B5_FIXTURE_NOT_REAL\", `review ${review.stepId}`)":{count:1,treatment:"omitted",examples:["review 4"]},
+  "helper: refuse(\"B5_RECIPE_MISMATCH\", recipe.id)":{count:1,treatment:"omitted",examples:["site-smoke","site-status"]},
+  "helper: refuse(\"B5_CONFIG_INVALID\", parsed.error.issues.map(issue => issue.path.join(\".\")).join(\",\"))":{count:1,treatment:"omitted",examples:["a2.contractFile"]},
+  "helper: refuse(\"B5_PORT_BUSY\", String(port))":{count:1,treatment:"omitted",examples:["5432"]},
+  "helper: refuse(\"B5_ARTIFACT_BYTES\", check.outputPath)":{count:1,treatment:"omitted",examples:["checks/site-smoke.tap"]},
+  "helper: refuse(\"B5_CANDIDATE_REPOSITORY\", args[0])":{count:1,treatment:"omitted",examples:["rev-parse","status"]},
+  "helper: refuse(\"B5_ARTIFACT_BYTES\", entry.path)":{count:1,treatment:"omitted",examples:["journey.json"]},
+  "helper: refuse(\"B5_ARTIFACT_MISSING\", path)":{count:1,treatment:"omitted",examples:["journey.json","teardown.json"]},
+  "helper: refuse(\"B5_ARTIFACT_MISSING\", check.outputPath)":{count:1,treatment:"omitted",examples:["checks/site-smoke.tap"]},
+  "helper: refuse(\"B5_SNAPSHOT_INVALID\", entry.table)":{count:1,treatment:"omitted",examples:["loop_requests"]},
+  "host: new B5RefusalV1(\"B5_A2_FINALIZATION_TIMEOUT\", reasonCode)":{count:1,treatment:"reason-code"},
+};
+function b5RefusalInventoryV1(ts:B5TypeScriptV1,sources:B5ProducerSourcesV1){
+  const producers=new Set(["refuse","B5RefusalV1","bad","broken"]),wrappers=new Set(["bad","broken"]);
+  const printer=ts.createPrinter({removeComments:true,newLine:ts.NewLineKind.LineFeed});
+  const literals=Object.fromEntries(Object.keys(sources).map(m=>[m,{} as Record<string,number>])) as Record<keyof B5ProducerSourcesV1,Record<string,number>>;
+  const nonliteral:Record<string,number>={},noDetail:Record<string,number>={},parseErrors:string[]=[],escapes:string[]=[];
+  let kinds:string[]|undefined;
+  const bump=(r:Record<string,number>,k:string)=>{r[k]=(r[k]??0)+1;};
+  for(const module of Object.keys(sources) as (keyof B5ProducerSourcesV1)[]){
+    const sf=ts.createSourceFile(`${module}.ts`,sources[module],ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    for(const d of (sf as unknown as {parseDiagnostics:readonly import("typescript").Diagnostic[]}).parseDiagnostics)
+      parseErrors.push(`${module}: ${ts.flattenDiagnosticMessageText(d.messageText,"\n")}`);
+    const normal=(n:import("typescript").Node)=>printer.printNode(ts.EmitHint.Unspecified,n,sf).replace(/\s+/gu," ");
+    const visit=(n:import("typescript").Node):void=>{
+      if(ts.isIdentifier(n)&&producers.has(n.text)){
+        const p=n.parent,direct=(ts.isCallExpression(p)||ts.isNewExpression(p))&&p.expression===n;
+        const declared=(ts.isFunctionDeclaration(p)||ts.isVariableDeclaration(p)||ts.isClassDeclaration(p)||ts.isImportSpecifier(p))&&p.name===n;
+        const inert=ts.isBinaryExpression(p)&&p.operatorToken.kind===ts.SyntaxKind.InstanceOfKeyword&&p.right===n||ts.isTypeReferenceNode(p)&&p.typeName===n;
+        if(!direct&&!declared&&!inert)escapes.push(`${module}: ${normal(p)}`);
+        if(direct){
+          const call=p as import("typescript").CallExpression|import("typescript").NewExpression,args=call.arguments??[];
+          const at=wrappers.has(n.text)?0:1,detail=args[at];
+          if(!detail)bump(noDetail,`${module}: ${n.text}`);
+          else if(args.length===at+1&&(ts.isStringLiteral(detail)||ts.isNoSubstitutionTemplateLiteral(detail)))bump(literals[module],detail.text);
+          else bump(nonliteral,`${module}: ${normal(call)}`);
+        }
+      }
+      if(ts.isFunctionDeclaration(n)&&n.name?.text==="canonical"){
+        const type=n.parameters.find(q=>ts.isIdentifier(q.name)&&q.name.text==="kind")?.type;
+        kinds=type&&ts.isUnionTypeNode(type)&&type.types.every(t=>ts.isLiteralTypeNode(t)&&ts.isStringLiteral(t.literal))
+          ?type.types.map(t=>((t as import("typescript").LiteralTypeNode).literal as import("typescript").StringLiteral).text):[];
+      }
+      ts.forEachChild(n,visit);
+    };
+    visit(sf);
+  }
+  return {parseErrors,escapes,literals,nonliteral,noDetail,kinds};
+}
+/** Each assertion carries a distinct message so mutation cases can require the intended one. */
+function assertB5RefusalInventoryV1(ts:B5TypeScriptV1,sources:B5ProducerSourcesV1,known:ReadonlySet<string>){
+  const inventory=b5RefusalInventoryV1(ts,sources);
+  assert.deepEqual(inventory.parseErrors,[],"B5 producer source does not parse");
+  assert.deepEqual(inventory.escapes,[],"refusal producer referenced outside a direct call");
+  const literalLabels=[...new Set(Object.values(inventory.literals).flatMap(r=>Object.keys(r)))];
+  assert.deepEqual(literalLabels.filter(l=>!known.has(l)).sort(),[],"literal refusal detail missing from b5KnownRefusalDetailsV1");
+  assert.deepEqual(inventory.kinds,B5_EXPECTED_CANONICAL_KINDS_V1,"canonical kind union changed");
+  assert.deepEqual(inventory.nonliteral,Object.fromEntries(Object.entries(B5_EXPECTED_NONLITERAL_DETAILS_V1).map(([k,v])=>[k,v.count])),
+    "nonliteral refusal detail not in the explicit inventory");
+  assert.deepEqual(inventory.literals,B5_EXPECTED_LITERAL_DETAILS_V1,"literal refusal detail inventory changed");
+  assert.deepEqual(inventory.noDetail,B5_EXPECTED_NO_DETAIL_V1,"no-detail refusal inventory changed");
+  return inventory;
+}
 test("B5 refusal detail label set covers every literal detail the producers pass",async()=>{
   const {b5KnownRefusalDetailsV1}=await import('../scripts/workflow-journeys/first-website-controller');
-  const sources=await Promise.all(["tests/helpers/improve-control-room-first-website.ts","scripts/workflow-journeys/first-website-controller.ts"].map(f=>readFile(new URL(`../${f}`,import.meta.url),'utf8')));
-  // refuse(code, <detail>) / new B5RefusalV1(code, <detail>) and the helper wrappers bad(<detail>) / broken(<detail>) that forward to refuse.
-  const call=/\b(?:refuse|B5RefusalV1)\(\s*[^,()]+,\s*(["`])((?:\\.|(?!\1)[^\\])*)\1|\b(?:bad|broken)\(\s*(["`])((?:\\.|(?!\3)[^\\])*)\3/gu;
-  const literals=new Set<string>(),templates=new Set<string>();
-  for(const source of sources)for(const m of source.matchAll(call)){
-    const quote=m[1]??m[3],text=(m[2]??m[4])!;
-    (quote==="`"?templates:literals).add(text);
+  const ts=(await import("typescript")).default;
+  const inventory=assertB5RefusalInventoryV1(ts,await readB5ProducerSourcesV1(),b5KnownRefusalDetailsV1);
+  assert.equal(Object.values(inventory.literals.helper).reduce((a,b)=>a+b,0),57);
+  assert.equal(Object.keys(inventory.literals.helper).length,52);
+  for(const [expression,entry] of Object.entries(B5_EXPECTED_NONLITERAL_DETAILS_V1)){
+    if(entry.treatment==="fixed-label"||entry.treatment==="prefix-label"){
+      assert.ok(entry.labels?.length,expression);
+      for(const label of entry.labels!)assert.ok(b5KnownRefusalDetailsV1.has(label),`${expression} -> ${label}`);
+    } else assert.equal(entry.labels,undefined,expression);
+    // Known arbitrary text stays out of the public label set.
+    if(entry.treatment==="omitted"){assert.ok(entry.examples?.length,expression);for(const ex of entry.examples!)assert.ok(!b5KnownRefusalDetailsV1.has(ex),`${expression} -> ${ex}`);}
   }
-  // canonical() passes its `kind` parameter as the detail; its string-literal union is the set of values.
-  const kinds=sources.join("\n").match(/function canonical\([^)]*?\bkind: ((?:"[a-z]+"(?: \| )?)+)/u);
-  assert.ok(kinds,"canonical kind union not found");
-  for(const k of kinds![1]!.matchAll(/"([a-z]+)"/gu))literals.add(k[1]!);
-  assert.ok(literals.size>=50,`extraction found only ${literals.size} literal details`);
-  assert.deepEqual([...literals].filter(l=>!b5KnownRefusalDetailsV1.has(l)),[],"literal refusal detail missing from b5KnownRefusalDetailsV1");
-  // Template details are dynamic; each is listed here with what the verdict keeps. A new template detail fails until it is listed.
-  const knownDynamic:Record<string,string>={
-    "${binding.name}:${typeof envelope.error === \"string\" ? envelope.error : \"unknown\"}":"B5_INPUT_BINDING_REFUSED keeps only the text before the first colon (the binding name)",
-    "${brief.role}:${receipt.name}":"B5_BRIEF_SCOPE keeps only the text before the first colon (the role)",
-    "dom ${screen}":"kept only when equal to a listed dom screen label",
-    "binding ${binding.name}":"kept only when equal to a listed binding label",
-    "fresh ${role}":"kept only when equal to a listed fresh-review role label",
-    "review ${review.stepId}":"never listed, so always omitted"};
-  assert.deepEqual([...templates].sort(),Object.keys(knownDynamic).sort(),"template refusal detail not listed as known-dynamic");
+  assert.deepEqual(Object.entries(B5_EXPECTED_NONLITERAL_DETAILS_V1).filter(([,v])=>v.treatment==="reason-code").map(([k])=>k),
+    ["host: new B5RefusalV1(\"B5_A2_FINALIZATION_TIMEOUT\", reasonCode)"]);
   for(const label of ["dom 07-finish-phone","dom 08-finish-desktop","dom 09-retained","binding b5-builder-fault","binding b5-review-instruction","build","code-review","fresh attack-review","fresh ui-review","fresh ci-review","fresh final"])assert.ok(b5KnownRefusalDetailsV1.has(label),label);
+});
+test("B5 refusal producer inventory rejects uncovered details",async()=>{
+  const {b5KnownRefusalDetailsV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  const ts=(await import("typescript")).default;
+  const sources=await readB5ProducerSourcesV1();
+  const validate=(s:B5ProducerSourcesV1)=>assertB5RefusalInventoryV1(ts,s,b5KnownRefusalDetailsV1);
+  validate(sources);
+  // Memory-only copies: exactly one intended insertion or replacement, and the mutant must still parse.
+  const mutate=(module:keyof B5ProducerSourcesV1,find:string,replace:string):B5ProducerSourcesV1=>{
+    const text=sources[module];
+    assert.equal(text.split(find).length-1,1,`mutation anchor must occur exactly once: ${find}`);
+    const changed=text.replace(find,()=>replace);
+    assert.notEqual(changed,text);
+    assert.deepEqual(b5RefusalInventoryV1(ts,{...sources,[module]:changed}).parseErrors,[],"mutant must parse");
+    return {...sources,[module]:changed};
+  };
+  const evidenceLine='refuse("B5_EVIDENCE_DIR", "must be <scratchRoot>/evidence");',remoteLine='  if (facts.remotes !== "") bad("remote");\n';
+  const cases:[string,B5ProducerSourcesV1,RegExp][]=[
+    ["helper quoted",mutate("helper",'if (stat.isSymbolicLink()) refuse(code, "symlink");','if (stat.isSymbolicLink()) refuse(code, "symlink");\n    if (stat.isFIFO()) refuse(code, "unlisted fifo detail");'),/^literal refusal detail missing/u],
+    ["host literal",mutate("host",'Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"))','Promise.reject(new B5RefusalV1("B5_HOST_CLOSED", "unlisted host detail"))'),/^literal refusal detail missing/u],
+    ["helper bare identifier",mutate("helper",evidenceLine,`${evidenceLine}\n  if (!root) refuse("B5_EVIDENCE_DIR", evidenceDir);`),/^nonliteral refusal detail not in the explicit inventory/u],
+    ["helper call expression",mutate("helper",evidenceLine,`${evidenceLine}\n  if (!root) refuse("B5_EVIDENCE_DIR", evidenceDir.slice(1));`),/^nonliteral refusal detail not in the explicit inventory/u],
+    ["helper conditional",mutate("helper",evidenceLine,`${evidenceLine}\n  if (!root) refuse("B5_EVIDENCE_DIR", root ? "json" : "git");`),/^nonliteral refusal detail not in the explicit inventory/u],
+    ["helper template",mutate("helper",remoteLine,`${remoteLine}  if (!facts.clean) bad(\`remote \${facts.remotes}\`);\n`),/^nonliteral refusal detail not in the explicit inventory/u],
+    ["host bare identifier",mutate("host",'Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"))','Promise.reject(new B5RefusalV1("B5_HOST_CLOSED", ownerCode))'),/^nonliteral refusal detail not in the explicit inventory/u],
+    ["listed literal added",mutate("helper",remoteLine,`${remoteLine}  if (!facts.clean) bad("remote");\n`),/^literal refusal detail inventory changed/u],
+    ["protected literal removed",mutate("helper",remoteLine,""),/^literal refusal detail inventory changed/u],
+    ["producer escapes a direct call",mutate("helper",'function refuse(code: string, detail = ""): never { throw new B5RefusalV1(code, detail); }',
+      'function refuse(code: string, detail = ""): never { throw new B5RefusalV1(code, detail); }\nexport const refuseAlias = refuse;'),/^refusal producer referenced outside a direct call/u],
+    ["no-detail call added",mutate("host",'Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"))','Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"), new B5RefusalV1("B5_HOST_CLOSED"))'),/^no-detail refusal inventory changed/u],
+  ];
+  for(const [name,mutant,intended] of cases)
+    assert.throws(()=>validate(mutant),(e:unknown)=>e instanceof assert.AssertionError&&intended.test(e.message),name);
+  // The removed protected literal is still listed, so the old allowlist check and size floor (>= 50 distinct) would both pass.
+  const removed=b5RefusalInventoryV1(ts,cases.find(([n])=>n==="protected literal removed")![1]);
+  assert.equal(removed.literals.helper.remote,undefined); assert.ok(b5KnownRefusalDetailsV1.has("remote"));
+  assert.ok(Object.keys(removed.literals.helper).length+B5_EXPECTED_CANONICAL_KINDS_V1.length>=50);
 });
 test("B5 controller applies the same refusal detail rule to a cleanup failure",async t=>{
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
