@@ -1026,22 +1026,80 @@ test("a test-created stray file is reported distinctly after restoration", () =>
 });
 
 test("the CI job gates verification on a branch manifest and joins the merge gate", () => {
-  const start = workflow.indexOf("  mutation-checks:");
-  const end = workflow.indexOf("\n  quick:", start);
-  assert.ok(start > 0 && end > start, "the mutation-checks job must appear before quick checks");
-  const job = workflow.slice(start, end);
-  assert.match(job, /name: Mutation checks/u);
-  assert.match(job, /fetch-depth: 0/u);
-  assert.match(job, /if: steps\.manifest\.outputs\.exists == 'true'/u);
-  assert.match(job, /--warn-only/u);
-  const anchorStep = job.split("      - name: ").find(step => step.startsWith("Validate every declared mutation anchor"));
-  assert.ok(anchorStep, "all branches must validate anchors");
-  assert.match(anchorStep, /run: node scripts\/ci\/verify-mutation-checks\.mjs --anchors-only/u);
-  assert.doesNotMatch(anchorStep, /\bif:/u);
-  assert.doesNotMatch(job, /secrets\./u);
-  const gate = workflow.slice(workflow.indexOf("  merge-gate:"));
-  assert.match(gate, /needs: \[[^\]]*mutation-checks/u);
-  assert.match(gate, /check mutation-checks/u);
+  const { jobs } = createRequire(import.meta.resolve("eslint"))("js-yaml").load(workflow);
+  const root = mkdtempSync(join(tmpdir(), "manifest-workflow-guard-"));
+  const list = join(root, "manifests"), trace = join(root, "trace");
+  const manifests = ["mutation-checks/first.json", "mutation-checks/with spaces.json", "mutation-checks/with\nnewline.json"];
+  // Execute the shipped loop with a synthetic verifier; no real mutation or model runs.
+  const verifierStub = `node() {
+    [ "$1" = scripts/ci/verify-mutation-checks.mjs ] || return 99
+    printf '%s\\0' "$2" >> "$MANIFEST_TRACE"
+    [ "$2" != "$FAIL_MANIFEST" ]
+  }`;
+  function check(parsed) {
+    const job = parsed["mutation-checks"], gate = parsed["merge-gate"];
+    assert.match(job.name, /^Mutation checks/u);
+    assert.equal(job.if, "${{ always() }}");
+    assert.deepEqual(job.needs, ["mutation-checks-lineage", "mutation-checks-candidate"]);
+    assert.equal(job["continue-on-error"], undefined);
+    for (const step of job.steps) {
+      assert.equal(step.if, undefined, `${step.name ?? step.uses} must be unconditional`);
+      assert.equal(step["continue-on-error"], undefined);
+    }
+    assert.equal(job.steps.find(step => step.uses?.startsWith("actions/checkout@")).with["fetch-depth"], 0);
+    const selection = job.steps.find(step => step.id === "manifest");
+    assert.match(selection.run, /scripts\/ci\/check-mutation-manifest-branch\.sh/u);
+    assert.match(selection.run, /echo "list=\$\{list\}" >> "\$GITHUB_OUTPUT"/u);
+    const anchors = job.steps.find(step => step.name === "Validate every declared mutation anchor");
+    assert.equal(anchors.run, "node scripts/ci/verify-mutation-checks.mjs --anchors-only");
+    const verification = job.steps.find(step => step.name === "Re-run declared guard mutations");
+    assert.equal(verification.env.MANIFEST_LIST, "${{ steps.manifest.outputs.list }}");
+    assert.match(job.steps.find(step => step.name === "Warn about guard-like changes without a manifest").run, /--warn-only/u);
+    assert.doesNotMatch(JSON.stringify(job), /secrets\./u);
+    assert.ok(gate.needs.includes("mutation-checks"));
+    assert.equal(gate.if, "${{ always() }}");
+    const finalGate = gate.steps.find(step => step.run?.includes("check mutation-checks"));
+    assert.ok(finalGate, "merge gate must check the mutation job result");
+    assert.equal(finalGate.if, undefined); assert.equal(finalGate["continue-on-error"], undefined);
+    for (const entries of [[], manifests]) {
+      for (const failure of ["", ...entries]) {
+        writeFileSync(list, entries.map(name => `${name}\0`).join(""));
+        writeFileSync(trace, "");
+        const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", `${verifierStub}\n${verification.run}`], {
+          encoding: "utf8", timeout: 5000,
+          env: { ...process.env, MANIFEST_LIST: list, MANIFEST_TRACE: trace, FAIL_MANIFEST: failure },
+        });
+        assert.deepEqual(readFileSync(trace, "utf8").split("\0").filter(Boolean), entries,
+          "verification must visit the full manifest list even after a failure");
+        assert.equal(result.status, failure ? 1 : 0, "manifest failures must fail verification");
+        // A failed non-tolerated step fails its job. Execute the actual merge-gate
+        // command with every other job successful to prove that verdict reaches it.
+        const command = finalGate.run
+          .replaceAll("${{ needs.mutation-checks.result }}", result.status === 0 ? "success" : "failure")
+          .replace(/\$\{\{[^}]+\}\}/gu, "success");
+        const verdict = spawnSync("/bin/bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", command], {
+          encoding: "utf8", timeout: 5000, env: { ...process.env, COMPONENTS_ROUTED: "true" },
+        });
+        assert.equal(verdict.status, failure ? 1 : 0, "manifest failures must reach the final merge gate");
+      }
+    }
+  }
+  try {
+    check(jobs);
+    const truncated = structuredClone(jobs);
+    const loop = truncated["mutation-checks"].steps.find(step => step.name === "Re-run declared guard mutations");
+    loop.run = loop.run.replace('done < "$MANIFEST_LIST"', 'break\ndone < "$MANIFEST_LIST"');
+    assert.throws(() => check(truncated), /must visit the full manifest list/u);
+    const swallowed = structuredClone(jobs);
+    const swallowedLoop = swallowed["mutation-checks"].steps.find(step => step.name === "Re-run declared guard mutations");
+    swallowedLoop.run = swallowedLoop.run.replace('exit "$failed"', 'exit 0');
+    assert.throws(() => check(swallowed), /manifest failures must fail verification/u);
+    const ignored = structuredClone(jobs);
+    const ignoredGate = ignored["merge-gate"].steps.find(step => step.run?.includes("check mutation-checks"));
+    ignoredGate.run = ignoredGate.run.replace('${{ needs.mutation-checks.result }}', 'success');
+    assert.throws(() => check(ignored), /manifest failures must reach the final merge gate/u);
+    console.log("Manifest negative proof: truncated list, swallowed failure and ignored merge-gate result rejected");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("the self-manifest runs behavioral tests without the source-drift meta-test", () => {
