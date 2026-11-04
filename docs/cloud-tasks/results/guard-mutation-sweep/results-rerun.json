@@ -1,0 +1,195 @@
+[
+  {
+    "id": "LC9",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "drop-key",
+    "what": "drop the monitoring-load lane from the expected mutation-lane shape",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 103,
+    "failed": [
+      "the CI job gates verification on a branch manifest and joins the merge gate"
+    ]
+  },
+  {
+    "id": "LC10",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "drop-key",
+    "what": "stop requiring continue-on-error to be absent on mutation jobs",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 177,
+    "failed": []
+  },
+  {
+    "id": "LC11",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "skip-loop",
+    "what": "skip the per-step unconditional check",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 172,
+    "failed": []
+  },
+  {
+    "id": "LC12",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "flip-comparison",
+    "what": "step timeout bound equal -> notEqual",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 101,
+    "failed": [
+      "the CI job gates verification on a branch manifest and joins the merge gate"
+    ]
+  },
+  {
+    "id": "LC13",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "widen-regex",
+    "what": "mutation job key filter widened to any job",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 171,
+    "failed": []
+  },
+  {
+    "id": "V10",
+    "suite": "verify-mutations-behavior",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "flip-comparison",
+    "what": "audit counts caught entries as failures",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 22198,
+    "failed": []
+  },
+  {
+    "id": "C1",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "flip-comparison",
+    "what": "shipped edits accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4336,
+    "failed": [
+      "editing a shipped migration fails and adding a new migration is linted",
+      "the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection",
+      "baseline selection preserves the refusal for a later shipped migration edit"
+    ]
+  },
+  {
+    "id": "C2",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "widen-regex",
+    "what": "any 1xxxxx git mode is regular (symlink 120000 accepted)",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 4244,
+    "failed": []
+  },
+  {
+    "id": "C3",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "skip-loop",
+    "what": "working-tree non-regular entries ignored",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4481,
+    "failed": [
+      "the migration checker rejects every symlink under db/migrations",
+      "baseline mode still refuses symlinks and nested migration directories"
+    ]
+  },
+  {
+    "id": "C4",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "drop-key",
+    "what": "added migrations never linted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4558,
+    "failed": [
+      "editing a shipped migration fails and adding a new migration is linted",
+      "the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection",
+      "a Squawk that never ran is reported as a missing tool, not as a rejected migration",
+      "a Squawk that ran and rejected the SQL still reports a rejection"
+    ]
+  },
+  {
+    "id": "C5",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "flip-comparison",
+    "what": "squawk nonzero accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 3989,
+    "failed": [
+      "the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection",
+      "a Squawk that ran and rejected the SQL still reports a rejection",
+      "Squawk rejection, dropped execution and stop halfway fail; a repaired retry passes",
+      "real Squawk rejects unsafe future SQL and a safe retry passes in baseline mode",
+      "real Squawk accepts only the seven maintenance findings and refuses extra SQL debt",
+      "accepted findings cannot turn malformed, empty, interrupted or failed lint into a pass"
+    ]
+  },
+  {
+    "id": "C6",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "drop-key",
+    "what": "squawk exec failure ignored",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4664,
+    "failed": [
+      "a Squawk that never ran is reported as a missing tool, not as a rejected migration",
+      "Squawk rejection, dropped execution and stop halfway fail; a repaired retry passes"
+    ]
+  },
+  {
+    "id": "C7",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "flip-comparison",
+    "what": "baseline accepts findings when any remain",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4626,
+    "failed": [
+      "real Squawk accepts only the seven maintenance findings and refuses extra SQL debt"
+    ]
+  },
+  {
+    "id": "C8",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "skip-loop",
+    "what": "base tree not scanned for symlinks",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 4673,
+    "failed": []
+  },
+  {
+    "id": "C9",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "widen-regex",
+    "what": "isMigration accepts any path",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 4408,
+    "failed": []
+  }
+]

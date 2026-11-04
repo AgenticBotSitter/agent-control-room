@@ -1,0 +1,1686 @@
+[
+  {
+    "id": "baseline:lane-coverage",
+    "suite": "lane-coverage",
+    "command": "node --test tests/check-test-lane-coverage.test.mjs",
+    "status": 0,
+    "ms": 184
+  },
+  {
+    "id": "baseline:lane-shape",
+    "suite": "lane-shape",
+    "command": "node --test tests/check-test-lane-coverage.test.mjs && node --test --test-name-pattern='^the CI job gates verification on a branch manifest and joins the merge gate$' tests/verify-mutation-checks.test.mjs",
+    "status": 0,
+    "ms": 344
+  },
+  {
+    "id": "baseline:quarantine",
+    "suite": "quarantine",
+    "command": "node --test tests/test-quarantine.test.mjs",
+    "status": 0,
+    "ms": 336
+  },
+  {
+    "id": "baseline:loaders",
+    "suite": "loaders",
+    "command": "node --test tests/package-test-loaders.test.mjs",
+    "status": 0,
+    "ms": 1304
+  },
+  {
+    "id": "baseline:routing",
+    "suite": "routing",
+    "command": "node --test tests/ci-path-routing.test.mjs",
+    "status": 0,
+    "ms": 107
+  },
+  {
+    "id": "baseline:verify-mutations",
+    "suite": "verify-mutations",
+    "command": "node --test tests/verify-mutation-checks.test.mjs",
+    "status": 0,
+    "ms": 32468
+  },
+  {
+    "id": "baseline:verify-mutations-behavior",
+    "suite": "verify-mutations-behavior",
+    "command": "node --test --test-skip-pattern='^declared manifests name unique, tracked source snippets$' tests/verify-mutation-checks.test.mjs",
+    "status": 0,
+    "ms": 23192
+  },
+  {
+    "id": "baseline:manifest-branch",
+    "suite": "manifest-branch",
+    "command": "node --test tests/mutation-manifest-branch.test.mjs",
+    "status": 0,
+    "ms": 8358
+  },
+  {
+    "id": "baseline:pr-claims",
+    "suite": "pr-claims",
+    "command": "node --test tests/check-pr-claims.test.mjs",
+    "status": 0,
+    "ms": 1021
+  },
+  {
+    "id": "baseline:migration-numbers",
+    "suite": "migration-numbers",
+    "command": "node --test tests/migration-number-check.test.mjs",
+    "status": 0,
+    "ms": 404
+  },
+  {
+    "id": "baseline:migration-changes",
+    "suite": "migration-changes",
+    "command": "npm exec --yes --package=squawk-cli@2.61.0 -- node --import tsx --test tests/migration-change-check.test.mjs tests/migration-lint-baseline.test.mjs",
+    "status": 0,
+    "ms": 4524
+  },
+  {
+    "id": "baseline:migration-ledger",
+    "suite": "migration-ledger",
+    "command": "node --test tests/postgres-production-ledger.test.mjs",
+    "status": 0,
+    "ms": 2212
+  },
+  {
+    "id": "baseline:private-names",
+    "suite": "private-names",
+    "command": "node --test tests/private-name-guard.test.mjs",
+    "status": 0,
+    "ms": 1458
+  },
+  {
+    "id": "baseline:search-path",
+    "suite": "search-path",
+    "command": "PG_BIN=/usr/lib/postgresql/17/bin node --import tsx --test --test-concurrency=1 --test-timeout=240000 tests/attack-kit-search-path-gate-real-postgres.test.ts tests/attack-kit-search-path-waiver-real-postgres.test.ts",
+    "status": 0,
+    "ms": 345
+  },
+  {
+    "id": "LC1",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "widen-regex",
+    "what": "drop the end lookahead on test-file arguments",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 179,
+    "failed": [
+      "look-alike filenames do not count as exact test arguments"
+    ]
+  },
+  {
+    "id": "LC2",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "widen-regex",
+    "what": "any bare word counts as a package-script reference, not only pnpm <name>",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 179,
+    "failed": [
+      "keep-going runner names reach their package chains without covering unused scripts"
+    ]
+  },
+  {
+    "id": "LC3",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "flip-comparison",
+    "what": "CLI: uncovered.length > 0 -> < 0 (never fails)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 179,
+    "failed": [
+      "the CLI exits non-zero and names a test file no workflow command reaches"
+    ]
+  },
+  {
+    "id": "LC4",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "skip-loop",
+    "what": "do not recurse into tests/ subdirectories",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 174,
+    "failed": [
+      "nested tests are discovered and workflow-reachable script chains are followed"
+    ]
+  },
+  {
+    "id": "LC5",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "skip-loop",
+    "what": "ignore keep-going runner package names",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 176,
+    "failed": [
+      "keep-going runner names reach their package chains without covering unused scripts"
+    ]
+  },
+  {
+    "id": "LC6",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "skip-loop",
+    "what": "do not follow package-script chains",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 175,
+    "failed": [
+      "an unused package script cannot disguise an uncovered test",
+      "nested tests are discovered and workflow-reachable script chains are followed",
+      "keep-going runner names reach their package chains without covering unused scripts"
+    ]
+  },
+  {
+    "id": "LC7",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "flip-comparison",
+    "what": "visited.has -> !visited.has",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 177,
+    "failed": [
+      "an unused package script cannot disguise an uncovered test",
+      "nested tests are discovered and workflow-reachable script chains are followed",
+      "keep-going runner names reach their package chains without covering unused scripts"
+    ]
+  },
+  {
+    "id": "LC8",
+    "suite": "lane-coverage",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "flip-comparison",
+    "what": "block scalar ends at <= indentation -> < (block swallows the next step)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 172,
+    "failed": [
+      "a block command ends at the next step, so it cannot absorb a sibling's text"
+    ]
+  },
+  {
+    "id": "LC9",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "drop-key",
+    "what": "drop the monitoring-load lane from the expected mutation-lane shape",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 179,
+    "failed": [
+      "the CLI exits non-zero and names a test file no workflow command reaches",
+      "a mutation lane job marked continue-on-error is refused"
+    ]
+  },
+  {
+    "id": "LC10",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "drop-key",
+    "what": "stop requiring continue-on-error to be absent on mutation jobs",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 177,
+    "failed": [
+      "a mutation lane job marked continue-on-error is refused"
+    ]
+  },
+  {
+    "id": "LC11",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "skip-loop",
+    "what": "skip the per-step unconditional check",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 172,
+    "failed": [
+      "a conditional step inside a mutation lane job is refused"
+    ]
+  },
+  {
+    "id": "LC12",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "flip-comparison",
+    "what": "step timeout bound equal -> notEqual",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 172,
+    "failed": [
+      "the CLI exits non-zero and names a test file no workflow command reaches",
+      "a mutation lane job marked continue-on-error is refused"
+    ]
+  },
+  {
+    "id": "LC13",
+    "suite": "lane-shape",
+    "file": "scripts/check-test-lane-coverage.mjs",
+    "kind": "widen-regex",
+    "what": "mutation job key filter widened to any job",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 355,
+    "failed": []
+  },
+  {
+    "id": "Q1",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "flip-comparison",
+    "what": "future added date: ageDays < 0 -> < -1 (tomorrow accepted)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 360,
+    "failed": [
+      "a quarantine entry dated tomorrow is refused as a future date"
+    ]
+  },
+  {
+    "id": "Q2",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "drop-key",
+    "what": "accept entries with extra keys as long as the four exist",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 353,
+    "failed": [
+      "a quarantine entry with an extra key is refused"
+    ]
+  },
+  {
+    "id": "Q3",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "widen-regex",
+    "what": "issue reference unanchored",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 348,
+    "failed": [
+      "an issue must be exactly \\#<positive number>"
+    ]
+  },
+  {
+    "id": "Q4",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "widen-regex",
+    "what": "test identifier no longer pinned to tests/*.test.*",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 339,
+    "failed": [
+      "expired and issue-less quarantine entries fail validation"
+    ]
+  },
+  {
+    "id": "Q5",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "skip-loop",
+    "what": "duplicate detection disabled",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 343,
+    "failed": [
+      "a test quarantined twice is refused as a duplicate"
+    ]
+  },
+  {
+    "id": "Q6",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "drop-key",
+    "what": "owner no longer required to be non-blank",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 346,
+    "failed": [
+      "a blank owner is refused"
+    ]
+  },
+  {
+    "id": "Q7",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "flip-comparison",
+    "what": "expiry: ageDays > 14 -> > 140",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 364,
+    "failed": [
+      "expired and issue-less quarantine entries fail validation"
+    ]
+  },
+  {
+    "id": "Q8",
+    "suite": "quarantine",
+    "file": "scripts/run-tests-with-quarantine.mjs",
+    "kind": "skip-loop",
+    "what": "affected files are never run",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 214,
+    "failed": [
+      "quarantined failures leave the gate green while ordinary failures fail it"
+    ]
+  },
+  {
+    "id": "Q9",
+    "suite": "quarantine",
+    "file": "scripts/run-tests-with-quarantine.mjs",
+    "kind": "flip-comparison",
+    "what": "runGate: next !== 0 -> === 0",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 342,
+    "failed": [
+      "quarantined failures leave the gate green while ordinary failures fail it",
+      "known flaky",
+      "files with no quarantined test still run, and fail the gate, beside a quarantined file"
+    ]
+  },
+  {
+    "id": "Q10",
+    "suite": "quarantine",
+    "file": "scripts/run-tests-with-quarantine.mjs",
+    "kind": "flip-comparison",
+    "what": "runQuarantined: next !== 0 -> === 0 (report lane always green)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 337,
+    "failed": [
+      "the quarantined-test report fails when a quarantined test fails"
+    ]
+  },
+  {
+    "id": "Q11",
+    "suite": "quarantine",
+    "file": "scripts/run-tests-with-quarantine.mjs",
+    "kind": "flip-comparison",
+    "what": "runner: invalid quarantine errors.length > 0 -> < 0 (runs anyway)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 412,
+    "failed": [
+      "the quarantine runner refuses to run tests under an invalid list"
+    ]
+  },
+  {
+    "id": "Q12",
+    "suite": "quarantine",
+    "file": "scripts/check-test-quarantine.mjs",
+    "kind": "flip-comparison",
+    "what": "check CLI: errors.length > 0 -> < 0",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 356,
+    "failed": [
+      "the quarantine check CLI exits non-zero on an invalid list"
+    ]
+  },
+  {
+    "id": "Q13",
+    "suite": "quarantine",
+    "file": "scripts/run-tests-with-quarantine.mjs",
+    "kind": "skip-loop",
+    "what": "unaffected files are never run",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 366,
+    "failed": [
+      "files with no quarantined test still run, and fail the gate, beside a quarantined file"
+    ]
+  },
+  {
+    "id": "L1",
+    "suite": "loaders",
+    "file": "scripts/ci/check-test-loaders.mjs",
+    "kind": "flip-comparison",
+    "what": "preload after file accepted: importIndex > fileIndex -> <",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1429,
+    "failed": [
+      "every tracked package preloads tsx for TypeScript test invocations",
+      "direct node and quarantine invocations accept the same tsx preload",
+      "a preload in another chained invocation does not protect a plain node test",
+      "quoted shell operators stay in one invocation",
+      "another loader or a preload after the test file cannot replace --import tsx",
+      "JavaScript tests importing TypeScript require the preload while plain JS stays native",
+      "the CLI rejects an unloaded nested package and accepts its repaired command"
+    ]
+  },
+  {
+    "id": "L2",
+    "suite": "loaders",
+    "file": "scripts/ci/check-test-loaders.mjs",
+    "kind": "widen-regex",
+    "what": "any --import=<x> accepted as the tsx preload",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1395,
+    "failed": [
+      "an --import= preload of another module cannot replace --import=tsx"
+    ]
+  },
+  {
+    "id": "L3",
+    "suite": "loaders",
+    "file": "scripts/ci/check-test-loaders.mjs",
+    "kind": "skip-loop",
+    "what": "only the first chained invocation is checked",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1304,
+    "failed": [
+      "a preload in another chained invocation does not protect a plain node test"
+    ]
+  },
+  {
+    "id": "L4",
+    "suite": "loaders",
+    "file": "scripts/ci/check-test-loaders.mjs",
+    "kind": "drop-key",
+    "what": "nested package.json files no longer scanned",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1058,
+    "failed": [
+      "the CLI rejects an unloaded nested package and accepts its repaired command"
+    ]
+  },
+  {
+    "id": "L5",
+    "suite": "loaders",
+    "file": "scripts/ci/check-test-loaders.mjs",
+    "kind": "flip-comparison",
+    "what": "JS tests never inspected for TS imports",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1113,
+    "failed": [
+      "direct node and quarantine invocations accept the same tsx preload",
+      "JavaScript tests importing TypeScript require the preload while plain JS stays native",
+      "a missing JavaScript test file is a failure rather than an assumed safe import",
+      "multiline, side-effect and dynamic literal TypeScript imports are checked"
+    ]
+  },
+  {
+    "id": "L6",
+    "suite": "loaders",
+    "file": "scripts/ci/check-test-loaders.mjs",
+    "kind": "widen-regex",
+    "what": "newline no longer separates invocations",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1384,
+    "failed": [
+      "a preload in another chained invocation does not protect a plain node test"
+    ]
+  },
+  {
+    "id": "R1",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "flip-comparison",
+    "what": "lanes === null -> !== null",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 114,
+    "failed": [
+      "a docs-only change runs only the quick check and skips every heavy lane",
+      "a generated docs artifact is inert too, because it is written rather than read",
+      "install guides select the macOS updater lane before the inert docs class",
+      "a frontend change runs the complete suite, because every lane observes frontend paths",
+      "root markdown runs the component and updater lanes, because that is what reads it",
+      "markdown outside docs/ and the repository root belongs to its own area, not to docs",
+      "a release change runs the server, component and updater lanes",
+      "a database change runs the complete suite",
+      "a connector change runs the complete suite",
+      "workflow, lockfile and test changes run the complete suite",
+      "an unclassified path refuses to guess and runs the complete suite",
+      "one unclassified path in an otherwise light change still forces the complete suite",
+      "a rename is classified on both sides, so a move between classes cannot slip through",
+      "markdown under docs/ is inert, and that is the only markdown the docs class owns",
+      "deletions are classified, and deleting a heavy path still runs the complete suite",
+      "for every possible decision the fast path plus the merge gate is the complete suite",
+      "the quick check is present in every decision",
+      "every class declares its evidence and the unknown class cannot claim lanes",
+      "a shell-shaped file name stays data, and nothing is executed"
+    ]
+  },
+  {
+    "id": "R2",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "skip-loop",
+    "what": "full suite never sets the lanes",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 104,
+    "failed": [
+      "a frontend change runs the complete suite, because every lane observes frontend paths",
+      "a database change runs the complete suite",
+      "diff uncertainty of every kind routes to the complete suite"
+    ]
+  },
+  {
+    "id": "R3",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "widen-regex",
+    "what": "name-status code accepts any non-space",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 109,
+    "failed": [
+      "diff uncertainty of every kind routes to the complete suite"
+    ]
+  },
+  {
+    "id": "R4",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "flip-comparison",
+    "what": "empty diff is no longer uncertain",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 105,
+    "failed": [
+      "diff uncertainty of every kind routes to the complete suite"
+    ]
+  },
+  {
+    "id": "R5",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "drop-key",
+    "what": "release class drops the server lane",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 114,
+    "failed": [
+      "a release change runs the server, component and updater lanes"
+    ]
+  },
+  {
+    "id": "R6",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "drop-key",
+    "what": "rename source path no longer classified",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 111,
+    "failed": [
+      "a rename is classified on both sides, so a move between classes cannot slip through",
+      "both sides of a rename and every changed path are reported, not just the first"
+    ]
+  },
+  {
+    "id": "R7",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "flip-comparison",
+    "what": "gate runs the lanes that already ran",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 108,
+    "failed": [
+      "a docs-only change runs only the quick check and skips every heavy lane",
+      "install guides select the macOS updater lane before the inert docs class",
+      "a frontend change runs the complete suite, because every lane observes frontend paths",
+      "root markdown runs the component and updater lanes, because that is what reads it",
+      "a database change runs the complete suite",
+      "diff uncertainty of every kind routes to the complete suite",
+      "for every possible decision the fast path plus the merge gate is the complete suite"
+    ]
+  },
+  {
+    "id": "R8",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "widen-regex",
+    "what": "single * crosses directories",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 108,
+    "failed": [
+      "markdown outside docs/ and the repository root belongs to its own area, not to docs",
+      "the glob dialect matches whole paths and crosses directories only where asked"
+    ]
+  },
+  {
+    "id": "R9",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "skip-loop",
+    "what": "first-match order reversed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 110,
+    "failed": [
+      "install guides select the macOS updater lane before the inert docs class",
+      "a connector change runs the complete suite"
+    ]
+  },
+  {
+    "id": "R10",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "drop-key",
+    "what": "workflow class drops tests/**",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 101,
+    "failed": []
+  },
+  {
+    "id": "R11",
+    "suite": "routing",
+    "file": "scripts/ci-path-routing.mjs",
+    "kind": "flip-comparison",
+    "what": "a rename line with < 3 fields accepted",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 103,
+    "failed": []
+  },
+  {
+    "id": "V1",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "flip-comparison",
+    "what": "verifyEntry accepts multiple matches",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 32308,
+    "failed": []
+  },
+  {
+    "id": "V2",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "drop-key",
+    "what": "manifest entries may carry extra fields",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 23099,
+    "failed": [
+      "a manifest entry refuses extra schema fields",
+      "declared manifests name unique, tracked source snippets"
+    ]
+  },
+  {
+    "id": "V3",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "flip-comparison",
+    "what": "a nonzero test exit no longer counts as caught",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32046,
+    "failed": [
+      "a surviving mutation fails and names the check",
+      "maintenance audit reports every entry, distinguishes baselines, and preserves existing edits",
+      "a valid TypeScript mutation is applied and its test is run",
+      "a valid TSX mutation is applied and its test is run",
+      "a replacement containing dollar patterns is applied literally",
+      "a normal test-command exit kills its background child",
+      "the verifier runs green in a linked worktree",
+      "SIGKILL leaves only a dirty target, which can be restored without a wedged verifier",
+      "an empty replacement deletes a guard line and is caught",
+      "a test-created stray file is reported distinctly after restoration",
+      "a surviving second entry fails the manifest after a caught first entry",
+      "maintenance audit passes when every entry is caught"
+    ]
+  },
+  {
+    "id": "V4",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "widen-regex",
+    "what": "isInside accepts ../ traversal",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32937,
+    "failed": [
+      "a manifest file path cannot traverse out of the checkout",
+      "a manifest target cannot resolve through a symbolic-link parent"
+    ]
+  },
+  {
+    "id": "V5",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "skip-loop",
+    "what": "anchor validation visits no manifest",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32201,
+    "failed": [
+      "find must match exactly once, rejecting both zero and multiple matches",
+      "running one manifest fails when an anchor in any declared manifest is unresolved",
+      "anchor-only validation rejects stale manifests without a branch manifest or a clean tree"
+    ]
+  },
+  {
+    "id": "V6",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "skip-loop",
+    "what": "only the first manifest entry is mutated",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32386,
+    "failed": [
+      "a surviving second entry fails the manifest after a caught first entry"
+    ]
+  },
+  {
+    "id": "V7",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "drop-key",
+    "what": "no clean-tree check after the mutated test",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32253,
+    "failed": [
+      "a test-created stray file is reported distinctly after restoration"
+    ]
+  },
+  {
+    "id": "V8",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "drop-key",
+    "what": "whitespace-only control skipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 21197,
+    "failed": [
+      "a test command that fails on a whitespace-only edit is rejected",
+      "diff and source-grep test-command bypasses are rejected by text-only controls",
+      "declared manifests name unique, tracked source snippets"
+    ]
+  },
+  {
+    "id": "V9",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "flip-comparison",
+    "what": "baseline failures no longer stop the run",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32948,
+    "failed": [
+      "a failed baseline prevents later mutations from being applied"
+    ]
+  },
+  {
+    "id": "V10",
+    "suite": "verify-mutations-behavior",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "flip-comparison",
+    "what": "audit counts caught entries as failures",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 23539,
+    "failed": [
+      "maintenance audit passes when every entry is caught"
+    ]
+  },
+  {
+    "id": "V11",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "widen-regex",
+    "what": "timeout env accepts any string containing a digit",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 32879,
+    "failed": [
+      "a malformed mutation timeout is refused before any test runs"
+    ]
+  },
+  {
+    "id": "V12",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "drop-key",
+    "what": "text-only probe control skipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 21346,
+    "failed": [
+      "diff and source-grep test-command bypasses are rejected by text-only controls",
+      "declared manifests name unique, tracked source snippets"
+    ]
+  },
+  {
+    "id": "V13",
+    "suite": "verify-mutations",
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "kind": "flip-comparison",
+    "what": "baseline nonzero exit accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 23116,
+    "failed": [
+      "maintenance audit reports every entry, distinguishes baselines, and preserves existing edits",
+      "a test that is already failing is rejected before any mutation is applied",
+      "a failed baseline prevents later mutations from being applied",
+      "declared manifests name unique, tracked source snippets"
+    ]
+  },
+  {
+    "id": "M1",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "flip-comparison",
+    "what": "misnamed addition test flipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 7763,
+    "failed": [
+      "mismatched added manifest refuses with expected and found names",
+      "rename away from the derived filename refuses the destination",
+      "newline and unicode changed filename is compared without line parsing",
+      "misnamed PR addition still refuses with stale and fresh event bases",
+      "merge with a different second parent falls back to event base",
+      "merge without PR head falls back to event base",
+      "nonmerge PR checkout falls back to event base",
+      "nonmerge without PR head retains the complete event-base range"
+    ]
+  },
+  {
+    "id": "M2",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "widen-regex",
+    "what": "refusal diff includes modifications",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 6365,
+    "failed": [
+      "modified foreign manifest passes when matching manifest is absent",
+      "R1 modified foreign manifest is selected when own manifest is absent",
+      "real verifier runs every modified manifest without an own manifest",
+      "verifier loop keeps going after failure and fails the aggregate"
+    ]
+  },
+  {
+    "id": "M3",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "widen-regex",
+    "what": "selection glob recurses into subdirectories",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 8260,
+    "failed": [
+      "nested JSON files are not top-level manifests",
+      "nested JSON addition without own manifest preserves empty selection"
+    ]
+  },
+  {
+    "id": "M4",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "skip-loop",
+    "what": "changed manifests not checked for regular blobs",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 8226,
+    "failed": [
+      "modified foreign symlink refuses even when own manifest exists"
+    ]
+  },
+  {
+    "id": "M5",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "flip-comparison",
+    "what": "own manifest emitted only when absent",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 8476,
+    "failed": [
+      "matching changed manifest selects branch mutations",
+      "no changed manifest preserves absent-manifest behavior",
+      "rename into the derived filename passes",
+      "every branch slash is replaced and shell metacharacters stay literal",
+      "non-PR fallback keeps existing branch selection without a PR diff",
+      "R1 modified foreign manifest is selected when own manifest is absent",
+      "all changed manifests plus unchanged own manifest are selected once",
+      "nested JSON files are not top-level manifests",
+      "nested JSON addition without own manifest preserves empty selection",
+      "stale PR base excludes main manifests when own manifest is absent",
+      "stale PR base selects only the PR own manifest"
+    ]
+  },
+  {
+    "id": "M6",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "widen-regex",
+    "what": "any 1xxxxx mode is a regular blob",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 8411,
+    "failed": [
+      "symlink at own manifest path refuses a nonregular blob",
+      "modified foreign symlink refuses even when own manifest exists"
+    ]
+  },
+  {
+    "id": "M7",
+    "suite": "manifest-branch",
+    "file": "scripts/ci/check-mutation-manifest-branch.sh",
+    "kind": "flip-comparison",
+    "what": "merge topology trusted for a foreign second parent",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 7948,
+    "failed": [
+      "stale PR base excludes main manifests when own manifest is absent",
+      "stale PR base selects only the PR own manifest",
+      "misnamed PR addition still refuses with stale and fresh event bases",
+      "merge with a different second parent falls back to event base"
+    ]
+  },
+  {
+    "id": "P1",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "widen-regex",
+    "what": "any tests/ path resolves as a test file",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 896,
+    "failed": [
+      "a test reference must name a tests/*.test or *.spec file, not any file under tests/"
+    ]
+  },
+  {
+    "id": "P2",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "widen-regex",
+    "what": "evidence item no longer anchored at line start",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 898,
+    "failed": [
+      "prose that merely contains the word test: is not a test reference",
+      "an inline-code package script inside a bullet is not a reference",
+      "a marker at the end of a prose line is not a reference",
+      "a DB-VERIFIED line naming a package script is not a test reference",
+      "prose mentioning test: does not excuse a bullet with no evidence item",
+      "a real source change with prose false positives passes the wired checker",
+      "restoring the whole-line reference scan makes the false-positive cases fail"
+    ]
+  },
+  {
+    "id": "P3",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "flip-comparison",
+    "what": "missing reference flipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 927,
+    "failed": [
+      "existing test, CI job, and fenced command output references pass",
+      "references in fenced command output are ignored and a following reference is checked",
+      "tilde and indented fences do not create evidence references",
+      "an unclosed fence ignores the rest of its bullet and warns",
+      "a named Playwright spec is valid test evidence",
+      "prose that merely contains the word test: is not a test reference",
+      "an inline-code package script inside a bullet is not a reference",
+      "a marker at the end of a prose line is not a reference",
+      "a DB-VERIFIED line naming a package script is not a test reference",
+      "prose mentioning test: does not excuse a bullet with no evidence item",
+      "a continuation reference is still recognised after prose bullets",
+      "a real source change with prose false positives passes the wired checker",
+      "restoring the whole-line reference scan makes the false-positive cases fail"
+    ]
+  },
+  {
+    "id": "P4",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "skip-loop",
+    "what": "only the first reference in a bullet is checked",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 913,
+    "failed": [
+      "every reference in one bullet is checked, not only the first"
+    ]
+  },
+  {
+    "id": "P5",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "drop-key",
+    "what": "ci references never resolved",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 970,
+    "failed": [
+      "a renamed CI job reference fails",
+      "a line-start ci reference to an unknown job still fails",
+      "every reference in one bullet is checked, not only the first",
+      "a key nested inside a job is not a CI job reference"
+    ]
+  },
+  {
+    "id": "P6",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "flip-comparison",
+    "what": "stray report only when every added path is a report",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 920,
+    "failed": [
+      "an added report is refused even beside ordinary added files"
+    ]
+  },
+  {
+    "id": "P7",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "widen-regex",
+    "what": "any indented key counts as a workflow job",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 929,
+    "failed": [
+      "a key nested inside a job is not a CI job reference"
+    ]
+  },
+  {
+    "id": "P8",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "flip-comparison",
+    "what": "body size limit flipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 989,
+    "failed": [
+      "a very large body is rejected before its content is inspected"
+    ]
+  },
+  {
+    "id": "P9",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "drop-key",
+    "what": "src/db change without evidence section accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 905,
+    "failed": [
+      "a missing Evidence section on a src change fails"
+    ]
+  },
+  {
+    "id": "P10",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "widen-regex",
+    "what": "named test match accepts a prefix",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 917,
+    "failed": [
+      "a test reference must name the whole test, not a prefix of it"
+    ]
+  },
+  {
+    "id": "P11",
+    "suite": "pr-claims",
+    "file": "scripts/ci/check-pr-claims.mjs",
+    "kind": "skip-loop",
+    "what": "bullets after the first are ignored",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 914,
+    "failed": [
+      "fence tracking is required to ignore command output references"
+    ]
+  },
+  {
+    "id": "N1",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "widen-regex",
+    "what": "five-digit prefix joins a four-digit group",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 181,
+    "failed": [
+      "migrationNumber claims exactly four digits, and not a five-digit name's prefix",
+      "findDuplicateMigrationNumbers groups by number and reports every colliding file"
+    ]
+  },
+  {
+    "id": "N2",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "flip-comparison",
+    "what": "group.length > 1 -> < 1",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 189,
+    "failed": [
+      "findDuplicateMigrationNumbers groups by number and reports every colliding file",
+      "the check refuses a duplicate number in a copy of the real tree, and names both files",
+      "the check refuses every colliding pair at once, not only the first",
+      "two independently duplicated numbers are both reported, not just the first one",
+      "a colliding non-SQL file in the real tree is refused, not skipped by extension",
+      "a symlinked migration counts, because counting it is the safe direction",
+      "the checker's own entry point reports the collision and exits non-zero"
+    ]
+  },
+  {
+    "id": "N3",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "drop-key",
+    "what": "only .sql entries counted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 180,
+    "failed": [
+      "a colliding non-SQL file in the real tree is refused, not skipped by extension"
+    ]
+  },
+  {
+    "id": "N4",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "skip-loop",
+    "what": "no names grouped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 184,
+    "failed": [
+      "findDuplicateMigrationNumbers groups by number and reports every colliding file",
+      "the check refuses a duplicate number in a copy of the real tree, and names both files",
+      "the check refuses every colliding pair at once, not only the first",
+      "two independently duplicated numbers are both reported, not just the first one",
+      "a colliding non-SQL file in the real tree is refused, not skipped by extension",
+      "a symlinked migration counts, because counting it is the safe direction",
+      "the checker's own entry point reports the collision and exits non-zero"
+    ]
+  },
+  {
+    "id": "N5",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "flip-comparison",
+    "what": "CLI: !result.ok -> result.ok",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 195,
+    "failed": [
+      "the checker's own entry point reports the collision and exits non-zero"
+    ]
+  },
+  {
+    "id": "N6",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "flip-comparison",
+    "what": "CLI: unreadable directory treated as clean",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 199,
+    "failed": []
+  },
+  {
+    "id": "N7",
+    "suite": "migration-numbers",
+    "file": "scripts/ci/check-migration-numbers.mjs",
+    "kind": "skip-loop",
+    "what": "only the first duplicate group reported",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 201,
+    "failed": [
+      "two independently duplicated numbers are both reported, not just the first one"
+    ]
+  },
+  {
+    "id": "C1",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "flip-comparison",
+    "what": "shipped edits accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 3942,
+    "failed": [
+      "editing a shipped migration fails and adding a new migration is linted",
+      "the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection",
+      "baseline selection preserves the refusal for a later shipped migration edit"
+    ]
+  },
+  {
+    "id": "C2",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "widen-regex",
+    "what": "any 1xxxxx git mode is regular (symlink 120000 accepted)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4373,
+    "failed": [
+      "a symlink in the base tree's db/migrations is refused even when the working tree is clean"
+    ]
+  },
+  {
+    "id": "C3",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "skip-loop",
+    "what": "working-tree non-regular entries ignored",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 3920,
+    "failed": [
+      "the migration checker rejects every symlink under db/migrations",
+      "baseline mode still refuses symlinks and nested migration directories"
+    ]
+  },
+  {
+    "id": "C4",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "drop-key",
+    "what": "added migrations never linted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4371,
+    "failed": [
+      "editing a shipped migration fails and adding a new migration is linted",
+      "the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection",
+      "a Squawk that never ran is reported as a missing tool, not as a rejected migration",
+      "a Squawk that ran and rejected the SQL still reports a rejection"
+    ]
+  },
+  {
+    "id": "C5",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "flip-comparison",
+    "what": "squawk nonzero accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4338,
+    "failed": [
+      "the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection",
+      "a Squawk that ran and rejected the SQL still reports a rejection",
+      "Squawk rejection, dropped execution and stop halfway fail; a repaired retry passes",
+      "real Squawk rejects unsafe future SQL and a safe retry passes in baseline mode",
+      "real Squawk accepts only the seven maintenance findings and refuses extra SQL debt",
+      "accepted findings cannot turn malformed, empty, interrupted or failed lint into a pass"
+    ]
+  },
+  {
+    "id": "C6",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "drop-key",
+    "what": "squawk exec failure ignored",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4682,
+    "failed": [
+      "a Squawk that never ran is reported as a missing tool, not as a rejected migration",
+      "Squawk rejection, dropped execution and stop halfway fail; a repaired retry passes"
+    ]
+  },
+  {
+    "id": "C7",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "flip-comparison",
+    "what": "baseline accepts findings when any remain",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4559,
+    "failed": [
+      "real Squawk accepts only the seven maintenance findings and refuses extra SQL debt"
+    ]
+  },
+  {
+    "id": "C8",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "skip-loop",
+    "what": "base tree not scanned for symlinks",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 4704,
+    "failed": [
+      "a symlink in the base tree's db/migrations is refused even when the working tree is clean"
+    ]
+  },
+  {
+    "id": "C9",
+    "suite": "migration-changes",
+    "file": "scripts/check-migration-changes.mjs",
+    "kind": "widen-regex",
+    "what": "isMigration accepts any path",
+    "status": 0,
+    "verdict": "SURVIVED",
+    "ms": 4692,
+    "failed": []
+  },
+  {
+    "id": "D1",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "drop-key",
+    "what": "per-file sha256 check removed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1832,
+    "failed": [
+      "ledger refuses altered, missing, extra and reordered files"
+    ]
+  },
+  {
+    "id": "D2",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "drop-key",
+    "what": "entry count check removed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2219,
+    "failed": [
+      "ledger refuses altered, missing, extra and reordered files"
+    ]
+  },
+  {
+    "id": "D3",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "skip-loop",
+    "what": "per-entry loop skipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2121,
+    "failed": [
+      "ledger refuses altered, missing, extra and reordered files",
+      "ledger refuses a pinned entry whose kind was changed",
+      "ledger refuses a pinned entry whose order number was edited"
+    ]
+  },
+  {
+    "id": "D4",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "drop-key",
+    "what": "kind check removed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2441,
+    "failed": [
+      "ledger refuses a pinned entry whose kind was changed"
+    ]
+  },
+  {
+    "id": "D5",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "drop-key",
+    "what": "digest check removed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2280,
+    "failed": [
+      "ledger refuses a committed digest that does not match its entries"
+    ]
+  },
+  {
+    "id": "D6",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "drop-key",
+    "what": "version check removed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2476,
+    "failed": [
+      "ledger refuses an unknown ledger version"
+    ]
+  },
+  {
+    "id": "D7",
+    "suite": "migration-ledger",
+    "file": "scripts/verify-migration-ledger.mjs",
+    "kind": "drop-key",
+    "what": "order-number check removed",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2156,
+    "failed": [
+      "ledger refuses a pinned entry whose order number was edited"
+    ]
+  },
+  {
+    "id": "D8",
+    "suite": "migration-ledger",
+    "file": "scripts/generate-migration-ledger.mjs",
+    "kind": "flip-comparison",
+    "what": "empty migration directory accepted",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2308,
+    "failed": [
+      "ledger collection refuses an empty migration directory"
+    ]
+  },
+  {
+    "id": "D9",
+    "suite": "migration-ledger",
+    "file": "scripts/generate-migration-ledger.mjs",
+    "kind": "widen-regex",
+    "what": "any name containing .sql enters the ledger",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 2168,
+    "failed": [
+      "only files ending in .sql enter the ledger"
+    ]
+  },
+  {
+    "id": "PN1",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "flip-comparison",
+    "what": "fork test flipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1468,
+    "failed": [
+      "a GitHub Actions run of this repository with no list fails closed, and says what to set",
+      "a fork pull request skips with its reason, because it can never receive the secret",
+      "skipDecision separates a local run, a fork and a same-repository run"
+    ]
+  },
+  {
+    "id": "PN2",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "drop-key",
+    "what": "filename matches dropped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1538,
+    "failed": [
+      "guard finds case-insensitive content and filename matches without disclosing the term"
+    ]
+  },
+  {
+    "id": "PN3",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "drop-key",
+    "what": "content match becomes case-sensitive",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1179,
+    "failed": [
+      "guard matches content whose case differs from both the term and its lowercase"
+    ]
+  },
+  {
+    "id": "PN4",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "skip-loop",
+    "what": "only the first tracked file scanned",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 851,
+    "failed": [
+      "the guard is driven against the real repository checkout, not a fixture",
+      "guard finds case-insensitive content and filename matches without disclosing the term"
+    ]
+  },
+  {
+    "id": "PN5",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "flip-comparison",
+    "what": "GITHUB_ACTIONS check flipped",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1405,
+    "failed": [
+      "guard skips cleanly when no private-name list is configured",
+      "a GitHub Actions run of this repository with no list fails closed, and says what to set",
+      "a fork pull request skips with its reason, because it can never receive the secret",
+      "an unreadable or absent event payload is not treated as a fork",
+      "skipDecision separates a local run, a fork and a same-repository run",
+      "a configured-but-blank list is treated as no list, not as a clean scan",
+      "a push to main fails closed and says it is a push, not an unreadable payload",
+      "a pull request payload without a base repository cannot buy a fork skip"
+    ]
+  },
+  {
+    "id": "PN6",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "flip-comparison",
+    "what": "missing head OR base -> AND (fail-open on a missing base)",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1500,
+    "failed": [
+      "a pull request payload without a base repository cannot buy a fork skip"
+    ]
+  },
+  {
+    "id": "PN7",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "flip-comparison",
+    "what": "absent payload treated as skippable",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1442,
+    "failed": [
+      "an unreadable or absent event payload is not treated as a fork"
+    ]
+  },
+  {
+    "id": "PN8",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "flip-comparison",
+    "what": "CLI: matches.length === 0 -> >= 0",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1518,
+    "failed": [
+      "the guard is driven against the real repository checkout, not a fixture",
+      "guard finds case-insensitive content and filename matches without disclosing the term",
+      "guard matches content whose case differs from both the term and its lowercase",
+      "guard scans every line of a file, not only the first"
+    ]
+  },
+  {
+    "id": "PN9",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "skip-loop",
+    "what": "only the first line of each file scanned",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1129,
+    "failed": [
+      "guard scans every line of a file, not only the first"
+    ]
+  },
+  {
+    "id": "PN10",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "drop-key",
+    "what": "list file read failure falls back silently",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1423,
+    "failed": [
+      "an unreadable configured list file fails instead of skipping"
+    ]
+  },
+  {
+    "id": "PN11",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "widen-regex",
+    "what": "event name printed from any characters",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1417,
+    "failed": [
+      "a push to main fails closed and says it is a push, not an unreadable payload"
+    ]
+  },
+  {
+    "id": "PN12",
+    "suite": "private-names",
+    "file": "scripts/check-private-names.mjs",
+    "kind": "flip-comparison",
+    "what": "no-list repository run passes",
+    "status": 1,
+    "verdict": "caught",
+    "ms": 1354,
+    "failed": [
+      "a GitHub Actions run of this repository with no list fails closed, and says what to set",
+      "an unreadable or absent event payload is not treated as a fork",
+      "a push to main fails closed and says it is a push, not an unreadable payload"
+    ]
+  }
+]

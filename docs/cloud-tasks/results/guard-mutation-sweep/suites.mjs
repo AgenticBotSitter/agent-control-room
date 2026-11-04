@@ -1,0 +1,16 @@
+export const suites = {
+  "lane-coverage": "node --test tests/check-test-lane-coverage.test.mjs",
+  "lane-shape": "node --test tests/check-test-lane-coverage.test.mjs && node --test --test-name-pattern='^the CI job gates verification on a branch manifest and joins the merge gate$' tests/verify-mutation-checks.test.mjs",
+  "quarantine": "node --test tests/test-quarantine.test.mjs",
+  "loaders": "node --test tests/package-test-loaders.test.mjs",
+  "routing": "node --test tests/ci-path-routing.test.mjs",
+  "verify-mutations": "node --test tests/verify-mutation-checks.test.mjs",
+  "verify-mutations-behavior": "node --test --test-skip-pattern='^declared manifests name unique, tracked source snippets$' tests/verify-mutation-checks.test.mjs",
+  "manifest-branch": "node --test tests/mutation-manifest-branch.test.mjs",
+  "pr-claims": "node --test tests/check-pr-claims.test.mjs",
+  "migration-numbers": "node --test tests/migration-number-check.test.mjs",
+  "migration-changes": "npm exec --yes --package=squawk-cli@2.61.0 -- node --import tsx --test tests/migration-change-check.test.mjs tests/migration-lint-baseline.test.mjs",
+  "migration-ledger": "node --test tests/postgres-production-ledger.test.mjs",
+  "private-names": "node --test tests/private-name-guard.test.mjs",
+  "search-path": "PG_BIN=/usr/lib/postgresql/17/bin node --import tsx --test --test-concurrency=1 --test-timeout=240000 tests/attack-kit-search-path-gate-real-postgres.test.ts tests/attack-kit-search-path-waiver-real-postgres.test.ts",
+};
