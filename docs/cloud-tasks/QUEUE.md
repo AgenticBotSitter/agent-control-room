@@ -12,3 +12,8 @@ b5-transport-digest-binding cloud-base/b5-transport-digest-binding
 b5-device-file-custody cloud-base/b5-device-file-custody
 b5-closed-interval-oracle cloud-base/b5-closed-interval-oracle
 selfcheck-split-selector cloud-base/selfcheck-split-selector
+linux-loop-postgres-verification cloud-base/linux-loop-postgres-verification
+linux-b5-lanes-verification cloud-base/linux-b5-lanes-verification
+linux-loop-component-soak cloud-base/linux-loop-component-soak
+monitor-umask-diagnosis cloud-base/monitor-umask-diagnosis
+mutation-timeout-diagnosis cloud-base/mutation-timeout-diagnosis
