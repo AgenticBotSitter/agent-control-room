@@ -910,7 +910,17 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
       verdict.state = "incomplete"; verdict.reasons.push(codeOf(error));
     }
-    finally { owner.dispose(); }
+    finally {
+      try {
+        if (preflight.sourceCheck) {
+          await mkdir(evidenceDir, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
+          await chmod(evidenceDir, 0o700); wroteEvidence = true;
+          await preflight.sourceCheck(join(config.scratchRoot, "evidence/b11-source-comparison.json"));
+        }
+      }
+      catch { verdict.state = "incomplete"; verdict.reasons.push("B11_FOREIGN_WRITE"); }
+      owner.dispose();
+    }
   }
   if (cleanupResult) {
     cleanupResult.overrunMs = owner.capAt() === undefined ? 0 : Math.max(0, Date.now() - owner.capAt()!);

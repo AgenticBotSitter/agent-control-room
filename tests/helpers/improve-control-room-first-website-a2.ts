@@ -109,9 +109,9 @@ const carrierSchema = z.object({ modulePath: z.string(), moduleSha256: hash,
 /** Hash before import, then use the real tools loader and product adapter constructor.
  * Approved interpreter digest is independent input, never derived from the carrier.
  */
-export async function loadB5A2V1(root: string, approvedPythonSha256: string) {
+export async function loadB5A2V1(root: string, approvedPythonSha256: string, rootName = /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u) {
   await canonical(root, undefined, true);
-  need(/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1)), "B5_A2_ROOT");
+  need(rootName.test(root.slice(dirname(root).length + 1)), "B5_A2_ROOT");
   const carrierFile = join(root, "config/contract-cleanup.json");
   const carrier = carrierSchema.parse(await json(carrierFile, root));
   need(carrier.modulePath === join(root, "tools/loop/bridge/a2-contract.mjs"), "B5_A2_MODULE_PATH");
@@ -334,9 +334,9 @@ async function checkedEntry(root: string, approved: string, configuration: LoopA
 /** Actual chain_emit reader for a separately qualified run; status only. No
  * intake, Start or launcher dispatch. The loader rechecks all fixed pins first.
  */
-export async function readB5ChainStatusV1(root: string, approved: string, runId: string) {
+export async function readB5ChainStatusV1(root: string, approved: string, runId: string, rootName?: RegExp) {
   need(runName.test(runId), "B5_A2_RUN_ID");
-  const { adapter, configuration } = await loadB5A2V1(root, approved);
+  const { adapter, configuration } = await loadB5A2V1(root, approved, rootName);
   try {
     const result = await checkedEntry(root, approved, configuration, ["status", runId, "--json"]);
     return emittedSchema.parse(parseStrictJsonV1(result.stdout, { maxBytes: 1 << 20 }));
@@ -344,8 +344,8 @@ export async function readB5ChainStatusV1(root: string, approved: string, runId:
 }
 
 /** Only explicit calls spawn; imports are inert. */
-async function qualify(root: string, approved: string) {
-  const { adapter, configuration } = await loadB5A2V1(root, approved);
+export async function qualify(root: string, approved: string, rootName?: RegExp) {
+  const { adapter, configuration } = await loadB5A2V1(root, approved, rootName);
   try {
     const result = await checkedEntry(root, approved, configuration, ["bind-input", "--help"]);
     need(/bind-input/u.test(result.stdout), "B5_A2_BIND_HELP");
@@ -353,8 +353,11 @@ async function qualify(root: string, approved: string) {
   } finally { await adapter.close(); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  if (process.argv[2] !== "--qualify" || process.argv.length !== 5) throw new Error("B5_A2_QUALIFICATION_ARGUMENTS");
-  await qualify(process.argv[3], process.argv[4]);
+  const args = process.argv.slice(2);
+  if (args[0] !== "--qualify" || ![3, 5].includes(args.length)
+    || (args.length === 5 && (args[3] !== "--profile" || !["first-website", "model-eval"].includes(args[4]))))
+    throw new Error("B5_A2_QUALIFICATION_ARGUMENTS");
+  await qualify(args[1], args[2], args[4] === "model-eval" ? /^acr-b11-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u : undefined);
 }
 
 

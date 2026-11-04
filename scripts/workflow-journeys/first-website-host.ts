@@ -39,6 +39,9 @@ import { B5RefusalV1, B5_PORTS, B5_REQUEST_TEXT, B5_SNAPSHOT_TABLES, B5_SNAPSHOT
   preflightFirstWebsiteV1, probeBindInputCapabilityV1, withFirstWebsiteHostV1,
   type FirstWebsiteConfigV1, type FirstWebsiteHostV1 } from "../../tests/helpers/improve-control-room-first-website";
 
+async function resolveJourneyProfileV1(root: string, selection?: string) {
+  return (await import("../../tests/helpers/improve-control-room-model-eval")).resolveJourneyProfileV1(root, selection);
+}
 const exec = promisify(execFile);
 const origin = "http://127.0.0.1:60460";
 const assemblyWrapper = 'export { createFirstWebsiteHostV1 } from "../product/scripts/workflow-journeys/first-website-host.ts";\n';
@@ -138,9 +141,10 @@ export async function withFirstWebsiteOwnerCodeV1<T>(host: FirstWebsiteHostV1, u
 
 /** Read-only packet checks finish before PG, listeners or recovery acquisition. */
 export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1> | undefined,
-  signalOwner?: import("../../tests/helpers/improve-control-room-first-website").FirstWebsiteCleanupOwnerV1) {
+  signalOwner?: import("../../tests/helpers/improve-control-room-first-website").FirstWebsiteCleanupOwnerV1, selection?: string) {
   need(input, "B5_A2_QUALIFICATION_REQUIRED");
   const config = firstWebsiteConfigSchemaV1.parse(input), root = config.scratchRoot;
+  const profile = await resolveJourneyProfileV1(root, selection);
   const st = await regular(root, root, true);
   need((st.mode & 0o077) === 0, "B5_HOST_CUSTODY");
   need(config.product.root === join(root, "product") && config.a2.contractFile === join(root, "config/contract-cleanup.json"), "B5_HOST_LAYOUT");
@@ -148,7 +152,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     && config.ports.postgresBase === B5_PORTS.postgresBase, "B5_PORT_RESERVATION");
 
   const preflight = await preflightFirstWebsiteV1({ configFile: join(root, "config/b5.json"),
-    evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts"), signalOwner, existingEvidence: !!signalOwner });
+    evidenceDir: join(root, "evidence"), cliFile: join(config.product.root, "scripts/workflow-journeys/first-website-proof.ts"), signalOwner, existingEvidence: !!signalOwner, profile });
   need(JSON.stringify(preflight.config) === JSON.stringify(config), "B5_HOST_CONFIG_CHANGED");
   const transport = config.device.origin === origin ? undefined : await loadB5TransportV1(
     config.device.transportQualification, root, config.device.origin, preflight.digests.transport);
@@ -165,7 +169,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
   need(config.product.candidateRevision === handoff.productPin, "B5_HOST_PRODUCT_PIN");
   need(await readFile(config.assembly.module, "utf8") === assemblyWrapper, "B5_HOST_WRAPPER");
   await checkBuildSource(config.product.root, root);
-  const loaded = await loadB5A2V1(root, handoff.pythonSha256);
+  const loaded = await loadB5A2V1(root, handoff.pythonSha256, profile.rootName);
   try {
     const c = loaded.configuration;
     need(c.toolingRevision === config.a2.toolingRevision && loaded.adapter.schemaDigest === config.a2.schemaDigest
@@ -192,7 +196,7 @@ export async function validateFirstWebsiteHostV1(input: Readonly<FirstWebsiteCon
     const assets = await loadPrivateClientAssets(join(config.product.root, "dist-vps/client"));
     need(assets.digest === config.product.assetsDigest, "B5_HOST_ASSETS");
     for (const file of ["runtime.js", "index.js"]) await regular(join(config.product.root, "dist-vps/server", file), root);
-    return { config, handoff, assets, entry, transport, digests: preflight.digests,
+    return { config, handoff, assets, entry, transport, profile, digests: preflight.digests,
       rehearsal: preflight.rehearsal, configDigest: b5Bytes(await readFile(join(root, "config/b5.json"))),
       handoffDigest: b5Bytes(await readFile(join(root, "config/b5-handoff.json"))) };
   } finally { await loaded.adapter.close(); }
@@ -226,9 +230,15 @@ async function checkBuildSource(product: string, root: string) {
 /** Explicit F03a completion of a frozen packet. The product must already be
  * built from its reviewed clean candidate; this writes only new assembly inputs.
  */
-export async function prepareFirstWebsiteAssemblyV1(root: string) {
+export async function prepareFirstWebsiteAssemblyV1(root: string, selection?: string) {
   const rootStat = await regular(root, root, true);
-  need(/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1)), "B5_SCRATCH_ROOT");
+  if (selection !== undefined) {
+    const { FIRST_WEBSITE_PROFILE, MODEL_EVAL_ROOT } = await import("../../tests/helpers/improve-control-room-model-eval");
+    need(["first-website", "model-eval"].includes(selection), "B11_PROFILE_MISMATCH");
+    need((selection === "model-eval" ? MODEL_EVAL_ROOT : FIRST_WEBSITE_PROFILE.rootName).test(root.slice(dirname(root).length + 1)), "B5_SCRATCH_ROOT");
+  }
+  const profile = await resolveJourneyProfileV1(root, selection);
+  need(profile.rootName.test(root.slice(dirname(root).length + 1)), "B5_SCRATCH_ROOT");
   need((rootStat.mode & 0o077) === 0, "B5_HOST_CUSTODY");
   const handoff = handoffSchema.parse(await json(join(root, "config/b5-handoff.json"), root));
   for (const [name, hash] of Object.entries(handoff.hashes)) {
@@ -244,7 +254,7 @@ export async function prepareFirstWebsiteAssemblyV1(root: string) {
   await regular(join(product, "scripts/workflow-journeys/first-website-host.ts"), root);
   await checkBuildSource(product, root);
   const assets = await loadPrivateClientAssets(join(product, "dist-vps/client"));
-  const loaded = await loadB5A2V1(root, handoff.pythonSha256);
+  const loaded = await loadB5A2V1(root, handoff.pythonSha256, profile.rootName);
   try {
     const assembly = join(root, "config/first-website-host.mjs"), transport = join(root, "config/b5-loopback-transport.json");
     const wrapper = assemblyWrapper;
@@ -257,7 +267,7 @@ export async function prepareFirstWebsiteAssemblyV1(root: string) {
       ports: { product: B5_PORTS.product, preview: B5_PORTS.preview, postgresBase: B5_PORTS.postgresBase },
       device: { origin, transportQualification: transport, actor: "owner" },
       settingsFile: c.settingsFile, availabilityFile: c.availabilityFile, authorizationEvidence: join(root, "config/authorization.json"),
-      requestText: B5_REQUEST_TEXT, faultInputFile: join(root, "config/fault-input.txt"), reviewInputFile: join(root, "config/review-input.txt") });
+      requestText: profile.requestText, faultInputFile: join(root, "config/fault-input.txt"), reviewInputFile: join(root, "config/review-input.txt") });
     for (const file of [assembly, transport, join(root, "config/b5.json")])
       need(!await lstat(file).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; }), "B5_HOST_OUTPUT_EXISTS");
     await writeFile(assembly, wrapper, { flag: "wx", mode: 0o600 });
@@ -357,7 +367,7 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
   signal.throwIfAborted();
   const prepared = await validateFirstWebsiteHostV1(input, hooks.signalOwner);
   signal.throwIfAborted();
-  const { config, handoff, assets, entry } = prepared, root = config.scratchRoot;
+  const { config, handoff, assets, entry, profile } = prepared, root = config.scratchRoot;
   if (hooks.signalOwner) need(typeof hooks.signalOwner.registerStopPostgres === "function", "B5_HOST_PG_STOP_PORT_REQUIRED");
   const pgOwnership = hooks.signalOwner ? { signalOwner: "caller" as const, cleanup: () => hooks.signalOwner!.cleanup() } : {};
   if (prepared.transport) {
@@ -424,7 +434,9 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
     need(dirty.stdout === "", "B5_PRODUCT_DIRTY");
     await checkBuildSource(config.product.root, root);
     activeSignal.throwIfAborted();
-    const loaded = await loadB5A2V1(root, handoff.pythonSha256);
+    const currentProfile = await resolveJourneyProfileV1(root, profile.id);
+    need(currentProfile.id === profile.id, "B11_PROFILE_MISMATCH");
+    const loaded = await loadB5A2V1(root, handoff.pythonSha256, currentProfile.rootName);
     const adapter = loaded.adapter;
     let web: ReturnType<typeof pool> | undefined, coordinator: ReturnType<typeof pool> | undefined;
     let application: ReturnType<typeof createMacLocalWebProcessV1> | undefined;
@@ -690,13 +702,21 @@ async function acquireFirstWebsiteHostV1(input: Readonly<FirstWebsiteConfigV1>, 
 // The assembly entry is separate from the later journey controller. It never
 // starts intake, binds inputs or claims device/provider readiness.
 async function main() {
+  let selection: string | undefined;
+  const profileIndex = process.argv.indexOf('--profile');
+  if (profileIndex !== -1) {
+    selection = process.argv[profileIndex + 1];
+    need(selection && ['first-website', 'model-eval'].includes(selection), 'B11_PROFILE_MISMATCH');
+    process.argv.splice(profileIndex, 2);
+  }
   if (process.argv.length === 4 && process.argv[2] === "--prepare") {
-    await prepareFirstWebsiteAssemblyV1(process.argv[3]);
+    await prepareFirstWebsiteAssemblyV1(process.argv[3], selection);
     console.log("RESULT: PASS B5 strict local assembly config written (assembly only)"); return;
   }
   const [flag, configFile, evidenceFlag, evidenceDir] = process.argv.slice(2);
   need(flag === "--config" && configFile && evidenceFlag === "--evidence-dir" && evidenceDir && process.argv.length === 6, "B5_USAGE");
-  const preflight = await preflightFirstWebsiteV1({ configFile, evidenceDir,
+  const profile = await resolveJourneyProfileV1(dirname(dirname(configFile)), selection);
+  const preflight = await preflightFirstWebsiteV1({ configFile, evidenceDir, profile,
     cliFile: join(dirname(dirname(configFile)), "product/scripts/workflow-journeys/first-website-proof.ts") });
   const abort = new AbortController(), interrupt = () => abort.abort(new B5RefusalV1("B5_HOST_INTERRUPTED"));
   process.on("SIGINT", interrupt); process.on("SIGTERM", interrupt);

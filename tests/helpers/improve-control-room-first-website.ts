@@ -208,13 +208,20 @@ export async function requireB5RecipesV1(checks: unknown, root: string): Promise
   }
 }
 
+export type FirstWebsitePolicyV1 = {
+  rootName: RegExp; requestText: string; requiredRisk: { readonly categories: readonly string[]; readonly slots: readonly string[] };
+  validateRecipes(checks: unknown, root: string): Promise<void>;
+  validateInputs?(root: string, settings: unknown, availability: unknown, identities?: unknown): Promise<void>;
+  verifySources?(root: string, comparisonFile?: string): Promise<void>;
+};
 export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
+  sourceCheck?: (comparisonFile?: string) => Promise<void>;
   controllerOwner?: import("../../scripts/workflow-journeys/first-website-controller").B5ControllerOwnerV1;
   capture:B5CaptureQualificationV1; providers: B5ProviderProvenanceV1; digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only"; realEvidence?: B5RealEvidenceQualificationV1; rehearsal?: B5RehearsalPacketV1 };
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
 export async function preflightFirstWebsiteV1(input: { configFile: string; evidenceDir: string; cliFile: string;
-  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1; existingEvidence?: boolean }): Promise<FirstWebsitePreflightV1> {
+  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1; existingEvidence?: boolean; profile?: FirstWebsitePolicyV1 }): Promise<FirstWebsitePreflightV1> {
   const uid = input.uid ?? process.getuid?.() ?? refuse("B5_EXECUTION_IDENTITY_UNAVAILABLE");
   await canonical(input.configFile, "file", "B5_CONFIG_PATH");
   let raw: unknown;
@@ -222,10 +229,10 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   const parsed = firstWebsiteConfigSchemaV1.safeParse(raw);
   if (!parsed.success) refuse("B5_CONFIG_INVALID", parsed.error.issues.map(issue => issue.path.join(".")).join(","));
   const config = parsed.data!;
-  if (config.requestText !== B5_REQUEST_TEXT) refuse("B5_REQUEST_TEXT_CHANGED");
+  if (config.requestText !== (input.profile?.requestText ?? B5_REQUEST_TEXT)) refuse("B5_REQUEST_TEXT_CHANGED");
   // Scratch root: unique, owned, non-Git, and the only home of every disposable input.
   const root = config.scratchRoot, rootStat = await canonical(root, "directory", "B5_SCRATCH_ROOT");
-  if (!/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1))) refuse("B5_SCRATCH_ROOT", "name");
+  if (!(input.profile?.rootName ?? /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u).test(root.slice(dirname(root).length + 1))) refuse("B5_SCRATCH_ROOT", "name");
   if (rootStat.uid !== uid) refuse("B5_EXECUTION_IDENTITY_MISMATCH", "scratch owner");
   if (await lstat(join(root, ".git")).then(() => true, () => false)) refuse("B5_SCRATCH_ROOT", "git");
   const evidenceDir = join(root, "evidence");
@@ -260,11 +267,13 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   let settings: { project?: { risk_categories?: unknown; test_checks?: unknown }; roles?: { risk_reviews?: unknown; code_reviews?: unknown } };
   try { settings = JSON.parse(await readFile(config.settingsFile, "utf8")); } catch { refuse("B5_SETTINGS_INVALID", "json"); }
   const categories = settings!.project?.risk_categories, slots = settings!.roles?.risk_reviews, checks = settings!.project?.test_checks;
-  if (!Array.isArray(categories) || !B5_REQUIRED_RISK.categories.every(name => categories.includes(name))) refuse("B5_RISK_CATEGORIES");
+  if (!Array.isArray(categories) || !(input.profile?.requiredRisk ?? B5_REQUIRED_RISK).categories.every(name => categories.includes(name))) refuse("B5_RISK_CATEGORIES");
   const slotRoles = Array.isArray(slots) ? slots.map(slot => (slot as { role?: unknown })?.role) : [];
-  if (!B5_REQUIRED_RISK.slots.every(role => slotRoles.includes(role))) refuse("B5_RISK_SLOTS");
+  if (!(input.profile?.requiredRisk ?? B5_REQUIRED_RISK).slots.every(role => slotRoles.includes(role))) refuse("B5_RISK_SLOTS");
   if (!Array.isArray(settings!.roles?.code_reviews) || settings!.roles!.code_reviews.length !== 2) refuse("B5_CODE_REVIEW_SLOTS");
-  await requireB5RecipesV1(checks, root);
+  if (input.profile?.validateInputs) await input.profile.validateInputs(root, settings,
+    JSON.parse(await readFile(config.availabilityFile, 'utf8')));
+  await (input.profile?.validateRecipes ?? requireB5RecipesV1)(checks, root);
   // Qualification bytes are independently supplied, confined and hashed above. No default real provider.
   let qualification: { providers?: unknown; capture?:unknown; realEvidence?:unknown; rehearsal?: { packetFile: string; packetSha256: string } };
   const providerBytes = await readFirstWebsitePrivateBytesV1(config.a2.qualificationEvidence, root);
@@ -283,6 +292,8 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     const marker=z.object({version:z.literal(1),providers:z.literal("fixture"),reason:z.literal("B5_PROVIDER_FIXTURE")}).passthrough().safeParse(staged);
     if(!marker.success || providers.classification !== "fixture" || providers.transport !== "scripted") refuse("B5_PROVIDER_PROVENANCE_MISMATCH");
   }
+  if (input.profile?.validateInputs) await input.profile.validateInputs(root, settings,
+    JSON.parse(await readFile(config.availabilityFile, 'utf8')), providers.lineup);
   const capture = b5CaptureQualificationSchemaV1.safeParse(qualification!.capture);
   if (!capture.success || capture.data.qualificationDigest !== digests.transport) refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
   if (!loopback && capture.data!.approval !== "approved") refuse("B5_CAPTURE_MODE_UNAPPROVED");
@@ -293,7 +304,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
       || config.maxDurationMs > 600_000) refuse("B5_REHEARSAL_PACKET_INVALID");
     if (b5Bytes(await readFirstWebsitePrivateBytesV1(r.data!.packetFile, root)) !== r.data!.packetSha256)
       refuse("B5_REHEARSAL_PACKET_CHANGED");
-    rehearsal = await requireFirstWebsiteRehearsalPart2V1(r.data!.packetFile);
+    rehearsal = await requireFirstWebsiteRehearsalPart2V1(r.data!.packetFile, input.profile?.rootName);
     if (rehearsal.root !== root || rehearsal.toolingRevision !== config.a2.toolingRevision
       || rehearsal.productRevision !== config.product.candidateRevision) refuse("B5_REHEARSAL_PACKET_CHANGED");
   }
@@ -312,7 +323,9 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   if (config.ports.product !== B5_PORTS.product || config.ports.preview !== B5_PORTS.preview || config.ports.postgresBase !== B5_PORTS.postgresBase
     || ports.some(port => B5_PROTECTED_PORTS.includes(port))) refuse("B5_PORT_RESERVATION");
   for (const port of ports) if (!await (input.probe ?? portFree)(port)) refuse("B5_PORT_BUSY", String(port));
-  return { config, uid, evidenceDir, providers, capture:capture.data!, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
+  await input.profile?.verifySources?.(root);
+  return { ...(input.profile?.verifySources ? { sourceCheck: (comparisonFile?: string) => input.profile!.verifySources!(root, comparisonFile) } : {}),
+    config, uid, evidenceDir, providers, capture:capture.data!, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
     phoneTransport: loopback ? "loopback-only" : "tailscale-serve", ...(realEvidence ? {realEvidence} : {}), ...(rehearsal ? { rehearsal } : {}) };
 }
 
@@ -327,11 +340,11 @@ export const b5RehearsalPacketSchemaV1 = z.object({
     "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"]).nullable(),sha256:sha256.nullable()}).strict().refine(b=>(b.executablePath === null) === (b.sha256 === null)),
 }).strict();
 export type B5RehearsalPacketV1 = z.infer<typeof b5RehearsalPacketSchemaV1>;
-export async function requireFirstWebsiteRehearsalPart2V1(packet?: unknown): Promise<B5RehearsalPacketV1> {
+export async function requireFirstWebsiteRehearsalPart2V1(packet?: unknown, rootName = /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u): Promise<B5RehearsalPacketV1> {
   if (packet === undefined) refuse("B5_A2_QUALIFICATION_REQUIRED");
   if (typeof packet !== "string" || !absolute.safeParse(packet).success) refuse("B5_REHEARSAL_PACKET_INVALID");
   const file = packet as string, root = dirname(dirname(file));
-  if (file !== join(root, "config/b5-rehearsal.json") || !/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1)))
+  if (file !== join(root, "config/b5-rehearsal.json") || !rootName.test(root.slice(dirname(root).length + 1)))
     refuse("B5_REHEARSAL_PACKET_INVALID");
   let parsed;
   try { parsed = b5RehearsalPacketSchemaV1.safeParse(JSON.parse((await readFirstWebsitePrivateBytesV1(file, root)).toString("utf8"))); }

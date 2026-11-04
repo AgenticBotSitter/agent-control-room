@@ -468,6 +468,9 @@ jobs:
         run: node --test tests/run-scripts-keep-going.test.mjs
       - name: Install the frozen dependency graph
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prove second project stage and recipe guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-second-project
       - name: Verify the mutation workflow guards
         run: node scripts/run-tests-with-quarantine.mjs --test tests/verify-mutation-checks.test.mjs
       - name: Test the generic VPS front-door installer
