@@ -1,0 +1,6 @@
+2026-11-04T15:21Z claimed cloud/b8-named-presets from base 1828b4474a6caa5a90b22ff09f849e26c633ed99; read task + CLOUD-LEAD playbook.
+2026-11-04T15:22Z setup: npm ci exit 1 (no npm lockfile); pnpm install --frozen-lockfile exit 0; PG17 apt exit 100, PGDG key 403, source listing 403; PG16.15 present (unused in PLAN).
+2026-11-04T15:25Z inspection: policy/provider/roster services, transport editPut, budgets, migrations, grants, pins, counts; spec helper report verified.
+2026-11-04T15:28Z drafted spec r1, decisions D1–D11, owner questions (None).
+2026-11-04T15:30Z plan review on r1: HIGH 2 / MEDIUM 5 / LOW 3; all applied in r2; open 0/0/0.
+2026-11-04T15:32Z checks: check-private-names SKIPPED (no list); public-text scan no matches; git diff --check exit 0. Evidence and status written.
