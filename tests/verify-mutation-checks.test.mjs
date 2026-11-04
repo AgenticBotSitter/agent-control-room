@@ -1145,3 +1145,13 @@ test("maintenance audit passes when every entry is caught", () => {
     assert.match(result.stdout, /AUDIT: .*"status":"caught"/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a malformed mutation timeout is refused before any test runs", () => {
+  const root = fixture();
+  try {
+    const result = run(root, manifest(root), { MUTATION_CHECK_TIMEOUT_MS: "5s" });
+    assert.equal(result.status, 1, output(result));
+    assert.match(output(result), /MUTATION_CHECK_TIMEOUT_MS must be a positive integer/u);
+    assert.doesNotMatch(output(result), /Baseline \[1\]/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
