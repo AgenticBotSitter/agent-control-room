@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import fsPromises, { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join, resolve } from 'node:path';
-import { createPaidRunJournalLedgerV1 } from '../../src/usage/v1/paid-run-ledger';
+import { createPaidRunJournalLedgerV1, paidRunLedgerRootIdentityV1 } from '../../src/usage/v1/paid-run-ledger';
 import { createPaidRunExecutorV1 } from '../../src/usage/v1/paid-run-executor';
 import { paidRunAdmission, paidRunContext, paidRunFakeProfile, paidRunNow,
   paidRunFixture, paidRunInput, createPaidRunFakeProviderV1 } from './paid-run-fake-provider';
@@ -17,18 +19,46 @@ async function main() {
     return;
   }
   const [rootArg, point] = process.argv.slice(2);
-  if (!rootArg || !['reserve', 'dispatch', 'settle'].includes(point!)) throw new Error('driver_arguments');
+  if (!rootArg || !['reserve', 'dispatch', 'settle', 'lock-window', 'journal-created', 'anchor-open', 'anchor-dispatch', 'anchor-settle', 'recovery-window'].includes(point!)) throw new Error('driver_arguments');
   // Keep the IPC channel referenced while parked at a kill checkpoint.
   process.on('message', () => {});
-  const root = resolve(rootArg), context = paidRunContext(), admission = await paidRunAdmission(context);
+  const root = resolve(rootArg), context = paidRunContext({ ledgerRootIdentity: await paidRunLedgerRootIdentityV1(root) }), admission = await paidRunAdmission(context);
   async function notify(phase: string, requests: number) {
     const lease = JSON.parse(await readFile(join(root, admission.runKey, 'lease.json'), 'utf8'));
     process.send?.({ phase, requests, generation: lease.generation, runKey: admission.runKey, pinDigest: admission.pinDigest });
   }
   const hold = () => new Promise<void>(() => {});
+  if (point === 'lock-window' || point === 'journal-created' || point === 'recovery-window') {
+    const realOpen = fsPromises.open;
+    fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
+      const target = String(args[0]);
+      const createsJournal = target === join(root, admission.runKey, 'journal.jsonl') && (Number(args[1]) & constants.O_CREAT) !== 0;
+      if (target === join(root, admission.runKey, 'journal.jsonl') && !createsJournal && point === 'recovery-window') {
+        await notify(point, 1); await hold();
+      }
+      // Intercept the actual filesystem boundary, not a product test hook.
+      if (createsJournal && point === 'lock-window') { await notify(point, 0); await hold(); }
+      const file = await realOpen(...args);
+      if (createsJournal && point === 'journal-created') { await notify(point, 0); await hold(); }
+      return file;
+    }) as typeof realOpen;
+    syncBuiltinESMExports();
+  }
+  if (point!.startsWith('anchor-')) {
+    const realRename = fsPromises.rename;
+    fsPromises.rename = async (...args: Parameters<typeof realRename>) => {
+      await realRename(...args);
+      if (String(args[1]) === join(root, admission.runKey, 'head.json')) {
+        const record = JSON.parse(await readFile(args[1], 'utf8'));
+        if (point === 'anchor-' + record.type) { await notify(point, record.type === 'settle' ? 1 : 0); await hold(); }
+      }
+    };
+    syncBuiltinESMExports();
+  }
   const store = createPaidRunJournalLedgerV1({ root, afterReserve: async () => {
     if (point === 'reserve') { await notify('reserve', 0); await hold(); }
   } });
+  if (point === 'recovery-window') { await store.reopenForSettlementV1(admission); throw new Error('missed recovery checkpoint'); }
   const ledger = await store.open(admission);
   const fake = createPaidRunFakeProviderV1(point === 'dispatch' ? [{ failure: 'hang' }] : []);
   const transport = { async send(...args: Parameters<typeof fake.transport.send>) {

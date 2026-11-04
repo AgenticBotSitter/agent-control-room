@@ -42,21 +42,21 @@ test('T2 retries are cumulative: four requests settle 14100000', async () => {
   } finally { await f.close(); }
 });
 test('T4 twenty callers: three durable winners, seventeen cap refusals', async () => {
-  const hold = paidRunBarrier(), reached = paidRunBarrier(); let seen = 0;
-  const f = await paidRunFixture({ scripts: Array.from({ length: 3 }, () => ({ hold: hold.promise })),
+  const hold = paidRunBarrier(), reached = paidRunBarrier(), reserves = paidRunBarrier(); let seen = 0, reserved = 0;
+  const f = await paidRunFixture({ afterReserve: async () => { if (++reserved === 3) reserves.release(); }, scripts: Array.from({ length: 3 }, () => ({ hold: hold.promise })),
     onRequest: () => { if (++seen === 3) reached.release(); } });
   const jobs = Array.from({ length: 20 }, (_, i) => f.executor.call(paidRunInput(i)));
   try {
     await reached.promise;
-    // Wait for all twenty reserves, without waiting for the held dispatched calls.
-    await f.ledger.reserve({ callId: paidRunCallId(90), requestDigest: sha256Digest('barrier'),
-      priceRowDigest: f.admission.pin.priceRowDigest, maxNanoUsd: '0', check() {} });
+    await reserves.promise;
+    // The tail caller must lose while all three real reservations are still held.
+    assert.equal(reason(await jobs[19]!), 'cap_exhausted');
     assert.equal(f.executor.snapshot().reserved, '18000000');
     hold.release(); const results = await Promise.all(jobs);
     assert.equal(results.filter(r => reason(r) === 'cap_exhausted').length, 17);
     const winners = results.flatMap((r, i) => r.kind === 'settled' ? [paidRunCallId(i)] : []);
     assert.deepEqual(new Set(winners), new Set(f.fake.requests.map(r => r.callId)));
-    assert.equal((await records(f.journal)).filter(r => r.type === 'reserve' && r.maxNanoUsd !== '0').length, 3);
+    assert.equal((await records(f.journal)).filter(r => r.type === 'reserve').length, 3);
     assert.equal(f.executor.snapshot().settled, '8100000');
   } finally { hold.release(); await Promise.allSettled(jobs); await f.close(); }
 });
@@ -297,7 +297,7 @@ test('T9 exact ledger admission binding and single executor ownership', async ()
 
 test('T9 authentic versus fabricated capabilities before actual ledger and send', async () => {
   const f = await paidRunFixture();
-  const context = paidRunContext(), store = createPaidRunMemoryConsentStoreV1();
+  const context = paidRunContext({ ledgerRootIdentity: f.context.ledgerRootIdentity }), store = createPaidRunMemoryConsentStoreV1();
   const preview = derivePaidRunPinV1(context, '18000000');
   assert.equal(preview.kind, 'paid'); if (preview.kind !== 'paid') throw new Error('fixture_pin');
   const issued = await store.issue({ ...context, capNanoUsd: '18000000', pinDigest: preview.pinDigest });
@@ -322,4 +322,29 @@ test('T9 authentic versus fabricated capabilities before actual ledger and send'
     try { assert.equal(reason(await executor.call(paidRunInput(1))), 'settled'); assert.equal(f.fake.requests.length, 1); }
     finally { await executor.stop('run_ended'); await ledger.close(); }
   } finally { await f.close(); }
+});
+
+test('FIX stop deadline bounds abort-ignoring transport and stream', async () => {
+  for (const stream of [false, true]) {
+    const entered = paidRunBarrier(), release = paidRunBarrier();
+    const f = await paidRunFixture({ onRequest: () => entered.release(), scripts: [stream ? {
+      events: { kind: 'stream', status: 200, events: (async function* () {
+        await release.promise; yield { kind: 'final' as const, servedModelId: 'served/one',
+          usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 } };
+      })() },
+    } : { hold: release.promise, ignoreAbort: true }] });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const job = f.executor.call({ ...paidRunInput(1), stream });
+    try {
+      await entered.promise;
+      const ack = await Promise.race([f.executor.stop('owner_stop'), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('stop_deadline_exceeded')), 1000);
+      })]).catch(error => assert.fail(error.message));
+      assert.deepEqual(ack.uncertain, [paidRunCallId(1)]); assert.equal(ack.totals.uncertain, '6000000');
+      assert.equal(ack.totals.reserved, '0'); assert.equal(ack.totals.stopped, true);
+      assert.equal(reason(await f.executor.call(paidRunInput(2))), 'run_stopped');
+      await job; release.release(); await new Promise<void>(r => setImmediate(r));
+      assert.equal(f.executor.snapshot().uncertain, '6000000'); assert.equal(f.fake.requests.length, 1);
+    } finally { clearTimeout(timer); release.release(); await job; await f.close(); }
+  }
 });

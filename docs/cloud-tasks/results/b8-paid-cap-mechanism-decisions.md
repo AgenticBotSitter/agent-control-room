@@ -209,3 +209,39 @@ Affected spec item: 3, 8.4.
 Choice: recovery never regains spending authority. `reopenForSettlementV1` accepts the journal and expected `{runKey, pinDigest}` from the trusted run record, without admission or consent. It verifies the journal and exclusive lease, releases provably undispatched reservations, settles dispatched-but-unsettled calls at their reserved maximum, records late/duplicate responses without reducing charges, durably spending-closes the run and reports totals. Every subsequent reservation/dispatch/call refuses `run_recovered_closed`. A mismatched run/pin, corrupt journal or concurrent opener refuses.
 Why: CAP-A consent is one-shot, in-memory and runtime branded. A crash cannot reconstruct authentic authority. This implements the settled refuse-before-overspend and retained-accounting-or-refuse rules. No consent is minted, imported or reconstructed; another paid call requires fresh owner consent and a new run, outside this slice.
 Affected spec item: 7.2 T5. The pre-existing CAP-A cache-profile decision formerly labeled D17 is relabeled D19 only to resolve the identifier collision; its choice and rationale are unchanged. Independent review of this amendment remains pending.
+
+## D20 — Crash-recoverable opener arbitration and mechanically dead owners (CAP-B fix)
+
+Choice: replace the anonymous O_EXCL opener file with non-waiting bakery arbitration. Each contender atomically publishes a uniquely named choosing token, then an ordered ticket, before checking peers. Choosing or lower-ticket live contenders cause refusal. Only ESRCH from signal 0 establishes death; a reused PID or any probing error refuses takeover. Exact-generation lease recovery additionally requires the saved owner to be dead. No start-time guess or arbitrary stale-lock age grants takeover. Tokens are symlinks containing metadata, explicitly read with readlink; journal, anchor and lease opens retain O_NOFOLLOW. Dead tokens have unique names, so concurrent reapers cannot remove a successor's token. Normal completion removes the caller's own token.
+
+Lease contents are fsynced in a staging file before an exclusive hard-link publication, then the staging link is removed and the directory fsynced. A kill cannot publish an empty lease. A killed publication may leave two links to this immutable owner record; only lease metadata permits this specific two-link state. Journals and anchors still require one link. Crash leftovers do not confer authority. Recovery remains settle-only under D17.
+
+Options: age-based lock breaking; a recursively recoverable second shared lock; unique choosing/ticket tokens. The first can steal from a live slow process and the second repeats the original crash hole. The selected protocol needs no downloaded/native locking dependency and never waits for contenders.
+
+Affected findings: MEDIUM-1 and LOW-2. This amends implementation decisions without rewriting reviewed specification text. PID reuse conservatively delays recovery until that PID exits; it never treats a live process as dead. Files from older unanchored/anonymous-lock formats are not silently promoted into spending authority.
+
+## D21 — Write-ahead content anchor and interrupted initial-open recovery (CAP-B fix)
+
+Choice: atomically publish and directory-fsync a separate head.json containing the next canonical complete record before appending/fsyncing that record in journal.jsonl. Validate on a tentative replay before publishing either. Replay requires the journal head to equal the anchor, or to be exactly one predecessor behind it; in the latter case validate and materialize the anchored record. Earlier rollback, a different valid final record, semantic/chain corruption or an absent anchor refuses. A noncommitted torn suffix is repaired only after identity and anchor validation.
+
+The initial open record is anchored before journal creation. A kill with an absent or empty journal therefore retains the complete trusted opening identity and cap. Reopen materializes that record and durably closes spending before releasing unsent reservations or conservatively settling dispatched calls. A durable dispatch intent can be charged at its maximum even when the process died before transport entry. This is deliberately conservative. Fresh admission can never overwrite an existing opening intent.
+
+Options: an after-the-fact digest (creates a rollback window); a write-ahead complete record; external transactional storage (outside CAP-B). The selected record closes both the initial-creation gap and the anchor/journal publication gap without losing charges or authorizing recovery spending. A same-uid writer who can replace both journal and anchor, or remove the entire protected root, remains outside this local integrity boundary. Old journals without an anchor fail closed; this isolated stand-in has no live migration.
+
+Affected findings: LOW-1 and LOW-5. Actual killed children cover empty journal, absent journal and write-ahead dispatch/settlement windows. Expected amounts are independently fixed literals.
+
+## D22 — Bind ledger custody through the trusted consent context (CAP-B fix)
+
+Choice: trusted Start supplies ledgerRootIdentity, a digest of the canonical root, filesystem device and inode, in the run context before issuing consent. Issuance snapshots it, consume and admission compare it, and the authentic admission retains the immutable value. Ledger open requires exact equality with the protected root's current identity. The durable opening record also binds this identity and settlement replay checks it. A fresh consent for the same trusted run context cannot move the accounting to another root, and replacing an empty root at the same path changes its identity. Missing binding cannot open a spending ledger. CAP-A preview/admission without a root remains possible but conveys no usable ledger authority.
+
+Options: an in-process run-to-root map (lost on process exit); an arbitrary sibling registry (merely moves the root-choice problem); immutable root custody in the trusted run/consent record. The selected contract makes root custody explicit without broadening CAP-B into production Start/PG wiring. The trusted run record must preserve its root identity across retries and fresh consent; rebuilding or changing that trusted record is not a recovery API. This is the same trust boundary as the existing tenant/run/config snapshot. The pricing pin remains unchanged.
+
+Affected finding: LOW-4. Root identities and filesystem paths exist only in runtime fixtures/artifacts, never as machine-specific repository constants. Production readiness remains false.
+
+## D23 — Stop is bounded independently of transport cooperation (CAP-B verification)
+
+Choice: retain the existing executor race between transport completion and a locally rejected abort promise. Stop durably closes admission, aborts its controllers and awaits local maximum-uncertain settlement, not transport completion. A one-second regression deadline proves acknowledgement for both abort-ignoring send and an abort-ignoring stream iterator, with 6000000 uncertain, zero reserved, no second send and no late refund. No extra timer is added to Stop: returning an acknowledgement before durable local accounting would weaken its meaning. Filesystem failure refuses/throws; the deadline is a transport-independence test, not a claim to bound uninterruptible storage or a blocked JavaScript event loop.
+
+The new regression passes against the reviewed base, so LOW-3's described transport dependency is not present in that candidate. A disposable guard-off removes the abort race to prove the bounded test detects that exact regression. No deliberately broken product change is manufactured as red evidence.
+
+Affected finding: LOW-3. The related LOW-6 test hygiene note is addressed with an afterReserve barrier and the final caller's refusal; there is no synthetic reservation in the observed journal.

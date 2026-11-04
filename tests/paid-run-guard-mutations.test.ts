@@ -135,6 +135,24 @@ const capBMutations: { name: string; target: 'ledger' | 'executor'; changes: [st
   { name: 'recovery-max', target: 'ledger', expected: 'T5 D17 SIGKILL after dispatch', changes: [
     ["settlement: { accountedNanoUsd: call.maxNanoUsd, excessNanoUsd: '0', outcome: 'uncertain', servedModelId: null }", "settlement: { accountedNanoUsd: '0', excessNanoUsd: '0', outcome: 'completed', servedModelId: null }"],
   ] },
+  { name: 'dead-opener', target: 'ledger', expected: 'FIX lock-window', changes: [
+    ['if (!ownerAlive(peer!.pid)) {', 'if (false) {'],
+  ] },
+  { name: 'live-owner', target: 'ledger', expected: 'FIX live holder cannot lose', changes: [
+    ["if (ownerAlive(saved.pid)) fail('lease_owner_alive');", ''],
+  ] },
+  { name: 'root-binding', target: 'ledger', expected: 'FIX fresh consent for same run', changes: [
+    ["if (admission && admission.ledgerRootIdentity !== rootIdentity) fail('ledger_root_mismatch');", ''],
+  ] },
+  { name: 'head-anchor', target: 'ledger', expected: 'FIX content anchor rejects valid-rewrite', changes: [
+    ["else if (!state.head || sha256Digest(state.head) !== sha256Digest(anchor)) fail('journal_corrupt');", ''],
+  ] },
+  { name: 'initial-intent', target: 'ledger', expected: 'FIX journal-created', changes: [
+    ['apply(state, opening); await writeAnchor(dir, opening);', 'apply(state, opening);'],
+  ] },
+  { name: 'abort-race', target: 'executor', expected: 'FIX stop deadline bounds abort-ignoring', changes: [
+    ['const r = await Promise.race([response, aborted]);', 'void aborted.catch(() => {}); const r = await response;'],
+  ] },
   { name: 'recovery-close', target: 'ledger', expected: 'T5 D17 SIGKILL after reserve', changes: [
     ["case 'recovered': state.spendingClosed = true;", "case 'recovered': state.spendingClosed = false;"],
   ] },
@@ -161,13 +179,13 @@ test('CAP-B guard-off mutations fail the independent behavioral assertions', asy
     }
     const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
     const command = ['scripts/run-tests-with-quarantine.mjs', '--import', 'tsx', '--test', '--test-concurrency=1',
-      '--test-timeout=600000', copies[original.tests]!, copies[original.restart]!];
+      '--test-timeout=600000', ...(mutation?.name === 'abort-race' ? ['--test-name-pattern=^FIX stop deadline bounds abort-ignoring'] : []), copies[original.tests]!, copies[original.restart]!];
     const result = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 600000, maxBuffer: 8 * 1024 * 1024,
       env: { ...env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' } });
     assert.ifError(result.error); assert.equal(result.signal, null);
     const output = result.stdout + result.stderr;
     const count = (label: string) => Number(output.match(new RegExp(`^# ${label} (\\d+)$`, 'm'))?.[1] ?? NaN);
-    assert.ok(count('tests') >= 50, output); assert.equal(count('skipped'), 0, output); assert.equal(count('cancelled'), 0, output);
+    assert.ok(count('tests') >= (mutation?.name === 'abort-race' ? 1 : 50), output); assert.equal(count('skipped'), 0, output); assert.equal(count('cancelled'), 0, output);
     t.diagnostic(`COMMAND node ${command.map(x => x.startsWith(root) ? relative(process.cwd(), x) : x).join(' ')}`);
     t.diagnostic(`MUTATION ${mutation?.name ?? 'restored'} exit=${result.status} tests=${count('tests')} pass=${count('pass')} fail=${count('fail')} skipped=${count('skipped')}`);
     if (mutation) {

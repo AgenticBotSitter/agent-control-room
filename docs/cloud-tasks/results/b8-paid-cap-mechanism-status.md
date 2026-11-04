@@ -13,3 +13,13 @@ Production: paidExecutionReady remains false; no real paid calls, endpoint/broke
 Custody: git add exited 128, index.lock creation refused. No retry/escalation/commit command reached; all fourteen allowed files remain uncommitted for the lead. New SHA none; retained HEAD b973364ab035ae29ef3ea51f3773dade5978cbcf. Dependency symlink excluded; no push or identity config edit.
 Cleanup: foreground commands complete; checkpoint/mutation children killed or exited and reaped; resource cleanup test passes; no owned cluster/listener/provider. Native PG not started because ipcs was denied (pipeline printed zero is not a qualifying count).
 Status: BLOCKED: git index.lock refused; independent reviews and pinned Linux parity pending; painted browser layout unverified
+
+## CAP-B review FIX — local verification complete
+
+The six requested findings are addressed in decisions D20–D23: recoverable opener tokens, mechanical dead-owner enforcement, a complete-record write-ahead head anchor, consent-bound root custody and recoverable interrupted opening. LOW-3's reported dependence on transport cooperation does not reproduce against the base's abort race; a one-second send/stream deadline regression and deliberate race-removal probe protect the existing behavior. The related T4 synthetic-reservation hygiene note is also fixed.
+
+Real SIGKILL tests preserve D17's settlement-only boundary and independently literal accounting. Final full paid-run suite is 147/147, zero skips/cancellations; all 28 guard-off probes fail their intended assertions and every restore is green (CAP-A 71/71, CAP-B 74/74). Affected usage/provider tests are 63/63; both typechecks, driver self-check, loader/lane/quarantine and scope checks pass. The reviewed spec, package/CI registration and paidExecutionReady=false are unchanged. Commit custody is recorded in the assigned report. No push or production qualification.
+
+Git staging of exactly the ten allowed files exited 128: index.lock creation was refused (Operation not permitted). The per-commit identity command was not reached. No retry, escalation, git configuration change or push. New commit SHA: none. Retained HEAD: `c837b423919bd3e5a43116c256559cb069cefe20`. The lead must commit the verified uncommitted changes.
+
+Status: BLOCKED: git index.lock refused; local FIX verified; independent FIX review and pinned Linux parity pending

@@ -32,7 +32,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import assert from 'node:assert/strict';
 import { admitPaidRunV1, createPaidRunMemoryConsentStoreV1, derivePaidRunPinV1 } from '../../src/usage/v1/paid-run-admission';
-import { createPaidRunJournalLedgerV1 } from '../../src/usage/v1/paid-run-ledger';
+import { createPaidRunJournalLedgerV1, paidRunLedgerRootIdentityV1 } from '../../src/usage/v1/paid-run-ledger';
 import { createPaidRunExecutorV1, type PaidRunTransportV1, type PaidRunTransportResponseV1,
   type PaidRunReportedUsageV1, type PaidRunCurrentConfigV1 } from '../../src/usage/v1/paid-run-executor';
 export const paidRunCallId = (n: number) => `scripted_call_${String(n).padStart(6, '0')}`;
@@ -96,7 +96,8 @@ export async function paidRunFixture(options: { cap?: string; scripts?: PaidRunS
   afterReserve?: (callId: string) => Promise<void>; clock?: () => number; onRequest?: (id: string) => void } = {}) {
   await mkdir(resolve('.test-tmp'), { recursive: true });
   const root = await mkdtemp(resolve('.test-tmp/paid-run-fixture-'));
-  const context = options.context ?? paidRunContext({ loopRunId: `run:${randomUUID()}` });
+  const context = { ...(options.context ?? paidRunContext({ loopRunId: `run:${randomUUID()}` })),
+    ledgerRootIdentity: await paidRunLedgerRootIdentityV1(root) };
   const admission = await paidRunAdmission(context, options.cap);
   const store = createPaidRunJournalLedgerV1({ root, afterReserve: options.afterReserve }), ledger = await store.open(admission);
   const fake = createPaidRunFakeProviderV1(options.scripts, options.onRequest);

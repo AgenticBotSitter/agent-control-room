@@ -339,3 +339,44 @@ Commit custody: see the final assigned build report and git history; the next op
 Final commit attempt: `git add --` the fourteen allowed files exited 128 because index.lock creation was refused (Operation not permitted). No commit command reached, retry, escalation or identity configuration change. Lead must commit the uncommitted candidate. New commit SHA: none; retained HEAD `b973364ab035ae29ef3ea51f3773dade5978cbcf`. No push. This custody failure does not change the passing local behavior/check evidence above.
 
 Status: BLOCKED: git index.lock refused; independent reviews and pinned Linux parity pending; painted browser layout unverified
+
+## CAP-B review FIX — crash windows, content anchor and custody
+
+Base `c837b423919bd3e5a43116c256559cb069cefe20`, current branch `cook/b8-paid-cap`. Decisions D20–D23 describe the implementation changes; the reviewed specification is unchanged. The fix retains D17: settlement-only recovery cannot create, import or reconstruct consent and exposes no spending methods.
+
+The initial new-regression command (CLI-blocked wrapper, executor/restart tests, `--test-name-pattern='^FIX (lock-window|journal-created|live holder|content anchor|fresh consent|stop deadline)'`) exited 1: 7 tests, 1 pass, 6 behavior failures, zero skips/cancellations. Actual SIGKILL covered lock ownership and empty journal creation; live-owner takeover was attempted before the real child's observed SIGKILL. Opening-only rollback, semantically valid final-record rewrite and fresh-consent relocation all failed their assertions against the base. Stop's one-second deadline already passed on the base, so no false original-red claim is made for LOW-3.
+
+The opener now uses unique choosing/ticket metadata tokens rather than a shared anonymous file. Exact-generation recovery requires ESRCH owner-death evidence; live or reused PIDs conservatively refuse. Lease contents are durably populated before atomic exclusive publication. Every journal record has an external complete-record write-ahead head anchor. Replay either verifies the exact anchored head, or validates/materializes its one missing record; it never silently accepts an older/different head. The initial opening intent precedes journal creation, so an absent/empty journal after a kill recovers only to a spending-closed handle.
+
+Real killed children additionally cover an interrupted settlement replay and kills after publishing opening, dispatch and settlement anchors but before the journal append. Independently fixed expected accounting is 0, 6000000 uncertain, or 2700000 settled (synthetic 1000-byte input bound at 3000 plus 200 output at 15000; completed usage 400 input plus 100 output). A durable unsent dispatch intent is conservatively charged at 6000000. Twelve concurrent reapers/openers permit at most one owner and prove progress by an uncontended retry when all non-waiting contenders refuse. Root custody is snapshotted through issuance/consume/admission and checked against canonical root/device/inode identity; missing binding, changed context, another root and replacement at the same pathname refuse.
+
+The abort-ignoring send and stream regression requires Stop acknowledgement within one second, 6000000 uncertain, zero reserved, no later send, and no late refund. Removing the existing abort race in a disposable copy produces its intended deadline assertion; the bounded probe exited 1 with 2 tests / 1 pass / 1 fail / zero skips/cancellations, followed by a 70/70 green restore at that checkpoint. The initial unbounded guard-off attempt with cancellations is rejected as evidence and documented in the assigned report. The T4 journal now contains only its three real reservations; its synchronization uses afterReserve and the tail caller refusal.
+
+Affected §9.1 usage/provider command: exit 0, 63 tests / 63 pass / 0 fail / 0 skipped / 0 cancelled. Driver self-check: exit 0, 2 assertions, 0 requests. Both VPS and demo typechecks pass; loader guard, lane coverage (936 reachable files), quarantine (0 entries) and whitespace pass. A stricter demo-typecheck diagnostic and two updated fixture-contract errors were corrected before final checks. The first full all-paid run rejected a test assumption about guaranteed progress under non-waiting contention; its corrected test requires mutual exclusion and an uncontended successful retry.
+
+Final full paid-run/guard command: `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-*.test.ts` → exit 0; 147 tests / 147 pass / 0 fail / 0 skipped / 0 cancelled (402.57 seconds). All 28 guard-off probes (14 inherited CAP-A, 14 CAP-B) fail at named behavioral assertions. All 30 baseline/restored runs are green: CAP-A 71/71, CAP-B 74/74, zero skips/cancellations. Exact expanded commands and all counts are retained in the assigned fix report and separate timestamped progress file. No dependency, workflow, production adapter or readiness change. No native provider/model, paid request, login, download, live-install port or PostgreSQL cluster was started. Adjacent provider fixtures are synthetic/PGlite.
+
+Runtime: Node v22.23.4, darwin arm64. New independent review and supplied pinned Linux parity are pending; no production or BUILD-READY claim. Old unanchored journals fail closed, and same-uid replacement of both journal and anchor remains outside this local integrity boundary. The trusted run record must preserve its consent-bound root identity across retries. Commit custody will be recorded in the assigned report; no push.
+
+Final CAP-B guard counts:
+
+| CAP-B guard removed | Tests | Pass | Fail | Exit | Restore |
+|---|---:|---:|---:|---:|---|
+| cap | 74 | 69 | 5 | 1 | 74/74 |
+| dispatch-order | 74 | 55 | 19 | 1 | 74/74 |
+| dispatch-stop-block | 74 | 72 | 2 | 1 | 74/74 |
+| served-id | 74 | 71 | 3 | 1 | 74/74 |
+| private-body | 74 | 72 | 2 | 1 | 74/74 |
+| replay-options | 74 | 72 | 2 | 1 | 74/74 |
+| recovery-max | 74 | 67 | 7 | 1 | 74/74 |
+| dead-opener | 74 | 70 | 4 | 1 | 74/74 |
+| live-owner | 74 | 73 | 1 | 1 | 74/74 |
+| root-binding | 74 | 72 | 2 | 1 | 74/74 |
+| head-anchor | 74 | 72 | 2 | 1 | 74/74 |
+| initial-intent | 74 | 71 | 3 | 1 | 74/74 |
+| abort-race | 2 | 1 | 1 | 1 | 74/74 |
+| recovery-close | 74 | 62 | 12 | 1 | 74/74 |
+
+The abort-race mutation is deliberately restricted to the bounded deadline regression (the second TAP test is the empty filtered restart-file wrapper); each normal/restored run executes all 74 behavior tests. No behavior is skipped or quarantined. Full product-shell, bundler and Linux parity were not rerun in this focused FIX; no new BUILD-READY claim.
+
+Final FIX commit custody: Git staging of exactly the ten allowed files exited 128: index.lock creation was refused (Operation not permitted). The per-commit identity command was not reached. No retry, escalation, git configuration change or push. New commit SHA: none. Retained HEAD: `c837b423919bd3e5a43116c256559cb069cefe20`. The lead must commit the verified uncommitted changes.

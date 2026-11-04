@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { open, mkdir, unlink, lstat, type FileHandle } from 'node:fs/promises';
+import { open, mkdir, unlink, lstat, realpath, readdir, readlink, symlink, rename, link, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, sha256Digest } from '../../security/digest';
@@ -68,21 +68,93 @@ async function exclusive(path: string): Promise<FileHandle> {
   try { return await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail('lease_held'); throw error; }
 }
-/** Caller MUST have observed the previous holder's exit. No PID probing or authority recovery. */
+// A reused PID is conservatively treated as live. ESRCH is the only exit evidence accepted.
+function ownerAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid < 1) fail('lease_owner_invalid');
+  try { process.kill(pid, 0); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; return true; }
+}
+type Gate = { pid: number; generation: string; ticket: number };
+// Non-waiting bakery gate: publish a choosing token before selecting a ticket. A later
+// contender either sees our ticket or our choosing token. Unique names make dead-token
+// cleanup safe even with concurrent reapers; no shared unlink/replacement race exists.
+async function takeGate(dir: string): Promise<() => Promise<void>> {
+  const generation = randomUUID(), name = `opener-${process.pid}-${generation}.lock`, path = join(dir, name);
+  const own: Gate = { pid: process.pid, generation, ticket: 0 };
+  const peers = async () => {
+    const result: Gate[] = [];
+    for (const entry of await readdir(dir)) {
+      if (!/^opener-[0-9]+-[a-f0-9-]+\.lock$/.test(entry) || entry === name) continue;
+      const peerPath = join(dir, entry);
+      let peer: Gate;
+      try { peer = JSON.parse(await readlink(peerPath)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; fail('lease_owner_invalid'); }
+      if (!peer! || entry !== `opener-${peer!.pid}-${peer!.generation}.lock`
+        || !Number.isSafeInteger(peer!.ticket) || peer!.ticket < 0) fail('lease_owner_invalid');
+      if (!ownerAlive(peer!.pid)) { await unlink(peerPath).catch(error => { if (error.code !== 'ENOENT') throw error; }); continue; }
+      result.push(peer!);
+    }
+    return result;
+  };
+  await symlink(canonicalJson(own), path);
+  const temporary = join(dir, `.opener-${generation}.tmp`);
+  try {
+    own.ticket = Math.max(0, ...(await peers()).map(peer => peer.ticket)) + 1;
+    if (!Number.isSafeInteger(own.ticket)) fail('lease_held');
+    await symlink(canonicalJson(own), temporary); await rename(temporary, path);
+    for (const peer of await peers()) if (peer.ticket === 0 || peer.ticket < own.ticket
+      || peer.ticket === own.ticket && peer.generation < generation) fail('lease_held');
+    await syncDirectory(dir);
+    return async () => { await unlink(path); await syncDirectory(dir); };
+  } catch (error) { await unlink(path); throw error; }
+  finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+}
+async function readLease(dir: string): Promise<{ generation: string; pid: number }> {
+  const file = await open(join(dir, 'lease.json'), readonlyFlags);
+  try {
+    // The atomic publication link can survive a kill before its staging link is removed.
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.nlink < 1 || stat.nlink > 2 || (stat.mode & 0o077) !== 0
+      || process.getuid && stat.uid !== process.getuid()) fail('journal_unsafe');
+    const saved = JSON.parse(await file.readFile('utf8'));
+    if (!saved || typeof saved.generation !== 'string' || !/^[a-f0-9-]{36}$/.test(saved.generation)
+      || !Number.isSafeInteger(saved.pid) || saved.pid < 1) fail('lease_owner_invalid');
+    return saved;
+  } finally { await file.close(); }
+}
+async function publishLease(dir: string) {
+  const generation = randomUUID(), temporary = join(dir, `.lease-${generation}.tmp`);
+  const file = await exclusive(temporary); let published = false;
+  try {
+    await file.writeFile(canonicalJson({ generation, pid: process.pid }) + '\n'); await file.sync();
+    try { await link(temporary, join(dir, 'lease.json')); published = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') fail('lease_held'); throw error; }
+    await unlink(temporary); await syncDirectory(dir);
+  } catch (error) {
+    if (published) { await unlink(join(dir, 'lease.json')); await syncDirectory(dir); }
+    throw error;
+  } finally {
+    await file.close(); await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
+/** Exact-generation recovery additionally proves that the prior owner is no longer live. */
 export async function recoverPaidRunLeaseV1(root: string, runKey: string, expectedGeneration: string): Promise<void> {
   if (!validRun(runKey) || typeof expectedGeneration !== 'string' || !expectedGeneration) fail('cross_run');
   await directory(root, false);
   const dir = join(root, runKey); await directory(dir, false);
-  const gatePath = join(dir, 'opener.lock'), gate = await exclusive(gatePath);
+  const releaseGate = await takeGate(dir);
   try {
-    const lease = await open(join(dir, 'lease.json'), readonlyFlags);
-    try {
-      await safeFile(lease);
-      const saved = JSON.parse(await lease.readFile('utf8'));
-      if (saved.generation !== expectedGeneration) fail('lease_generation_mismatch');
-    } finally { await lease.close(); }
+    const saved = await readLease(dir);
+    if (saved.generation !== expectedGeneration) fail('lease_generation_mismatch');
+    if (ownerAlive(saved.pid)) fail('lease_owner_alive');
     await unlink(join(dir, 'lease.json')); await syncDirectory(dir);
-  } finally { await gate.close(); await unlink(gatePath); await syncDirectory(dir); }
+  } finally { await releaseGate(); }
+}
+/** Trusted Start persists this identity in its run context before issuing consent. */
+export async function paidRunLedgerRootIdentityV1(root: string): Promise<string> {
+  await directory(root, false);
+  const stat = await lstat(root, { bigint: true });
+  return sha256Digest([await realpath(root), String(stat.dev), String(stat.ino)]);
 }
 
 type RecordV1 = { seq: number; prev: string | null; type: string; [key: string]: unknown };
@@ -149,49 +221,81 @@ function apply(state: State, r: RecordV1) {
   state.head = r;
 }
 
+// The external anchor is a write-ahead record. Journal fsync follows its durable atomic
+// publication. A kill may leave exactly this one record missing; replay restores it.
+async function writeAnchor(dir: string, record: RecordV1) {
+  const temporary = join(dir, `.head-${randomUUID()}.tmp`), file = await exclusive(temporary);
+  try {
+    await file.writeFile(canonicalJson(record) + '\n'); await file.sync();
+    await rename(temporary, join(dir, 'head.json')); await syncDirectory(dir);
+  } finally {
+    await file.close(); await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
+async function readAnchor(dir: string): Promise<RecordV1> {
+  const file = await open(join(dir, 'head.json'), readonlyFlags);
+  try {
+    await safeFile(file);
+    const text = await file.readFile('utf8');
+    try {
+      const record = JSON.parse(text);
+      if (!record || !Number.isSafeInteger(record.seq) || record.seq < 1 || canonicalJson(record) + '\n' !== text) fail('journal_corrupt');
+      return record;
+    } catch { return fail('journal_corrupt'); }
+  } finally { await file.close(); }
+}
+
 export function createPaidRunJournalLedgerV1(options: Readonly<{ root: string; afterReserve?: (callId: string) => Promise<void> }>): PaidRunLedgerV1 {
   const root = options.root;
   async function acquire(expected: { runKey: string; pinDigest: string }, admission?: PaidRunAdmissionV1) {
     if (!validRun(expected.runKey) || !validRun(expected.pinDigest)) fail('cross_run');
     await directory(root, !!admission);
     const dir = join(root, expected.runKey); await directory(dir, !!admission);
-    const gatePath = join(dir, 'opener.lock'), gate = await exclusive(gatePath);
-    let file: FileHandle | undefined, lease: FileHandle | undefined, ownLease = false;
+    const rootIdentity = await paidRunLedgerRootIdentityV1(root);
+    if (admission && admission.ledgerRootIdentity !== rootIdentity) fail('ledger_root_mismatch');
+    const releaseGate = await takeGate(dir);
+    let file: FileHandle | undefined, ownLease = false;
     const state: State = { head: null, calls: new Map(), cap: '0', blocked: null, stopped: false, spendingClosed: false };
-    const leasePath = join(dir, 'lease.json');
+    const leasePath = join(dir, 'lease.json'), journalPath = join(dir, 'journal.jsonl');
     try {
-      lease = await exclusive(leasePath); ownLease = true;
-      await lease.writeFile(canonicalJson({ generation: randomUUID(), pid: process.pid }) + '\n');
-      await lease.sync(); await lease.close(); lease = undefined; await syncDirectory(dir);
+      await publishLease(dir); ownLease = true;
       let tornTail = false;
       if (admission) {
-        // Initial spending can only create a new journal. Existing journals are recovery-only.
-        try { file = await open(join(dir, 'journal.jsonl'), constants.O_CREAT | constants.O_EXCL | constants.O_RDWR
-          | constants.O_APPEND | constants.O_NOFOLLOW, 0o600); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-          const existing = await open(join(dir, 'journal.jsonl'), readonlyFlags);
+        // Existing intent/journal is recovery-only, including an interrupted first open.
+        let existing: FileHandle | undefined;
+        try { existing = await open(journalPath, readonlyFlags); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        if (existing) {
           try {
             await safeFile(existing);
             const rows = (await existing.readFile('utf8')).split('\n');
             if (rows.pop() !== '') fail('journal_corrupt');
             for (const row of rows) {
-              let r: RecordV1;
-              try { r = JSON.parse(row); } catch { fail('journal_corrupt'); }
-              try { if (canonicalJson(r!) !== row) fail('journal_corrupt'); apply(state, r!); }
+              try { const r = JSON.parse(row); if (canonicalJson(r) !== row) fail('journal_corrupt'); apply(state, r); }
               catch { fail('journal_corrupt'); }
             }
-            if (!state.opening) fail('journal_corrupt');
+            if (!state.opening) fail('run_recovered_closed');
             if (state.opening!.runKey !== admission.runKey || state.opening!.pinDigest !== admission.pinDigest
               || state.opening!.consentId !== admission.consentId) fail('cross_run');
             fail('run_recovered_closed');
           } finally { await existing.close(); }
-         }
+        }
+        try { await readAnchor(dir); fail('run_recovered_closed'); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        const opening: RecordV1 = { type: 'open', seq: 1, prev: null, runKey: admission.runKey, pin: admission.pin,
+          pinDigest: admission.pinDigest, consentId: admission.consentId, cap: admission.pin.capNanoUsd, ledgerRootIdentity: rootIdentity };
+        apply(state, opening); await writeAnchor(dir, opening);
+        file = await open(journalPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+        await file.writeFile(canonicalJson(opening) + '\n'); await file.sync();
       } else {
-        file = await open(join(dir, 'journal.jsonl'), constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-        await safeFile(file);
-        const buffer = await file.readFile();
-        // Only a non-committed final record is repairable. Chain/semantic defects never are.
-        const lastNewline = buffer.lastIndexOf(10);
+        const anchor = await readAnchor(dir);
+        try { file = await open(journalPath, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || anchor.seq !== 1 || anchor.type !== 'open') throw error;
+          file = await open(journalPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+        }
+        await safeFile(file!);
+        const buffer = await file!.readFile(), lastNewline = buffer.lastIndexOf(10);
         let goodBytes = lastNewline + 1;
         tornTail = goodBytes !== buffer.length;
         const lines = buffer.subarray(0, goodBytes).toString('utf8').split('\n'); lines.pop();
@@ -203,9 +307,14 @@ export function createPaidRunJournalLedgerV1(options: Readonly<{ root: string; a
           try { if (canonicalJson(record) !== lines[i]) fail('journal_corrupt'); apply(state, record!); }
           catch { fail('journal_corrupt'); }
         }
+        const restoreAnchor = anchor.seq === (state.head?.seq ?? 0) + 1;
+        if (restoreAnchor) { try { apply(state, anchor); } catch { fail('journal_corrupt'); } }
+        else if (!state.head || sha256Digest(state.head) !== sha256Digest(anchor)) fail('journal_corrupt');
         if (!state.opening) fail('journal_corrupt');
-        if (state.opening!.runKey !== expected.runKey || state.opening!.pinDigest !== expected.pinDigest) fail('cross_run');
-        if (tornTail) { await file.truncate(goodBytes); await file.sync(); }
+        if (state.opening!.runKey !== expected.runKey || state.opening!.pinDigest !== expected.pinDigest
+          || state.opening!.ledgerRootIdentity !== rootIdentity) fail('cross_run');
+        if (tornTail) { await file!.truncate(goodBytes); await file!.sync(); }
+        if (restoreAnchor) { await file!.writeFile(canonicalJson(anchor) + '\n'); await file!.sync(); tornTail = true; }
       }
       await safeFile(file!); await syncDirectory(dir);
       let queue: Promise<unknown> = Promise.resolve(), closed = false, poisoned = false;
@@ -219,15 +328,14 @@ export function createPaidRunJournalLedgerV1(options: Readonly<{ root: string; a
         const next: State = { ...state, calls: new Map(state.calls) }; apply(next, r);
         const bytes = Buffer.from(canonicalJson(r) + '\n');
         try {
+          await writeAnchor(dir, r);
           const written = await file!.write(bytes);
           if (written.bytesWritten !== bytes.length) fail('journal_io_failed');
           await file!.sync();
         } catch (error) { poisoned = true; throw error; }
         Object.assign(state, next);
       }
-      if (admission) await append({ type: 'open', runKey: admission.runKey, pin: admission.pin,
-        pinDigest: admission.pinDigest, consentId: admission.consentId, cap: admission.pin.capNanoUsd });
-      else {
+      if (!admission) {
         // Closing first makes interruption of recovery fail closed on the next replay too.
         await append({ type: 'recovered', tornTail });
         for (const call of state.calls.values()) {
@@ -299,10 +407,10 @@ export function createPaidRunJournalLedgerV1(options: Readonly<{ root: string; a
       };
       liveHandles.set(handle, admission); return Object.freeze(handle);
     } catch (error) {
-      await file?.close(); await lease?.close();
+      await file?.close();
       if (ownLease) { await unlink(leasePath); await syncDirectory(dir); }
       throw error;
-    } finally { await gate.close(); await unlink(gatePath); await syncDirectory(dir); }
+    } finally { await releaseGate(); }
   }
   return Object.freeze({
     async open(admission: PaidRunAdmissionV1) {

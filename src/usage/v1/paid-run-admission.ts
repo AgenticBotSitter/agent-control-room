@@ -7,7 +7,7 @@ export type PaidRunTrustedContextV1 = Readonly<{
   tenantId: string; ownerIdentityId: string; projectId: string; requestId: string;
   loopRunId: string; commandId: string; settingsSha256: string;
   resolution: LoopProviderRouteResolutionV1; providers: readonly LoopProviderDataV1[];
-  providerVersion: number; prices: readonly ProviderPriceV1[]; now: number;
+  providerVersion: number; prices: readonly ProviderPriceV1[]; now: number; ledgerRootIdentity?: string;
 }>;
 
 // Test-only policy constants. Neither value authorizes production spending.
@@ -19,7 +19,7 @@ type Refusal = Readonly<{ kind: 'refused'; reason: PaidRunAdmissionRefusalV1 }>;
 const refuse = (reason: PaidRunAdmissionRefusalV1): Refusal => ({ kind: 'refused', reason });
 
 type ConsentBinding = Readonly<{
-  tenantId: string; ownerIdentityId: string; projectId: string; requestId: string; settingsSha256: string;
+  tenantId: string; ownerIdentityId: string; projectId: string; requestId: string; settingsSha256: string; ledgerRootIdentity?: string;
 }>;
 type ConsentIssue = ConsentBinding & Readonly<{ pinDigest: string; capNanoUsd: string; now: number }>;
 type ConsentClaim = ConsentBinding & Readonly<{ commandId: string; loopRunId: string; now: number }>;
@@ -35,7 +35,7 @@ export interface PaidRunConsentStoreV1 {
   consumeOnce(consentId: string, claim: ConsentClaim): Promise<
     { kind: 'consumed'; capability: PaidRunConsumedConsentV1 } | Refusal>;
 }
-const bindingKeys = ['tenantId', 'ownerIdentityId', 'projectId', 'requestId', 'settingsSha256'] as const;
+const bindingKeys = ['tenantId', 'ownerIdentityId', 'projectId', 'requestId', 'settingsSha256', 'ledgerRootIdentity'] as const;
 const bindingMatches = (a: ConsentBinding, b: ConsentBinding) => bindingKeys.every(key => a[key] === b[key]);
 function fresh(record: Pick<ConsentRecord, 'issuedAt' | 'expiresAt'>, now: number) {
   return [record.issuedAt, record.expiresAt, now].every(Number.isSafeInteger)
@@ -53,7 +53,7 @@ export function createPaidRunMemoryConsentStoreV1(options: Readonly<{ lifetimeMs
       // Explicit scalars only: no aliases to caller-owned objects survive issuance.
       const copy = Object.freeze({ tenantId: input.tenantId, ownerIdentityId: input.ownerIdentityId,
         projectId: input.projectId, requestId: input.requestId, settingsSha256: input.settingsSha256,
-        pinDigest: input.pinDigest, capNanoUsd: input.capNanoUsd, now: input.now });
+        ledgerRootIdentity: input.ledgerRootIdentity, pinDigest: input.pinDigest, capNanoUsd: input.capNanoUsd, now: input.now });
       records.set(consentId, { input: copy, expiresAt: input.now + lifetimeMs, consumed: false });
       return { consentId };
     },
@@ -67,7 +67,7 @@ export function createPaidRunMemoryConsentStoreV1(options: Readonly<{ lifetimeMs
       row.consumed = true;
       const record: ConsentRecord = Object.freeze({ consentId, tenantId: row.input.tenantId,
         ownerIdentityId: row.input.ownerIdentityId, projectId: row.input.projectId, requestId: row.input.requestId,
-        settingsSha256: row.input.settingsSha256, pinDigest: row.input.pinDigest, capNanoUsd: row.input.capNanoUsd,
+        settingsSha256: row.input.settingsSha256, ledgerRootIdentity: row.input.ledgerRootIdentity, pinDigest: row.input.pinDigest, capNanoUsd: row.input.capNanoUsd,
         issuedAt: row.input.now, expiresAt: row.expiresAt,
         consumedBy: Object.freeze({ commandId: claim.commandId, loopRunId: claim.loopRunId }) });
       const capability = Object.freeze({}) as PaidRunConsumedConsentV1;
@@ -84,7 +84,7 @@ export type PaidRunPinV1 = Readonly<{
 declare const admissionBrand: unique symbol;
 export type PaidRunAdmissionV1 = Readonly<{
   readonly [admissionBrand]: true;
-  runKey: string; pin: PaidRunPinV1; pinDigest: string; consentId: string;
+  runKey: string; pin: PaidRunPinV1; pinDigest: string; consentId: string; ledgerRootIdentity?: string;
 }>;
 const admissions = new WeakSet<object>();
 const admittedConsents = new WeakSet<object>();
@@ -146,7 +146,7 @@ function admitPaidRunUnchecked(context: PaidRunTrustedContextV1, consent: PaidRu
   if (derived.pinDigest !== record.pinDigest) return refuse('consent_mismatch');
   if (admittedConsents.has(consent!)) return refuse('consent_replayed');
   const admission = Object.freeze({ runKey: sha256Digest([context.tenantId, context.loopRunId]),
-    pin: derived.pin, pinDigest: derived.pinDigest, consentId: record.consentId }) as PaidRunAdmissionV1;
+    pin: derived.pin, pinDigest: derived.pinDigest, consentId: record.consentId, ledgerRootIdentity: record.ledgerRootIdentity }) as PaidRunAdmissionV1;
   // Synchronous check and mark: one consumed capability can authorize only one admission.
   admittedConsents.add(consent!);
   admissions.add(admission);
