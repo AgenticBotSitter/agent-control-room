@@ -337,3 +337,14 @@ test("guard scans every line of a file, not only the first", () => {
     assert.match(result.stderr, /safe\.txt:2: private name <redacted>/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("an unreadable configured list file fails instead of skipping", () => {
+  const root = fixture();
+  try {
+    const result = spawnSync(process.execPath, [guard], {
+      cwd: root, encoding: "utf8", env: { CONTROL_ROOM_PRIVATE_NAMES_FILE: join(root, "missing-names.txt") },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /configured list could not be read/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
