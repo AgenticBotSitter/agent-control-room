@@ -115,3 +115,7 @@ test("the CLI rejects an unloaded nested package and accepts its repaired comman
     assert.match(accepted.stdout, /all package TypeScript test invocations preload tsx/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("an --import= preload of another module cannot replace --import=tsx", () => {
+  assert.equal(testLoaderErrors({ test: "node --import=other --test tests/case.test.ts" }).length, 1);
+});
