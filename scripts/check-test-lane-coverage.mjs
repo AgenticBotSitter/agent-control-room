@@ -1,5 +1,7 @@
 import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Proves every test file is reachable from a command GitHub Actions actually runs.
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parseArguments } from "./ci/run-scripts-keep-going.mjs";
@@ -81,7 +83,66 @@ export function findUncoveredTests(repositoryRoot = process.cwd()) {
   return listTestFiles(repositoryRoot).filter(file => !reached.has(file));
 }
 
+// Pin the mutation lanes independently of the workflow so a missing partition
+// cannot hide behind file-level reachability through another partition.
+export function assertMutationLaneCoverage(scripts, source) {
+  const require = createRequire(import.meta.resolve("eslint"));
+  const { jobs } = require("js-yaml").load(source);
+  const loop = "test:improve-control-room-loop-";
+  const website = "test:improve-control-room-first-website-mutations";
+  const candidateParts = ["source", "ui", "sql-consumption", "sql-decision-immutability",
+    "sql-binding", "sql-checks", "sql-authority", "sql-candidate-immutability", "sql-grants"];
+  const expected = {
+    "mutation-checks-lineage": ["lineage-mutations", "bridge-mutations", "ui-mutations", "attention-mutations"].map(s => loop + s),
+    "mutation-checks-candidate": ["recovery-mutations", "monitoring-mutations", "monitoring-load"].map(s => loop + s)
+      .concat(candidateParts.map(part => `${loop}candidate-mutations:${part}`)),
+    "mutation-checks": [loop + "finalization-mutations", loop + "finalization-load", website + ":part-1", website + ":part-2"],
+  };
+  assert.deepEqual(Object.keys(jobs).filter(key => /^mutation-checks(?:-|$)/u.test(key)).sort(), Object.keys(expected).sort());
+  for (const [key, names] of Object.entries(expected)) {
+    const job = jobs[key];
+    assert.equal(job["timeout-minutes"], 45, `${key}: retain the job bound`);
+    assert.equal(job["continue-on-error"], undefined);
+    assert.equal(job.strategy, undefined);
+    assert.equal(job.if, key === "mutation-checks" ? "${{ always() }}" : undefined);
+    if (key !== "mutation-checks") assert.equal(job.needs, undefined);
+    assert.equal(job.env.PG_BIN, "/usr/lib/postgresql/17/bin");
+    assert.ok(job.steps.some(step => step.run === "pnpm install --frozen-lockfile --ignore-scripts"));
+    assert.ok(job.steps.some(step => step.name === "Install PostgreSQL 17 from PGDG"));
+    for (const step of job.steps) assert.equal(step.if, undefined, `${key}: ${step.name ?? step.uses} must be unconditional`);
+    const checks = job.steps.filter(step => /^pnpm run test:/u.test(step.run ?? ""));
+    assert.deepEqual(checks.map(step => step.run), names.map(name => `pnpm run ${name}`), `${key}: every suite/partition exactly once`);
+    for (const step of checks) {
+      const name = step.run.slice("pnpm run ".length);
+      assert.equal(typeof scripts[name], "string", `${name}: executable package lane required`);
+      assert.match(scripts[name], /node scripts\/run-tests-with-quarantine\.mjs .*--test/u);
+      const bound = name.endsWith("lineage-mutations") ? 12
+        : /(?:bridge|attention)-mutations$/u.test(name) ? 10 : name.endsWith("-load") ? 3 : 5;
+      assert.equal(step["timeout-minutes"], bound, `${name}: retain the step bound`);
+      assert.equal(step["continue-on-error"], name.endsWith("lineage-mutations") ? true : undefined);
+      if (name.includes("candidate-mutations:") || name.startsWith(website + ":")) assert.match(scripts[name], /--test-name-pattern=/u);
+    }
+  }
+  const final = jobs["mutation-checks"];
+  assert.deepEqual(final.needs, ["mutation-checks-lineage", "mutation-checks-candidate"]);
+  const aggregation = final.steps.at(-1);
+  assert.deepEqual(aggregation.env, {
+    LINEAGE_RESULT: "${{ needs.mutation-checks-lineage.result }}",
+    CANDIDATE_RESULT: "${{ needs.mutation-checks-candidate.result }}",
+  });
+  assert.equal(aggregation.run, 'test "$LINEAGE_RESULT" = success\ntest "$CANDIDATE_RESULT" = success\n');
+  const commands = Object.keys(expected).flatMap(key => jobs[key].steps.map(step => step.run ?? ""));
+  assert.equal(commands.filter(command => command === "node scripts/ci/verify-mutation-checks.mjs --anchors-only").length, 1);
+  assert.equal(commands.filter(command => command.includes('node scripts/ci/verify-mutation-checks.mjs "$manifest"')).length, 1);
+  for (const part of [1, 2]) {
+    assert.ok(scripts[`${website}:part-${part}`].includes(`--test-name-pattern="^B5 verifier guard mutations partition ${part} "`));
+  }
+  return Object.fromEntries(Object.keys(expected).map(key => [key, jobs[key]]));
+}
+
 function main() {
+  assertMutationLaneCoverage(JSON.parse(readFileSync("package.json", "utf8")).scripts,
+    readFileSync(".github/workflows/ci.yml", "utf8"));
   const tests = listTestFiles(process.cwd()), uncovered = findUncoveredTests();
   if (uncovered.length > 0) {
     console.error(`${uncovered.length} test file(s) are not reachable from GitHub Actions:`);

@@ -21,7 +21,7 @@ import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import { loopAttentionItemSchemaV1, loopAttentionKey, loopDecisionStatusSchemaV1, loopAttentionComplete, loopAttentionUnknown } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { buildActionInbox } from "../src/web/v1/action-inbox";
 import { readFile } from "node:fs/promises";
-import { reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
+import { assertMutationLaneCoverage, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
 import { sha256Digest, hmacSha256Tag } from "../src/security";
 import { taskFixture } from "./helpers/web-task";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
@@ -332,15 +332,20 @@ test("B2b strict same-response gate evidence and current bindings",async()=>{
 
 test("B2b CI registrations stay unconditional and separate",async()=>{
   const manifest=JSON.parse(await readFile("package.json","utf8")),workflow=await readFile(".github/workflows/ci.yml","utf8");
-  const mutation=workflow.slice(workflow.indexOf("  mutation-checks:"),workflow.indexOf("\n  pr-claims:"));
+  const jobs=assertMutationLaneCoverage(manifest.scripts,workflow);
   const browser=workflow.slice(workflow.indexOf("  owner-browser-journey:"),workflow.indexOf("\n  full-gate:"));
-  for(const lane of [mutation,mutation.replace(/steps\.manifest\.outputs\.exists == 'true'/g,"false")]){
-    const reached=reachableTests(manifest.scripts,workflowCommands(lane));
-    assert.ok(reached.has("tests/improve-control-room-loop-attention-mutations.test.ts"));
-    const step=lane.slice(lane.indexOf("      - name: Prove saved loop owner decision guards"),lane.indexOf("      - name: Validate every declared mutation anchor"));
-    assert.doesNotMatch(step,/\n\s+if:/);assert.match(step,/timeout-minutes: 10/);
-    assert.match(lane,/timeout-minutes: 45/);assert.ok(lane.indexOf("test:improve-control-room-loop-ui-mutations")<lane.indexOf("test:improve-control-room-loop-attention-mutations"));
+  const lineage=jobs["mutation-checks-lineage"];
+  const attention=lineage.steps.find(step=>step.run==="pnpm run test:improve-control-room-loop-attention-mutations");
+  assert.equal(attention["timeout-minutes"],10);
+  assert.ok(lineage.steps.findIndex(step=>step.run==="pnpm run test:improve-control-room-loop-ui-mutations")<lineage.steps.indexOf(attention));
+  for(const key of Object.keys(jobs)){
+    const conditional=key==="mutation-checks"
+      ? workflow.replace("    if: ${{ always() }}", "    if: false")
+      : workflow.replace(`  ${key}:`, `  ${key}:\n    if: false`);
+    assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,conditional),{name:"AssertionError"});
   }
+  const conditionalStep=workflow.replace("      - name: Prove saved loop owner decision guards", "      - if: false\n        name: Prove saved loop owner decision guards");
+  assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,conditionalStep),{name:"AssertionError"});
   assert.ok(reachableTests(manifest.scripts,workflowCommands(workflow)).has("tests/improve-control-room-loop-attention.test.tsx"));
   assert.ok(!reachableTests(manifest.scripts,["pnpm run test:components"]).has("tests/improve-control-room-loop-attention-mutations.test.ts"));
   assert.match(manifest.scripts["test:improve-control-room-loop-attention-browser"],/playwright test tests\/browser\/improve-control-room-loop-attention\.spec\.ts$/);

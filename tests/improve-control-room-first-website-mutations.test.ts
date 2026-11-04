@@ -63,7 +63,7 @@ const probes=[
   {name:"controller missing qualification",find:'  if (packet === undefined) refuse("B5_A2_QUALIFICATION_REQUIRED");',replace:"",
     lane:"tests/improve-control-room-first-website-controller-postgres.test.ts",pattern:"B5 controller-postgres missing qualification refuses before acquisition",assertion:"B5 controller-postgres missing qualification guard"},
 ];
-test("B5 verifier guard mutations bite independently and restore green",{timeout:600000},async t=>{
+for (const partition of [1,2]) test(`B5 verifier guard mutations partition ${partition} bite independently and restore green`,{timeout:600000},async t=>{
   await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b5-mutations-"));
   try{
     execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -71,7 +71,7 @@ test("B5 verifier guard mutations bite independently and restore green",{timeout
     // Exercise current uncommitted bytes; never accidentally test only the clone's old HEAD.
     for (const path of [file,"src/web/v1/improve-control-room-loop-finalization.ts","src/web/v1/improve-control-room-loop-recovery.ts","src/web/v1/improve-control-room-loop-service.ts","scripts/workflow-journeys/first-website-device.ts","scripts/workflow-journeys/first-website-controller.ts","scripts/workflow-journeys/first-website-host.ts","tests/improve-control-room-first-website.test.ts","tests/improve-control-room-first-website-controller-postgres.test.ts"])
       await writeFile(join(copy,path),await readFile(join(root,path)));
-    for(const p of probes)await t.test(p.name,async()=>{
+    for(const [index,p] of probes.entries())if(index % 2 === partition - 1)await t.test(p.name,async()=>{
       const cmd=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=^${p.pattern}$`,p.lane ?? "tests/improve-control-room-first-website.test.ts"];
       const target=("target" in p ? p.target : undefined) ?? file;
       const original=await readFile(join(copy,target),"utf8");

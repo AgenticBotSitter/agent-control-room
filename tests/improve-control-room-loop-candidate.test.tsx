@@ -1022,14 +1022,15 @@ test("B4 decision URL and body candidate IDs must agree",async()=>{
 test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
  const {readFile}=await import("node:fs/promises");
  const workflow=await readFile(".github/workflows/ci.yml","utf8"),manifest=JSON.parse(await readFile("package.json","utf8"));
- const job=workflow.split("  mutation-checks:")[1]!.split("\n  pr-claims:")[0]!;
- assert.match(job,/timeout-minutes: 45/u);
+ const {assertMutationLaneCoverage}=await import("../scripts/check-test-lane-coverage.mjs");
+ assertMutationLaneCoverage(manifest.scripts,workflow);
  for(const part of ["source","ui","sql-consumption","sql-decision-immutability","sql-binding","sql-checks","sql-authority","sql-candidate-immutability","sql-grants"]){
   const script=`test:improve-control-room-loop-candidate-mutations:${part}`;
-  assert.equal(typeof manifest.scripts[script],"string","B4 bounded CI partitions each invoke an executable lane");
-  assert.match(manifest.scripts[script],/--test-name-pattern=/u);
-  const step=job.split(/      - /u).find(s=>s.includes(`run: pnpm run ${script}\n`));
-  assert.ok(step,`B4 CI reaches mutation partition ${part}`);assert.match(step,/timeout-minutes: 5/u);assert.doesNotMatch(step,/\n        if:/u);
+  const removed=workflow.replace(`        run: pnpm run ${script}\n`,"");
+  assert.notEqual(removed,workflow);
+  assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,removed),{name:"AssertionError"},`B4 missing partition ${part} must fail coverage`);
+  const duplicated=workflow.replace(`        run: pnpm run ${script}\n`,`        run: pnpm run ${script}\n      - run: pnpm run ${script}\n        timeout-minutes: 5\n`);
+  assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,duplicated),{name:"AssertionError"},`B4 duplicated partition ${part} must fail coverage`);
  }
 });
 

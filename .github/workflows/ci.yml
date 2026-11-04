@@ -214,8 +214,132 @@ jobs:
             echo "Every lane not run early is run by \`full-gate\`, so the complete suite still runs before merge."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  mutation-checks-lineage:
+    name: Mutation checks (lineage and attention)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PG_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install the frozen dependency graph
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install PostgreSQL 17 from PGDG
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+      - name: Prove saved loop lineage guards
+        id: lineage-guards
+        timeout-minutes: 12
+        # Preserve the failure below, after the bridge has had its own budget.
+        continue-on-error: true
+        run: pnpm run test:improve-control-room-loop-lineage-mutations
+      - name: Prove authorized loop bridge guards
+        timeout-minutes: 10
+        run: pnpm run test:improve-control-room-loop-bridge-mutations
+      - name: Prove saved loop website guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-ui-mutations
+      - name: Prove saved loop owner decision guards
+        timeout-minutes: 10
+        run: pnpm run test:improve-control-room-loop-attention-mutations
+      - name: Require saved loop lineage guards to pass
+        env:
+          LINEAGE_OUTCOME: ${{ steps.lineage-guards.outcome }}
+        run: test "$LINEAGE_OUTCOME" = success
+
+  mutation-checks-candidate:
+    name: Mutation checks (recovery and candidates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PG_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install the frozen dependency graph
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install PostgreSQL 17 from PGDG
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+      - name: Prove interrupted loop recovery guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-recovery-mutations
+      - name: Prove route monitoring guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-monitoring-mutations
+      - name: Prove route monitoring contention
+        timeout-minutes: 3
+        run: pnpm run test:improve-control-room-loop-monitoring-load
+      - name: Prove retained loop candidate guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:source
+      - name: Prove retained loop candidate UI guards
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:ui
+      - name: Prove retained loop candidate SQL candidate consumption
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-consumption
+      - name: Prove retained loop candidate SQL decision immutability
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-decision-immutability
+      - name: Prove retained loop candidate SQL current bindings
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-binding
+      - name: Prove retained loop candidate SQL completed checks
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-checks
+      - name: Prove retained loop candidate SQL owner authority
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-authority
+      - name: Prove retained loop candidate SQL candidate immutability
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-candidate-immutability
+      - name: Prove retained loop candidate SQL application grants
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-grants
+
   mutation-checks:
-    name: Mutation checks
+    name: Mutation checks (finalization and website)
+    # Keep the existing merge-gate dependency and still run this group after a peer failure.
+    needs: [mutation-checks-lineage, mutation-checks-candidate]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -261,70 +385,21 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-17
-      - name: Prove saved loop lineage guards
-        id: lineage-guards
-        timeout-minutes: 12
-        # Preserve the failure below, after the bridge has had its own budget.
-        continue-on-error: true
-        run: pnpm run test:improve-control-room-loop-lineage-mutations
-      - name: Prove authorized loop bridge guards
-        timeout-minutes: 10
-        run: pnpm run test:improve-control-room-loop-bridge-mutations
-      - name: Prove saved loop website guards
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-ui-mutations
-      - name: Prove saved loop owner decision guards
-        timeout-minutes: 10
-        run: pnpm run test:improve-control-room-loop-attention-mutations
-      - name: Prove interrupted loop recovery guards
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-recovery-mutations
-      - name: Prove route monitoring guards
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-monitoring-mutations
-      - name: Prove route monitoring contention
-        timeout-minutes: 3
-        run: pnpm run test:improve-control-room-loop-monitoring-load
-      - name: Prove retained loop candidate guards
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:source
-      - name: Prove retained loop candidate UI guards
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:ui
-      - name: Prove retained loop candidate SQL candidate consumption
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-consumption
-      - name: Prove retained loop candidate SQL decision immutability
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-decision-immutability
-      - name: Prove retained loop candidate SQL current bindings
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-binding
-      - name: Prove retained loop candidate SQL completed checks
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-checks
-      - name: Prove retained loop candidate SQL owner authority
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-authority
-      - name: Prove retained loop candidate SQL candidate immutability
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-candidate-immutability
-      - name: Prove retained loop candidate SQL application grants
-        timeout-minutes: 5
-        run: pnpm run test:improve-control-room-loop-candidate-mutations:sql-grants
       - name: Prove retained finalization guards
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-loop-finalization-mutations
       - name: Prove retained finalization contention
         timeout-minutes: 3
         run: pnpm run test:improve-control-room-loop-finalization-load
-      - name: Prove first website proof verifier guards
+      - name: Prove first website proof verifier guards partition 1
         timeout-minutes: 5
-        run: pnpm run test:improve-control-room-first-website-mutations
+        run: pnpm run test:improve-control-room-first-website-mutations:part-1
+      - name: Prove first website proof verifier guards partition 2
+        timeout-minutes: 5
+        run: pnpm run test:improve-control-room-first-website-mutations:part-2
       - name: Validate every declared mutation anchor
         run: node scripts/ci/verify-mutation-checks.mjs --anchors-only
       - name: Re-run declared guard mutations
-        if: steps.manifest.outputs.exists == 'true'
         env:
           MANIFEST_LIST: ${{ steps.manifest.outputs.list }}
         run: |
@@ -335,15 +410,20 @@ jobs:
           done < "$MANIFEST_LIST"
           exit "$failed"
       - name: Warn about guard-like changes without a manifest
-        if: steps.manifest.outputs.exists != 'true'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: node scripts/ci/verify-mutation-checks.mjs --warn-only
-      - name: Require saved loop lineage guards to pass
-        if: always()
+          MANIFEST_EXISTS: ${{ steps.manifest.outputs.exists }}
+        run: |
+          if [ "$MANIFEST_EXISTS" != true ]; then
+            node scripts/ci/verify-mutation-checks.mjs --warn-only
+          fi
+      - name: Require every mutation group to pass
         env:
-          LINEAGE_OUTCOME: ${{ steps.lineage-guards.outcome }}
-        run: test "$LINEAGE_OUTCOME" = success
+          LINEAGE_RESULT: ${{ needs.mutation-checks-lineage.result }}
+          CANDIDATE_RESULT: ${{ needs.mutation-checks-candidate.result }}
+        run: |
+          test "$LINEAGE_RESULT" = success
+          test "$CANDIDATE_RESULT" = success
 
   pr-claims:
     name: PR evidence claims
