@@ -185,7 +185,7 @@ test("B4 PostgreSQL fresh production login exact grants preflight and schema dig
   assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json","utf8")).digest,measured);
   await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:"test"},now,{nativeQueue:true});
   const count=(await sql(pg,"SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n;
-  assert.equal(count,259);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
+  assert.equal(count,262);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
   for(const table of ["control_loop_update_candidates","control_loop_update_candidate_decisions"]){
    for(const role of ["app","scheduler","coordinator","results","publisher","queueWorker","intake","news","fleet"])
     await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:"42501"},`B4 broad role ${role} denied`);
@@ -259,13 +259,14 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0306%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0306%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  await admin.query(await readFile("db/down/0308_control_loop_providers.sql","utf8"));
   await admin.query(await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"));
   await admin.query(await readFile("db/down/0306_control_loop_policy.sql","utf8"));
   await admin.query(await readFile("db/down/0305_control_loop_roster.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -363,12 +364,13 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   assert.ok(files.includes("db/migrations/0302_control_loop_improvement_commands.sql"));assert.ok(!files.includes("db/migrations/0303_control_loop_update_candidates.sql"));
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
+   await admin.query(await readFile("db/down/0308_control_loop_providers.sql","utf8"));
    await admin.query(await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"));
    await admin.query(await readFile("db/down/0306_control_loop_policy.sql","utf8"));
   await admin.query(await readFile("db/down/0305_control_loop_roster.sql","utf8"));
    await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
@@ -446,12 +448,80 @@ test("B4 PostgreSQL interrupt before commit and lost receipt after commit recons
  }finally{await f.close();}
 }));
 
-test("B4 inherited fixture preparation measures 258 tables and preserves refusals",{timeout:600000},async()=>{
+test("B4 inherited fixture preparation measures 261 tables and preserves refusals",{timeout:600000},async()=>{
  const {promisify}=await import("node:util"),{execFile}=await import("node:child_process");
  const exec=promisify(execFile),env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_PG_TEST_PORT_BASE:String(PORT)};delete env.NODE_TEST_CONTEXT;
  const child=await exec(process.execPath,["scripts/run-tests-with-quarantine.mjs","--import","tsx","--test","--test-concurrency=1","--test-timeout=600000",
   "--test-name-pattern=^B1a fixture preparation (shipped ownership|prepared|wrong owner|nonempty)$","tests/improve-control-room-desk-postgres.test.ts"],
   {env,timeout:600000,maxBuffer:8*1024*1024});
- assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=258/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
- console.log("B4 native inherited_fixture_cases=4 prepared_catalog=258 ownership_and_nonempty_refusals=true");
+ assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=261/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
+ console.log("B4 native inherited_fixture_cases=4 prepared_catalog=261 ownership_and_nonempty_refusals=true");
 });
+
+// S1: production-login storage, process-independent reopen, route withdrawal and exact grants.
+test('S1 PostgreSQL provider persistence after application pool close and exact ACLs',async()=>run(async pg=>{
+ const {LoopProviderServiceV1}=await import('../src/web/v1/loop-provider-service');
+ await seed(pg);
+ await sql(pg,`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+ VALUES($1,'synthetic/model',1,'synthetic-api','','','','','','','','on','','','',$2,now())`,[scope.tenantId,owner]);
+ const p={provider_id:'provider-one',display_name:'Synthetic provider',base_url:'https://example.com/api',billing_kind:'token' as const,
+  secret_ref:{kind:'launcher' as const,launcher:'synthetic-api'},models:[{roster_name:'synthetic/model',launcher:'synthetic-api',served_model_id:'served/old'}],
+  credit_amount_nano_usd:'123000',credit_expires_on:'2027-01-31',credit_note:'Synthetic credit',price_source_url:null,price_source_format:null};
+ let w=web(pg),service=new LoopProviderServiceV1(w.client,scope,undefined,()=>now);
+ const expected={schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:1,providers:[p]};
+ try{
+  assert.deepEqual((await w.client.query('SELECT current_user,session_user')).rows,[{current_user:'control_room_web',session_user:'control_room_web'}]);
+  assert.deepEqual(await service.upsert(identity,p.provider_id,{expectedVersion:0,provider:p},'s1-native-add-0001'),{replayed:false,version:1});
+  assert.deepEqual(await service.view(identity),expected);
+ }finally{await w.close();}
+ // A genuinely new application pool on the same server/database; no migrations or reseed here.
+ w=web(pg);service=new LoopProviderServiceV1(w.client,scope,undefined,()=>now);
+ try{
+  assert.deepEqual(await service.view(identity),expected);
+  const rows=(await w.client.query('SELECT provider_id,display_name,base_url,billing_kind,secret_ref,credit_amount_nano_usd,credit_expires_on::text,credit_note,price_source_url,price_source_format,updated_by FROM control_loop_providers')).rows;
+  const {models:_models,...stored}=p;assert.deepEqual(rows,[{...stored,updated_by:owner}]);
+  assert.deepEqual((await w.client.query('SELECT provider_id,roster_name,launcher,served_model_id FROM control_loop_provider_models')).rows,[{provider_id:p.provider_id,...p.models[0]}]);
+  await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:'test'},now,{nativeQueue:true});
+  const updates:Record<string,string[]>={control_loop_providers:['base_url','billing_kind','credit_amount_nano_usd','credit_expires_on','credit_note','display_name','price_source_format','price_source_url','secret_ref','updated_at','updated_by'],control_loop_provider_models:[],control_loop_provider_state:['last_idempotency_key','last_request_digest','updated_at','version']};
+  for(const [table,columns] of Object.entries(updates)){
+   for(const right of ['SELECT','INSERT'])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,true);
+   assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,'DELETE') yes",[table])).rows[0].yes,!table.endsWith('_state'));
+   for(const right of ['UPDATE','TRUNCATE'])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,false);
+   assert.deepEqual((await sql(pg,"SELECT attname FROM pg_attribute WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege('control_room_web',attrelid,attnum,'UPDATE') ORDER BY attname COLLATE \"C\"",[table])).rows.map(r=>r.attname),columns);
+   for(const role of ['app','scheduler','coordinator','results','publisher','queueWorker','intake','news','fleet'])await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:'42501'});
+  }
+  const replacement={...p,secret_ref:{kind:'launcher' as const,launcher:'synthetic-api'},models:[{...p.models[0]!,served_model_id:'served/new'}],credit_note:'Replacement'};
+  await service.upsert(identity,p.provider_id,{expectedVersion:1,provider:replacement},'s1-native-replace-0001');
+  assert.deepEqual(await service.view(identity),{...expected,version:2,providers:[replacement]});
+  assert.equal((await w.client.query("SELECT * FROM control_loop_provider_models WHERE served_model_id='served/old'")).rows.length,0);
+  assert.equal((await service.revalidate(identity,{providerId:p.provider_id,model:'synthetic/model'})).served_model_id,'served/new');
+  await assert.rejects(service.revalidate(identity,{providerId:p.provider_id,model:'absent'}),{reason:'roster_mismatch'});
+  const before=(await sql(pg,'SELECT * FROM control_loop_providers')).rows;
+  await assert.rejects(sql(pg,await readFile('db/down/0308_control_loop_providers.sql','utf8')),/loop providers retained/);
+  assert.deepEqual((await sql(pg,'SELECT * FROM control_loop_providers')).rows,before);
+  await service.remove(identity,p.provider_id,{expectedVersion:2},'s1-native-remove-0001');
+  assert.deepEqual(await service.view(identity),{...expected,version:3,providers:[]});
+  for(const table of ['control_loop_providers','control_loop_provider_models'])assert.equal((await w.client.query(`SELECT * FROM ${table}`)).rows.length,0);
+  await assert.rejects(service.revalidate(identity,{providerId:p.provider_id,model:'synthetic/model'}),{reason:'roster_mismatch'});
+  await assert.rejects(sql(pg,await readFile('db/down/0308_control_loop_providers.sql','utf8')),/loop providers retained/);
+  console.log('S1 native reopened_pool=true exact_rows=true replaced_and_removed=true exact_grants=true retained_down_atomic=true');
+ }finally{await w.close();}
+}));
+
+test('S1 PostgreSQL 20 independent provider callers contend at probe barrier with one winner',async()=>run(async pg=>{
+ const {LoopProviderServiceV1}=await import('../src/web/v1/loop-provider-service');await seed(pg);
+ await sql(pg,`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+ VALUES($1,'synthetic/model',1,'synthetic-api','','','','','','','','on','','','',$2,now())`,[scope.tenantId,owner]);
+ const p={provider_id:'provider-one',display_name:'Synthetic provider',base_url:'https://example.com',billing_kind:'token' as const,secret_ref:{kind:'macos_keychain' as const,service:'control-room.provider' as const,account:'provider-one'},models:[{roster_name:'synthetic/model',launcher:'synthetic-api',served_model_id:'served/one'}],credit_amount_nano_usd:null,credit_expires_on:null,credit_note:'',price_source_url:null,price_source_format:null};
+ const clients=Array.from({length:20},()=>web(pg));let arrived=0,release!:()=>void;
+ const barrier=new Promise<void>(r=>release=r),presence={availability:async()=>{arrived++;if(arrived===20)release();await barrier;return 'available' as const;}};
+ const services=clients.map(w=>new LoopProviderServiceV1(w.client,scope,presence,()=>now));
+ try{
+  const results=await Promise.allSettled(services.map((s,i)=>s.upsert(identity,p.provider_id,{expectedVersion:0,provider:p},`s1-native-race-key-${String(i).padStart(4,'0')}`)));
+  assert.equal(arrived,20);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const losers=results.filter(r=>r.status==='rejected');assert.equal(losers.length,19);for(const loser of losers)if(loser.status==='rejected')assert.equal(loser.reason.code,'conflict');
+  assert.equal((await services[0]!.view(identity)).version,1);
+  assert.equal((await sql(pg,'SELECT * FROM control_loop_providers')).rows.length,1);
+  console.log('S1 native separate_production_callers=20 barrier_arrivals=20 winners=1 losers=19 version=1');
+ }finally{release();await Promise.all(clients.map(w=>w.close()));}
+}));

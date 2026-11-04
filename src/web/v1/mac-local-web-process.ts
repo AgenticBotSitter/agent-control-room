@@ -1,3 +1,5 @@
+import { LoopProviderServiceV1 } from "./loop-provider-service";
+import { createLoopProviderHttpHandlerV1, isLoopProviderRouteV1 } from "./loop-provider-http";
 import { LoopPolicyServiceV1 } from "./loop-policy-service";
 import { createLoopPolicyHttpHandlerV1, isLoopPolicyRouteV1 } from "./loop-policy-http";
 import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
@@ -338,6 +340,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock) : undefined;
   const loopRosterStarted = loopRoster?.start().catch(() => undefined);
+  const loopProviders = loopRosterTools ? new LoopProviderServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopRosterHttp = loopRoster ? createLoopRosterHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: loopRoster, clock }) : undefined;
   const loopPolicyHttp = loopPolicy ? createLoopPolicyHttpHandlerV1({ origin: options.origin,
@@ -882,6 +886,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (isLoopPolicyRouteV1(url.pathname)) {
         if (!loopPolicyHttp) throw new WebAccessError("not_found");
         return loopPolicyHttp(request);
+      }
+      if (isLoopProviderRouteV1(url.pathname)) {
+        if (!loopProviders) throw new WebAccessError("not_found");
+        await loopRosterStarted;
+        return createLoopProviderHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, service: loopProviders, clock })(request);
       }
       if (isLoopRosterRouteV1(url.pathname)) {
         if (!loopRosterHttp) throw new WebAccessError("not_found");

@@ -10,6 +10,7 @@ import { ImprovementRunPanel } from "./improvement-run-panel";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { LoopProviderSection } from "./loop-provider-panel";
 import { LoopRosterSection } from "./loop-roster-panel";
 
 type ReadState = { state: "loading" } | { state: "unavailable" } | { state: "ready"; value: ImprovementDeskViewV1 };
@@ -101,6 +102,7 @@ function BoundImproveWorkspace({ projectId }: { projectId: string }) {
       window.location.hash = `request=${encodeURIComponent(requestId)}`; setGeneration(value => value + 1);
     }} />}
     {desk?.kind === "loop" && <LoopRosterSection />}
+    {desk?.kind === "loop" && <LoopProviderSection />}
     <h2>Legacy pipelines</h2>
     {data.state === "loading" ? <p role="status">Loading saved improvement desk…</p>
       : data.state === "unavailable" ? <section className="private-panel"><h2>Desk unavailable</h2>

@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "20b5066a7d22a83eb8e7739a527b9016874007387a73b6464403fd87db5f499b",
-  "note": "Measured on native PostgreSQL 17 with migrations through 0306 policy layers and the closed intake body extension. Production-login and updater-query equality are checked in the P71 native lane."
+  "digest": "5f22dd333a6dd42a3b5a4298acce91e6fab71e66a3279048b6a8737acd16210c",
+  "note": "Measured on native PostgreSQL 17 through 0308 provider settings; web and updater query digests match."
 }

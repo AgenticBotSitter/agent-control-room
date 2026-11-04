@@ -90,7 +90,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Current value includes the 0306 policy layers, immutable input sources/events and
 // closed intake body extension. Measured with the production applier on native PostgreSQL 17;
 // the updater query and private-web login must agree with this pin.
-export const privateWebSchemaDigest = "20b5066a7d22a83eb8e7739a527b9016874007387a73b6464403fd87db5f499b";
+export const privateWebSchemaDigest = "5f22dd333a6dd42a3b5a4298acce91e6fab71e66a3279048b6a8737acd16210c";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -136,6 +136,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
   "control_loop_update_candidates", "control_loop_update_candidate_decisions",
   "control_loop_roster_models", "control_loop_roster_state",
+  "control_loop_providers", "control_loop_provider_models", "control_loop_provider_state",
   "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources",
   // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
   // notice, claim and settle, and holds nothing else on it. Listed here because
@@ -197,6 +198,7 @@ for (const table of ["control_loop_improvement_requests", "control_loop_improvem
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
   "control_loop_update_candidates", "control_loop_update_candidate_decisions",
   "control_loop_roster_models", "control_loop_roster_state",
+  "control_loop_providers", "control_loop_provider_models", "control_loop_provider_state",
   "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources"]) privateWebInsertTables.add(table);
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
@@ -275,6 +277,8 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   // 0305: roster rows are edited in place; the state row holds version, export marker and replay key.
+  control_loop_providers: ["display_name","base_url","billing_kind","secret_ref","price_source_url","price_source_format","credit_amount_nano_usd","credit_expires_on","credit_note","updated_by","updated_at"],
+  control_loop_provider_state: ["version","last_idempotency_key","last_request_digest","updated_at"],
   control_loop_policy_layers: ["version", "settings_text", "settings_sha256", "updated_by", "updated_at", "last_idempotency_key", "last_request_digest"],
   control_loop_roster_models: ["launcher", "provider", "family", "model_class", "roles", "efforts", "default_effort", "cost",
     "on_off", "note", "nick", "max_build_grade", "updated_by", "updated_at"],
@@ -840,7 +844,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedInserts = kind === "agentReviewer" ? agentReviewerInserts : kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : privateWebInsertTables;
   const allowedUpdates = kind === "agentReviewer" ? agentReviewerUpdates : kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : privateWebUpdateColumns;
   const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : kind === "web"
-    ? new Set(["owner_web_push_subscriptions"]) : new Set<string>();
+    ? new Set(["owner_web_push_subscriptions", "control_loop_providers", "control_loop_provider_models"]) : new Set<string>();
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);
