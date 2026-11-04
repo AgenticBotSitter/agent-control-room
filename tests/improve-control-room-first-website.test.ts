@@ -1848,11 +1848,70 @@ test('B5 closed interval 3-6: refusals stay, each next to its green sibling', as
   const codeEnds=journey.steps.filter(x=>x.role==='code-review'&&x.verdict==='CLEAN').map(x=>Date.parse(x.endedAt));
   assert.ok(codeEnds.length>=2);
   no(j=>{early(j);j.closed[1]!.to=new Date(Math.max(...codeEnds)-1000).toISOString();},'fresh review ends after to');
-  // 5b: the build itself must still end at or before `to`.
-  no(j=>{early(j);j.closed[1]!.to=at(14.8);},'build ends after to');
+  // 5b (the defective build's own end bound) lives in its own test below,
+  // "B5 defective build end bound refuses independently", with valid intervals only.
   // 6: no closed interval at all. Sibling: the unedited fixture passes.
+  // Guard unit case only: b5JourneySchemaV1 requires closed.min(2), so an empty list is
+  // schema-unreachable through parsed full-verifier evidence. No full-verifier claim is made.
   ok(()=>{},'unedited sibling');
   no(j=>{j.closed=[];},'no interval');
+});
+
+test('B5 defective build end bound refuses independently', async t => {
+  const {manifest,journey,variant,at}=await closedIntervalFixture(t);
+  const ms=(s:string)=>Date.parse(s);
+  const steps=[...journey.steps].sort((a,b)=>a.n-b.n);
+  const defective=steps.find(s=>s.role==='build')!;
+  assert.equal(ms(defective.startedAt),ms(at(14)),'fixture defective build starts at minute 14');
+  assert.equal(ms(defective.endedAt),ms(at(15)),'fixture defective build ends at minute 15');
+  const later=steps.filter(s=>s.n>defective.n);
+  assert.ok(later.some(s=>s.role==='code-review'&&s.verdict==='NEEDS-FIX'),'a rejection follows the build');
+  assert.ok(later.filter(s=>s.role==='code-review'&&s.verdict==='CLEAN').length>=2,'fresh code reviews follow the build');
+  assert.ok(ms(later[0]!.startedAt)>=ms(at(16)),'every later step starts at or after minute 16');
+  // Explicit synthetic chronology (fixture minutes):
+  //   6      approve-spec (existing owner action; the defective build's handoff start)
+  //   13.5   closed "defective build" interval opens
+  //   14-15  defective build
+  //   15 + d closed "defective build" interval closes (d = -0.1 before, 0 equal, +0.1 after)
+  //   15.3   SYNTHETIC owner action (re-open/close handshake between intervals)
+  //   15.5   closed "rejection and repair" interval opens
+  //   16-    rejection, repair and fresh reviews
+  //   38     closed "rejection and repair" interval closes
+  // The 15.3 owner action is the latest owner action at or before 15.5, so the later interval's
+  // handoff start (15.3) is after the build's start (14): it cannot cover the build via fromHandoff's
+  // latest-owner-action rule. The existing "after Start" interval (3.1-3.4) closes before the build
+  // starts, so it, like the "defective build" interval, is excluded only by the end clause under test.
+  const handshake=at(15.3);
+  const matrix=(buildTo:string)=>variant(j=>{
+    const template=j.actions.find(a=>a.name==='answer')!;
+    j.actions.push({...structuredClone(template),sequence:90,receiptPath:'receipts/90.json',at:handshake});
+    const receipts=(a:number,b:number)=>[{device:'phone' as const,sequence:a,path:`receipts/${a}.json`},{device:'desktop' as const,sequence:b,path:`receipts/${b}.json`}];
+    j.closed=[j.closed[0]!,
+      {label:'defective build',from:at(13.5),to:buildTo,receipts:receipts(91,92)},
+      {label:'rejection and repair',from:at(15.5),to:at(38),receipts:receipts(93,94)}];
+  });
+  const cases={before:matrix(new Date(ms(at(15))-6_000).toISOString()),equal:matrix(at(15)),after:matrix(at(15.1))};
+  for(const [name,j] of Object.entries(cases)){
+    assert.doesNotThrow(()=>H.b5JourneySchemaV1.parse(j),`${name}: journey parses`);
+    for(const c of j.closed)assert.ok(ms(c.from)<=ms(c.to),`${name}: ${c.label} has from<=to`);
+    const handoffStart=(c:typeof j.closed[number])=>{const owner=j.actions.map(a=>ms(a.at)).filter(x=>x<=ms(c.from));return owner.length?Math.max(...owner):ms(c.from);};
+    // No interval other than "defective build" may satisfy fromHandoff's start clause for the build.
+    const laterOnes=j.closed.filter(c=>ms(c.from)>ms(defective.endedAt));
+    assert.equal(laterOnes.length,1,`${name}: one later interval`);
+    for(const c of laterOnes)assert.ok(handoffStart(c)>ms(defective.startedAt),`${name}: ${c.label} cannot cover the build via the latest owner action`);
+    for(const c of j.closed.filter(c=>!laterOnes.includes(c)))assert.ok(handoffStart(c)<=ms(defective.startedAt),`${name}: ${c.label} differs only by its end bound`);
+    const own=j.closed.find(c=>c.label==='defective build')!;
+    assert.ok(handoffStart(own)<=ms(defective.startedAt)&&ms(own.from)<=ms(defective.startedAt),`${name}: start clause holds for the build interval`);
+    // Every non-build prerequisite (rejection, repair, fresh reviews: all later steps) is strictly inside the later interval.
+    const rest=j.closed.find(c=>c.label==='rejection and repair')!;
+    for(const s of later)assert.ok(ms(rest.from)<=ms(s.startedAt)&&ms(s.endedAt)<=ms(rest.to),`${name}: step ${s.n} strictly closed`);
+    // Owner actions stay outside every closed interval.
+    for(const a of j.actions)for(const c of j.closed)assert.ok(!(ms(c.from)<ms(a.at)&&ms(a.at)<ms(c.to)),`${name}: action ${a.sequence} outside ${c.label}`);
+  }
+  // Siblings first: equality and just-after pass on the same input, so every non-build prerequisite holds.
+  assert.doesNotThrow(()=>H.assertRejectionRepairV1(manifest,cases.equal),'same input, build end equals interval end');
+  assert.doesNotThrow(()=>H.assertRejectionRepairV1(manifest,cases.after),'same input, interval closes after build end');
+  assert.throws(()=>H.assertRejectionRepairV1(manifest,cases.before),closedIntervalRefused,'build ends 6s after its interval closes');
 });
 
 test('F04b per-screen HTTP receipts bind distinct envelopes to the authoritative cold card', async t => {
