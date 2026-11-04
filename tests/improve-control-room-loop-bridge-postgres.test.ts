@@ -462,6 +462,35 @@ test('P71 PostgreSQL dropped commit connection rolls back layer/event and retry 
   }finally{await retry.close();}
 }));
 
+test('P71 PostgreSQL retained run-edit commands refuse down without changing rows or schema',async()=>run(async pg=>{
+  await seed(pg);const e=engine(),w=web(pg,e.adapter),admin=new Client(pg.admin());await admin.connect();
+  try{
+    const description='Retained edited command';
+    const draft=await w.desk.saveLoopDraft(identity,project,{description,settingsText:'{}'},'p71-native-retained-draft-0001');
+    const binding={schemaVersion:1,body:{description,settingsEdits:'{}'},localVersion:1,
+      adapterId:e.adapter.adapterId,loopRunId:'run:fixture',toolingRevision:e.adapter.toolingRevision,schemaDigest:e.adapter.schemaDigest,
+      a2SchemaVersion:1,requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1('{}'),runLinkId:null,
+      authorizationId:null,inputVersion:null,expectedRevision:null,evidence:null};
+    await admin.query(`INSERT INTO control_loop_improvement_commands
+      (tenant_id,command_id,entry_kind,request_id,project_id,owner_identity_id,operation,idempotency_key,binding,record_digest,auth_tag,created_at)
+      VALUES($1,$2,'claim',$3,$4,$5,'intake',$6,$7,'sha256:'||repeat('c',64),'hmac-sha256:'||repeat('d',64),now())`,
+      [scope.tenantId,'loop-command:'+'1'.repeat(32),draft.request.requestId,project,owner,'p71-native-retained-command-0001',JSON.stringify(binding)]);
+    const before=(await admin.query('SELECT * FROM control_loop_improvement_commands')).rows;
+    for(const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
+      assert.equal((await admin.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
+    await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
+    const schemaBefore=await readPrivateWebSchemaDigest(admin);
+    await assert.rejects(admin.query(await readFile('db/down/0306_control_loop_policy.sql','utf8')),
+      {code:'23514',message:'loop policy retained command rows'});
+    await admin.query('ROLLBACK');
+    assert.deepEqual((await admin.query('SELECT * FROM control_loop_improvement_commands')).rows,before);
+    assert.equal(await readPrivateWebSchemaDigest(admin),schemaBefore,'named refusal leaves the entire pre-down schema intact');
+    await admin.query(await readFile('db/migrations/0307_control_loop_policy_validate.sql','utf8'));
+    assert.equal(await readPrivateWebSchemaDigest(admin),privateWebSchemaDigest,'re-validating P71 restores its release pin after refusal');
+    console.log('P71 retained_commands=1 named_down_refusal=23514 rows_unchanged=true schema_unchanged=true P71_pin_restored=true');
+  }finally{await admin.end();await w.close();}
+}));
+
 test('P71 PostgreSQL empty down/re-up and injected migration failure preserve ledger',async()=>run(async pg=>{
   const admin=new Client(pg.admin());await admin.connect();
   const stage=await mkdtemp(resolve('.test-tmp/p71-ledger-'));
@@ -471,6 +500,9 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
     assert.equal(await validated(),false,'validation down restores NOT VALID while preserving the predicate');
     await admin.query(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
+    assert.equal(await validated(),true,'0306 down restores the validated pre-P71 predicate');
+    // The release pin shipped immediately before P71 (7cc303ebc).
+    assert.equal(await readPrivateWebSchemaDigest(admin),'8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c');
     await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     for(const entry of await collectLedgerEntries(resolve('.'))){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}

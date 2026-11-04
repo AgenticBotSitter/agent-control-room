@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { composeLoopSettingsV1 } from "../src/web/v1/loop-policy-compose";
+import { readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
 import { LoopPolicyServiceV1 } from "../src/web/v1/loop-policy-service";
 import { createLoopPolicyHttpHandlerV1 } from "../src/web/v1/loop-policy-http";
 import { WebAccessError } from "../src/web/v1/access-verifier";
@@ -69,7 +70,7 @@ test("P71 ordinary CI excludes only the mandatory real-tools test and exposes a 
 
 });
 
-test("P71 downgrade preserves retained run-edit commands while enforcing the old body on new writes", async t => {
+test("P71 downgrade refuses retained run-edit commands before changing the schema", async t => {
   const f = await policyFixture(t);
   const { ImproveControlRoomDeskServiceV1 } = await import('../src/improve-control-room/v1/service');
   const desk = new ImproveControlRoomDeskServiceV1(f.client, scope, new Uint8Array(32).fill(65), undefined, () => now);
@@ -88,11 +89,22 @@ test("P71 downgrade preserves retained run-edit commands while enforcing the old
   for (const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
     assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
   await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
-  await f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
+  const schemaBefore = await readPrivateWebSchemaDigest(f.client);
+  await assert.rejects(f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8')),
+    { code: '23514', message: 'loop policy retained command rows' });
+  await f.db.exec('ROLLBACK');
   assert.deepEqual((await f.db.query('SELECT * FROM control_loop_improvement_commands')).rows, before);
-  assert.equal((await f.db.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conname='control_loop_improvement_commands_check1'")).rows[0]!.convalidated, false);
-  assert.equal((await f.db.query("SELECT relname FROM pg_class WHERE relname IN ('control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources')")).rows.length, 0);
-  await assert.rejects(insert('loop-command:'+'2'.repeat(32), binding.body), { code: '23514' });
+  assert.equal(await readPrivateWebSchemaDigest(f.client), schemaBefore, 'refusal preserves the schema before 0306 down');
+  assert.equal((await f.db.query("SELECT relname FROM pg_class WHERE relname IN ('control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources')")).rows.length, 3);
+});
+
+test("P71 empty downgrade restores the validated pre-P71 release schema pin", async t => {
+  const f = await policyFixture(t);
+  await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
+  assert.equal((await f.db.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conname='control_loop_improvement_commands_check1'")).rows[0]!.convalidated, true);
+  // The release pin shipped immediately before P71 (7cc303ebc).
+  assert.equal(await readPrivateWebSchemaDigest(f.client), '8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c');
 });
 
 async function policyFixture(t: TestContext) {

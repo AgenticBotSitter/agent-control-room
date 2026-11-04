@@ -1,11 +1,17 @@
 BEGIN;
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
-LOCK TABLE control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources,
+  control_loop_improvement_commands IN ACCESS EXCLUSIVE MODE;
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM control_loop_policy_layers) OR EXISTS (SELECT 1 FROM control_loop_policy_events)
     OR EXISTS (SELECT 1 FROM control_loop_policy_input_sources) THEN
     RAISE EXCEPTION 'loop policy retained' USING ERRCODE='23514';
+  END IF;
+  -- Signed command history cannot be rewritten to fit the pre-P71 body shape.
+  IF EXISTS (SELECT 1 FROM control_loop_improvement_commands
+    WHERE operation='intake' AND binding->'body' ? 'settingsEdits') THEN
+    RAISE EXCEPTION 'loop policy retained command rows' USING ERRCODE='23514';
   END IF;
 END $$;
 ALTER TABLE control_loop_improvement_commands DROP CONSTRAINT control_loop_improvement_commands_check1;
@@ -48,7 +54,7 @@ CHECK ((
         AND ((binding->'body') - ARRAY['expectedVersion','expectedRevision','questionId','inputVersion','questionReportSha256','text'])='{}'::jsonb
     END
   ) IS TRUE) NOT VALID;
--- Preserve historical P71 command bodies; the restored predicate still checks new writes.
+ALTER TABLE control_loop_improvement_commands VALIDATE CONSTRAINT control_loop_improvement_commands_check1;
 DROP TABLE control_loop_policy_input_sources RESTRICT;
 DROP TABLE control_loop_policy_events RESTRICT;
 DROP TABLE control_loop_policy_layers RESTRICT;
