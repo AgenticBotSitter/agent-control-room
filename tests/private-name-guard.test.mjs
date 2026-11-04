@@ -324,3 +324,16 @@ test("a pull request payload without a base repository cannot buy a fork skip", 
     assert.equal(skipDecision({ GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: file }).skip, false);
   } finally { rmSync(file, { force: true }); }
 });
+
+test("guard scans every line of a file, not only the first", () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, "safe.txt"), "line one\nline two syntheticprivateterm\n");
+    git(root, ["add", "."]);
+    const result = spawnSync(process.execPath, [guard], {
+      cwd: root, encoding: "utf8", env: { CONTROL_ROOM_PRIVATE_NAMES: "SyntheticPrivateTerm\n" },
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /safe\.txt:2: private name <redacted>/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
