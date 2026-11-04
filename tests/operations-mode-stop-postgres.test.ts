@@ -117,10 +117,11 @@ async function seedRunningWork(admin: Client, jobId: string, store: CanonicalSto
     required_capability,authority_digest,payload,created_at,updated_at)
     VALUES($1,$2,$3,$4,'ready',1,50,'code.change',$5,$6::jsonb,$7,$7)`,
   [jobId, TENANT, workflow.id, PROJECT, authority.digest, JSON.stringify(job), now]);
+  const acquiredAt = Date.now();
   const claimed = await store.claimReadyTaskJob({ tenantId: TENANT, jobId, expectedJobVersion: 1, nodeId: NODE,
     workerId: EXECUTOR, attemptId: `${jobId}:attempt:1`, leaseId: `${jobId}:lease:1`, transitionId: `${jobId}:claim`,
-    idempotencyKey: `${jobId}:claim-key`, actor: { actorId: OWNER, actorType: "human" }, acquiredAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 600_000).toISOString() });
+    idempotencyKey: `${jobId}:claim-key`, actor: { actorId: OWNER, actorType: "human" }, acquiredAt: new Date(acquiredAt).toISOString(),
+    expiresAt: new Date(acquiredAt + 600_000).toISOString() });
   return { jobId, attemptId: claimed.attempt.id, leaseId: claimed.lease.id };
 }
 
