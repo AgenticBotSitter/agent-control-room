@@ -1015,6 +1015,94 @@ for (const kind of ["before-observation", "uncertain-response", "rejected-comman
     }
   });
 
+// Pins the existing pre-action heuristic: only a first 4xx owner-command
+// response clears "possibly acted"; it is not a new receipt contract.
+const restartMatrixWait = "sign-in expired after you acted; press Stop and the lead restarts the run";
+async function restartMatrixSetup(t: { after(fn: () => Promise<void>): void }) {
+  const f = await restartFixture(t), { mailbox } = f;
+  const request = await mailbox.request("confirm-start", "phone", new Date(f.clock.now + 3600_000).toISOString(),
+    { requestId: "unit-request", runLinkId: "unit-run", inputVersion: 1 });
+  const original = await f.observe(request, "a".repeat(43));
+  assert.equal(original.sequence, request.sequence);
+  const observationBytes = await readFile(join(mailbox.root, "observations/1.json"), "utf8");
+  assert.equal(observationBytes, JSON.stringify(original) + "\n");
+  return { f, mailbox, request, original, observationBytes };
+}
+async function restartMatrixExists(path: string) {
+  return lstat(path).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return false; throw error; });
+}
+
+for (const outcome of [399, 400, 401, 403, 409, 422, 499, 500, "throw"] as const)
+  test(`B5 restart outcome matrix first command ${outcome}`, async t => {
+    const { f, mailbox, request, original, observationBytes } = await restartMatrixSetup(t);
+    const rendered = outcome === "throw" ? undefined : new Response(null, { status: outcome });
+    const thrown = new Error("synthetic render failure");
+    const command = f.action(request, "a".repeat(43), "confirm", async () => { if (!rendered) throw thrown; return rendered; });
+    if (rendered) assert.equal(await command, rendered, `B5_MATRIX_IDENTITY status=${outcome} response identity`);
+    else await assert.rejects(command, (error: unknown) => error === thrown);
+    const restarts = typeof outcome === "number" && outcome >= 400 && outcome < 500;
+    const signed = await f.signIn("b".repeat(43));
+    assert.equal(signed.status, 201);
+    const current = mailbox.currentRequest()!;
+    if (restarts) {
+      assert.equal(current.sequence, request.sequence + 1, `B5_MATRIX_RESTART status=${outcome} must republish after a first 4xx`);
+      assert.deepEqual({ ...current, sequence: request.sequence, sessionNonce: request.sessionNonce }, request);
+      assert.notEqual(current.sessionNonce, request.sessionNonce);
+      assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")), current);
+      assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), ["1.json"]);
+      const audit = JSON.parse(await readFile(join(mailbox.root, "abandoned/1.json"), "utf8"));
+      assert.deepEqual(Object.keys(audit).sort(), ["abandonedAt", "counted", "events", "observation", "reason", "request", "schemaVersion"]);
+      assert.deepEqual({ ...audit, abandonedAt: undefined }, { schemaVersion: 1, request, observation: original, events: [],
+        abandonedAt: undefined, reason: "session-replaced-before-owner-command", counted: false });
+      assert.equal(mailbox.observation(), undefined);
+      assert.equal(await restartMatrixExists(join(mailbox.root, "session-wait.json")), false);
+      // The republished request continues with the fresh session only.
+      const next = await f.observe(current, "b".repeat(43));
+      assert.equal(next.sequence, request.sequence + 1);
+      assert.deepEqual(await readdir(join(mailbox.root, "observations")), ["1.json", "2.json"]);
+    } else {
+      assert.equal(current.sequence, request.sequence, `B5_MATRIX_NO_RESTART outcome=${outcome} must retain uncertainty`);
+      assert.deepEqual(current, request);
+      assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "request.json"), "utf8")), request);
+      assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+      assert.deepEqual(mailbox.observation(), original);
+      assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "session-wait.json"), "utf8")), { sequence: request.sequence, reason: restartMatrixWait });
+      assert.deepEqual(await readdir(join(mailbox.root, "observations")), ["1.json"]);
+    }
+    assert.equal(await readFile(join(mailbox.root, "observations/1.json"), "utf8"), observationBytes);
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+    assert.deepEqual(await readdir(join(mailbox.root, "service")), []);
+    console.log(`RESULT: PASS restart outcome matrix first=${outcome} restart=${restarts} sequence=${current.sequence}`);
+  });
+
+for (const second of [400, 409] as const)
+  test(`B5 restart outcome matrix prior accepted command then ${second} keeps the action authoritative`, async t => {
+    const { f, mailbox, request, original, observationBytes } = await restartMatrixSetup(t);
+    const confirmed = await f.action(request, "a".repeat(43), "confirm");
+    assert.equal(confirmed.status, 201);
+    const rejected = new Response(null, { status: second });
+    assert.equal(await f.action(request, "a".repeat(43), "start", async () => rejected), rejected);
+    await f.signIn("b".repeat(43));
+    assert.equal(mailbox.currentRequest()!.sequence, request.sequence, `B5_MATRIX_PRIOR_ACTION second=${second} must block restart`);
+    assert.deepEqual(mailbox.currentRequest(), request);
+    assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+    assert.deepEqual(mailbox.observation(), original);
+    assert.deepEqual(JSON.parse(await readFile(join(mailbox.root, "session-wait.json"), "utf8")), { sequence: request.sequence, reason: restartMatrixWait });
+    assert.equal(await readFile(join(mailbox.root, "observations/1.json"), "utf8"), observationBytes);
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+    // The rejected Start supplied no event: a receipt still lacks it.
+    await assert.rejects(mailbox.accept(await f.receipt(request, ["confirmed", "started"])), { code: "B5_DEVICE_SERVICE_MISSING" });
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), []);
+    assert.deepEqual(await readdir(join(mailbox.root, "service")), []);
+    // The earlier accepted Confirm remains the sequence's first service event.
+    await f.action(request, "a".repeat(43), "start");
+    const accepted = await mailbox.accept(await f.receipt(request, ["confirmed", "started"]));
+    assert.equal(accepted.sequence, request.sequence);
+    assert.deepEqual((await mailbox.readServiceEvidence(request.sequence)).events.map(e => [e.name, e.status]), [["confirm", 201], ["start", 201]]);
+    assert.deepEqual(await readdir(join(mailbox.root, "receipts")), ["1.json"]);
+    console.log(`RESULT: PASS restart outcome matrix prior accepted Confirm then ${second}: restart blocked, Confirm authoritative`);
+  });
+
 test("B5 receipt acceptance and pre-action sign-in serialize without a partial reset", async t => {
   const f = await restartFixture(t), { mailbox } = f;
   const request = await mailbox.request("connect", "phone", new Date(f.clock.now + 3600_000).toISOString());
