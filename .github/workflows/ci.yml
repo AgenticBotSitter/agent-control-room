@@ -459,7 +459,7 @@ jobs:
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
-        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/test-file-dynamic-import-guard.test.mjs tests/release-tool.test.mjs tests/migration-number-check.test.mjs tests/verify-mutation-checks.test.mjs tests/install-preflight.test.mjs tests/mac-local-rehearsal-fleet-bringup-sources.test.mjs tests/runtime-inventory-ci.test.mjs
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/test-file-dynamic-import-guard.test.mjs tests/release-tool.test.mjs tests/migration-number-check.test.mjs tests/install-preflight.test.mjs tests/mac-local-rehearsal-fleet-bringup-sources.test.mjs tests/runtime-inventory-ci.test.mjs
       - name: Test the PR evidence claims checker
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
@@ -468,6 +468,8 @@ jobs:
         run: node --test tests/run-scripts-keep-going.test.mjs
       - name: Install the frozen dependency graph
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify the mutation workflow guards
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/verify-mutation-checks.test.mjs
       - name: Test the generic VPS front-door installer
         run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions

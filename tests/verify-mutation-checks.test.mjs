@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
-import { assertMutationLaneCoverage, mutationWorkflowJobs } from "../scripts/check-test-lane-coverage.mjs";
+import { assertMutationLaneCoverage } from "../scripts/check-test-lane-coverage.mjs";
 
 const verifier = resolve("scripts/ci/verify-mutation-checks.mjs");
 const workflow = readFileSync(resolve(".github/workflows/ci.yml"), "utf8");
@@ -645,7 +645,8 @@ test("a timed-out mutated command restores the file", () => {
   const root = fixture();
   try {
     const path = manifest(root, {
-      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+      // Use a fast baseline so the 50ms timeout reaches the mutated command.
+      test: 'if grep -q allow src/guard.mjs; then exec node -e "setInterval(()=>{},1000)"; fi',
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
     const result = run(root, path, { MUTATION_CHECK_TIMEOUT_MS: "50" });
@@ -1026,21 +1027,8 @@ test("a test-created stray file is reported distinctly after restoration", () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("dependency-free mutation workflow reader preserves blocks and rejects ambiguous mappings", () => {
-  const source = "jobs:\n  mutation-checks:\n    steps:\n      - run: |\n          echo first\n            echo nested\n        timeout-minutes: 5\n      - if: false\n        run: 'echo second'\n";
-  assert.deepEqual(mutationWorkflowJobs(source), {
-    "mutation-checks": { steps: [
-      { run: "echo first\n  echo nested\n", "timeout-minutes": 5 },
-      { if: false, run: "echo second" },
-    ] },
-  });
-  assert.throws(() => mutationWorkflowJobs(`${source}  mutation-checks:\n`), /duplicate workflow job/u);
-  assert.throws(() => mutationWorkflowJobs(source.replace("    steps:", "    if: false\n    if: true\n    steps:")), /duplicate workflow key/u);
-  assert.throws(() => mutationWorkflowJobs(source.replace("'echo second'", "*hidden-command")), /unsupported workflow scalar/u);
-});
-
 test("the CI job gates verification on a branch manifest and joins the merge gate", () => {
-  const jobs = mutationWorkflowJobs(workflow);
+  const { jobs } = createRequire(import.meta.resolve("eslint"))("js-yaml").load(workflow);
   const root = mkdtempSync(join(tmpdir(), "manifest-workflow-guard-"));
   const list = join(root, "manifests"), trace = join(root, "trace");
   const manifests = ["mutation-checks/first.json", "mutation-checks/with spaces.json", "mutation-checks/with\nnewline.json"];
