@@ -31,8 +31,7 @@ test("P71 composition four-layer precedence and independently specified exact by
 
 test("P71 composition refuses decoded duplicate, prototype, secret, inherited overrides and bounded output", () => {
   for (const text of ['[]', 'null', '{', '{"a":1,"a":2}', '{"a":1,"\\u0061":2}', '{"x":{"constructor":{}}}',
-    '{"__proto__":{}}', '{"array":[{"prototype":1}]}', '{"api_key":"SYNTHETIC"}', '{"x":1e999}',
-    '{"paid":true}', '{"a":[{"paidPin":true}]}']) {
+    '{"__proto__":{}}', '{"array":[{"prototype":1}]}', '{"api_key":"SYNTHETIC"}', '{"x":1e999}']) {
     assert.throws(() => composeLoopSettingsV1({ defaultsText: '{}', runEdits: text }), refused, text);
   }
   for (const layer of ['project','selection'] as const)
@@ -40,6 +39,60 @@ test("P71 composition refuses decoded duplicate, prototype, secret, inherited ov
   const a = JSON.stringify({ a: 'a'.repeat(40000) }), b = JSON.stringify({ b: 'b'.repeat(40000) });
   assert.throws(() => composeLoopSettingsV1({ defaultsText: a, project: b }), refused, "composed bound applies across individually bounded inputs");
   assert.throws(() => composeLoopSettingsV1({ defaultsText: JSON.stringify({ a: 'é'.repeat(33000) }) }), refused, "bound counts UTF-8 bytes");
+});
+
+test("P71 preserves unknown paid-named settings without assigning authority", () => {
+  const text = '{"paid":false,"nested":{"paidPin":null},"array":[{"paid":true}],"providerRoute":{"providerId":"fixture","model":"fixture-model"}}';
+  for (const source of ['defaultsText', 'project', 'selection', 'runEdits'] as const) {
+    const input = { defaultsText: '{}', [source]: text };
+    assert.deepEqual(JSON.parse(composeLoopSettingsV1(input).text), JSON.parse(text), source);
+  }
+});
+
+test("P71 ordinary CI excludes only the mandatory real-tools test and exposes a fail-closed real lane", async t => {
+  const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
+  assert.match(scripts['test:improve-control-room'], /--test-skip-pattern=['"]\^P71 real settings check\$['"]/,
+    'ordinary CI must exclude the qualified-tools acceptance test');
+  assert.match(scripts['test:loop-policy:real'] ?? '', /--test-name-pattern=['"]\^P71 real settings check\$['"]/);
+  assert.doesNotMatch(scripts['test:loop-policy:real'], /skip|\|\|/);
+  const pattern = /--test-skip-pattern='([^']+)'/.exec(scripts['test:improve-control-room'])![1]!;
+  await mkdir(resolve('.test-tmp'), { recursive: true });
+  const root = await mkdtemp(resolve('.test-tmp/p71-ci-filter-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'ci.mjs');
+  await writeFile(file, `import test from 'node:test'; import assert from 'node:assert/strict';
+    test('P71 real settings check', () => assert.fail('qualified tools must be separate'));
+    test('ordinary policy check', () => assert.ok(true));`);
+  const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
+  const { stdout } = await promisify(execFile)(process.execPath, ['--test', `--test-skip-pattern=${pattern}`, file], { env, timeout: 10000 });
+  assert.match(stdout, /ok 1 - ordinary policy check/);
+  assert.match(stdout, /# pass 1/); assert.match(stdout, /# fail 0/);
+
+});
+
+test("P71 downgrade preserves retained run-edit commands while enforcing the old body on new writes", async t => {
+  const f = await policyFixture(t);
+  const { ImproveControlRoomDeskServiceV1 } = await import('../src/improve-control-room/v1/service');
+  const desk = new ImproveControlRoomDeskServiceV1(f.client, scope, new Uint8Array(32).fill(65), undefined, () => now);
+  const draft = await desk.saveLoopDraft(f.identity, f.project.projectId,
+    { description: 'Retained edited command', settingsText: '{}' }, key());
+  const binding = { schemaVersion: 1, body: { description: 'Retained edited command', settingsEdits: '{}' }, localVersion: 1,
+    adapterId: 'adapter:fixture', loopRunId: 'run:fixture', toolingRevision: 'sha256:'+'a'.repeat(64), schemaDigest: 'sha256:'+'b'.repeat(64),
+    a2SchemaVersion: 1, requestSha256: sha('Retained edited command'), settingsSha256: sha('{}'), runLinkId: null,
+    authorizationId: null, inputVersion: null, expectedRevision: null, evidence: null };
+  const insert = (command: string, body: unknown) => f.db.query(`INSERT INTO control_loop_improvement_commands
+    (tenant_id,command_id,entry_kind,request_id,project_id,owner_identity_id,operation,idempotency_key,binding,record_digest,auth_tag,created_at)
+    VALUES($1,$2,'claim',$3,$4,'identity:web','intake',$5,$6,'sha256:'||repeat('c',64),'hmac-sha256:'||repeat('d',64),$7)`,
+    [scope.tenantId, command, draft.request.requestId, f.project.projectId, key(), JSON.stringify({ ...binding, body }), new Date(now).toISOString()]);
+  await insert('loop-command:'+'1'.repeat(32), binding.body);
+  const before = (await f.db.query('SELECT * FROM control_loop_improvement_commands')).rows;
+  for (const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
+    assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
+  assert.deepEqual((await f.db.query('SELECT * FROM control_loop_improvement_commands')).rows, before);
+  assert.equal((await f.db.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conname='control_loop_improvement_commands_check1'")).rows[0]!.convalidated, false);
+  assert.equal((await f.db.query("SELECT relname FROM pg_class WHERE relname IN ('control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources')")).rows.length, 0);
+  await assert.rejects(insert('loop-command:'+'2'.repeat(32), binding.body), { code: '23514' });
 });
 
 async function policyFixture(t: TestContext) {

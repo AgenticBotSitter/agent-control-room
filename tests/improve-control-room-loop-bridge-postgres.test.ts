@@ -532,13 +532,19 @@ test('P71 PostgreSQL previous-release signed rows survive production upgrade and
   }finally{await w.close();}
 }));
 
-test('P71 PostgreSQL distinct-owner intake versus PUT waits at the initial project mutex in both schedules',async()=>run(async pg=>{
+for (const schedule of ['put-first','intake-first'] as const)
+test(`P71 PostgreSQL distinct-owner intake versus PUT waits at the initial project mutex: ${schedule}`,async()=>run(async pg=>{
   await seed(pg);const other=await secondOwner(pg),e=engine(),states:string[]=[];
   const traced=(db:DatabaseClient):DatabaseClient=>{
     const wrap=(tx:DatabaseSession):DatabaseSession=>({query:async(sql,params)=>{try{return await tx.query(sql,params);}catch(error){const state=databaseSqlStateV1(error);if(state)states.push(state);throw error;}}});
     return{query:db.query.bind(db),transaction:work=>db.transaction(tx=>work(wrap(tx))),transactionWithPreCommitCheck:(work,check)=>db.transactionWithPreCommitCheck(tx=>work(wrap(tx)),check)};
   };
-  for(const schedule of ['put-first','intake-first'] as const){
+  if (schedule === 'intake-first') {
+    const initial = web(pg, e.adapter);
+    try { await initial.policy.put(identity, project, 'project', { expectedVersion: 0, settings: '{}' }, 'p71-mutex-explicit-seed-0001'); }
+    finally { await initial.close(); }
+  }
+  {
     let intakeChecked!:()=>void,putChecked!:()=>void,releaseIntake!:()=>void,releasePut!:()=>void;
     const intakeReady=new Promise<void>(r=>{intakeChecked=r;}),putReady=new Promise<void>(r=>{putChecked=r;});
     const intakeGate=new Promise<void>(r=>{releaseIntake=r;}),putGate=new Promise<void>(r=>{releasePut=r;});

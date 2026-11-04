@@ -48,7 +48,7 @@ CHECK ((
         AND ((binding->'body') - ARRAY['expectedVersion','expectedRevision','questionId','inputVersion','questionReportSha256','text'])='{}'::jsonb
     END
   ) IS TRUE) NOT VALID;
-ALTER TABLE control_loop_improvement_commands VALIDATE CONSTRAINT control_loop_improvement_commands_check1;
+-- Preserve historical P71 command bodies; the restored predicate still checks new writes.
 DROP TABLE control_loop_policy_input_sources RESTRICT;
 DROP TABLE control_loop_policy_events RESTRICT;
 DROP TABLE control_loop_policy_layers RESTRICT;

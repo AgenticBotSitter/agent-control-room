@@ -78,9 +78,11 @@ function requestHead(input: IncomingMessage, origins: readonly string[], mode: N
   const method = input.method;
   const target = input.url;
   const allowedMethods = ["GET", "HEAD", ...(mode.allowPost ? ["POST"] : []), ...(mode.allowDelete ? ["DELETE"] : [])];
-  // PUT is confined to the two existing-item edit routes; setup remains read-only.
+  // PUT is confined to existing-item edits and the provider/policy settings routes; setup remains read-only.
   const editPut = mode.allowPost && method === "PUT" && target !== undefined
-    && /^\/api\/v1\/projects\/[^/]+\/(?:skills|recurring-rules)\/[^/?]+$/.test(target);
+    && (/^\/api\/v1\/projects\/[^/]+\/(?:skills|recurring-rules)\/[^/?]+$/.test(target)
+      || /^\/api\/v1\/loop-providers\/[a-z0-9][a-z0-9._-]{2,63}$/.test(target)
+      || /^\/api\/v1\/projects\/[^/?]+\/loop-policy\/(?:project|selection)$/.test(target));
   if (!method || !allowedMethods.includes(method) && !editPut)
     throw new RequestFailure(405);
   if (!target || Buffer.byteLength(target) > privateHttpLimits.urlBytes || !target.startsWith("/")

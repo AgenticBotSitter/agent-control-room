@@ -6,7 +6,7 @@ import { WebAccessError } from "./access-verifier";
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): value is ObjectValue => value !== null && typeof value === "object" && !Array.isArray(value);
 const invalid = () => new WebAccessError("invalid_request");
-const forbidden = new Set(["__proto__", "prototype", "constructor", "paid", "paidPin"]);
+const forbidden = new Set(["__proto__", "prototype", "constructor"]);
 
 /** Decoded validation also catches escaped member names and encoded secret values. */
 export function parseLoopSettingsV1(text: string, layer = false): ObjectValue {

@@ -1228,8 +1228,6 @@ test("B2b approval document isolation", async t=>{
 test("P71 intake preserves explicit run settings in the signed copy", async t => {
   const f = await fixture(t);
   const response = await f.post("intake", { description, settingsEdits: '{"fixture":"RUN"}' });
-  if (response.status !== 202) await f.bridge.mutate(f.identity, f.project.projectId, null, "intake",
-    { description, settingsEdits: '{"fixture":"RUN"}' }, "p71-diagnostic-intake-0001");
   assert.equal(response.status, 202, "P71 accepts closed intake settingsEdits");
   const receipt = await response.json() as { requestId: string; state: string };
   assert.equal(receipt.state, "accepted");
