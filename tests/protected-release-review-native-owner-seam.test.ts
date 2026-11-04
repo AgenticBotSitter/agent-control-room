@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,26 +14,28 @@ import { prepareProtectedReleaseReviewOwnerAttestationV1 } from
 import { prepareProtectedReleaseReviewNativeOwnerSeamV1,
   verifyProtectedReleaseReviewNativeOwnerSeamV1 } from
   "../src/installer/v1/protected-release-review-native-owner-seam";
-import { releaseFixtureTemp } from "./helpers/release-fixture-temp";
+import { type FixtureCleanupOwner, type ReleaseSourceSeams, ownedReleaseFixtureTemp,
+  verifyReleaseFixtureCleanupOwnership } from "./helpers/release-fixture-temp";
 
 const d = (value: string) => sha256Digest(value);
 
-async function releaseSource() {
-  const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const root = await releaseFixtureTemp(repository, "acr-owner-review-seam-");
+async function releaseSource(owner: FixtureCleanupOwner, seams: ReleaseSourceSeams = {}) {
+  const repository = seams.repository ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  // Cleanup ownership starts at allocation, before any fallible setup below.
+  const root = await ownedReleaseFixtureTemp(owner, repository, "acr-owner-review-seam-", seams.tempBase);
   const releaseDirectory = join(root, "release"), installRoot = join(root, "install");
   await mkdir(installRoot, { mode: 0o700 });
-  await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: releaseDirectory });
-  const placement = await stageLocalReleaseV1({ ownerAttended: true, releaseDirectory, installRoot });
+  await (seams.assemble ?? assembleLocalReleaseV1)({ releaseRoot: repository, outputDirectory: releaseDirectory });
+  const placement = await (seams.stage ?? stageLocalReleaseV1)({ ownerAttended: true, releaseDirectory, installRoot });
   const releaseRoot = join(installRoot, "versions", placement.version);
-  const fingerprint = await prepareLocalInstallationReleaseV1({ releaseRoot });
-  const preparation = await prepareLocalInstallationReleaseV1({ releaseRoot,
+  const fingerprint = await (seams.prepare ?? prepareLocalInstallationReleaseV1)({ releaseRoot });
+  const preparation = await (seams.prepare ?? prepareLocalInstallationReleaseV1)({ releaseRoot,
     expectedDigest: fingerprint.bundle.digest });
   return { root, preparation };
 }
 
 test("native owner seam stays blocked and rejects fake owner authority", async t => {
-  const source = await releaseSource(); t.after(() => rm(source.root, { recursive: true, force: true }));
+  const source = await releaseSource(t);
   const binding = { installationId: "control-room-one",
     releaseDigest: source.preparation.releaseManifestDigest, topologyPlanDigest: d("topology-one") };
   const review = prepareProtectedReleaseReviewV1({ ...binding, releasePreparation: source.preparation });
@@ -65,7 +67,7 @@ test("native owner seam stays blocked and rejects fake owner authority", async t
 });
 
 test("cross-plan challenges remain distinct and neither plan can mint readiness", async t => {
-  const source = await releaseSource(); t.after(() => rm(source.root, { recursive: true, force: true }));
+  const source = await releaseSource(t);
   const common = { installationId: "control-room-one", releaseDigest: source.preparation.releaseManifestDigest };
   const local = prepareProtectedReleaseReviewV1({ ...common, topologyPlanDigest: d("local-topology"),
     releasePreparation: source.preparation });
@@ -80,4 +82,8 @@ test("cross-plan challenges remain distinct and neither plan can mint readiness"
   assert.equal(localSeam.providesReviewedReleaseIdentity, false);
   assert.equal(foreignSeam.providesReviewedReleaseIdentity, false);
   assert.equal(localSeam.performsEffect, false); assert.equal(foreignSeam.performsEffect, false);
+});
+
+test("release fixture setup failures retain cleanup ownership", async t => {
+  await verifyReleaseFixtureCleanupOwnership(t, releaseSource, assembleLocalReleaseV1);
 });
