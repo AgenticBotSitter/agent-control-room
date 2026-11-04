@@ -21,6 +21,7 @@ import { CONTROL_ROOM_UPDATE_PATH_RULES_V1, CONTROL_ROOM_UPDATE_TEST_PROFILES_V1
   type IntegrationRepositorySnapshotV1, type UpdateCandidateRunnerResultV1 } from "../src/improve-control-room/v1";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
+import { WebAccessError } from "../src/web/v1/access-verifier";
 import { bindCandidatePublisherToPipelineAdvanceV1 } from "../src/web/v1/task-coordinator-lifecycle";
 import { taskFixture } from "./helpers/web-task";
 import { now, origin, request as webRequest, token as webToken, trust } from "./helpers/web-foundation";
@@ -621,6 +622,32 @@ test("B1a service owner guard refuses before persistence", async t => {
   const error = await f.desk.saveLoopDraft(f.identity, f.project.projectId, f.draft, "loop-owner-refusal-0001").then(() => undefined, error => error);
   assert.equal(f.writes(), before, "B1a owner refusal attempts zero persistence");
   assert.match(String(error), /access_denied/u);
+});
+
+test("B1a draft key lower boundary refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
+  const shortKey = "loop-key-15-abc", boundaryKey = "loop-key-16-abcd";
+  assert.equal(shortKey.length, 15); assert.equal(boundaryKey.length, 16);
+  const count = async (table: "requests" | "inputs") =>
+    (await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM control_loop_improvement_${table}`)).rows[0]!.n;
+  const before = { writes: f.writes(), requests: await count("requests"), inputs: await count("inputs") };
+  const error = await f.desk.saveLoopDraft(f.identity, projectId, f.draft, shortKey).then(() => undefined, error => error);
+  assert.ok(error instanceof WebAccessError, "15-character key refused by the service");
+  assert.equal(error.code, "invalid_request");
+  assert.equal(f.writes(), before.writes, "B1a 15-character key attempts zero persistence");
+  assert.equal(await count("requests"), before.requests); assert.equal(await count("inputs"), before.inputs);
+  const saved = await f.desk.saveLoopDraft(f.identity, projectId, f.draft, boundaryKey);
+  assert.equal(saved.replayed, false); assert.match(saved.request.requestId, /^loop-request:/u);
+  assert.notEqual(saved.request.requestId, f.saved.request.requestId);
+  assert.equal(f.writes(), before.writes + 2, "16-character key saves one root and one input");
+  assert.equal(await count("requests"), before.requests + 1); assert.equal(await count("inputs"), before.inputs + 1);
+  const afterSave = f.writes();
+  const replay = await f.desk.saveLoopDraft(f.identity, projectId, f.draft, boundaryKey);
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.request, saved.request);
+  assert.deepEqual(replay.savedInput, saved.savedInput);
+  assert.equal(f.writes(), afterSave, "exact 16-character retry attempts no write");
+  assert.equal(await count("requests"), before.requests + 1); assert.equal(await count("inputs"), before.inputs + 1);
+  assert.equal(f.dispatches(), 0);
 });
 
 test("B1a service current version guard refuses before persistence", async t => {
