@@ -1121,3 +1121,17 @@ test("declared manifests name unique, tracked source snippets", () => {
     }
   }
 });
+
+test("a surviving second entry fails the manifest after a caught first entry", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root);
+    const checks = JSON.parse(readFileSync(path, "utf8"));
+    checks.push({ ...checks[0], test: 'node -e "process.exit(0)"', why: "second entry survives" });
+    writeFileSync(path, `${JSON.stringify(checks, null, 2)}\n`);
+    git(root, "commit", "-qam", "two entries");
+    const result = run(root, path);
+    assert.equal(result.status, 1, output(result));
+    assert.match(output(result), /second entry survives: mutation survived/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
