@@ -575,3 +575,13 @@ test("the pull-request claims job is wired into the merge gate", () => {
   assert.match(gate, /needs: \[[^\]]*pr-claims/u);
   assert.match(gate, /check pr-claims "\$\{\{ needs\.pr-claims\.result \}\}"/u);
 });
+
+test("a test reference must name a tests/*.test or *.spec file, not any file under tests/", () => {
+  const root = fixture();
+  try {
+    mkdirSync(join(root, "tests/support"));
+    writeFileSync(join(root, "tests/support/helper.mjs"), 'test("looks like a test", () => {});\n');
+    const result = inspect(root, "## Evidence\n\n- A helper is not a test.\n  test: tests/support/helper.mjs::looks like a test");
+    assert.ok(result.errors.includes("test_reference_unresolved"), JSON.stringify(result));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
