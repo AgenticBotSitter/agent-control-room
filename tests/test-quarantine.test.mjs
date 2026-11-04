@@ -75,3 +75,7 @@ test("an issue must be exactly #<positive number>", () => {
     assert.match(validateQuarantine([{ ...valid, issue }], today).join("\n"), /GitHub issue/u, issue);
   }
 });
+
+test("a test quarantined twice is refused as a duplicate", () => {
+  assert.match(validateQuarantine([valid, { ...valid }], today).join("\n"), /duplicates tests\/example\.test\.mjs::flaky path/u);
+});
