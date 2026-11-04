@@ -111,3 +111,14 @@ test("the quarantine runner refuses to run tests under an invalid list", async t
 test("the quarantined-test report fails when a quarantined test fails", () => {
   assert.equal(runQuarantined([valid], () => ({ status: 1 })), 1);
 });
+
+test("files with no quarantined test still run, and fail the gate, beside a quarantined file", () => {
+  const calls = [];
+  const spawn = (_node, args) => {
+    calls.push(args);
+    return { status: args.includes("tests/other.test.mjs") ? 1 : 0 };
+  };
+  const status = runGate(["--test", "tests/example.test.mjs", "tests/other.test.mjs"], [valid], spawn);
+  assert.equal(status, 1);
+  assert.ok(calls.some(args => args.includes("tests/other.test.mjs")));
+});
