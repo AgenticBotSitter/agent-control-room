@@ -48,13 +48,15 @@ const description = "Show the exact saved improvement.";
 test("B1b mutation steps have separate budgets and retain lineage failures", async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
   const scripts = JSON.parse(await readFile('package.json', 'utf8')).scripts;
-  const jobs = assertMutationLaneCoverage(scripts, workflow);
+  const jobs: Record<string, { steps: {
+    name?: string; run?: string; id?: string; env?: Record<string, string>; if?: boolean | string;
+  }[] }> = assertMutationLaneCoverage(scripts, workflow);
   function check(parsed: typeof jobs) {
     assertMutationLaneCoverage(scripts, parsed);
     const job = parsed['mutation-checks-lineage'];
-    assert.equal(job.steps.find(step => step.run === 'pnpm run test:improve-control-room-loop-lineage-mutations').id, 'lineage-guards');
-    const bridge = job.steps.find(step => step.run === 'pnpm run test:improve-control-room-loop-bridge-mutations');
-    const required = job.steps.find(step => step.name === 'Require saved loop lineage guards to pass');
+    assert.equal(job.steps.find(step => step.run === 'pnpm run test:improve-control-room-loop-lineage-mutations')!.id, 'lineage-guards');
+    const bridge = job.steps.find(step => step.run === 'pnpm run test:improve-control-room-loop-bridge-mutations')!;
+    const required = job.steps.find(step => step.name === 'Require saved loop lineage guards to pass')!;
     assert.ok(job.steps.indexOf(bridge) < job.steps.indexOf(required));
     assert.equal(required.env?.LINEAGE_OUTCOME, '${{ steps.lineage-guards.outcome }}');
     for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {

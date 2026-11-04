@@ -281,9 +281,9 @@ test('B3a registration reaches ordinary Pg and unconditional mutation lanes',asy
   const ordinary='tests/improve-control-room-loop-recovery.test.ts',pg='tests/improve-control-room-loop-recovery-postgres.test.ts',mutation='tests/improve-control-room-loop-recovery-mutations.test.ts';
   const reached=reachableTests(scripts,workflowCommands(workflow));for(const name of [ordinary,pg,mutation])assert.ok(reached.has(name));
   const components=reachableTests(scripts,['pnpm test:components']);assert.ok(components.has(ordinary));assert.ok(components.has(pg));assert.ok(!components.has(mutation));
-  const jobs=assertMutationLaneCoverage(scripts,workflow);
+  const jobs:Record<string,{steps:{name?:string;if?:boolean|string}[]}>=assertMutationLaneCoverage(scripts,workflow);
   const broken=structuredClone(jobs);
-  broken['mutation-checks-candidate'].steps.find(step=>step.name==='Prove interrupted loop recovery guards').if=false;
+  broken['mutation-checks-candidate'].steps.find(step=>step.name==='Prove interrupted loop recovery guards')!.if=false;
   assert.throws(()=>assertMutationLaneCoverage(scripts,broken),/must be unconditional/,'a conditional recovery step is rejected');
   console.log('B3a negative proof: conditional recovery step rejected; final job dependency accepted');
   assert.match(scripts['test:improve-control-room-loop-attention-browser'],/tests\/browser\/improve-control-room-loop-attention.spec.ts$/);

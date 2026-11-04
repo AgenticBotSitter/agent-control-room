@@ -1024,7 +1024,8 @@ test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
  const workflow=await readFile(".github/workflows/ci.yml","utf8"),manifest=JSON.parse(await readFile("package.json","utf8"));
  const {assertMutationLaneCoverage,mutationLaneShape}=await import("../scripts/check-test-lane-coverage.mjs");
  assertMutationLaneCoverage(manifest.scripts,workflow);
- for(const [script] of mutationLaneShape["mutation-checks-candidate"].lanes.filter(([name])=>name.includes("candidate-mutations:"))){
+ const lanes=mutationLaneShape["mutation-checks-candidate"].lanes as [script:string,bound:number][];
+ for(const [script] of lanes.filter(([name])=>name.includes("candidate-mutations:"))){
   const part=script.split(":").at(-1);
   const removed=workflow.replace(`        run: pnpm run ${script}\n`,"");
   assert.notEqual(removed,workflow);
