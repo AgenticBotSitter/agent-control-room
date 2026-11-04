@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
+import { createRequire } from "node:module";
+import { assertMutationLaneCoverage, findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
+
+function realLaneInputs() {
+  const load = createRequire(import.meta.resolve("eslint"))("js-yaml").load;
+  return {
+    scripts: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts,
+    jobs: load(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")).jobs,
+  };
+}
 
 function fixture({ scripts, workflow, tests }) {
   const root = mkdtempSync(join(tmpdir(), "control-room-lane-coverage-"));
@@ -92,4 +101,11 @@ test("a block command ends at the next step, so it cannot absorb a sibling's tex
     "    env:",
     "      NOTE: node --test tests/fake.test.mjs",
   ].join("\n")), ["pnpm run test:one"]);
+});
+
+test("a mutation lane job marked continue-on-error is refused", () => {
+  const { scripts, jobs } = realLaneInputs();
+  assertMutationLaneCoverage(scripts, jobs);
+  jobs["mutation-checks-candidate"]["continue-on-error"] = true;
+  assert.throws(() => assertMutationLaneCoverage(scripts, jobs));
 });
