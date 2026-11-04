@@ -138,4 +138,13 @@ The foundation projection is a product contract exercised only with scripted che
 
 The completed foundation preserves non-B8 P71 role members in run-edit projections and resets both switches even for overrides-only new-run edits. It validates requested-slot coverage and checker-attested preview digests without adding a second family policy. The exact tools projection pin and physical admission snapshot reader remain unreleased; no admission authority is created by preview. Build implementation is complete; remaining environment/commit gates are reported in evidence and status.
 
-Status: BLOCKED: required environment and committed-HEAD gates incomplete
+
+## D21 — U81-B prerequisite audit and bounded split
+
+The lead continuation supplies product predecessor `7105bd85159e3273cb692135ececa84f0ab379cb` and read-only tools pin `03c3595f40317de0d1bdc97675377ce3ae4f58e3`. Inspection confirms that this tools pin does not release T-TOOLS or T-SNAPSHOT: its bridge contract exports no selectionProjection, its admissionExpectation requires exactly operation/commandId, and its check-lineup CLI has no context input. The product guard remains an interface only; policy.assertSnapshot still compares defaults/layers/text, with no authoritative availability/roster reader. Spec sections 5, 6 and 8.1 explicitly withhold B until the physical reader/producer protocol and allowed-file amendment are released. No fake reader, cache, new availability table, guessed projection digest or tools edit is substituted.
+
+LOW-2 split, preserving the reviewed contract: **U81-B1 admission/cancellation** owns service/adapter/schema/attention/policy changes, complete frozen candidate and accepted lineage, deadline/cancellation/reap/temp cleanup, dispatch capsule, and admission T1–T5/T14, T6–T9/T11/T12 unit/mutation evidence with the released real reader. **U81-B2 SQL/PG integration** owns allocated A/Av migrations/down plus the entire section 4.4 same-commit grants/ledger/schema pins/preflight/fixture/candidate/desk set, selection-PG registration, production-login fresh/upgrade/down/refused-down/delayed-result/copied-record/barrier/guard-off proofs. B1 cannot claim end-to-end SQL-backed acknowledgement until B2 lands; B2 cannot detach any section 4.4 file from its migrations. Both require the reviewed release packet; B2 additionally requires lead-allocated migration IDs. No part is implemented in this blocked attempt.
+
+LOW-1 remains resolved by D20: T10 is A preview/readiness only; T13-project is A and T13-saved/real transport is C. No invented T10 admission case. Next continuation must name the exact tools projection/context/expectation/settings mapping and measured latency, physical producer/current reader/serialization lock protocol, and their allowed files. The supplied tools commit alone does not satisfy these releases.
+
+Status: BLOCKED: U81-B requires released T-TOOLS/T-SNAPSHOT and physical reader allowed-file amendment

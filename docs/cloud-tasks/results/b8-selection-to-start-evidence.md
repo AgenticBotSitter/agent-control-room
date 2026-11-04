@@ -97,4 +97,26 @@ Build inspection unresolved product findings: HIGH 0 / MEDIUM 0 / LOW 0. LOW-1 l
 
 Final audit command: `python3 .test-tmp/u81a/final-audit.py` — RESULT exit=0; files=11 allowed=true; whitespace/privacy PASS; dependencies unchanged; node_modules symlink retained and untracked; staged_changes=0; HEAD unchanged; final source fingerprint matches; disposable copies=0; protected temp=0.
 
-Status: BLOCKED: index lock refused; exact build, offline hygiene, browser and committed-HEAD gates incomplete
+
+## U81-B prerequisite inspection — 2026-11-04T22:25:51.735249+00:00
+
+Product predecessor/unchanged executable HEAD: `7105bd85159e3273cb692135ececa84f0ab379cb`, branch `cook/b8-selection-u81b`. Reviewed spec head remains `936cef0483ce0a151ff17591ae5c97c697ee4de1`. The supplied read-only tools checkout resolves to `03c3595f40317de0d1bdc97675377ce3ae4f58e3` as requested. No product implementation or test change is made: the spec's prerequisite gate fails before red-first implementation can begin.
+
+Deciding static audit: `python3 - <<'PY'` with pathlib/subprocess assertions over the pinned tracked source; exit 0, checks 9 / confirmed 9 / unexpected 0, elapsed 0.041 s. This is inspection evidence of a BLOCKED prerequisite, not a product test pass. Exact code facts:
+
+- T-TOOLS: pinned `bridge/a2-contract.mjs:241-243` requires `exact(context, ["operation", "commandId"])`; the section 5 selectionDispatch context would be rejected. Contract return at lines 309–313 has no selectionProjection pin. Pinned `cr.py:9602-9606` registers only settings/availability/json for check-lineup; no admission context input is released.
+- T-SNAPSHOT: `src/web/v1/loop-selection-service.ts:11-17` declares the port/capsule only. The guard type has one tracked product source reference and zero implementations. `loop-policy-service.ts:84-86` compares only P71 defaults/layers/text/hash. No released physical reader/producer files or serialization protocol are named by this continuation.
+- Section 4.4 A/Av migration names remain placeholders. They are deferred intact to B2, not allocated opportunistically.
+
+D21 records the precise LOW-2 split into B1 admission/cancellation and B2 complete SQL/PG integration; LOW-1 is already resolved by D20. B1 remains blocked by sections 5/6/8.1, so no partial mock admission is committed. This is a missing technical release, not an owner policy question or a claim that the reviewed spec permits a replacement mechanism.
+
+NOT RUN: R2/R3/R4 red cases, admission T1–T9/T11/T12/T14 unit/mutation/real-reader proof; every section 9.1/9.2 required product, DB, type/build, loader/lane/ledger/hygiene/browser command; section 9.3 real-tools qualification; native/worker/device/Linux gates. None can qualify this absent implementation, and no inherited A result is relabelled as B green. No PG17 cluster was started and the shared-memory threshold was not exercised. No network, secret/provider/model call, live install/port, tools write, package download or process remains.
+
+Only decisions/evidence/status and the assigned external report/progress are changed. Documentary validation and commit receipts follow in the report; this candidate contains handoff documentation only. Product U81-B1 and U81-B2 remain NOT BUILT.
+
+
+Final documentary checks: `git diff --check` exit 0. Python document audit exit 0: documents=3, allowed_files=3, last_lines=3, bounded added-line privacy matches=0, product files changed=0, staged files=0, node_modules remains untracked symlink. No executable change required a product regression run.
+
+Commit attempt: `git add -- docs/cloud-tasks/results/b8-selection-to-start-decisions.md docs/cloud-tasks/results/b8-selection-to-start-evidence.md docs/cloud-tasks/results/b8-selection-to-start-status.md` failed with `RESULT git_add exit=128`: index.lock creation was refused (Operation not permitted). Per the lead's explicit fallback, leave these documents uncommitted for the lead; no escalation/retry or commit command after failed staging. Product HEAD remains `7105bd85159e3273cb692135ececa84f0ab379cb`; new commit SHAs: none; no push.
+
+Status: BLOCKED: U81-B requires released T-TOOLS/T-SNAPSHOT and physical reader allowed-file amendment
