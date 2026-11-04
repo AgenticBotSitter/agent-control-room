@@ -497,6 +497,7 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
   const validated=async()=>Boolean((await admin.query("SELECT convalidated FROM pg_constraint WHERE conrelid='control_loop_improvement_commands'::regclass AND conname='control_loop_improvement_commands_check1'")).rows[0].convalidated);
   try{
     assert.equal(await validated(),true,'fresh production migration validates the command predicate');
+    await admin.query(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
     await admin.query(await readFile('db/down/0308_control_loop_providers.sql','utf8'));
     await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
     assert.equal(await validated(),false,'validation down restores NOT VALID while preserving the predicate');
@@ -504,7 +505,7 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     assert.equal(await validated(),true,'0306 down restores the validated pre-P71 predicate');
     // The release pin shipped immediately before P71 (7cc303ebc).
     assert.equal(await readPrivateWebSchemaDigest(admin),'8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c');
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     for(const entry of await collectLedgerEntries(resolve('.'))){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
     await mkdir(join(stage,'db/setup'),{recursive:true});await writeFile(join(stage,'db/setup/production_migration_ledger.sql'),await readFile('db/setup/production_migration_ledger.sql'));
@@ -531,10 +532,11 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
 }));
 
 test('P71 PostgreSQL previous-release signed rows survive production upgrade and legacy Start',async()=>run(async pg=>{
+  await sql(pg,await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0308_control_loop_providers.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0306_control_loop_policy.sql','utf8'),[],'migrator');
-  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
+  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
   await seed(pg);const e=engine(),w=web(pg,e.adapter);
   try{
     const description='Retained pre-policy input.';
