@@ -228,12 +228,36 @@ def reviewed_settings(settings, availability, root, baseline, python, dry, cr, r
     return dict(effective=effective, provenance=provenance, lineup=result)
 
 
-def model_recipes(python):
+# This literal must match the profile's final argv. Baseline uses full discovery.
+FINAL_KIT_BIN = '''import sys,unittest
+excluded = (
+ 'test_run004_fixes.RetryTests.test_frozen_archives_count_without_writes',
+ 'test_run004_round2.PacketTests.test_frozen_run003_scores',
+)
+def flatten(suite):
+ for test in suite:
+  if isinstance(test,unittest.TestSuite): yield from flatten(test)
+  else: yield test
+tests = list(flatten(unittest.defaultTestLoader.discover('bin',pattern='test_*.py')))
+if any(sum(t.id() == name for t in tests) != 1 for name in excluded):
+ raise SystemExit('B11_FINAL_KIT_EXCLUSIONS')
+result = unittest.TextTestRunner().run(unittest.TestSuite(t for t in tests if t.id() not in excluded))
+sys.exit(not result.wasSuccessful())
+'''
+
+
+def model_baseline_recipes(python):
     return [dict(id=name, argv=[str(python), '-m', 'unittest', 'discover', '-s', folder, '-p', pattern],
                  parser='unittest', required=required)
             for name, folder, pattern, required in (
                 ('kit-bin', 'bin', 'test_*.py', True), ('kit-scoring', 'scoring/bin', 'test_*.py', True),
                 ('lean-isolation', 'bin/diagnostic', 'lean_isolation_check.py', False))]
+
+
+def model_recipes(python):
+    recipes = model_baseline_recipes(python)
+    recipes[0]['argv'] = [str(python), '-c', FINAL_KIT_BIN]
+    return recipes
 
 
 MODEL_PROTECTED = ('bin/test_build_prompts_lean.py', 'bin/diagnostic/lean_isolation_check.py')
@@ -392,6 +416,7 @@ def model_check_gate(name, output, exit_code, audit, baseline=True):
     require(counts == audit['counts'] and not audit['errors'], 'B11_BASELINE_GATE')
     skips = audit['skips']
     require(counts['skipped'] == len(skips) and len({item[0] for item in skips}) == len(skips)
+            and (baseline or not skips)
             and len(skips) <= 2 and all(name == 'kit-bin' and ARCHIVE_SKIPS.get(identifier) == reason
                                       for identifier, reason in skips), 'B11_BASELINE_GATE')
     failures = audit['failures']
@@ -425,8 +450,8 @@ def model_baseline(root, python, recipes, python_sha256):
                        PYTHONDONTWRITEBYTECODE='1')
     model_runner_check(repo, python, environment)
     records = {}
-    for recipe in recipes:
-        recipe_check(recipes, root, model_recipes(python), python_pin=dict(path=str(python), sha256=python_sha256))
+    recipe_check(recipes, root, model_recipes(python), python_pin=dict(path=str(python), sha256=python_sha256))
+    for recipe in model_baseline_recipes(python):
         result = subprocess.run(recipe['argv'], cwd=repo, env=environment, capture_output=True, timeout=240)
         output = (result.stdout + result.stderr).decode(errors='replace')
         audit = subprocess.run([str(python), '-I', '-B', '-c', SKIP_AUDIT,

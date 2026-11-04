@@ -30,8 +30,7 @@ root=Path(sys.argv[2]); (root/'runtime/bin').mkdir(parents=True); (root/'config'
 node=root/'runtime/bin/node'; shutil.copyfile(${JSON.stringify(process.execPath)},node);node.chmod(0o700)
 node_pin=hashlib.sha256(node.read_bytes()).hexdigest()
 py=Path(sys.executable).resolve(); py_pin=hashlib.sha256(py.read_bytes()).hexdigest()
-recipes=[dict(id=name,argv=[str(py),'-m','unittest','discover','-s',folder,'-p',pattern],parser='unittest',required=required)
- for name,folder,pattern,required in [('kit-bin','bin','test_*.py',True),('kit-scoring','scoring/bin','test_*.py',True),('lean-isolation','bin/diagnostic','lean_isolation_check.py',False)]]
+recipes=b5.model_recipes(py)
 constants=dict(profile='model-eval',recipes=recipes,risk=dict(categories=['code','ci'],slots=['attack-review','ci-review']),python=dict(path=str(py),sha256=py_pin))
 rows=[dict(name='hosted-builder',launcher='codex'),dict(name='hosted-reviewer',launcher='hermes'),dict(name='local-reviewer',launcher='ollama')]
 slot=lambda name: dict(model=name,route=next(r['launcher'] for r in rows if r['name']==name),effort='high')
@@ -92,12 +91,15 @@ print(json.dumps(dict(code=invoke(),calls=calls)))
 test("B11 Python recipe rejects wrong canonical path, digest, parser and required flags", async t => {
   passed(python(reviewedFixture + `
 b5.recipe_check(recipes,root,recipes,python_pin=constants['python'])
-for change in ('path','digest','parser','required'):
+for change in ('path','digest','parser','required','other-exclusion','renamed-exclusion','third-exclusion'):
  checks=copy.deepcopy(recipes); pin=copy.deepcopy(constants['python'])
  if change=='path': checks[0]['argv'][0]=str(node)
  elif change=='digest': pin['sha256']='0'*64
  elif change=='parser': checks[0]['parser']='node-tap'
- else: checks[0]['required']=False
+ elif change=='required': checks[0]['required']=False
+ elif change=='other-exclusion': checks[0]['argv'][2]=checks[0]['argv'][2].replace('test_frozen_run003_scores','test_kept')
+ elif change=='renamed-exclusion': checks[0]['argv'][2]=checks[0]['argv'][2].replace('PacketTests','RenamedTests')
+ else: checks[0]['argv'][2]=checks[0]['argv'][2].replace('excluded = (',"excluded = ('test_other.OtherTests.test_third',")
  try: b5.recipe_check(checks,root,recipes,python_pin=pin)
  except ValueError as e: assert str(e)=='B5_RECIPE_MISMATCH',str(e)
  else: raise AssertionError('wrong '+change+' accepted')
@@ -127,7 +129,11 @@ for case in ('third','renamed','reason','error','failure','zero','second-summary
  except ValueError as error: assert str(error)=='B11_BASELINE_GATE'
  else: raise AssertionError(case+' accepted')
 final=dict(counts=dict(completed=18,passed=16,failed=0,skipped=2),errors=[],failures=[],skips=list(b5.ARCHIVE_SKIPS.items()))
-b5.model_check_gate('kit-bin','Ran 18 tests in 0.2s\nOK (skipped=2)\n',0,final,baseline=False)
+try:b5.model_check_gate('kit-bin','Ran 18 tests in 0.2s\nOK (skipped=2)\n',0,final,baseline=False)
+except ValueError as error:assert str(error)=='B11_BASELINE_GATE'
+else:raise AssertionError('final skipped archive tests accepted')
+final.update(counts=dict(completed=16,passed=16,failed=0,skipped=0),skips=[])
+b5.model_check_gate('kit-bin','Ran 16 tests in 0.2s\nOK\n',0,final,baseline=False)
 print('RESULT: PASS archive skips, third/renamed/reason failures and final gate')
 `));
 });
@@ -224,9 +230,101 @@ test("B11 Python and TypeScript recipes and unittest parsers agree independently
   await assert.rejects(requireModelEvalRecipesV1(recipes, root, { ...pin, sha256: "0".repeat(64) }), { code: "B5_RECIPE_MISMATCH" });
   const changed = structuredClone(recipes); changed[0].argv[0] = "/other/python";
   await assert.rejects(requireModelEvalRecipesV1(changed, root, pin), { code: "B5_RECIPE_MISMATCH" });
+  for (const replacement of [
+    ["test_frozen_run003_scores", "test_kept"], ["PacketTests", "RenamedTests"],
+    ["excluded = (", "excluded = ('test_other.OtherTests.test_third',"],
+  ]) {
+    const invalid = structuredClone(recipes); invalid[0].argv[2] = invalid[0].argv[2].replace(replacement[0], replacement[1]);
+    await assert.rejects(requireModelEvalRecipesV1(invalid, root, pin), { code: "B5_RECIPE_MISMATCH" });
+  }
   assert.deepEqual(parseModelEvalUnittestV1("Ran 18 tests in 0.1s\nFAILED (failures=2, skipped=2)\n"), { completed: 18, passed: 14, failed: 2, skipped: 2 });
   assert.deepEqual(parseModelEvalUnittestV1("Ran 2 tests in 0.1s\nOK\nRESULT: PASS (2 checks)"), { completed: 2, passed: 2, failed: 0, skipped: 0 });
   for (const text of ["Ran 0 tests in 0.1s\nOK", "Ran 3 tests in 0.1s\nOK (failures=1)", "Ran 1 test in 0.1s\nOK\nRan 1 test in 0.1s\nOK"]) assert.throws(() => parseModelEvalUnittestV1(text), { code: "B11_BASELINE_GATE" });
+});
+
+test("B11 final kit recipe excludes exactly the two archive IDs and runs every other discovered test", async t => {
+  const parent = await scratch(t), bin = join(parent, "bin"); await mkdir(bin);
+  const excluded = [
+    "test_run004_fixes.RetryTests.test_frozen_archives_count_without_writes",
+    "test_run004_round2.PacketTests.test_frozen_run003_scores",
+  ];
+  await writeFile(join(bin, "test_run004_fixes.py"), "import unittest\nclass RetryTests(unittest.TestCase):\n @unittest.skip('frozen run 004 archives absent in scratch kit')\n def test_frozen_archives_count_without_writes(self): raise AssertionError('archive executed')\n def test_kept(self): pass\n");
+  await writeFile(join(bin, "test_run004_round2.py"), "import unittest\nclass PacketTests(unittest.TestCase):\n @unittest.skip('frozen run absent in scratch rehearsal')\n def test_frozen_run003_scores(self): raise AssertionError('archive executed')\n def test_kept(self): pass\n");
+  await writeFile(join(bin, "test_other.py"), "import unittest\nclass OtherTests(unittest.TestCase):\n def test_kept(self): pass\n");
+  const pinResult = python("import json\nprint(json.dumps(str(Path(sys.executable).resolve())))");
+  assert.equal(pinResult.status, 0, pinResult.stderr); const executable = JSON.parse(pinResult.stdout);
+  const { modelEvalRecipesV1: selectedRecipes } = await import(process.env.CONTROL_ROOM_B11_TEST_FINAL_MODULE ?? "./helpers/improve-control-room-model-eval");
+  const recipe = selectedRecipes(executable)[0];
+  const run = () => spawnSync(executable, recipe.argv.slice(1), { cwd: parent, encoding: "utf8", timeout: 30_000,
+    env: { PATH: "/usr/bin:/bin", TZ: "UTC", LC_ALL: "C", LANG: "C", PYTHONDONTWRITEBYTECODE: "1" } as unknown as NodeJS.ProcessEnv });
+  let result = run(); assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(parseModelEvalUnittestV1(result.stdout + result.stderr), { completed: 3, passed: 3, failed: 0, skipped: 0 },
+    "B11 final required kit check must omit only the two named archive tests");
+  assert.deepEqual(recipe.argv.slice(0, 2), [executable, "-c"]);
+  // Independently inspect the executable literal, rather than trusting its exported policy.
+  passed(python(`
+import ast,json
+code=json.loads(sys.argv[2]); tree=ast.parse(code)
+assignments=[n for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='excluded' for t in n.targets)]
+assert len(assignments)==1
+assert list(ast.literal_eval(assignments[0].value))==json.loads(sys.argv[3]),'archive exclusion literal changed'
+assert b5.model_recipes(Path(sys.executable).resolve())[0]['argv'][1:]==['-c',code]
+print('RESULT: PASS exact two-entry literal and Python/TypeScript final argv parity')
+`, [JSON.stringify(recipe.argv[2]), JSON.stringify(excluded)]));
+  const original = await readFile(join(bin, "test_run004_round2.py"), "utf8");
+  await writeFile(join(bin, "test_run004_round2.py"), original.replace("test_frozen_run003_scores", "test_renamed"));
+  result = run(); assert.notEqual(result.status, 0, "renamed exclusion must refuse before running");
+  assert.match(result.stderr, /B11_FINAL_KIT_EXCLUSIONS/u);
+  await writeFile(join(bin, "test_run004_round2.py"), original);
+  await writeFile(join(bin, "test_other.py"), "import unittest\nclass OtherTests(unittest.TestCase):\n @unittest.skip('third skip')\n def test_kept(self): pass\n");
+  result = run(); assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(parseModelEvalUnittestV1(result.stdout + result.stderr).skipped, 1, "unapproved skip must remain visible to the final card guard");
+  await writeFile(join(bin, "test_other.py"), "import unittest\nclass OtherTests(unittest.TestCase):\n def test_kept(self): self.fail('nonexcluded failure')\n");
+  result = run(); assert.equal(result.status, 1); assert.match(result.stderr, /nonexcluded failure/u);
+  assert.equal(parseModelEvalUnittestV1(result.stdout + result.stderr).failed, 1);
+});
+
+test("B11 baseline still executes full discovery and exact archive audit with filtered final settings", async t => {
+  passed(python(String.raw`
+import hashlib,json
+root=Path(sys.argv[2]);repo=root/'work/repo';(repo/'bin/diagnostic').mkdir(parents=True);(repo/'scoring/bin').mkdir(parents=True)
+(repo/'bin/runner_guard.py').write_text('def require_runner(): pass\n')
+(repo/'bin/test_run004_fixes.py').write_text("import unittest\nclass RetryTests(unittest.TestCase):\n @unittest.skip('frozen run 004 archives absent in scratch kit')\n def test_frozen_archives_count_without_writes(self): pass\n def test_kept(self): pass\n")
+(repo/'bin/test_run004_round2.py').write_text("import unittest\nclass PacketTests(unittest.TestCase):\n @unittest.skip('frozen run absent in scratch rehearsal')\n def test_frozen_run003_scores(self): pass\n")
+(repo/'scoring/bin/test_scoring.py').write_text('import unittest\nclass ScoringTests(unittest.TestCase):\n def test_kept(self): pass\n')
+b5.git(repo,'init','--quiet');b5.git(repo,'add','.');b5.git(repo,'commit','--quiet','-m','B11 baseline dispatch fixture')
+(repo/'bin/test_build_prompts_lean.py').write_text("import unittest\nclass LeanPromptTests(unittest.TestCase):\n def test_full_suite_lean_variant(self): self.fail('expected baseline failure')\n def test_unsupported_attack_role(self): self.fail('expected baseline failure')\n")
+(repo/'bin/diagnostic/lean_isolation_check.py').write_text("import unittest\nclass IsolationTests(unittest.TestCase):\n def test_isolation(self): self.fail('qualifying baseline diagnostic')\n")
+b5.git(repo,'add','.');b5.git(repo,'commit','--quiet','-m','B11 protected fixture checks')
+py=Path(sys.executable).resolve();recipes=b5.model_recipes(py)
+assert recipes[0]['argv'][1]=='-c'
+records=b5.model_baseline(root,py,recipes,hashlib.sha256(py.read_bytes()).hexdigest())
+assert records['kit-bin']['counts']==dict(completed=5,passed=1,failed=2,skipped=2)
+assert dict(records['kit-bin']['audit']['skips'])==b5.ARCHIVE_SKIPS
+assert records['kit-scoring']['counts']==dict(completed=1,passed=1,failed=0,skipped=0)
+assert records['lean-isolation']['counts']==dict(completed=1,passed=0,failed=1,skipped=0)
+print('RESULT: PASS real baseline dispatch retains full discovery and exact archive audit; synthetic kit only')
+`, [await scratch(t)]));
+});
+
+test("B11 final kit exclusion guard switched off fails the named assertion and restores", async t => {
+  const parent = await scratch(t), root = join(parent, "copy"), helpers = join(root, "tests/helpers");
+  await mkdir(helpers, { recursive: true });
+  await symlink(resolve("node_modules"), join(root, "node_modules"), "dir");
+  await symlink(resolve("tests/helpers/improve-control-room-first-website.ts"), join(helpers, "improve-control-room-first-website.ts"));
+  const file = join(helpers, "improve-control-room-model-eval.ts"), original = await readFile("tests/helpers/improve-control-room-model-eval.ts", "utf8");
+  const anchor = "t for t in tests if t.id() not in excluded";
+  assert.ok(original.includes(anchor)); await writeFile(file, original.replace(anchor, "t for t in tests"));
+  const env: NodeJS.ProcessEnv = { ...process.env, CONTROL_ROOM_B11_TEST_FINAL_MODULE: file }; delete env.NODE_TEST_CONTEXT;
+  const args = ["--import", "tsx", "--test", "--test-concurrency=1", "--test-timeout=600000", "--test-name-pattern=^B11 final kit recipe excludes", "tests/improve-control-room-second-project.test.ts"];
+  const disabled = spawnSync(process.execPath, args, { env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(disabled.status, 1, disabled.stdout + disabled.stderr);
+  assert.match(disabled.stdout, /B11 final required kit check must omit only the two named archive tests/u);
+  assert.match(disabled.stdout, /# fail 1/u); assert.match(disabled.stdout, /# skipped 0/u);
+  assert.match(disabled.stdout, /skipped: 2/u);
+  await writeFile(file, original);
+  const restored = spawnSync(process.execPath, args, { env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(restored.status, 0, restored.stdout + restored.stderr); assert.match(restored.stdout, /# pass 1/u);
 });
 
 test("B11 source state checker detects writes after success, refusal and abort without restoring sources", async t => {
