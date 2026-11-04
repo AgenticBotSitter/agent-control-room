@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
+import {
+  assertMutationLaneCoverage, findUncoveredTests, reachableTests, workflowCommands,
+} from "../scripts/check-test-lane-coverage.mjs";
 
 function fixture({ scripts, workflow, tests }) {
   const root = mkdtempSync(join(tmpdir(), "control-room-lane-coverage-"));
@@ -64,4 +66,72 @@ test("quoted and block workflow commands are extracted", () => {
     "      pnpm run test:two",
     "      node --test tests/direct.test.js",
   ].join("\n")), ["pnpm install --frozen-lockfile", "pnpm run test:one", "pnpm run test:two\nnode --test tests/direct.test.js"]);
+});
+
+// Load-lane contract: each load lane keeps its enable flag, exact selection and module.
+const actualScripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
+const actualWorkflow = readFileSync(".github/workflows/ci.yml", "utf8");
+const loadLanes = [
+  { name: "test:improve-control-room-loop-monitoring-load", flag: "CONTROL_ROOM_B3B_LOAD",
+    pattern: '--test-name-pattern="^B3b product collector contention$"',
+    module: "tests/improve-control-room-loop-monitoring.test.tsx" },
+  { name: "test:improve-control-room-loop-finalization-load", flag: "CONTROL_ROOM_B3C_LOAD",
+    pattern: '--test-name-pattern="^B3c 24 finalizers retain once and refuse destruction$"',
+    module: "tests/improve-control-room-loop-finalization.test.tsx" },
+];
+
+function mutated(name, change) {
+  const scripts = structuredClone(actualScripts), before = scripts[name];
+  scripts[name] = change(before);
+  assert.notEqual(scripts[name], before, `${name}: mutation must change the command`);
+  return scripts;
+}
+
+function replaced(search, replacement) {
+  return command => {
+    assert.ok(command.includes(search), `fixture expects ${search}`);
+    return command.replace(search, replacement);
+  };
+}
+
+test("the current load-lane package commands and workflow satisfy the mutation lane contract", () => {
+  assert.doesNotThrow(() => assertMutationLaneCoverage(structuredClone(actualScripts), actualWorkflow));
+});
+
+for (const lane of loadLanes) {
+  const other = loadLanes.find(candidate => candidate !== lane);
+  const mutations = {
+    "missing enable flag": replaced(`${lane.flag}=1 `, ""),
+    "renamed enable flag": replaced(`${lane.flag}=1`, `${lane.flag}_RENAMED=1`),
+    "enable flag value 0": replaced(`${lane.flag}=1`, `${lane.flag}=0`),
+    "missing name pattern": replaced(` ${lane.pattern}`, ""),
+    "unanchored name pattern": replaced(lane.pattern, lane.pattern.replace("^", "").replace("$", "")),
+    "wrong name pattern": replaced(lane.pattern, other.pattern),
+    "missing agent CLI block flag": replaced("CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 ", ""),
+    "wrong test module": replaced(lane.module, other.module),
+    "echo instead of invocation": command => `echo ${command}`,
+    "swallowed exit": command => `${command} || true`,
+    "flag only in an unrelated variable value": replaced(`${lane.flag}=1`, `NOTE=${lane.flag}=1`),
+    "pattern only inside a comment": command => `${command.replace(` ${lane.pattern}`, "")} # ${lane.pattern}`,
+    "parallel execution": replaced("--test-concurrency=1", "--test-concurrency=4"),
+    "changed process timeout": replaced("--test-timeout=600000", "--test-timeout=60000"),
+  };
+  for (const [label, change] of Object.entries(mutations)) {
+    test(`${lane.name}: ${label} is rejected`, () => {
+      assert.throws(() => assertMutationLaneCoverage(mutated(lane.name, change), actualWorkflow),
+        error => error instanceof assert.AssertionError && error.message.includes(lane.name));
+    });
+  }
+  test(`${lane.name}: cannot borrow the other load lane's valid command`, () => {
+    const scripts = structuredClone(actualScripts);
+    scripts[lane.name] = actualScripts[other.name];
+    assert.throws(() => assertMutationLaneCoverage(scripts, actualWorkflow),
+      error => error instanceof assert.AssertionError && error.message.includes(lane.name));
+  });
+}
+
+test("swapped load-lane commands are rejected even though each command is individually valid", () => {
+  const scripts = structuredClone(actualScripts);
+  [scripts[loadLanes[0].name], scripts[loadLanes[1].name]] = [scripts[loadLanes[1].name], scripts[loadLanes[0].name]];
+  assert.throws(() => assertMutationLaneCoverage(scripts, actualWorkflow), assert.AssertionError);
 });

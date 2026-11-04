@@ -101,6 +101,20 @@ export const mutationLaneShape = {
     [website + ":part-1", 5], [website + ":part-2", 5],
   ] },
 };
+// Load lanes are pinned to their exact literal command: the enable flag, the anchored
+// selection and the module are invocation tokens, so no shell parsing is attempted.
+export const loadLaneContract = {
+  [loop + "monitoring-load"]: { enable: "CONTROL_ROOM_B3B_LOAD=1",
+    selection: '--test-name-pattern="^B3b product collector contention$"',
+    module: "tests/improve-control-room-loop-monitoring.test.tsx" },
+  [loop + "finalization-load"]: { enable: "CONTROL_ROOM_B3C_LOAD=1",
+    selection: '--test-name-pattern="^B3c 24 finalizers retain once and refuse destruction$"',
+    module: "tests/improve-control-room-loop-finalization.test.tsx" },
+};
+export function loadLaneCommand({ enable, selection, module }) {
+  return `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 ${enable} node scripts/run-tests-with-quarantine.mjs `
+    + `--import tsx --test --test-concurrency=1 --test-timeout=600000 ${selection} ${module}`;
+}
 export function assertMutationLaneCoverage(scripts, source) {
   const require = createRequire(import.meta.resolve("eslint"));
   const jobs = typeof source === "string" ? require("js-yaml").load(source).jobs : source;
@@ -128,8 +142,16 @@ export function assertMutationLaneCoverage(scripts, source) {
       assert.match(scripts[name], /node scripts\/run-tests-with-quarantine\.mjs .*--test/u);
       assert.equal(step["timeout-minutes"], stepBound, `${name}: retain the step bound`);
       if (name.includes("candidate-mutations:") || name.startsWith(website + ":")) assert.match(scripts[name], /--test-name-pattern=/u);
+      if (Object.hasOwn(loadLaneContract, name)) {
+        const contract = loadLaneContract[name];
+        assert.equal(scripts[name], loadLaneCommand(contract),
+          `${name}: load lane must be exactly the serial ${contract.enable} invocation with ${contract.selection} on ${contract.module}`);
+      }
     }
   }
+  const loadLanes = Object.values(expected).flatMap(({ lanes }) => lanes.map(([name]) => name))
+    .filter(name => Object.hasOwn(loadLaneContract, name));
+  assert.deepEqual(loadLanes.sort(), Object.keys(loadLaneContract).sort(), "every pinned load lane stays in a mutation job");
   const final = jobs["mutation-checks"];
   assert.deepEqual(final.needs, ["mutation-checks-lineage", "mutation-checks-candidate"]);
   const aggregation = final.steps.at(-1);
