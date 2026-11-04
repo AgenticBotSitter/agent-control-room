@@ -593,3 +593,11 @@ test("every reference in one bullet is checked, not only the first", () => {
     assert.ok(result.errors.includes("ci_reference_unresolved"), JSON.stringify(result));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("an added report is refused even beside ordinary added files", () => {
+  const root = fixture();
+  try {
+    const result = inspect(root, "## Summary\n\nAdded a page.", ["docs/page.md", "reports/x.md"]);
+    assert.ok(result.errors.includes("stray_report_path"), JSON.stringify(result));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
