@@ -83,3 +83,23 @@ The final result commit changes only these files under `docs/cloud-tasks/results
 ## Cleanup
 
 There were no long-lived processes. Both helper agents finished. Scratch files stayed outside the repository.
+
+## Local specification revision r3 (2026-11-04)
+
+Starting result: 61ea85a3bf5d73606dff7127816851e77c5dc9ec; source: origin/cook/b7-providers 412d0c149fe8e272c491900d7a9164f80ecb612a. Local plan branch; no push. Earlier cloud environment/setup/helper dispositions are historical and superseded where r3 changes the contract.
+
+Independent specification gate: HIGH 2 / MEDIUM 2 / LOW 0. P1 now requires runtime store-issued consumed-consent provenance, P2 corrects all cache-mode ceilings, P3 binds a private request/options snapshot and full replay identity, P4 adds bounded CAP-A/B continuations and independent code/attack/CI/Linux/wrapper obligations. New deciding tests cover authentic/cloned/fabricated/unconsumed handles before ledger/send, none-mode actual 7500000 versus reserved 6000000/excess 1500000, exact boundaries, buffer mutation and changed output/stream replay. Q1/Q2 values are test-only and cannot authorize production/tiny probe. The paid digest/identity/one-pair and exact candidate handoff to later U83a/paid consumers is explicit.
+
+No implementation or product/unit/PG17/provider/tools/browser/device/Linux tests were run locally; no dependency installation or real provider/model process. Documentation/source audit results follow after completion. Full private-name denylist check is NOT RUN (none supplied); bounded public-text inspection is a separate limited check. Independent re-review pending.
+
+### r3 completed documentation checks
+
+- `git fetch origin` → `RESULT fetch exit=0`; disposable local plan branch created from the exact cloud result head (worktree creation exit 0). The first fetch needed a metadata permission retry; no push or other task network operation.
+- `python3 .test-tmp/b8-fix1-doc-audit.py` (from the parent clone) → `PATHS=96 SCRIPTS=24 SYMBOLS=70 UNRESOLVED=0`, `RESULT documentation-audit exit=0`. Existing source paths/symbols/script names and line bounds checked against origin/cook/b7-providers; absent planned files/scripts classified NEW/deferred. Initial audit-harness path/prose/generic-method matching false positives were corrected before this passing result; no product behavior was changed.
+- Independent contract arithmetic → reserve=6000000, actual=7500000, excess=1500000. Timing model: +1-second fresh-intent claim checks freshness; identical +8-second result and omitted-intent copied claim do not. These are contract calculations, not executed product/PG tests.
+- Source subtree comparison against the pinned base reports no implementation difference. Allowed-write audit finds exactly this ID's five result Markdown documents. Both status final lines are exactly `Status: PLAN-READY`; P1–P4/S1–S7 have explicit r3 Revision history dispositions; balanced fences and bounded public-text privacy checks pass. The denylist-dependent privacy gate is still NOT RUN.
+- `git diff --check` passed before this evidence update; final whitespace/allowed-path check is repeated for the handoff. Current independent spec re-review is pending; no product green gate or reviewer CLEAN is claimed.
+
+Commit identity handoff: effective configured identity differs from the brief's required worker identity. No Git identity configuration was changed. No response authorizing command-scoped identity overrides was received before handoff. The verified worktree is retained for the lead to commit; no new commit exists. No wrong-identity commit is claimed.
+
+Final handoff: both plan branches retain exactly five changed result Markdown files. Staging and staged whitespace checks completed with exit 0; final repeat follows the last documentation update. Worktrees are retained because commit identity authorization is unresolved; they are not removed with uncommitted work. No owned process remains.

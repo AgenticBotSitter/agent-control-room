@@ -80,7 +80,7 @@ Each decision below is a technical choice inside approved scope. None is an owne
 
 ## D7 — Capability branding
 
-- **Choice:** Admission objects are branded via a module-private WeakSet, and the ledger binds `runKey` and `pinDigest` from the journal `open` record.
+- **Choice:** Store consumption mints an opaque handle authenticated by a module-private WeakMap of private immutable records; admission outputs additionally use a module-private WeakSet, and the ledger binds `runKey` and `pinDigest` from the journal `open` record.
 - **Options:**
   - (a) Signed tokens.
   - (b) A structural check.
@@ -116,7 +116,7 @@ Each decision below is a technical choice inside approved scope. None is an owne
 - **Choice:** `cacheReporting` in the profile selects the settlement mode.
   - `subset` maps to `harness:'codex'`, which nets cached tokens off input.
   - `additive` maps to `harness:'other'`.
-  - `none` turns any cached tokens into a violation.
+  - `none` requires input <= inCeil and cached=0; subset also requires cached<=input. Unknown usage still refuses.
 - **Usage mapping:** reported usage is mapped exactly to `usageMeasurementSchemaV1`, with `totalTokens:null` and `wallTimeMs:null`.
 - **Synthetic table:** the one-entry table uses the ids `paid-run-bound` and `paid-run-entry`, which satisfy `catalogProjectIdSchema`.
 - **Why:** the spec reviewer showed that the r1 `other`-only mapping double-charges subset-reporting providers. It also showed that the r1 usage shape fails the strict schema.
@@ -142,7 +142,7 @@ Each decision below is a technical choice inside approved scope. None is an owne
 - **Why:**
   - Option (a) is self-asserted; the reviewer rated this HIGH. The owner also cannot know the claim ids in advance.
   - Option (b) needs key management.
-  - Option (c) gives real owner authority and real single use. In the cloud it is backed by an in-memory store; the durable store is P3 and PG17-later.
+  - Option (c), with the r3 opaque consumed-capability lookup, gives verifiable store provenance and single use; the original structural record alone did not. In the cloud it is backed by an in-memory store; the durable store is P3 and PG17-later.
 - **Affected spec item:** 3.
 
 ## D12 — Stop and block are re-checked at dispatch
@@ -153,3 +153,31 @@ Each decision below is a technical choice inside approved scope. None is an owne
   - (b) Re-check at dispatch.
 - **Why:** With option (a), a call that already held a reservation could still send after Stop or after a block; the reviewer rated this HIGH. Option (b) closes that path, and test T13b proves it.
 - **Affected spec item:** 6.
+
+## D13 — Consumed-consent provenance (P1)
+
+Choice: consumeOnce alone mints a frozen opaque handle; admitPaidRunV1 resolves it through a module-private WeakMap to the immutable stored record before ledger/send. No public mint/registration API, record export or structural consent input.
+Options: structural consumedBy check; authoritative lookup; opaque store-issued handle.
+Why: A structural clone or fabricated consumedBy passed r2 field checks. Runtime provenance supplies the missing authority proof without signing/key management. The memory factory is tests-only; durable transactional consumption remains separately reviewed.
+Affected spec item: 3, T9.
+
+## D14 — Private request and full identity (P3)
+
+Choice: synchronously copy bounded non-shared request bytes and scalar options before the first await; hash body plus maxOutputTokens/normalized stream for durable requestDigest.
+Options: readonly outer object/body-only replay; private snapshot/full identity.
+Why: Caller mutation during currentConfig/ledger waits cannot alter what is bound/sent; changed output/stream options conflict rather than replaying a different call.
+Affected spec item: 5.3, 6.1, T6.
+
+## D15 — Continuation and policy boundary (P2/P4)
+
+Choice: CAP-A bound/admission, CAP-B ledger/executor/Stop/registration, each at most six hours with independent code/attack/CI and pinned Node 22 Linux parity. Every supported cache mode has ceiling/negative/boundary tests.
+Options: one long BUILD; named bounded stops.
+Why: Retains the budget and authority/owned-file/concurrency proof obligations. Wrapper/CLI-blocked checks are mandatory; production PG migration/consent/broker/profile and tiny real probe remain later. Q1 cap ceiling and Q2 lifetime values are test-only until explicit owner decisions.
+Affected spec item: 4, 7, 8.4, 9.
+
+## D10 integration amendment — shared paid consumer
+
+Choice: Later U83a/paid admission consumes the same sorted whole-window priceRowDigest, roster model versus servedModelId distinction and one-distinct-paid-pair rule. Future consumption binds the exact winning U81 candidate commandId/run inside its claim transaction.
+Options: sibling-specific digest/IDs; one shared server contract.
+Why: Window bounds cover multiple rows, and U81 moves candidate allocation before the checker. Neither provider choice nor family acknowledgement is spending authority, and stand-in success never enables paid readiness.
+Affected spec item: 3.2 and cross-chunk handoff.

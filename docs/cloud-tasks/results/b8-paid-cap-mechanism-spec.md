@@ -1,13 +1,13 @@
-# b8-paid-cap-mechanism — specification (PLAN, revision r2)
+# b8-paid-cap-mechanism — specification (PLAN, revision r3)
 
 Phase: PLAN (specification only; no product code in this phase).
 Source base: `cook/b7-providers` at `412d0c149fe8e272c491900d7a9164f80ecb612a`.
 Delivery base: `cloud-base/b8-paid-cap-mechanism` at `d0a1c8a3895d5dc283c8fdf2b01ed41f14790d9b`. That base is one task/playbook commit on top of the source base. Ancestry was verified with `git merge-base --is-ancestor`, which exited 0.
-Result branch: `cloud/b8-paid-cap-mechanism`.
+Revision branch: `plan/b8-paid-cap-mechanism`, created from `origin/cloud/b8-paid-cap-mechanism` at `61ea85a3bf5d73606dff7127816851e77c5dc9ec`.
 
 ## 0. Summary and verdict
 
-The U83b per-run paid-call enforcement is specified as a self-contained stand-in slice under `src/usage/v1/paid-run-*`. It is testable against a deterministic scripted provider and has five parts:
+The U83b per-run paid-call enforcement is specified as a self-contained stand-in slice under `src/usage/v1/paid-run-*`. It is testable against a deterministic scripted provider and has four parts:
 
 1. **Trusted admission.** A server-persisted, single-use owner consent plus a server-derived pin produce an unforgeable per-run capability.
 2. **Conservative pre-call bound.**
@@ -104,7 +104,7 @@ The engine and harness CLIs need a reviewed contract under which:
 - (c) a refusal is terminal for that call, with no engine-side fallback route;
 - (d) Stop is a broker-side abort.
 
-No such contract exists in the public repository. This spec does not design the private engine's internals. **Production paid enablement is BLOCKED** on P1–P5 (§8.4).
+No such contract exists in the public repository. This spec does not design the private engine's internals. **Production paid enablement is BLOCKED** on P1–P5 (§8.5).
 
 ## 3. Trusted admission (item 3) — NEW `src/usage/v1/paid-run-admission.ts`
 
@@ -128,16 +128,23 @@ export interface PaidRunConsentStoreV1 {           // NEW port; consent is serve
   /** Atomic single use inside the Start-claim transaction; binds the claim's freshly generated ids. */
   consumeOnce(consentId: string, claim: Readonly<{ tenantId: string; ownerIdentityId: string; projectId: string;
     requestId: string; settingsSha256: string; commandId: string; loopRunId: string; now: number }>):
-    Promise<{ kind: 'consumed'; record: PaidRunConsentRecordV1 } | { kind: 'refused'; reason: PaidRunRefusalV1 }>;
+    Promise<{ kind: 'consumed'; capability: PaidRunConsumedConsentV1 } | { kind: 'refused'; reason: PaidRunRefusalV1 }>;
 }
-export type PaidRunConsentRecordV1 = Readonly<{ consentId: string; tenantId: string; ownerIdentityId: string;
+// NEW module-private declaration, never exported or accepted as runtime proof:
+declare const consumedConsentBrand: unique symbol;
+// Opaque type: callers cannot construct its brand; runtime map lookup is mandatory.
+export type PaidRunConsumedConsentV1 = Readonly<{ readonly [consumedConsentBrand]: true }>;
+// Internal record only; not an admission argument and not exported.
+type PaidRunConsentRecordV1 = Readonly<{ consentId: string; tenantId: string; ownerIdentityId: string;
   projectId: string; requestId: string; settingsSha256: string; pinDigest: string; capNanoUsd: string;
   issuedAt: number; expiresAt: number; consumedBy: { commandId: string; loopRunId: string } }>;
 export type PaidRunPinV1 = Readonly<{ providerId: string; model: string; servedModelId: string;
   providerVersion: number; priceRowDigest: string; capNanoUsd: string }>;
-export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRunConsentRecordV1 | undefined):
+export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRunConsumedConsentV1 | undefined):
   { kind: 'paid'; admission: PaidRunAdmissionV1 } | { kind: 'unpaid' } | { kind: 'refused'; reason: PaidRunRefusalV1 };
 ```
+
+Successful `consumeOnce` alone creates a frozen empty opaque handle and registers it in a module-private `WeakMap<object, PaidRunConsentRecordV1>` in this admission module. The map holds a private deep-frozen copy of the authoritative stored record, including `consumedBy`. The tests-only memory-store factory lives in this module and is the only issuer implemented here. Neither the map, mint function, brand symbol nor the internal record is exported. `issue` returns an ID only; it never returns a consumed handle. The compile-time private brand is supplemented by the runtime map lookup: casts, object spread, JSON clones, prototypes and fabricated `consumedBy` fields cannot mint authority. `admitPaidRunV1` does the provenance lookup before any ledger creation, then checks the retrieved record against the trusted context. Missing/unregistered handles refuse `consent_missing`. There is no public registration API for arbitrary stores. A later durable store must be separately integrated with this trusted mint after its transaction commits; structural implementation of the port alone is insufficient. No signing/token service is introduced.
 
 ### 3.2 Rules (each a named refusal)
 
@@ -155,13 +162,13 @@ export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRu
 3. **Consent.**
    - Consent exists only as a record created by `PaidRunConsentStoreV1.issue`, through the owner's explicit authenticated action, with `ownerIdentityId = actor.id`.
    - The record is bound to `projectId`, `requestId`, `settingsSha256`, the server-derived `pinDigest` and `capNanoUsd`.
-   - Lifetime: `issuedAt ≤ now < expiresAt` and `expiresAt − issuedAt ≤ 600 000 ms`; otherwise it refuses with `consent_stale`.
-   - At Start-claim insertion, `consumeOnce` atomically consumes the record and binds the claim's `commandId`/`loopRunId`, which are generated in that transaction (`improve-control-room-loop-service.ts:645,656`) and cannot be known beforehand. A second consume refuses with `consent_replayed`.
-   - `admitPaidRunV1` accepts only a consumed record. It re-checks every binding against the trusted context (`consent_mismatch`) and recomputes `pinDigest`.
+   - Stand-in lifetime (test-only pending Q2): `issuedAt ≤ now < expiresAt` and `expiresAt − issuedAt ≤ 600 000 ms`; otherwise it refuses with `consent_stale`.
+   - At Start-claim insertion, `consumeOnce` atomically consumes the record and binds the claim's `commandId`/`loopRunId`, which are server-allocated (today at claim insertion, `improve-control-room-loop-service.ts:645,656`; U81 moves candidate allocation to preflight). Future paid integration must consume against the exact winning checked candidate inside the claim transaction; owner/browser cannot supply these IDs. A second consume refuses with `consent_replayed`.
+   - `admitPaidRunV1` accepts only a registered consumed-consent handle and reads its internal store-issued record. It re-checks every binding against the trusted context (`consent_mismatch`) and recomputes `pinDigest`.
    - Consent is never read from request bodies, settings text, presets, defaults or copied historical Starts. The only code path that creates consent is `issue`.
    - The cloud stand-in is `createPaidRunMemoryConsentStoreV1` (NEW, tests only). The durable store needs a lead-reserved migration (PG17-later, P3).
 4. **Money units.**
-   - `capNanoUsd` must match `/^[1-9][0-9]{0,15}$/` and be ≤ `PAID_RUN_CAP_CEILING_NANO_USD`. That constant is NEW and its value is pending as owner question Q1; otherwise the cap refuses with `invalid_cap`.
+   - `capNanoUsd` must match `/^[1-9][0-9]{0,15}$/` and be ≤ `PAID_RUN_CAP_CEILING_NANO_USD`. Invalid syntax/range refuses with `invalid_cap`. The constant is NEW; the stand-in uses test-only `5000000000`, pending owner question Q1. This value and the test-only lifetime authorize neither production spending nor a tiny real probe.
    - All money is BigInt: no `Number` money and no floating point.
 5. **Provider labels are not authority.** `billing_kind` only *classifies* a route, which makes the gate stricter. It never grants spending; the consumed consent cap is the only spending authority.
 6. **Unforgeable capability.**
@@ -217,9 +224,11 @@ For a call with body `b` and requested `maxOutputTokens = o`, all in BigInt:
 - **Output limit.** `o` must be an integer with `1 ≤ o ≤ maxOutputTokensCeiling`; otherwise the call refuses with `output_unbounded`.
 - **Body size.** `b.byteLength ≤ maxBodyBytes`; otherwise it refuses with `input_unbounded`.
 - **Input ceiling.** `inCeil = byteLength × maxTokensPerInputByte + inputOverheadTokens`. The post-response ceiling check depends on `cacheReporting`:
-  - `subset`: `input ≤ inCeil` (cached ⊆ input);
+  - `subset`: `input ≤ inCeil` **and** `0 ≤ cached ≤ input`;
   - `additive`: `input + cached ≤ inCeil`;
-  - `none`: `cached > 0` is a violation.
+  - `none`: `input ≤ inCeil` **and** `cached = 0`.
+
+  Missing/null/invalid usage remains `usage_unverified`, not a zero count. All counters must be nonnegative safe integers. A subset report with cached > input violates the profile even when input is within the ceiling.
 
   In every mode, `output ≤ o`.
 - **Maximum charge.** `maxCharge = inCeil × inRateMax + o × outRateMax`, using the maxima over every row active anywhere in the call interval (§4.3). Cached input is charged at the input rate, which is conservative.
@@ -263,7 +272,7 @@ export interface PaidRunLedgerV1 {               // NEW storage port
   open(admission: PaidRunAdmissionV1): Promise<PaidRunLedgerHandleV1>;   // takes the run lease
 }
 export interface PaidRunLedgerHandleV1 {
-  reserve(r: { callId: string; bodyDigest: string; maxNanoUsd: string; priceRowDigest: string; check: () => void }):
+  reserve(r: { callId: string; requestDigest: string; maxNanoUsd: string; priceRowDigest: string; check: () => void }):
     Promise<{ kind: 'reserved' } | { kind: 'replay'; state: CallState } | { kind: 'refused'; reason: PaidRunRefusalV1 }>;
   // `check` re-applies the revalidation verdict inside the critical section.
   dispatch(callId: string): Promise<{ kind: 'dispatched' } | { kind: 'refused'; reason: 'run_stopped' | 'run_blocked' }>;
@@ -278,11 +287,14 @@ export interface PaidRunLedgerHandleV1 {
 }
 ```
 
-### 5.3 Call identity
+### 5.3 Private snapshot and call identity
+
+At synchronous `call` entry, before the first await, read and validate `callId`, `maxOutputTokens`, `stream` (omitted normalizes to false) and the body length, then copy the bounded `Uint8Array` with `Uint8Array.from`. Reject shared-memory-backed bodies (`input_unbounded`); copying concurrently writable shared memory cannot establish exact caller bytes. Never retain the caller's options object or buffer. Keep this private copied body and scalar options in the invocation closure. Derive `bodyDigest = sha256(exact private bytes)` and `requestDigest = sha256Digest({schemaVersion:1, bodyDigest, maxOutputTokens, stream})` once from that snapshot. Both the bound and the `send` arguments use those same private bytes/options; no digest comes from a later read of caller memory. Do not rely on shallow readonly or freezing a typed array.
 
 - A `callId` must match `/^[A-Za-z0-9:_-]{16,100}$/`.
-- An existing `callId` with the same `bodyDigest` (sha256 of the bytes) returns `replay` with the recorded state. It is **never dispatched again**: a settled call returns its recorded result, and a dispatched-but-unsettled call is `uncertain`.
-- An existing `callId` with a different body refuses with `call_conflict` and changes nothing.
+- An existing `callId` with the same **requestDigest** returns `replay` with the recorded state. It is **never dispatched again**: a settled call returns its recorded result, and a dispatched-but-unsettled call is `uncertain`.
+- A changed body, maxOutputTokens or normalized stream value under that id refuses `call_conflict`, with no write/send and unchanged totals. Omitted stream and explicit false are the same identity.
+- `reserve` and the durable reserve record store requestDigest; bodyDigest is diagnostic only. PG17-later uses the same conflict definition.
 - Retries are new `callId`s and are counted cumulatively. The executor never retries automatically.
 
 ### 5.4 Cloud storage: durable journal (NEW `createPaidRunJournalLedgerV1({ root })`)
@@ -320,7 +332,7 @@ Production multi-process accounting needs a PostgreSQL ledger with:
 
 - a run-head row locked `FOR UPDATE` inside `transactionWithPreCommitCheck` (`src/persistence/database.ts:57`);
 - a unique `(tenant, runKey, callId)` constraint;
-- `bodyDigest` conflict checks;
+- `requestDigest` conflict checks (body plus output/stream options);
 - a single-use consent table.
 
 That needs a migration number **only the lead may reserve**; none is guessed here. Native qualification is listed in §9.2 and is still pending. The cloud journal does not qualify production storage.
@@ -330,13 +342,13 @@ That needs a migration number **only the lead may reserve**; none is guessed her
 ### 6.1 `call()` algorithm (strict order)
 
 1. Refuse if stopped or blocked (`run_stopped`, `run_blocked`). Steps 5 and 7 re-check this inside the mutex.
-2. Validate the input. `stream:true` with `!streamUsageInFinalEvent` refuses with `stream_unbounded`.
+2. Use only the synchronous private snapshot and full requestDigest from §5.3. Validate the input before any await. `stream:true` with `!streamUsageInFinalEvent` refuses with `stream_unbounded`.
 3. Revalidate with `currentConfig()` (§3.3). A mismatch blocks the run; the verdict is re-applied as `check` inside step 5.
 4. Compute the bound (§4) at `t0 = clock()`.
-5. `ledger.reserve` (mutex: stopped/blocked, `check`, cap, append).
+5. `ledger.reserve` with requestDigest (mutex: stopped/blocked, `check`, cap, append).
 6. Concurrency gate inside the same mutex: if `inFlight ≥ maxConcurrent`, release and refuse with `concurrency_limit`.
 7. `ledger.dispatch` (mutex: re-check stopped/blocked; refuse and release if set).
-8. `transport.send(..., signal)`, where `signal = any(callController, stopController, deadline at t0 + maxCallMs)`.
+8. `transport.send` with the private snapshot body and scalar options from §5.3, where `signal = any(callController, stopController, deadline at t0 + maxCallMs)`.
 9. Verify the response:
    - **Identity.** A missing or different `servedModelId` settles at the **reservation max** as `identity_mismatch` and blocks the run.
    - **Usage presence.** If usage is missing, `inputTokens`, `outputTokens` or `cachedInputTokens` is null, or a separate `reasoningTokens > 0` is present, the call settles at max as `usage_unverified` and blocks the run.
@@ -366,7 +378,7 @@ The calls that may be in flight at Stop are exactly those with a `dispatch` reco
 
 ## 7. Independent proof (item 7)
 
-Expected values were worked out by hand and checked independently by the spec reviewer.
+Expected values were worked out by hand and independently checked as contract arithmetic; no executed product result is claimed.
 
 The fake provider, `tests/helpers/paid-run-fake-provider.ts` (NEW):
 
@@ -430,8 +442,9 @@ Expected: requests 4, settled **14 100 000**.
 
 **T6 Replay and conflict.**
 
-- The same id and body after settle gives `replay`, with no new request and unchanged totals.
-- The same id with a different body gives `call_conflict`, with totals unchanged.
+- The same id and full normalized request after settle gives `replay`, with no new request and unchanged totals; omitted stream and false replay identically.
+- The same id with a different body, output limit or stream gives `call_conflict`, with totals unchanged and zero additional requests.
+- Hold `currentConfig`, mutate the original buffer and options after invoking `call`, then release it. The independent fake must observe the original bytes/bodyDigest/output limit/stream; journal requestDigest must match that snapshot. Repeat around a held ledger reservation. These use a shared barrier rather than timing sleeps.
 - Replay of a dispatched-but-uncertain call gives `uncertain`, with no re-send.
 
 **T7 Stale price.** `checkedAt` at 24 h + 1 ms before now gives `price_stale` with 0 requests. At exactly 24 h it is admitted, matching the `>` rule at `loop-provider-service.ts:79`.
@@ -453,8 +466,9 @@ Expected: requests 4, settled **14 100 000**.
 
 | Case | Expected |
 |---|---|
-| No consumed consent record | `consent_missing` |
-| A plain object shaped like consent, consent text in settings, a saved preset, or a copied historical Start record | `consent_missing` (not a consumed store record; no API path) |
+| No registered consumed-consent capability | `consent_missing` |
+| Structural clone of a real consumed record/handle, fabricated matching consumedBy, an unconsumed issue receipt, consent text in settings, a preset or historical Start | `consent_missing`; zero ledger opens and sends |
+| Authentic issue → consumeOnce → admit, with matching context | admitted; positive control creates the ledger and one fake send |
 | Expired, or lifetime > 10 min | `consent_stale` |
 | Consent for request R1 consumed by a Start of R2; different owner; different `settingsSha256`; different `pinDigest` | `consent_mismatch` |
 | Second consume of the same consent | `consent_replayed` |
@@ -504,7 +518,12 @@ Expected: requests 4, settled **14 100 000**.
 | `subset` | 900 / 800 / 100 (inCeil 1000) | (900−800)·3000 + 800·3000 + 100·15000 = 300 000 + 2 400 000 + 1 500 000 = **4 200 000**; no violation |
 | `additive` | 400 / 300 / 100 | 1 200 000 + 900 000 + 1 500 000 = **3 600 000** |
 | `additive` | 900 / 800 / 100 | `bound_violated`; accounted 6 000 000; excess 2 700 000 + 2 400 000 + 1 500 000 − 6 000 000 = **600 000**; blocked |
-| `none` | cached 1 | `bound_violated` |
+| `none` | 1000 / 0 / 200 | exact positive boundary, **6 000 000**, no excess |
+| `none` | 2000 / 0 / 100 | `bound_violated`; actual **7 500 000**, accounted **6 000 000**, excess **1 500 000**; block and zero next sends |
+| `none` | 400 / 1 / 100 | `bound_violated`; block |
+| `subset` | 400 / 401 / 100 | `bound_violated` (cached exceeds input); block |
+| `additive` | 700 / 300 / 200 | exact positive boundary, **6 000 000**, no excess |
+| `subset` | 1000 / 1000 / 200 | exact positive boundary, **6 000 000**, no excess |
 | any | separate `reasoningTokens: 50` reported | `usage_unverified`: 6 000 000, blocked |
 
 **T15 Unbounded profile.** `extraBillableCategories: ['request_fee']`, `enforcesMaxOutputTokens: false`, an unknown `cacheReporting`, or `inputOverheadTokens` 70 000 each give `unbounded_provider` with 0 requests.
@@ -518,7 +537,7 @@ Expected: requests 4, settled **14 100 000**.
 
 ### 7.3 Red-first and guard-off evidence
 
-Each behavioural test is first run red against a stub executor that dispatches without reserving or without revalidating. It must fail on the intended assertion, not on a missing module.
+For these NEW modules there is no existing bounded executor to run red. First create a minimal compilable public entry point/fake transport and prove an independently expected refusal/order/count assertion fails through call/admit, then implement that guard and pass. A test-only bypass may demonstrate guard-off only in the throwaway copy below; it is not an existing-product red claim. Missing modules, setup crashes, zero tests, skips and timeouts never count as intended red evidence.
 
 Guard-off probes run in a throwaway copy only:
 
@@ -529,6 +548,9 @@ Guard-off probes run in a throwaway copy only:
 | Dispatch-time stop/block re-check | T13b |
 | Served-id check | T10 |
 | Model filter | T8 isolation |
+| Consumed-consent provenance lookup | T9 authentic-versus-cloned/fabricated/unconsumed negatives; authentic positive remains valid |
+| none-mode input ceiling / subset validity | T14b independently priced negatives |
+| Private body snapshot / option replay comparison | T6 mutation and changed-option assertions |
 
 After each probe the guard is restored and the tests are rerun green.
 
@@ -539,14 +561,14 @@ After each probe the guard is restored and the tests are rerun green.
 | File | Exports / role | Consumer |
 |---|---|---|
 | `src/usage/v1/paid-run-bound.ts` | `PaidRunProviderProfileV1`, `assertBoundableProfileV1`, `rowsForIntervalV1`, `paidCallBoundV1` | executor |
-| `src/usage/v1/paid-run-admission.ts` | `admitPaidRunV1`, `PaidRunConsentStoreV1`, `PaidRunConsentRecordV1`, `createPaidRunMemoryConsentStoreV1` (stand-in), `PaidRunPinV1`, `PaidRunAdmissionV1`, `isPaidRunAdmissionV1`, `PAID_RUN_CAP_CEILING_NANO_USD` | executor, ledger; later Start broker |
+| `src/usage/v1/paid-run-admission.ts` | `admitPaidRunV1`, `PaidRunConsentStoreV1`, `PaidRunConsumedConsentV1` (record remains internal), `createPaidRunMemoryConsentStoreV1` (stand-in), `PaidRunPinV1`, `PaidRunAdmissionV1`, `isPaidRunAdmissionV1`, `PAID_RUN_CAP_CEILING_NANO_USD` | executor, ledger; later Start broker |
 | `src/usage/v1/paid-run-ledger.ts` | `PaidRunLedgerV1`, `PaidRunLedgerHandleV1`, `createPaidRunJournalLedgerV1`, `recoverPaidRunLeaseV1` | executor |
 | `src/usage/v1/paid-run-executor.ts` | `createPaidRunExecutorV1`, transport/result types, `PaidRunRefusalV1` | tests and driver now; later per-call broker (P1) |
 | `tests/helpers/paid-run-fake-provider.ts` | scripted provider | tests |
 | `tests/helpers/paid-run-driver.ts` | child-process driver with kill hooks and `--self-check` | T5; entry-point proof |
 | `tests/paid-run-bound.test.ts` | T7, T8, T12, T14b (bound side), T15 | — |
-| `tests/paid-run-admission.test.ts` | T9, T16, T17 | — |
-| `tests/paid-run-executor.test.ts` | T1–T4, T6, T10, T11, T13, T13b, T14, T14b | — |
+| `tests/paid-run-admission.test.ts` | T9 admission-only provenance/binding with downstream-open spy, T16, T17; no absent executor/ledger import in CAP-A | — |
+| `tests/paid-run-executor.test.ts` | T1–T4, T6, T9 full admission→ledger→send integration, T10, T11, T13, T13b, T14, T14b | — |
 | `tests/paid-run-ledger-restart.test.ts` | T5, torn-tail and tamper cases | — |
 
 ### 8.2 Existing modules: read-only imports, unchanged
@@ -564,7 +586,18 @@ The only shared file is `package.json`. BUILD appends the four new tests to the 
 
 No `ci.yml` change is needed, and no change to `tests/fixtures/ci-component-steps-main.json`: the lane guard pins lane invocation, not the file list. No test is removed and no skip pattern is added.
 
-### 8.4 Integration prerequisites (separate; none satisfied by this slice)
+### 8.4 Bounded BUILD continuations and reviews (P4)
+
+The task estimate is 8–12 hours; it is not one six-hour authorization. The lead issues each continuation against the exact reviewed predecessor SHA and names the shared registration writer. Each run reserves its last 90 minutes for checks/reviews and 30 minutes for final evidence/cleanup; stop earlier with a truthful pending gate rather than silently extending.
+
+| Continuation (maximum 6 h each) | Allowed implementation and stopping evidence | Still unavailable at stop |
+|---|---|---|
+| CAP-A | bound/admission modules, fake helper and their two test files from §8.1; authentic-versus-cloned admission with downstream-open spy, every cache-mode boundary, price/DST and guard-off evidence; check:demo. No executor/ledger imports before those files exist | executor/storage/production; paidExecutionReady=false |
+| CAP-B, after reviewed CAP-A | ledger/executor/driver and remaining tests; full T9 authentic-versus-cloned before actual ledger/send, private snapshot/replay identity, fsync/concurrency/restart/Stop and independently observed request counts; final package registration and adjacent regressions from §9.1 | production persistence, real provider, consent endpoint/broker and CAPPED-PAID-RUN-GREEN; paidExecutionReady=false |
+
+Each stop requires an independent code review plus attack and CI reviews of the pinned candidate, with findings fixed and rechecked. Applicable risky checks: authority and guard-off (T9), owned-file custody/tamper/restart, 20-caller contention with observed winners/losers, interruption/drop/retry/cleanup, and Linux/CI parity. The lead supplies the existing pinned Node 22 Linux environment used by the reached CI job; run the affected §9.1 lanes there with nproc=2 and record exact Node/runtime image identity and TAP. No image pull/install is authorized. The journal mutex/lease/fsync semantics need Linux proof as well as the local proof. Missing a required continuation gate blocks that continuation's BUILD-READY. PG migration/production-role/native paid checks remain a separately reviewed packet, not CAP-B work.
+
+### 8.5 Integration prerequisites (separate; none satisfied by this slice)
 
 - (P1) The per-call broker contract with the engine and harness CLIs (§2.3).
 - (P2) A lead-reserved migration and a PostgreSQL ledger, with native PG17 qualification (§9.2).
@@ -582,25 +615,23 @@ Native paid readiness stays `false`. `CAPPED-PAID-RUN-GREEN` is not awarded.
 
 ### 9.1 Cloud BUILD
 
-All scripts named below were verified to exist on this base (evidence E5).
+Existing script names were verified on this base (evidence E5). The paid-run files/driver are NEW and must be registered at their continuation; tests do not exist yet.
+
+Use the already installed/cached tools only; no install/download command is part of this packet. Each deciding test command requires nonzero deciding passes and zero skips/quarantine replacements; record TAP counts and intended guard-off failures.
 
 ```bash
-pnpm install --frozen-lockfile                     # repo lockfile is pnpm-lock.yaml (npm ci has no lockfile)
-node --import tsx --test tests/paid-run-bound.test.ts            # red first, then green
-node --import tsx --test tests/paid-run-admission.test.ts
-node --import tsx --test tests/paid-run-executor.test.ts
-node --import tsx --test --test-concurrency=1 tests/paid-run-ledger-restart.test.ts
-node --import tsx tests/helpers/paid-run-driver.ts --self-check  # bounded-call entry point, real process
-node --import tsx --test tests/usage-cost.test.ts tests/usage-price-table-loader.test.ts tests/usage-cost-authorization.test.ts
-node --import tsx --test tests/loop-provider-contract.test.ts tests/loop-providers.test.ts
-pnpm run test:product-shell                        # lane containing the registration
-pnpm run check                                     # tsc -p tsconfig.vps.json (adjacent production entries)
-pnpm run check:demo                                # tsc --noEmit: covering typecheck for src/usage/v1/paid-run-*
-pnpm run build                                     # node scripts/build-vps.mjs
+CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts
+CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-executor.test.ts tests/paid-run-ledger-restart.test.ts
+CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx tests/helpers/paid-run-driver.ts --self-check
+CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/usage-cost.test.ts tests/usage-price-table-loader.test.ts tests/usage-cost-authorization.test.ts tests/loop-provider-contract.test.ts tests/loop-providers.test.ts
+CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 pnpm run test:product-shell
+pnpm run check
+pnpm run check:demo
+pnpm run build
 pnpm run check:test-loaders
 node scripts/check-test-lane-coverage.mjs
 pnpm run check:test-quarantine
-node scripts/check-private-names.mjs               # with the lead-provided list; unconfigured here
+node scripts/check-private-names.mjs               # only with a lead-provided list; unconfigured is NOT RUN
 git diff --check
 ```
 
@@ -614,7 +645,9 @@ Probes:
 This runs only after the lead reserves a migration and the PostgreSQL ledger and consent store are separately authorized and built.
 
 ```bash
-PG_BIN=/opt/homebrew/opt/postgresql@17/bin node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/paid-run-ledger-postgres.test.ts
+test -n "$PG_BIN"
+"$PG_BIN/postgres" --version
+CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/paid-run-ledger-postgres.test.ts
 pnpm run check:migrations
 ```
 
@@ -635,7 +668,7 @@ This qualification is pending, and release remains blocked.
 - **Profile assumptions.** The hard cap holds only under the reviewed profile (§4.1, §5.1). Overbilling beyond the declared ceilings is detected and blocked (`excessNanoUsd`), not prevented.
 - **Single-host journal.** Lease takeover relies on supervisor-observed exit. That is suitable for the stand-in, not for production.
 - **Consent store.** The stand-in consent store is in-memory and tests-only. Durable consent is P3.
-- **Owner questions.** Q1–Q2 parameterise constants and do not block BUILD of the mechanism.
+- **Owner questions.** Q1–Q2 parameterise **test-only** stand-in constants and do not block BUILD of the fake-provider mechanism. They authorize neither a production cap/lifetime nor the later real probe.
 
 ## Revision history
 
@@ -657,3 +690,9 @@ This qualification is pending, and release remains blocked.
   - formatter caching;
   - single clock;
   - T13 cap.
+
+- **r3 (2026-11-04, specification gate revisions):** **P1 fixed:** store consumption mints runtime-verifiable opaque consent; cloned/fabricated/unconsumed receipts refuse before ledger/send. **P2 fixed:** none input ceiling, subset validity and independently priced boundary/excess tests. **P3 fixed:** synchronous private request/options snapshot, full durable replay identity and mutation/option probes. **P4 fixed:** named six-hour CAP-A/CAP-B continuations, independent code/attack/CI review and pinned Linux parity, wrapper/CLI-blocked required commands. Test-only Q1/Q2 scope and cross-chunk row-set digest/authority ownership clarified. These replace conflicting r2 assertions; independent re-review is pending.
+
+## Cross-chunk handoff
+
+U83a and any later paid admission consumer must use §3.2/D10's sorted **whole-window row-set** priceRowDigest, roster `model` distinct from servedModelId, and the one-distinct-paid-pair rule. Provider choice/billing labels, selection acknowledgement and successful stand-in tests convey no paid consent. No sibling may enable paidExecutionReady from this result. U81→U82→D01a→D01b selection work is independent of CAP-A/B for free/subscription launcher routes. Future production paid integration is separately reviewed after durable PG17 consent/ledger, complete resolver, broker and provider-profile prerequisites; only explicit later authorization permits a tiny real probe. Shared Start/adapter/schema/policy/process/migration/registration files have one lead-named writer in actual integration order; this isolated slice writes none except §8.3 package registration.
