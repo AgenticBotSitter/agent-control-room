@@ -98,4 +98,3 @@ CHECK ((
         AND ((binding->'body') - ARRAY['expectedVersion','expectedRevision','questionId','inputVersion','questionReportSha256','text'])='{}'::jsonb
     END
   ) IS TRUE) NOT VALID;
-ALTER TABLE control_loop_improvement_commands VALIDATE CONSTRAINT control_loop_improvement_commands_check1;

@@ -169,6 +169,7 @@ test("B1b SQL claim uniqueness guard",async()=>run(async pg=>{
 test("B1b empty down/re-up and failed migration roll back atomically",async()=>run(async pg=>{
   const baseline=await readPrivateWebSchemaDigest({query:async(q,p)=>sql(pg,q,p)});
   const down=await readFile("db/down/0302_control_loop_improvement_commands.sql","utf8"),up=await readFile("db/migrations/0302_control_loop_improvement_commands.sql","utf8");
+  await sql(pg,await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0306_control_loop_policy.sql","utf8"),[],"migrator");
   await sql(pg,down,[],"migrator");
   assert.equal((await sql(pg,"SELECT to_regclass('control_loop_improvement_commands') AS table")).rows[0].table,null);
@@ -176,6 +177,7 @@ test("B1b empty down/re-up and failed migration roll back atomically",async()=>r
   assert.equal((await sql(pg,"SELECT to_regclass('control_loop_improvement_commands') AS table")).rows[0].table,null);
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0306_control_loop_policy.sql","utf8")}\nCOMMIT;`,[],"migrator");
+  await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0307_control_loop_policy_validate.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,"GRANT SELECT,INSERT ON control_loop_improvement_commands TO control_room_private_web");
   const roleSql=await readFile("db/roles/private_web_roles.sql","utf8");
   await sql(pg,"BEGIN;"+roleSql.slice(roleSql.indexOf("-- P71:")));
@@ -463,9 +465,13 @@ test('P71 PostgreSQL dropped commit connection rolls back layer/event and retry 
 test('P71 PostgreSQL empty down/re-up and injected migration failure preserve ledger',async()=>run(async pg=>{
   const admin=new Client(pg.admin());await admin.connect();
   const stage=await mkdtemp(resolve('.test-tmp/p71-ledger-'));
+  const validated=async()=>Boolean((await admin.query("SELECT convalidated FROM pg_constraint WHERE conrelid='control_loop_improvement_commands'::regclass AND conname='control_loop_improvement_commands_check1'")).rows[0].convalidated);
   try{
+    assert.equal(await validated(),true,'fresh production migration validates the command predicate');
+    await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
+    assert.equal(await validated(),false,'validation down restores NOT VALID while preserving the predicate');
     await admin.query(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     for(const entry of await collectLedgerEntries(resolve('.'))){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
     await mkdir(join(stage,'db/setup'),{recursive:true});await writeFile(join(stage,'db/setup/production_migration_ledger.sql'),await readFile('db/setup/production_migration_ledger.sql'));
@@ -477,15 +483,24 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     await ledger();await assert.rejects(migrate(),/division by zero/);
     assert.equal((await admin.query("SELECT to_regclass('control_loop_policy_layers') name")).rows[0].name,null);
     assert.deepEqual((await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows,before);
-    await writeFile(join(stage,name),original);await ledger();await migrate();await migrate();
+    await writeFile(join(stage,name),original);
+    const validationName='db/migrations/0307_control_loop_policy_validate.sql',validationSql=await readFile(validationName,'utf8');
+    await writeFile(join(stage,validationName),validationSql+'\nSELECT 1/0;\n');
+    await ledger();await assert.rejects(migrate(),/division by zero/);
+    assert.equal(await validated(),false,'failed validation migration rolls back its catalog change');
+    assert.equal((await admin.query("SELECT count(*)::int n FROM control_room_schema_migrations WHERE filename=$1",[validationName])).rows[0].n,0,'failed validation is absent from the ledger');
+    assert.equal((await admin.query('SELECT count(*)::int n FROM control_loop_policy_layers')).rows[0].n,0,'the preceding schema migration committed without policy data');
+    await writeFile(join(stage,validationName),validationSql);await ledger();await migrate();await migrate();
+    assert.equal(await validated(),true,'retry validates in a separate production-applier transaction');
     assert.equal(await readPrivateWebSchemaDigest(admin),privateWebSchemaDigest);
-    console.log('P71 empty_down=true failed_migration_partial_tables=0 ledger_unchanged=true reup_replay=true');
+    console.log('P71 empty_down=true failed_migration_partial_tables=0 ledger_unchanged=true validation_rollback=true validation_retry=true reup_replay=true');
   }finally{await admin.end();await rm(stage,{recursive:true,force:true});}
 }));
 
 test('P71 PostgreSQL previous-release signed rows survive production upgrade and legacy Start',async()=>run(async pg=>{
+  await sql(pg,await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0306_control_loop_policy.sql','utf8'),[],'migrator');
-  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/roles/%'");
+  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/roles/%'");
   await seed(pg);const e=engine(),w=web(pg,e.adapter);
   try{
     const description='Retained pre-policy input.';

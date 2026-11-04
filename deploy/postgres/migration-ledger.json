@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "71f842989244c72861a403363742c438f78f4653d085f3da9404ccaf6b135bae",
+  "digest": "94c3e33f8c9cf257a8ee36c7d76530b703893c9d2dc932c89c6c72bf7f23bf5d",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -1043,30 +1043,36 @@
     {
       "file": "db/migrations/0306_control_loop_policy.sql",
       "order": 174,
-      "sha256": "2959db271042e483863cb56914c1e2d77e3b0c9a9c3ef23873e2773279fe109c",
+      "sha256": "798d647df5d0ca4e174473a8198230e057396ea0ef725eadc5232c7bd200589a",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0307_control_loop_policy_validate.sql",
+      "order": 175,
+      "sha256": "9f61381a9cb19f4729af4d64dcee041e9fe213eb7b459ec37fc7a8c96671c373",
       "kind": "migrate"
     },
     {
       "file": "db/roles/production_roles.sql",
-      "order": 175,
+      "order": 176,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 176,
+      "order": 177,
       "sha256": "0516b12b21e145901ab608810151001b3650796bc2338a9a3d0c1bba8b5111a5",
       "kind": "grants"
     },
     {
       "file": "db/roles/agent_reviewer_roles.sql",
-      "order": 177,
+      "order": 178,
       "sha256": "69a199a5dc16a7263e7037c47bb86b2908bdbbf3d741d2d948c4889781b5d5f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 178,
+      "order": 179,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }
