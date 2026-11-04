@@ -1,7 +1,6 @@
 import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Proves every test file is reachable from a command GitHub Actions actually runs.
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parseArguments } from "./ci/run-scripts-keep-going.mjs";
@@ -101,9 +100,72 @@ export const mutationLaneShape = {
     [website + ":part-1", 5], [website + ":part-2", 5],
   ] },
 };
+
+// Like workflowCommands, read the checked-in indentation directly so the early
+// CI guards need no installed packages. Only the mutation jobs and merge gate
+// use this mapping/sequence/scalar subset; reject unsupported syntax there.
+export function mutationWorkflowJobs(source) {
+  const jobs = {}, lines = source.split(/\r?\n/u);
+  function scalar(value) {
+    value = value.replace(/\s+#.*$/u, "").trim();
+    if (value.startsWith('"')) return JSON.parse(value);
+    if (value.startsWith("'")) {
+      assert.match(value, /^'(?:[^']|'')*'$/u);
+      return value.slice(1, -1).replaceAll("''", "'");
+    }
+    if (value.startsWith("[")) {
+      assert.match(value, /^\[[a-zA-Z0-9_, -]*\]$/u);
+      return value.slice(1, -1).split(",").map(item => item.trim()).filter(Boolean);
+    }
+    if (value === "true" || value === "false") return value === "true";
+    if (/^\d+$/u.test(value)) return Number(value);
+    assert.ok(value && !/^[&*!{}|>]/u.test(value), `unsupported workflow scalar: ${value}`);
+    return value;
+  }
+  for (let index = 0; index < lines.length; index++) {
+    const header = /^  ([a-zA-Z0-9_-]+):\s*(?:#.*)?$/u.exec(lines[index]);
+    if (!header || !/^(?:mutation-checks(?:-|$)|merge-gate$)/u.test(header[1])) continue;
+    const key = header[1];
+    assert.ok(!Object.hasOwn(jobs, key), `duplicate workflow job: ${key}`);
+    const job = jobs[key] = {}, stack = [{ indent: 2, value: job }];
+    while (++index < lines.length) {
+      const line = lines[index];
+      if (!line.trim() || /^\s*#/u.test(line)) continue;
+      const indent = /^ */u.exec(line)[0].length;
+      if (indent <= 2) { index--; break; }
+      while (stack.at(-1).indent >= indent) stack.pop();
+      let parent = stack.at(-1).value, text = line.slice(indent), mappingIndent = indent;
+      if (text.startsWith("- ")) {
+        assert.ok(Array.isArray(parent), "workflow sequence requires a list");
+        const step = {}; parent.push(step); parent = step;
+        stack.push({ indent, value: step });
+        text = text.slice(2);
+        mappingIndent += 2;
+      }
+      const entry = /^([a-zA-Z0-9_-]+):(?:\s+(.*))?$/u.exec(text);
+      assert.ok(entry, `unsupported workflow entry: ${text}`);
+      const [, name, raw = ""] = entry;
+      assert.ok(!Object.hasOwn(parent, name), `duplicate workflow key: ${name}`);
+      if (/^\|-?$/u.test(raw)) {
+        const block = [];
+        while (index + 1 < lines.length && (!lines[index + 1].trim() || /^ */u.exec(lines[index + 1])[0].length > mappingIndent)) {
+          block.push(lines[++index]);
+        }
+        while (block.length && !block.at(-1).trim()) block.pop();
+        const padding = block.find(value => value.trim())?.match(/^ */u)[0].length ?? 0;
+        assert.ok(block.every(value => !value.trim() || value.startsWith(" ".repeat(padding))), "inconsistent workflow block indentation");
+        parent[name] = block.map(value => value.slice(padding)).join("\n") + (raw === "|-" ? "" : "\n");
+      } else if (!raw || raw.startsWith("#")) {
+        parent[name] = name === "steps" ? [] : {};
+        stack.push({ indent: mappingIndent, value: parent[name] });
+      } else parent[name] = scalar(raw);
+    }
+  }
+  return jobs;
+}
+
 export function assertMutationLaneCoverage(scripts, source) {
-  const require = createRequire(import.meta.resolve("eslint"));
-  const jobs = typeof source === "string" ? require("js-yaml").load(source).jobs : source;
+  const jobs = typeof source === "string" ? mutationWorkflowJobs(source) : source;
   const expected = mutationLaneShape;
   assert.deepEqual(Object.keys(jobs).filter(key => /^mutation-checks(?:-|$)/u.test(key)).sort(), Object.keys(expected).sort());
   for (const [key, { bound, lanes }] of Object.entries(expected)) {
