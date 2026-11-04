@@ -316,3 +316,11 @@ test("guard matches content whose case differs from both the term and its lowerc
     assert.match(result.stderr, /safe\.txt:1: private name <redacted>/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a pull request payload without a base repository cannot buy a fork skip", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "control-room-event-")), "event.json");
+  writeFileSync(file, JSON.stringify({ pull_request: { head: { repo: { full_name: FORK } } } }));
+  try {
+    assert.equal(skipDecision({ GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: file }).skip, false);
+  } finally { rmSync(file, { force: true }); }
+});
