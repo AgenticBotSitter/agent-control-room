@@ -1,10 +1,5 @@
-# b8-selection-to-start owner questions (PLAN)
+# b8-selection-to-start owner questions (PLAN r3)
 
-None.
+None. Option A, record scope, roles/count/slot codec and selection authority are settled.
 
-Settled owner choices are recorded as context in the spec (section 0). The open items are technical prerequisites, not owner decisions:
-
-- Released tools expectation schema (B8 member names, projection, R296 record semantics, strict review-only family policy), tooling revision and digest — spec section 6.
-- Qualified review-only tools acknowledgement/expectation and R62/P72 release evidence — spec section 6.5.
-- PostgreSQL 17 on the BUILD machine — spec section 9.2 (this PLAN run could not obtain it; see status).
-- Migration IDs, ledger, grants and schema pins — lead allocation, spec section 4.4.
+Technical prerequisites, not owner choices: T-TOOLS exact released context/settings/expectation/projection/schema digest and strict review-only policy; T-SNAPSHOT authoritative producer/current reader/lock protocol plus allowed-file amendment before U81-B; lead migration IDs/shared writers; PG17 production login and qualified native/device/Linux facilities. Their absence withholds the dependent continuation/gate, not the foundation contract.

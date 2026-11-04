@@ -1,14 +1,15 @@
 # b8-selection-to-start status
 Phase: PLAN
-Base: cloud-base/b8-selection-to-start fa673cc8f81ce1dac457ce383b47b2f3ac31f026 (source cook/b7-providers 412d0c149fe8e272c491900d7a9164f80ecb612a)
-Candidate: HEAD (full SHA in final handoff)
-Spec gate: pending
-Budget: 2026-11-04 15:05 UTC, deadline 17:05 UTC, elapsed ~15 min wall clock as reported by the container clock
-Completed: Inspected real callers; wrote spec r2 (selection codec, one checker-owned preview, pre-stamped R296 acknowledgement bound into the signed claim, Confirm/Start admission checks of exact saved bytes, lineupDigest drift fence, additive SQL CHECKs, UI state machine, file ownership, exact BUILD commands), decisions, owner questions (none), evidence.
-Checks: Docs-only PLAN checks in b8-selection-to-start-evidence.md (base SHA/ancestry, every cited path and interface lookup, script names, absence greps, git diff --check, public-text scan). Product tests NOT RUN (not required in PLAN). check-private-names SKIPPED: no denylist configured.
-Reviews: Claude plan-review helper on spec r1: HIGH 2, MEDIUM 11, LOW 8; all addressed in r2 (evidence table). r2 not re-reviewed by a helper.
-Pending qualification: PG17-later — this cloud machine could not obtain PostgreSQL 17 (apt package absent; official apt repository and source download refused by the egress proxy); only PostgreSQL 16.15 present, and no DB checks were run. A BUILD on this environment would be BLOCKED for DB gates unless PG17 is reachable. Released tools expectation schema/projection/R296 contract (spec 6), qualified real-tools lane, native Start proof and device evidence remain withheld.
-Owner questions: none (b8-selection-to-start-owner-questions.md)
-Next action: Sol spec review of the committed spec r2
-Cleanup: no owned processes running; temporary PGDG apt source removed; checkout contains only the five result documents plus this progress file.
+Base: cloud-base/b8-selection-to-start fa673cc8f81ce1dac457ce383b47b2f3ac31f026; source origin/cook/b7-providers 412d0c149fe8e272c491900d7a9164f80ecb612a
+Revision branch: plan/b8-selection-to-start
+Candidate: staged working revision r3; no new commit (required worker identity differs from configured identity; lead handoff)
+Spec gate: independent re-review pending; no CLEAN claimed
+Budget: local revision time-box 90 minutes for both IDs; no product BUILD authorization
+Completed: Approved roles/count/slot codec and separate false-reset envelope; selection actions; exact candidate check/capsule; copied/delayed SQL timing; exact-target normalized/reload/Start renewal; T-SNAPSHOT prerequisite and U81-A/B/C continuations; complete migration/CI integration.
+Checks: source/document audit in evidence; product/unit/PG17/tools/native/browser/device/Linux NOT RUN (spec only); full private-name denylist gate NOT RUN (none supplied).
+Reviews: independent specification gate S1–S7 (HIGH 2 / MEDIUM 5 / LOW 0); r3 contract dispositions and Revision history address each; earlier cloud helper claims are historical, not current qualification.
+Pending qualification: U81-B blocked until reviewed T-TOOLS/T-SNAPSHOT physical producer/current-reader/serialization/allowed-file packet; PG17 production login migrations, real-tools/actual-worker identity/argv/Stop, device and pinned Linux gates remain later.
+Owner questions: None; remaining items are technical/lead prerequisites.
+Next action: lead resolves configured/required identity mismatch and commits retained worktree, then independent specification re-review of exact new SHA
+Cleanup: owned commands completed in foreground; no listeners/models/DB processes started; disposable worktree deliberately retained with five staged result files for lead commit; no Git identity configuration changed
 Status: PLAN-READY

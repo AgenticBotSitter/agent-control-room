@@ -1,66 +1,101 @@
-# b8-selection-to-start decisions (PLAN)
+# b8-selection-to-start decisions (PLAN r3)
 
-Choice: Deliver the U81 selection as intake `settingsEdits` (P71 run-edit layer), not by writing the selection layer.
-Options: (a) save the P71 selection layer, then intake; (b) run edits at intake.
-Why: Preview must create no layer, overrides are run-only (P71 already rejects `overrides` in layers), and saving belongs to U82. Run edits reuse the existing composer, recheck and `recordInputSources` path unchanged. U81 still ships the layer codec U82 will use.
-Affected spec item: 2, 3, 5
+These decisions supersede the conflicting r2 helper dispositions. Independent re-review is pending.
 
-Choice: Write every B8 member in full on each edit.
-Options: partial edits relying on deep merge; full members.
-Why: `composeLoopSettingsV1` merges objects key-wise, so a partial slot could inherit a lower-layer key. Full slots and replacing arrays make requested == composed for B8 members.
-Affected spec item: 2.2
+## D1 — One approved selection codec
 
-Choice: Preview eligibility comes only from the checker plus a validated projection; the product never computes families.
-Options: product-side family rules from the roster `family` column; checker-only.
-Why: The repository keeps rules in the tools (`cr models check`, `cr check lineup`). A second rule engine is forbidden by the task. Missing projection makes preview unavailable instead of guessing.
-Affected spec item: 3, 6
+Choice: Use roles plus matching top-level review counts and strict model/route/effort slots; separate persisted five-role preset projection and run overrides.
+Options: Flat role aliases/launcher slots/in-selection overrides; approved roles/count shape.
+Why: Restores the approved B8 contract and a shared slot schema for U82/D01a/D01b; no product family policy.
+Affected spec item: 2, S4
 
-Choice: Extend `checkSettings` additively with an optional context, and add an optional `selectionProjection` contract pin.
-Options: new checker spawn wrapper; change existing signature; additive optional context + contract pin.
-Why: The task forbids a second checker spawn wrapper; the adapter already uses optional contract pins that fail closed when omitted (`decisionProjection`, `recovery`, `finalization`). P71 callers keep identical behaviour.
-Affected spec item: 6
+## D2 — Explicit false reset
 
-Choice: Store the acknowledgement as an optional key `familyRiskAcceptance` in the existing signed claim binding, schemaVersion unchanged.
-Options: new table; new binding schema version; optional key.
-Why: The signed binding already carries owner/input/hash lineage and is passed to `admissionExpectation`; an optional key keeps legacy rows verifying and needs only additive CHECK changes (precedent: 0306/0307 for `settingsEdits`).
-Affected spec item: 4
+Choice: Run envelope accepts booleans, writes both override switches explicitly and defaults each to false for new runs.
+Options: Reject false; inherit installed true; explicit false reset.
+Why: U82/D01b fragments must reach intake/checker as false without persisting any override or authority.
+Affected spec item: 2.4, S4
 
-Choice: Intent is accepted only on intake and Confirm bodies; Start copies the record from the accepted Confirm claim.
-Options: intent on Start too; lineage-only reuse.
-Why: The task requires reuse only from verified accepted intake/Confirm receipts and preserving the exact timestamp; a Start flag would create a second acceptance moment.
-Affected spec item: 4.3
+## D3 — One layer merger
 
-Choice: Add a policy check of the exact saved bytes at Confirm and Start, outside transactions, with relock recheck.
-Options: rely on A2 `--expect` only; product check of saved bytes.
-Why: The task requires Start to use exact saved bytes and current checks; today only intake checks. The existing intake pattern (check outside tx, `assertSnapshot` under locks) is reused.
-Affected spec item: 5
+Choice: U81 owns mergeSelectionLayerV1; later saved selections extend this export in place and retain every valid non-B8 member at expectedVersion.
+Options: Duplicate merger in saved.ts; one foundation export.
+Why: Avoids conflicting shared writers and preserves providerRoute/other roles without saving acceptance.
+Affected spec item: 2.3, S4
 
-Choice: Preview is a separate POST route without an idempotency key and without writes.
-Options: GET with query; POST body; reuse loop-policy PUT.
-Why: Loop policy HTTP refuses query strings; selection bodies exceed URL-friendly size; no state changes so no idempotency key; no generic PUT/DELETE allowance.
-Affected spec item: 3, 7
+## D4 — Shared selection authority
 
-Choice: SQL enforces record shape, operation scope and same-row predicates (intake flag ⇔ record, accepted_at ≤ created_at, < 5 s); the service enforces cross-row Confirm reuse and override coupling (r2).
-Options: encode reuse lineage in SQL; service only.
-Why: Reuse depends on a prior result row and checker outcome, which a row CHECK cannot see. Guard-off tests cover both layers.
-Affected spec item: 4.4, 7
+Choice: U81 selection service owns owner-only/project loop_selection.read low and loop_selection.manage high with resourceType loop_selection. P71 layer saves retain loop_policy.manage.
+Options: tasks.propose preview mode; named selection actions.
+Why: WebSessionAuthority already accepts action strings and rechecks grants at commit. Task launch grants remain separate and unchanged.
+Affected spec item: 3, S5
 
-Choice: Pre-stamp the acknowledgement record (run id reserved, `accepted_at` = preflight `actor.now`) before the checker runs, and sign the same record in the claim within the freshness window.
-Options: stamp inside the claim transaction (checker never sees it); let the override in settings imply acceptance; pre-stamp and bind.
-Why: The plan-review helper (HIGH) showed the checker could otherwise only rely on settings bytes, making settings an authority. Pre-stamping lets the checker evaluate the exact signed record; SQL row predicates bound `accepted_at` to `created_at` (≤, < 5 s).
-Affected spec item: 4.3, 4.4, 5
+## D5 — Exact candidate before checker
 
-Choice: Keep checker `eligible/reasons` unchanged and report product refusals (paid, override origin) as separate `blockers`.
-Options: fold product reasons into eligibility; separate blockers.
-Why: The task requires one eligibility decision from the checker with unchanged reasons; a second eligibility source is forbidden.
-Affected spec item: 3, 2.4
+Choice: Allocate one server candidate commandId/run in preflight, build full post-normalization binding, check outside locks, revalidate and insert precisely that candidate.
+Options: Check a partial context then sign a larger binding; check full candidate.
+Why: Checker must see the approved {mode:admission,binding,commandId} that is actually committed. No draft write before guard/revalidation.
+Affected spec item: 4.2, S1
 
-Choice: Pass a checker `lineupDigest` through the additive `admissionExpectation` context rather than a new binding field.
-Options: new binding fields for roster/availability digests; expectation context; rely on freshness window only.
-Why: Avoids widening the signed binding beyond the one approved record while giving the tools a lock-checked drift fence at spawn.
-Affected spec item: 5, 6
+## D6 — Approved optional acknowledgement
 
-Choice: The selection GET projection reads signed lineage only and never spawns the checker.
-Options: recompute preview on GET; lineage-only read.
-Why: A read path must not run external work or imply authority; Confirm gating compares hashes against the panel's own preview.
-Affected spec item: 7
+Choice: Use sameFamilyAcknowledgement, exactly six fields, only intake/confirm/start. New true intent on any of those actions mints a fresh record.
+Options: Renamed/expanded record; approved name/scope.
+Why: Keeps Option A, current body compatibility and tools semantics; no owner decision is reopened.
+Affected spec item: 4.1–4.3, S1/S3
+
+## D7 — Reuse only accepted provenance
+
+Choice: Unchanged Confirm/Start may copy exact accepted_at from verified accepted intake/confirm lineage. Changed input requires fresh explicit intent.
+Options: Age expiry on every record; accepted provenance plus candidate freshness.
+Why: Claim alone cannot authorize; accepted lineage has no invented age expiry, and exact replay never remints or redispatches.
+Affected spec item: 4.3, S2/S3
+
+## D8 — SQL timing by row kind
+
+Choice: Freshness <5 seconds applies only to new-true-intent claims. Results/reconciliation and copied records do not get an elapsed-age predicate.
+Options: Same freshness on every row; claim-only new-intent timing.
+Why: Results repeat the claim binding with later created_at; copied provenance must remain usable. Strict absent-or-validated disjunctions and timestamp validation preserve legacy rows.
+Affected spec item: 4.4, S2
+
+## D9 — Actual snapshot prerequisite
+
+Choice: Define a fail-closed snapshot guard port and withhold U81-B until the lead releases the physical producer/current reader/serialization protocol and allowed files.
+Options: Pretend policy.assertSnapshot or a spy covers availability; explicitly unreleased prerequisite.
+Why: No implementable atomic availability reader exists on the pinned base. A tools post-claim fence cannot prove zero product claims.
+Affected spec item: 5, S6
+
+## D10 — Per-command dispatch capsule
+
+Choice: Carry frozen commandId/bindingDigest/snapshot/lineupDigest from checker result through admitted, #dispatch, adapter, invoke and admissionExpectation.
+Options: Mutable last-check cache; new binding fields; immutable optional per-command argument.
+Why: Concurrent checks cannot exchange digests; the binding gains only its approved optional record. Exact replay never spawns.
+Affected spec item: 5, S1
+
+## D11 — Exact-target UI projection
+
+Choice: Add approved safe status selection projection; previewSaved derives target server-side for normalization/reload; show unchecked renewal at Confirm or Start only when acceptance is not current.
+Options: Settings-hash-only gate; exact request/version/hash/engine/epoch target.
+Why: Normalized input shares settings bytes but cannot inherit acceptance; checkbox is never restored. Frozen uncertain actions reconcile before replacement.
+Affected spec item: 7, S3
+
+## D12 — Tools remain one policy core
+
+Choice: Add optional preview-intent/full-admission context and validated projection to existing hook; release exact schema/revision/digest and strict review-only final/manual/chained/recovery proofs.
+Options: Second checker/product family rules; shared checker core.
+Why: Current F10c is provider routing only and does not qualify B8 acknowledgement/snapshot semantics. Do not widen approve/answer record scope.
+Affected spec item: 6, S1/S6
+
+## D13 — Bounded continuations
+
+Choice: Use U81-A foundation, U81-B admission/PG after prerequisites, U81-C UI/transport, each <=6 hours with exact writer/files/evidence.
+Options: One 8–12-hour BUILD; named bounded stops.
+Why: Preserves six-hour budget and review time; every missing integration/native gate stays pending.
+Affected spec item: 8.1/9/10, S7
+
+## D14 — Integration order and route distinction
+
+Choice: U81→U82→D01a→D01b share exports sequentially; U83a consumes U81/U82 and only configured-provider validation waits on it. Paid cap runs independently.
+Options: Circular requirement for every launcher route; distinct launcher/provider contracts.
+Why: B8 slots always have a launcher route. Provider choice, billing and family acceptance never grant paid consent/readiness; later paid integration consumes whole-window priceRowDigest and the exact server candidate.
+Affected spec item: 8.1, cross-chunk ownership

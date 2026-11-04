@@ -45,7 +45,7 @@ Script names verified in `package.json`: `test:improve-control-room` (skip patte
 
 `node scripts/check-private-names.mjs`: SKIPPED — no `CONTROL_ROOM_PRIVATE_NAMES`/`_FILE` denylist is configured in this environment. Separate bounded public-text scan of the five results is recorded below. The lead retains full privacy qualification.
 
-## Helper review
+## Historical r1 helper review (r2 dispositions superseded below)
 
 Claude plan-review helper (read-only, general-purpose), reviewed spec r1 at working tree on `fa673cc8…`: verdict NEEDS-FIX — HIGH 2, MEDIUM 11, LOW 8 (counts from its report; no edits by the helper). Cited facts were confirmed accurate apart from LOW notes.
 
@@ -66,7 +66,7 @@ Claude plan-review helper (read-only, general-purpose), reviewed spec r1 at work
 | MEDIUM | Item 6 policy core only intake/confirm/start | Fixed: product half in 4.3, engine half 6.4 |
 | LOW | Effort enum not exported; "review-only" absence scope; pnpm vs npm; wrong unavailable error code; Start Confirm lookup; Confirm flag UX; preview authority shape; status files missing | Fixed in r2 (2.1, 1, 9, 5, 4.3, 7, 3) / status files added |
 
-Spec r2 was not re-reviewed by a helper (budget); the Sol spec gate reviews the committed r2.
+Spec r2 was not re-reviewed by a helper in the original cloud run. The subsequent specification gate found S1–S7; r3 replaces conflicting r2 dispositions. No independent CLEAN is claimed.
 
 ## Document checks
 
@@ -75,3 +75,25 @@ Spec r2 was not re-reviewed by a helper (budget); the Sol spec gate reviews the 
 - Bounded public-text scan (workstation paths, account/email fragments, session URLs, key/token patterns, private-key headers) over the result files: one line matched, the spec's "Absent" row (a benign word match); no secret, workstation path or private name found.
 - Status document last line verified: `Status: PLAN-READY`.
 - Direct inspection: all five results re-read after r2; required spec sections 0–10, decisions format (Choice/Options/Why/Affected spec item) and owner-questions `None` present.
+
+## Local specification revision r3 (2026-11-04)
+
+Starting result: 43f09d589fcea359653a9d500f706bc61c999db3; source: origin/cook/b7-providers 412d0c149fe8e272c491900d7a9164f80ecb612a. Local plan branch; no push. This section describes the current revision; earlier setup/results are historical cloud evidence, not commands rerun locally. No dependency install, DB/model/provider/worker/browser/listener execution in this revision.
+
+The independent gate reported HIGH 2 / MEDIUM 5 / LOW 0: S1 exact candidate/context/capsule; S2 SQL copied/delayed timing; S3 normalized/reload/Start UI; S4 shared codec/reset; S5 shared authority; S6 real snapshot prerequisite; S7 continuations/migration/lane integration. All have explicit r3 contract changes and future deciding probes; re-review remains pending. Tools/snapshot implementation is not claimed present.
+
+Verified current source anchors: policy.assertSnapshot covers only defaults/layers/text; commandId/run currently allocated at claim; binding has no requestId; normalized Confirm increments saved version; result repeats claim binding with a later created_at. Roster DB state has version/export metadata, but no atomic availability reader. Fixture/application count is 263 and native public count 264 on this base (no PG execution); U81 constraint-only migration adds zero tables. Candidate and desk rollback chains already include 0309→0301 and need the new pair before that chain.
+
+Deciding documentation audit and cleanup results are recorded below after completion. Full private-name denylist gate is NOT RUN (none supplied); bounded public-text scan is a separate limited check. Product/unit/PG17/tools/native/browser/device/Linux checks remain NOT RUN, as this is specification-only work.
+
+### r3 completed documentation checks
+
+- `git fetch origin` → `RESULT fetch exit=0`; disposable local plan branch created from the exact cloud result head (worktree creation exit 0). The first fetch needed a metadata permission retry; no push or other task network operation.
+- `python3 .test-tmp/b8-fix1-doc-audit.py` (from the parent clone) → `PATHS=96 SCRIPTS=24 SYMBOLS=70 UNRESOLVED=0`, `RESULT documentation-audit exit=0`. Existing source paths/symbols/script names and line bounds checked against origin/cook/b7-providers; absent planned files/scripts classified NEW/deferred. Initial audit-harness path/prose/generic-method matching false positives were corrected before this passing result; no product behavior was changed.
+- Independent contract arithmetic → reserve=6000000, actual=7500000, excess=1500000. Timing model: +1-second fresh-intent claim checks freshness; identical +8-second result and omitted-intent copied claim do not. These are contract calculations, not executed product/PG tests.
+- Source subtree comparison against the pinned base reports no implementation difference. Allowed-write audit finds exactly this ID's five result Markdown documents. Both status final lines are exactly `Status: PLAN-READY`; P1–P4/S1–S7 have explicit r3 Revision history dispositions; balanced fences and bounded public-text privacy checks pass. The denylist-dependent privacy gate is still NOT RUN.
+- `git diff --check` passed before this evidence update; final whitespace/allowed-path check is repeated for the handoff. Current independent spec re-review is pending; no product green gate or reviewer CLEAN is claimed.
+
+Commit identity handoff: effective configured identity differs from the brief's required worker identity. No Git identity configuration was changed. No response authorizing command-scoped identity overrides was received before handoff. The verified worktree is retained for the lead to commit; no new commit exists. No wrong-identity commit is claimed.
+
+Final handoff: both plan branches retain exactly five changed result Markdown files. Staging and staged whitespace checks completed with exit 0; final repeat follows the last documentation update. Worktrees are retained because commit identity authorization is unresolved; they are not removed with uncommitted work. No owned process remains.
