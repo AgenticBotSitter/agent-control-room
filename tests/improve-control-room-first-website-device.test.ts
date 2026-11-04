@@ -9,12 +9,12 @@ test("F03b device actor is the owner", () => {
   assert.equal(schema.safeParse({ ...device, actor: "reviewer" }).success, false);
 });
 
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createB5DeviceMailboxV1, b5DeviceHashV1, b5DeviceRequestSchemaV1, b5DeviceReceiptSchemaV1,
   writeB5DeviceReceiptV1, writeB5DeviceRequestV1, waitB5DeviceJsonV1,
   assertB5EvidenceSecretFreeV1, redactB5EvidenceV1, retainB5TransportQualificationV1, parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
-  b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, type B5TransportQualificationV1,
+  b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, loadB5TransportV1, type B5TransportQualificationV1,
   type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
 
 const local = "http://127.0.0.1:60460", remote = "https://fixture.ts.net:60462";
@@ -1126,4 +1126,51 @@ test("B5 transport accepts an explicit four-day run approval and enforces its ex
     assert.throws(() => validateB5TransportV1(packet, remote, now - 1), { code: "B5_DEVICE_EXPIRED" });
   }
   console.log("RESULT: PASS B5 transport run approval accepts 4d; 5d confirms no duration cap; before authorization and exact expiry refuse");
+});
+
+test("B5 transport file digest binds exact private bytes", async t => {
+  const root = await scratch(t);
+  assert.equal((await lstat(root)).mode & 0o777, 0o700);
+  const file = join(root, "transport-qualification.json");
+  const place = async (bytes: string) => {
+    const staged = join(root, "staged.json");
+    await writeFile(staged, bytes, { mode: 0o600, flag: "wx" }); await chmod(staged, 0o600);
+    await rename(staged, file);
+    const s = await lstat(file);
+    assert.equal(s.mode & 0o777, 0o600); assert.equal(s.nlink, 1); assert.equal(s.isFile(), true);
+  };
+  // Refresh the fixed fixture dates so expiry cannot decide any outcome below.
+  const current = Date.now();
+  const packet = { ...qualification(), authorizedAt: new Date(current - 60_000).toISOString(), expiresAt: new Date(current + 3_600_000).toISOString() };
+  const original = JSON.stringify(packet);
+  const originalPin = b5DeviceHashV1(Buffer.from(original, "utf8"));
+  const wrongPin = `sha256:${"0".repeat(64)}`;
+  assert.notEqual(originalPin, wrongPin);
+  await place(original);
+
+  const pinned = await loadB5TransportV1(file, root, remote, originalPin);
+  assert.equal(pinned.origin, remote); assert.equal(pinned.ownerLogin, "owner@example.invalid");
+  const unpinned = await loadB5TransportV1(file, root, remote);
+  assert.equal(unpinned.origin, remote, "omitted pin keeps the current API contract");
+  await assert.rejects(loadB5TransportV1(file, root, remote, wrongPin), { code: "B5_DEVICE_QUALIFICATION_CHANGED" });
+
+  // Harmless replacement: still strict JSON and a valid qualification, but different bytes.
+  const replaced = `${original}\n \t\n`;
+  assert.deepEqual(JSON.parse(replaced), JSON.parse(original));
+  const replacedPin = b5DeviceHashV1(Buffer.from(replaced, "utf8"));
+  assert.notEqual(replacedPin, originalPin);
+  await place(replaced);
+  await assert.rejects(loadB5TransportV1(file, root, remote, originalPin), { code: "B5_DEVICE_QUALIFICATION_CHANGED" }, "stale pin must refuse replaced bytes");
+  await assert.rejects(loadB5TransportV1(file, root, remote, wrongPin), { code: "B5_DEVICE_QUALIFICATION_CHANGED" });
+  assert.equal((await loadB5TransportV1(file, root, remote, replacedPin)).origin, remote, "new independent pin accepts");
+  assert.equal((await loadB5TransportV1(file, root, remote)).origin, remote);
+
+  // Digest comparison precedes JSON parsing.
+  const malformed = `${original.slice(0, -1)},`;
+  const malformedPin = b5DeviceHashV1(Buffer.from(malformed, "utf8"));
+  await place(malformed);
+  await assert.rejects(loadB5TransportV1(file, root, remote, originalPin), { code: "B5_DEVICE_QUALIFICATION_CHANGED" });
+  await assert.rejects(loadB5TransportV1(file, root, remote, malformedPin), { code: "B5_DEVICE_JSON" });
+  await assert.rejects(loadB5TransportV1(file, root, remote), { code: "B5_DEVICE_JSON" });
+  console.log("RESULT: PASS B5 transport pin accepts exact bytes; wrong/stale pins refuse QUALIFICATION_CHANGED; digest precedes JSON");
 });
