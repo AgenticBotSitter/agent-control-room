@@ -94,14 +94,16 @@ export function isPaidRunAdmissionV1(value: unknown): value is PaidRunAdmissionV
 
 function paidRoute(context: PaidRunTrustedContextV1):
   { kind: 'paid'; providerId: string; model: string; servedModelId: string } | { kind: 'unpaid' } | Refusal {
-  if (!context.resolution || !Array.isArray(context.resolution.additionalRoutes)) return refuse('route_unknown');
+  if (!context || !Array.isArray(context.providers) || !context.resolution || !Array.isArray(context.resolution.additionalRoutes)) return refuse('route_unknown');
   const paid = new Map<string, { providerId: string; model: string; servedModelId: string }>();
   for (const route of [context.resolution, ...context.resolution.additionalRoutes]) {
     if (!route || typeof route.providerId !== 'string' || typeof route.model !== 'string') return refuse('route_unknown');
+    if (context.providers.some(provider => !provider || !Array.isArray(provider.models)
+      || provider.models.some((model: { roster_name: string; served_model_id: string } | null) => !model || typeof model.roster_name !== 'string' || typeof model.served_model_id !== 'string'))) return refuse('route_unknown');
     const providers = context.providers.filter(provider => provider.provider_id === route.providerId);
     if (providers.length !== 1) return refuse('route_unknown');
     const provider = providers[0]!;
-    const models = provider.models.filter(model => model.roster_name === route.model);
+    const models = provider.models.filter((model: { roster_name: string; served_model_id: string }) => model.roster_name === route.model);
     if (models.length !== 1 || !['subscription', 'token'].includes(provider.billing_kind)) return refuse('route_unknown');
     if (provider.billing_kind === 'token') paid.set(JSON.stringify([route.providerId, route.model]),
       { providerId: route.providerId, model: route.model, servedModelId: models[0]!.served_model_id });
@@ -115,11 +117,13 @@ const validCap = (cap: string) => typeof cap === 'string' && /^[1-9][0-9]{0,15}$
   && BigInt(cap) <= BigInt(PAID_RUN_CAP_CEILING_NANO_USD);
 
 /** Server-side preview for consent issuance; never derives authority from settings or request pins. */
-export function derivePaidRunPinV1(context: PaidRunTrustedContextV1, capNanoUsd: string):
+function derivePaidRunPinUnchecked(context: PaidRunTrustedContextV1, capNanoUsd: string):
   { kind: 'paid'; pin: PaidRunPinV1; pinDigest: string } | { kind: 'unpaid' } | Refusal {
   const route = paidRoute(context);
   if (route.kind !== 'paid') return route;
   if (!validCap(capNanoUsd)) return refuse('invalid_cap');
+  if (!Array.isArray(context.prices) || context.prices.some(row => !row || typeof row !== 'object'
+    || typeof row.providerId !== 'string' || typeof row.model !== 'string' || typeof row.checkedAt !== 'string')) return refuse('route_unknown');
   const digests = context.prices.filter(row => row.providerId === route.providerId && row.model === route.servedModelId)
     .map(providerPriceDigestV1).sort();
   const pin = Object.freeze({ providerId: route.providerId, model: route.model, servedModelId: route.servedModelId,
@@ -128,7 +132,7 @@ export function derivePaidRunPinV1(context: PaidRunTrustedContextV1, capNanoUsd:
   return { kind: 'paid', pin, pinDigest: sha256Digest(pin) };
 }
 
-export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRunConsumedConsentV1 | undefined):
+function admitPaidRunUnchecked(context: PaidRunTrustedContextV1, consent: PaidRunConsumedConsentV1 | undefined):
   { kind: 'paid'; admission: PaidRunAdmissionV1 } | { kind: 'unpaid' } | Refusal {
   const route = paidRoute(context);
   if (route.kind !== 'paid') return route;
@@ -147,4 +151,16 @@ export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRu
   admittedConsents.add(consent!);
   admissions.add(admission);
   return { kind: 'paid', admission };
+}
+
+/** Malformed trusted snapshots fail closed at the public boundary, including nested row/digest errors. */
+export function derivePaidRunPinV1(context: PaidRunTrustedContextV1, capNanoUsd: string):
+  ReturnType<typeof derivePaidRunPinUnchecked> {
+  try { return derivePaidRunPinUnchecked(context, capNanoUsd); }
+  catch { return refuse('route_unknown'); }
+}
+export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRunConsumedConsentV1 | undefined):
+  ReturnType<typeof admitPaidRunUnchecked> {
+  try { return admitPaidRunUnchecked(context, consent); }
+  catch { return refuse('route_unknown'); }
 }

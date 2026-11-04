@@ -426,19 +426,20 @@ Expected: requests 4, settled **14 100 000**.
 - The test records the winner and loser callIds and asserts the winner set equals the fake's observed set.
 - Separately, with `maxConcurrent` 2 and cap 60 000 000, 20 callers never produce more than 2 simultaneous requests (high-water mark).
 
-**T5 Restart.**
+**T5 Restart (lead decision D17, pending review).**
 
-- A real child-process driver using the journal ledger is killed with `SIGKILL` at an injected hook.
-- The parent waits for the `exit` event, calls `recoverPaidRunLeaseV1` and reopens. Cap is 18M.
+- A real child-process driver owning the journal is killed with `SIGKILL` after reserve, after dispatch/request receipt, and after settlement. Cap is 18M.
+- The parent observes the child's `exit`, recovers the exact lease generation with `recoverPaidRunLeaseV1`, then uses **only** `reopenForSettlementV1` with the journal and expected `{runKey, pinDigest}` from the trusted run record. No admission or consent is required or reconstructed. The admission-required `open` interface in §5.2/§3.2 applies only to initial spending, never to parent recovery.
 
-| Kill point | Totals after recovery | Block | Fake requests |
+| Kill point | Totals after recovery | Spending state | Fake requests |
 |---|---|---|---|
-| (a) after `reserve` | released, 0 | `recovered` → `run_blocked` | 0 |
-| (b) after `dispatch`, request received | uncertain 6 000 000 | `recovered_uncertain` | 1 |
-| (c) after `settle` | settled 2 700 000 | `recovered` → `run_blocked` | 1 |
+| (a) after `reserve` | provably unsent reservation released, 0 | `run_recovered_closed` | 0 |
+| (b) after `dispatch`, request received | uncertain charged 6 000 000 at reserved maximum | `run_recovered_closed` | 1 |
+| (c) after `settle` | settled 2 700 000 | `run_recovered_closed` | 1 |
 
-- In every case a subsequent `call` refuses with `run_blocked` and no new request.
-- On copies of the journal, a torn tail recovers and a flipped byte in a middle record gives `journal_corrupt`.
+- Recovery durably closes spending. Every later reserve, dispatch or call refuses `run_recovered_closed`; zero new requests occur. The recovery handle cannot start paid execution. New spending requires fresh owner consent and a new run (out of scope).
+- Late/duplicate responses are informational only and never reduce settled/uncertain charges.
+- Refuse a mismatched expected runKey/pinDigest, corrupt journal or second concurrent opener. On copies, a torn final tail recovers; a flipped middle-record byte gives `journal_corrupt`.
 
 **T6 Replay and conflict.**
 

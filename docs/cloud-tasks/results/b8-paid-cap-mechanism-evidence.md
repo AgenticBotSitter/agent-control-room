@@ -289,3 +289,53 @@ Commit custody: `git add package.json` exited 128 because index.lock creation wa
 Final custody audit: `python3 .test-tmp/paid-cap-b/audit.py` exited 0 with 15 assertions. Exactly package.json plus this evidence file and status changed; staged index empty; reviewed spec/source unchanged; temporary product scaffold absent; no machine/home paths added. `git diff --exit-code HEAD -- docs/cloud-tasks/results/b8-paid-cap-mechanism-spec.md` exited 0. Final whitespace initially exited 2 for one extra EOF blank line in this evidence file; trimming it made `git diff --check` exit 0. These were documentation-only corrections.
 
 Status: BLOCKED: T5 cross-process journal reopen lacks a trusted admission recovery contract; git index.lock creation refused
+
+## CAP-B round 2 — lead D17 settlement-only recovery (in progress)
+
+This continuation starts at `b973364ab035ae29ef3ea51f3773dade5978cbcf` and supersedes the previous missing-recovery-contract stop. The lead explicitly chose settlement-only reopen without admission or consent. The amendment is confined to spec §7.2 T5 and marked pending review. Existing CAP-A cache-profile D17 is preserved under D19 to avoid the identifier collision.
+
+Initial executable red: public executor ignored a ledger cap refusal and returned completed instead of refused; 1 test / 0 pass / 1 intended ERR_ASSERTION / 0 skipped, exit 1. Implemented green proof includes true ledger-owner SIGKILL after reserve, after dispatch/request receipt and after settlement, supervisor-observed exit and exact-generation lease recovery. Expected recovery amounts are independently fixed at 0, 6,000,000 uncertain and 2,700,000 settled. Settlement handles have no reserve, dispatch or settle method and cannot construct a spending executor; their terminal call refusal is run_recovered_closed. Late/duplicate information cannot lower totals. Mismatched run/pin, corrupt journal, unsafe file/symlink and simultaneous openers refuse.
+
+The 20-caller barrier produces exactly three 6M reservation winners and seventeen cap refusals; observed request ids equal winners. A separate gate proves high-water 2. Sequential, retries, exact boundary, all cache modes/excess, identity, usage, private byte/options snapshots, replay/conflict, streams, Stop races and resource cleanup are exercised.
+
+Guard probes run only in disposable copies. All fourteen inherited CAP-A and eight CAP-B mutants fail named behavioral assertions, with every restore green (71 CAP-A and 53 CAP-B tests at this checkpoint). CAP-B probes remove cap, dispatch order, dispatch-time Stop/block, served-id, private bytes, option identity, recovery maximum and recovery closure protections.
+
+Affected usage/provider regressions: 63/63 pass, exit 0. Driver --self-check: 2 assertions, 0 requests, exit 0. Both typecheck commands pass. Default npm run build exits 1 on dependency-symlink .vite-temp EPERM. A local-only scratch driver runs the same createBuilder/buildApp and build-source write with configLoader runner and cacheDir from PAID_CAP_VITE_CACHE_DIR under .test-tmp: exit 0, full VPS build succeeds. No config or dependency file changed.
+
+Setup corrections are not claimed as behavioral red: first malformed-context test accidentally merged an empty override into a valid context; first mutation baseline exposed unrelocated dynamic import and an IPC checkpoint that could exit while a bare promise awaited. The test was corrected, digest import made static and driver IPC channel explicitly referenced until SIGKILL. First typecheck reported annotations/narrowing errors, corrected before green.
+
+Full product-shell and final custody/commit checks are in progress. Independent code/attack/CI reviews and pinned Node 22 Linux parity are not supplied in this build session; BUILD-READY remains blocked. No production readiness or real-provider qualification is awarded.
+
+Status: BLOCKED: final local checks and independent continuation gates pending
+
+## CAP-B round 2 final local evidence
+
+Final behavioral command: `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts tests/paid-run-executor.test.ts tests/paid-run-ledger-restart.test.ts` → exit 0; 131/131 pass, zero skips/cancellations. Includes independently parent-derived trusted run/pin expectations without parent consent, every crash checkpoint, duplicate/late recovery responses, malformed primitive/non-finite journal records and normal-open consent mismatch after close. The CAP-A LOW-1 boundary now returns refusal for nested malformed contexts/digest errors; malformed currentConfig also blocks before reservation.
+
+Final product-shell: `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 PLAYWRIGHT_BROWSERS_PATH=.test-tmp/paid-cap-b-r2/playwright-browsers npm run test:product-shell` → exit 0, 707 tests / 704 pass / 0 fail / 3 skipped / 0 cancelled. The three inherited painted Chromium layout tests (R4U-15, R4U-17, R6PH phone layout) skip because the browser is not provisioned in the allowed worktree path. No skip/quarantine rule was added. All CAP-A/CAP-B behavioral tests and guard mutations execute without skips. Browser layout remains unverified.
+
+All 22 mutation probes are killed at their expected assertions. CAP-A restores 71/71; final CAP-B restores 60/60, zero skips. Final CAP-B mutant results:
+
+| Guard removed | Pass | Fail | Exit | Green restore |
+|---|---|---|---|---|
+| cap | 55 | 5 | 1 | 60/60 |
+| dispatch order | 46 | 14 | 1 | 60/60 |
+| dispatch Stop/block | 58 | 2 | 1 | 60/60 |
+| served id | 57 | 3 | 1 | 60/60 |
+| private body | 58 | 2 | 1 | 60/60 |
+| option replay identity | 58 | 2 | 1 | 60/60 |
+| recovery max | 57 | 3 | 1 | 60/60 |
+| recovery closed | 56 | 4 | 1 | 60/60 |
+
+Affected usage/provider regression command from §9.1 → exit 0, 63/63. Final `npm run check`, `npm run check:demo`, driver `--self-check` (2 assertions, zero sends), loader guard, lane coverage (936 reachable files), quarantine (0 entries), whitespace and 13-assertion scope/custody audit all exit 0. `test:product-shell` retains the former command as an identical prefix and adds only the executor/restart files; CI invocation and dependency symlink are unchanged.
+
+The final exact `npm run build` also exits 0 with local-only `PAID_CAP_VITE_CACHE_DIR` under `.test-tmp` and a scratch Node preload that supplies Vite `configLoader: runner` and `cacheDir` at runtime. This avoids the pre-config bundle write into symlinked node_modules/.vite-temp that made the unmodified invocation fail. Normal buildApp and build-source metadata writing run. No config, build script or dependency edit is committed.
+
+Node v22.23.4, darwin arm64. Independent candidate code/attack/CI and D17 amendment review plus supplied pinned Node 22 Linux parity remain NOT RUN; no BUILD-READY or production green. No native PG cluster was started: ipcs itself was denied, so its pipeline's printed 0 cannot qualify the under-20 native gate. Adjacent tests use unchanged PGlite/scripted fixtures. All owned command/driver/mutation children complete and are reaped; no real login, provider/model, paid probe, listener, live-install operation, push, download or credential read. No unresolved local code findings are claimed by this builder (HIGH 0 / MEDIUM 0 / LOW 0); independent review remains authoritative.
+
+Commit custody: see the final assigned build report and git history; the next operation attempts only these fourteen allowed files with the brief-authorized per-commit identity. A denied index lock leaves the candidate uncommitted for the lead. Production readiness remains false.
+
+
+Final commit attempt: `git add --` the fourteen allowed files exited 128 because index.lock creation was refused (Operation not permitted). No commit command reached, retry, escalation or identity configuration change. Lead must commit the uncommitted candidate. New commit SHA: none; retained HEAD `b973364ab035ae29ef3ea51f3773dade5978cbcf`. No push. This custody failure does not change the passing local behavior/check evidence above.
+
+Status: BLOCKED: git index.lock refused; independent reviews and pinned Linux parity pending; painted browser layout unverified

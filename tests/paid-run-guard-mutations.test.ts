@@ -32,7 +32,7 @@ const cases = [
   ['admission-replay', 'admission', "  if (admittedConsents.has(consent!)) return refuse('consent_replayed');\n", '',
     'FIX LOW-3 one consumed capability mints one admission'],
   ['resolution-shape', 'admission',
-    "  if (!context.resolution || !Array.isArray(context.resolution.additionalRoutes)) return refuse('route_unknown');\n", '',
+    "  if (!context || !Array.isArray(context.providers) || !context.resolution || !Array.isArray(context.resolution.additionalRoutes)) return refuse('route_unknown');\n", '',
     'FIX LOW-2 malformed resolution refuses: additionalRoutes [object Set]'],
 ] as const;
 
@@ -83,7 +83,7 @@ test('CAP-A guard-off mutations fail behavioral assertions in disposable copies'
       assert.equal(result.signal, null, `${label}: child must exit normally`);
       const output = result.stdout + result.stderr;
       const count = (name: string) => Number(output.match(new RegExp(`^# ${name} (\\d+)$`, 'm'))?.[1] ?? NaN);
-      assert.equal(count('tests'), 70, `${label}: all behavioral tests execute\n${output}`);
+      assert.equal(count('tests'), 71, `${label}: all behavioral tests execute\n${output}`);
       assert.equal(count('skipped'), 0, label);
       assert.equal(count('cancelled'), 0, label);
       t.diagnostic(`MUTATION ${label} exit=${result.status} tests=${count('tests')} pass=${count('pass')} fail=${count('fail')} skipped=${count('skipped')}`);
@@ -108,5 +108,80 @@ test('CAP-A guard-off mutations fail behavioral assertions in disposable copies'
     await rm(root, { recursive: true, force: true });
     for (const key of ['bound', 'admission'] as const)
       assert.equal(await readFile(subjects[key], 'utf8'), sources[key], 'original source stays intact');
+  }
+});
+
+const capBMutations: { name: string; target: 'ledger' | 'executor'; changes: [string, string][]; expected: string }[] = [
+  { name: 'cap', target: 'ledger', expected: 'T3 public executor exact cap 5999999', changes: [
+    ["if (BigInt(t.settled) + BigInt(t.uncertain) + BigInt(t.reserved) + BigInt(r.maxNanoUsd as string) > BigInt(t.cap)) fail('journal_corrupt');", ''],
+    ["if (BigInt(t.settled) + BigInt(t.uncertain) + BigInt(t.reserved) + BigInt(maxNanoUsd) > BigInt(t.cap)) return refuse('cap_exhausted');", ''],
+  ] },
+  { name: 'dispatch-order', target: 'ledger', expected: 'structural dispatch is durable', changes: [
+    ["await append({ type: 'dispatch', callId });", "state.calls.set(callId, Object.freeze({ ...call!, phase: 'dispatched' }));"],
+  ] },
+  { name: 'dispatch-stop-block', target: 'ledger', expected: 'T13b stop between reserve and dispatch', changes: [
+    ["const reason = spendingRefusal(state), call = state.calls.get(callId);", 'const reason = null, call = state.calls.get(callId);'],
+    ["if (spendingRefusal(state) || call?.phase !== 'reserved')", "if (call?.phase !== 'reserved')"],
+  ] },
+  { name: 'served-id', target: 'executor', expected: 'T10 different model', changes: [
+    ["if (servedModelId !== admission.pin.servedModelId) return max('identity_mismatch');", ''],
+  ] },
+  { name: 'private-body', target: 'executor', expected: 'T6 private snapshot survives currentConfig', changes: [
+    ['const privateBody = Uint8Array.from(body);', 'const privateBody = body;'],
+  ] },
+  { name: 'replay-options', target: 'executor', expected: 'T6 full identity replays', changes: [
+    [".digest('hex')}`, maxOutputTokens, stream });", ".digest('hex')}` });"],
+  ] },
+  { name: 'recovery-max', target: 'ledger', expected: 'T5 D17 SIGKILL after dispatch', changes: [
+    ["settlement: { accountedNanoUsd: call.maxNanoUsd, excessNanoUsd: '0', outcome: 'uncertain', servedModelId: null }", "settlement: { accountedNanoUsd: '0', excessNanoUsd: '0', outcome: 'completed', servedModelId: null }"],
+  ] },
+  { name: 'recovery-close', target: 'ledger', expected: 'T5 D17 SIGKILL after reserve', changes: [
+    ["case 'recovered': state.spendingClosed = true;", "case 'recovered': state.spendingClosed = false;"],
+  ] },
+];
+
+test('CAP-B guard-off mutations fail the independent behavioral assertions', async t => {
+  await mkdir(resolve('.test-tmp'), { recursive: true });
+  const root = await mkdtemp(resolve('.test-tmp/paid-cap-b-guards-'));
+  const original = {
+    ledger: resolve('src/usage/v1/paid-run-ledger.ts'), executor: resolve('src/usage/v1/paid-run-executor.ts'),
+    fake: resolve('tests/helpers/paid-run-fake-provider.ts'), driver: resolve('tests/helpers/paid-run-driver.ts'),
+    tests: resolve('tests/paid-run-executor.test.ts'), restart: resolve('tests/paid-run-ledger-restart.test.ts'),
+  };
+  const sources = Object.fromEntries(await Promise.all(Object.entries(original).map(async ([k, path]) => [k, await readFile(path, 'utf8')])));
+  const copies = Object.fromEntries(Object.values(original).map(path => [path, join(root, path.split('/').at(-1)!)]));
+  const run = async (mutation?: typeof capBMutations[number]) => {
+    for (const [key, path] of Object.entries(original)) {
+      let source = sources[key]!;
+      if (key === mutation?.target) for (const [before, after] of mutation.changes) {
+        assert.equal(source.split(before).length - 1, 1, `${mutation.name} unique anchor`); source = source.replace(before, after);
+      }
+      source = source.replace("resolve('tests/helpers/paid-run-driver.ts')", JSON.stringify(copies[original.driver]));
+      await writeFile(copies[path]!, relocate(source, path, copies));
+    }
+    const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+    const command = ['scripts/run-tests-with-quarantine.mjs', '--import', 'tsx', '--test', '--test-concurrency=1',
+      '--test-timeout=600000', copies[original.tests]!, copies[original.restart]!];
+    const result = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 600000, maxBuffer: 8 * 1024 * 1024,
+      env: { ...env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' } });
+    assert.ifError(result.error); assert.equal(result.signal, null);
+    const output = result.stdout + result.stderr;
+    const count = (label: string) => Number(output.match(new RegExp(`^# ${label} (\\d+)$`, 'm'))?.[1] ?? NaN);
+    assert.ok(count('tests') >= 50, output); assert.equal(count('skipped'), 0, output); assert.equal(count('cancelled'), 0, output);
+    t.diagnostic(`COMMAND node ${command.map(x => x.startsWith(root) ? relative(process.cwd(), x) : x).join(' ')}`);
+    t.diagnostic(`MUTATION ${mutation?.name ?? 'restored'} exit=${result.status} tests=${count('tests')} pass=${count('pass')} fail=${count('fail')} skipped=${count('skipped')}`);
+    if (mutation) {
+      assert.equal(result.status, 1, output);
+      assert.ok(output.split('\n').some(line => line.startsWith('not ok ') && line.includes(mutation.expected)), output);
+      assert.match(output, /ERR_ASSERTION/, output);
+      assert.doesNotMatch(output, /ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|SyntaxError/);
+    } else { assert.equal(result.status, 0, output); assert.equal(count('fail'), 0); }
+  };
+  try {
+    await run();
+    for (const mutation of capBMutations) { await run(mutation); await run(); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    for (const [key, path] of Object.entries(original)) assert.equal(await readFile(path, 'utf8'), sources[key]);
   }
 });

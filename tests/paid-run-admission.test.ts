@@ -288,3 +288,17 @@ test('T9 over-ceiling capability with independently computed matching pin still 
   if (consumed.kind !== 'consumed') throw new Error('expected consumption');
   assert.deepEqual(admitPaidRunV1(context, consumed.capability), { kind: 'refused', reason: 'invalid_cap' });
 });
+
+ test('FIX LOW-1 malformed trusted context refuses rather than throwing', () => {
+  for (const change of [null, undefined, { providers: undefined }, { providers: null }, { providers: {} },
+    { providers: [null] }, { providers: [{ provider_id: 'provider-one', models: null }] },
+    { providers: [{ provider_id: 'provider-one', models: [null] }] }, { prices: null }, { prices: [null] }, { prices: [{}] }, { providerVersion: NaN }, { providerVersion: undefined }]) {
+    const context = change === null || change === undefined ? change : { ...paidRunContext(), ...change };
+    assert.doesNotThrow(() => {
+      const preview = derivePaidRunPinV1(context as PaidRunTrustedContextV1, '18000000');
+      assert.equal(preview.kind, 'refused');
+      const result = admitPaidRunV1(context as PaidRunTrustedContextV1, undefined);
+      assert.equal(result.kind, 'refused');
+    });
+  }
+});

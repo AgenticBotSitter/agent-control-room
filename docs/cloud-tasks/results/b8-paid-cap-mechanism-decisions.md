@@ -191,7 +191,7 @@ Why: CAP-A must derive the exact server pin before store issuance and independen
 Related clarifications for review: the maximum 1 500 000 ms interval samples at most 27 instants (two ends plus at most 25 interior minute boundaries); a checkedAt refresh changes the price-row digest even at unchanged rates. These implementation facts are documented here without rewriting the reviewed contract.
 Affected spec item: 3.2, 4.3, 8.1, 8.4.
 
-## D17 — Bind cache ceilings to their originating profile (MEDIUM-1)
+## D19 — Bind cache ceilings to their originating profile (MEDIUM-1)
 
 Choice: every frozen bound carries the originating profileId and cacheReporting. The usage predicate refuses a disagreement in either field and reads the mode from the bound. Numeric ceilings remain those computed at reservation.
 Why: additive usage of 1000 input plus 1000 cached plus 200 output tokens costs 9000000 nano-USD at the synthetic 3000/15000 rates, exceeding a 6000000 reserve. Reinterpreting the same usage as subset must never turn it into an accepted report. Cross-mode and profile-ID tests use literal expectations.
@@ -203,3 +203,9 @@ Choice: a private WeakSet records consumed capabilities that have successfully m
 Why: admission itself must enforce the spending-authority limit without depending on CAP-B journal leases. This remains an in-process test-only mechanism; durable consent/lease integration is still later work. The admission object is not a one-shot dispatch ticket; CAP-B retains its separate lease/reservation obligations.
 Related LOW-2: missing/non-array additionalRoutes, missing resolutions and invalid route entries refuse route_unknown before preview/admission, rather than throwing.
 Affected spec item: 3, 8.4.
+
+## D17 — Settlement-only recovery (lead decision D17, pending review)
+
+Choice: recovery never regains spending authority. `reopenForSettlementV1` accepts the journal and expected `{runKey, pinDigest}` from the trusted run record, without admission or consent. It verifies the journal and exclusive lease, releases provably undispatched reservations, settles dispatched-but-unsettled calls at their reserved maximum, records late/duplicate responses without reducing charges, durably spending-closes the run and reports totals. Every subsequent reservation/dispatch/call refuses `run_recovered_closed`. A mismatched run/pin, corrupt journal or concurrent opener refuses.
+Why: CAP-A consent is one-shot, in-memory and runtime branded. A crash cannot reconstruct authentic authority. This implements the settled refuse-before-overspend and retained-accounting-or-refuse rules. No consent is minted, imported or reconstructed; another paid call requires fresh owner consent and a new run, outside this slice.
+Affected spec item: 7.2 T5. The pre-existing CAP-A cache-profile decision formerly labeled D17 is relabeled D19 only to resolve the identifier collision; its choice and rationale are unchanged. Independent review of this amendment remains pending.
