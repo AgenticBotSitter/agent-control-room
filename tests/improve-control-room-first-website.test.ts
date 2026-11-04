@@ -2527,10 +2527,13 @@ const B5_EXPECTED_NONLITERAL_DETAILS_V1:Record<string,B5NonliteralDetailV1>={
 function b5RefusalInventoryV1(ts:B5TypeScriptV1,sources:B5ProducerSourcesV1){
   const producers=new Set(["refuse","B5RefusalV1","bad","broken"]),wrappers=new Set(["bad","broken"]);
   const printer=ts.createPrinter({removeComments:true,newLine:ts.NewLineKind.LineFeed});
-  const literals=Object.fromEntries(Object.keys(sources).map(m=>[m,{} as Record<string,number>])) as Record<keyof B5ProducerSourcesV1,Record<string,number>>;
-  const nonliteral:Record<string,number>={},noDetail:Record<string,number>={},parseErrors:string[]=[],escapes:string[]=[];
+  // Counters are Maps: a literal such as "__proto__" or "constructor" is an ordinary own key, never an inherited accessor or method.
+  const literals=new Map(Object.keys(sources).map(m=>[m as keyof B5ProducerSourcesV1,new Map<string,number>()]));
+  const nonliteral=new Map<string,number>(),noDetail=new Map<string,number>(),parseErrors:string[]=[],escapes:string[]=[];
   let kinds:string[]|undefined;
-  const bump=(r:Record<string,number>,k:string)=>{r[k]=(r[k]??0)+1;};
+  const bump=(r:Map<string,number>,k:string)=>{r.set(k,(r.get(k)??0)+1);};
+  // Normalized comparison output: ordinary objects whose keys are all own data properties (Object.fromEntries defines, never assigns).
+  const own=(r:Map<string,number>):Record<string,number>=>Object.fromEntries(r);
   for(const module of Object.keys(sources) as (keyof B5ProducerSourcesV1)[]){
     const sf=ts.createSourceFile(`${module}.ts`,sources[module],ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
     for(const d of (sf as unknown as {parseDiagnostics:readonly import("typescript").Diagnostic[]}).parseDiagnostics)
@@ -2546,7 +2549,7 @@ function b5RefusalInventoryV1(ts:B5TypeScriptV1,sources:B5ProducerSourcesV1){
           const call=p as import("typescript").CallExpression|import("typescript").NewExpression,args=call.arguments??[];
           const at=wrappers.has(n.text)?0:1,detail=args[at];
           if(!detail)bump(noDetail,`${module}: ${n.text}`);
-          else if(args.length===at+1&&(ts.isStringLiteral(detail)||ts.isNoSubstitutionTemplateLiteral(detail)))bump(literals[module],detail.text);
+          else if(args.length===at+1&&(ts.isStringLiteral(detail)||ts.isNoSubstitutionTemplateLiteral(detail)))bump(literals.get(module)!,detail.text);
           else bump(nonliteral,`${module}: ${normal(call)}`);
         }
       }
@@ -2559,7 +2562,8 @@ function b5RefusalInventoryV1(ts:B5TypeScriptV1,sources:B5ProducerSourcesV1){
     };
     visit(sf);
   }
-  return {parseErrors,escapes,literals,nonliteral,noDetail,kinds};
+  return {parseErrors,escapes,kinds,nonliteral:own(nonliteral),noDetail:own(noDetail),
+    literals:Object.fromEntries([...literals].map(([m,r])=>[m,own(r)])) as Record<keyof B5ProducerSourcesV1,Record<string,number>>};
 }
 /** Each assertion carries a distinct message so mutation cases can require the intended one. */
 function assertB5RefusalInventoryV1(ts:B5TypeScriptV1,sources:B5ProducerSourcesV1,known:ReadonlySet<string>){
@@ -2611,6 +2615,7 @@ test("B5 refusal producer inventory rejects uncovered details",async()=>{
   const evidenceLine='refuse("B5_EVIDENCE_DIR", "must be <scratchRoot>/evidence");',remoteLine='  if (facts.remotes !== "") bad("remote");\n';
   const cases:[string,B5ProducerSourcesV1,RegExp][]=[
     ["helper quoted",mutate("helper",'if (stat.isSymbolicLink()) refuse(code, "symlink");','if (stat.isSymbolicLink()) refuse(code, "symlink");\n    if (stat.isFIFO()) refuse(code, "unlisted fifo detail");'),/^literal refusal detail missing/u],
+    ["helper __proto__ literal",mutate("helper",'if (stat.isSymbolicLink()) refuse(code, "symlink");','if (stat.isSymbolicLink()) refuse(code, "symlink");\n    if (stat.isFIFO()) refuse(code, "__proto__");'),/^literal refusal detail missing/u],
     ["host literal",mutate("host",'Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"))','Promise.reject(new B5RefusalV1("B5_HOST_CLOSED", "unlisted host detail"))'),/^literal refusal detail missing/u],
     ["helper bare identifier",mutate("helper",evidenceLine,`${evidenceLine}\n  if (!root) refuse("B5_EVIDENCE_DIR", evidenceDir);`),/^nonliteral refusal detail not in the explicit inventory/u],
     ["helper call expression",mutate("helper",evidenceLine,`${evidenceLine}\n  if (!root) refuse("B5_EVIDENCE_DIR", evidenceDir.slice(1));`),/^nonliteral refusal detail not in the explicit inventory/u],
@@ -2623,8 +2628,36 @@ test("B5 refusal producer inventory rejects uncovered details",async()=>{
       'function refuse(code: string, detail = ""): never { throw new B5RefusalV1(code, detail); }\nexport const refuseAlias = refuse;'),/^refusal producer referenced outside a direct call/u],
     ["no-detail call added",mutate("host",'Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"))','Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"), new B5RefusalV1("B5_HOST_CLOSED"))'),/^no-detail refusal inventory changed/u],
   ];
+  // Prototype-named literals, one independent producer copy each, across every producer syntax a module supports, plus an
+  // ordinary new literal control per site. Each must be counted as an own key and fail the named literal-allowlist assertion.
+  const literalSites:[string,keyof B5ProducerSourcesV1,string,(label:string)=>string][]=[
+    ["helper refuse","helper",'if (stat.isSymbolicLink()) refuse(code, "symlink");',l=>`if (stat.isSymbolicLink()) refuse(code, "symlink");\n    if (stat.isFIFO()) refuse(code, "${l}");`],
+    ["helper bad","helper",remoteLine,l=>`${remoteLine}  if (!facts.clean) bad("${l}");\n`],
+    ["helper broken","helper",'if (!defective) broken("rejection");',l=>`if (!defective) broken("rejection");\n  if (!steps.length) broken("${l}");`],
+    ["helper new","helper",evidenceLine,l=>`${evidenceLine}\n  if (!root) throw new B5RefusalV1("B5_EVIDENCE_DIR", "${l}");`],
+    ["controller new","controller",'new B5RefusalV1("B5_INTERRUPTED")',l=>`new B5RefusalV1("B5_INTERRUPTED", "${l}")`],
+    ["host new","host",'Promise.reject(new B5RefusalV1("B5_HOST_CLOSED"))',l=>`Promise.reject(new B5RefusalV1("B5_HOST_CLOSED", "${l}"))`],
+  ];
+  const prototypeLabels=["__proto__","constructor","toString","hasOwnProperty"],controlLabel="unlisted ordinary detail";
+  for(const label of [...prototypeLabels,controlLabel])assert.ok(!b5KnownRefusalDetailsV1.has(label),`runtime allowlist must not list ${label}`);
+  const counted:[string,keyof B5ProducerSourcesV1,string,B5ProducerSourcesV1][]=[];
+  for(const [site,module,find,make] of literalSites)for(const label of [...prototypeLabels,controlLabel]){
+    const mutant=mutate(module,find,make(label));
+    counted.push([site,module,label,mutant]);
+    cases.push([`${site} ${label} literal`,mutant,/^literal refusal detail missing/u]);
+  }
+  assert.equal(counted.length,literalSites.length*(prototypeLabels.length+1));
   for(const [name,mutant,intended] of cases)
     assert.throws(()=>validate(mutant),(e:unknown)=>e instanceof assert.AssertionError&&intended.test(e.message),name);
+  for(const [site,module,label,mutant] of counted){
+    const literals=b5RefusalInventoryV1(ts,mutant).literals[module];
+    assert.ok(Object.hasOwn(literals,label),`${site} ${label} counted as an own key`);
+    assert.equal(literals[label],1,`${site} ${label} counted exactly once`);
+  }
+  // Normalized output stays ordinary prototype-shaped objects, so the exact expected-inventory comparisons are unchanged.
+  const normal=b5RefusalInventoryV1(ts,sources);
+  for(const r of [normal.literals,normal.nonliteral,normal.noDetail,...Object.values(normal.literals)])
+    assert.equal(Object.getPrototypeOf(r),Object.prototype);
   // The removed protected literal is still listed, so the old allowlist check and size floor (>= 50 distinct) would both pass.
   const removed=b5RefusalInventoryV1(ts,cases.find(([n])=>n==="protected literal removed")![1]);
   assert.equal(removed.literals.helper.remote,undefined); assert.ok(b5KnownRefusalDetailsV1.has("remote"));
