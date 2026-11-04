@@ -585,3 +585,11 @@ test("a test reference must name a tests/*.test or *.spec file, not any file und
     assert.ok(result.errors.includes("test_reference_unresolved"), JSON.stringify(result));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("every reference in one bullet is checked, not only the first", () => {
+  const root = fixture();
+  try {
+    const result = inspect(root, "## Evidence\n\n- Two references.\n  test: tests/example.test.mjs::keeps the claim honest\n  ci: No such job");
+    assert.ok(result.errors.includes("ci_reference_unresolved"), JSON.stringify(result));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
