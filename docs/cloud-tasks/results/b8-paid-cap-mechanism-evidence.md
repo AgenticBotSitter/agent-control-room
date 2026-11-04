@@ -1,4 +1,6 @@
-# b8-paid-cap-mechanism — evidence (PLAN)
+# b8-paid-cap-mechanism — evidence
+
+Current phase: BUILD, CAP-A. See the current BUILD section below. Earlier PLAN commands and environments are historical, not current product qualification.
 
 ## Environment
 
@@ -54,7 +56,7 @@ Product tests were not run, because PLAN is specification-only.
 | Helper | Scope | Findings and disposition |
 |---|---|---|
 | Spec helper (Claude, Explore, read-only) | Harness execution seams, provider/price shapes, durable facilities, lanes, existing fakes | **Facts.** The harness and engine are opaque subprocesses. There is no per-call hook. The pin is not implemented. `budget-store` is in micro-USD. `loop-providers` runs on PGlite. No billable fake provider exists. **Verification.** The mini-lead re-checked the key facts: adapter :376 and :701, `owner-trusted-local-cli-execution.ts` :82/:94/:101, `budget-store.ts` :9/:16, and E14. |
-| Spec reviewer (Claude, general-purpose, read-only) | Spec r1 against the task, the playbook and the code | 2 HIGH, 6 MEDIUM, 7 LOW. All were verified against the code (`ci.yml:563`, `prices:95`/`:38`, the strict usage schema, adapter :706-713, publish :112) and **all were resolved in spec r2**. The reviewer independently recomputed T1, T2, T4, T5, T8 and T13, and all matched. No finding remains open. |
+| Spec reviewer (Claude, general-purpose, read-only) | Spec r1 against the task, the playbook and the code | 2 HIGH, 6 MEDIUM, 7 LOW. All were verified against the code (`ci.yml:563`, `prices:95`/`:38`, the strict usage schema, adapter :706-713, publish :112) and **all were resolved in spec r2**. The reviewer independently recomputed T1, T2, T4, T5, T8 and T13, and all matched. That was the r2 reviewer disposition only; the later Sol gate found P1–P4 and r3 superseded those contracts. |
 
 ### Disposition of each finding
 
@@ -100,6 +102,85 @@ No implementation or product/unit/PG17/provider/tools/browser/device/Linux tests
 - Source subtree comparison against the pinned base reports no implementation difference. Allowed-write audit finds exactly this ID's five result Markdown documents. Both status final lines are exactly `Status: PLAN-READY`; P1–P4/S1–S7 have explicit r3 Revision history dispositions; balanced fences and bounded public-text privacy checks pass. The denylist-dependent privacy gate is still NOT RUN.
 - `git diff --check` passed before this evidence update; final whitespace/allowed-path check is repeated for the handoff. Current independent spec re-review is pending; no product green gate or reviewer CLEAN is claimed.
 
-Commit identity handoff: effective configured identity differs from the brief's required worker identity. No Git identity configuration was changed. No response authorizing command-scoped identity overrides was received before handoff. The verified worktree is retained for the lead to commit; no new commit exists. No wrong-identity commit is claimed.
+Historical revision handoff: r3 was subsequently committed by the lead as `fba6ae026`. The supplied independent DeepSeek specification re-review is CLEAN for this chunk, with three LOWs addressed in CAP-A. The earlier identity-blocked handoff is superseded; current build commit status is recorded below.
 
 Final handoff: both plan branches retain exactly five changed result Markdown files. Staging and staged whitespace checks completed with exit 0; final repeat follows the last documentation update. Worktrees are retained because commit identity authorization is unresolved; they are not removed with uncommitted work. No owned process remains.
+
+## Current BUILD: CAP-A (2026-11-04)
+
+Native environment: Node v22.23.4, darwin/arm64; existing dependencies only. Start 2026-11-04T20:54:16.477367+00:00, deadline 2026-11-05T02:54:16.477367+00:00, update 2026-11-04T21:06:00.780956+00:00, elapsed 11.7 minutes. Starting and retained HEAD: `fba6ae026cbd7be1178df1844e15288caebeb53b`, branch `cook/b8-paid-cap`. The lead-supplied DeepSeek re-review is CLEAN for this spec revision. No product code review verdict is claimed.
+
+Implemented CAP-A per §8.4: two modules, two tests and synthetic fixture helper. No executor, ledger, journal, scripted transport or driver was added. No shared registration file was changed. CAP-B is explicitly after independently reviewed CAP-A, so this is not the whole paid-cap mechanism and earns no spending-cap qualification. Native paid readiness remains false; T17 uses the actual adapter constructor with inert files and closes it without starting an engine.
+
+- Admission uses opaque consumed handles authenticated by a private WeakMap, frozen private records and a private admission WeakSet. Single use, exact owner/project/request/settings/claim bindings, cap syntax/range and freshness are exercised. A 20-consume contention test observes 1 winner and 19 replays. This is not a durable/PG ledger contention proof.
+- Bounds validate every profile assumption, exact input/output limits, all three cache modes and stale/unknown prices. Price scanning caches per-zone formatters and takes minute-window maxima across skew/DST using only the selected provider and served model. Money remains BigInt.
+- The attached three LOWs are addressed: 27 maximum scan instants; any checkedAt refresh invalidates consent at unchanged rates (documented and tested); old r3 commit and review-status claims are explicitly superseded.
+
+### Red/green and entry-point proof
+
+The initial minimal compilable seams ran 3 tests, all failing at intended behavioral assertions (missing authority admitted, stale price accepted, none input ceiling bypassed). No missing import/setup failure is counted as red. This is NEW-seam red evidence, not an existing-product failure claim. Original red snapshots remain ignored scratch text only. Final CAP-A suite: 58 pass, 0 fail, 0 skipped. Actual CAP-A CLI exercise: `CAP_A_ENTRY_PASS checks=3 authentic=paid cloned=consent_missing maxNanoUsd=6000000 providerRequests=0`. The complete bounded-call driver is CAP-B and was not run.
+
+Guard mutations lived only in throwaway copies and were removed after each probe. Provenance bypass: 55 pass/3 intended fail; none input-ceiling removal: 55/3; subset-validity removal: 57/1; served-model-filter removal: 57/1. Every restored run passes all 58, zero skips. Provenance positive remains valid before cloned/fabricated/unconsumed negatives fail. Guarded source files were never mutated for these probes. Reproduction: `.test-tmp/paid-cap/probe.py <consent-provenance|none-ceiling|subset-validity|model-filter>` reconstructs each disposable copy. Dispatch/cap/identity/Stop/request-snapshot probes belong to CAP-B and are not claimed.
+
+### Adjacent boundary and checks
+
+Historical usage costing/rollups, owner price-file custody, provider schema and provider service behavior remain unchanged: affected command below passes 63 tests with 0 skips. Existing service fixtures use PGlite and are not native PostgreSQL qualification. Both typechecks pass. Loader guard passes; quarantine guard has 0 entries. Product-shell exits 0 with 571 pass/0 fail/3 Chromium-not-provisioned skips, so it is INCOMPLETE against the spec's zero-skip gate. No browser was installed.
+
+The first scratch CI-wiring probe searched for a literal pnpm invocation and failed; source inspection showed the existing serial run-scripts-keep-going runner. Correcting only that assertion yields 2 reachability checks PASS; CI and package files are unchanged. The actual lane guard still fails with exactly 2 unregistered new tests. §8.4 reserves final package registration for CAP-B; this continuation does not silently amend that seam.
+
+`npm run build` exits 1 before compilation: Vite cannot open the temporary bundled config under node_modules/.vite-temp (EPERM through the shared dependency symlink). No dependency/tool installation, write outside the clone or build-script workaround was attempted. npm run executes the unchanged package scripts in place of pnpm run to avoid a shim.
+
+### Commands and real output
+
+| Command label | Exact command | Real final result | Counts |
+|---|---|---|---|
+| red | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT red exit=1 elapsed=0.42s` | # tests 3; # suites 0; # pass 0; # fail 3; # cancelled 0; # skipped 0; # todo 0 |
+| cap-a-green | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT cap-a-green exit=0 elapsed=0.65s` | # tests 58; # suites 0; # pass 58; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-consent-provenance | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/consent-provenance/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/consent-provenance/tests/paid-run-admission.test.ts` | `RESULT guard-off-consent-provenance exit=1 elapsed=0.62s` | # tests 58; # suites 0; # pass 55; # fail 3; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-none-ceiling | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/none-ceiling/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/none-ceiling/tests/paid-run-admission.test.ts` | `RESULT guard-off-none-ceiling exit=1 elapsed=0.62s` | # tests 58; # suites 0; # pass 55; # fail 3; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-subset-validity | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/subset-validity/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/subset-validity/tests/paid-run-admission.test.ts` | `RESULT guard-off-subset-validity exit=1 elapsed=0.61s` | # tests 58; # suites 0; # pass 57; # fail 1; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-model-filter | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/model-filter/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/model-filter/tests/paid-run-admission.test.ts` | `RESULT guard-off-model-filter exit=1 elapsed=0.61s` | # tests 58; # suites 0; # pass 57; # fail 1; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-consent-provenance | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/consent-provenance/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/consent-provenance/tests/paid-run-admission.test.ts` | `RESULT guard-off-consent-provenance exit=1 elapsed=0.6s` | # tests 58; # suites 0; # pass 55; # fail 3; # cancelled 0; # skipped 0; # todo 0 |
+| check-demo | `npm run check:demo` | `RESULT check-demo exit=0 elapsed=19.76s` | not a TAP test |
+| guard-restored-consent-provenance | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT guard-restored-consent-provenance exit=0 elapsed=0.58s` | # tests 58; # suites 0; # pass 58; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-none-ceiling | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/none-ceiling/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/none-ceiling/tests/paid-run-admission.test.ts` | `RESULT guard-off-none-ceiling exit=1 elapsed=0.56s` | # tests 58; # suites 0; # pass 55; # fail 3; # cancelled 0; # skipped 0; # todo 0 |
+| guard-restored-none-ceiling | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT guard-restored-none-ceiling exit=0 elapsed=0.56s` | # tests 58; # suites 0; # pass 58; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-subset-validity | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/subset-validity/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/subset-validity/tests/paid-run-admission.test.ts` | `RESULT guard-off-subset-validity exit=1 elapsed=0.56s` | # tests 58; # suites 0; # pass 57; # fail 1; # cancelled 0; # skipped 0; # todo 0 |
+| guard-restored-subset-validity | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT guard-restored-subset-validity exit=0 elapsed=0.55s` | # tests 58; # suites 0; # pass 58; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| guard-off-model-filter | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 .test-tmp/paid-cap/probes/model-filter/tests/paid-run-bound.test.ts .test-tmp/paid-cap/probes/model-filter/tests/paid-run-admission.test.ts` | `RESULT guard-off-model-filter exit=1 elapsed=0.55s` | # tests 58; # suites 0; # pass 57; # fail 1; # cancelled 0; # skipped 0; # todo 0 |
+| guard-restored-model-filter | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT guard-restored-model-filter exit=0 elapsed=0.55s` | # tests 58; # suites 0; # pass 58; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| affected-usage | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/usage-cost.test.ts tests/usage-price-table-loader.test.ts tests/usage-cost-authorization.test.ts tests/loop-provider-contract.test.ts tests/loop-providers.test.ts` | `RESULT affected-usage exit=0 elapsed=28.76s` | # tests 63; # suites 0; # pass 63; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| build | `npm run build` | `RESULT build exit=1 elapsed=0.71s` | not a TAP test |
+| check | `npm run check` | `RESULT check exit=0 elapsed=16.91s` | not a TAP test |
+| lane-coverage | `node scripts/check-test-lane-coverage.mjs` | `RESULT lane-coverage exit=1 elapsed=0.11s` | not a TAP test |
+| quarantine | `npm run check:test-quarantine` | `RESULT quarantine exit=0 elapsed=0.21s` | not a TAP test |
+| test-loaders | `npm run check:test-loaders` | `RESULT test-loaders exit=0 elapsed=0.84s` | not a TAP test |
+| ci-wiring | `node -e 'const f=require("node:fs"); const s=f.readFileSync(".github/workflows/ci.yml","utf8"); const p=JSON.parse(f.readFileSync("package.json","utf8")); if(!s.includes("pnpm test:product-shell") \|\| !p.scripts["test:components"].includes("test:product-shell")) process.exit(1); console.log("CI product-shell lane reachable: 2 checks PASS");'` | `RESULT ci-wiring exit=1 elapsed=0.06s` | not a TAP test |
+| product-shell | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 npm run test:product-shell` | `RESULT product-shell exit=0 elapsed=32.73s` | # tests 574; # suites 0; # pass 571; # fail 0; # cancelled 0; # skipped 3; # todo 0 |
+| ci-wiring-corrected | `node -e 'const f=require("node:fs"); const s=f.readFileSync(".github/workflows/ci.yml","utf8"); const p=JSON.parse(f.readFileSync("package.json","utf8")); if(!s.includes("run-scripts-keep-going.mjs test:product-shell") \|\| !p.scripts["test:components"].includes("test:product-shell")) process.exit(1); console.log("CI product-shell lane reachable: 2 checks PASS");'` | `RESULT ci-wiring-corrected exit=0 elapsed=0.08s` | not a TAP test |
+| cap-a-entry | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx .test-tmp/paid-cap/entry.ts` | `RESULT cap-a-entry exit=0 elapsed=0.33s` | not a TAP test |
+| diff-check | `git diff --check` | `RESULT diff-check exit=0 elapsed=0.29s` | not a TAP test |
+| cap-a-final | `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | `RESULT cap-a-final exit=0 elapsed=0.7s` | # tests 58; # suites 0; # pass 58; # fail 0; # cancelled 0; # skipped 0; # todo 0 |
+| check-demo-final | `npm run check:demo` | `RESULT check-demo-final exit=0 elapsed=24.13s` | not a TAP test |
+| final-audit | `python3 .test-tmp/paid-cap/audit.py` | `RESULT final-audit exit=0 elapsed=0.33s` | not a TAP test |
+| final-diff-check | `git diff --check` | `RESULT final-diff-check exit=0 elapsed=0.25s` | not a TAP test |
+
+### Commit, review and remaining gates
+
+The progressive staging/commit chain was `git add <five CAP-A files> && git -c user.name='Control Room Worker' -c user.email=worker@localhost commit -m 'test(usage): prove paid admission and bound guards red through new seams'`. `git add` exited 128 with `fatal: Unable to create index.lock: Operation not permitted`; commit was never reached. Per the brief, the lock refusal was not retried or escalated; all work is uncommitted for the lead. No Git identity configuration changed. New commit SHAs: none; retained base SHA is above. Tracked docs and five untracked sources are intentionally retained, so a clean-worktree/committed-candidate gate is not claimed.
+
+No independent code/attack/CI review of a committed CAP-A candidate occurred. The lead-provided pinned Node22 Linux environment/image was not supplied, so required Linux parity is NOT RUN. No alternate reviewer/model CLI was launched. Local guard probes and source inspection do not substitute for those reviews. CAP-B, its executor/restart tests and driver --self-check are NOT RUN because that continuation requires reviewed CAP-A. No real paid provider, production consent endpoint, production ledger or tiny probe is available. PG17-later tests/migrations remain separately authorized production work; no PG server was started. The private-name denylist gate is NOT RUN because no lead list was provided; limited changed-file text audit is recorded separately.
+
+Review packet source digest (uncommitted, not a git SHA): `sha256:2e9c543c48b8a56baf71b97199bb82db26bf1683d2b77ccfed002b8736447efe`.
+
+- `src/usage/v1/paid-run-admission.ts`: `sha256:4d0d3c98a0feb41d51b26b0eeccf764664be48328c47178593a61a24c20cf9b3`
+- `src/usage/v1/paid-run-bound.ts`: `sha256:3e660128a6db9e7b77a948e8a91fe8b0000d7db0752afae92352e3b5bb29d39c`
+- `tests/helpers/paid-run-fake-provider.ts`: `sha256:cf5f23848d5923a7b069157d37f06663c12f336c193f1de861d872c370021fce`
+- `tests/paid-run-admission.test.ts`: `sha256:ca24a32d22bb6a259f7b091d652af41775f7f7b11bf41c8b2ace51e82d2425c5`
+- `tests/paid-run-bound.test.ts`: `sha256:150c539f3d7960fb2f77a131a1c3b61e9bb3fbbfe27d1c47ca523acd98972868`
+
+Cleanup: all command sessions completed in the foreground; no listener, engine, provider or PostgreSQL process was started. All per-probe throwaway copies and per-test readiness directories were removed. Ignored scratch retains only reproduction scripts and evidence logs/snapshots, with no background job. node_modules remains its original symlink and is not staged. No downloads, network requests, live-install ports, credential files, keychain operations or real model/provider launches. The allowed-write audit covers exactly the five CAP-A files plus this chunk's spec/evidence/status docs.
+
+Findings drafted: HIGH 0 / MEDIUM 0 / LOW 0 from local build checks; no independent review claimed.
+
+Status: BLOCKED: CAP-A reviews/Linux/commit gates and required build/lane/zero-skip checks incomplete; CAP-B withheld
