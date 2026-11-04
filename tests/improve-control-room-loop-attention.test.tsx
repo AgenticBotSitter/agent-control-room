@@ -105,6 +105,8 @@ async function fixture() {
       : saved.approval ? {kind:"approve"} : !saved.confirmation ? {kind:"confirm"} : null } });
   let documentText = "Sealed complete plan.\n".repeat(4000), documentCalls = 0;
   const adapter: LoopAdapterV1 = { adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
+    // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
+    checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     available:()=>true,reserveRun:()=>`synthetic-run:${++sequence}`,
     intake:(id,b,text)=>complete("intake",id,b,text),confirmRequest:(id,b)=>complete("confirm",id,b),start:(id,b)=>complete("start",id,b),stop:(id,b)=>complete("stop",id,b),
     approve:(id,b)=>complete("approve",id,b),answer:(id,b,text)=>complete("answer",id,b,text),status:async()=>snapshot(),

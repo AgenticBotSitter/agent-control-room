@@ -609,6 +609,8 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
     return snapshot();
   };
   const adapter: Adapter = { adapterId: "adapter:synthetic-b5", toolingRevision, schemaDigest, settingsText, contract,
+    // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
+    checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     available: () => true, reserveRun: () => `synthetic-run:b5-${++sequence}`,
     intake: (id, b, text) => command("intake", id, b, text), confirmRequest: (id, b) => command("confirm", id, b), start: (id, b) => command("start", id, b),
     stop: (id, b) => command("stop", id, b), approve: (id, b) => command("approve", id, b), answer: (id, b, text) => command("answer", id, b, text),

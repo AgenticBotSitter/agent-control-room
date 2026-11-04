@@ -52,6 +52,8 @@ async function syntheticFixture(options: { website?: boolean } = {}) {
     approval:null,question:null,progress:{step:"final",completed:1,attention:"none"},receipts:[]};
   const forbidden:string[]=[], unexpected=async()=>{forbidden.push("unexpected operation");throw new Error("SYNTHETIC forbidden");};
   const adapter:import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,
+    // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
+    checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     reserveRun:()=>run.loopRunId,available:()=>true,status:async()=>structuredClone(status),
     intake:options.website?async(id,b,text,fence)=>{fence();status={...status,revision:3,state:"draft",description:text,confirmation:null,
       receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC intake"})}]};return structuredClone(status);}:unexpected,

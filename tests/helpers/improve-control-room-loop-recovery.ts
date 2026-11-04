@@ -13,7 +13,7 @@ export const recoveryKey = new Uint8Array(32).fill(73);
 export const syntheticSettings = JSON.stringify({project:{host_adapter:"local-loop"},fixture:"SYNTHETIC"});
 // A persistent test engine. No agents, credentials, model or network calls.
 const cli = `import os,sys,json,hashlib,time,signal
-root=os.path.dirname(os.path.abspath(__file__))
+root=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 op,run=sys.argv[1:3];args=sys.argv[3:];file=os.path.join(root,'runs',run+'.json')
 def h(s): return hashlib.sha256(s.encode()).hexdigest()
 def flag(k): return args[args.index(k)+1]
@@ -49,8 +49,17 @@ export async function syntheticRecoveryEngine(t: TestContext) {
   await mkdir(resolve('.test-tmp'),{recursive:true});
   const root=await mkdtemp(resolve('.test-tmp/b3a-fixture-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
-  for(const d of ['runs','work'])await mkdir(join(root,d));
-  await writeFile(join(root,'engine.py'),cli);await writeFile(join(root,'tooling.json'),'SYNTHETIC recovery v1');
+  for(const d of ['runs','work','bridge'])await mkdir(join(root,d));
+  // The real adapter resolves cr.py beside bridge/, even in this synthetic host.
+  // Validate the exact fixture defaults; this is not qualified tools evidence.
+  await writeFile(join(root,'cr.py'),`import sys,json
+assert sys.argv[1:3]==['check','lineup']
+with open(sys.argv[sys.argv.index('--settings')+1]) as f: candidate=json.load(f)
+with open(sys.argv[sys.argv.index('--availability')+1]) as f: json.load(f)
+assert candidate==json.loads(${JSON.stringify(syntheticSettings)})
+print(json.dumps(dict(eligible=True,reasons=[])))
+`);
+  await writeFile(join(root,'bridge/engine.py'),cli);await writeFile(join(root,'tooling.json'),'SYNTHETIC recovery v1');
   await writeFile(join(root,'settings.json'),syntheticSettings);await writeFile(join(root,'availability.json'),'{}');
   const interpreter=realpathSync(process.platform==='darwin'?'/Library/Developer/CommandLineTools/usr/bin/python3':'/usr/bin/python3');
   const toolingRevision=`sha256:${loopByteHashV1('SYNTHETIC recovery v1')}`;
@@ -62,7 +71,7 @@ export async function syntheticRecoveryEngine(t: TestContext) {
   };
   const configuration:LoopAdapterConfigurationV1={adapterId:'adapter:synthetic',toolingRevision,
     interpreter,interpreterSha256:loopByteHashV1(await readFile(interpreter)),
-    entrypoint:join(root,'engine.py'),entrypointSha256:loopByteHashV1(cli),toolingManifest:join(root,'tooling.json'),configRoot:root,
+    entrypoint:join(root,'bridge/engine.py'),entrypointSha256:loopByteHashV1(cli),toolingManifest:join(root,'tooling.json'),configRoot:root,
     runRoot:join(root,'runs'),workRoot:join(root,'work'),cwd:root,settingsFile:join(root,'settings.json'),availabilityFile:join(root,'availability.json'),
     settingsSha256:loopByteHashV1(syntheticSettings),availabilitySha256:loopByteHashV1('{}'),executionIdentity:{uid:process.getuid!(),isolationEvidenceDigest:sha256Digest('SYNTHETIC isolation')},
     contract:{lineage,schemaDigest:sha256Digest('SYNTHETIC recovery schema'),generateRunId:()=>`fixture-run-${randomBytes(16).toString('hex')}`,
