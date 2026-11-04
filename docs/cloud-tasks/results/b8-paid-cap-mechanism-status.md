@@ -1,16 +1,17 @@
 # b8-paid-cap-mechanism status
-Phase: BUILD — CAP-A FIX only
-Baseline: cook/b8-paid-cap 15431739ec5dddae885bc3fde29206342514c29c
-Candidate: uncommitted CAP-A FIX worktree; git add exited 128 because index.lock creation was refused; lead must commit; no retry/escalation or commit attempt followed
-Review input: NEEDS-FIX, HIGH 0 / MEDIUM 1 / LOW 4; all five findings locally addressed, independent CLEAN disposition pending
-Completed: profile/mode-bound frozen ceilings; malformed resolution refusal; single admission per consumed capability; specification restored to fba6ae026; helper exports proposed for review in D16; independent literal digest expectations; committed reproducible guard mutations
-Red-first: MEDIUM-1 0/1, LOW-2 1/8, LOW-3 0/1 pass/fail; intended behavioral defects observed before fixes
-Checks PASS: paid-run wildcard 71/71 and affected usage/provider 63/63, zero skips; check and check:demo; loaders; quarantine 0 entries; whitespace
-Guard probes: 14/14 killed; 70/70 green baseline and 70/70 restored after each mutation; no original source modified by probes
-Lane coverage: exit 1, exactly 3 unregistered files (paid-run-admission, paid-run-bound, paid-run-guard-mutations); final package registration remains CAP-B
-Not rerun: Vite build (prior dependency-symlink write refusal), product-shell/browser qualification, pinned Linux parity and independent reviews; earlier results are historical only
-Pending: reviewer/lead disposition of D16 exports and independent CLEAN review of the fixed CAP-A candidate; CAP-B remains withheld
-Production: paidExecutionReady=false; durable PG17 consent/ledger, owner endpoints, complete resolver, broker, reviewed provider profile and real-probe qualification remain later work
-Owner questions: Q1/Q2 test-only cap/lifetime constants authorize no real spending
-Cleanup: foreground checks completed; disposable test directories removed; no server, real model/provider or PG cluster started; node_modules remains its original unstaged symlink; no push or Git identity configuration change
-Status: BLOCKED: git index.lock creation refused; lead must commit fixed CAP-A; CLEAN review still required before CAP-B
+Phase: BUILD — CAP-B stopped on specification/code contract gap
+Baseline: cook/b8-paid-cap cc81268c9dfbe35a72fe7f00fbf8e59794b1ab5f (reviewed CAP-A CLEAN)
+Candidate: uncommitted package registration and evidence/status only; no new commit
+Spec gate: reviewed r3; this continuation requires a reviewed recovery-authority clarification
+Budget: six-hour limit; stopped early on explicit brief/spec mismatch rule; handoff updated 2026-11-04T21:45:07.002954+00:00
+Completed: all three CAP-A tests appended to test:product-shell; temporary red-test scaffold removed; no product code changed
+Blocker: spec T5 requires parent reopening after killing the ledger-owning child, but open(admission) requires authentic exact consentId binding; CAP-A uses random consent IDs and process-local private authority maps with no recovery API
+Proof: real child/parent entry-point probe passes five assertions (same run/pin, different consentId, serialized child unbranded, parent authentic); child exited and reaped
+Checks PASS: existing paid-run wildcard 71/71 zero skips/cancellations; all 14 CAP-A mutations killed with green restores; lane coverage all 934 files; loaders; quarantine 0 entries; whitespace
+Not run after mandatory STOP: CAP-B suites/driver/attacks, affected usage/provider, full product-shell, check/check:demo/build, candidate independent reviews and Linux parity; private-name guard unconfigured
+Reviews: inherited CAP-A CLEAN; R2 malformed-context LOW remains; registration advisory addressed; no CAP-B review verdict
+Pending qualification: all CAP-B gates; PG17 production ledger/consent, broker/profile/endpoint/native paid checks remain separate future work
+Owner questions: Q1/Q2 remain test-only; no production spending authorized
+Next action: lead-reviewed recovery/report-only reopen or trusted reconstruction contract; lead commit of retained changes because index.lock refused
+Cleanup: owned foreground checks/children completed and reaped; no cluster, listener or provider launched; node_modules unchanged/unstaged; no push
+Status: BLOCKED: T5 cross-process journal reopen lacks a trusted admission recovery contract; git index.lock creation refused

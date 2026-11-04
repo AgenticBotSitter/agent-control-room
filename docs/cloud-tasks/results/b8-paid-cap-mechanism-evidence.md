@@ -245,3 +245,47 @@ Not rerun in this focused fix: Vite build (the prior reviewed dependency-symlink
 Commit outcome for this FIX: staging the nine allowed files with `git add` exited 128: index.lock creation was refused (Operation not permitted). Per the brief, no retry or escalation was made and no commit command was reached. No new commit SHA exists; baseline remains `15431739ec5dddae885bc3fde29206342514c29c`. All nine files remain uncommitted for the lead. No Git identity configuration was changed, and node_modules was never included. The pending commit is a custody blocker, independent of the passing local behavior checks.
 
 Status: BLOCKED: git index.lock creation refused; lead must commit fixed CAP-A; CAP-B withheld
+
+## CAP-B continuation — stopped at restart-authority contract gap
+
+Baseline: `cook/b8-paid-cap` at `cc81268c9dfbe35a72fe7f00fbf8e59794b1ab5f` (reviewed CAP-A CLEAN). Native Node `v22.23.4`. No production/provider capability enabled.
+
+The brief requires stopping if the reviewed spec does not match the existing code. The dependent CAP-B implementation is stopped on this exact gap:
+
+- Spec §7.2 T5 requires a ledger-owning child to die and the parent to recover the lease and reopen its journal.
+- Spec §5.2 requires `open(admission)`. Spec §3.2 rule 6 requires an authentic admission and exact journal `runKey`, `pinDigest`, and `consentId` bindings.
+- Reviewed `paid-run-admission.ts:49,52` keeps issuance in a local Map and allocates each consent ID with `randomUUID()`. Lines 32, 89, 135, and 148 authenticate consumed handles/admissions using private process-local maps/sets; there is no trusted recovery/reconstitution API.
+- A parent cannot authenticate a serialized child admission. A fresh genuine parent issuance for the same context/cap has matching run/pin but a different consent ID and must fail `cross_run`. Changing fields on the fresh admission creates an unbranded copy.
+
+A real two-process probe through the existing consent/admission entry points verified five independent assertions: child JSON admission unbranded; parent admission authentic; runKey equal; pinDigest equal; consentId different. Child exit 0, reaped. This establishes the missing recovery authority path; it does not claim a completed ledger or restart implementation. The admission protections are behaving correctly.
+
+Lead action: specify and review a safe recovery/report-only reopen contract or equivalent trusted reconstruction. Public arbitrary mint/import, deterministic consent issuance, weakening consent equality/branding, or keeping the real ledger owner alive outside the killed child would change the contract or weaken T5. None was introduced. No reviewed specification was edited.
+
+Before discovering the blocker, a minimal executable new executor/fake seam was run red: the 5,999,999 cap dispatched instead of refusing a 6,000,000 bound; the exact 6,000,000 positive control passed. Temporary new scaffold/test/transport changes were removed on STOP. This was new-seam red evidence, never an old-product enforcement claim. Red sources and the standalone authority probe remain in ignored `.test-tmp/paid-cap-b/` only.
+
+Retained implementation change: append all three reviewed CAP-A test files to `package.json` `test:product-shell`. Existing lane command remains an identical prefix; no file removal, skip, quarantine, CI workflow change, or dependency change. CI still reaches the lane via `.github/workflows/ci.yml:563`; aggregate `test:components` still includes it.
+
+| Exact command (test commands use CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1) | Exit | Counts/result |
+|---|---|---|
+| `node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-executor.test.ts` (temporary red scaffold, subsequently removed) | 1 | 2 tests / 1 pass / 1 intended assertion fail / 0 skipped |
+| `node --import tsx .test-tmp/paid-cap-b/restart-authority.ts` (initial scratch probe) | 1 | setup error: relative imports traversed one directory too far; not behavioral evidence |
+| `node --import tsx .test-tmp/paid-cap-b/restart-authority.ts` (corrected path depth) | 0 | 5 assertions PASS; real child exited 0 and reaped |
+| `node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts` | 0 | 70 tests / 70 pass / 0 fail / 0 skipped / 0 cancelled |
+| `node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-bound.test.ts tests/paid-run-admission.test.ts tests/paid-run-guard-mutations.test.ts` | 0 | 71 tests / 71 pass / 0 fail / 0 skipped / 0 cancelled; 18.75 s |
+| `node scripts/check-test-lane-coverage.mjs` (initial and final) | 0 | all 934 test files reachable |
+| `npm run check:test-loaders` | 0 | all TypeScript test invocations preload tsx |
+| `npm run check:test-quarantine` | 0 | valid; 0 entries |
+| `git diff --check` | 0 | whitespace PASS |
+
+The mutation harness killed all 14 CAP-A mutants at their expected behavioral assertions and restored 70/70 passing tests after each, with zero skipped/cancelled; original source files remained intact and disposable mutation copies were removed. CAP-B dispatch/cap/Stop/restart mutations remain NOT RUN.
+
+Not run after mandatory specification STOP: CAP-B executor/restart suites and driver --self-check (not implemented), remaining CAP-B attacks, affected usage/provider suites, full product-shell, check, check:demo, build, independent candidate code/attack/CI reviews, or supplied Linux parity. No CAP-B implementation is claimed. Private-name check NOT RUN without a lead-provided list. PG17-later ledger/consent/migration and production qualification remain separate future work; no PostgreSQL cluster or DB-backed test started in this continuation.
+
+R2 residual malformed-context LOW remains unmodified after STOP. Existing mutation-harness registration is addressed. No independent partial-candidate review verdict claimed. Native paid readiness remains false (also asserted by the passing actual-adapter T17 test).
+
+Commit custody: `git add package.json` exited 128 because index.lock creation was refused (Operation not permitted). The chained per-commit worker identity command was never reached; no retry, escalation, config edit, or new commit. Lead must commit any retained changes. HEAD remains the full baseline SHA above. No push, download, external request, real provider/model, paid probe, live install, prohibited port, PG cluster, or listener started. Owned command children completed and were reaped. node_modules remains its unchanged unstaged symlink.
+
+
+Final custody audit: `python3 .test-tmp/paid-cap-b/audit.py` exited 0 with 15 assertions. Exactly package.json plus this evidence file and status changed; staged index empty; reviewed spec/source unchanged; temporary product scaffold absent; no machine/home paths added. `git diff --exit-code HEAD -- docs/cloud-tasks/results/b8-paid-cap-mechanism-spec.md` exited 0. Final whitespace initially exited 2 for one extra EOF blank line in this evidence file; trimming it made `git diff --check` exit 0. These were documentation-only corrections.
+
+Status: BLOCKED: T5 cross-process journal reopen lacks a trusted admission recovery contract; git index.lock creation refused
