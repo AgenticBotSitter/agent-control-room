@@ -202,3 +202,9 @@ test("ledger refuses a pinned entry whose kind was changed", async t => {
   await write(tampered);
   await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_kind/);
 });
+
+test("ledger refuses a committed digest that does not match its entries", async t => {
+  const { run, ledgerPath, write, ledger } = await pinnedLedgerCopy(t);
+  await write({ ...ledger(), digest: "0".repeat(64) });
+  await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_digest/);
+});
