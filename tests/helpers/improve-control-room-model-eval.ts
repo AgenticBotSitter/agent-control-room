@@ -6,12 +6,13 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { B5_PROTECTED_TESTS, B5_RECIPES, B5_REQUEST_TEXT, B5_REQUIRED_RISK, B5RefusalV1,
-  b5Bytes, requireB5RecipesV1, readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1 } from "./improve-control-room-first-website";
+  b5Bytes, requireB5RecipesV1, readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, b5StatusCheckRecordSchemaV1 } from "./improve-control-room-first-website";
 
 const exec = promisify(execFile);
 function refuse(code: string): never { throw new B5RefusalV1(code); }
 export const MODEL_EVAL_ROOT = /^acr-b11-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u;
 export const MODEL_EVAL_REQUEST = "Add --lean --out DIR to bin/build_prompts.py to render lean variants of tasks that have a lean role into that folder without changing tasks/. Refuse roles without a lean text. Ask me whether the lean version keeps the KIT NOTE before choosing. Change only bin/build_prompts.py and DESIGN.md.";
+export const MODEL_EVAL_CHANGED_PATHS = Object.freeze(["bin/build_prompts.py", "DESIGN.md"]);
 export const MODEL_EVAL_RISK = Object.freeze({ categories: ["code", "ci"], slots: ["attack-review", "ci-review"] });
 export const MODEL_EVAL_PROTECTED = Object.freeze(["bin/test_build_prompts_lean.py", "bin/diagnostic/lean_isolation_check.py"]);
 const pythonPinSchema = z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
@@ -54,12 +55,18 @@ export async function requireModelEvalRecipesV1(checks: unknown, _root: string, 
 export const FIRST_WEBSITE_PROFILE = Object.freeze({ id: "first-website" as const,
   rootName: /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u, requestText: B5_REQUEST_TEXT,
   recipes: B5_RECIPES, requiredRisk: B5_REQUIRED_RISK, protectedTests: B5_PROTECTED_TESTS,
-  validateRecipes: requireB5RecipesV1, diagnostic: runIndependentStatusCheckV1 });
+  validateRecipes: requireB5RecipesV1,
+  diagnostic: { id: "site-status", argv: () => B5_RECIPES[1].argv, recordSchema: b5StatusCheckRecordSchemaV1,
+    runner: runIndependentStatusCheckV1, rejectedHeadMustFail: true }, changedPaths: ["index.html"],
+  fixtureQuestionAnswer: "Amber", verifyEvidence: verifyFirstWebsiteEvidenceV1 });
 export function modelEvalProfileV1(pin: ModelEvalPythonPinV1) {
-  return Object.freeze({ id: "model-eval" as const, rootName: MODEL_EVAL_ROOT, requestText: MODEL_EVAL_REQUEST,
+  return Object.freeze({ id: "model-eval" as const, python: pin, rootName: MODEL_EVAL_ROOT, requestText: MODEL_EVAL_REQUEST,
     recipes: modelEvalRecipesV1(pin.path), requiredRisk: MODEL_EVAL_RISK, protectedTests: MODEL_EVAL_PROTECTED,
     validateRecipes: (checks: unknown, root: string) => requireModelEvalRecipesV1(checks, root, pin),
-    diagnostic: runModelEvalDiagnosticV1, validateInputs: validateModelEvalFrozenInputsV1, verifySources: verifyModelEvalSourcesUnchangedV1 });
+    diagnostic: { id: "lean-isolation", argv: () => modelEvalRecipesV1(pin.path)[2].argv,
+      recordSchema: modelEvalCheckRecordSchemaV1(pin), runner: (root: string, repo: string, output: string) => runModelEvalDiagnosticV1(root, repo, output, pin),
+      rejectedHeadMustFail: false }, changedPaths: MODEL_EVAL_CHANGED_PATHS, fixtureQuestionAnswer: "Keep the KIT NOTE",
+    verifyEvidence: verifyModelEvalCandidateV1, validateInputs: validateModelEvalFrozenInputsV1, verifySources: verifyModelEvalSourcesUnchangedV1 });
 }
 export type JourneyProfile = typeof FIRST_WEBSITE_PROFILE | ReturnType<typeof modelEvalProfileV1>;
 export function modelEvalStageConstantsV1(pin: ModelEvalPythonPinV1) {
@@ -238,4 +245,90 @@ export async function runModelEvalDiagnosticV1(root: string, repo: string, outpu
     head, protectedTestsDigest: `sha256:${protectedTestsDigest}`, startedAt, endedAt: new Date().toISOString(), durationMs: Date.now() - start,
     exitCode, ...counts, outputPath, outputSha256: b5Bytes(output) });
   return { record, output };
+}
+
+export type ModelEvalCheckRecordV1 = z.infer<ReturnType<typeof modelEvalCheckRecordSchemaV1>>;
+
+/** Independently read Git objects, including protected bytes at every rejected head. */
+export async function readModelEvalCandidateRepositoryV1(repository: string,
+  heads: z.infer<typeof import("./improve-control-room-first-website").b5ManifestSchemaV1>["heads"]) {
+  try {
+    if (!isAbsolute(repository) || await realpath(repository) !== repository || !(await lstat(repository)).isDirectory()) refuse("B5_CANDIDATE_REPOSITORY");
+    const git = async (args: string[]) => (await exec("/usr/bin/git", ["-C", repository, "-c", "core.fsmonitor=false", ...args],
+      { encoding: "buffer", timeout: 30_000, maxBuffer: 8 << 20,
+        env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } })).stdout;
+    const gitdir = join(repository, ".git");
+    if (!(await lstat(gitdir)).isDirectory() || await realpath(gitdir) !== gitdir
+      || await lstat(join(gitdir, "objects/info/alternates")).then(() => true, e => { if (e.code === "ENOENT") return false; throw e; })) refuse("B5_CANDIDATE_REPOSITORY");
+    if ((await git(["rev-parse", "--absolute-git-dir"])).toString().trim() !== gitdir) refuse("B5_CANDIDATE_REPOSITORY");
+    const ordered = [heads.base, ...(heads.rejectedHeads ?? [heads.rejected]), heads.final];
+    if (ordered.some(head => !/^[a-f0-9]{40}$/u.test(head))) refuse("B5_CANDIDATE_REPOSITORY");
+    const protectedTests: string[] = [];
+    for (const [i, head] of ordered.entries()) {
+      await git(["cat-file", "-e", `${head}^{commit}`]);
+      if (i > 0) await git(["merge-base", "--is-ancestor", ordered[i - 1]!, head]);
+      const hash = createHash("sha256");
+      for (const name of [...MODEL_EVAL_PROTECTED].sort()) hash.update(name + "\0").update(await git(["show", `${head}:${name}`])).update("\0");
+      protectedTests.push(`sha256:${hash.digest("hex")}`);
+    }
+    return { head: (await git(["rev-parse", "HEAD"])).toString().trim(),
+      clean: (await git(["status", "--porcelain", "--untracked-files=all"])).length === 0,
+      remotes: (await git(["remote"])).toString().trim(), protectedTests,
+      changed: (await git(["diff", "--name-only", "-z", heads.base, heads.final])).toString().split("\0").filter(Boolean) };
+  } catch { return refuse("B5_CANDIDATE_REPOSITORY"); }
+}
+
+export function assertModelEvalFullReportV1(card: import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1) {
+  const e = card.evidence;
+  if (!e.summary?.trim() || !e.changedAreas?.length || e.changedAreas.some(name => !MODEL_EVAL_CHANGED_PATHS.includes(name))
+    || e.databaseChanges?.kind !== "none" || e.assumptions == null || e.validations == null) refuse("B5_FULL_REPORT_INCOMPLETE");
+}
+export function assertModelEvalCardChecksV1(card: import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1) {
+  for (const id of ["kit-bin", "kit-scoring"]) {
+    const c = card.evidence.checks.find(check => check.id === id);
+    if (!c || !c.required || c.status !== "PASS" || c.exitCode !== 0 || c.candidateRevision !== card.candidateRevision
+      || c.completed < 1 || c.passed !== c.completed || c.failed !== 0 || c.skipped !== 0) refuse("B5_HEAD_BINDING");
+  }
+  if (card.evidence.checks.find(c => c.id === "lean-isolation")?.required === true) refuse("B5_HEAD_BINDING");
+}
+
+/** The same retained verifier, with only the kit's report/recipe/repository policies. */
+export async function verifyModelEvalCandidateV1(evidenceDir: string,
+  input: Omit<Parameters<typeof verifyFirstWebsiteEvidenceV1>[1], "policy"> & { proofRoot: string; requireRejectedDiagnosticFailure?: boolean }) {
+  const root = input.proofRoot;
+  // Re-authenticate the frozen marker at the final boundary, including a restart.
+  const profile = await resolveJourneyProfileV1(root, "model-eval");
+  const packet = modelEvalProfilePacketSchemaV1.parse(JSON.parse((await readFirstWebsitePrivateBytesV1(join(root, "config/model-eval-profile.json"), root)).toString()));
+  const settingsBytes = await readFirstWebsitePrivateBytesV1(join(root, "config/settings.json"), root);
+  const availabilityBytes = await readFirstWebsitePrivateBytesV1(join(root, "config/availability.json"), root);
+  if (b5Bytes(settingsBytes) !== input.pins.digests.settings || b5Bytes(availabilityBytes) !== input.pins.digests.availability) refuse("B5_INPUT_CHANGED");
+  const settings = JSON.parse(settingsBytes.toString());
+  const availability = JSON.parse(availabilityBytes.toString());
+  await profile.validateRecipes(settings.project?.test_checks, root);
+  await validateModelEvalFrozenInputsV1(root, settings, availability, input.pins.providers.lineup);
+  const policy: import("./improve-control-room-first-website").FirstWebsiteEvidencePolicyV1 = {
+    requiredRisk: MODEL_EVAL_RISK, requireRejectedDiagnosticFailure: input.requireRejectedDiagnosticFailure ?? false,
+    checkSchema: modelEvalCheckRecordSchemaV1(packet.python),
+    assertFullReport: assertModelEvalFullReportV1, assertCardChecks: assertModelEvalCardChecksV1,
+    assertRepository: async (repository, manifest, checks, card) => {
+      const facts = await readModelEvalCandidateRepositoryV1(repository, manifest.heads);
+      if (repository !== join(root, "work/repo") || facts.head !== manifest.heads.final || facts.head !== card.candidateRevision
+        || !facts.clean || facts.remotes !== "") refuse("B5_CANDIDATE_REPOSITORY");
+      const changed = [...facts.changed].sort(), areas = [...(card.evidence.changedAreas ?? [])].sort();
+      if (!changed.length || changed.some(name => !MODEL_EVAL_CHANGED_PATHS.includes(name))
+        || JSON.stringify(changed) !== JSON.stringify(areas)) refuse("B5_CANDIDATE_REPOSITORY");
+      const expected = `sha256:${packet.protectedTestsDigest}`;
+      if (facts.protectedTests.some(digest => digest !== expected) || checks.some(c => c.protectedTestsDigest !== expected)) refuse("B5_PROTECTED_TEST_CHANGED");
+      for (const c of checks) {
+        const output = (await readFirstWebsitePrivateBytesV1(join(evidenceDir, c.outputPath), root)).toString();
+        const counts = parseModelEvalUnittestV1(output);
+        if (JSON.stringify(counts) !== JSON.stringify({ completed: c.completed, passed: c.passed, failed: c.failed, skipped: c.skipped })
+          || (c.exitCode === 0) !== (c.failed === 0) || c.skipped !== 0 || c.completed !== c.passed + c.failed
+          || Date.parse(c.endedAt) < Date.parse(c.startedAt)) refuse("B5_DIAGNOSTIC_INVALID");
+      }
+    },
+    validateJourney: async journey => validateModelEvalFrozenInputsV1(root, settings, availability,
+      journey.steps.map(s => ({ identity: s.identity, route: s.provider.route }))),
+  };
+  return verifyFirstWebsiteEvidenceV1(evidenceDir, { ...input, policy });
 }

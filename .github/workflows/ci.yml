@@ -468,7 +468,7 @@ jobs:
         run: node --test tests/run-scripts-keep-going.test.mjs
       - name: Install the frozen dependency graph
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Prove second project stage and recipe guards
+      - name: Prove second project stage, verifier and retained journey guards
         timeout-minutes: 5
         run: pnpm run test:improve-control-room-second-project
       - name: Verify the mutation workflow guards
