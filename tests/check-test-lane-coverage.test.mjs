@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
 
 function fixture({ scripts, workflow, tests }) {
@@ -64,4 +66,19 @@ test("quoted and block workflow commands are extracted", () => {
     "      pnpm run test:two",
     "      node --test tests/direct.test.js",
   ].join("\n")), ["pnpm install --frozen-lockfile", "pnpm run test:one", "pnpm run test:two\nnode --test tests/direct.test.js"]);
+});
+
+test("the CLI exits non-zero and names a test file no workflow command reaches", () => {
+  const root = mkdtempSync(join(tmpdir(), "control-room-lane-coverage-cli-"));
+  try {
+    mkdirSync(join(root, ".github/workflows"), { recursive: true });
+    mkdirSync(join(root, "tests"));
+    copyFileSync(new URL("../package.json", import.meta.url), join(root, "package.json"));
+    copyFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), join(root, ".github/workflows/ci.yml"));
+    writeFileSync(join(root, "tests/orphan-lane-coverage-fixture.test.mjs"), "");
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("../scripts/check-test-lane-coverage.mjs", import.meta.url))],
+      { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /tests\/orphan-lane-coverage-fixture\.test\.mjs/u);
+  } finally { rmSync(root, { recursive: true }); }
 });
