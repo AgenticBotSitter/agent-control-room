@@ -391,11 +391,20 @@ test("B5 browser intake requires accepted state even for HTTP 202", () => {
 });
 
 // Evidence projection maps back to the internal pin names only after parsing.
-function readControllerStartDigests(value: unknown): import("./helpers/improve-control-room-first-website").B5QualifiedPinsV1["digests"] {
-  const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
-  const { authorizationSha256, ...otherDigests } = z.object({ authorizationSha256: digest }).catchall(digest).parse(value);
-  return { ...otherDigests, authorization: authorizationSha256 } as import("./helpers/improve-control-room-first-website").B5QualifiedPinsV1["digests"];
+// Every required pin is validated at runtime; extra digest-only commitments (such as transport) stay accepted.
+const b5StartDigestV1 = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+const b5ControllerStartDigestsSchemaV1 = z.object({
+  authorizationSha256: b5StartDigestV1, settings: b5StartDigestV1, availability: b5StartDigestV1, qualification: b5StartDigestV1,
+  assembly: b5StartDigestV1, faultInput: b5StartDigestV1, reviewInput: b5StartDigestV1,
+}).catchall(b5StartDigestV1).superRefine((digests, ctx) => {
+  if (Object.hasOwn(digests, "authorization")) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["authorization"], message: "internal pin name is not a wire key" });
+}).transform(({ authorizationSha256, ...otherDigests }) => ({ ...otherDigests, authorization: authorizationSha256 }));
+function readControllerStartDigests(value: unknown): z.output<typeof b5ControllerStartDigestsSchemaV1> {
+  return b5ControllerStartDigestsSchemaV1.parse(value);
 }
+const b5StartDigestsAssignableV1 = (digests: z.output<typeof b5ControllerStartDigestsSchemaV1>):
+  import("./helpers/improve-control-room-first-website").B5QualifiedPinsV1["digests"] => digests;
+void b5StartDigestsAssignableV1;
 
 test("B5 controller-start consumer restores every internal preflight pin", () => {
   const digests = Object.fromEntries(["authorization", "settings", "availability", "qualification", "assembly", "faultInput", "reviewInput", "transport"]
@@ -404,6 +413,72 @@ test("B5 controller-start consumer restores every internal preflight pin", () =>
     rehearsal: true, captureMode: "fixture-browser-loopback" });
   assert.deepEqual(readControllerStartDigests(JSON.parse(JSON.stringify(start)).preflightDigests), digests);
   assert.throws(() => readControllerStartDigests(digests), z.ZodError);
+});
+
+const B5_START_REQUIRED_DIGESTS = ["authorization", "settings", "availability", "qualification", "assembly", "faultInput", "reviewInput"] as const;
+function b5StartDigestFixture(names: readonly string[]) {
+  const digests = Object.fromEntries(names.map(name => [name, b5Bytes(`synthetic ${name}`)]));
+  const preflight = JSON.parse(JSON.stringify(projectB5ControllerStartV1({ digests, startedAt: "2026-11-03T00:00:00.000Z",
+    maxDurationMs: 60_000, rehearsal: true, captureMode: "fixture-browser-loopback" }))).preflightDigests as Record<string, unknown>;
+  return { digests, preflight };
+}
+const b5StartWireKey = (name: string) => name === "authorization" ? "authorizationSha256" : name;
+function assertB5StartDigestRejected(input: Record<string, unknown>) {
+  const before = JSON.stringify(input), copy = structuredClone(input);
+  assert.throws(() => readControllerStartDigests(input), z.ZodError);
+  assert.equal(JSON.stringify(input), before);
+  assert.deepEqual(input, copy);
+}
+
+for (const [label, names] of [["complete seven-key", B5_START_REQUIRED_DIGESTS], ["optional transport", [...B5_START_REQUIRED_DIGESTS, "transport"]]] as const) {
+  test(`B5 controller-start consumer preserves ${label} digests byte-for-byte`, () => {
+    const { digests, preflight } = b5StartDigestFixture(names);
+    const before = JSON.stringify(preflight), copy = structuredClone(preflight);
+    const restored: Record<string, string> = readControllerStartDigests(preflight);
+    assert.deepEqual(restored, digests);
+    assert.deepEqual(Object.keys(restored).sort(), [...names].sort());
+    for (const name of names) {
+      assert.strictEqual(restored[name], preflight[b5StartWireKey(name)]);
+      assert.deepEqual(Buffer.from(restored[name]!, "utf8"), Buffer.from(digests[name]!, "utf8"));
+    }
+    assert.equal("authorizationSha256" in restored, false);
+    assert.equal(JSON.stringify(preflight), before);
+    assert.deepEqual(preflight, copy);
+  });
+}
+
+for (const name of B5_START_REQUIRED_DIGESTS) {
+  test(`B5 controller-start consumer rejects a missing ${b5StartWireKey(name)} pin`, () => {
+    const { preflight } = b5StartDigestFixture([...B5_START_REQUIRED_DIGESTS, "transport"]);
+    delete preflight[b5StartWireKey(name)];
+    assert.equal(Object.keys(preflight).length, 7);
+    assertB5StartDigestRejected(preflight);
+  });
+}
+
+test("B5 controller-start consumer rejects malformed required and extra digest values", () => {
+  const hex = "a".repeat(64);
+  const bad: unknown[] = [undefined, null, 1, true, {}, [], [`sha256:${hex}`], "", `sha256:${hex.slice(1)}`, `sha256:${hex}0`,
+    `sha256:${"A".repeat(64)}`, `SHA256:${hex}`, `sha256:${"g".repeat(64)}`, `sha256:${"z".repeat(63)}a`, hex, `sha256:${hex} `, ` sha256:${hex}`, `sha256:${hex}\n`];
+  let cases = 0;
+  for (const key of [...B5_START_REQUIRED_DIGESTS.map(b5StartWireKey), "transport"]) {
+    for (const value of bad) {
+      const { preflight } = b5StartDigestFixture([...B5_START_REQUIRED_DIGESTS, "transport"]);
+      preflight[key] = value;
+      if (value === undefined) assert.equal(key in preflight, true);
+      assertB5StartDigestRejected(preflight);
+      cases++;
+    }
+  }
+  assert.equal(cases, 8 * bad.length);
+  for (const value of [null, undefined, 1, "x", [], `sha256:${hex}`]) assert.throws(() => readControllerStartDigests(value), z.ZodError);
+});
+
+test("B5 controller-start consumer rejects the internal authorization name", () => {
+  const { digests, preflight } = b5StartDigestFixture(B5_START_REQUIRED_DIGESTS);
+  assertB5StartDigestRejected({ ...digests });
+  const both = { ...preflight, authorization: digests.authorization };
+  assertB5StartDigestRejected(both);
 });
 
 async function requestPollFixture(t: test.TestContext) {
