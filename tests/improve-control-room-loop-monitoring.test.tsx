@@ -165,7 +165,7 @@ if(ordinary){
     const f=await fixture(t);await f.tick();await writeFile(f.file,payload(f.wall(),false));
     let accepted=0;try{f.monitor.assertAvailability();accepted++;}catch{}assert.equal(accepted,0,'B3b foreign snapshot accepted zero');
     await rm(f.file);await symlink(join(f.root,'other'),f.file);assert.throws(()=>f.monitor.assertAvailability());
-    await rm(f.file);await writeFile(f.file,payload(f.wall()),{mode:0o644});assert.throws(()=>f.monitor.assertAvailability());
+    await rm(f.file);await writeFile(f.file,payload(f.wall()),{mode:0o644});await chmod(f.file,0o644);assert.equal((await stat(f.file)).mode&0o777,0o644,'B3b public-mode fixture is 0644 regardless of umask');assert.throws(()=>f.monitor.assertAvailability());
   });
   test('B3b close fence and disabled opt in',async t=>{
     const f=await fixture(t);await f.monitor.close();await f.tick();assert.equal(f.calls(),0,'B3b no collection admitted after close');
