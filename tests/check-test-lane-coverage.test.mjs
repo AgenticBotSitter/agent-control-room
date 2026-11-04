@@ -82,3 +82,14 @@ test("the CLI exits non-zero and names a test file no workflow command reaches",
     assert.match(result.stderr, /tests\/orphan-lane-coverage-fixture\.test\.mjs/u);
   } finally { rmSync(root, { recursive: true }); }
 });
+
+test("a block command ends at the next step, so it cannot absorb a sibling's text", () => {
+  assert.deepEqual(workflowCommands([
+    "steps:",
+    "  - run: |",
+    "      pnpm run test:one",
+    "  - name: Not a command",
+    "    env:",
+    "      NOTE: node --test tests/fake.test.mjs",
+  ].join("\n")), ["pnpm run test:one"]);
+});
