@@ -1,15 +1,16 @@
 "use client";
 import { useCallback, useEffect, useState } from 'react';
 import type { LoopProviderDataV1, LoopProviderSnapshotV1 } from '../../src/web/v1/improve-control-room-loop-adapter';
+import type { ProviderPriceViewV1 } from '../../src/web/v1/loop-provider-prices';
 const empty = (): LoopProviderDataV1 => ({provider_id:'',display_name:'',base_url:'',billing_kind:'subscription',secret_ref:{kind:'launcher',launcher:''},
  models:[{roster_name:'',launcher:'',served_model_id:''}],credit_amount_nano_usd:null,credit_expires_on:null,credit_note:'',price_source_url:null,price_source_format:null});
 const headers=(key?:string)=>({accept:'application/json',...(key?{'content-type':'application/json','idempotency-key':key}:{})});
 /** Routes and opaque references only. Credentials are provisioned through owner-controlled tools. */
 export function LoopProviderSection(){
- const [view,setView]=useState<LoopProviderSnapshotV1>(),[absent,setAbsent]=useState(false),[draft,setDraft]=useState(empty),[editing,setEditing]=useState(false);
+ const [view,setView]=useState<LoopProviderSnapshotV1 & ProviderPriceViewV1>(),[absent,setAbsent]=useState(false),[draft,setDraft]=useState(empty),[editing,setEditing]=useState(false);
  const [pending,setPending]=useState(false),[message,setMessage]=useState('');
  const load=useCallback(async()=>{try{const r=await fetch('/api/v1/loop-providers',{credentials:'same-origin',cache:'no-store',redirect:'error',headers:headers()});
-  if(r.status===404){setAbsent(true);return;}if(!r.ok)throw new Error();setView(await r.json() as LoopProviderSnapshotV1);
+  if(r.status===404){setAbsent(true);return;}if(!r.ok)throw new Error();setView(await r.json() as LoopProviderSnapshotV1 & ProviderPriceViewV1);
  }catch{setMessage('Provider settings could not be read.');}},[]);
  useEffect(()=>{void load();},[load]);
  if(absent)return null;
@@ -24,14 +25,30 @@ export function LoopProviderSection(){
   }catch{setMessage('Save could not be confirmed. Refresh provider settings before trying again.');await load();}
   finally{setPending(false);}
  };
+ const refresh=async()=>{
+  if(!view)return;setPending(true);setMessage('');
+  try{const r=await fetch('/api/v1/loop-providers/refresh-prices',{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:headers(`provider:${crypto.randomUUID()}`),body:JSON.stringify({expectedVersion:view.version})});
+   setMessage(r.ok?'Price refresh finished. Review each provider’s latest fetch outcome.':r.status===409?'Provider settings changed. Refresh prices again with the current settings.':'Price refresh could not be confirmed.');
+   await load();
+  }catch{setMessage('Price refresh could not be confirmed.');await load();}finally{setPending(false);}
+ };
  return <section className="private-panel" style={{overflowWrap:"anywhere"}}><h2>Providers</h2>
   <p>Manage provider routes and references. Provision credentials outside this page with owner-controlled tools. Removing a route leaves those credentials under your control.</p>
   {message&&<p role="status">{message}</p>}
   {!view?<p>Loading provider settings…</p>:<>
    <p>Settings version {view.version}</p>
+   <button type="button" disabled={pending} onClick={()=>void refresh()}>Refresh prices</button>
    <ul>{view.providers.map(p=><li key={p.provider_id}><strong>{p.display_name}</strong> — {p.billing_kind==='token'?'Token (paid)':'Subscription'}<p>{p.base_url}</p>
     <p>Credit: {p.credit_amount_nano_usd??'Unknown'} nano-USD; expires {p.credit_expires_on??'Unknown'}. {p.credit_note}</p>
-    <ul>{p.models.map(m=><li key={m.roster_name}>{m.roster_name} → {m.served_model_id} ({m.launcher})</li>)}</ul>
+    <p>Latest price fetch: {view.fetches.find(f=>f.providerId===p.provider_id)?.outcome??'Not checked'}{view.fetches.find(f=>f.providerId===p.provider_id)?.outcome==='failed'?' — fetch failure':''}</p>
+    <ul>{p.models.map(m=><li key={m.roster_name}>{m.roster_name} → {m.served_model_id} ({m.launcher})
+     {!view.prices.some(price=>price.providerId===p.provider_id&&price.model===m.served_model_id)?<p>Price: Unknown; checked at: Not checked</p>:
+      view.prices.filter(price=>price.providerId===p.provider_id&&price.model===m.served_model_id).map(price=><p key={price.windowKey}>
+       {price.status==='known'?`Input ${price.input}; output ${price.output} nano-USD per token`:
+        price.status==='not_comparable'?`Not comparable (${price.currency})`:`Unknown (${price.reason})`}. Checked at: <time dateTime={price.checkedAt}>{price.checkedAt}</time>. {price.stale?'Stale (over 24 hours)':'Fresh'}.
+       {' '}{price.window?`Window: ${price.window.tz}, days ${price.window.days.join(', ')}, ${price.window.start}–${price.window.end}`:'All times'}
+      </p>)}
+    </li>)}</ul>
     <button type="button" disabled={pending} onClick={()=>{setDraft(structuredClone(p));setEditing(true);}}>Edit {p.display_name}</button>
     <button type="button" disabled={pending} onClick={()=>void send(true,p.provider_id)}>Remove {p.display_name}</button></li>)}</ul>
    <form className="private-graph-editor" aria-label="Provider settings" onSubmit={e=>{e.preventDefault();void send();}}>

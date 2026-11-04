@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "5f22dd333a6dd42a3b5a4298acce91e6fab71e66a3279048b6a8737acd16210c",
-  "note": "Measured on native PostgreSQL 17 through 0308 provider settings; web and updater query digests match."
+  "digest": "fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f",
+  "note": "Measured on native PostgreSQL 17 through 0309 provider prices; web and updater query digests match."
 }

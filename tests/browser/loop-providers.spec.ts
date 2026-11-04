@@ -5,12 +5,13 @@ import {taskFixture} from '../helpers/web-task';
 import {now,origin,request,trust} from '../helpers/web-foundation';
 import {LoopProviderServiceV1} from '../../src/web/v1/loop-provider-service';
 import {createLoopProviderHttpHandlerV1} from '../../src/web/v1/loop-provider-http';
-for(const width of [390,1280])test(`S1 owner adds replaces removes provider settings at ${width}px`,async({browser})=>{
+for(const width of [390,1280])test(`S1/S2 owner manages providers and refreshes recorded prices at ${width}px`,async({browser})=>{
  const f=await taskFixture();let context:Awaited<ReturnType<typeof browser.newContext>>|undefined;
  try{
   await f.db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
    VALUES('tenant:web','synthetic/model',1,'synthetic-api','','','','','','','','on','','','','identity:web',$1)`,[new Date(now).toISOString()]);
-  const service=new LoopProviderServiceV1(f.client,{tenantId:'tenant:web',workspaceId:'workspace:web'},{availability:async()=>{throw new Error('browser must not probe credentials');}},()=>now);
+  let failSource=false;
+  const service=new LoopProviderServiceV1(f.client,{tenantId:'tenant:web',workspaceId:'workspace:web'},{availability:async()=>{throw new Error('browser must not probe credentials');}},()=>now,{lookup:async()=>[{address:'8.8.8.8',family:4}],fetch:async()=>failSource?new Response('recorded failure',{status:500}):Response.json({schema:'control-room.provider-prices/v1',prices:[{model:'served/one',currency:'USD',inputUsdPerMillionTokens:'1.234',outputUsdPerMillionTokens:'2.5'},{model:'served/one',currency:'USD',inputUsdPerMillionTokens:'0.5',outputUsdPerMillionTokens:'1',window:{tz:'UTC',days:[0,6],start:'00:00',end:'12:00'}}]})});
   const handler=createLoopProviderHttpHandlerV1({origin,trust,service,clock:()=>now});
   const bundle=await build({write:false,bundle:true,platform:'browser',format:'iife',jsx:'automatic',stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {LoopProviderSection} from './private-app/app/loop-provider-panel';createRoot(document.getElementById('root')).render(<LoopProviderSection/>);`}});
   const css=await readFile('private-app/app/private.css','utf8'),unexpected:string[]=[];
@@ -41,9 +42,20 @@ for(const width of [390,1280])test(`S1 owner adds replaces removes provider sett
   await page.getByLabel('Credit amount (nano-USD, blank means unknown)',{exact:true}).fill('123000');
   await page.getByLabel('Credit expiry',{exact:true}).fill('2027-01-31');
   await page.getByLabel('Credit note',{exact:true}).fill('Synthetic credit');
+  await page.getByLabel('Price source address (optional)',{exact:true}).fill('https://example.com/prices');
   await page.getByRole('button',{name:'Save provider',exact:true}).click();
   await expect(page.getByRole('button',{name:'Edit Synthetic provider',exact:true})).toBeVisible();
   expect((await service.view(f.identity)).providers[0]!.models[0]!.served_model_id).toBe('served/one');
+  await expect(page.getByText('Price: Unknown; checked at: Not checked',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Refresh prices',exact:true}).click();
+  await expect(page.getByText(/Input 1234; output 2500 nano-USD per token/)).toBeVisible();
+  await expect(page.locator('time')).toHaveText([new Date(now).toISOString(),new Date(now).toISOString()]);
+  await expect(page.getByText(/Window: UTC, days 0, 6, 00:00–12:00/)).toBeVisible();
+  await expect(page.getByText('Latest price fetch: ok',{exact:true})).toBeVisible();
+  await f.db.query('UPDATE control_loop_provider_prices SET checked_at=$1',[new Date(now-24*3600_000-1).toISOString()]);
+  failSource=true;await page.getByRole('button',{name:'Refresh prices',exact:true}).click();
+  await expect(page.getByText(/Stale \(over 24 hours\)/)).toHaveCount(2);
+  await expect(page.getByText('Latest price fetch: failed — fetch failure',{exact:true})).toBeVisible();
   await page.reload();await page.getByRole('button',{name:'Edit Synthetic provider',exact:true}).click();
   await page.getByLabel('Provider name',{exact:true}).fill('Replacement');
   await page.getByLabel(/^Credential reference/).selectOption('bitwarden');
@@ -58,7 +70,7 @@ for(const width of [390,1280])test(`S1 owner adds replaces removes provider sett
   expect((await service.view(f.identity)).providers[0]!.secret_ref).toEqual({kind:'bitwarden',item:'opaque-item'});
   await expect(service.revalidate(f.identity,{providerId:'provider-one',model:'synthetic/model'})).rejects.toMatchObject({reason:'secret_missing'});
   await page.getByRole('button',{name:'Remove Replacement',exact:true}).click();
-  await expect(page.getByText('Settings version 3',{exact:true})).toBeVisible();
+  await expect(page.getByText('Settings version 5',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Edit Replacement',exact:true})).toHaveCount(0);
   expect((await service.view(f.identity)).providers).toEqual([]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);

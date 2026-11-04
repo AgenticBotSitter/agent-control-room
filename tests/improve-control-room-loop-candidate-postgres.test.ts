@@ -185,7 +185,7 @@ test("B4 PostgreSQL fresh production login exact grants preflight and schema dig
   assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json","utf8")).digest,measured);
   await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:"test"},now,{nativeQueue:true});
   const count=(await sql(pg,"SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n;
-  assert.equal(count,262);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
+  assert.equal(count,264);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
   for(const table of ["control_loop_update_candidates","control_loop_update_candidate_decisions"]){
    for(const role of ["app","scheduler","coordinator","results","publisher","queueWorker","intake","news","fleet"])
     await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:"42501"},`B4 broad role ${role} denied`);
@@ -259,14 +259,15 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0306%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0306%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/migrations/0309%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  await admin.query(await readFile("db/down/0309_control_loop_provider_prices.sql","utf8"));
   await admin.query(await readFile("db/down/0308_control_loop_providers.sql","utf8"));
   await admin.query(await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"));
   await admin.query(await readFile("db/down/0306_control_loop_policy.sql","utf8"));
   await admin.query(await readFile("db/down/0305_control_loop_roster.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -364,13 +365,14 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   assert.ok(files.includes("db/migrations/0302_control_loop_improvement_commands.sql"));assert.ok(!files.includes("db/migrations/0303_control_loop_update_candidates.sql"));
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
+   await admin.query(await readFile("db/down/0309_control_loop_provider_prices.sql","utf8"));
    await admin.query(await readFile("db/down/0308_control_loop_providers.sql","utf8"));
    await admin.query(await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"));
    await admin.query(await readFile("db/down/0306_control_loop_policy.sql","utf8"));
   await admin.query(await readFile("db/down/0305_control_loop_roster.sql","utf8"));
    await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}});
@@ -448,14 +450,14 @@ test("B4 PostgreSQL interrupt before commit and lost receipt after commit recons
  }finally{await f.close();}
 }));
 
-test("B4 inherited fixture preparation measures 261 tables and preserves refusals",{timeout:600000},async()=>{
+test("B4 inherited fixture preparation measures 263 tables and preserves refusals",{timeout:600000},async()=>{
  const {promisify}=await import("node:util"),{execFile}=await import("node:child_process");
  const exec=promisify(execFile),env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_PG_TEST_PORT_BASE:String(PORT)};delete env.NODE_TEST_CONTEXT;
  const child=await exec(process.execPath,["scripts/run-tests-with-quarantine.mjs","--import","tsx","--test","--test-concurrency=1","--test-timeout=600000",
   "--test-name-pattern=^B1a fixture preparation (shipped ownership|prepared|wrong owner|nonempty)$","tests/improve-control-room-desk-postgres.test.ts"],
   {env,timeout:600000,maxBuffer:8*1024*1024});
- assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=261/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
- console.log("B4 native inherited_fixture_cases=4 prepared_catalog=261 ownership_and_nonempty_refusals=true");
+ assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=263/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
+ console.log("B4 native inherited_fixture_cases=4 prepared_catalog=263 ownership_and_nonempty_refusals=true");
 });
 
 // S1: production-login storage, process-independent reopen, route withdrawal and exact grants.
@@ -468,7 +470,7 @@ test('S1 PostgreSQL provider persistence after application pool close and exact 
   secret_ref:{kind:'launcher' as const,launcher:'synthetic-api'},models:[{roster_name:'synthetic/model',launcher:'synthetic-api',served_model_id:'served/old'}],
   credit_amount_nano_usd:'123000',credit_expires_on:'2027-01-31',credit_note:'Synthetic credit',price_source_url:null,price_source_format:null};
  let w=web(pg),service=new LoopProviderServiceV1(w.client,scope,undefined,()=>now);
- const expected={schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:1,providers:[p]};
+ const expected={schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:1,providers:[p],prices:[],fetches:[]};
  try{
   assert.deepEqual((await w.client.query('SELECT current_user,session_user')).rows,[{current_user:'control_room_web',session_user:'control_room_web'}]);
   assert.deepEqual(await service.upsert(identity,p.provider_id,{expectedVersion:0,provider:p},'s1-native-add-0001'),{replayed:false,version:1});
@@ -530,4 +532,96 @@ test('S1 PostgreSQL 20 independent provider callers contend at probe barrier wit
   assert.equal((await sql(pg,'SELECT * FROM control_loop_providers')).rows.length,1);
   console.log('S1 native separate_production_callers=20 barrier_arrivals=20 winners=1 losers=19 version=1');
  }finally{release();await Promise.all(clients.map(w=>w.close()));}
+}));
+
+const s2Provider = {
+ provider_id:'provider-one',display_name:'Synthetic provider',base_url:'https://example.com/api',billing_kind:'token' as const,
+ secret_ref:{kind:'launcher' as const,launcher:'synthetic-api'},models:[{roster_name:'synthetic/model',launcher:'synthetic-api',served_model_id:'served/one'}],
+ credit_amount_nano_usd:null,credit_expires_on:null,credit_note:'',price_source_url:'https://example.com/prices',price_source_format:'control-room.provider-prices/v1' as const,
+};
+const s2Document = {schema:'control-room.provider-prices/v1',prices:[{model:'served/one',currency:'USD',inputUsdPerMillionTokens:'1.234',outputUsdPerMillionTokens:'2.5'}]};
+async function s2Seed(pg:Pg) {
+ await seed(pg);
+ await sql(pg,`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+ VALUES($1,'synthetic/model',1,'synthetic-api','','','','','','','','on','','','',$2,now())`,[scope.tenantId,owner]);
+}
+test('S2 PostgreSQL real refresh persistence replacement exact ACLs and retained down',async()=>run(async pg=>{
+ const {LoopProviderServiceV1}=await import('../src/web/v1/loop-provider-service');
+ await s2Seed(pg);
+ let fail=false;const dependencies={lookup:async()=>[{address:'8.8.8.8',family:4 as const}],fetch:async()=>fail?new Response('recorded failure',{status:500}):Response.json(s2Document)};
+ let w=web(pg),service=new LoopProviderServiceV1(w.client,scope,undefined,()=>now,dependencies);
+ try{
+  await service.upsert(identity,s2Provider.provider_id,{expectedVersion:0,provider:s2Provider},'s2-native-add-0001');
+  await service.refreshPrices(identity,{expectedVersion:1},'s2-native-refresh-0001');
+  assert.deepEqual((await w.client.query('SELECT model,window_key,input_nano_usd_per_token,output_nano_usd_per_token,currency,status,reason FROM control_loop_provider_prices')).rows,
+   [{model:'served/one',window_key:'all',input_nano_usd_per_token:'1234',output_nano_usd_per_token:'2500',currency:'USD',status:'known',reason:''}]);
+  const expected=await service.view(identity);await w.close();w=web(pg);service=new LoopProviderServiceV1(w.client,scope,undefined,()=>now,dependencies);
+  assert.deepEqual(await service.view(identity),expected,'new application pool preserves exact observations');
+  fail=true;await service.refreshPrices(identity,{expectedVersion:2},'s2-native-refresh-0002');
+  assert.deepEqual((await service.view(identity)).prices,expected.prices);
+  assert.equal((await service.view(identity)).fetches[0]!.outcome,'failed');
+  await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:'test'},now,{nativeQueue:true});
+  for(const [table,columns] of Object.entries({control_loop_provider_prices:[],control_loop_provider_fetches:['fetched_at','outcome','reason']})){
+   for(const right of ['SELECT','INSERT','DELETE'])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,true);
+   for(const right of ['UPDATE','TRUNCATE'])assert.equal((await sql(pg,"SELECT has_table_privilege('control_room_web',$1,$2) yes",[table,right])).rows[0].yes,false);
+   assert.deepEqual((await sql(pg,"SELECT attname FROM pg_attribute WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege('control_room_web',attrelid,attnum,'UPDATE') ORDER BY attname COLLATE \"C\"",[table])).rows.map(r=>r.attname),columns);
+   for(const role of ['app','scheduler','coordinator','results','publisher','queueWorker','intake','news','fleet'])await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:'42501'});
+  }
+  const before=await service.view(identity);
+  await assert.rejects(sql(pg,await readFile('db/down/0309_control_loop_provider_prices.sql','utf8')),/provider prices retained/);
+  assert.deepEqual(await service.view(identity),before);
+  await service.upsert(identity,s2Provider.provider_id,{expectedVersion:3,provider:s2Provider},'s2-native-replace-0001');
+  assert.deepEqual((await service.view(identity)).prices,[]);assert.deepEqual((await service.view(identity)).fetches,[]);
+  fail=false;await service.refreshPrices(identity,{expectedVersion:4},'s2-native-refresh-0003');
+  await service.remove(identity,s2Provider.provider_id,{expectedVersion:5},'s2-native-remove-0001');
+  assert.deepEqual((await service.view(identity)).prices,[]);assert.deepEqual((await service.view(identity)).fetches,[]);
+  await sql(pg,await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
+  console.log('S2 native refresh_storage=true reopened_pool=true replacement_and_remove=true exact_ACL=true retained_down_atomic=true');
+ }finally{await w.close();}
+}));
+test('S2 PostgreSQL 20 separate refresh callers at source barrier one winner and cancelled retry',async()=>run(async pg=>{
+ const {LoopProviderServiceV1}=await import('../src/web/v1/loop-provider-service');await s2Seed(pg);
+ const clients=Array.from({length:20},()=>web(pg));let arrived=0,release!:()=>void;
+ const barrier=new Promise<void>(r=>release=r);
+ const dependencies={lookup:async()=>[{address:'8.8.8.8',family:4 as const}],fetch:async()=>{arrived++;if(arrived===20)release();await barrier;return Response.json(s2Document);}};
+ const services=clients.map(w=>new LoopProviderServiceV1(w.client,scope,undefined,()=>now,dependencies));
+ try{
+  await services[0]!.upsert(identity,s2Provider.provider_id,{expectedVersion:0,provider:s2Provider},'s2-native-barrier-add-0001');
+  const results=await Promise.allSettled(services.map((s,i)=>s.refreshPrices(identity,{expectedVersion:1},`s2-native-race-${String(i).padStart(4,'0')}`)));
+  assert.equal(arrived,20);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const losers=results.filter(r=>r.status==='rejected');assert.equal(losers.length,19);for(const loser of losers)if(loser.status==='rejected')assert.equal(loser.reason.code,'conflict');
+  const before=await services[0]!.view(identity);assert.equal(before.version,2);assert.equal(before.prices.length,1);
+  const disconnect=new AbortController();let entered!:()=>void;const started=new Promise<void>(r=>entered=r);
+  const slow=new LoopProviderServiceV1(clients[0]!.client,scope,undefined,()=>now,{lookup:dependencies.lookup,fetch:async(_u,_a,init)=>{
+   entered();return new Promise<Response>((_resolve,reject)=>init.signal!.addEventListener('abort',()=>reject(new Error('recorded disconnect')),{once:true}));
+  }});
+  const pending=slow.refreshPrices(identity,{expectedVersion:2},'s2-native-disconnect-0001',disconnect.signal);
+  await started;disconnect.abort();await assert.rejects(pending);assert.deepEqual(await services[0]!.view(identity),before);
+  assert.deepEqual(await services[0]!.refreshPrices(identity,{expectedVersion:2},'s2-native-retry-0001'),{replayed:false,version:3});
+  console.log('S2 native separate_production_callers=20 barrier_arrivals=20 winners=1 losers=19 disconnect_rollback=true retry=true');
+ }finally{release();await Promise.all(clients.map(w=>w.close()));}
+}));
+
+test('S2 PostgreSQL failed price migration leaves neither table nor ledger entry and retries cleanly',async()=>run(async pg=>{
+ const admin=new Client(pg.admin());await admin.connect();
+ const stage=await mkdtemp(resolve('.test-tmp/s2-migration-'));
+ try{
+  await admin.query(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
+  const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
+  const entries=await collectLedgerEntries(resolve('.'));
+  for(const entry of entries){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
+  await mkdir(join(stage,'db/setup'),{recursive:true});await writeFile(join(stage,'db/setup/production_migration_ledger.sql'),await readFile('db/setup/production_migration_ledger.sql'));
+  const migration='db/migrations/0309_control_loop_provider_prices.sql',original=await readFile(migration,'utf8');
+  const fault=original.replace('CREATE TABLE control_loop_provider_fetches (','SELECT 1/0; CREATE TABLE control_loop_provider_fetches (');
+  assert.notEqual(fault,original);await writeFile(join(stage,migration),fault);
+  const ledger=async()=>{const staged=await collectLedgerEntries(stage);await mkdir(join(stage,'deploy/postgres'),{recursive:true});await writeFile(join(stage,'deploy/postgres/migration-ledger.json'),JSON.stringify({version:1,entries:staged,digest:ledgerDigest(staged)}));};
+  const migrate=()=>applyMigrations({target:undefined,ledgerPath:join(stage,'deploy/postgres/migration-ledger.json'),rootDir:stage,bootstrapTarget:pg.admin(),migrateTarget:pg.connection('migrator'),env:{NODE_ENV:'test',CONTROL_ROOM_MIGRATOR_PASSWORD:pg.connection('migrator').password,CONTROL_ROOM_APP_PASSWORD:pg.connection('app').password,CONTROL_ROOM_SCHEDULER_PASSWORD:pg.connection('scheduler').password,CONTROL_ROOM_WORK_INTAKE_PASSWORD:pg.connection('control_room_work_intake_agent').password}});
+  await ledger();await assert.rejects(migrate(),/division by zero/);
+  assert.deepEqual((await admin.query("SELECT to_regclass('public.control_loop_provider_prices') prices,to_regclass('public.control_loop_provider_fetches') fetches")).rows,[{prices:null,fetches:null}]);
+  assert.deepEqual((await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows,before);
+  await writeFile(join(stage,migration),original);await ledger();await migrate();await migrate();
+  assert.equal(await readPrivateWebSchemaDigest(admin),privateWebSchemaDigest);
+  console.log('S2 native failed_migration_atomic=true prior_ledger_unchanged=true retry_and_replay=true');
+ }finally{await admin.end();await rm(stage,{recursive:true,force:true});}
 }));

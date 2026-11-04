@@ -329,4 +329,8 @@ GRANT UPDATE (display_name,base_url,billing_kind,secret_ref,price_source_url,pri
 GRANT UPDATE (version,last_idempotency_key,last_request_digest,updated_at) ON control_loop_provider_state TO control_room_private_web;
 GRANT DELETE ON control_loop_providers,control_loop_provider_models TO control_room_private_web;
 
+-- S2 observations replace rows; only fetch outcome columns are mutable.
+GRANT SELECT, INSERT, DELETE ON control_loop_provider_prices, control_loop_provider_fetches TO control_room_private_web;
+GRANT UPDATE (outcome,reason,fetched_at) ON control_loop_provider_fetches TO control_room_private_web;
+
 COMMIT;

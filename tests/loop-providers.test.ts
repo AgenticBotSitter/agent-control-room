@@ -36,10 +36,10 @@ async function fixture(t: TestContext, presence = { availability: async (_id: st
 }
 test('S1 owner add replace remove replay and conflicts retain exactly one revision per edit', async t => {
   const f = await fixture(t);
-  assert.deepEqual(await f.service.view(f.identity), {schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:0,providers:[]});
+  assert.deepEqual(await f.service.view(f.identity), {schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:0,providers:[],prices:[],fetches:[]});
   assert.deepEqual(await f.rows(), [[],[],[]]);
   const k = key(); assert.equal((await f.put(0,provider(),k)).status,201);
-  assert.deepEqual(await f.service.view(f.identity), {schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:1,providers:[provider()]});
+  assert.deepEqual(await f.service.view(f.identity), {schema:'control-room.loop-provider-snapshot/v1',tenantId:scope.tenantId,version:1,providers:[provider()],prices:[],fetches:[]});
   assert.equal((await f.put(0,provider(),k)).status,200);
   assert.equal((await f.put(0,provider({display_name:'Changed'}),k)).status,409);
   assert.equal((await f.put(0)).status,409);
@@ -145,7 +145,8 @@ test('S1 down is empty-only and retained provider model or state rolls back atom
  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');assert.deepEqual(await f.rows(),saved);
  await f.db.query('DELETE FROM control_loop_provider_models');await f.db.query('DELETE FROM control_loop_providers');
  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');
- await f.db.query('DELETE FROM control_loop_provider_state');await f.db.exec(down);
+ await f.db.query('DELETE FROM control_loop_provider_state');
+ await f.db.exec(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));await f.db.exec(down);
  assert.equal((await f.db.query("SELECT * FROM pg_tables WHERE tablename LIKE 'control_loop_provider%'")).rows.length,0);
 });
 for(const mode of ['private','Mac-local'] as const)test(`S1 ${mode} Node actual provider and policy PUT persistence and refusal`,async t=>{
@@ -197,4 +198,290 @@ test('S1 oversized valid mapped snapshot refuses before provider storage',async 
  const p=provider({models});assert.ok(Buffer.byteLength(JSON.stringify(p))>65536);
  await assert.rejects(f.service.upsert(f.identity,p.provider_id,{expectedVersion:0,provider:p},key()),{code:'invalid_request'});
  assert.deepEqual(await f.rows(),[[],[],[]]);
+});
+
+test('S2 refresh handler accepts an owner snapshot and idempotent replay without a source', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.put(0)).status, 201);
+  const k = key();
+  const refresh = () => f.handler(request('/api/v1/loop-providers/refresh-prices', 'POST', {expectedVersion:1}, k));
+  const first = await refresh();
+  assert.equal(first.status, 201, 'owner refresh must reach the real service');
+  assert.deepEqual(await first.json(), {replayed:false,version:2});
+  assert.equal((await refresh()).status, 200);
+  assert.equal((await f.service.view(f.identity)).version, 2);
+  assert.deepEqual((await f.db.query('SELECT provider_id,outcome,reason FROM control_loop_provider_fetches')).rows,
+    [{provider_id:'provider-one',outcome:'no_source',reason:'no_source'}]);
+  assert.equal((await f.db.query('SELECT * FROM control_loop_provider_prices')).rows.length, 0);
+});
+
+// All S2 sources below are recorded documents served by injected, address-aware transports.
+const priceDocument = (prices: unknown[] = [{model:'served/one',currency:'USD',inputUsdPerMillionTokens:'1.234',outputUsdPerMillionTokens:'2.5'}]) => ({schema:'control-room.provider-prices/v1',prices});
+const priceProvider = (id='provider-one',served='served/one') => provider({provider_id:id,price_source_url:'https://example.com/prices',price_source_format:'control-room.provider-prices/v1',models:[{...provider().models[0]!,served_model_id:served}]});
+const publicLookup = async () => [{address:'8.8.8.8',family:4 as const}];
+async function priceFixture(t:TestContext,dependencies:import('../src/web/v1/loop-provider-prices').ProviderPriceDependenciesV1) {
+  const f=await fixture(t);
+  const service=new LoopProviderServiceV1(f.client,scope,undefined,()=>now,{lookup:publicLookup,...dependencies});
+  const handler=createLoopProviderHttpHandlerV1({origin,trust,service,clock:()=>now});
+  const refresh=(expectedVersion:number,k=key(),signal?:AbortSignal)=>{
+    const req=request('/api/v1/loop-providers/refresh-prices','POST',{expectedVersion},k);
+    return handler(signal?new Request(req,{signal}):req);
+  };
+  return {...f,service,handler,refresh};
+}
+test('S2 actual refresh four sources partial failure recovery staleness and replay',async t=>{
+  let failing=true,gets=0;
+  const f=await priceFixture(t,{fetch:async url=>{
+    gets++;
+    if(url.pathname==='/third'&&failing)return new Response('recorded failure',{status:500});
+    if(url.pathname==='/html')return new Response('<html>Recorded page</html>',{headers:{'content-type':'text/html'}});
+    return Response.json(priceDocument());
+  }});
+  let version=0;
+  for(const [id,path] of [['provider-one','/first'],['provider-two','/second'],['provider-three','/third'],['provider-four','/html']]){
+    const p={...priceProvider(id),price_source_url:'https://example.com'+path};
+    await f.service.upsert(f.identity,id!,{expectedVersion:version++,provider:p},key());
+  }
+  const k=key();assert.equal((await f.refresh(4,k)).status,201);assert.equal(gets,4);
+  let view=await f.service.view(f.identity);
+  assert.equal(view.prices.length,2);
+  assert.deepEqual(view.prices.map(p=>[p.input,p.output,p.status,p.reason,p.checkedAt,p.stale]),Array.from({length:2},()=>['1234','2500','known','',new Date(now).toISOString(),false]));
+  assert.deepEqual(view.fetches.map(f=>[f.providerId,f.outcome]),[['provider-four','not_machine_readable'],['provider-one','ok'],['provider-three','failed'],['provider-two','ok']]);
+  assert.equal((await f.refresh(4,k)).status,200);assert.equal(gets,4,'replay performs zero GETs');
+  failing=false;assert.equal((await f.refresh(5)).status,201);
+  // The retained observation is now older than one day, while this fetch fails anew.
+  const old=new Date(now-24*3600_000-1).toISOString();
+  await f.db.query("UPDATE control_loop_provider_prices SET checked_at=$1 WHERE provider_id='provider-three'",[old]);
+  failing=true;assert.equal((await f.refresh(6)).status,201);
+  view=await f.service.view(f.identity);
+  assert.equal(view.prices.find(p=>p.providerId==='provider-three')!.checkedAt,old);
+  assert.equal(view.prices.find(p=>p.providerId==='provider-three')!.stale,true);
+  assert.equal(view.fetches.find(p=>p.providerId==='provider-three')!.outcome,'failed');
+});
+test('S2 public address refusal and pinned address rebinding proof through the handler',async t=>{
+  let answers=[{address:'127.0.0.1',family:4 as 4|6}],calls=0,lookups=0;
+  const f=await priceFixture(t,{lookup:async()=>{lookups++;return answers;},fetch:async(url,address,init)=>{
+    calls++;assert.deepEqual(address,{address:'8.8.8.8',family:4});assert.equal(url.hostname,'example.com');
+    assert.equal(init.method,'GET');assert.deepEqual(Object.fromEntries(new Headers(init.headers)),{accept:'application/json','accept-encoding':'identity'});
+    // A subsequent resolution would now be private; the transport must use the vetted address.
+    answers=[{address:'127.0.0.1',family:4}];return Response.json(priceDocument());
+  }});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  let version=1;
+  for(const addresses of [[{address:'127.0.0.1',family:4}],[{address:'169.254.169.254',family:4}],[{address:'::1',family:6}],
+    [{address:'::ffff:10.0.0.1',family:6}],[{address:'8.8.8.8',family:4},{address:'10.0.0.1',family:4}],[{address:'invalid',family:4}]] as typeof answers[]){
+    answers=addresses;assert.equal((await f.refresh(version++)).status,201);
+    assert.equal(calls,0,'S2 private-address guard must prevent every transport call');
+  }
+  answers=[{address:'8.8.8.8',family:4}];assert.equal((await f.refresh(version)).status,201);
+  assert.equal(calls,1);assert.equal(lookups,7,'exactly one resolution per refresh');
+});
+test('S2 strict document reader normalization windows DST and canonical digest',async()=>{
+  const {providerPriceDocumentSchemaV1:schema,refreshProviderPricesV1,priceAtV1,providerPriceDigestV1}=await import('../src/web/v1/loop-provider-prices');
+  const base={model:'served/one',currency:'USD',inputUsdPerMillionTokens:'1.234000000',outputUsdPerMillionTokens:'0'};
+  const window={tz:'America/Denver',days:[0],start:'01:00',end:'02:00'};
+  for(const item of [{...base,model:' bad'},{...base,model:'a'.repeat(181)},{...base,currency:'ZZZ'},{...base,currency:'usd'},
+    {...base,inputUsdPerMillionTokens:'1e3'},{...base,inputUsdPerMillionTokens:'-1'},{...base,inputUsdPerMillionTokens:'NaN'},
+    {...base,extra:true},{...base,window:{...window,end:'00:00'}},{...base,window:{...window,days:[0,0]}},
+    {...base,window:{...window,tz:'Fake/Zone'}},{...base,window:{...window,start:'24:00'}},{...base,window:{...window,days:[2,1]}}])assert.equal(schema.safeParse(priceDocument([item])).success,false);
+  assert.equal(schema.safeParse({...priceDocument(),extra:true}).success,false);
+  assert.equal(schema.safeParse(priceDocument(Array(257).fill(base))).success,false);
+  assert.equal(schema.safeParse(priceDocument([{...base,window},{...base,window}])).success,false);
+  assert.equal(schema.safeParse(priceDocument([{...base,window},{...base,window:{...window,start:'01:30',end:'03:00'}}])).success,false);
+  assert.equal(schema.safeParse(priceDocument([{...base,window},{...base,window:{...window,tz:'UTC',start:'02:00',end:'03:00'}}])).success,false);
+  const rows=[base,{...base,window}];assert.equal(schema.safeParse(priceDocument(rows)).success,true);
+  const result=await refreshProviderPricesV1([priceProvider()],new AbortController().signal,()=>now,{lookup:publicLookup,fetch:async()=>Response.json(priceDocument(rows))});
+  const prices=result[0]!.prices!;assert.equal(prices[0]!.input,'1234');assert.equal(prices[0]!.output,'0');
+  assert.equal(prices[1]!.windowKey,'America/Denver|0|01:00-02:00');
+  for(const at of ['2026-11-01T07:00:00Z','2026-11-01T08:30:00Z'])assert.equal(priceAtV1(prices,new Date(at))!.windowKey,prices[1]!.windowKey,'both DST folds use local window');
+  assert.equal(priceAtV1(prices,new Date('2026-11-01T09:00:00Z'))!.windowKey,'all','end is exclusive');
+  assert.equal(priceAtV1(prices,new Date('2026-11-01T06:59:59Z'))!.windowKey,'all');
+  assert.equal(priceAtV1(prices.slice(1),new Date('2026-11-01T09:00:00Z')),null);
+  const p=prices[0]!;
+  assert.equal(providerPriceDigestV1(p),sha256Digest({providerId:'provider-one',model:'served/one',windowKey:'all',window:null,input:'1234',output:'0',currency:'USD',status:'known',reason:'',checkedAt:new Date(now).toISOString()}));
+  assert.notEqual(providerPriceDigestV1(p),providerPriceDigestV1({...p,status:'unknown'}));
+});
+test('S2 handler retains rows for invalid unmapped other-provider and non-machine documents',async t=>{
+  let document:unknown=priceDocument();
+  const f=await priceFixture(t,{fetch:async()=>Response.json(document)});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  await f.service.upsert(f.identity,'provider-two',{expectedVersion:1,provider:priceProvider('provider-two','served/other')},key());
+  assert.equal((await f.refresh(2)).status,201);
+  const before=(await f.service.view(f.identity)).prices;
+  let version=3;
+  for(const model of ['served/unmapped','served/other',' bad','a'.repeat(181)]){
+    document=priceDocument([{model,currency:'USD',inputUsdPerMillionTokens:'1',outputUsdPerMillionTokens:'2'}]);
+    assert.equal((await f.refresh(version++)).status,201);
+    const after=await f.service.view(f.identity);
+    assert.deepEqual(after.prices.filter(p=>p.providerId==='provider-one'),before.filter(p=>p.providerId==='provider-one'));
+    assert.equal(after.fetches.find(p=>p.providerId==='provider-one')!.outcome,'not_machine_readable');
+    assert.equal(after.fetches.find(p=>p.providerId==='provider-one')!.reason,model.startsWith('served/')?'unmapped_model':'invalid_document');
+  }
+  for(const invalid of [priceDocument([{model:'served/one',currency:'ZZZ',inputUsdPerMillionTokens:'1',outputUsdPerMillionTokens:'2'}]),priceDocument([{model:'served/one',currency:'USD',inputUsdPerMillionTokens:'1',outputUsdPerMillionTokens:'2',window:{tz:'UTC',days:[0],start:'23:00',end:'01:00'}}])]){
+    document=invalid;assert.equal((await f.refresh(version++)).status,201);
+    assert.deepEqual((await f.service.view(f.identity)).prices.filter(p=>p.providerId==='provider-one'),before.filter(p=>p.providerId==='provider-one'));
+  }
+  document=priceDocument([{model:'served/one',currency:'USD',inputUsdPerMillionTokens:'0.0001',outputUsdPerMillionTokens:'2'}]);
+  await f.refresh(version++);let view=await f.service.view(f.identity);
+  assert.equal(view.prices.find(p=>p.providerId==='provider-one')!.reason,'precision');assert.equal(view.prices.find(p=>p.providerId==='provider-one')!.input,null);
+  document=priceDocument([{model:'served/one',currency:'EUR',inputUsdPerMillionTokens:'1',outputUsdPerMillionTokens:'2'}]);
+  await f.refresh(version++);view=await f.service.view(f.identity);
+  assert.equal(view.prices.find(p=>p.providerId==='provider-one')!.status,'not_comparable');
+  assert.equal(view.prices.find(p=>p.providerId==='provider-one')!.input,null);
+  document=priceDocument([]);await f.refresh(version++);assert.deepEqual((await f.service.view(f.identity)).prices,[],'success replaces all rows');
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:version++,provider:priceProvider()},key());
+  assert.equal((await f.service.view(f.identity)).fetches.some(p=>p.providerId==='provider-one'),false,'replacement invalidates fetch');
+  await f.service.remove(f.identity,'provider-two',{expectedVersion:version},key());
+  assert.equal((await f.service.view(f.identity)).fetches.some(p=>p.providerId==='provider-two'),false);
+});
+test('S2 three simultaneous source timeouts retain observations while the fast source commits',async t=>{
+  let slow=false,started=0,aborted=0;
+  const f=await priceFixture(t,{providerTimeoutMs:80,handlerTimeoutMs:1000,fetch:async(url,_address,init)=>{
+    started++;
+    if(slow&&url.pathname!=='/fast')return new Promise<Response>((_resolve,reject)=>init.signal!.addEventListener('abort',()=>{aborted++;reject(new Error('fixture cancelled'));},{once:true}));
+    return Response.json(priceDocument());
+  }});
+  for(let i=0;i<4;i++)await f.service.upsert(f.identity,`provider-${i}`,{expectedVersion:i,provider:{...priceProvider(`provider-${i}`),price_source_url:'https://example.com/'+(i===3?'fast':'slow'+i)}},key());
+  await f.refresh(4);const before=(await f.service.view(f.identity)).prices;slow=true;started=0;
+  const start=performance.now();const response=await f.refresh(5);const elapsed=performance.now()-start;
+  assert.equal(response.status,201);assert.equal(started,4);assert.equal(aborted,3);
+  assert.ok(elapsed<240,`parallel source deadlines took ${elapsed}ms`);
+  const after=await f.service.view(f.identity);assert.equal(after.fetches.filter(f=>f.outcome==='failed').length,3);
+  assert.deepEqual(after.prices,before);assert.equal(after.fetches[3]!.outcome,'ok');
+});
+test('S2 source overflow redirect encoding body timeout and no retry cancel every request',async t=>{
+  let mode='redirect',calls=0,cancelled=0;
+  const signals:AbortSignal[]=[];
+  const f=await priceFixture(t,{providerTimeoutMs:30,fetch:async(_url,_address,init)=>{
+    calls++;signals.push(init.signal!);
+    const body=new ReadableStream<Uint8Array>({start(c){if(mode==='overflow')c.enqueue(new Uint8Array(256*1024+1));},cancel(){cancelled++;}});
+    return new Response(body,mode==='redirect'?{status:302,headers:{location:'https://example.com/other'}}:mode==='encoding'?{headers:{'content-encoding':'gzip'}}:{});
+  }});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  for(const [index,m] of ['redirect','overflow','encoding','timeout'].entries()){
+    mode=m;assert.equal((await f.refresh(index+1)).status,201);assert.equal(calls,index+1,'exactly one request, no redirect or retry');
+    const fetch=(await f.service.view(f.identity)).fetches[0]!;
+    assert.equal(fetch.reason,({redirect:'http_status',overflow:'overflow',encoding:'encoding',timeout:'timeout'} as Record<string,string>)[m]);
+  }
+  assert.equal(cancelled,4);assert.ok(signals.every(signal=>signal.aborted));
+});
+test('S2 handler deadline and disconnect cancel work with no late commit',async t=>{
+  let cancelled=0;
+  const f=await priceFixture(t,{handlerTimeoutMs:80,providerTimeoutMs:1000,fetch:async(_u,_a,init)=>new Promise<Response>((_resolve,reject)=>{
+    init.signal!.addEventListener('abort',()=>{cancelled++;reject(new Error('fixture cancelled'));},{once:true});
+  })});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  const before=await f.rows();const start=performance.now();assert.ok((await f.refresh(1)).status>=400);
+  assert.ok(performance.now()-start<250);assert.equal(cancelled,1);assert.deepEqual(await f.rows(),before);
+  const disconnect=new AbortController();const pending=f.refresh(1,key(),disconnect.signal);
+  const timer=setTimeout(()=>disconnect.abort(),20);try{assert.ok((await pending).status>=400);}finally{clearTimeout(timer);}
+  assert.equal(cancelled,2);assert.deepEqual(await f.rows(),before);
+  assert.equal((await f.db.query('SELECT * FROM control_loop_provider_fetches')).rows.length,0);
+});
+test('S2 changed configuration and concurrent refresh reject stale commits',async t=>{
+  let arrival!:()=>void,release!:()=>void;
+  let arrived=new Promise<void>(r=>arrival=r),gate=new Promise<void>(r=>release=r);
+  let count=0;
+  const f=await priceFixture(t,{fetch:async()=>{count++;arrival();await gate;return Response.json(priceDocument());}});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  const pending=f.refresh(1);await arrived;
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:1,provider:priceProvider()},key());release();
+  assert.equal((await pending).status,409);assert.equal((await f.service.view(f.identity)).prices.length,0);
+  let arrivals=0;arrived=new Promise<void>(r=>arrival=r);gate=new Promise<void>(r=>release=r);
+  const deps={lookup:publicLookup,fetch:async()=>{arrivals++;if(arrivals===2)arrival();await gate;return Response.json(priceDocument());}};
+  const s=new LoopProviderServiceV1(f.client,scope,undefined,()=>now,deps),h=createLoopProviderHttpHandlerV1({origin,trust,service:s,clock:()=>now});
+  const race=[1,2].map(()=>h(request('/api/v1/loop-providers/refresh-prices','POST',{expectedVersion:2},key())));
+  await arrived;release();assert.deepEqual((await Promise.all(race)).map(r=>r.status).sort(),[201,409]);
+  assert.equal((await s.view(f.identity)).version,3);assert.equal(count,1);
+});
+test('S2 refresh rejects operator non-human malformed content and CSRF without transport or price writes',async t=>{
+  let gets=0;const f=await priceFixture(t,{fetch:async()=>{gets++;return Response.json(priceDocument());}});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  const before=await f.rows();
+  await f.db.query("UPDATE control_role_grants SET role_key='operator'");assert.equal((await f.refresh(1)).status,403,'S2 independent owner denial assertion');
+  await f.db.query("UPDATE control_role_grants SET role_key='owner'");
+  await f.db.query("UPDATE control_identities SET actor_type='agent'");assert.equal((await f.refresh(1)).status,403);
+  await f.db.query("UPDATE control_identities SET actor_type='human'");
+  for(const body of [{},{expectedVersion:1,extra:true},{expectedVersion:-1},{expectedVersion:'1'}])assert.equal((await f.handler(request('/api/v1/loop-providers/refresh-prices','POST',body,key()))).status,400);
+  for(const changed of [{'content-type':'text/plain'},{origin:'https://foreign.invalid'},{'idempotency-key':''}]){
+    const req=request('/api/v1/loop-providers/refresh-prices','POST',{expectedVersion:1},key());for(const [k,v] of Object.entries(changed))req.headers.set(k,v);
+    assert.ok((await f.handler(req)).status>=400);
+  }
+  assert.equal(gets,0);assert.deepEqual(await f.rows(),before);
+  assert.equal((await f.db.query('SELECT * FROM control_loop_provider_fetches')).rows.length,0);
+});
+test('S2 price down refuses retained price or fetch atomically and accepts empty',async t=>{
+  const f=await priceFixture(t,{fetch:async()=>Response.json(priceDocument())});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());await f.refresh(1);
+  const down=await readFile('db/down/0309_control_loop_provider_prices.sql','utf8');
+  const before=await f.service.view(f.identity);
+  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');assert.deepEqual(await f.service.view(f.identity),before);
+  await f.db.query('DELETE FROM control_loop_provider_prices');await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');
+  await f.db.query('DELETE FROM control_loop_provider_fetches');await f.db.exec(down);
+  assert.equal((await f.db.query("SELECT * FROM pg_tables WHERE tablename IN ('control_loop_provider_prices','control_loop_provider_fetches')")).rows.length,0);
+});
+
+test('S2 DNS timeout never transports and all late fetch responses are cancelled',async t=>{
+  let calls=0;
+  const f=await priceFixture(t,{providerTimeoutMs:20,lookup:async()=>new Promise(()=>{}),fetch:async()=>{calls++;return Response.json(priceDocument());}});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  assert.equal((await f.refresh(1)).status,201);assert.equal(calls,0);
+  assert.equal((await f.service.view(f.identity)).fetches[0]!.reason,'timeout');
+  const {refreshProviderPricesV1}=await import('../src/web/v1/loop-provider-prices');
+  let deliver!:(response:Response)=>void,cancelled!:()=>void;
+  const cancelledBody=new Promise<void>(r=>cancelled=r);
+  const result=await refreshProviderPricesV1([priceProvider()],new AbortController().signal,()=>now,{providerTimeoutMs:10,lookup:publicLookup,fetch:async()=>new Promise(r=>deliver=r)});
+  assert.equal(result[0]!.fetch.reason,'timeout');
+  deliver(new Response(new ReadableStream({cancel(){cancelled();}})));await cancelledBody;
+});
+test('S2 precommit cancellation rolls back price fetch and state writes together',async t=>{
+  const f=await fixture(t),disconnect=new AbortController();
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  const before=await f.rows();let updated=false;
+  const db:import('../src/persistence/database').DatabaseClient={...f.client,
+    transactionWithPreCommitCheck:(work,check)=>f.client.transactionWithPreCommitCheck(tx=>work({query:async <T>(sql:string,params?:unknown[])=>{
+      const result=await tx.query<T>(sql,params);
+      if(sql.startsWith('UPDATE control_loop_provider_state')){updated=true;disconnect.abort();}
+      return result;
+    }}),check),
+  };
+  const service=new LoopProviderServiceV1(db,scope,undefined,()=>now,{lookup:publicLookup,fetch:async()=>Response.json(priceDocument())});
+  await assert.rejects(service.refreshPrices(f.identity,{expectedVersion:1},key(),disconnect.signal));
+  assert.equal(updated,true,'cancellation occurs after actual SQL writes');assert.deepEqual(await f.rows(),before);
+  for(const table of ['control_loop_provider_prices','control_loop_provider_fetches'])assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length,0);
+});
+test('S2 final authorization recheck refuses a revoked owner after fetch without observations',async t=>{
+  let began!:()=>void,release!:()=>void;
+  const started=new Promise<void>(r=>began=r),gate=new Promise<void>(r=>release=r);
+  const f=await priceFixture(t,{fetch:async()=>{began();await gate;return Response.json(priceDocument());}});
+  await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());
+  const before=await f.rows(),pending=f.refresh(1);await started;
+  await f.db.query("UPDATE control_role_grants SET revoked_at=$1",[new Date(now).toISOString()]);release();
+  assert.equal((await pending).status,403);assert.deepEqual(await f.rows(),before);
+  assert.equal((await f.db.query('SELECT * FROM control_loop_provider_fetches')).rows.length,0);
+});
+test('S2 refresh endpoint preserves refresh-prices as a valid provider ID for PUT and remove',async t=>{
+  const f=await fixture(t),p=provider({provider_id:'refresh-prices'});
+  assert.equal((await f.handler(request('/api/v1/loop-providers/refresh-prices','PUT',{expectedVersion:0,provider:p},key()))).status,201);
+  assert.equal((await f.handler(request('/api/v1/loop-providers/refresh-prices/remove','POST',{expectedVersion:1},key()))).status,201);
+});
+
+test('S2 clock crossing exactly 24 hours keeps checked-at and exposes a stale retained price on failed refresh',async t=>{
+  const f=await fixture(t);let at=now,failed=false;
+  const service=new LoopProviderServiceV1(f.client,scope,undefined,()=>at,{lookup:publicLookup,fetch:async()=>failed?new Response('recorded failure',{status:500}):Response.json(priceDocument())});
+  const longTrust={...trust,validUntilMs:now+3*24*3600_000};
+  const handler=createLoopProviderHttpHandlerV1({origin,trust:longTrust,service,clock:()=>at});
+  const jwt=token({exp:(now+3*24*3600_000)/1000});
+  const send=(path:string,method='GET',body?:unknown)=>handler(request(path,method,body,key(),jwt));
+  await f.db.query('UPDATE control_role_grants SET expires_at=NULL');
+  assert.equal((await send('/api/v1/loop-providers/provider-one','PUT',{expectedVersion:0,provider:priceProvider()})).status,201);
+  assert.equal((await send('/api/v1/loop-providers/refresh-prices','POST',{expectedVersion:1})).status,201);
+  at=now+24*3600_000;
+  let view=await (await send('/api/v1/loop-providers')).json() as Awaited<ReturnType<typeof service.view>>;
+  assert.equal(view.prices[0]!.stale,false,'exact 24 hour boundary is still fresh');
+  at++;failed=true;
+  assert.equal((await send('/api/v1/loop-providers/refresh-prices','POST',{expectedVersion:2})).status,201);
+  view=await (await send('/api/v1/loop-providers')).json() as typeof view;
+  assert.equal(view.prices[0]!.stale,true);assert.equal(view.prices[0]!.checkedAt,new Date(now).toISOString());
+  assert.deepEqual(view.fetches,[{providerId:'provider-one',outcome:'failed',reason:'http_status',fetchedAt:new Date(at).toISOString()}]);
 });

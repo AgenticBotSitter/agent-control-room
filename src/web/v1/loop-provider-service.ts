@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import type { DatabaseClient, DatabaseSession } from '../../persistence/database';
+import { withDatabaseOperationSignal } from '../../persistence/operation-signal';
 import { sha256Digest } from '../../security/digest';
 import { assertNoSecretMaterial } from '../../security/redaction';
 import { NodeSafeCommandRunner, type SafeCommandRunnerV1 } from '../../node-policy/v1/native-key-stores';
 import { WebAccessError, type VerifiedWebIdentity } from './access-verifier';
 import { WebSessionAuthority } from './session-authority';
+import { refreshProviderPricesV1, providerPriceDigestV1, type ProviderPriceV1, type ProviderFetchV1,
+  type ProviderPriceDependenciesV1, type ProviderPriceViewV1 } from './loop-provider-prices';
 import { loopProviderDataSchemaV1, loopProviderRouteSchemaV1, classifyLoopProviderIssuesV1,
   serializeLoopProviderSnapshotV1, parseLoopProviderSnapshotV1, type LoopProviderDataV1,
   type LoopProviderSnapshotV1 } from './improve-control-room-loop-adapter';
@@ -44,7 +47,8 @@ const schemaError = (issues: Parameters<typeof classifyLoopProviderIssuesV1>[0])
 export class LoopProviderServiceV1 {
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: {tenantId:string;workspaceId:string},
-    private readonly presence: ProviderSecretPresenceV1 = createProviderSecretPresenceV1(), private readonly clock:()=>number = Date.now) {
+    private readonly presence: ProviderSecretPresenceV1 = createProviderSecretPresenceV1(), private readonly clock:()=>number = Date.now,
+    private readonly priceDependencies:ProviderPriceDependenciesV1 = {}) {
     this.#authority = new WebSessionAuthority(db, scope, clock, 'loop_provider');
   }
   async #read(tx: Pick<DatabaseSession,'query'>, lock=false) {
@@ -59,8 +63,81 @@ export class LoopProviderServiceV1 {
   async view(identity:VerifiedWebIdentity) {
     return this.#authority.authenticated(identity,async(tx,actor)=>{
       actor.require('providers.read',undefined,true);
-      return (await this.#read(tx)).snapshot;
+      return {...(await this.#read(tx)).snapshot,...await this.#priceView(tx)};
     },{repeatableReadSnapshot:true,readOnly:true});
+  }
+  async #priceView(tx:DatabaseSession):Promise<ProviderPriceViewV1> {
+    const rows=(await tx.query<{provider_id:string;model:string;window_key:string;window:ProviderPriceV1['window'];
+      input_nano_usd_per_token:string|null;output_nano_usd_per_token:string|null;currency:string;status:ProviderPriceV1['status'];reason:string;checked_at:string|Date}>(
+      'SELECT * FROM control_loop_provider_prices WHERE tenant_id=$1 ORDER BY provider_id,model,window_key',[this.scope.tenantId])).rows;
+    const fetches=(await tx.query<{provider_id:string;outcome:ProviderFetchV1['outcome'];reason:string;fetched_at:string|Date}>(
+      'SELECT * FROM control_loop_provider_fetches WHERE tenant_id=$1 ORDER BY provider_id',[this.scope.tenantId])).rows;
+    return {prices:rows.map(row=>{
+      const price:ProviderPriceV1={providerId:row.provider_id,model:row.model,windowKey:row.window_key,window:row.window,
+        input:row.input_nano_usd_per_token,output:row.output_nano_usd_per_token,currency:row.currency,status:row.status,reason:row.reason,
+        checkedAt:new Date(row.checked_at).toISOString()};
+      return {...price,stale:this.clock()-Date.parse(price.checkedAt)>24*3600_000,digest:providerPriceDigestV1(price)};
+    }),fetches:fetches.map(row=>({providerId:row.provider_id,outcome:row.outcome,reason:row.reason,fetchedAt:new Date(row.fetched_at).toISOString()}))};
+  }
+  async refreshPrices(identity:VerifiedWebIdentity,body:unknown,key:string,incoming?:AbortSignal) {
+    const parsed=removeBody.safeParse(body);
+    if(!parsed.success||!/^[A-Za-z0-9:_-]{16,100}$/.test(key))throw new WebAccessError('invalid_request');
+    const expectedVersion=parsed.data.expectedVersion,digest=sha256Digest({operation:'refresh-prices',body:parsed.data});
+    const controller=new AbortController(),signal=incoming?AbortSignal.any([incoming,controller.signal]):controller.signal;
+    const budget=this.priceDependencies.handlerTimeoutMs??20000,deadline=performance.now()+budget;
+    const timer=setTimeout(()=>controller.abort(),budget);
+    const current=()=>{signal.throwIfAborted();if(performance.now()>=deadline)throw new WebAccessError('conflict');};
+    // Bound every lock/statement by the shared remaining budget. The production adapter also
+    // consumes the operation signal during pool checkout and immediately before COMMIT.
+    const transaction=<T>(work:(tx:DatabaseSession)=>Promise<T>,check:()=>void|Promise<void>)=>this.db.transactionWithPreCommitCheck(async tx=>{
+      current();
+      const bounded:DatabaseSession={query:async <U>(sql:string,params?:unknown[])=>{
+        current();const remaining=String(Math.max(1,Math.floor(deadline-performance.now())));
+        await tx.query("SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)",[remaining]);
+        current();const result=await tx.query<U>(sql,params);current();return result;
+      }};
+      return work(bounded);
+    },async()=>{current();await check();current();});
+    const db:DatabaseClient={query:(sql,params)=>this.db.query(sql,params),transaction:work=>transaction(work,()=>{}),transactionWithPreCommitCheck:transaction};
+    const authority=new WebSessionAuthority(db,this.scope,this.clock,'loop_provider');
+    const replay=(state:State|undefined)=>{
+      if(state?.last_idempotency_key!==key)return undefined;
+      if(state.last_request_digest!==digest)throw new WebAccessError('conflict');
+      return {replayed:true,version:Number(state.version)};
+    };
+    try{return await withDatabaseOperationSignal(signal,async()=>{
+      const before=await authority.authenticated(identity,async(tx,actor)=>{
+        actor.require('providers.manage',undefined,true);
+        const read=await this.#read(tx,true),again=replay(read.state);
+        if(!again&&(read.snapshot.version!==expectedVersion||expectedVersion===Number.MAX_SAFE_INTEGER))throw new WebAccessError('conflict');
+        return {...read,replayed:again};
+      });
+      if(before.replayed)return before.replayed;
+      const results=await refreshProviderPricesV1(before.snapshot.providers,signal,this.clock,this.priceDependencies);
+      current();
+      return authority.authenticated(identity,async(tx,actor)=>{
+        actor.require('providers.manage',undefined,true);
+        const inserted=await tx.query(`INSERT INTO control_loop_provider_state(tenant_id,version,last_idempotency_key,last_request_digest,updated_at)
+          VALUES($1,1,$2,$3,$4) ON CONFLICT (tenant_id) DO NOTHING RETURNING tenant_id`,[this.scope.tenantId,key,digest,actor.now]);
+        const read=await this.#read(tx,true);
+        const snapshot=inserted.rows.length?{...read.snapshot,version:0}:read.snapshot;
+        if(snapshot.version!==expectedVersion||sha256Digest(snapshot)!==sha256Digest(before.snapshot))throw new WebAccessError('conflict');
+        for(const result of results){
+          const id=result.fetch.providerId;
+          if(result.prices){
+            await tx.query('DELETE FROM control_loop_provider_prices WHERE tenant_id=$1 AND provider_id=$2',[this.scope.tenantId,id]);
+            for(const price of result.prices)await tx.query(`INSERT INTO control_loop_provider_prices(tenant_id,provider_id,model,window_key,"window",input_nano_usd_per_token,output_nano_usd_per_token,currency,status,reason,checked_at)
+              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[this.scope.tenantId,id,price.model,price.windowKey,price.window?JSON.stringify(price.window):null,price.input,price.output,price.currency,price.status,price.reason,price.checkedAt]);
+          }
+          await tx.query(`INSERT INTO control_loop_provider_fetches(tenant_id,provider_id,outcome,reason,fetched_at) VALUES($1,$2,$3,$4,$5)
+            ON CONFLICT (tenant_id,provider_id) DO UPDATE SET outcome=EXCLUDED.outcome,reason=EXCLUDED.reason,fetched_at=EXCLUDED.fetched_at`,
+            [this.scope.tenantId,id,result.fetch.outcome,result.fetch.reason,result.fetch.fetchedAt]);
+        }
+        await tx.query('UPDATE control_loop_provider_state SET version=$2,last_idempotency_key=$3,last_request_digest=$4,updated_at=$5 WHERE tenant_id=$1',
+          [this.scope.tenantId,expectedVersion+1,key,digest,actor.now]);
+        return {replayed:false,version:expectedVersion+1};
+      });
+    });}finally{clearTimeout(timer);controller.abort();}
   }
   async #roster(tx: DatabaseSession,p:LoopProviderDataV1) {
     const roster=(await tx.query<{name:string;launcher:string}>('SELECT name,launcher FROM control_loop_roster_models WHERE tenant_id=$1 FOR SHARE',[this.scope.tenantId])).rows;
@@ -125,6 +202,8 @@ export class LoopProviderServiceV1 {
       const base=existed?current.snapshot:{...current.snapshot,version:0};
       if(sha256Digest(base)!==sha256Digest(before.snapshot))throw new WebAccessError('conflict');
       this.#candidate(base,id,p,expectedVersion+1);
+      await tx.query('DELETE FROM control_loop_provider_prices WHERE tenant_id=$1 AND provider_id=$2',[this.scope.tenantId,id]);
+      await tx.query('DELETE FROM control_loop_provider_fetches WHERE tenant_id=$1 AND provider_id=$2',[this.scope.tenantId,id]);
       await tx.query('DELETE FROM control_loop_provider_models WHERE tenant_id=$1 AND provider_id=$2',[this.scope.tenantId,id]);
       if(p){
         const values=columns.map(c=>c==='secret_ref'?JSON.stringify(p[c]):p[c]);
