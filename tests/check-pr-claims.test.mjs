@@ -610,3 +610,11 @@ test("a key nested inside a job is not a CI job reference", () => {
     assert.ok(result.errors.includes("ci_reference_unresolved"), JSON.stringify(result));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a test reference must name the whole test, not a prefix of it", () => {
+  const root = fixture();
+  try {
+    const result = inspect(root, "## Evidence\n\n- A prefix.\n  test: tests/example.test.mjs::keeps the claim");
+    assert.ok(result.errors.includes("test_reference_unresolved"), JSON.stringify(result));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
