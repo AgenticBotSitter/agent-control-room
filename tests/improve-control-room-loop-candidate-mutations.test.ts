@@ -1,7 +1,7 @@
 // Dedicated guard lane. Child commands cannot select this runner.
 // Each probe checks its baseline explicitly before asking the helper to mutate it.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mutationLane, assertMutationLaneSelection } from "./helpers/mutation-lane-selfcheck";
 import { execFile,execFileSync } from "node:child_process";
 import { mkdir,mkdtemp,readFile,rm,symlink } from "node:fs/promises";
 import { join,resolve } from "node:path";
@@ -45,12 +45,15 @@ const probes=[
  {name:"decision source freshness",file:service,find:'if (canonicalJson(verified) !== canonicalJson(prepared.e)) throw new WebAccessError("conflict");',replace:"/* MUTANT: changed completion admitted. */",
   pattern:"B4 decision freshness refuses changed sealed completion",assertion:"B4 changed sealed completion attempts zero decision inserts"},
 ];
-function sourceGuardPartition(name:string, selected:typeof probes) { test(name,{timeout:600000},async t=>{
+const sourceLane=mutationLane(2),uiLane=mutationLane(2),sqlLanes=Array.from({length:7},()=>mutationLane(1));
+function sourceGuardPartition(lane:ReturnType<typeof mutationLane>,name:string, selected:typeof probes,expectedProbes:number) { lane.test(name,expectedProbes,{timeout:600000},async(t,probeStarted)=>{
+ assert.equal(selected.length,expectedProbes,"B4 partition selects expected probes");
  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b4-mutations-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
   await symlink(join(root,"node_modules"),join(copy,"node_modules"),"dir");
   for(const probe of selected)await t.test(probe.name,async()=>{
+   probeStarted();
    const args=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",`--test-name-pattern=^${probe.pattern}$`,"tests/improve-control-room-loop-candidate.test.tsx"];
    const original=await readFile(join(copy,probe.file),"utf8");
    const env:NodeJS.ProcessEnv={...process.env,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:"1"};delete env.NODE_TEST_CONTEXT;
@@ -68,8 +71,8 @@ function sourceGuardPartition(name:string, selected:typeof probes) { test(name,{
   });
  }finally{await rm(copy,{recursive:true,force:true});}
 }); }
-sourceGuardPartition("B4 candidate service guards fail independently and restore green",probes.filter(p=>!p.name.startsWith("UI ")));
-sourceGuardPartition("B4 candidate UI guards fail independently and restore green",probes.filter(p=>p.name.startsWith("UI ")));
+sourceGuardPartition(sourceLane,"B4 candidate service guards fail independently and restore green",probes.filter(p=>!p.name.startsWith("UI ")),15);
+sourceGuardPartition(uiLane,"B4 candidate UI guards fail independently and restore green",probes.filter(p=>p.name.startsWith("UI ")),3);
 
 const sqlProbesAll=[
  {name:"SQL decision uniqueness",file:"db/migrations/0303_control_loop_update_candidates.sql",
@@ -99,7 +102,8 @@ const sqlProbesAll=[
   find:"\n        AND a.a2_input_version=c.binding->'inputVersion'",replace:"",
   pattern:"B4 SQL Start authorization guard refuses a claim bound to another A2 input version",assertion:"B4 SQL refuses a Start claim whose input version differs from its authorization"},
 ];
-function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(name,{timeout:600000},async t=>{
+function sqlGuardPartition(lane:ReturnType<typeof mutationLane>,name:string, sqlProbes:typeof sqlProbesAll,expectedProbes:number) { lane.test(name,expectedProbes,{timeout:600000},async(t,probeStarted)=>{
+ assert.equal(sqlProbes.length,expectedProbes,"B4 SQL partition selects expected probes");
  await mkdir(resolve(".test-tmp"),{recursive:true});const copy=await mkdtemp(resolve(".test-tmp/b4-sql-mutations-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -114,6 +118,7 @@ function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(na
     });
   assert.match(native.stdout,/# pass 1/u);assert.match(native.stdout,/# fail 0/u);
   for(const probe of sqlProbes)await t.test(probe.name,async()=>{
+   probeStarted();
    const args=[process.execPath,"scripts/ci/run-mutation-postgres-test.mjs","--test-concurrency=1","--test-timeout=600000",
     `--test-name-pattern=^${probe.pattern}$`,"tests/improve-control-room-loop-candidate-postgres.test.ts"];
    // The preflight used this exact first command on the unchanged copy.
@@ -130,15 +135,15 @@ function sqlGuardPartition(name:string, sqlProbes:typeof sqlProbesAll) { test(na
   });
  }finally{await rm(copy,{recursive:true,force:true});}
 }); }
-sqlGuardPartition("B4 SQL consumption guards require independently loaded native mutations",[sqlProbesAll[0]!]);
-sqlGuardPartition("B4 SQL decision immutability guards require independently loaded native mutations",[sqlProbesAll[1]!]);
-sqlGuardPartition("B4 SQL binding guards require independently loaded native mutations",[sqlProbesAll[2]!,sqlProbesAll[7]!]);
-sqlGuardPartition("B4 SQL completed checks guards require independently loaded native mutations",[sqlProbesAll[3]!]);
-sqlGuardPartition("B4 SQL authority guards require independently loaded native mutations",[sqlProbesAll[4]!]);
-sqlGuardPartition("B4 SQL candidate immutability guards require independently loaded native mutations",[sqlProbesAll[5]!]);
-sqlGuardPartition("B4 SQL grants guards require independently loaded native mutations",[sqlProbesAll[6]!]);
+sqlGuardPartition(sqlLanes[0]!,"B4 SQL consumption guards require independently loaded native mutations",[sqlProbesAll[0]!],1);
+sqlGuardPartition(sqlLanes[1]!,"B4 SQL decision immutability guards require independently loaded native mutations",[sqlProbesAll[1]!],1);
+sqlGuardPartition(sqlLanes[2]!,"B4 SQL binding guards require independently loaded native mutations",[sqlProbesAll[2]!,sqlProbesAll[7]!],2);
+sqlGuardPartition(sqlLanes[3]!,"B4 SQL completed checks guards require independently loaded native mutations",[sqlProbesAll[3]!],1);
+sqlGuardPartition(sqlLanes[4]!,"B4 SQL authority guards require independently loaded native mutations",[sqlProbesAll[4]!],1);
+sqlGuardPartition(sqlLanes[5]!,"B4 SQL candidate immutability guards require independently loaded native mutations",[sqlProbesAll[5]!],1);
+sqlGuardPartition(sqlLanes[6]!,"B4 SQL grants guards require independently loaded native mutations",[sqlProbesAll[6]!],1);
 
-test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{timeout:120000},async()=>{
+uiLane.test("B4 inert decision callback mutation reaches the forbidden-attempt spy",1,{timeout:120000},async(_t,probeStarted)=>{
  const copy=await mkdtemp(resolve(".test-tmp/b4-inert-mutation-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -147,6 +152,7 @@ test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{ti
   const args=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",
    "--test-name-pattern=^B4 inert decision transport spy observes forbidden attempts before refusal$","tests/improve-control-room-loop-candidate.test.tsx"];
   const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:60000,maxBuffer:4*1024*1024});assert.match(baseline.stdout,/# pass 1/u);
+  probeStarted();
   const result=await assertGuardBites({skipBaseline:true,root:copy,file:"private-app/app/improvement-finish-card.tsx",find:"      await client.decide(action);",
    replace:'      await fetch("/api/v1/install",{method:"POST"}); await client.decide(action);',testCmd:args,boundMs:60000,
    because:"B4 inert decision attempts zero delivery operations before any downstream refusal"});
@@ -158,7 +164,7 @@ test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{ti
  }finally{await rm(copy,{recursive:true,force:true});}
 });
 
-test("B4 decided-state response mutation reaches the invariant assertion",{timeout:120000},async()=>{
+sourceLane.test("B4 decided-state response mutation reaches the invariant assertion",1,{timeout:120000},async(_t,probeStarted)=>{
  const copy=await mkdtemp(resolve(".test-tmp/b4-state-mutation-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -167,6 +173,7 @@ test("B4 decided-state response mutation reaches the invariant assertion",{timeo
   const args=[process.execPath,"scripts/run-tests-with-quarantine.mjs","--import","tsx","--test",
    "--test-name-pattern=^B4 wire decided state requires version two and a decision time$","tests/improve-control-room-loop-candidate.test.tsx"];
   const baseline=await exec(args[0]!,args.slice(1),{cwd:copy,env,timeout:60000,maxBuffer:4*1024*1024});assert.match(baseline.stdout,/# pass 1/u);
+  probeStarted();
   const result=await assertGuardBites({skipBaseline:true,root:copy,file:wire,
    find:'|| (c.state === "ready" ? c.version !== 1 || c.decidedAt !== null : c.version !== 2 || c.decidedAt === null)',
    replace:'|| (c.state === "ready") !== (c.version === 1 && c.decidedAt === null)',testCmd:args,boundMs:60000,
@@ -178,3 +185,4 @@ test("B4 decided-state response mutation reaches the invariant assertion",{timeo
   console.log("B4 mutation decided-state response: baseline=true loaded=true intended_assertion=true restored=true green=true");
  }finally{await rm(copy,{recursive:true,force:true});}
 });
+assertMutationLaneSelection([sourceLane,uiLane,...sqlLanes]);

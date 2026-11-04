@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mutationLane, assertMutationLaneSelection } from './helpers/mutation-lane-selfcheck';
 import { createPrivateTaskBootstrap } from '../src/web/v1/private-task-startup';
 import { taskStartupFixture } from './helpers/task-startup';
 import { monitoringEngine,until } from './helpers/improve-control-room-loop-monitoring';
@@ -247,7 +248,8 @@ if(ordinary){
     assert.equal((await readFile(join(f.root,'collectors'),'utf8')).trim().split('\n').length,2);recovered.send('close');await new Promise<void>(r=>recovered.once('exit',()=>r()));
   });
 }
-if(!ordinary)test('B3b product collector contention',async t=>{
+const loadLane=mutationLane(1);
+if(!ordinary)loadLane.test('B3b product collector contention',24,{},async(t,probeStarted)=>{
   const db=await taskFixture();t.after(()=>db.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const saved=await seedRecoveryRun({...db,db:db.client,scope},e,db.project.projectId,()=>webNow,'b3b-load-stop');
   const bridge=new ImproveControlRoomLoopServiceV1(db.client,scope,{integrityKey:recoveryKey,adapter:e.adapter},()=>webNow);
@@ -257,7 +259,7 @@ if(!ordinary)test('B3b product collector contention',async t=>{
   const monitors=Array.from({length:24},(_,index)=>createImproveControlRoomLoopMonitorV1({...config,collect:async(...args)=>{winner=index;return config.collect(...args);}}));t.after(async()=>{release?.();await Promise.all(monitors.map(m=>m.close()));});
   // All24 enter refresh synchronously with no schedule, before the first async
   // exclusive open can finish and reserve a future due time.
-  for(const m of monitors)m.tick();await reached;await new Promise<void>(r=>setTimeout(r,100));
+  for(const m of monitors){probeStarted();m.tick();}await reached;await new Promise<void>(r=>setTimeout(r,100));
   const losers=monitors.filter((_,index)=>index!==winner);assert.equal(losers.length,23);
   assert.equal(calls,1,'B3b all 23 losing paths preserve one collector');
   const at=performance.now();await Promise.all(losers.slice(0,12).map(m=>m.close()));
@@ -269,6 +271,8 @@ if(!ordinary)test('B3b product collector contention',async t=>{
   f.advance(3000000);const retry=createImproveControlRoomLoopMonitorV1({...f.configuration,collect:async()=>{calls++;throw Error('SYNTHETIC dropped transport');}});await f.tick(retry);assert.equal((await f.schedule()).nextKind,'retry');
   f.advance(300000);await f.tick(retry);assert.equal((await f.schedule()).nextKind,'normal');assert.equal(calls,3);await retry.close();
 });
+
+if(!ordinary)assertMutationLaneSelection([loadLane]);
 
 import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';

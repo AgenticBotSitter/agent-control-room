@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mutationLane, assertMutationLaneSelection } from "./helpers/mutation-lane-selfcheck";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { taskFixture } from "./helpers/web-task";
@@ -685,7 +686,8 @@ if(process.env.CONTROL_ROOM_B3C_REQUIRE_DESTRUCTIVE==="1")test("B3c reviewed ret
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-if(process.env.CONTROL_ROOM_B3C_LOAD==="1")test("B3c 24 finalizers retain once and refuse destruction",{timeout:150000},async t=>{
+const loadLane=mutationLane(1);
+if(process.env.CONTROL_ROOM_B3C_LOAD==="1")loadLane.test("B3c 24 finalizers retain once and refuse destruction",24,{timeout:150000},async(t,probeStarted)=>{
   const f=await using(t),other=await using(t),children=new Set<ChildProcess>();
   const events:{child:ChildProcess;kind:string;[key:string]:unknown}[]=[];
   let publications=0;
@@ -721,7 +723,7 @@ if(process.env.CONTROL_ROOM_B3C_LOAD==="1")test("B3c 24 finalizers retain once a
     try{timer=setTimeout(()=>child.kill("SIGKILL"),2000);await closed;}finally{clearTimeout(timer);}
   };
   try{
-    const cohort=Array.from({length:24},start);await waitFor(()=>events.filter(e=>e.kind==="ready").length===24);
+    const cohort=Array.from({length:24},()=>{const child=start();probeStarted();return child;});await waitFor(()=>events.filter(e=>e.kind==="ready").length===24);
     const began=Date.now();for(const child of cohort)child.send({kind:"go"});
     await waitFor(()=>events.filter(e=>e.kind==="busy").length===23&&events.some(e=>e.kind==="acquired"));
     assert.equal(events.filter(e=>e.kind==="acquired").length,1);assert.equal(events.filter(e=>e.kind==="busy").length,23);
@@ -869,3 +871,5 @@ if(ordinary) test("B5 diagnostic logging bounds unknown errors and preserves fix
   const wrapped=new LoopFinalizationFailureV1("PUBLICATION_RECORD_FAILED",cause);
   assert.deepEqual(loopFinalizationErrorDiagnosticV1(wrapped),["Error","loop_adapter_unavailable"]);
 });
+
+if(process.env.CONTROL_ROOM_B3C_LOAD==="1")assertMutationLaneSelection([loadLane]);
