@@ -109,3 +109,9 @@ test("a mutation lane job marked continue-on-error is refused", () => {
   jobs["mutation-checks-candidate"]["continue-on-error"] = true;
   assert.throws(() => assertMutationLaneCoverage(scripts, jobs));
 });
+
+test("a conditional step inside a mutation lane job is refused", () => {
+  const { scripts, jobs } = realLaneInputs();
+  jobs["mutation-checks-lineage"].steps.at(-1).if = "${{ false }}";
+  assert.throws(() => assertMutationLaneCoverage(scripts, jobs), /must be unconditional/u);
+});
