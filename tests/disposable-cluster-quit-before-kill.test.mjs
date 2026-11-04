@@ -26,9 +26,22 @@ async function startStub(root, ignoreQuit) {
     setInterval(() => {}, 1000);
   `;
   const child = spawn(process.execPath, ["-e", script, "postgres"], { stdio: ["ignore", "pipe", "ignore"] });
-  await new Promise(resolve => child.stdout.once("data", resolve));
   const closed = new Promise(resolve => child.once("close", (code, signal) => resolve({ code, signal })));
-  return { child, closed, log };
+  try {
+    await new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); child.stdout.off("data", ready); child.off("error", failed); child.off("close", early); };
+      const ready = () => { cleanup(); resolve(); };
+      const failed = error => { cleanup(); reject(error); };
+      const early = () => failed(new Error("SYNTHETIC postmaster stub closed before readiness"));
+      const timer = setTimeout(() => failed(new Error("SYNTHETIC postmaster stub readiness timeout")), 10000);
+      child.stdout.once("data", ready); child.once("error", failed); child.once("close", early);
+    });
+    return { child, closed, log };
+  } catch (error) {
+    try { child.kill("SIGKILL"); } catch { /* gone */ }
+    await closed;
+    throw error;
+  }
 }
 
 function fixture(pid) {
@@ -46,35 +59,57 @@ function fixture(pid) {
 
 test("stopCluster sends SIGQUIT to a postmaster pg_ctl could not stop, and does not SIGKILL one that leaves", async () => {
   const dir = mkdtempSync(join(tmpdir(), "quit-before-kill-stub-"));
-  const stub = await startStub(dir, false);
-  const { root, cluster } = fixture(stub.child.pid);
+  let stub, root;
   try {
+    stub = await startStub(dir, false);
+    const fixtureState = fixture(stub.child.pid);
+    root = fixtureState.root;
+    const { cluster } = fixtureState;
     await stopCluster(cluster, { quitGraceMs: 5_000, isAlive });
     const exit = await stub.closed;
+    assert.equal(existsSync(stub.log), true, "SIGQUIT-before-SIGKILL: cooperative stub must record SIGQUIT");
     assert.equal(readFileSync(stub.log, "utf8"), "SIGQUIT\n", "the stub must have been sent SIGQUIT");
     assert.deepEqual(exit, { code: 0, signal: null }, "a process that quits on SIGQUIT must not be SIGKILLed");
     assert.equal(existsSync(cluster.socket), false, "the socket directory is removed once the postmaster is gone");
   } finally {
-    try { stub.child.kill("SIGKILL"); } catch { /* gone */ }
-    rmSync(root, { recursive: true, force: true });
+    if (stub) {
+      if (stub.child.exitCode === null && stub.child.signalCode === null) {
+        try { stub.child.kill("SIGKILL"); } catch { /* gone */ }
+      }
+      await stub.closed;
+      assert.ok(stub.child.exitCode !== null || stub.child.signalCode !== null, "owned stub close must be observed");
+      console.log("RESULT stopCluster owned stub close observed");
+    }
+    if (root) rmSync(root, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test("stopCluster falls back to SIGKILL only after SIGQUIT was ignored for the grace period", async () => {
   const dir = mkdtempSync(join(tmpdir(), "quit-before-kill-stub-"));
-  const stub = await startStub(dir, true);
-  const { root, cluster } = fixture(stub.child.pid);
+  let stub, root;
   try {
+    stub = await startStub(dir, true);
+    const fixtureState = fixture(stub.child.pid);
+    root = fixtureState.root;
+    const { cluster } = fixtureState;
     const started = Date.now();
     await stopCluster(cluster, { quitGraceMs: 400, isAlive });
     const exit = await stub.closed;
+    assert.equal(existsSync(stub.log), true, "SIGQUIT-before-SIGKILL: ignoring stub must record SIGQUIT before forced kill");
     assert.equal(readFileSync(stub.log, "utf8"), "SIGQUIT\n", "SIGQUIT must come before the SIGKILL");
     assert.deepEqual(exit, { code: null, signal: "SIGKILL" }, "a process that ignores SIGQUIT is SIGKILLed after the grace");
     assert.ok(Date.now() - started >= 350, "the grace period must be waited out before SIGKILL");
   } finally {
-    try { stub.child.kill("SIGKILL"); } catch { /* gone */ }
-    rmSync(root, { recursive: true, force: true });
+    if (stub) {
+      if (stub.child.exitCode === null && stub.child.signalCode === null) {
+        try { stub.child.kill("SIGKILL"); } catch { /* gone */ }
+      }
+      await stub.closed;
+      assert.ok(stub.child.exitCode !== null || stub.child.signalCode !== null, "owned stub close must be observed");
+      console.log("RESULT stopCluster owned stub close observed");
+    }
+    if (root) rmSync(root, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
   }
 });

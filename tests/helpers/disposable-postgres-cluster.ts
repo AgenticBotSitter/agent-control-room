@@ -308,6 +308,9 @@ export async function quitThenKill(pid: number, graceMs = QUIT_GRACE_MS, alive: 
  * instead: it falls back to the recorded postmaster pid, verifies the process is
  * gone, and only then removes the directory. */
 export async function stopCluster(target: Cluster,
+  // isAlive and a short quitGraceMs are test-only seams for Node postmaster
+  // stubs when sandbox restrictions prevent ps. Default production-shaped
+  // custody still uses isPostmasterAlive; kill-0 alone is no identity proof.
   options: { quitGraceMs?: number; isAlive?: (pid: number | undefined) => boolean } = {}): Promise<void> {
   const pid = await readPostmasterPid(target);
   const isAlive = options.isAlive ?? isPostmasterAlive;
