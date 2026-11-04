@@ -1204,6 +1204,79 @@ test("F04a driver executes native bind capability probe before intake invitation
   console.log('RESULT: PASS F04a actual bind-input --help child refusal before intake/mapping; ordered full cleanup (fixture host)');
 });
 
+async function repeatEvidenceAttempt(t: TestContext, driver: Awaited<ReturnType<typeof controllerDriverFixture>>) {
+  const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
+  const {getEventListeners}=await import('node:events');
+  const before={SIGINT:process.listeners('SIGINT'),SIGTERM:process.listeners('SIGTERM')};
+  const abort=new AbortController(),owner=createFirstWebsiteControllerOwnerV1(abort.signal);
+  const dispose=owner.dispose,cleanup=owner.cleanup,beginAcquisition=owner.beginAcquisition;
+  t.after(dispose);
+  const calls={assembly:0,acquisition:0,ownerChannel:0,other:0,cleanup:0,dispose:0};
+  t.mock.method(owner,'beginAcquisition',()=>{calls.acquisition++;beginAcquisition();});
+  t.mock.method(owner,'cleanup',()=>{calls.cleanup++;return cleanup();});
+  t.mock.method(owner,'dispose',()=>{calls.dispose++;dispose();});
+  const unexpected=async()=>{calls.other++;throw Error('SYNTHETIC_REPEAT_UNEXPECTED_PORT');};
+  const ports:NonNullable<Parameters<typeof driver.runFirstWebsiteJourneyV1>[2]>={
+    loadAssembly:async()=>{calls.assembly++;throw Error('SYNTHETIC_REPEAT_ASSEMBLY_REFUSAL');},
+    ownerChannel:async()=>{calls.ownerChannel++;throw Error('SYNTHETIC_REPEAT_UNEXPECTED_OWNER_CHANNEL');},
+    probeBind:unexpected,bindInputs:unexpected,captureDesktop:unexpected,diagnosticSnapshot:unexpected,verifyEvidence:unexpected,
+  };
+  // Keep the same preflight and evidence directory; bypass CLI preflight so the
+  // real controller's exclusive writer owns this refusal.
+  const verdict=await driver.runFirstWebsiteJourneyV1({...driver.preflight,controllerOwner:owner},abort.signal,ports);
+  assert.deepEqual(process.listeners('SIGINT'),before.SIGINT,'repeat attempt removes its SIGINT listener');
+  assert.deepEqual(process.listeners('SIGTERM'),before.SIGTERM,'repeat attempt removes its SIGTERM listener');
+  assert.equal(getEventListeners(abort.signal,'abort').length,0,'repeat attempt removes its forwarded abort listener');
+  assert.equal(calls.cleanup,1,'repeat attempt executes controller cleanup once');
+  assert.equal(calls.dispose,1,'repeat attempt disposes the controller owner once');
+  assert.equal(await lstat(driver.events).then(()=>true,()=>false),false,'original assembly and probe never execute');
+  return {verdict,calls};
+}
+
+for(const retainedDiagnostics of [false,true])test(`B5 in-process repeat evidence preserves ${retainedDiagnostics?'start and final diagnostics':'seeded start bytes'}`,async t=>{
+  const driver=await controllerDriverFixture(t),{s}=driver;
+  await mkdir(s.evidence,{mode:0o700});
+  const retained=new Map<string,Buffer>();
+  for(const name of ['controller-start.json',...(retainedDiagnostics?['controller-observations.json','controller-verdict.json']:[])]){
+    const bytes=Buffer.from(JSON.stringify({fixture:'SYNTHETIC retained evidence',file:name})+'\n');
+    await writeFile(join(s.evidence,name),bytes,{flag:'wx',mode:0o600});retained.set(name,bytes);
+  }
+  for(let attempt=0;attempt<2;attempt++){
+    const {verdict,calls}=await repeatEvidenceAttempt(t,driver);
+    for(const [name,bytes] of retained){
+      assert.deepEqual(await readFile(join(s.evidence,name)),bytes,'repeat evidence custody preserves original '+name+' bytes');
+      assert.equal((await lstat(join(s.evidence,name))).mode&0o777,0o600,'retained evidence stays private-mode');
+    }
+    assert.deepEqual(calls,{assembly:0,acquisition:0,ownerChannel:0,other:0,cleanup:1,dispose:1},
+      'repeat evidence collision must prevent assembly load and host acquisition');
+    assert.equal(verdict.state,'incomplete');
+    const diagnosticsAlreadyExist=retainedDiagnostics||attempt>0;
+    assert.deepEqual(verdict.reasons,['B5_CONTROLLER_FAILED',...(diagnosticsAlreadyExist?['B5_OBSERVATIONS_WRITE_FAILED','B5_VERDICT_WRITE_FAILED']:[]),'B5_PROVIDER_FIXTURE']);
+    const details=(verdict as {detail:{name:string;message:string}[]}).detail;
+    assert.equal(details[0]!.name,'Error');assert.match(details[0]!.message,/EEXIST/,'direct invocation retains the current exclusive-create error');
+    assert.equal(verdict.transportCleanup!.mappingAttempted,false);
+    assert.equal(verdict.transportCleanup!.hostStopped,true);assert.equal(verdict.transportCleanup!.postgresStopped,true);
+    assert.deepEqual(verdict.transportCleanup!.failures,[]);
+    // The next direct attempt must preserve diagnostics created by the first,
+    // as well as the known seeded bytes; no CLI guard participates.
+    for(const name of ['controller-observations.json','controller-verdict.json','controller-timing.json']){
+      retained.set(name,await readFile(join(s.evidence,name)));
+    }
+  }
+});
+
+test('B5 in-process repeat evidence fresh sibling reaches the injected assembly seam',async t=>{
+  const driver=await controllerDriverFixture(t);
+  assert.equal(await lstat(driver.s.evidence).then(()=>true,()=>false),false);
+  const {verdict,calls}=await repeatEvidenceAttempt(t,driver);
+  assert.deepEqual(calls,{assembly:1,acquisition:0,ownerChannel:0,other:0,cleanup:1,dispose:1},
+    'fresh evidence must reach assembly loading before the deliberate synthetic refusal');
+  assert.equal(verdict.state,'incomplete');assert.deepEqual(verdict.reasons,['B5_CONTROLLER_FAILED','B5_PROVIDER_FIXTURE']);
+  assert.equal((verdict as {detail:{message:string}[]}).detail[0]!.message,'SYNTHETIC_REPEAT_ASSEMBLY_REFUSAL');
+  const start=JSON.parse(await readFile(join(driver.s.evidence,'controller-start.json'),'utf8'));
+  assert.equal(start.budget.maxDurationMs,driver.preflight.config.maxDurationMs,'fresh sibling passed input scanning and wrote controller-start');
+});
+
 test("B5 controller catches retain timestamped error details before and after evidence creation", async t => {
   const {createFirstWebsiteControllerOwnerV1}=await import('../scripts/workflow-journeys/first-website-controller');
   for (const phase of ['acquisition','preflight','cleanup','adapter'] as const) await t.test(phase, async t => {
