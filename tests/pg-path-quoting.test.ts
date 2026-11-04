@@ -84,6 +84,8 @@ for (const suffix of ["space dir", "quote' dir", 'double" dir', 'comma,back\\ di
     process.env.ATTACK_KIT_SOCKET_ROOT = directory;
     let data: string | undefined, socket: string | undefined;
     try {
+      // The kit provisions every named login, including the queue worker;
+      // retain its queue role setup so startup reaches the path assertions.
       await withRealPostgres(async pg => {
         data = pg.dataDirectory; socket = pg.socketDirectory;
         assert.ok(data.startsWith(directory)); assert.ok(socket.startsWith(directory));
@@ -92,7 +94,7 @@ for (const suffix of ["space dir", "quote' dir", 'double" dir', 'comma,back\\ di
         await client.connect();
         try { assert.equal((await client.query("SHOW listen_addresses")).rows[0]?.listen_addresses, ""); }
         finally { await client.end(); }
-      }, { pgBin: bin!, port: 56179, allowedPorts: [56179], withoutQueue: true });
+      }, { pgBin: bin!, port: 56179, allowedPorts: [56179] });
       assert.ok(data && socket);
       const { existsSync } = await import("node:fs");
       assert.equal(existsSync(data), false); assert.equal(existsSync(socket), false);
