@@ -110,7 +110,6 @@ export class LoopProviderServiceV1 {
       return {...read,replayed:undefined};
     },{repeatableReadSnapshot:true});
     if(before.replayed)return before.replayed;
-    if(p?.secret_ref.kind==='bitwarden')throw new LoopProviderRefusedV1('secret_missing');
     if(p?.secret_ref.kind==='macos_keychain'&&await this.presence.availability(id)!=='available')throw new LoopProviderRefusedV1('secret_missing');
     return this.#authority.authenticated(identity,async(tx,actor)=>{
       actor.require('providers.manage',undefined,true);

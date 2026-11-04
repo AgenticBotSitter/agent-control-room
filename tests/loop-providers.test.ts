@@ -65,7 +65,7 @@ test('S1 owner guard denies operator and non-human reads and writes without prov
 });
 test('S1 schema errors and semantic URL roster categories are neutral and leave no writes',async t=>{
   const f=await fixture(t);
-  for(const p of [provider({billing_kind:'free' as 'token'}),{...provider(),apiKey:'synthetic'},provider({credit_note:'Bearer CRMARKER-'+'a'.repeat(32)})])
+  for(const p of [provider({billing_kind:'free' as 'token'}),{...provider(),apiKey:'synthetic'}])
     assert.equal((await f.put(0,p)).status,400);
   for(const [p,reason] of [[provider({base_url:'http://example.com'}),'base_url'],[provider({price_source_url:'https://other.example/prices',price_source_format:'control-room.provider-prices/v1'}),'price_source_url'],
     [provider({models:[{...provider().models[0]!,launcher:'other'}],secret_ref:{kind:'launcher',launcher:'other'}}),'roster_mismatch']] as const){
@@ -73,12 +73,19 @@ test('S1 schema errors and semantic URL roster categories are neutral and leave 
   }
   assert.deepEqual(await f.rows(),[[],[],[]]);
 });
+test('S1 body secret in allowed credit note refuses without writes or marker disclosure',async t=>{
+ const f=await fixture(t),marker='Bearer CRMARKER-'+'a'.repeat(32);
+ const response=await f.put(0,provider({credit_note:marker}));
+ assert.equal(response.status,400);
+ assert.deepEqual(await response.json(),{error:'invalid_request'});
+ assert.deepEqual(await f.rows(),[[],[],[]]);
+});
 test('S1 removal HTTP body type size CSRF and owner refusals preserve all rows',async t=>{
  const f=await fixture(t);assert.equal((await f.put(0)).status,201);const saved=await f.rows();
  for(const req of [new Request(origin+'/api/v1/loop-providers/provider-one/remove',{method:'POST',headers:{'cf-access-jwt-assertion':token(),origin}}),
   new Request(origin+'/api/v1/loop-providers/provider-one/remove',{method:'POST',headers:{'cf-access-jwt-assertion':token(),origin,'content-type':'text/plain'},body:'{}'}),
-  request('/api/v1/loop-providers/provider-one/remove','POST',{expectedVersion:1,extra:true}),
-  request('/api/v1/loop-providers/provider-one/remove','POST',{expectedVersion:1,extra:'x'.repeat(65536)})]) assert.ok([400,413].includes((await f.handler(req)).status));
+  request('/api/v1/loop-providers/provider-one/remove','POST',{expectedVersion:1,extra:true})]) assert.equal((await f.handler(req)).status,400);
+ assert.equal((await f.handler(request('/api/v1/loop-providers/provider-one/remove','POST',{expectedVersion:1,extra:'x'.repeat(65536)}))).status,413);
  const foreign=request('/api/v1/loop-providers/provider-one/remove','POST',{expectedVersion:1});foreign.headers.set('origin','https://foreign.invalid');assert.equal((await f.handler(foreign)).status,403);
  await f.db.query("UPDATE control_role_grants SET role_key='operator'");assert.equal((await f.remove(1)).status,403);
  assert.deepEqual(await f.rows(),saved);
@@ -110,8 +117,25 @@ test('S1 concurrent reference change during outside-transaction probe refuses st
  await seen;assert.equal((await f.put(1,provider({credit_note:'Concurrent edit'}))).status,201);release();assert.equal((await pending).status,409);
  assert.equal((await f.service.view(f.identity)).providers[0]!.credit_note,'Concurrent edit');
 });
-test('S1 roster change invalidates mappings; unresolved Bitwarden reference is unavailable',async t=>{
- const f=await fixture(t);assert.equal((await f.put(0,provider({secret_ref:{kind:'bitwarden',item:'opaque-item'}}))).status,422);
+test('S1 Bitwarden reference persists and replays without probing but unresolved routes refuse',async t=>{
+ const calls:string[]=[];
+ const f=await fixture(t,{availability:async id=>{calls.push(id);return 'available';}});
+ const p=provider({secret_ref:{kind:'bitwarden',item:'opaque-item'}}),k=key();
+ assert.equal((await f.put(0,p,k)).status,201);
+ const saved=await f.rows();
+ assert.deepEqual((await f.service.view(f.identity)).providers,[p]);
+ assert.deepEqual(saved[0]![0]!.secret_ref,p.secret_ref);
+ assert.deepEqual(saved.map(rows=>rows.length),[1,1,1]);
+ assert.equal((await f.put(0,p,k)).status,200);
+ await assert.rejects(f.service.revalidate(f.identity,{providerId:'provider-one',model:'synthetic/model'}),{reason:'secret_missing',message:'Secret unavailable'});
+ assert.deepEqual(await f.rows(),saved);
+ assert.deepEqual(calls,[]);
+ assert.equal((await f.remove(1)).status,201);
+ assert.deepEqual((await f.rows()).map(rows=>rows.length),[0,0,1]);
+ assert.deepEqual(calls,[]);
+});
+test('S1 roster change invalidates mappings',async t=>{
+ const f=await fixture(t);
  assert.equal((await f.put(0)).status,201);await f.db.query("UPDATE control_loop_roster_models SET launcher='changed'");
  await assert.rejects(f.service.revalidate(f.identity,{providerId:'provider-one',model:'synthetic/model'}),{reason:'roster_mismatch'});
 });

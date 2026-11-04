@@ -46,10 +46,17 @@ for(const width of [390,1280])test(`S1 owner adds replaces removes provider sett
   expect((await service.view(f.identity)).providers[0]!.models[0]!.served_model_id).toBe('served/one');
   await page.reload();await page.getByRole('button',{name:'Edit Synthetic provider',exact:true}).click();
   await page.getByLabel('Provider name',{exact:true}).fill('Replacement');
+  await page.getByLabel(/^Credential reference/).selectOption('bitwarden');
+  await page.getByLabel('Opaque item reference',{exact:true}).fill('opaque-item');
   await page.getByLabel('Served model ID',{exact:true}).fill('served/replacement');
   await page.getByRole('button',{name:'Save provider',exact:true}).click();
   await expect(page.getByRole('button',{name:'Remove Replacement',exact:true})).toBeVisible();
   expect((await service.view(f.identity)).providers[0]!.models[0]!.served_model_id).toBe('served/replacement');
+  await page.reload();
+  await page.getByRole('button',{name:'Edit Replacement',exact:true}).click();
+  await expect(page.getByLabel('Opaque item reference',{exact:true})).toHaveValue('opaque-item');
+  expect((await service.view(f.identity)).providers[0]!.secret_ref).toEqual({kind:'bitwarden',item:'opaque-item'});
+  await expect(service.revalidate(f.identity,{providerId:'provider-one',model:'synthetic/model'})).rejects.toMatchObject({reason:'secret_missing'});
   await page.getByRole('button',{name:'Remove Replacement',exact:true}).click();
   await expect(page.getByText('Settings version 3',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Edit Replacement',exact:true})).toHaveCount(0);

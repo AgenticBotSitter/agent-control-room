@@ -323,10 +323,10 @@ GRANT SELECT, INSERT ON control_loop_policy_layers, control_loop_policy_events, 
 GRANT UPDATE (version, settings_text, settings_sha256, updated_by, updated_at, last_idempotency_key, last_request_digest)
   ON control_loop_policy_layers TO control_room_private_web;
 
-COMMIT;
-
 -- S1 owner-managed provider routes, never credential values.
 GRANT SELECT, INSERT ON control_loop_providers, control_loop_provider_models, control_loop_provider_state TO control_room_private_web;
 GRANT UPDATE (display_name,base_url,billing_kind,secret_ref,price_source_url,price_source_format,credit_amount_nano_usd,credit_expires_on,credit_note,updated_by,updated_at) ON control_loop_providers TO control_room_private_web;
 GRANT UPDATE (version,last_idempotency_key,last_request_digest,updated_at) ON control_loop_provider_state TO control_room_private_web;
 GRANT DELETE ON control_loop_providers,control_loop_provider_models TO control_room_private_web;
+
+COMMIT;

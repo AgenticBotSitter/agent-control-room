@@ -56,6 +56,7 @@
     "test:improve-control-room-loop-candidate-browser": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 playwright test tests/browser/improve-control-room-loop-candidate.spec.ts",
     "test:improve-control-room-loop-attention-browser": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 playwright test tests/browser/improve-control-room-loop-attention.spec.ts",
     "test:improve-control-room-loop-attention-mutations": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/improve-control-room-loop-attention-mutations.test.ts",
+    "test:improve-control-room-loop-providers-browser": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 playwright test tests/browser/loop-providers.spec.ts",
     "test:improve-control-room-loop-browser": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 playwright test tests/browser/improve-control-room-loop.spec.ts",
     "test:improve-control-room-loop-ui-mutations": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/improve-control-room-loop-ui-mutations.test.ts",
     "test:improve-control-room-postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/improve-control-room-loop-recovery-postgres.test.ts tests/improve-control-room-loop-bridge-postgres.test.ts tests/improve-control-room-desk-postgres.test.ts tests/improve-control-room-loop-candidate-postgres.test.ts",

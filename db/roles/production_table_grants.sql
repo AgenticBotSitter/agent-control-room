@@ -214,4 +214,5 @@ REVOKE ALL ON control_loop_policy_layers, control_loop_policy_events, control_lo
   control_room_github_broker, control_room_work_intake, control_room_backup;
 
 REVOKE ALL ON control_loop_providers, control_loop_provider_models, control_loop_provider_state
- FROM control_room_application, control_room_scheduler, control_room_reader, control_room_backup;
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake, control_room_backup;
