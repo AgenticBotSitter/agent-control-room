@@ -15,7 +15,7 @@ import { createB5DeviceMailboxV1, b5DeviceHashV1, b5DeviceRequestSchemaV1, b5Dev
   writeB5DeviceReceiptV1, writeB5DeviceRequestV1, waitB5DeviceJsonV1,
   assertB5EvidenceSecretFreeV1, redactB5EvidenceV1, retainB5TransportQualificationV1, parseB5DeviceJsonV1, validateB5DeviceOriginV1, validateB5TransportV1, b5MappingDigestV1,
   b5DeviceRemoteOriginsV1, createB5DeviceCleanupV1, assertB5DeviceSignalCleanupV1, type B5TransportQualificationV1,
-  type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
+  B5DeviceRefusalV1, type B5DeviceMailboxV1, type B5DeviceRequestV1 } from "../scripts/workflow-journeys/first-website-device";
 
 const local = "http://127.0.0.1:60460", remote = "https://fixture.ts.net:60462";
 const now = Date.parse("2026-11-01T18:00:00.000Z"), time = (offset = 0) => new Date(now + offset).toISOString();
@@ -435,6 +435,107 @@ test("F03b mailbox close drains an already-started receipt and refuses new work"
   await assert.rejects(mailbox.request("connect", "phone", time(1000)), { code: "B5_DEVICE_CLOSED" });
   await closing; assert.equal(settled, true); await accepted;
   assert.deepEqual(await readdir(join(mailbox.root, "receipts")), ["1.json"]);
+});
+
+// B5 closed mailbox HTTP: the handle exchange fence must refuse before render or evidence.
+async function b5ClosedTree(root: string, base = root): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const entry of (await readdir(root, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join(root, entry.name), rel = path.slice(base.length + 1);
+    if (entry.isDirectory()) { out[rel + "/"] = ""; Object.assign(out, await b5ClosedTree(path, base)); }
+    else out[rel] = (await readFile(path)).toString("base64");
+  }
+  return out;
+}
+async function b5ClosedReal(t: { after(fn: () => Promise<void>): void }) {
+  let mailbox: B5DeviceMailboxV1 | undefined, root: string | undefined;
+  // Cleanup registered before any fallible fixture work: close first, then remove scratch.
+  t.after(async () => { await mailbox?.close(); if (root) await rm(root, { recursive: true, force: true }); });
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  root = await mkdtemp(resolve(".test-tmp/f03b-closed-")); await chmod(root, 0o700);
+  mailbox = await createB5DeviceMailboxV1(root, remote, { real: true, projectId: "unit-project", inventory: qualification().inventory, now: () => now });
+  return mailbox;
+}
+const b5ClosedOwner = "control_room_local_owner=" + "c".repeat(43);
+const b5ClosedPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+
+test("B5 closed mailbox HTTP refuses project GET, owner POST and sign-in POST before render or evidence", async t => {
+  const mailbox = await b5ClosedReal(t);
+  // Existing evidence: sequence 1 accepted with observation, receipt and sealed service evidence.
+  const first = await mailbox.request("connect", "phone", time(10_000));
+  for (const cookie of [b5ClosedOwner, `${b5ClosedOwner}; b5_correlation=${first.sessionNonce}`])
+    assert.equal((await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie } }), async () => new Response("product document"))).status, 200);
+  await writeFile(join(mailbox.root, "captures/closed.png"), b5ClosedPng, { mode: 0o600 });
+  await mailbox.accept({ ...first, real: true, browser: "fixture-browser/fixture-version", observedAt: time(), actions: ["connected"], observation: mailbox.observation()!,
+    captures: [{ path: "captures/closed.png", sha256: b5DeviceHashV1(b5ClosedPng), device: "phone", sequence: first.sequence, sessionNonce: first.sessionNonce, capturedAt: time() }] });
+  // A second, unaccepted request is pending and its session challenge is issued, so
+  // without the fence each request below would reach a live evidence branch.
+  const second = await mailbox.request("prepare", "phone", time(10_000));
+  const challenged = await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: b5ClosedOwner } }), async () => new Response("product document"));
+  assert.match(challenged.headers.get("set-cookie")!, new RegExp(`b5_correlation=${second.sessionNonce}`));
+  const before = await b5ClosedTree(mailbox.root), observation = mailbox.observation();
+  assert.ok(before["observations/1.json"] && before["receipts/1.json"] && before["service/1.json"] && before["request.json"]);
+  assert.equal(before["session-wait.json"], undefined); assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+  const closing = mailbox.close(); assert.equal(mailbox.close(), closing, "close is idempotent");
+  await closing; assert.equal(mailbox.close(), closing, "close stays idempotent after settling");
+  const loop = "/api/v1/projects/unit-project/improvements/loop/intake";
+  const intake = JSON.stringify({ schemaVersion: 1, requestId: "unit-request", localVersion: 1, commandId: "unit-command", state: "accepted", replayed: false, engineRevision: 1, error: null });
+  const cases: [string, Request, () => Response][] = [
+    ["project GET", new Request(remote + mailbox.projectPath, { headers: { cookie: `${b5ClosedOwner}; b5_correlation=${second.sessionNonce}` } }), () => new Response("product document")],
+    ["owner POST", new Request(remote + loop, { method: "POST", headers: { cookie: b5ClosedOwner }, body: "synthetic owner command" }),
+      () => new Response(intake, { status: 201, headers: { "content-type": "application/json" } })],
+    ["sign-in POST", new Request(remote + "/api/v1/local-owner-session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+      () => new Response("{}", { status: 201, headers: { "set-cookie": "control_room_local_owner=" + "n".repeat(43) + "; Path=/; HttpOnly" } })],
+  ];
+  for (const [label, request, response] of cases) {
+    let renders = 0;
+    await assert.rejects(mailbox.handle(request, async () => { renders++; return response(); }),
+      (error: unknown) => error instanceof B5DeviceRefusalV1 && error.code === "B5_DEVICE_CLOSED", `${label} must refuse with exact B5_DEVICE_CLOSED`);
+    assert.equal(renders, 0, `${label} render callback must not run after close`);
+  }
+  assert.deepEqual(await b5ClosedTree(mailbox.root), before, "request/observation/receipt/service bytes and directory listing unchanged");
+  assert.equal((await readdir(mailbox.root)).includes("session-wait.json"), false); assert.deepEqual(await readdir(join(mailbox.root, "abandoned")), []);
+  assert.deepEqual(mailbox.currentRequest(), second, "pending sequence is stable"); assert.deepEqual(mailbox.observation(), observation);
+  assert.deepEqual(await mailbox.readReceipt(first.sequence), JSON.parse(Buffer.from(before["receipts/1.json"]!, "base64").toString("utf8")));
+  console.log("RESULT: PASS B5 closed mailbox HTTP project-GET/owner-POST/sign-in-POST=B5_DEVICE_CLOSED renders=0 evidence-bytes-unchanged abandoned=0 session-wait=0 pending-sequence=2");
+});
+
+test("B5 closed mailbox HTTP drains an already-entered render without new post-close evidence", async t => {
+  const mailbox = await b5ClosedReal(t);
+  let release: () => void = () => {}, entered!: () => void, renders = 0;
+  const gate = new Promise<void>(yes => { release = yes; }), inside = new Promise<void>(yes => { entered = yes; });
+  try {
+    const request = await mailbox.request("connect", "phone", time(10_000));
+    const challenged = await mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: b5ClosedOwner } }), async () => new Response("product document"));
+    assert.match(challenged.headers.get("set-cookie")!, new RegExp(`b5_correlation=${request.sessionNonce}`));
+    const before = await b5ClosedTree(mailbox.root);
+    // The correlated GET would publish observations/1.json if it completed while open.
+    const held = mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: `${b5ClosedOwner}; b5_correlation=${request.sessionNonce}` } }),
+      async () => { renders++; entered(); await gate; return new Response("held product document"); });
+    await inside; assert.equal(renders, 1);
+    let closed = false; const closing = mailbox.close(); void closing.then(() => { closed = true; });
+    assert.equal(mailbox.close(), closing);
+    for (let i = 0; i < 5; i++) await new Promise<void>(yes => setImmediate(yes));
+    assert.equal(closed, false, "close drains the already-entered ordered exchange");
+    // Current ordering: a post-close ordered GET queues behind the held exchange and
+    // is refused only once that exchange settles; it never renders.
+    let late = 0, lateSettled = false;
+    const lateWork = mailbox.handle(new Request(remote + mailbox.projectPath, { headers: { cookie: b5ClosedOwner } }), async () => { late++; return new Response("late"); });
+    void lateWork.then(() => { lateSettled = true; }, () => { lateSettled = true; });
+    for (let i = 0; i < 5; i++) await new Promise<void>(yes => setImmediate(yes));
+    assert.equal(lateSettled, false, "post-close ordered request waits behind the entered exchange");
+    release();
+    const response = await held; await closing; assert.equal(closed, true);
+    await assert.rejects(lateWork, (error: unknown) => error instanceof B5DeviceRefusalV1 && error.code === "B5_DEVICE_CLOSED");
+    assert.equal(late, 0, "a request arriving during drain never renders");
+    // Current policy: the entered render's response is returned unchanged, without correlation cookies.
+    assert.equal(response.status, 200); assert.equal(await response.text(), "held product document");
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.equal(mailbox.observation(), undefined); assert.deepEqual(await readdir(join(mailbox.root, "observations")), []);
+    assert.deepEqual(await b5ClosedTree(mailbox.root), before, "no post-close evidence");
+    assert.deepEqual(mailbox.currentRequest(), request); assert.equal(renders, 1);
+    console.log("RESULT: PASS B5 closed mailbox HTTP in-flight render drained by close; response unchanged; set-cookie=none observation=none late-render=0");
+  } finally { release(); }
 });
 
 
