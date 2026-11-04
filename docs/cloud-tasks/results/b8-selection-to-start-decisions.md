@@ -1,4 +1,4 @@
-# b8-selection-to-start decisions (PLAN r3)
+# b8-selection-to-start decisions (PLAN r4)
 
 These decisions supersede the conflicting r2 helper dispositions. Independent re-review is pending.
 
@@ -99,3 +99,29 @@ Choice: U81→U82→D01a→D01b share exports sequentially; U83a consumes U81/U8
 Options: Circular requirement for every launcher route; distinct launcher/provider contracts.
 Why: B8 slots always have a launcher route. Provider choice, billing and family acceptance never grant paid consent/readiness; later paid integration consumes whole-window priceRowDigest and the exact server candidate.
 Affected spec item: 8.1, cross-chunk ownership
+
+## D15 — Remove codec-only string limits (R2A MEDIUM)
+Choice: preserve roster-valid model/launcher/effort values without independent byte caps.
+Options: remove caps; amend all consumers and approved spec.
+Why: one exported slot codec must admit the same valid roster choices as D01b and the checker.
+Affected spec item: 2.1, T1.
+
+## D16 — Budget the exact frozen candidate (R2A MEDIUM)
+Choice: bound admission checker preparation/child and transaction by the existing at-most-five-second window; pass execution signal/timeout separately from approved context, cancel/reap, never restamp acceptance.
+Options: check for up to 30 seconds then always refuse; weaken fresh-intent SQL; explicit smaller cancellable admission budget.
+Why: preserves exact checked binding and SQL freshness. Slow qualified tools remain unavailable until measured within budget; preview retains its legacy timeout.
+Affected spec item: 4.2, 6, T12.
+
+## D17 — Preview intent and caller route assembly (R2A LOWs)
+Choice: previewSaved uses sameFamilyIntent only. U83a caller assembles a complete optional providerRoute after the unchanged encoder/merger and before shared preview/intake/save validation.
+Options: preview action consent; route dropped by roles-only encoder; separate caller assembly.
+Why: preview cannot mint acceptance; strict B8/preset JSON stays roles-only while explicit provider choice survives unsaved intake.
+Affected spec item: 2.2–2.3, 7, T4.
+
+## D18 — Record preview-name deviation and committed provenance (R2A LOWs)
+Choice: retain fixed consumer product names reviewFamily/standardFinal, record the approved B8 selection spec R4 preview-body deviation and require exact tools mapping; candidate is its containing commit over committed r3.
+Options: silently deviate; change the CLEAN D01b contract; record and qualify the mapping.
+Why: avoids a second codec and stale uncommitted handoff prose without asserting approval of a new spec revision.
+Affected spec item: 2.4, revision history, status/evidence.
+
+Status: PLAN-READY
