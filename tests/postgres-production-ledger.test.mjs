@@ -222,3 +222,11 @@ test("ledger refuses a pinned entry whose order number was edited", async t => {
   await write(tampered);
   await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_order/);
 });
+
+test("ledger collection refuses an empty migration directory", async t => {
+  const run = await mkdtemp(join(tmpdir(), "cr-ledger-empty-"));
+  t.after(async () => { await rm(run, { recursive: true, force: true }); });
+  await mkdir(join(run, "db/migrations"), { recursive: true });
+  await cp(join(ROOT, "db/roles"), join(run, "db/roles"), { recursive: true });
+  await assert.rejects(collectLedgerEntries(run), /migration_ledger_empty/);
+});
