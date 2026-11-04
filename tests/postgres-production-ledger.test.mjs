@@ -208,3 +208,9 @@ test("ledger refuses a committed digest that does not match its entries", async 
   await write({ ...ledger(), digest: "0".repeat(64) });
   await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_digest/);
 });
+
+test("ledger refuses an unknown ledger version", async t => {
+  const { run, ledgerPath, write, ledger } = await pinnedLedgerCopy(t);
+  await write({ ...ledger(), version: 2 });
+  await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_version/);
+});
