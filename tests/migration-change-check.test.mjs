@@ -183,3 +183,15 @@ test("a Squawk that ran and rejected the SQL still reports a rejection", async t
   assert.match(result.violations.join("\n"), /Squawk rejected a changed migration/);
   assert.doesNotMatch(result.violations.join("\n"), /could not run/);
 });
+
+test("a symlink in the base tree's db/migrations is refused even when the working tree is clean", async t => {
+  const { root } = await repository(t);
+  await writeFile(join(root, "db/payload.sql"), "SELECT 1;\n");
+  await symlink("../payload.sql", join(root, "db/migrations/0002_base_link.sql"));
+  await commit(t, root, "base with link");
+  const base = command("git", ["rev-parse", "HEAD"], root);
+  await rm(join(root, "db/migrations/0002_base_link.sql"));
+  await commit(t, root, "remove link");
+  const result = checkMigrations({ base, cwd: root, runGit: checkerGit(root), runSquawk: () => 0 });
+  assert.match(result.violations.join("\n"), new RegExp(`${base}:db/migrations/0002_base_link\\.sql is not a regular file`, "u"));
+});
