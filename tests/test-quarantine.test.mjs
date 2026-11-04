@@ -94,3 +94,15 @@ test("the quarantine check CLI exits non-zero on an invalid list", async t => {
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stderr, /GitHub issue/u);
 });
+
+test("the quarantine runner refuses to run tests under an invalid list", async t => {
+  const root = await mkdtemp(join(tmpdir(), "test-quarantine-invalid-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "tests"));
+  await writeFile(join(root, "tests", "sample.test.mjs"), `import test from "node:test";\ntest("passes", () => {});\n`);
+  await writeFile(join(root, "tests", "quarantine.json"), JSON.stringify([{ ...valid, issue: "" }]));
+  const runner = fileURLToPath(new URL("../scripts/run-tests-with-quarantine.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [runner, "--test", "tests/sample.test.mjs"], { cwd: root, encoding: "utf8" });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /GitHub issue/u);
+});
