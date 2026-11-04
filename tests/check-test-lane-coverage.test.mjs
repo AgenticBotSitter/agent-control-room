@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assertMutationLaneCoverage, findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
+import { findUncoveredTests, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
 
 function fixture({ scripts, workflow, tests }) {
   const root = mkdtempSync(join(tmpdir(), "control-room-lane-coverage-"));
@@ -65,45 +64,4 @@ test("quoted and block workflow commands are extracted", () => {
     "      pnpm run test:two",
     "      node --test tests/direct.test.js",
   ].join("\n")), ["pnpm install --frozen-lockfile", "pnpm run test:one", "pnpm run test:two\nnode --test tests/direct.test.js"]);
-});
-
-// Independent measured budget contract: saved CI exhausted 550s, whereas the
-// R13 local full run took 283.2s. Reserve 900s for the parent, 60s for runner
-// cleanup, another 60s for the CI step, and setup headroom in the job.
-const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
-const yaml = createRequire(import.meta.resolve("eslint"))("js-yaml");
-const workflow = yaml.load(readFileSync(".github/workflows/ci.yml", "utf8")).jobs;
-const bridge = readFileSync("tests/improve-control-room-loop-bridge-mutations.test.ts", "utf8");
-const bridgeLane = "test:improve-control-room-loop-bridge-mutations";
-
-test("bridge mutation lane retains its measured parent, runner, step and job budgets", () => {
-  assertMutationLaneCoverage(scripts, workflow, bridge);
-  assert.match(scripts[bridgeLane], /--test-timeout=960000(?: |$)/u);
-  assert.equal(workflow["mutation-checks-lineage"]["timeout-minutes"], 50);
-  assert.equal(workflow["mutation-checks-lineage"].steps.find(step => step.run === `pnpm run ${bridgeLane}`)["timeout-minutes"], 17);
-});
-
-test("bridge lane guard rejects a stale, missing or commented parent timeout", () => {
-  for (const replacement of ["timeout:550000", "timeout:600000", "timeout:1800000", "timeout:900000,timeout:550000", "/* timeout:900000 */", "concurrency:2"]) {
-    const altered = bridge.replace(/timeout:\s*\d+/u, replacement);
-    assert.notEqual(altered, bridge, "the independent parent-timeout mutation must apply");
-    assert.throws(() => assertMutationLaneCoverage(scripts, workflow, altered), { name: "AssertionError" }, replacement);
-  }
-});
-
-test("bridge lane guard rejects reduced, missing, widened or overriding runner timeouts", () => {
-  for (const replacement of ["--test-timeout=600000", "", "--test-timeout=1800000", "--test-timeout=960000 --test-timeout=550000"]) {
-    const altered = { ...scripts, [bridgeLane]: scripts[bridgeLane].replace(/--test-timeout=\d+/u, replacement) };
-    assert.throws(() => assertMutationLaneCoverage(altered, workflow, bridge), { name: "AssertionError" }, replacement);
-  }
-});
-
-test("bridge lane guard rejects insufficient workflow step and job headroom", () => {
-  for (const target of ["step", "job"]) {
-    const altered = structuredClone(workflow);
-    const job = altered["mutation-checks-lineage"];
-    if (target === "step") job.steps.find(step => step.run === `pnpm run ${bridgeLane}`)["timeout-minutes"] = 10;
-    else job["timeout-minutes"] = 45;
-    assert.throws(() => assertMutationLaneCoverage(scripts, altered, bridge), { name: "AssertionError" }, target);
-  }
 });

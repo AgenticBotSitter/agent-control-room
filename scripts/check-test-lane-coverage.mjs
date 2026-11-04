@@ -1,7 +1,6 @@
 import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Proves every test file is reachable from a command GitHub Actions actually runs.
 import assert from "node:assert/strict";
-import ts from "typescript";
 import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -110,6 +109,9 @@ export function assertMutationLaneCoverage(scripts, source, bridgeSource = readF
   assert.equal(typeof bridgeCommand, "string");
   assert.deepEqual([...bridgeCommand.matchAll(/(?:^|\s)--test-timeout=(\d+)(?=\s|$)/gu)].map(match => Number(match[1])),
     [960000], "bridge: retain the 960s runner budget, including cleanup headroom");
+  // This guard runs after installation; pre-install planners import the same
+  // module for its dependency-free file and command helpers.
+  const ts = createRequire(import.meta.url)("typescript");
   const program = ts.createSourceFile("bridge-mutations.test.ts", bridgeSource, ts.ScriptTarget.Latest, true);
   const parents = program.statements.filter(statement => ts.isExpressionStatement(statement)
     && ts.isCallExpression(statement.expression) && ts.isIdentifier(statement.expression.expression)
