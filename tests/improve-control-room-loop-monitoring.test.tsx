@@ -227,24 +227,72 @@ if(ordinary){
     }
   });
   test('B3b two OS process contenders and positive dead owner recovery',async t=>{
-    const f=await fixture(t),children:ChildProcess[]=[];
-    const start=()=>{const child=fork(resolve('tests/helpers/improve-control-room-loop-monitoring.ts'),['--b3b-fixture-host',f.root],{execArgv:['--import','tsx'],env:{NODE_ENV:'test',CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1'},stdio:['ignore','ignore','pipe','ipc']});children.push(child);return child;};
-    const wait=(child:ChildProcess,message:string)=>new Promise<void>((res,rej)=>{const timer=setTimeout(()=>rej(Error('SYNTHETIC host timeout')),4000);const listener=(v:unknown)=>{if(v===message){clearTimeout(timer);child.off('message',listener);res();}};child.on('message',listener);});
-    const stop=async(child:ChildProcess)=>{if(child.exitCode!==null||child.signalCode!==null)return;const end=new Promise<void>(r=>child.once('exit',()=>r()));child.kill('SIGKILL');await end;};
+    const children:ChildProcess[]=[],closed=new Map<ChildProcess,Promise<void>>(),messages=new Map<ChildProcess,unknown[]>();
+    const alive=(child:ChildProcess)=>child.exitCode===null&&child.signalCode===null;
+    const reaped=async(child:ChildProcess)=>{
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      try{await Promise.race([closed.get(child),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('B3b owned fixture child did not close')),4000);})]);}
+      finally{clearTimeout(timer);}
+    };
+    const stop=async(child:ChildProcess)=>{if(alive(child))child.kill('SIGKILL');await reaped(child);};
+    // Registered before fixture creation or any fork, including timeout paths.
     t.after(async()=>{for(const child of children)await stop(child);});
-    const first=start();await wait(first,'collecting');
-    // A due saved reservation with a still-owned collector must reach the lock,
-    // rather than return through the not-due fast path.
+    const f=await fixture(t);
+    const wait=(child:ChildProcess,message:string,ms=4000)=>new Promise<void>((res,rej)=>{
+      const diagnostic=message==='contended'?'B3b missing observed monitor-lock contention':`B3b missing fixture message ${message}`;
+      const cleanup=()=>{clearTimeout(timer);child.off('message',listener);child.off('error',failed);child.off('close',ended);};
+      const listener=(value:unknown)=>{if(value===message){cleanup();res();}};
+      const failed=(error:Error)=>{cleanup();rej(error);};
+      const ended=()=>{cleanup();rej(Error(diagnostic+' (child closed)'));};
+      const timer=setTimeout(()=>{cleanup();rej(Error(diagnostic));},ms);
+      child.on('message',listener);child.once('error',failed);child.once('close',ended);
+    });
+    const start=(contender=false)=>{
+      const child=fork(resolve('tests/helpers/improve-control-room-loop-monitoring.ts'),['--b3b-fixture-host',f.root,...(contender?['--b3b-contender']:[])],{
+        execArgv:['--import','tsx'],env:{NODE_ENV:'test',CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1'},stdio:['ignore','ignore','pipe','ipc']});
+      children.push(child);const seen:unknown[]=[];messages.set(child,seen);
+      const record=(message:unknown)=>seen.push(message);child.on('message',record);
+      child.stderr?.resume();
+      closed.set(child,new Promise<void>(res=>child.once('close',()=>{child.off('message',record);res();})));
+      // Install the readiness listener synchronously after fork, before any
+      // child work can be triggered over IPC.
+      return {child,ready:wait(child,'ready')};
+    };
+    const closeHost=async(child:ChildProcess)=>{
+      try{const done=wait(child,'closed');child.send('close');await done;await reaped(child);}
+      finally{if(alive(child))await stop(child);}
+      assert.equal(child.exitCode,0,'fixture shutdown restores fs wrappers and exits cleanly');
+      assert.equal(child.listenerCount('message'),0,'owned IPC listeners are removed');
+    };
+    const winner=start();await winner.ready;
+    const collecting=wait(winner.child,'collecting');winner.child.send('tick');await collecting;
+    const lockBefore=await readFile(f.file+'.monitor.lock');
+    // The saved future reservation must take the not-due path. A successful
+    // timeout is a harness control, never evidence of observed contention.
+    const notDue=start(true);await notDue.ready;
+    const absent=assert.rejects(wait(notDue.child,'contended',300),/^Error: B3b missing observed monitor-lock contention$/);
+    const ticked=wait(notDue.child,'ticked');notDue.child.send('tick');await ticked;await absent;
+    await closeHost(notDue.child);
+    assert.equal(messages.get(notDue.child)!.includes('contended'),false,'not-due child must never acknowledge contention');
+    assert.deepEqual(await readFile(f.file+'.monitor.lock'),lockBefore);
+    console.log('RESULT B3b not-due control: expected bounded missing-contention timeout; child closed');
+    // A due saved reservation with a still-owned collector must reach the lock.
     const due=await f.schedule();due.nextAttemptAt=new Date(Date.now()-1).toISOString();
     await writeFile(f.file+'.schedule.json',JSON.stringify(due));
-    const lockBefore=await readFile(f.file+'.monitor.lock');
-    const loser=start();await wait(loser,'attempted');
+    const loser=start(true);await loser.ready;
+    const contended=wait(loser.child,'contended');loser.child.send('tick');await assert.doesNotReject(contended,'B3b due contender must observe held monitor-lock contention');
     assert.deepEqual(await readFile(f.file+'.monitor.lock'),lockBefore);
     assert.equal((await readFile(join(f.root,'collectors'),'utf8')).trim().split('\n').length,1);
-    await stop(loser);await stop(first);const s=await f.schedule();s.nextAttemptAt=new Date(Date.now()-1000).toISOString();s.lastAttemptAt=new Date(Date.now()-2000).toISOString();await writeFile(f.file+'.schedule.json',JSON.stringify(s));
-    const recovered=start();await wait(recovered,'collecting');recovered.send('release');await until(async()=>existsSync(f.file));
+    await closeHost(loser.child);await stop(winner.child);
+    const saved=await f.schedule();saved.nextAttemptAt=new Date(Date.now()-1000).toISOString();saved.lastAttemptAt=new Date(Date.now()-2000).toISOString();
+    await writeFile(f.file+'.schedule.json',JSON.stringify(saved));
+    const recovered=start();await recovered.ready;
+    const recovery=wait(recovered.child,'collecting');recovered.child.send('tick');await recovery;
+    recovered.child.send('release');await until(async()=>existsSync(f.file));
     await until(async()=>!existsSync(f.file+'.monitor.lock'));assert.equal(JSON.parse(await readFile(f.file,'utf8')).schema_version,1);
-    assert.equal((await readFile(join(f.root,'collectors'),'utf8')).trim().split('\n').length,2);recovered.send('close');await new Promise<void>(r=>recovered.once('exit',()=>r()));
+    assert.equal((await readFile(join(f.root,'collectors'),'utf8')).trim().split('\n').length,2);
+    await closeHost(recovered.child);
+    for(const child of children){await reaped(child);assert.equal(alive(child),false,'all owned fixture children are reaped');}
   });
 }
 if(!ordinary)test('B3b product collector contention',async t=>{

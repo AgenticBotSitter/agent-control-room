@@ -32,16 +32,53 @@ export async function until(check:()=>Promise<boolean>,ms=4000){
 
 // Explicit SYNTHETIC fixture-host entry, never selected by production configuration.
 if(process.argv.includes('--b3b-fixture-host')){
-  const {createImproveControlRoomLoopMonitorV1}=await import('../../src/web/v1/improve-control-room-loop-monitoring');
-  const {appendFile}=await import('node:fs/promises');
   const root=process.argv[process.argv.indexOf('--b3b-fixture-host')+1]!;
-  let release:()=>void=()=>{};
-  const monitor=createImproveControlRoomLoopMonitorV1({availabilityFile:join(root,'health.json'),bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),enabled:()=>true,
-    collect:async(signal,onChild)=>{
-      await onChild(process.pid);await appendFile(join(root,'collectors'),'1\n');process.send?.('collecting');
-      await new Promise<void>(r=>{release=r;signal.addEventListener('abort',()=>r(),{once:true});});
-      return{exitCode:0,bytes:Buffer.from(JSON.stringify({schema_version:1,checked_at:new Date().toISOString(),entries:[{model:'SYNTHETIC',route:'new-route',available:true}]}))};
-    }});
-  process.on('message',message=>{if(message==='release')release();if(message==='close')void monitor.close().then(()=>process.exit(0));});
-  monitor.tick();setTimeout(()=>process.send?.('attempted'),180);
+  const {default:fs}=await import('node:fs');
+  const {syncBuiltinESMExports}=await import('node:module');
+  const originalOpen=fs.promises.open,lockPath=join(root,'health.json.monitor.lock');
+  let acknowledged=false;
+  // Observe the real syscall result, delegating every open unchanged. The
+  // wrapper exists only in this explicit synthetic child-process entry mode.
+  fs.promises.open=async(...args:Parameters<typeof originalOpen>)=>{
+    try{return await originalOpen(...args);}
+    catch(error){
+      if(!acknowledged&&args[0]===lockPath&&args[1]==='wx'&&(error as NodeJS.ErrnoException).code==='EEXIST'){
+        acknowledged=true;process.send?.('contended');
+      }
+      throw error;
+    }
+  };
+  syncBuiltinESMExports();
+  try{
+    const {createImproveControlRoomLoopMonitorV1}=await import('../../src/web/v1/improve-control-room-loop-monitoring');
+    const {appendFile}=await import('node:fs/promises');
+    let release:()=>void=()=>{};
+    const monitor=createImproveControlRoomLoopMonitorV1({availabilityFile:join(root,'health.json'),bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),enabled:()=>true,
+      collect:async(signal,onChild)=>{
+        await onChild(process.pid);await appendFile(join(root,'collectors'),'1\n');process.send?.('collecting');
+        await new Promise<void>(r=>{release=r;signal.addEventListener('abort',()=>r(),{once:true});});
+        return{exitCode:0,bytes:Buffer.from(JSON.stringify({schema_version:1,checked_at:new Date().toISOString(),entries:[{model:'SYNTHETIC',route:'new-route',available:true}]}))};
+      }});
+    const loser={tick:()=>monitor.tick()};
+    let closing:Promise<void>|undefined;
+    const close=()=>closing??=(async()=>{
+      try{await monitor.close();}
+      finally{
+        fs.promises.open=originalOpen;syncBuiltinESMExports();
+        process.off('message',message);process.off('disconnect',disconnected);
+      }
+      if(process.connected)process.send?.('closed',()=>{if(process.connected)process.disconnect();});
+    })();
+    const disconnected=()=>{void close();};
+    const message=(value:unknown)=>{
+      if(value==='release')release();
+      if(value==='tick'){
+        if(process.argv.includes('--b3b-contender')){loser.tick();}else{monitor.tick();}
+        process.send?.('ticked');
+      }
+      if(value==='close')void close();
+    };
+    process.on('message',message);process.once('disconnect',disconnected);
+    process.send?.('ready');
+  }catch(error){fs.promises.open=originalOpen;syncBuiltinESMExports();throw error;}
 }
