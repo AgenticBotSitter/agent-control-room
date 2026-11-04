@@ -27,7 +27,7 @@ for(const width of [390,1280])test(`S1/S2 owner manages providers and refreshes 
    }
    unexpected.push(req.url());await route.abort();
   });
-  await context.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{get:()=>true});});
+  await context.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{get:()=>true,configurable:true});});
   context.setDefaultTimeout(20000);
   const page=await context.newPage();await page.goto('https://product.invalid');
   await expect(page.getByRole('heading',{name:'Providers',exact:true})).toBeVisible();
@@ -111,7 +111,7 @@ for(const width of [390,1280])test(`S3 all-provider choice saves non-cheapest cr
    const response=await handler(request(url.pathname,req.method(),req.postData()?JSON.parse(req.postData()!):undefined,req.headers()['idempotency-key']??'browser-s3-read-00001'));
    await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:await response.text()});
   });
-  await context.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{get:()=>true});});
+  await context.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{get:()=>true,configurable:true});});
   context.setDefaultTimeout(20000);
   const page=await context.newPage();await page.goto('https://product.invalid');
   await expect(page.getByRole('heading',{name:'Provider choice',exact:true})).toBeVisible();
@@ -119,7 +119,14 @@ for(const width of [390,1280])test(`S3 all-provider choice saves non-cheapest cr
   await expect(page.getByRole('radio')).toHaveCount(3);await expect(page.getByRole('radio',{checked:true})).toHaveCount(0);
   await expect(page.getByText('Cheapest',{exact:true})).toHaveCount(1);
   await expect(page.getByText(/Credit: 500000 nano-USD/)).toBeVisible();await expect(page.getByText(/expired/)).toHaveCount(3);
-  await page.getByRole('radio',{name:'Choose provider-two',exact:true}).check();await page.getByRole('button',{name:'Save provider choice',exact:true}).click();
+  await expect(page.getByText('Mapping valid; credential not re-checked.',{exact:true})).toHaveCount(3);
+  await page.getByRole('radio',{name:'Choose provider-two',exact:true}).check();
+  await page.evaluate(()=>Object.defineProperty(navigator,'onLine',{get:()=>false,configurable:true}));
+  await page.getByRole('button',{name:'Save provider choice',exact:true}).click();
+  await expect(page.getByText('Offline. Reconnect before saving the provider choice.',{exact:true})).toBeVisible();
+  expect((await policy.view(f.identity,f.project.projectId)).selection.version).toBe(1);
+  await page.evaluate(()=>Object.defineProperty(navigator,'onLine',{get:()=>true,configurable:true}));
+  await page.getByRole('button',{name:'Save provider choice',exact:true}).click();
   await expect(page.getByText('Provider choice saved',{exact:true})).toBeVisible();
   await page.reload();await expect(page.getByRole('radio',{name:'Choose provider-two',exact:true})).toBeChecked();
   await page.screenshot({path:`test-results/s3-provider-choice-${width}.png`,fullPage:true});

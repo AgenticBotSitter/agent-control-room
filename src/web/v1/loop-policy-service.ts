@@ -123,10 +123,10 @@ export class LoopPolicyServiceV1 {
       actor.require("loop_policy.manage", projectId, true, "high"); await this.#scope(tx, projectId, true);
       const rows = await this.#layers(tx, projectId, true), again = replay(rows);
       if (again) return again;
+      if (Number(rows[layer]?.version ?? 0) !== body.expectedVersion) throw conflict();
       const snapshot = this.#compose(rows, undefined, { layer, settings: body.settings });
       this.assertSnapshot(before.snapshot!, snapshot);
       await this.#revalidate(tx, snapshot.text);
-      if (Number(rows[layer]?.version ?? 0) !== body.expectedVersion) throw conflict();
       const next = body.expectedVersion + 1, hash = createHash("sha256").update(body.settings).digest("hex");
       const params = [this.scope.tenantId, projectId, layer, next, body.settings, hash, actor.id, actor.now, key, digest];
       const saved = rows[layer] ? await tx.query(`UPDATE control_loop_policy_layers SET version=$4,settings_text=$5,settings_sha256=$6,

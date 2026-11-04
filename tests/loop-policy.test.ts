@@ -1,3 +1,12 @@
+// Required macOS host gates, lt-a2pin 03c3595 (no skips or fixture replacement):
+// export CONTROL_ROOM_A2_TEST_LOOP="<pinned lead-tools checkout>/loop"
+// test -n "$CONTROL_ROOM_A2_TEST_LOOP" && node --import tsx --test --test-name-pattern='^P71 real settings check$' tests/loop-policy.test.ts
+// test -n "$CONTROL_ROOM_A2_TEST_LOOP" && node --import tsx --test --test-name-pattern='^P71 real provider settings check$' tests/loop-policy.test.ts
+// Linux CI uses test:improve-control-room:linux-without-macos-host-gates. Its explicit
+// name-pattern excludes only these two cases: the pin's interpreter shim is macOS-only.
+// <root> is Node's synthetic ancestor: matching it would include every child test.
+// The Mac lane and either exact command still FAIL if CONTROL_ROOM_A2_TEST_LOOP is missing.
+// test:improve-control-room dispatches by host OS, preserving the frozen CI lane registration.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test, { type TestContext } from "node:test";
@@ -50,24 +59,34 @@ test("P71 preserves unknown paid-named settings without assigning authority", ()
   }
 });
 
-test("P71 ordinary CI excludes only the mandatory real-tools test and exposes a fail-closed real lane", async t => {
+test("P71 Linux CI excludes exactly two macOS host gates without skip-as-pass", async t => {
   const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
-  assert.match(scripts['test:improve-control-room'], /--test-skip-pattern=['"]\^P71 real settings check\$['"]/,
-    'ordinary CI must exclude the qualified-tools acceptance test');
+  const name = 'test:improve-control-room:linux-without-macos-host-gates';
+  const lane = scripts[name] as string;
+  const filter = / --test-name-pattern='([^']+)'/.exec(lane);
+  assert.ok(filter, 'Linux lane names its two host-gate exclusions explicitly');
+  const dispatcher = scripts['test:improve-control-room'] as string;
+  assert.ok(dispatcher.startsWith(`if [ "$(uname -s)" = Linux ]; then pnpm run ${name}; else `));
+  const host = dispatcher.split('; else ')[1]!.replace(/; fi$/, '');
+  assert.equal(lane.replace(filter[0], ''), host, 'all other files and options stay in the lane');
+  assert.doesNotMatch(lane, /skip|\|\|/);
+  assert.match(scripts['test:components'], /pnpm test:improve-control-room(?: &&|$)/);
+  assert.ok((await readFile('.github/workflows/ci.yml','utf8')).includes(' test:improve-control-room '));
   assert.match(scripts['test:loop-policy:real'] ?? '', /--test-name-pattern=['"]\^P71 real settings check\$['"]/);
   assert.doesNotMatch(scripts['test:loop-policy:real'], /skip|\|\|/);
-  const pattern = /--test-skip-pattern='([^']+)'/.exec(scripts['test:improve-control-room'])![1]!;
   await mkdir(resolve('.test-tmp'), { recursive: true });
   const root = await mkdtemp(resolve('.test-tmp/p71-ci-filter-')); t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'ci.mjs');
   await writeFile(file, `import test from 'node:test'; import assert from 'node:assert/strict';
-    test('P71 real settings check', () => assert.fail('qualified tools must be separate'));
-    test('ordinary policy check', () => assert.ok(true));`);
+    test('P71 real settings check', () => assert.fail('macOS host gate must be separate'));
+    test('P71 real provider settings check', () => assert.fail('macOS host gate must be separate'));
+    test('ordinary policy check', () => assert.ok(true));
+    test('P71 real settings check neighbour', () => assert.ok(true));
+    test('P71 real provider settings check neighbour', () => assert.ok(true));
+    test('prefix P71 real settings check', () => assert.ok(true));`);
   const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
-  const { stdout } = await promisify(execFile)(process.execPath, ['--test', `--test-skip-pattern=${pattern}`, file], { env, timeout: 10000 });
-  assert.match(stdout, /ok 1 - ordinary policy check/);
-  assert.match(stdout, /# pass 1/); assert.match(stdout, /# fail 0/);
-
+  const { stdout } = await promisify(execFile)(process.execPath, ['--test', `--test-name-pattern=${filter[1]}`, file], { env, timeout: 10000 });
+  assert.match(stdout, /# pass 4/); assert.match(stdout, /# fail 0/); assert.match(stdout, /# skipped 0/);
 });
 
 test("P71 downgrade refuses retained run-edit commands before changing the schema", async t => {
@@ -248,12 +267,21 @@ finally:
 }
 
 test("P71 real settings check", async t => {
-  const {adapter,settingsText}=await realSettingsFixture(t);
+  const {adapter,settingsText,root}=await realSettingsFixture(t);
   const fixture={settings:settingsText};
   const initialCheck=await adapter.checkSettings!(fixture.settings);
   assert.equal(initialCheck.eligible,true,`real cr accepts its qualified fixture defaults: ${JSON.stringify(initialCheck.reasons)}`);
   const composed=composeLoopSettingsV1({defaultsText:fixture.settings,project:'{}',selection:'{}',runEdits:'{}'});
   assert.equal((await adapter.checkSettings!(composed.text)).eligible,true,'real cr accepts deterministic merged encoding');
+  await mkdir(join(root,'skills'),{recursive:true});
+  await writeFile(join(root,'skills','recorded.md'),'Recorded skill fixture.');
+  const paths=JSON.parse(settingsText);
+  paths.project.skills=['recorded.md'];
+  paths.project.outputs=['recorded-output.md'];
+  assert.equal((await adapter.checkSettings!(JSON.stringify(paths))).eligible,true,'real cr accepts the explicit confined skills root and repository outputs');
+  await symlink(join(root,'work'),join(root,'skills','escape'));
+  paths.project.skills=['escape/outside-skill.md'];
+  assert.equal((await adapter.checkSettings!(JSON.stringify(paths))).eligible,false,'real cr refuses a skill outside the configured root');
   const unknown=JSON.parse(fixture.settings) as Record<string,unknown>;
   let changed=false;
   const replaceModel=(value:unknown)=>{
@@ -267,12 +295,12 @@ test("P71 real settings check", async t => {
   assert.ok(changed,'qualified settings must identify a model for the unknown-model refusal probe');
   const refusal=await adapter.checkSettings!(JSON.stringify(unknown));
   assert.equal(refusal.eligible,false);assert.ok(refusal.reasons.length>0,'real exit-3 refusal preserves the tools reason');
-  console.log(`P71 real direct cr checks=3 valid=true unknown_model=false reason=${refusal.reasons[0]!.code}`);
+  console.log(`P71 real direct cr checks=5 valid=true unknown_model=false reason=${refusal.reasons[0]!.code}`);
   // Real intake/Start path independence, check-side final-family refusal, merge-rule parity and recovery require separate release evidence;
   // a passing direct checker alone does not confer POLICY-STORE-GREEN.
 });
 
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -293,13 +321,33 @@ with open(settings) as f: candidate=json.load(f)
 with open(os.path.join(root,'trace.jsonl'),'a') as f:
  f.write(json.dumps(dict(args=args,settingsText=open(settings).read(),fileMode=os.stat(settings).st_mode&0o777,directoryMode=os.stat(os.path.dirname(settings)).st_mode&0o777,env=dict(os.environ),bytecode=sys.dont_write_bytecode))+'\n')
 mode=candidate.get('mode','ok')
-if mode=='envelope' or mode.startswith('envelope-bad-'):
+if mode.startswith('envelope'):
  result=dict(schema_version=1,eligible=True,slots={},candidates={},reasons=[],reserved_final=None,fallback=False,roster_digest=None,availability_digest=None)
+ # Recorded shapes from lt-a2pin 03c3595 lineup.py:52,287-315 and cr.py:736-772.
+ # Top-level reasons add slot/model; slot and candidate reasons retain the base reason.
+ if mode in ('envelope-waived','envelope-accepted','envelope-mixed','envelope-blocked','envelope-eligible-unwaived','envelope-ineligible-waived','envelope-exit-zero','envelope-exit-three'):
+  reason=dict(code='FINAL_REVIEW_FALLBACK',explanation='No eligible unused final family remains; a reviewer-only family may provide final.',waived=True)
+  if mode=='envelope-accepted': reason=dict(code='FINAL_BUILDER_FAMILY',explanation="The owner accepted the risk of a final from the builder's family.",waived=True)
+  reasons=[reason]
+  if mode in ('envelope-mixed','envelope-blocked','envelope-eligible-unwaived','envelope-exit-zero'):
+   blocked=dict(code='FAMILY_BUILDER',explanation='Review family conflicts with the builder.',waived=False)
+   reasons=([reason,blocked] if mode=='envelope-mixed' else [blocked])
+  eligible=mode not in ('envelope-mixed','envelope-blocked','envelope-ineligible-waived','envelope-exit-zero')
+  selection=dict(model='reviewer',route='codex',effort='high')
+  fallback=mode!='envelope-accepted'
+  result.update(eligible=eligible,fallback=fallback,reserved_final='reviewer',roster_digest='a'*64,availability_digest='b'*64,
+   reasons=[dict(r,slot='final',model='reviewer') for r in reasons],
+   slots={'final':dict(selection,role='final',requested_effort='high',eligible=eligible,reasons=reasons,chain_eligible=eligible,fallback=fallback)},
+   candidates={'final':[dict(selection,provider='synthetic',family='reviewer-family',**{'class':'frontier'},eligible=eligible,reasons=reasons,recommended=eligible,fallback=fallback)]})
+  if mode=='envelope-accepted':
+   result['same_family_warnings']=[dict(code='same-family-accepted',rule='R296',run='synthetic-run',accepted_at='2026-01-01T00:00:00Z',conflicts=['FINAL_BUILDER_FAMILY'],explanation='The owner accepted the risk of same-family work; other families are available.')]
+ # Exact recorded output of pinned check_role(final), two frontier families, no provider calls.
+ if mode=='envelope-recorded-fallback': result=json.loads(r"""{"schema_version":1,"eligible":true,"slots":{"final":{"role":"final","model":"review-front","route":"codex","effort":"medium","requested_effort":"medium","eligible":true,"reasons":[{"code":"FINAL_REVIEW_FALLBACK","explanation":"No eligible unused final family remains; a reviewer-only family may provide final.","waived":true}],"chain_eligible":true,"fallback":true}},"candidates":{"final":[{"model":"build-front","route":"codex","provider":"codex","family":"build-family","class":"frontier","effort":"medium","eligible":false,"reasons":[{"code":"FINAL_BUILDER_FAMILY","explanation":"The final must NEVER come from the builder's family, under any override or legacy flag.","waived":false}],"recommended":false,"fallback":false},{"model":"review-front","route":"codex","provider":"codex","family":"review-family","class":"frontier","effort":"medium","eligible":true,"reasons":[{"code":"FINAL_REVIEW_FALLBACK","explanation":"No eligible unused final family remains; a reviewer-only family may provide final.","waived":true}],"recommended":true,"fallback":true}]},"reasons":[{"code":"FINAL_REVIEW_FALLBACK","explanation":"No eligible unused final family remains; a reviewer-only family may provide final.","waived":true,"slot":"final","model":"review-front"}],"reserved_final":"review-front","fallback":true,"roster_digest":"d8ed70d137a3a217148b8620cdbb5d4468b44f07e51cb2c05c228ab7bd9316f0","availability_digest":"27c03762c9bcbf197b7c2434ca20857bc8fcdd732a65d65bdcf1cf0f53646bc4"}""")
  if mode=='envelope-bad-type': result['fallback']='false'
  if mode=='envelope-bad-field': result['unexpected']=True
  if mode=='envelope-bad-slot': result['slots']={'build':True}
  if mode=='envelope-bad-reason': result.update(eligible=False,reasons=[dict(code='REFUSED',explanation='Refused',waived='false')])
- print(json.dumps(result));sys.exit(0 if result['eligible'] else 3)
+ print(json.dumps(result));sys.exit(0 if mode=='envelope-exit-zero' else 3 if mode=='envelope-exit-three' else 0 if result['eligible'] else 3)
 if mode=='timeout': time.sleep(10)
 if mode=='large': print('x'*70000);sys.exit(0)
 if mode=='malformed': print('no json');sys.exit(0)
@@ -374,6 +422,12 @@ test('P71 commit reauthorizes revoked owner and compares exact defaults hash des
 test('P71 direct checker projects the pinned lineup envelope and refuses unexpected shapes', async t => {
  const f=await checkerFixture(t);
  assert.deepEqual(await f.adapter.checkSettings!('{"mode":"envelope"}'),{eligible:true,reasons:[]});
+ for(const mode of ['recorded-fallback','waived','accepted'])
+  assert.deepEqual(await f.adapter.checkSettings!(JSON.stringify({mode:`envelope-${mode}`})),{eligible:true,reasons:[]},mode);
+ for(const mode of ['mixed','blocked'])
+  assert.deepEqual(await f.adapter.checkSettings!(JSON.stringify({mode:`envelope-${mode}`})),{eligible:false,reasons:[{code:'FAMILY_BUILDER',explanation:'Review family conflicts with the builder.'}]},mode);
+ for(const mode of ['eligible-unwaived','ineligible-waived','exit-zero','exit-three'])
+  await assert.rejects(f.adapter.checkSettings!(JSON.stringify({mode:`envelope-${mode}`})),/unavailable/,mode);
  for(const mode of ['type','field','slot','reason'])
   await assert.rejects(f.adapter.checkSettings!(JSON.stringify({mode:`envelope-bad-${mode}`})),/unavailable/,mode);
 });

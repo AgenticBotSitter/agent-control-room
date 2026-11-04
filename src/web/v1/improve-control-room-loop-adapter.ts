@@ -666,6 +666,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
             "--availability", c.availabilityFile, "--json"], { cwd: c.cwd, shell: false,
             env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8",
               CR_CONFIG_ROOT: c.configRoot, CR_WORK_ROOT: c.workRoot, CR_RUNS: c.runRoot,
+              // Settings checks use the adapter's confined skills tree, never an ambient owner tree.
               CR_SKILLS: join(c.configRoot, "skills") }, stdio: ["ignore", "pipe", "pipe"] });
           children.add(child);
           const output: Buffer[] = [];
@@ -701,7 +702,8 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
               }).strict();
               const parsed = z.union([legacy, envelope]).parse(parseStrictJsonV1(
                 new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), { maxBytes: 65536 }));
-              const result = { eligible: parsed.eligible, reasons: parsed.reasons.map(({ code, explanation }) => ({ code, explanation })) };
+              const blocking = parsed.reasons.filter(reason => !("waived" in reason) || !reason.waived);
+              const result = { eligible: parsed.eligible, reasons: blocking.map(({ code, explanation }) => ({ code, explanation })) };
               if (result.eligible !== (code === 0) || result.eligible && result.reasons.length || !result.eligible && !result.reasons.length) throw unavailable();
               assertNoSecretMaterial(result);
               for (const reason of result.reasons) {

@@ -36,6 +36,7 @@ export function LoopProviderChoice({ rosterName, selectedProviderId, onChange, d
       <label style={{minHeight:44, display:"flex", alignItems:"center", gap:8}}><input type="radio" name="loop-provider-choice" aria-label={`Choose ${offer.displayName}${offer.displayName === offer.providerId ? "" : ` (${offer.providerId})`}`}
         checked={offer.providerId === selectedProviderId} disabled={!offer.available}
         onChange={() => onChange(offer.providerId)} />{offer.displayName}{offer.displayName !== offer.providerId ? ` (${offer.providerId})` : ""}</label>
+      {offer.available && <p>Mapping valid; credential not re-checked.</p>}
       <p>Served model: {offer.servedModelId} · Billing: {offer.billingKind}</p>
       {offer.cheapest && <p>Cheapest</p>}
       <p>{offer.price?.status === 'known' ? `Input ${offer.price.input}; output ${offer.price.output} nano-USD per token`
@@ -54,8 +55,8 @@ export function LoopProviderChoice({ rosterName, selectedProviderId, onChange, d
   </fieldset>;
 }
 
-/** One saved route in the existing selection layer. Changes affect the next prepared
- * request; existing requests continue to use their immutable signed settings. */
+/** One saved route in the existing selection layer. The choice is recorded in the next prepared
+ * request; route execution requires admission support. */
 export function LoopProviderSelection({ projectId, enabled }: { projectId: string; enabled: boolean }) {
   const [epoch, setEpoch] = useState(0), [data, setData] = useState<{selection:Layer; models:string[]}>();
   const [model, setModel] = useState(''), [providerId, setProviderId] = useState<string>();
@@ -80,7 +81,8 @@ export function LoopProviderSelection({ projectId, enabled }: { projectId: strin
     return () => controller.abort();
   }, [path, epoch]);
   async function save() {
-    if (!data || !model || !providerId || !enabled || latch.current || !navigator.onLine) return;
+    if (!data || !model || !providerId || !enabled || latch.current) return;
+    if (!navigator.onLine) { setNotice('Offline. Reconnect before saving the provider choice.'); return; }
     latch.current = true; setPending(true); setNotice('');
     try {
       const settings = {...JSON.parse(data.selection.settingsText), providerRoute:{providerId, model}};
@@ -96,7 +98,7 @@ export function LoopProviderSelection({ projectId, enabled }: { projectId: strin
   }
   return <section aria-label="Provider choice" style={{ minWidth:0, overflowWrap:'anywhere' }}>
     <h3>Provider choice</h3>
-    <p>Choose one route for the next prepared request. Saved requests keep their confirmed settings.</p>
+    <p>Record one route in the next prepared request. It will be used when route admission is enabled. Saved requests keep their confirmed settings.</p>
     {data && <>
       <label htmlFor="loop-provider-route-model">Routed roster model</label>
       <select id="loop-provider-route-model" style={{minHeight:44, maxWidth:"100%"}} value={model} disabled={pending || !enabled} onChange={event => {setModel(event.target.value);setProviderId(undefined);setNotice('');}}>
