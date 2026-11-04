@@ -181,3 +181,25 @@ Choice: Later U83a/paid admission consumes the same sorted whole-window priceRow
 Options: sibling-specific digest/IDs; one shared server contract.
 Why: Window bounds cover multiple rows, and U81 moves candidate allocation before the checker. Neither provider choice nor family acknowledgement is spending authority, and stand-in success never enables paid readiness.
 Affected spec item: 3.2 and cross-chunk handoff.
+
+
+## D16 — CAP-A helper exports proposed for independent review (LOW-1)
+
+Choice for review: retain the pure `derivePaidRunPinV1` export for server-side consent issuance preview and `paidUsageWithinBoundV1` for the cache-mode ceiling check used by later settlement. Neither helper mints authority or calls a ledger, transport or provider. The reviewed §8.1 export list does not include these helpers; this decision records the need without treating the builder as an approval authority. Independent reviewer/lead disposition remains pending.
+Options: export these pure helpers; duplicate pin derivation and ceiling logic at their callers; fold the behaviors into a larger admission/settlement API.
+Why: CAP-A must derive the exact server pin before store issuance and independently test all three cache modes. Shared pure helpers avoid divergent price-row identity and ceiling calculations. The BUILD-added specification clarification and other BUILD specification edits have been reverted; the spec is byte-identical to its pre-BUILD `fba6ae026` revision.
+Related clarifications for review: the maximum 1 500 000 ms interval samples at most 27 instants (two ends plus at most 25 interior minute boundaries); a checkedAt refresh changes the price-row digest even at unchanged rates. These implementation facts are documented here without rewriting the reviewed contract.
+Affected spec item: 3.2, 4.3, 8.1, 8.4.
+
+## D17 — Bind cache ceilings to their originating profile (MEDIUM-1)
+
+Choice: every frozen bound carries the originating profileId and cacheReporting. The usage predicate refuses a disagreement in either field and reads the mode from the bound. Numeric ceilings remain those computed at reservation.
+Why: additive usage of 1000 input plus 1000 cached plus 200 output tokens costs 9000000 nano-USD at the synthetic 3000/15000 rates, exceeding a 6000000 reserve. Reinterpreting the same usage as subset must never turn it into an accepted report. Cross-mode and profile-ID tests use literal expectations.
+Affected spec item: 4, 6.1 step 9; CAP-A only, no settlement added.
+
+## D18 — One admission per consumed capability (LOW-3)
+
+Choice: a private WeakSet records consumed capabilities that have successfully minted an admission. The check and mark are synchronous and have no await between them. Subsequent otherwise valid attempts return consent_replayed; validation failures do not mark the capability. One capability produces one downstream-open opportunity across twenty attempts.
+Why: admission itself must enforce the spending-authority limit without depending on CAP-B journal leases. This remains an in-process test-only mechanism; durable consent/lease integration is still later work. The admission object is not a one-shot dispatch ticket; CAP-B retains its separate lease/reservation obligations.
+Related LOW-2: missing/non-array additionalRoutes, missing resolutions and invalid route entries refuse route_unknown before preview/admission, rather than throwing.
+Affected spec item: 3, 8.4.

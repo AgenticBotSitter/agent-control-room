@@ -184,3 +184,64 @@ Cleanup: all command sessions completed in the foreground; no listener, engine, 
 Findings drafted: HIGH 0 / MEDIUM 0 / LOW 0 from local build checks; no independent review claimed.
 
 Status: BLOCKED: CAP-A reviews/Linux/commit gates and required build/lane/zero-skip checks incomplete; CAP-B withheld
+
+
+## CAP-A FIX round (2026-11-04; supersedes the earlier CAP-A handoff)
+
+Baseline: `15431739ec5dddae885bc3fde29206342514c29c` on `cook/b8-paid-cap`. All five findings from the assigned NEEDS-FIX review have local fixes; this statement does not claim an independent CLEAN review. CAP-B remains withheld until that review.
+
+- MEDIUM-1: frozen bounds now carry profileId/cacheReporting and reject mismatched profiles before reading usage. The predicate uses the bound's stored mode. Independent regression: additive usage costs 9000000 at literal 3000/15000 rates against a 6000000 reserve; presenting a subset profile cannot authorize it.
+- LOW-1: the spec has been restored byte-for-byte to `fba6ae026`. D16 records the two pure helper export needs for reviewer/lead disposition, plus the interval/refresh clarifications, without editing the reviewed specification to grant approval.
+- LOW-2: malformed route resolutions refuse route_unknown instead of throwing. Direct admission and preview are covered, and refusal preserves the capability for a valid retry.
+- LOW-3: successful admission synchronously marks its consumed capability in a private WeakSet. Twenty attempts now produce one branded admission/downstream-open opportunity and nineteen consent_replayed refusals. Failed validation does not mark it. Durable CAP-B leases remain a separate obligation.
+- LOW-4: expected base/two-window row-set digests, run key and the matching over-ceiling pin digest are fixed literals independently computed by Python hashlib over explicit compact sorted-key JSON. Tests no longer compute expected digests through product helpers. The new committed mutation test reconstructs throwaway copies and checks the intended behavioral assertion for each guard bypass.
+
+Behavioral red runs preceded the fixes (same quarantine wrapper, tsx preloaded and agent CLI blocked):
+
+| Command suffix after the common runner below | Exit | Tests / pass / fail / skipped | Observed defect |
+|---|---|---|---|---|
+| `--test-name-pattern='FIX MEDIUM-1' tests/paid-run-bound.test.ts` | 1 | 1 / 0 / 1 / 0 | true instead of false for the mismatched cache mode |
+| `--test-name-pattern='FIX LOW-2' tests/paid-run-admission.test.ts` | 1 | 9 / 1 / 8 / 0 | shared paidRoute throws for malformed resolutions; empty Set improperly admits |
+| `--test-name-pattern='FIX LOW-3' tests/paid-run-admission.test.ts` | 1 | 1 / 0 / 1 / 0 | twenty opens instead of one |
+
+Common runner: `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000`.
+
+Final commands and results (full exact mutation child commands and real result lines are retained in the assigned FIX report and its separate progress file):
+
+| Command | Exit | Counts |
+|---|---|---|
+| `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-*.test.ts` | 0 | 71 pass / 0 fail / 0 skipped / 0 cancelled / 0 todo |
+| `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/usage-cost.test.ts tests/usage-price-table-loader.test.ts tests/usage-cost-authorization.test.ts tests/loop-provider-contract.test.ts tests/loop-providers.test.ts` | 0 | 63 pass / 0 fail / 0 skipped / 0 cancelled / 0 todo |
+| `npm run check` | 0 | TypeScript, no TAP counts |
+| `npm run check:demo` | 0 | TypeScript, no TAP counts |
+| `node scripts/ci/check-test-loaders.mjs` | 0 | all TypeScript test invocations preload tsx |
+| `node scripts/check-test-quarantine.mjs` | 0 | 0 entries |
+| `node scripts/check-test-lane-coverage.mjs` | 1 | exactly 3 unregistered paid-run files, including the new reproducible mutation test; final registration remains CAP-B |
+| `git diff --check` | 0 | no whitespace errors |
+
+Reproduce guard evidence with `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/paid-run-guard-mutations.test.ts`. Each child runs the 70 behavioral tests. Baseline and every restored guard run pass 70/70 with zero skips/cancellations. Every mutant exits 1 at an asserted behavioral failure; the containing mutation test exits 0. Source files stay unchanged, and every disposable directory is removed in finally. The 29 child runs comprise one baseline and fourteen mutant/restored pairs.
+
+| Guard removed | Mutant pass | Mutant fail | Restored pass / fail | Skipped (each) |
+|---|---|---|---|---|
+| price-staleness | 68 | 2 | 70 / 0 | 0 |
+| profile-mode-binding | 69 | 1 | 70 / 0 | 0 |
+| none-ceiling | 67 | 3 | 70 / 0 | 0 |
+| subset-validity | 69 | 1 | 70 / 0 | 0 |
+| model-filter | 69 | 1 | 70 / 0 | 0 |
+| consent-provenance | 68 | 2 | 70 / 0 | 0 |
+| consume-binding | 69 | 1 | 70 / 0 | 0 |
+| admission-binding | 65 | 5 | 70 / 0 | 0 |
+| consumed-command | 69 | 1 | 70 / 0 | 0 |
+| consumed-run | 69 | 1 | 70 / 0 | 0 |
+| invalid-cap | 60 | 10 | 70 / 0 | 0 |
+| consume-replay | 62 | 8 | 70 / 0 | 0 |
+| admission-replay | 69 | 1 | 70 / 0 | 0 |
+| resolution-shape | 63 | 7 | 70 / 0 | 0 |
+
+The earlier uncommitted-candidate/commit-lock status belongs to the preceding BUILD and is superseded by the current FIX report's commit result. This fix adds no executor, ledger, transport, driver, adapter, package or CI change. New test registration is explicitly deferred to CAP-B along with the existing two tests. Production readiness remains false.
+
+Not rerun in this focused fix: Vite build (the prior reviewed dependency-symlink write refusal remains unresolved), product-shell/browser qualification, independent reviews and pinned Linux parity. No production provider/profile, durable PG17 consent or real paid qualification is claimed. Exact final commit SHA and custody audit are in the assigned FIX report.
+
+Commit outcome for this FIX: staging the nine allowed files with `git add` exited 128: index.lock creation was refused (Operation not permitted). Per the brief, no retry or escalation was made and no commit command was reached. No new commit SHA exists; baseline remains `15431739ec5dddae885bc3fde29206342514c29c`. All nine files remain uncommitted for the lead. No Git identity configuration was changed, and node_modules was never included. The pending commit is a custody blocker, independent of the passing local behavior checks.
+
+Status: BLOCKED: git index.lock creation refused; lead must commit fixed CAP-A; CAP-B withheld

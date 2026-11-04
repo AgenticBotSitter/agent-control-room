@@ -18,7 +18,8 @@ export type PaidRunProviderProfileV1 = Readonly<{
 }>;
 
 export type PaidRunBoundV1 = Readonly<{
-  kind: 'bounded'; inCeil: string; outCeil: number;
+  kind: 'bounded'; profileId: string; cacheReporting: PaidRunProviderProfileV1['cacheReporting'];
+  inCeil: string; outCeil: number;
   inRateMax: string; outRateMax: string; maxNanoUsd: string;
 }>;
 
@@ -107,19 +108,21 @@ export function paidCallBoundV1(input: Readonly<{
   }
   const inCeil = BigInt(input.body.byteLength) * BigInt(input.profile.maxTokensPerInputByte)
     + BigInt(input.profile.inputOverheadTokens);
-  return { kind: 'bounded', inCeil: String(inCeil), outCeil: input.maxOutputTokens,
+  return Object.freeze({ kind: 'bounded', profileId: input.profile.profileId, cacheReporting: input.profile.cacheReporting,
+    inCeil: String(inCeil), outCeil: input.maxOutputTokens,
     inRateMax: String(inRateMax), outRateMax: String(outRateMax),
-    maxNanoUsd: String(inCeil * inRateMax + BigInt(input.maxOutputTokens) * outRateMax) };
+    maxNanoUsd: String(inCeil * inRateMax + BigInt(input.maxOutputTokens) * outRateMax) });
 }
 
 /** Usage presence/schema and reasoning checks belong to settlement; this checks ceilings. */
 export function paidUsageWithinBoundV1(profile: PaidRunProviderProfileV1, bound: PaidRunBoundV1,
   usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number }): boolean {
+  if (profile.profileId !== bound.profileId || profile.cacheReporting !== bound.cacheReporting) return false;
   const { inputTokens, cachedInputTokens, outputTokens } = usage;
   if (![inputTokens, cachedInputTokens, outputTokens].every(n => Number.isSafeInteger(n) && n >= 0)
     || outputTokens > bound.outCeil) return false;
   const input = BigInt(inputTokens), cached = BigInt(cachedInputTokens), ceiling = BigInt(bound.inCeil);
-  switch (profile.cacheReporting) {
+  switch (bound.cacheReporting) {
     case 'none': return input <= ceiling && cached === BigInt(0);
     case 'subset': return input <= ceiling && cached <= input;
     case 'additive': return input + cached <= ceiling;

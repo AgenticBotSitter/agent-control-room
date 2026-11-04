@@ -6,7 +6,7 @@ import { priceAtV1 } from '../src/web/v1/loop-provider-prices';
 import { costForUsageV1 } from '../src/usage/v1/usage-cost';
 import { paidRunFakeProfile, paidRunNow, paidRunPrice } from './helpers/paid-run-fake-provider';
 
-const bound = (prices = [paidRunPrice()]) => paidCallBoundV1({ profile: paidRunFakeProfile,
+const bound = (prices = [paidRunPrice()], profile = paidRunFakeProfile) => paidCallBoundV1({ profile,
   body: new Uint8Array(1000), maxOutputTokens: 200, providerId: 'provider-one', servedModelId: 'served/one', prices, now: paidRunNow });
 
 test('T7 price older than 24 hours refuses before any call', () => {
@@ -132,10 +132,11 @@ const cacheCases = [
 ] as const;
 for (const [cacheReporting, inputTokens, cachedInputTokens, outputTokens, within, nanoUsd] of cacheCases) {
   test(`T14b ${cacheReporting} ${inputTokens}/${cachedInputTokens}/${outputTokens} independently priced boundary`, () => {
-    const result = bound();
+    const profile = { ...paidRunFakeProfile, cacheReporting };
+    const result = bound([paidRunPrice()], profile);
     assert.equal(result.kind, 'bounded');
     if (result.kind !== 'bounded') throw new Error('expected bound');
-    assert.equal(paidUsageWithinBoundV1({ ...paidRunFakeProfile, cacheReporting }, result,
+    assert.equal(paidUsageWithinBoundV1(profile, result,
       { inputTokens, cachedInputTokens, outputTokens }), within);
     const harness = cacheReporting === 'subset' ? 'codex' : 'other';
     const priced = costForUsageV1({ harness, model: 'served/one',
@@ -152,9 +153,9 @@ for (const [cacheReporting, inputTokens, cachedInputTokens, outputTokens, within
 }
 
 test('T14b output and unsafe or negative usage counters fail the ceiling predicate', () => {
-  const result = bound();
-  if (result.kind !== 'bounded') throw new Error('expected bound');
   for (const cacheReporting of ['none', 'subset', 'additive'] as const) {
+    const result = bound([paidRunPrice()], { ...paidRunFakeProfile, cacheReporting });
+    if (result.kind !== 'bounded') throw new Error('expected bound');
     for (const usage of [
       { inputTokens: 400, cachedInputTokens: 0, outputTokens: 201 },
       { inputTokens: Number.MAX_SAFE_INTEGER, cachedInputTokens: 0, outputTokens: 100 },
@@ -190,11 +191,35 @@ test('T15 every profile literal and bounded numeric assumption refuses invalid v
   }
 });
 test('T14b none input 2000 exceeds independent 1000 ceiling despite cached zero', () => {
-  const result = bound();
+  const result = bound([paidRunPrice()], { ...paidRunFakeProfile, cacheReporting: 'none' });
   assert.equal(result.kind, 'bounded');
   if (result.kind !== 'bounded') throw new Error('expected bound');
   // 2000*3000+100*15000=7500000, exceeding reserve 6000000 by 1500000.
   assert.equal(result.maxNanoUsd, '6000000');
   assert.equal(paidUsageWithinBoundV1({ ...paidRunFakeProfile, cacheReporting: 'none' }, result,
     { inputTokens: 2000, cachedInputTokens: 0, outputTokens: 100 }), false);
+});
+
+test('FIX MEDIUM-1 bound rejects cache mode or profile ID different from its origin', () => {
+  const result = bound(); // additive: 1000 input bytes, 200 output tokens.
+  if (result.kind !== 'bounded') throw new Error('expected bound');
+  assert.equal(result.maxNanoUsd, '6000000'); // 1000*3000 + 200*15000.
+  const usage = { inputTokens: 1000, cachedInputTokens: 1000, outputTokens: 200 };
+  // Under the originating additive contract this usage costs 9000000, above 6000000.
+  assert.equal(BigInt(1000) * BigInt(3000) + BigInt(1000) * BigInt(3000) + BigInt(200) * BigInt(15000), BigInt(9000000));
+  assert.equal(paidUsageWithinBoundV1({ ...paidRunFakeProfile, cacheReporting: 'subset' }, result, usage), false);
+  const within = { inputTokens: 700, cachedInputTokens: 300, outputTokens: 200 };
+  assert.equal(paidUsageWithinBoundV1(paidRunFakeProfile, result, within), true);
+  assert.equal(paidUsageWithinBoundV1({ ...paidRunFakeProfile, profileId: 'different/v1' }, result, within), false);
+  for (const cacheReporting of ['none', 'subset', 'additive'] as const) {
+    const profile = { ...paidRunFakeProfile, cacheReporting };
+    const own = bound([paidRunPrice()], profile);
+    if (own.kind !== 'bounded') throw new Error('expected bound');
+    const zero = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+    assert.equal(paidUsageWithinBoundV1(profile, own, zero), true);
+    for (const other of ['none', 'subset', 'additive'] as const) {
+      if (other !== cacheReporting)
+        assert.equal(paidUsageWithinBoundV1({ ...profile, cacheReporting: other }, own, zero), false);
+    }
+  }
 });

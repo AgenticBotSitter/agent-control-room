@@ -87,14 +87,17 @@ export type PaidRunAdmissionV1 = Readonly<{
   runKey: string; pin: PaidRunPinV1; pinDigest: string; consentId: string;
 }>;
 const admissions = new WeakSet<object>();
+const admittedConsents = new WeakSet<object>();
 export function isPaidRunAdmissionV1(value: unknown): value is PaidRunAdmissionV1 {
   return typeof value === 'object' && value !== null && admissions.has(value);
 }
 
 function paidRoute(context: PaidRunTrustedContextV1):
   { kind: 'paid'; providerId: string; model: string; servedModelId: string } | { kind: 'unpaid' } | Refusal {
+  if (!context.resolution || !Array.isArray(context.resolution.additionalRoutes)) return refuse('route_unknown');
   const paid = new Map<string, { providerId: string; model: string; servedModelId: string }>();
   for (const route of [context.resolution, ...context.resolution.additionalRoutes]) {
+    if (!route || typeof route.providerId !== 'string' || typeof route.model !== 'string') return refuse('route_unknown');
     const providers = context.providers.filter(provider => provider.provider_id === route.providerId);
     if (providers.length !== 1) return refuse('route_unknown');
     const provider = providers[0]!;
@@ -137,8 +140,11 @@ export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRu
   const derived = derivePaidRunPinV1(context, record.capNanoUsd);
   if (derived.kind !== 'paid') return derived;
   if (derived.pinDigest !== record.pinDigest) return refuse('consent_mismatch');
+  if (admittedConsents.has(consent!)) return refuse('consent_replayed');
   const admission = Object.freeze({ runKey: sha256Digest([context.tenantId, context.loopRunId]),
     pin: derived.pin, pinDigest: derived.pinDigest, consentId: record.consentId }) as PaidRunAdmissionV1;
+  // Synchronous check and mark: one consumed capability can authorize only one admission.
+  admittedConsents.add(consent!);
   admissions.add(admission);
   return { kind: 'paid', admission };
 }

@@ -156,7 +156,7 @@ Successful `consumeOnce` alone creates a frozen empty opaque handle and register
 2. **Server-side pin derivation.**
    - The pin is `{providerId, model: roster_name, servedModelId: models[].served_model_id, providerVersion, priceRowDigest, capNanoUsd}`.
    - `priceRowDigest` is the `sha256Digest` of the sorted `providerPriceDigestV1` values of **every** row for `(providerId, servedModelId)`, because the bound may use any window (§4.3). This deviates from the single-row reading; see D10.
-   - Row digests are always recomputed and never read from a supplied `digest` field. Because `providerPriceDigestV1` includes `checkedAt`, any refresh invalidates previously issued consent even when the rates are unchanged; the owner must renew consent against the refreshed pin.
+   - Row digests are always recomputed and never read from a supplied `digest` field.
    - `pinDigest = sha256Digest(pin)`.
    - No pin field is ever read from a request body or from settings text.
 3. **Consent.**
@@ -238,7 +238,7 @@ For a call with body `b` and requested `maxOutputTokens = o`, all in BigInt:
 - `t0` is the reservation instant on the executor clock.
 - The call interval is `[t0 − clockSkewMs, t0 + maxCallMs + clockSkewMs]`.
 - The executor's per-call deadline is measured **from `t0`**, so mutex and fsync waits consume the same budget.
-- `rowsForIntervalV1` (NEW) receives **only** the rows for `(providerId, servedModelId)`. It evaluates the `priceAtV1` semantics at both interval ends and at every whole-UTC-minute boundary between them, at most 27 instants (two endpoints and at most 25 interior minute boundaries over the maximum 1 500 000 ms interval).
+- `rowsForIntervalV1` (NEW) receives **only** the rows for `(providerId, servedModelId)`. It evaluates the `priceAtV1` semantics at both interval ends and at every whole-UTC-minute boundary between them, at most 25 001 instants.
 - Windows are minute-granular local times and IANA offsets in use are whole minutes, so this visits every distinct active row, including across DST.
 - BUILD caches one `Intl.DateTimeFormat` per time zone. The cached helper must be tested equal to `priceAtV1` on all T8 instants.
 - Refusals:
@@ -691,12 +691,8 @@ This qualification is pending, and release remains blocked.
   - single clock;
   - T13 cap.
 
-- **r3 (2026-11-04, specification gate revisions):** **P1 fixed:** store consumption mints runtime-verifiable opaque consent; cloned/fabricated/unconsumed receipts refuse before ledger/send. **P2 fixed:** none input ceiling, subset validity and independently priced boundary/excess tests. **P3 fixed:** synchronous private request/options snapshot, full durable replay identity and mutation/option probes. **P4 fixed:** named six-hour CAP-A/CAP-B continuations, independent code/attack/CI review and pinned Linux parity, wrapper/CLI-blocked required commands. Test-only Q1/Q2 scope and cross-chunk row-set digest/authority ownership clarified. These replace conflicting r2 assertions; the revision was committed as `fba6ae026` and the lead-provided DeepSeek re-review is CLEAN for this chunk.
+- **r3 (2026-11-04, specification gate revisions):** **P1 fixed:** store consumption mints runtime-verifiable opaque consent; cloned/fabricated/unconsumed receipts refuse before ledger/send. **P2 fixed:** none input ceiling, subset validity and independently priced boundary/excess tests. **P3 fixed:** synchronous private request/options snapshot, full durable replay identity and mutation/option probes. **P4 fixed:** named six-hour CAP-A/CAP-B continuations, independent code/attack/CI review and pinned Linux parity, wrapper/CLI-blocked required commands. Test-only Q1/Q2 scope and cross-chunk row-set digest/authority ownership clarified. These replace conflicting r2 assertions; independent re-review is pending.
 
 ## Cross-chunk handoff
 
 U83a and any later paid admission consumer must use §3.2/D10's sorted **whole-window row-set** priceRowDigest, roster `model` distinct from servedModelId, and the one-distinct-paid-pair rule. Provider choice/billing labels, selection acknowledgement and successful stand-in tests convey no paid consent. No sibling may enable paidExecutionReady from this result. U81→U82→D01a→D01b selection work is independent of CAP-A/B for free/subscription launcher routes. Future production paid integration is separately reviewed after durable PG17 consent/ledger, complete resolver, broker and provider-profile prerequisites; only explicit later authorization permits a tiny real probe. Shared Start/adapter/schema/policy/process/migration/registration files have one lead-named writer in actual integration order; this isolated slice writes none except §8.3 package registration.
-
-## CAP-A BUILD clarification (2026-11-04)
-
-Applied the CLEAN re-review LOWs: the interval scan has at most 27 instants; refreshing checkedAt invalidates consent at unchanged rates. CAP-A exposes pure `derivePaidRunPinV1` for the server-side issue preview and `paidUsageWithinBoundV1` for the cache-mode ceiling predicate later used by settlement. These are helpers within the reviewed module family, and neither exposes a mint or ledger/transport. CAP-B remains after reviewed CAP-A per §8.4.

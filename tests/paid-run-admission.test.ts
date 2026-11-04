@@ -4,8 +4,6 @@ import { mkdtemp, writeFile, mkdir, rm, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { admitPaidRunV1, createPaidRunMemoryConsentStoreV1, derivePaidRunPinV1, isPaidRunAdmissionV1,
   PAID_RUN_CAP_CEILING_NANO_USD, type PaidRunConsumedConsentV1, type PaidRunTrustedContextV1 } from '../src/usage/v1/paid-run-admission';
-import { providerPriceDigestV1 } from '../src/web/v1/loop-provider-prices';
-import { sha256Digest } from '../src/security/digest';
 import { createImproveControlRoomLoopAdapterV1, loopByteHashV1 } from '../src/web/v1/improve-control-room-loop-adapter';
 import { paidRunContext, paidRunPrice } from './helpers/paid-run-fake-provider';
 
@@ -80,6 +78,7 @@ for (const key of ['tenantId', 'ownerIdentityId', 'projectId', 'requestId', 'set
       { kind: 'refused', reason: 'consent_mismatch' });
     assert.deepEqual(await issued.store.consumeOnce(issued.receipt.consentId, context),
       { kind: 'refused', reason: 'consent_replayed' });
+    assert.equal(admitPaidRunV1(context, issued.capability).kind, 'paid', 'mismatch does not burn capability');
   });
 }
 
@@ -110,19 +109,23 @@ test('T9 expiry is exclusive and checked again at admission; overlong lifetime i
 
 for (const cap of ['0', '01', '1e9', ' 1', '-1', '1.5', '', '5000000001', '99999999999999999']) {
   test(`T9 cap ${JSON.stringify(cap)} refuses with invalid_cap`, async () => {
+    assert.deepEqual(derivePaidRunPinV1(paidRunContext(), cap), { kind: 'refused', reason: 'invalid_cap' });
     const issued = await consent(paidRunContext(), cap);
     assert.deepEqual(admitPaidRunV1(paidRunContext(), issued.capability), { kind: 'refused', reason: 'invalid_cap' });
   });
 }
 
+// Digest literals independently computed with Python hashlib over compact sorted-key JSON.
+// Base row includes every explicit fixture field; run key hashes [tenant:one, run:one].
 test('T9 exact cap policy boundaries and server pin fields; no settings-derived pin', async () => {
   const context = paidRunContext();
-  for (const cap of ['1', PAID_RUN_CAP_CEILING_NANO_USD]) {
+  assert.equal(PAID_RUN_CAP_CEILING_NANO_USD, '5000000000');
+  for (const cap of ['1', '5000000000']) {
     const derived = derivePaidRunPinV1(context, cap);
     assert.equal(derived.kind, 'paid');
     if (derived.kind !== 'paid') throw new Error('expected pin');
     assert.deepEqual(derived.pin, { providerId: 'provider-one', model: 'roster-one', servedModelId: 'served/one',
-      providerVersion: 1, priceRowDigest: sha256Digest([providerPriceDigestV1(context.prices[0]!)]), capNanoUsd: cap });
+      providerVersion: 1, priceRowDigest: 'sha256:7ad208c5594030210c104339516b6aefee5eceaea7323faf1fcf21725925172f', capNanoUsd: cap });
     const store = createPaidRunMemoryConsentStoreV1();
     const receipt = await store.issue({ ...context, pinDigest: derived.pinDigest, capNanoUsd: cap });
     const consumed = await store.consumeOnce(receipt.consentId, context);
@@ -130,7 +133,7 @@ test('T9 exact cap policy boundaries and server pin fields; no settings-derived 
     const result = admitPaidRunV1(context, consumed.capability);
     assert.equal(result.kind, 'paid');
     if (result.kind === 'paid') {
-      assert.equal(result.admission.runKey, sha256Digest(['tenant:one', 'run:one']));
+      assert.equal(result.admission.runKey, 'sha256:a0d9b6bb159ce39893f482b193284e122c59d5e889ea14337d1a2acb8aea6c8a');
       assert.ok(isPaidRunAdmissionV1(result.admission));
       assert.ok(Object.isFrozen(result.admission) && Object.isFrozen(result.admission.pin));
       for (const copy of [{ ...result.admission }, structuredClone(result.admission), Object.create(result.admission)])
@@ -145,16 +148,19 @@ test('T9 whole-window digest is order invariant; refresh or other window change 
     window: { tz: 'UTC', days: [0], start: '07:00', end: '08:00' } });
   const context = paidRunContext({ prices: [paidRunPrice(), peak] });
   const issued = await consent(context);
-  assert.equal(admitPaidRunV1({ ...context, prices: [...context.prices].reverse() }, issued.capability).kind, 'paid');
+  const derived = derivePaidRunPinV1(context, '18000000');
+  assert.equal(derived.kind, 'paid');
+  if (derived.kind === 'paid') assert.equal(derived.pin.priceRowDigest, 'sha256:aac2b211a573b836eaad6475e49f6c056f28bc408c4455a88b3e97846bc16ed9');
+  assert.equal(admitPaidRunV1({ ...context, prices: [...context.prices].reverse() }, (await consent(context)).capability).kind, 'paid');
   const unrelated = paidRunPrice({ model: 'served/other', input: '1' });
-  assert.equal(admitPaidRunV1({ ...context, prices: [unrelated, ...context.prices] }, issued.capability).kind, 'paid');
+  assert.equal(admitPaidRunV1({ ...context, prices: [unrelated, ...context.prices] }, (await consent(context)).capability).kind, 'paid');
   for (const prices of [
     [context.prices[0]!, { ...peak, input: '6001' }],
     context.prices.map(row => ({ ...row, checkedAt: new Date(context.now + 1).toISOString() })),
     [context.prices[0]!],
   ]) assert.deepEqual(admitPaidRunV1({ ...context, prices }, issued.capability), { kind: 'refused', reason: 'consent_mismatch' });
   const suppliedDigest = context.prices.map(row => ({ ...row, digest: 'forged' }));
-  assert.equal(admitPaidRunV1({ ...context, prices: suppliedDigest }, issued.capability).kind, 'paid', 'row digest is recomputed');
+  assert.equal(admitPaidRunV1({ ...context, prices: suppliedDigest }, (await consent(context)).capability).kind, 'paid', 'row digest is recomputed');
   assert.deepEqual(admitPaidRunV1({ ...context, providerVersion: 2 }, issued.capability), { kind: 'refused', reason: 'consent_mismatch' });
   const changedProviders = structuredClone(context.providers);
   changedProviders[0]!.models[0]!.served_model_id = 'served/changed';
@@ -239,4 +245,46 @@ test('T17 actual adapter construction keeps paid readiness false without executi
     assert.deepEqual(await readdir(join(root, 'work')), []);
     assert.deepEqual(await readdir(join(root, 'runs')), []);
   } finally { await adapter.close(); }
+});
+
+for (const [label, resolution] of [
+  ['absent resolution', undefined], ['null resolution', null],
+  ['absent additionalRoutes', { providerId: 'provider-one', model: 'roster-one' }],
+  ...[null, 0, 'routes', {}, new Set()].map(additionalRoutes =>
+    [`additionalRoutes ${String(additionalRoutes)}`, { providerId: 'provider-one', model: 'roster-one', additionalRoutes }]),
+  ['null additional route', { providerId: 'provider-one', model: 'roster-one', additionalRoutes: [null] }],
+] as const) {
+  test(`FIX LOW-2 malformed resolution refuses: ${label}`, async () => {
+    const context = paidRunContext(), issued = await consent(context);
+    const malformed = { ...context, resolution } as unknown as PaidRunTrustedContextV1;
+    assert.deepEqual(admitPaidRunV1(malformed, issued.capability), { kind: 'refused', reason: 'route_unknown' });
+    assert.deepEqual(derivePaidRunPinV1(malformed, '18000000'), { kind: 'refused', reason: 'route_unknown' });
+    assert.equal(admitPaidRunV1(context, issued.capability).kind, 'paid', 'refusal does not burn a valid capability');
+  });
+}
+
+test('FIX LOW-3 one consumed capability mints one admission across twenty attempts', async () => {
+  const context = paidRunContext(), issued = await consent(context);
+  let downstreamOpens = 0;
+  const results = await Promise.all(Array.from({ length: 20 }, async () => {
+    const result = admitPaidRunV1(context, issued.capability);
+    if (result.kind === 'paid') {
+      assert.ok(isPaidRunAdmissionV1(result.admission));
+      downstreamOpens++;
+    }
+    return result;
+  }));
+  assert.equal(downstreamOpens, 1);
+  assert.equal(results.filter(result => result.kind === 'paid').length, 1);
+  assert.deepEqual(results.slice(1), Array.from({ length: 19 }, () => ({ kind: 'refused', reason: 'consent_replayed' })));
+});
+
+test('T9 over-ceiling capability with independently computed matching pin still refuses', async () => {
+  const context = paidRunContext(), store = createPaidRunMemoryConsentStoreV1();
+  // Python hashlib of the explicit base pin with cap 5000000001, one nano above policy.
+  const receipt = await store.issue({ ...context, capNanoUsd: '5000000001',
+    pinDigest: 'sha256:b962ac8395904b85f9a7505c7065ebb0b160d293abd132d976dcf861e8cf0b1e' });
+  const consumed = await store.consumeOnce(receipt.consentId, context);
+  if (consumed.kind !== 'consumed') throw new Error('expected consumption');
+  assert.deepEqual(admitPaidRunV1(context, consumed.capability), { kind: 'refused', reason: 'invalid_cap' });
 });
