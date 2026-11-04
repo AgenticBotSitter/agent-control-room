@@ -83,3 +83,14 @@ test("a test quarantined twice is refused as a duplicate", () => {
 test("a blank owner is refused", () => {
   assert.match(validateQuarantine([{ ...valid, owner: "   " }], today).join("\n"), /must name an owner role/u);
 });
+
+test("the quarantine check CLI exits non-zero on an invalid list", async t => {
+  const root = await mkdtemp(join(tmpdir(), "test-quarantine-cli-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const list = join(root, "quarantine.json");
+  await writeFile(list, JSON.stringify([{ ...valid, issue: "" }]));
+  const checker = fileURLToPath(new URL("../scripts/check-test-quarantine.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [checker, list], { encoding: "utf8" });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /GitHub issue/u);
+});
