@@ -183,3 +183,22 @@ test("migration CLI refuses the removed single-target form and partial pairs", a
   await assert.rejects(cli(["--bootstrap-target", "host=/none dbname=x user=y"]), /migration_refused_partial_targets/);
   await assert.rejects(cli(["--migrate-target", "host=/none dbname=x user=y"]), /migration_refused_partial_targets/);
 });
+
+async function pinnedLedgerCopy(t) {
+  const run = await mkdtemp(join(tmpdir(), "cr-ledger-pin-"));
+  t.after(async () => { await rm(run, { recursive: true, force: true }); });
+  await mkdir(join(run, "deploy/postgres"), { recursive: true });
+  await cp(join(ROOT, "db"), join(run, "db"), { recursive: true });
+  const entries = await collectLedgerEntries(run);
+  const ledgerPath = join(run, "deploy/postgres/migration-ledger.json");
+  const write = ledger => writeFile(ledgerPath, JSON.stringify(ledger));
+  return { run, ledgerPath, write, ledger: () => ({ version: 1, digest: ledgerDigest(entries), entries: entries.map(entry => ({ ...entry })) }) };
+}
+
+test("ledger refuses a pinned entry whose kind was changed", async t => {
+  const { run, ledgerPath, write, ledger } = await pinnedLedgerCopy(t);
+  const tampered = ledger();
+  tampered.entries.at(-1).kind = "migrate";
+  await write(tampered);
+  await assert.rejects(verifyMigrationLedger({ rootDir: run, ledgerPath }), /migration_ledger_kind/);
+});
