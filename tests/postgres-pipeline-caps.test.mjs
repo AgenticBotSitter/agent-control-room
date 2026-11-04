@@ -103,7 +103,7 @@ before(async () => {
   data = await mkdtemp(join(tmpdir(), "cr-s7b-pg-"));
   socket = join(data, "sock");
   const env = { PATH: "/usr/bin:/bin:/opt/homebrew/bin", LC_ALL: "C", TMPDIR: data, NODE_ENV: "test" };
-  await exec(join(BIN, "initdb"), ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject"], { env });
+  await exec(join(BIN, "initdb"), ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject", "--encoding=UTF8"], { env });
   await mkdir(socket, { recursive: true });
   await exec(join(BIN, "pg_ctl"), ["-D", data, "-o", `-k ${socket} -p ${PORT} -c fsync=off -c full_page_writes=off`,
     "-l", join(data, "log"), "-w", "start"], { env });

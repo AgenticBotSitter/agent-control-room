@@ -92,7 +92,11 @@ test("component shard commands are not duplicated", () => {
 });
 
 test("every shard preserves setup and continues its selected checks after a failure", () => {
-  assert.deepEqual(components.steps.filter(step => !step.if), setup);
+  // Preserve the independently captured setup, with full history now required
+  // by the immutable database-upgrade fixtures invoked by these lanes.
+  const expectedSetup = structuredClone(setup);
+  expectedSetup.find(step => step.uses?.startsWith("actions/checkout@")).with["fetch-depth"] = 0;
+  assert.deepEqual(components.steps.filter(step => !step.if), expectedSetup);
   assert.equal(components["runs-on"], baseline.job["runs-on"]);
   assert.deepEqual(components.env, baseline.job.env);
   for (const step of components.steps.filter(step => step.if)) {

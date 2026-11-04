@@ -349,6 +349,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Provide the macOS /private/tmp path on Linux
+        # Protected updater mutation baselines require a real sticky directory.
+        run: test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - name: Find this branch's mutation manifest
         id: manifest
         env:
@@ -592,6 +595,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install zsh for the install guide checks
         run: |
           sudo apt-get update
@@ -1169,6 +1173,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
