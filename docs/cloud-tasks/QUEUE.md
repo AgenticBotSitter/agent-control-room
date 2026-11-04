@@ -21,3 +21,6 @@ b5-inventory-own-keys cloud-base/b5-inventory-own-keys
 b5-restart-outcome-matrix cloud-base/b5-restart-outcome-matrix
 b5-mailbox-closed-http cloud-base/b5-mailbox-closed-http
 b5-start-digest-schema cloud-base/b5-start-digest-schema
+b5-session-cleanup-boundary cloud-base/b5-session-cleanup-boundary
+ci-preinstall-import-isolation cloud-base/ci-preinstall-import-isolation
+bridge-shared-synthetic-fixture cloud-base/bridge-shared-synthetic-fixture
