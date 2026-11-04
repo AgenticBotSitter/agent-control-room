@@ -100,6 +100,7 @@ test("P71 downgrade refuses retained run-edit commands before changing the schem
 
 test("P71 empty downgrade restores the validated pre-P71 release schema pin", async t => {
   const f = await policyFixture(t);
+  await f.db.exec(await readFile('db/down/0308_control_loop_providers.sql','utf8'));
   await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
   await f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
   assert.equal((await f.db.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conname='control_loop_improvement_commands_check1'")).rows[0]!.convalidated, true);
