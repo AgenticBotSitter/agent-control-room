@@ -1,4 +1,4 @@
-# b8-selection-to-start decisions (PLAN r4)
+# b8-selection-to-start decisions (PLAN r5)
 
 These decisions supersede the conflicting r2 helper dispositions. Independent re-review is pending.
 
@@ -18,7 +18,7 @@ Affected spec item: 2.4, S4
 
 ## D3 — One layer merger
 
-Choice: U81 owns mergeSelectionLayerV1; later saved selections extend this export in place and retain every valid non-B8 member at expectedVersion.
+Choice: U81 owns mergeSelectionLayerV1; later saved selections consume this unchanged two-argument export and retain every valid non-B8 member at expectedVersion.
 Options: Duplicate merger in saved.ts; one foundation export.
 Why: Avoids conflicting shared writers and preserves providerRoute/other roles without saving acceptance.
 Affected spec item: 2.3, S4
@@ -110,7 +110,7 @@ Affected spec item: 2.1, T1.
 Choice: bound admission checker preparation/child and transaction by the existing at-most-five-second window; pass execution signal/timeout separately from approved context, cancel/reap, never restamp acceptance.
 Options: check for up to 30 seconds then always refuse; weaken fresh-intent SQL; explicit smaller cancellable admission budget.
 Why: preserves exact checked binding and SQL freshness. Slow qualified tools remain unavailable until measured within budget; preview retains its legacy timeout.
-Affected spec item: 4.2, 6, T12.
+Affected spec item: 4.2, 6, T12-P (preview), T12 (admission).
 
 ## D17 — Preview intent and caller route assembly (R2A LOWs)
 Choice: previewSaved uses sameFamilyIntent only. U83a caller assembles a complete optional providerRoute after the unchanged encoder/merger and before shared preview/intake/save validation.
@@ -123,5 +123,11 @@ Choice: retain fixed consumer product names reviewFamily/standardFinal, record t
 Options: silently deviate; change the CLEAN D01b contract; record and qualify the mapping.
 Why: avoids a second codec and stale uncommitted handoff prose without asserting approval of a new spec revision.
 Affected spec item: 2.4, revision history, status/evidence.
+
+## D19 — One reserve and executable evidence ownership (R3)
+Choice: §4.2 is the sole end-to-end timing definition; execution timeout measures to the candidate deadline, child budget subtracts one reserve, and service signal uses the same cutoff. U81-A owns T12-P only; U81-B owns T12 and the explicit cancellation protocol.
+Options: double subtraction / admission evidence in foundation; one deadline and named evidence owners.
+Why: the nonzero-preparation success case now has slack; the foundation can prove its own stop boundary. Cancellation and DB work must fit the stated implementation allowance or require a narrower lead continuation. Frozen encoder/merger signatures and approved B8 selection spec R4 remain unchanged.
+Affected spec item: 4.2, 8.1, T12-P/T12; MEDIUM-1, MEDIUM-2, LOW-1.
 
 Status: PLAN-READY
