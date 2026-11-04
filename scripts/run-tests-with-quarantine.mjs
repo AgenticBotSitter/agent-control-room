@@ -7,6 +7,14 @@ const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function runNode(args, spawn = spawnSync) {
   const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+  // Round 17 diagnostics for the two lanes whose hosted runner disappeared.
+  // Keep the existing test selection, concurrency, signals and exit status.
+  if (env.GITHUB_ACTIONS === "true" && args.some(arg =>
+    arg === "tests/codex-canonical-result-publication.test.ts"
+    || arg === "tests/improve-control-room-loop-bridge.test.ts")) {
+    env.CONTROL_ROOM_CI_TEST_DIAGNOSTICS_PID = String(process.pid);
+    args = ["--import", new URL("./ci/test-process-diagnostics.mjs", import.meta.url).href, ...args];
+  }
   const result = spawn(process.execPath, args, { stdio: "inherit", env });
   if (result.error) throw result.error;
   return result.status ?? 1;
