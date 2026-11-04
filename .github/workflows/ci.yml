@@ -588,13 +588,15 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    # Five shards balanced from the last ten successful hosted runs. Each has
-    # about 46 minutes of checks using each group's largest observed duration.
+    # The original five-shard forecast predates growth in the improvement lane.
+    # Run 41822589618 spent 12m39s in results, then at least 16m36s in improvement
+    # before shard 4's runner shutdown (well below this job's 90-minute limit).
+    # Give improvement its own shard; preserve every check and the existing bound.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: ['1', '2', '3', '4', '5']
+        shard: ['1', '2', '3', '4', '5', '6']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -667,12 +669,17 @@ jobs:
         if: ${{ !cancelled() && matrix.shard == '4' }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
-        run: node scripts/ci/run-scripts-keep-going.mjs test:project-activity-lifecycle-postgres test:updater:linux test:checkpoints test:server-composition test:ideas test:results test:articles test:workspaces test:night-kit:postgres test:fleet:lapse-stress test:improve-control-room test:r7cfix-harness test:pg-runtime test:install-database-phase:postgres test:text-copy-derivation:postgres test:perf-read-indexes
+        run: node scripts/ci/run-scripts-keep-going.mjs test:project-activity-lifecycle-postgres test:updater:linux test:checkpoints test:server-composition test:ideas test:results test:articles test:workspaces test:night-kit:postgres test:fleet:lapse-stress test:r7cfix-harness test:pg-runtime test:install-database-phase:postgres test:text-copy-derivation:postgres test:perf-read-indexes
       - name: Component lanes shard 5
         if: ${{ !cancelled() && matrix.shard == '5' }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
         run: node scripts/ci/run-scripts-keep-going.mjs test:result-file-database-hardening-postgres test:project-activity test:recurring:postgres test:notices test:access test:owner-signing test:coordination test:voice test:observations test:backup-recovery test:owner-push:postgres test:postgres-production test:windows-launcher-modes test:improve-control-room-postgres test:result-file-download-postgres test:result-upload-store-postgres test:install-services-bringup:postgres test:fleet:lapse-terminal-race test:soak:analysis test:mac-upgrade
+      - name: Component lanes shard 6
+        if: ${{ !cancelled() && matrix.shard == '6' }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs test:improve-control-room
       - name: Runtime-assembly memory guard
         if: ${{ !cancelled() && matrix.shard == '3' }}
         run: pnpm run test:private-local-runtime-assembly:memory-guard
