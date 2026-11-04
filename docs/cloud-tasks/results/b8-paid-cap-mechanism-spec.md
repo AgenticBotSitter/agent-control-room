@@ -1,63 +1,70 @@
-# b8-paid-cap-mechanism — specification (PLAN)
+# b8-paid-cap-mechanism — specification (PLAN, revision r2)
 
-Phase: PLAN. Specification only; no product code is written in this phase.
+Phase: PLAN (specification only; no product code in this phase).
 Source base: `cook/b7-providers` at `412d0c149fe8e272c491900d7a9164f80ecb612a`.
-Delivery base: `cloud-base/b8-paid-cap-mechanism` at `d0a1c8a3895d5dc283c8fdf2b01ed41f14790d9b`. It is one task/playbook commit on top of the source base; ancestry was checked with `git merge-base --is-ancestor`, exit 0.
+Delivery base: `cloud-base/b8-paid-cap-mechanism` at `d0a1c8a3895d5dc283c8fdf2b01ed41f14790d9b`. That base is one task/playbook commit on top of the source base. Ancestry was verified with `git merge-base --is-ancestor`, which exited 0.
 Result branch: `cloud/b8-paid-cap-mechanism`.
 
 ## 0. Summary and verdict
 
-The mechanism is **U83b per-run paid-call enforcement**. It is specified as a self-contained stand-in slice under `src/usage/v1/paid-run-*` and is testable against a deterministic scripted provider. It has four parts:
+The U83b per-run paid-call enforcement is specified as a self-contained stand-in slice under `src/usage/v1/paid-run-*`. It is testable against a deterministic scripted provider and has five parts:
 
-1. Trusted admission, which produces an unforgeable per-run capability.
-2. A conservative pre-call bound.
-3. A durable, crash-safe, append-only per-run reservation ledger.
-4. One bounded-call executor. Every scripted provider request passes through it, and it owns dispatch, identity verification, settlement and Stop.
+1. **Trusted admission.** A server-persisted, single-use owner consent plus a server-derived pin produce an unforgeable per-run capability.
+2. **Conservative pre-call bound.**
+3. **Durable per-run ledger.** It is crash-safe, append-only and records reservations.
+4. **One bounded-call executor.** Every scripted provider request passes through it. It owns dispatch, identity verification, settlement and Stop.
 
 **Production gap (stated plainly).** On this base, Control Room does not issue or observe individual billable requests:
 
-- Loop Start spawns an external engine as one opaque process: `src/web/v1/improve-control-room-loop-adapter.ts:376` spawns `c.interpreter` with `start`, run, `--settings`, ... from `execute()`, called by `start()` via `ImproveControlRoomLoopServiceV1.#dispatch`, `src/web/v1/improve-control-room-loop-service.ts:695`.
-- The harness CLIs (codex, claude, hermes) also run as whole-job subprocesses. Their usage is reported after the process ends: `src/harness/v1/owner-trusted-local-cli-execution.ts:54-89`; `src/harness/v1/owner-trusted-local-cli-publish.ts:101-118`.
-- No `src/` code issues provider model HTTP. The only provider HTTP is the price-sheet GET in `src/web/v1/loop-provider-prices.ts:84`.
+- Loop Start spawns an external engine as one opaque process (`src/web/v1/improve-control-room-loop-adapter.ts:376`, `spawn(c.interpreter, [c.entrypoint, ...args])`). This happens via `ImproveControlRoomLoopServiceV1.#dispatch` → `adapter.start` (`src/web/v1/improve-control-room-loop-service.ts:695`).
+- The harness CLIs (codex/claude/hermes) are whole-job subprocesses whose usage is reported after exit (`src/harness/v1/owner-trusted-local-cli-execution.ts:54-89`; `src/harness/v1/owner-trusted-local-cli-publish.ts:101-118`).
+- No `src/` code issues provider model HTTP. The only provider HTTP is the price-sheet GET (`src/web/v1/loop-provider-prices.ts:95`, inside `refreshProviderPricesV1` at :84).
 
-A launcher-wide opaque command therefore **cannot be declared capped** from after-the-fact totals. The production consumer needs an **unreleased per-call integration contract** (§2.3). Until it exists and is reviewed, production paid execution stays unavailable and `paidExecutionReady` stays `false` (`improve-control-room-loop-adapter.ts:701`). The cloud BUILD delivers and proves the stand-in mechanism only. It does **not** award `CAPPED-PAID-RUN-GREEN`.
+A launcher-wide opaque command therefore **cannot be declared capped** from after-the-fact totals. The production consumer needs an **unreleased per-call integration contract** (§2.3). Until it exists and is reviewed:
+
+- production paid execution remains unavailable;
+- `paidExecutionReady` stays `false` (`improve-control-room-loop-adapter.ts:701`).
+
+The cloud BUILD delivers and proves the stand-in mechanism only. It does **not** award `CAPPED-PAID-RUN-GREEN`.
 
 ## 1. Inspect-before-design facts (item 1)
 
-| Fact | Location | Use in this spec |
+| Fact | Location | Use |
 |---|---|---|
-| Post-execution pricing of reported usage, all BigInt nano-USD; named `unknown` refusals; never guesses cache prices | `src/usage/v1/usage-cost.ts:64-114` (`usageCostPlanV1`, `costForUsageV1`) | **Reused unchanged** for settlement arithmetic and usage validation (`usageMeasurementSchemaV1`, :33). |
-| Group rollup for historical reporting | `usage-cost.ts:167` `rollupUsageGroupsV1` | **Not touched.** Historical usage reporting is unchanged. |
-| Price table loader (owner file, 0600/O_NOFOLLOW/uid checks) | `src/usage/v1/usage-price-table-loader.ts` | Pattern reused for the journal's file-safety checks. Not imported. |
-| Provider price rows: `ProviderPriceV1 {providerId, model(=served_model_id), windowKey, window, input, output (nano-USD per token strings), currency, status, reason, checkedAt}` | `src/web/v1/loop-provider-prices.ts:42-45` | Input to the bound. |
-| `providerPriceDigestV1(price)` sha256 over every field, including `checkedAt` | `loop-provider-prices.ts:48` | Pin field `priceRowDigest`; revalidated on every reservation. |
-| `priceAtV1(prices, at)` returns the active window row or the window-null row; no row means `null` (never zero) | `loop-provider-prices.ts:52` | Evaluated over the whole call interval (§4.3). |
-| USD/M to nano-per-token conversion refuses more than 3 decimal digits (`precision` means unknown) | `loop-provider-prices.ts:64-68` | Only `status:'known'`, `currency:'USD'` rows can be bounded. |
-| Staleness is defined only in the view: `stale = now - checkedAt > 24h` | `src/web/v1/loop-provider-service.ts:79` (`#priceView`, reached via `view()`) | Consumer passes view rows (`stale`, `digest`); the stand-in applies the same 24 h rule to its own clock. |
-| Provider snapshot version (tenant-wide) and route revalidation | `loop-provider-service.ts:148` `revalidate(identity, route)` returns `{...model, provider, version}` | Source of `providerVersion`, `servedModelId`, `billing_kind`. |
-| Provider data: `billing_kind: 'subscription'\|'token'`, `models[{roster_name, launcher, served_model_id}]` | `improve-control-room-loop-adapter.ts:54-92` | `token` marks a route as paid. The billing label is never used as spending authority (§3). |
-| Route resolution `{providerId, model, additionalRoutes[]}`; adapter constant `paidExecutionReady: false` | adapter `:108-113`, `:243`, `:701-715` | Multiple-paid-pair classification; readiness stays false. |
-| Start identity: claim row with `owner_identity_id = actor.id`, `loopRunId`, `settings_sha256`, freshness-guarded `beforeSpawn` | `improve-control-room-loop-service.ts:643-660, 681-684` | Trusted admission context fields (§3). |
-| Existing DB reservation facility: `control_project_budget_*`, micro-USD, `FOR UPDATE` | `src/scheduler/v1/budget-store.ts:9-18`, migration 0015 | **Not reused.** It is micro-USD and project-scoped, and its own doc says "does not charge a provider". See decisions D4. |
-| Lanes: `tests/usage-cost.test.ts` runs in `test:product-shell`; `tests/loop-providers.test.ts` runs in `test:improve-control-room` (PGlite); real PG17 tests run in `test:improve-control-room-postgres` | `package.json` scripts; CI via `test:components` and `pnpm run test:ci-component-shards` (`.github/workflows/ci.yml:558`) | Lane registration (§8). |
+| Post-execution pricing of reported usage in BigInt nano-USD, with named `unknown` refusals and no guessed cache price | `src/usage/v1/usage-cost.ts:71` `usageCostPlanV1`, `:100` `costForUsageV1` | **Reused unchanged** for settlement arithmetic. |
+| `usageMeasurementSchemaV1` is `.strict()`. `inputTokens`, `outputTokens`, `totalTokens` and `wallTimeMs` are required and nullable; `cachedInputTokens` is optional and nullable. | `usage-cost.ts:30-40` | Settlement maps usage exactly (§6.1). |
+| Codex nets cached tokens off input; `other` treats cached tokens as additional | `usage-cost.ts:92,109` | Selects the settlement mode per `cacheReporting` (§4.1). |
+| Price-table ids use `catalogProjectIdSchema` (≥3 chars, `[A-Za-z0-9][A-Za-z0-9._:-]*`) | `usage-cost.ts:9`, `src/web/v1/project-wire.ts:37` | Synthetic one-entry table ids (§6.1). |
+| Group rollup for historical reporting | `usage-cost.ts:167` `rollupUsageGroupsV1` | **Not touched.** Historical reporting is unchanged. |
+| Owner price-file loader (O_NOFOLLOW, 0600, uid checks) | `src/usage/v1/usage-price-table-loader.ts` | Its file-safety pattern is reused by the journal; not imported. |
+| `ProviderPriceV1 {providerId, model (= served_model_id), windowKey, window, input, output (nano-USD/token strings), currency, status, reason, checkedAt}` | `src/web/v1/loop-provider-prices.ts:38-42` | Bound input. |
+| `providerPriceDigestV1(price)`: sha256 over all fields, including `checkedAt` | `loop-provider-prices.ts:48` | Recomputed by the executor; never trusted from input. |
+| `priceAtV1(prices, at)`: active window row, else the window-null row, else `null` (never zero). It does **not** filter by model. | `loop-provider-prices.ts:52-62` | Called only with one model's rows (§4.3). |
+| USD/M → nano/token: ×1000; more than 3 decimal digits gives `unknown` (precision) | `loop-provider-prices.ts:64-68` | Only `known`/`USD` rows are boundable. |
+| Staleness is `now − checkedAt > 24h`, computed only in the view | `src/web/v1/loop-provider-service.ts:79` (`#priceView`, via `view()`) | Same rule, applied on the executor's clock. |
+| `LoopProviderServiceV1.revalidate(identity, route)` returns `{...model, provider, version}` | `loop-provider-service.ts:148` | Source of `providerVersion`, `servedModelId` and `billing_kind`. |
+| Provider data: `billing_kind 'subscription'\|'token'`; `models[{roster_name, launcher, served_model_id}]` | `improve-control-room-loop-adapter.ts:54-92` | `token` classifies a route as paid; it is never spending authority. |
+| Route resolution `{providerId, model, additionalRoutes[]}` comes from an installation-supplied resolver; `paidExecutionReady: false` | adapter `:108-113`, `:243`, `:701-715` | Paid-pair classification; readiness stays false. |
+| Start claim: `owner_identity_id = actor.id`, fresh `loopRunId` (`reserveRun()`) and `commandId` generated in the claim transaction, `settings_sha256`, freshness-guarded `beforeSpawn` | `improve-control-room-loop-service.ts:643-660, 681-684` | Trusted-context fields and the consent-consumption point (§3). |
+| Existing DB reservation facility `control_project_budget_*`: micro-USD, `FOR UPDATE`, "does not charge a provider" | `src/scheduler/v1/budget-store.ts:9-18`; migration 0015 | Not reused (decision D2). |
+| `test:product-shell` holds the usage tests and is run directly by CI "Component lanes shard 1" with PG17 `PG_BIN`. `ci.yml:558` is the shard-workflow guard; `test:components` also contains it. | `package.json` `test:product-shell`; `.github/workflows/ci.yml:563` | Lane registration (§8). |
+| `tsconfig.vps.json` lists explicit entry files and excludes `src/usage/v1`; `tsconfig.json` includes `**/*.ts` | both tsconfigs | `check:demo` is the covering typecheck for new files. |
 
-Interfaces marked **NEW** below do not exist on this base. A search for `capNano`, `priceRowDigest`, `providerVersion` and `servedModelId` in `src/` found nothing (spec-helper report, verified for the adapter and service hits).
+Everything marked **NEW** below does not exist on this base. A grep for `capNano`, `priceRowDigest`, `providerVersion` and `servedModelId` in `src/` returns 0 lines (evidence E14).
 
 ## 2. Enforcement boundary (item 2)
 
-### 2.1 The one bounded-call interface (NEW)
-
-`src/usage/v1/paid-run-executor.ts`:
+### 2.1 The one bounded-call interface (NEW `src/usage/v1/paid-run-executor.ts`)
 
 ```ts
 export interface PaidRunTransportV1 {            // NEW: the only way bytes reach a (scripted) provider
   send(request: Readonly<{ callId: string; body: Uint8Array; servedModelId: string;
     maxOutputTokens: number; stream: boolean }>, signal: AbortSignal): Promise<PaidRunTransportResponseV1>;
 }
+export type PaidRunReportedUsageV1 = { inputTokens: number|null; outputTokens: number|null;
+  cachedInputTokens: number|null; reasoningTokens?: number|null };
 export type PaidRunTransportResponseV1 =
-  | { kind: 'completed'; status: number; servedModelId: string | null;
-      usage: { inputTokens: number|null; outputTokens: number|null; cachedInputTokens: number|null } | null;
-      body: Uint8Array }
+  | { kind: 'completed'; status: number; servedModelId: string | null; usage: PaidRunReportedUsageV1 | null; body: Uint8Array }
   | { kind: 'stream'; status: number; events: AsyncIterable<PaidRunStreamEventV1> };
 export interface PaidRunExecutorV1 {             // NEW
   call(input: Readonly<{ callId: string; body: Uint8Array; maxOutputTokens: number; stream?: boolean }>):
@@ -66,85 +73,113 @@ export interface PaidRunExecutorV1 {             // NEW
   snapshot(): PaidRunAccountingSnapshotV1;
 }
 export function createPaidRunExecutorV1(deps: Readonly<{
-  admission: PaidRunAdmissionV1;          // from paid-run-admission.ts, branded (§3)
-  ledger: PaidRunLedgerHandleV1;          // from paid-run-ledger.ts, opened for admission.runKey (§5)
+  admission: PaidRunAdmissionV1;          // branded, from paid-run-admission.ts (§3)
+  ledger: PaidRunLedgerHandleV1;          // opened for admission.runKey (§5)
   transport: PaidRunTransportV1;
-  currentConfig: () => Promise<PaidRunCurrentConfigV1>;   // revalidation port (§3.3)
+  currentConfig: () => Promise<PaidRunCurrentConfigV1>;   // revalidation port (§3.3); carries no time
   profile: PaidRunProviderProfileV1;      // reviewed provider assumptions (§4.1)
-  clock: () => number;                    // ms epoch, injectable for windows/DST tests
+  clock: () => number;                    // the ONLY clock (ms epoch), injectable
 }>): PaidRunExecutorV1;
 ```
 
-The transport is a closure owned by the executor factory. The executor never exposes it, and no other export calls `send`. The deciding test is a structural assertion: the scripted fake provider counts requests, and **every** observed request maps one-to-one to a ledger `dispatch` record that has a prior `reserve` record. A test that manually adjusts a balance around an unconstrained provider does not count as proof.
+The transport is captured in the executor closure and never re-exposed; no other export calls `send`.
 
-### 2.2 Who calls it
+The deciding structural test works through the scripted fake, which counts requests. **Every** observed request maps one-to-one to a ledger `dispatch` record that has a prior `reserve` record and no `stop` or `block` record between them. A test that adjusts a balance around an unconstrained provider is not accepted as proof.
 
-- **Cloud (this slice):** the tests in §7 call it, and so does a scripted driver entry point, `tests/helpers/paid-run-driver.ts` (NEW). The restart tests run the driver as a real child process.
-- **Later production consumer (NOT on this base, not built here):** a Control-Room-owned per-call broker. Each billable model request of a paid run is sent through `PaidRunExecutorV1.call`, with the provider credential held only by the broker side. Its consumers would be the loop adapter's Start path (`improve-control-room-loop-adapter.ts` `start()`/`execute()`) and the harness execution adapters (`owner-trusted-local-cli-execution.ts` `capture()`).
+### 2.2 Callers
 
-### 2.3 Unreleased per-call integration contract (prerequisite, blocks production)
+- **Cloud (this slice):**
+  - the tests in §7;
+  - the scripted driver entry point `tests/helpers/paid-run-driver.ts` (NEW), which runs as a real child process for the restart tests.
+- **Later production consumer (not on this base, not built here):** a Control-Room-owned per-call broker. Every billable model request of a paid run is sent through `PaidRunExecutorV1.call`, and the provider credential lives only on the broker side. Its callers would be:
+  - the loop adapter Start path (`improve-control-room-loop-adapter.ts` `start()`/`execute()`);
+  - the harness execution adapters (`owner-trusted-local-cli-execution.ts` `capture()`).
 
-The engine and harness CLIs must have a reviewed contract under which:
+### 2.3 Unreleased per-call integration contract (prerequisite P1; blocks production)
 
-- (a) they hold no paid provider credential;
-- (b) every billable request is issued through the broker as one framed request with a `callId`, exact body bytes, and an enforced `max_output_tokens`;
-- (c) a refusal is terminal for that call, with no engine-side fallback to another route;
-- (d) Stop is propagated as a broker-side abort.
+The engine and harness CLIs need a reviewed contract under which:
 
-No such contract exists in the public repository. This spec does not design the private engine's internals.
+- (a) they hold no paid credential;
+- (b) every billable request is a framed broker request with a `callId`, exact body bytes and an enforced `max_output_tokens`;
+- (c) a refusal is terminal for that call, with no engine-side fallback route;
+- (d) Stop is a broker-side abort.
 
-**Production paid enablement is BLOCKED on that contract, its review and native PG17 qualification of the ledger (§5.6).**
+No such contract exists in the public repository. This spec does not design the private engine's internals. **Production paid enablement is BLOCKED** on P1–P5 (§8.4).
 
-## 3. Trusted admission (item 3) — `src/usage/v1/paid-run-admission.ts` (NEW)
+## 3. Trusted admission (item 3) — NEW `src/usage/v1/paid-run-admission.ts`
 
-### 3.1 Inputs
+### 3.1 Interfaces
 
 ```ts
-export type PaidRunTrustedContextV1 = Readonly<{   // assembled ONLY by server code
-  tenantId: string; ownerIdentityId: string;       // actor.id of the verified Start claim
-  loopRunId: string; commandId: string;            // the claim row being executed
-  settingsSha256: string;                          // exact saved settings bound in the claim
+export type PaidRunTrustedContextV1 = Readonly<{   // assembled ONLY by server code from the verified Start claim
+  tenantId: string; ownerIdentityId: string; projectId: string; requestId: string;
+  loopRunId: string; commandId: string; settingsSha256: string;
   resolution: LoopProviderRouteResolutionV1;       // validated adapter route resolution
-  providers: readonly LoopProviderDataV1[];        // current snapshot (version below)
+  providers: readonly LoopProviderDataV1[];        // current snapshot at providerVersion
   providerVersion: number;                          // control_loop_provider_state.version
-  prices: readonly (ProviderPriceV1 & { stale: boolean; digest: string })[]; // #priceView rows
+  prices: readonly ProviderPriceV1[];              // rows from the provider view
   now: number;
 }>;
-export type PaidRunConsentV1 = Readonly<{          // owner's fresh, per-run opt-in
-  schema: 'control-room.paid-run-consent/v1'; loopRunId: string; commandId: string;
-  ownerIdentityId: string; settingsSha256: string; pinDigest: string;
-  capNanoUsd: string; consentNonce: string; issuedAt: string; expiresAt: string;
-}>;
+export interface PaidRunConsentStoreV1 {           // NEW port; consent is server-persisted, never caller-supplied
+  /** Only an authenticated owner request handler calls this (VerifiedWebIdentity → actor.id).
+   *  The handler derives pinDigest server-side from the current snapshot and shows pin and cap to the owner. */
+  issue(input: Readonly<{ tenantId: string; ownerIdentityId: string; projectId: string; requestId: string;
+    settingsSha256: string; pinDigest: string; capNanoUsd: string; now: number }>): Promise<{ consentId: string }>;
+  /** Atomic single use inside the Start-claim transaction; binds the claim's freshly generated ids. */
+  consumeOnce(consentId: string, claim: Readonly<{ tenantId: string; ownerIdentityId: string; projectId: string;
+    requestId: string; settingsSha256: string; commandId: string; loopRunId: string; now: number }>):
+    Promise<{ kind: 'consumed'; record: PaidRunConsentRecordV1 } | { kind: 'refused'; reason: PaidRunRefusalV1 }>;
+}
+export type PaidRunConsentRecordV1 = Readonly<{ consentId: string; tenantId: string; ownerIdentityId: string;
+  projectId: string; requestId: string; settingsSha256: string; pinDigest: string; capNanoUsd: string;
+  issuedAt: number; expiresAt: number; consumedBy: { commandId: string; loopRunId: string } }>;
 export type PaidRunPinV1 = Readonly<{ providerId: string; model: string; servedModelId: string;
   providerVersion: number; priceRowDigest: string; capNanoUsd: string }>;
-export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: unknown):
+export function admitPaidRunV1(context: PaidRunTrustedContextV1, consent: PaidRunConsentRecordV1 | undefined):
   { kind: 'paid'; admission: PaidRunAdmissionV1 } | { kind: 'unpaid' } | { kind: 'refused'; reason: PaidRunRefusalV1 };
 ```
 
-### 3.2 Rules (strict; each is a named refusal)
+### 3.2 Rules (each a named refusal)
 
-1. **Route classification.** Every route in `{providerId, model} ∪ additionalRoutes` resolves to exactly one provider/model row. A route whose provider `billing_kind === 'token'` is paid. If there are no paid routes, the result is `unpaid` and no paid machinery is involved; free and subscription work is unaffected. Two or more **distinct** paid `(providerId, model)` pairs refuse with `multiple_paid_routes`. One paid pair repeated across roles or calls is allowed.
-2. **Pin derivation is server-side.** The pin is `{providerId, model: roster_name, servedModelId: models[].served_model_id, providerVersion, priceRowDigest, capNanoUsd}`.
-   - `priceRowDigest` is the sha256 (via `sha256Digest`) of the **sorted digests of every price row for `(providerId, servedModelId)`**. All windows are covered, because the bound may use any of them (§4.3).
+1. **Route classification.**
+   - Every route in `{providerId, model} ∪ additionalRoutes` must resolve to exactly one provider/model row. A route is paid if its provider has `billing_kind === 'token'`.
+   - If no route is paid, the result is `unpaid`: no consent, no ledger, no executor. Free and subscription work is unaffected. A paid call from an unpaid run has no path to a transport.
+   - Two or more **distinct** paid `(providerId, model)` pairs refuse with `multiple_paid_routes`. One paid pair repeated across roles or calls is allowed.
+   - The verdict is only as complete as the installation resolver's `additionalRoutes` (adapter :706-713). A reviewed resolver-completeness guarantee is prerequisite P3.
+2. **Server-side pin derivation.**
+   - The pin is `{providerId, model: roster_name, servedModelId: models[].served_model_id, providerVersion, priceRowDigest, capNanoUsd}`.
+   - `priceRowDigest` is the `sha256Digest` of the sorted `providerPriceDigestV1` values of **every** row for `(providerId, servedModelId)`, because the bound may use any window (§4.3). This deviates from the single-row reading; see D10.
+   - Row digests are always recomputed and never read from a supplied `digest` field.
    - `pinDigest = sha256Digest(pin)`.
-   - No pin field is ever read from the request or the settings text.
-3. **Consent.** It is parsed with a strict zod schema; unknown keys refuse.
-   - It must match `loopRunId`, `commandId`, `ownerIdentityId`, `settingsSha256` and `pinDigest` exactly.
-   - `issuedAt ≤ now < expiresAt`, and `expiresAt - issuedAt ≤ 600 000 ms`. Otherwise it refuses with `consent_stale`.
-   - `consentNonce` matches `/^[A-Za-z0-9_-]{22,64}$/` and is recorded in the ledger `open` record. A nonce already present in any ledger journal under the root refuses with `consent_replayed`.
-   - A consent minted for another run, a copied historical Start, a saved preset or a default cannot match. A fresh `loopRunId` and `commandId` are reserved per Start claim (`improve-control-room-loop-service.ts:645,656`).
-   - There is no default consent and no code path that creates one.
-4. **Money units.** `capNanoUsd` matches `/^[1-9][0-9]{0,15}$/` and must be ≤ `PAID_RUN_CAP_CEILING_NANO_USD`. That constant is NEW: a compile-time value whose default is an owner question (Q1); the mechanism is parameterised. All arithmetic is BigInt, with no `Number` money and no floating point.
-5. **Provider-controlled labels are not authority.** `billing_kind` only *classifies* a route as paid, which makes the gate stricter. It never grants spending. The consent cap is the only authority.
-6. **Unforgeable capability.** `PaidRunAdmissionV1` is a frozen object registered in a module-private `WeakSet`. The executor and ledger refuse any admission object not in the set, so a structurally identical forged object refuses with `admission_forged`. The admission carries `runKey = sha256Digest([tenantId, loopRunId])` and the pin. The ledger refuses to open with `cross_run` when the journal's `runKey` or `pinDigest` differs.
+   - No pin field is ever read from a request body or from settings text.
+3. **Consent.**
+   - Consent exists only as a record created by `PaidRunConsentStoreV1.issue`, through the owner's explicit authenticated action, with `ownerIdentityId = actor.id`.
+   - The record is bound to `projectId`, `requestId`, `settingsSha256`, the server-derived `pinDigest` and `capNanoUsd`.
+   - Lifetime: `issuedAt ≤ now < expiresAt` and `expiresAt − issuedAt ≤ 600 000 ms`; otherwise it refuses with `consent_stale`.
+   - At Start-claim insertion, `consumeOnce` atomically consumes the record and binds the claim's `commandId`/`loopRunId`, which are generated in that transaction (`improve-control-room-loop-service.ts:645,656`) and cannot be known beforehand. A second consume refuses with `consent_replayed`.
+   - `admitPaidRunV1` accepts only a consumed record. It re-checks every binding against the trusted context (`consent_mismatch`) and recomputes `pinDigest`.
+   - Consent is never read from request bodies, settings text, presets, defaults or copied historical Starts. The only code path that creates consent is `issue`.
+   - The cloud stand-in is `createPaidRunMemoryConsentStoreV1` (NEW, tests only). The durable store needs a lead-reserved migration (PG17-later, P3).
+4. **Money units.**
+   - `capNanoUsd` must match `/^[1-9][0-9]{0,15}$/` and be ≤ `PAID_RUN_CAP_CEILING_NANO_USD`. That constant is NEW and its value is pending as owner question Q1; otherwise the cap refuses with `invalid_cap`.
+   - All money is BigInt: no `Number` money and no floating point.
+5. **Provider labels are not authority.** `billing_kind` only *classifies* a route, which makes the gate stricter. It never grants spending; the consumed consent cap is the only spending authority.
+6. **Unforgeable capability.**
+   - `PaidRunAdmissionV1` is frozen and registered in a module-private `WeakSet`. An unbranded, structurally equal object refuses with `admission_forged`.
+   - The admission carries `runKey = sha256Digest([tenantId, loopRunId])`, the pin, the pin digest and the consent id.
+   - The ledger refuses with `cross_run` when the journal's `runKey`, `pinDigest` or `consentId` differ.
 
 ### 3.3 Revalidation before every reservation
 
-`currentConfig()` returns `{providerVersion, servedModelId, billingKind, priceRowDigest, priceRows, now}`, re-read by server code. The production implementation would compose `LoopProviderServiceV1.revalidate` and the provider view for the verified identity.
+`currentConfig()` returns `{providerVersion, servedModelId, billingKind, priceRows}`, re-read by server code. In production this would be composed from `LoopProviderServiceV1.revalidate` plus the provider view for the verified identity.
 
-Before each `reserve`, every field must equal the pin and no price row may be `stale`. Otherwise the call refuses with `config_changed` or `price_stale`, and the run is **blocked**: a durable `block` record is written and no further reservations are made. Any change to provider configuration therefore stops further paid spending.
+The executor recomputes the row-set digest and requires all of the following, or it refuses with `config_changed` / `price_stale` and **blocks** the run with a durable `block` record:
 
-## 4. Bound before dispatch (item 4) — `src/usage/v1/paid-run-bound.ts` (NEW)
+- equality with the pin;
+- `billingKind === 'token'`;
+- no row stale on the executor clock.
+
+## 4. Bound before dispatch (item 4) — NEW `src/usage/v1/paid-run-bound.ts`
 
 ### 4.1 Provider profile (explicit assumption scope)
 
@@ -152,369 +187,431 @@ Before each `reserve`, every field must equal the pin and no price row may be `s
 export type PaidRunProviderProfileV1 = Readonly<{
   profileId: string;                    // reviewed identifier, e.g. 'scripted-fake/v1'
   maxTokensPerInputByte: 1;             // tokens <= UTF-8 bytes (byte-level tokenizer assumption)
-  inputOverheadTokens: number;          // fixed per-request framing tokens, integer >= 0
+  inputOverheadTokens: number;          // 0..65536
   enforcesMaxOutputTokens: true;        // provider hard-stops output at the requested limit
-  maxOutputTokensCeiling: number;       // profile ceiling for any request
-  reasoningBilledAsOutputWithinLimit: true;
-  cacheSemantics: 'none' | 'subset_at_or_below_input_rate';
-  extraBillableCategories: readonly [];  // per-request fees, tools, images, ...: must be empty
-  maxBodyBytes: number; maxCallMs: number; maxConcurrent: number;
+  maxOutputTokensCeiling: number;       // 1..1000000
+  cacheReporting: 'none' | 'subset' | 'additive';  // cache billed at <= input rate in every case
+  reasoningReporting: 'within_output';  // a separately reported reasoning count refuses settlement
+  extraBillableCategories: readonly []; // per-request fees, tools, images, ...: must be empty
+  maxBodyBytes: number;                 // 1..8 MiB
+  maxCallMs: number;                    // 1..900000
+  clockSkewMs: number;                  // 0..300000, reviewed provider billing-clock skew
+  maxConcurrent: number;                // 1..32
   streamUsageInFinalEvent: boolean;
   reportsServedModelId: true;
 }>;
 ```
 
-`assertBoundableProfileV1(profile)` refuses with `unbounded_provider` in any of these cases:
+`assertBoundableProfileV1` refuses with `unbounded_provider` when:
 
-- any literal field differs from the values shown;
+- any literal differs;
 - `extraBillableCategories` is non-empty;
-- any numeric field is out of range (`maxCallMs ≤ 900 000`, `maxConcurrent ≤ 32`, `maxBodyBytes ≤ 8 MiB`).
+- any number is outside its range or is not a safe integer.
 
-The only profile shipped in this slice is the scripted fake's, which lives in test helpers. A real provider profile requires its own review, so an unbounded or unknown provider remains unavailable.
+The only profile in this slice is the scripted fake's, which lives in the test helpers. Any real provider needs its own reviewed profile, so unbounded or unknown providers remain unavailable.
 
 ### 4.2 Conservative maximum
 
-For a call with body `b` (bytes) and requested `maxOutputTokens = o`:
+For a call with body `b` and requested `maxOutputTokens = o`, all in BigInt:
 
-- `o` must be an integer with `1 ≤ o ≤ profile.maxOutputTokensCeiling`; otherwise the call refuses with `output_unbounded`.
-- `b.byteLength` must be ≤ `maxBodyBytes`; otherwise it refuses with `input_unbounded`.
-- `inCeil = b.byteLength * maxTokensPerInputByte + inputOverheadTokens`. This ceiling covers input plus cached-input tokens combined.
-- `maxCharge = inCeil * inRateMax + o * outRateMax`, in BigInt nano-USD.
-- `inRateMax` and `outRateMax` are the maximum rates over **every** row that can be active during the call interval (§4.3). Cached input is charged at the input rate, which is conservative because the profile declares cache billed at or below the input rate.
+- **Output limit.** `o` must be an integer with `1 ≤ o ≤ maxOutputTokensCeiling`; otherwise the call refuses with `output_unbounded`.
+- **Body size.** `b.byteLength ≤ maxBodyBytes`; otherwise it refuses with `input_unbounded`.
+- **Input ceiling.** `inCeil = byteLength × maxTokensPerInputByte + inputOverheadTokens`. The post-response ceiling check depends on `cacheReporting`:
+  - `subset`: `input ≤ inCeil` (cached ⊆ input);
+  - `additive`: `input + cached ≤ inCeil`;
+  - `none`: `cached > 0` is a violation.
 
-### 4.3 Price windows and DST
+  In every mode, `output ≤ o`.
+- **Maximum charge.** `maxCharge = inCeil × inRateMax + o × outRateMax`, using the maxima over every row active anywhere in the call interval (§4.3). Cached input is charged at the input rate, which is conservative.
 
-The call interval is `[t0, t0 + maxCallMs]`, where `t0` is the reservation time. `rowsForIntervalV1` (NEW) evaluates the existing `priceAtV1` at `t0`, at `t0 + maxCallMs`, and at every whole-UTC-minute boundary in between: at most 15 001 evaluations.
+### 4.3 Price windows, DST and skew
 
-- Windows are minute-granular local times, and IANA offsets in use are whole minutes, so this visits every distinct active row, including across a DST transition.
-- If **any** instant yields `null`, the call refuses with `price_unknown`.
-- If any row in the set is not `known`/`USD`, or is `stale`, the call refuses with `price_unknown` or `price_stale`.
-- A per-call deadline of `maxCallMs` is enforced by the executor (§6), so the interval assumption holds. A late completion beyond the deadline is aborted and treated as uncertain.
+- `t0` is the reservation instant on the executor clock.
+- The call interval is `[t0 − clockSkewMs, t0 + maxCallMs + clockSkewMs]`.
+- The executor's per-call deadline is measured **from `t0`**, so mutex and fsync waits consume the same budget.
+- `rowsForIntervalV1` (NEW) receives **only** the rows for `(providerId, servedModelId)`. It evaluates the `priceAtV1` semantics at both interval ends and at every whole-UTC-minute boundary between them, at most 25 001 instants.
+- Windows are minute-granular local times and IANA offsets in use are whole minutes, so this visits every distinct active row, including across DST.
+- BUILD caches one `Intl.DateTimeFormat` per time zone. The cached helper must be tested equal to `priceAtV1` on all T8 instants.
+- Refusals:
+  - any instant yields `null`: `price_unknown`;
+  - any selected row is not `known`/`USD`: `price_unknown`;
+  - any selected row is stale: `price_stale`.
 
 ### 4.4 Forbidden shortcuts
 
 - No floating point.
-- No assumed zero cost: a missing row refuses.
-- No post-response cancellation as a cap: abort never lowers the charge.
+- No assumed zero cost.
+- Post-response cancellation is never treated as a cap.
 - Unknown billing categories refuse.
 
-## 5. Whole-run accounting (item 5) — `src/usage/v1/paid-run-ledger.ts` (NEW)
+## 5. Whole-run accounting (item 5) — NEW `src/usage/v1/paid-run-ledger.ts`
 
-### 5.1 Invariant
+### 5.1 Invariant and hard-cap scope
 
-For one run: `Σ settled + Σ open reservations (reserved, not settled) + Σ uncertain(at reservation max) ≤ capNanoUsd`, at every instant and across restarts.
+At every instant and across restarts:
 
-A reservation is admitted only if the sum *including* the new `maxCharge` is ≤ cap. **An exact-boundary reservation is admitted.** An over-budget reservation is refused with zero dispatch.
+`Σ settledAccounted + Σ open reservations + Σ uncertain (at reservation max) ≤ capNanoUsd`, where `settledAccounted = min(actual, reserved)`.
+
+- A reservation is admitted only if the sum including the new `maxCharge` is ≤ cap. **The exact boundary is admitted.** Over budget means zero dispatch.
+- The hard cap holds **under the reviewed profile assumptions** (§4.1).
+- If a provider reports usage beyond the declared ceilings (`bound_violated`), the excess `actual − reserved` is recorded separately as `excessNanoUsd` and reported in `totals().excess`, and the run is blocked. The mechanism detects a provider overbilling beyond its contract but cannot physically prevent it.
 
 ### 5.2 Interface
 
 ```ts
-export interface PaidRunLedgerV1 {               // NEW: storage port
+export interface PaidRunLedgerV1 {               // NEW storage port
   open(admission: PaidRunAdmissionV1): Promise<PaidRunLedgerHandleV1>;   // takes the run lease
 }
 export interface PaidRunLedgerHandleV1 {
-  reserve(r: { callId: string; bodyDigest: string; maxNanoUsd: string; priceRowDigest: string }):
+  reserve(r: { callId: string; bodyDigest: string; maxNanoUsd: string; priceRowDigest: string; check: () => void }):
     Promise<{ kind: 'reserved' } | { kind: 'replay'; state: CallState } | { kind: 'refused'; reason: PaidRunRefusalV1 }>;
-  dispatch(callId: string): Promise<void>;       // durable BEFORE transport.send
-  settle(callId: string, s: { chargedNanoUsd: string; outcome: SettleOutcome; servedModelId: string | null }): Promise<void>;
+  // `check` re-applies the revalidation verdict inside the critical section.
+  dispatch(callId: string): Promise<{ kind: 'dispatched' } | { kind: 'refused'; reason: 'run_stopped' | 'run_blocked' }>;
+  // durable BEFORE transport.send; under the mutex it re-checks stopped/blocked and, if set,
+  // writes `release` and refuses, so no reserved-but-undispatched call reaches the transport after stop/block
+  settle(callId: string, s: { accountedNanoUsd: string; excessNanoUsd: string; outcome: SettleOutcome; servedModelId: string | null }): Promise<void>;
   release(callId: string): Promise<void>;        // only if no dispatch record exists
   block(reason: PaidRunRefusalV1): Promise<void>;
   stop(): Promise<void>;
-  totals(): { settled: string; reserved: string; uncertain: string; cap: string; blocked: string | null; stopped: boolean };
+  totals(): { settled: string; reserved: string; uncertain: string; excess: string; cap: string; blocked: string | null; stopped: boolean };
   close(): Promise<void>;
 }
 ```
 
-### 5.3 Call-ID rules
+### 5.3 Call identity
 
-`callId` matches `/^[A-Za-z0-9:_-]{16,100}$/`.
+- A `callId` must match `/^[A-Za-z0-9:_-]{16,100}$/`.
+- An existing `callId` with the same `bodyDigest` (sha256 of the bytes) returns `replay` with the recorded state. It is **never dispatched again**: a settled call returns its recorded result, and a dispatched-but-unsettled call is `uncertain`.
+- An existing `callId` with a different body refuses with `call_conflict` and changes nothing.
+- Retries are new `callId`s and are counted cumulatively. The executor never retries automatically.
 
-- `reserve` with an existing `callId` and the same `bodyDigest` (sha256 of the bytes) returns `replay` with the recorded state, and the executor **never dispatches it again**. It returns the recorded result if settled; if dispatched but unsettled, it returns `uncertain`.
-- An existing `callId` with a different `bodyDigest` refuses with `call_conflict` and makes no state change.
-- Retries are new `callId`s, and each is reserved and counted cumulatively. The executor never retries automatically.
+### 5.4 Cloud storage: durable journal (NEW `createPaidRunJournalLedgerV1({ root })`)
 
-### 5.4 Cloud storage: durable append-only journal (NEW `PaidRunJournalLedgerV1`)
+- **Layout.**
+  - One directory per `runKey` under a protected root: 0700, owner uid checked, every open with `O_NOFOLLOW` (the `usage-price-table-loader.ts` pattern).
+  - The journal is `journal.jsonl`, mode 0600, append-only.
+  - Each line is a canonical-JSON record `{seq, prev, type, ...}`, where `prev` is the `sha256Digest` of the previous line, forming a hash chain.
+  - Record types: `open` (pin, pinDigest, consentId, cap, profileId), `reserve`, `dispatch`, `settle`, `release`, `block`, `stop` and `recovered`.
+- **Durability.** Each append is one `write` followed by `fsync`; the directory is fsynced at creation. The append completes before its effect is visible to any caller.
+- **Replay on open.** Open replays the journal and verifies the chain.
+  - A torn final line (no newline, or invalid JSON at EOF only) is truncated and noted in a `recovered{tornTail:true}` record. This is safe because dispatch is always recorded before send.
+  - Any other defect gives `journal_corrupt`: spending is blocked and nothing is repaired silently.
+- **In-process serialisation.** One async mutex per handle covers each of `reserve` (including its `check`), `dispatch`, `settle`, `release`, `block` and `stop`. The cap check and append are atomic with respect to each other, so 20 concurrent callers are serialised.
+- **Cross-process exclusion.**
+  - A lease file is created with `O_CREAT|O_EXCL` and holds `{generation, pid}`. A second `open` refuses with `lease_held`.
+  - Takeover is only through `recoverPaidRunLeaseV1(root, runKey, expectedGeneration)`, called by a supervisor that **observed the previous holder exit**. In tests that is the child's `exit` event. There is no pid-liveness guessing.
 
-The journal is `createPaidRunJournalLedgerV1({ root })`:
+### 5.5 Crash protocol (minimal choice D3: refuse after recovery)
 
-- **Layout.** One directory per `runKey` under a protected root: directory 0700, owner uid checked. All opens use `O_NOFOLLOW`, following the checks in `usage-price-table-loader.ts`.
-- **Records.** The file `journal.jsonl` is mode 0600 and append-only. Each line is a canonical JSON record `{seq, prev, type, ...}`, where `prev` is the `sha256Digest` of the previous line, forming a hash chain. The record types are `open` (pin, pinDigest, cap, consentNonce, profileId), `reserve`, `dispatch`, `settle`, `release`, `block`, `stop` and `recovered`.
-- **Write discipline.** Each append is one `write` followed by `fsync`, and the directory is fsynced on creation. The append happens before the corresponding effect becomes visible to the caller.
-- **Replay and repair.** Opening replays and verifies the chain.
-  - A torn final line (no trailing newline, or invalid JSON at EOF only) is truncated with a `recovered{tornTail:true}` record. This is safe because an unwritten record's effect never happened: dispatch is written before send.
-  - Any other chain or sequence defect refuses with `journal_corrupt`. Spending is then blocked, and nothing is repaired silently.
-- **In-process serialisation.** A single async mutex per handle serialises reserve, dispatch and settle. 20 concurrent callers are serialised, and the cap check plus append are atomic with respect to each other.
-- **Cross-process exclusion.** A lease file `lease` is created with `O_CREAT|O_EXCL`, containing `{generation, pid}`. A second `open` while the lease exists refuses with `lease_held`. Takeover after a crash requires the explicit `recoverLease(root, runKey, expectedGeneration)`, called by the supervisor that **observed the previous holder exit**; the test harness waits for the child's `exit` event. There is no pid-liveness guess.
-
-### 5.5 Crash protocol (justified minimal choice: refuse after recovery)
-
-| Crash point | Durable state | Recovery result |
+| Crash point | Durable state | Recovery accounting |
 |---|---|---|
 | Before `reserve` append | nothing | no effect |
-| After `reserve`, before `dispatch` | reserve only | provably not sent; reservation released (`release` record), counted 0 |
-| After `dispatch`, before `settle` (incl. during send) | reserve + dispatch | **uncertain**: charged at reservation max, **never refunded** |
-| After `settle` | settle | charged actual |
+| After `reserve`, before `dispatch` | reserve | provably unsent: `release`, counted 0 |
+| After `dispatch`, before `settle` | reserve + dispatch | **uncertain**: charged at reservation max, **never refunded** |
+| After `settle` | settle | charged as settled |
 
-The table above covers per-call accounting. Separately, after any recovery with open dispatches, the run is written `block{reason:'recovered_uncertain'}`, and any recovery at all writes `recovered`.
+Any recovery writes a `recovered` record. Any recovery that finds open dispatches also writes `block{reason:'recovered_uncertain'}`. After **any** restart, further paid spending for that run refuses with `run_blocked`.
 
-Further paid spending for that run is **refused** after any process restart. Accounting is retained for reporting, and fresh spending requires a new Start with fresh consent. A fresh in-memory counter is never used, because `totals()` is always derived from the replayed journal.
+Accounting is kept for reporting, and new spending requires a new Start with a new consent. A fresh in-memory counter is never used: `totals()` is always derived from the replayed journal.
 
-### 5.6 Native persistence (separate, PG17-later; not part of cloud tests)
+### 5.6 Native persistence (PG17-later; separate from the cloud tests)
 
-Production multi-process accounting needs a PostgreSQL ledger. It would hold run head and per-call rows with `FOR UPDATE` on the run head inside `transactionWithPreCommitCheck` (`src/persistence/database.ts:57`), a unique `(tenant, runKey, callId)` constraint, and `bodyDigest` conflict checks. That requires a migration number that **only the lead may reserve**. No number is guessed, and no schema is reserved here.
+Production multi-process accounting needs a PostgreSQL ledger with:
 
-Its native qualification is listed in §9.2 and remains pending. The cloud journal does not qualify production storage.
+- a run-head row locked `FOR UPDATE` inside `transactionWithPreCommitCheck` (`src/persistence/database.ts:57`);
+- a unique `(tenant, runKey, callId)` constraint;
+- `bodyDigest` conflict checks;
+- a single-use consent table.
+
+That needs a migration number **only the lead may reserve**; none is guessed here. Native qualification is listed in §9.2 and is still pending. The cloud journal does not qualify production storage.
 
 ## 6. Bounded execution and identity (item 6)
 
-### 6.1 `call()` algorithm
+### 6.1 `call()` algorithm (strict order)
 
-The executor's `call()` runs these steps strictly in order:
+1. Refuse if stopped or blocked (`run_stopped`, `run_blocked`). Steps 5 and 7 re-check this inside the mutex.
+2. Validate the input. `stream:true` with `!streamUsageInFinalEvent` refuses with `stream_unbounded`.
+3. Revalidate with `currentConfig()` (§3.3). A mismatch blocks the run; the verdict is re-applied as `check` inside step 5.
+4. Compute the bound (§4) at `t0 = clock()`.
+5. `ledger.reserve` (mutex: stopped/blocked, `check`, cap, append).
+6. Concurrency gate inside the same mutex: if `inFlight ≥ maxConcurrent`, release and refuse with `concurrency_limit`.
+7. `ledger.dispatch` (mutex: re-check stopped/blocked; refuse and release if set).
+8. `transport.send(..., signal)`, where `signal = any(callController, stopController, deadline at t0 + maxCallMs)`.
+9. Verify the response:
+   - **Identity.** A missing or different `servedModelId` settles at the **reservation max** as `identity_mismatch` and blocks the run.
+   - **Usage presence.** If usage is missing, `inputTokens`, `outputTokens` or `cachedInputTokens` is null, or a separate `reasoningTokens > 0` is present, the call settles at max as `usage_unverified` and blocks the run.
+   - **Usage mapping.** Usage is mapped exactly to `{inputTokens, outputTokens, cachedInputTokens, totalTokens: null, wallTimeMs: null}` and parsed with `usageMeasurementSchemaV1`. A schema failure is `usage_unverified`.
+   - **Ceilings.** If usage exceeds the ceilings (§4.2), the call settles `bound_violated` with `accounted = reserved` and `excess = max(0, actual − reserved)`, and blocks the run.
+   - **Normal settlement.** Otherwise settle at `actual = costForUsageV1({harness, model: servedModelId, usage, priceTable})`. Any `unknown` plan result is `usage_unverified`. `actual ≤ reserved` holds by construction. The inputs are:
+     - `harness = cacheReporting === 'subset' ? 'codex' : 'other'`;
+     - `priceTable = {schema:'control-room.usage-price-table/v1', tableId:'paid-run-bound', recordedAt: <ISO t0>, entries:[{entryId:'paid-run-entry', harness, model: servedModelId, billing:{kind:'token', inputNanoUsdPerToken: inRateMax, outputNanoUsdPerToken: outRateMax, cachedInputNanoUsdPerToken: inRateMax}}]}`.
+10. A non-2xx definite response *with* a verified identity settles at reservation max as `provider_error` and does not block, so a retry can be made as a new call. A non-2xx response without identity is handled as `identity_mismatch` under step 9.
 
-1. Refuse if the run is stopped or blocked (`run_stopped`, `run_blocked`).
-2. Validate the input. Refuse `stream:true` when `!profile.streamUsageInFinalEvent` (`stream_unbounded`).
-3. `currentConfig()` and compare to the pin (§3.3); on mismatch, block.
-4. Compute the bound (§4).
-5. `ledger.reserve`.
-6. Concurrency gate: if `inFlight ≥ maxConcurrent`, then `release` and refuse with `concurrency_limit`. The gate is checked under the same mutex.
-7. `ledger.dispatch` (durable).
-8. `transport.send(..., signal)`, where `signal = any(callController, stopController, deadline(maxCallMs))`.
-9. Verify:
-   - The response `servedModelId` must equal `pin.servedModelId`. If it is missing or different, settle at **reservation max** with `identity_mismatch` and block.
-   - Usage is validated with `usageMeasurementSchemaV1`. If it is missing, partial, or has a null `cachedInputTokens`, settle at max with `usage_unverified` and block.
-   - Usage beyond the ceilings (`input + cached > inCeil` or `output > o`) is charged at `max(actual computed, reserved)`, the outcome is `bound_violated`, and the run is blocked. This is a provider-assumption breach and is reported. The cap invariant can be exceeded only in this provider-contract-violation case, which is why only reviewed profiles are admitted.
-   - Otherwise `actual = costForUsageV1({harness:'other', model: servedModelId, usage, priceTable: oneEntryTable})`, where the one-entry table uses input = `inRateMax`, output = `outRateMax`, cached = `inRateMax`. `actual ≤ reserved` holds by construction, and the call is settled at `actual`.
-10. A non-2xx definite response with verified identity settles at reservation max (`provider_error`) without blocking, so retries remain possible as new calls. A response with no identity is a mismatch (step 9).
+### 6.2 Timeouts, aborts, late responses and streams
 
-### 6.2 Timeouts, aborts and late responses
-
-- A timeout, abort or transport rejection after dispatch settles as `uncertain` at the reservation max. It is never refunded.
-- A late response that arrives after the call settled as uncertain is logged as a `late` informational field. It does not change the charge.
-- A streaming response is consumed by the executor. Usage and identity come from the final event only. A stream that ends or aborts without a final usage event is `usage_unverified` (or `uncertain` if aborted).
+- A timeout, abort or transport rejection after dispatch settles as `uncertain` at the reservation max and is never refunded.
+- A response arriving after `uncertain` is recorded as `late` information only; the charge does not change.
+- Streams are consumed by the executor. Identity and usage come from the final event only. A stream that ends without that event is `usage_unverified`; an aborted stream is `uncertain`.
 
 ### 6.3 Stop
 
-`stop()`:
+`stop()` proceeds in four steps:
 
-- (a) appends `stop` durably **before** aborting, so no `reserve` can succeed afterwards;
-- (b) aborts the stop controller;
-- (c) awaits every in-flight call reaching a terminal ledger state (settled or uncertain), bounded by `maxCallMs`;
-- (d) returns `PaidRunStopAckV1 {stopped:true, inFlightAtStop:[callIds], settled:[...], uncertain:[...], totals}`.
+- (a) It appends `stop` durably under the mutex **before** aborting, so after that point no `reserve` or `dispatch` succeeds.
+- (b) It aborts the stop controller.
+- (c) It awaits every dispatched call reaching a terminal ledger state (settled or uncertain), bounded by `maxCallMs`.
+- (d) It returns `PaidRunStopAckV1 {stopped: true, inFlightAtStop: [callIds], settled: [...], uncertain: [...], totals}`.
 
-The only requests that may be in flight at Stop are those with a `dispatch` record and no `settle`, and there are at most `maxConcurrent` of them. The executor owns every AbortController and timer and clears them in `finally`; the transport must honour the signal. After the ack, the fake provider observes zero new requests.
+The calls that may be in flight at Stop are exactly those with a `dispatch` record and no `settle`, at most `maxConcurrent` of them. A call reserved but not yet dispatched is released at step 7 and never reaches the transport. The executor owns every AbortController and timer and clears them in `finally`; the transport must honour the signal.
 
 ## 7. Independent proof (item 7)
 
-Expected values were worked by hand, not by the implementation. All tests use the scripted fake provider `tests/helpers/paid-run-fake-provider.ts` (NEW).
+Expected values were worked out by hand and checked independently by the spec reviewer.
 
-The fake records `requests[]` (callId, body digest, servedModelId), plays a per-call script `{servedModelId, usage, delayMs, failure: none|http_500|reset_after_send|hang|stream, events}`, and exposes barrier hooks. It runs on an injected clock.
+The fake provider, `tests/helpers/paid-run-fake-provider.ts` (NEW):
+
+- records `requests[]` (callId, body digest, servedModelId) and a concurrency high-water mark;
+- plays a per-call script `{servedModelId, usage, delayMs, failure: none|http_500|reset_after_send|hang|stream, events}`;
+- exposes barrier and hold hooks;
+- runs on the injected clock.
 
 ### 7.1 Reference numbers
 
-| Quantity | Value |
+| Item | Value |
 |---|---|
-| Price | input `"3"` USD/M → `3000` nano/token; output `"15"` USD/M → `15000` nano/token |
-| Body | 1000 bytes; overhead 0 → `inCeil = 1000` |
-| `maxOutputTokens` | 200 |
-| Bound | 1000·3000 + 200·15000 = **6 000 000** nano-USD |
-| Scripted usage | input 400, cached 0, output 100 → 1 200 000 + 1 500 000 = **2 700 000** |
-| Cap | **18 000 000** |
+| Price | input "3" USD/M → 3000 nano/token; output "15" → 15000 nano/token |
+| Request | body 1000 bytes, overhead 0 → `inCeil = 1000`; `maxOutputTokens = 200` |
+| Bound | 1000·3000 + 200·15000 = **6 000 000** |
+| Scripted usage | input 400 / cached 0 / output 100 → 1 200 000 + 1 500 000 = **2 700 000** |
+| Default cap | **18 000 000** |
+| Profile | `cacheReporting: 'additive'`, `clockSkewMs: 0`, `maxCallMs: 120 000` unless stated otherwise |
 
-### 7.2 Test matrix
+### 7.2 Tests
 
-**T1 Sequential exhaustion.** A call proceeds while `settled + 6.0M ≤ 18.0M`.
+**T1 Sequential exhaustion.** Each call proceeds while `settled + 6.0M ≤ 18.0M`. The calls start at settled 0, 2.7, 5.4, 8.1 and 10.8 M, and all five are dispatched. Before the 6th, settled is 13.5 M and 13.5 + 6 = 19.5 > 18, so it refuses with `cap_exhausted`.
 
-| Call | Before | Check | Result |
-|---|---|---|---|
-| 1 | 0 | 6.0 ≤ 18 | dispatched |
-| 2 | 2.7 | 8.7 ≤ 18 | dispatched |
-| 3 | 5.4 | 11.4 ≤ 18 | dispatched |
-| 4 | 8.1 | 14.1 ≤ 18 | dispatched |
-| 5 | 10.8 | 16.8 ≤ 18 | dispatched |
-| 6 | 13.5 | 19.5 > 18 | **refused**, `cap_exhausted` |
+Expected: requests 5, settled **13 500 000**.
 
-Expected: fake requests = 5; settled = **13 500 000**.
+**T2 Retries counted cumulatively.**
 
-**T2 Retries counted cumulatively.** A `provider_error` retry is charged at max.
-
-| Call | Outcome | Settled after |
+| Call | Result | Settled after |
 |---|---|---|
-| 1 | ok | 2.7M |
-| 2 | `http_500`, charged 6.0M | 8.7M |
-| 3 (retry, new id) | ok | 11.4M |
-| 4 | reserve 11.4 + 6 = 17.4 ≤ 18, ok | 14.1M |
-| 5 | 20.1 > 18, refused | — |
+| 1 | ok | 2.7 M |
+| 2 | `http_500` → 6.0 M | 8.7 M |
+| 3 (retry, new id) | ok | 11.4 M |
+| 4 | 11.4 + 6 = 17.4 ≤ 18, ok | 14.1 M |
+| 5 | 20.1 > 18 | refused |
 
-Expected: requests = 4; settled = **14 100 000**.
+Expected: requests 4, settled **14 100 000**.
 
-**T3 Exact boundary.** Cap = 6 000 000 and one call: admitted, so this is the positive case. Cap = 5 999 999: refused, with **0** requests.
+**T3 Exact boundary.** With cap 6 000 000 the call is admitted (positive case). With cap 5 999 999 it refuses with 0 requests.
 
 **T4 Concurrency barrier.**
-- Setup: 20 callers start at once, the fake holds every response at a barrier, and cap = 18 000 000.
-- Expected: exactly **3** `reserved` results and 17 `cap_exhausted`; fake requests = 3; journal reserves = 3; `reserved` total = 18 000 000.
-- After the barrier releases, settled = 8 100 000.
-- The winner set is the three ids whose `reserve` acquired the mutex first. The test records the winner and loser callIds and asserts that the set equals the fake's observed set.
-- Separately, with `maxConcurrent = 2` and cap 60M, 20 callers give at most 2 simultaneous requests, observed via the fake's high-water mark.
 
-**T5 Restart.** A real child-process driver uses `PaidRunJournalLedgerV1` and is killed (`SIGKILL`) at an injected hook. The parent observes the exit, calls `recoverLease` and reopens. All three cases use cap 18M.
+- 20 callers start at once and the fake holds every response; cap 18 000 000.
+- Expected: exactly **3** `reserved` results and 17 `cap_exhausted`. The fake sees 3 requests, the journal has 3 reserves, and the reserved total is 18 000 000.
+- After release, settled is 8 100 000.
+- The test records the winner and loser callIds and asserts the winner set equals the fake's observed set.
+- Separately, with `maxConcurrent` 2 and cap 60 000 000, 20 callers never produce more than 2 simultaneous requests (high-water mark).
 
-| Kill point | Expected totals | Blocked | Fake requests |
+**T5 Restart.**
+
+- A real child-process driver using the journal ledger is killed with `SIGKILL` at an injected hook.
+- The parent waits for the `exit` event, calls `recoverPaidRunLeaseV1` and reopens. Cap is 18M.
+
+| Kill point | Totals after recovery | Block | Fake requests |
 |---|---|---|---|
-| (a) after `reserve` | released → totals 0 | no | 0 |
-| (b) after `dispatch`, with the fake having received the request | uncertain 6 000 000 | `recovered_uncertain` | 1 |
-| (c) after `settle` | settled 2 700 000 | — | 1 |
+| (a) after `reserve` | released, 0 | `recovered` → `run_blocked` | 0 |
+| (b) after `dispatch`, request received | uncertain 6 000 000 | `recovered_uncertain` | 1 |
+| (c) after `settle` | settled 2 700 000 | `recovered` → `run_blocked` | 1 |
 
-In every case a subsequent `reserve` refuses (`run_blocked`, post-recovery policy), and the fake observes no further requests. Torn-tail and tamper cases are also run on copies of the journal. A torn tail is recovered; a flipped byte in a middle record gives `journal_corrupt`.
+- In every case a subsequent `call` refuses with `run_blocked` and no new request.
+- On copies of the journal, a torn tail recovers and a flipped byte in a middle record gives `journal_corrupt`.
 
 **T6 Replay and conflict.**
-- The same callId and body after settle returns `replay`, with **no** new request and totals unchanged.
-- The same callId with a different body gives `call_conflict`, with totals unchanged.
-- A replay of a dispatched-but-uncertain call returns `uncertain`, with no re-send.
 
-**T7 Stale price.** `checkedAt` is 24 h + 1 ms before `now`: `price_stale`, 0 requests. At exactly 24 h it is admitted, matching the view's rule `> 24h` (`loop-provider-service.ts:79`).
+- The same id and body after settle gives `replay`, with no new request and unchanged totals.
+- The same id with a different body gives `call_conflict`, with totals unchanged.
+- Replay of a dispatched-but-uncertain call gives `uncertain`, with no re-send.
 
-**T8 Price window and DST.** Rows for the model:
-- fallback (no window): 3000/15000;
-- window `{tz:'America/New_York', days:[0], start:'03:00', end:'04:00'}`: input "6" → 6000, output "30" → 30000.
+**T7 Stale price.** `checkedAt` at 24 h + 1 ms before now gives `price_stale` with 0 requests. At exactly 24 h it is admitted, matching the `>` rule at `loop-provider-service.ts:79`.
 
-Cases:
-- `t0 = 2026-03-08T06:59:00Z`: 01:59 EST on Sunday 8 March 2026, the US DST start. With `maxCallMs = 120000`, the interval reaches 07:01Z = 03:01 EDT. The bound must use 6000/30000: 1000·6000 + 200·30000 = **12 000 000**. With cap 11 999 999 it refuses with 0 requests; with cap 12 000 000 it admits.
-- Control: `t0 = 2026-03-08T06:00:00Z` with the same `maxCallMs` stays on the fallback → 6 000 000.
-- Gap: a document with only windowed rows and no coverage at `t0` gives `price_unknown`.
+**T8 Price window, DST and skew.**
 
-**T9 Admission refusals.**
+- Rows for the model: a fallback at 3000/15000, and a window `{tz:'America/New_York', days:[0], start:'03:00', end:'04:00'}` at input "6" → 6000 and output "30" → 30000.
+- Verified on this base with `priceAtV1` (evidence E17): 06:59Z gives 3000; 07:00Z and 07:01Z give 6000.
+
+| Case | Setup | Expected |
+|---|---|---|
+| DST crossing | `t0 = 2026-03-08T06:59:00Z` (01:59 EST on Sunday 8 March 2026, the US DST start), `maxCallMs 120000`; interval reaches 07:01Z = 03:01 EDT | bound **12 000 000** (1000·6000 + 200·30000); cap 11 999 999 refuses with 0 requests; cap 12 000 000 admits |
+| Control | `t0 = 2026-03-08T06:00:00Z` | **6 000 000** |
+| Gap | only windowed rows, none covering `t0` | `price_unknown` |
+| Other-model isolation | a cheaper window row (input "1") for a different served model, active at `t0` | ignored; bound **6 000 000** |
+| Skew | `t0 = 2026-03-08T06:58:00Z`, `maxCallMs 60000`, `clockSkewMs 60000`; interval end is 07:00:00Z | peak, **12 000 000**; with skew 0 the end is 06:59:00Z and the bound is **6 000 000** |
+
+**T9 Admission.** Every refusal row has 0 requests.
 
 | Case | Expected |
 |---|---|
-| Missing consent | `consent_missing` |
-| Expired | `consent_stale` |
-| Window > 10 min | `consent_stale` |
-| Consent with different `loopRunId` / `commandId` / `ownerIdentityId` / `settingsSha256` / `pinDigest` | `consent_mismatch` |
-| Replayed nonce | `consent_replayed` |
-| Forged admission object (structurally equal, not branded) | `admission_forged` |
-| Pin of run A used with ledger of run B | `cross_run` |
+| No consumed consent record | `consent_missing` |
+| A plain object shaped like consent, consent text in settings, a saved preset, or a copied historical Start record | `consent_missing` (not a consumed store record; no API path) |
+| Expired, or lifetime > 10 min | `consent_stale` |
+| Consent for request R1 consumed by a Start of R2; different owner; different `settingsSha256`; different `pinDigest` | `consent_mismatch` |
+| Second consume of the same consent | `consent_replayed` |
+| Forged admission (structurally equal, unbranded) | `admission_forged` |
+| Run A admission with run B's ledger | `cross_run` |
 | Two distinct paid pairs | `multiple_paid_routes` |
-| Same paid pair twice (different roles) | admitted |
-| `capNanoUsd` `"0"`, `"01"`, `"1e9"`, `" 1"` or above the ceiling | `invalid_cap` |
+| One paid pair repeated across roles | admitted |
+| `capNanoUsd` of "0", "01", "1e9", " 1", or above the ceiling | `invalid_cap` |
+| Provider snapshot version changed before the 2nd call | `config_changed`, blocked |
 
-Every refusal case makes 0 requests.
+**T10 Identity mismatch.** The fake reports `servedModelId: 'other-model'`, or `null`. The call is charged 6 000 000, the run is blocked, and the next call refuses with 0 new requests.
 
-**T10 Identity mismatch.** The fake reports `servedModelId:'other-model'`. The call is charged 6 000 000 (max), the run is blocked, and the next call refuses with 0 additional requests. The same applies to a `null` served id.
-
-**T11 Missing usage.**
-- A 2xx with `usage:null`: charged 6 000 000 and blocked.
-- A null `cachedInputTokens`: same.
+**T11 Missing usage.** A 2xx response with `usage: null`, or with a null `cachedInputTokens`, is charged 6 000 000 and blocks the run.
 
 **T12 Overflow and range.**
-- A price `"999999999999999999999999999999"` USD/M (30 digits, allowed by the schema) gives a bound of about 10^36, refused as `cap_exhausted`. There is no exception and no `Number` conversion.
-- Token usage of `Number.MAX_SAFE_INTEGER`: `bound_violated`, charged `max(actual, reserved)` as an exact BigInt string, and blocked.
-- `maxOutputTokens` of `0`, `1.5`, or above the ceiling: `output_unbounded`.
-- A body larger than `maxBodyBytes`: `input_unbounded`.
+
+- A 30-digit price "999999999999999999999999999999" USD/M gives a bound around 10^36 and refuses with `cap_exhausted`, with no exception and no `Number` conversion.
+- Usage of `Number.MAX_SAFE_INTEGER` tokens gives `bound_violated`: accounted 6 000 000, an exact BigInt excess, and the run blocked.
+- `maxOutputTokens` of 0, 1.5, or above the ceiling gives `output_unbounded`.
+- An oversized body gives `input_unbounded`.
 
 **T13 Stop.**
-- Setup: 2 calls are in flight at a barrier, and `stop()` is called.
-- The ack lists both in-flight ids. The fake sees both aborted; it was scripted not to respond, so both are `uncertain`, totalling 12 000 000.
-- A subsequent `call` is refused with `run_stopped` and 0 new requests.
-- A late fake response after the ack does not change totals.
-- No timers or handles remain open: `process.getActiveResourcesInfo()` is unchanged after `close()`.
+
+- Setup: cap 60 000 000, `maxConcurrent` 2; 2 calls are in flight and the fake never responds; then `stop()`.
+- The ack lists both calls; both are aborted and `uncertain`, totalling **12 000 000**.
+- A later call refuses with `run_stopped` and 0 new requests.
+- A late fake response does not change the totals.
+- `process.getActiveResourcesInfo()` is unchanged after `close()`.
+
+**T13b Stop/block between reserve and dispatch.**
+
+- A hold hook pauses call X after `reserve` and before `dispatch`.
+- `stop()` completes; separately, another call's `identity_mismatch` blocks the run.
+- When X resumes it refuses with `run_stopped` / `run_blocked` and a `release` record is written. The fake sees 0 requests for X.
+- X is absent from the ack's in-flight and uncertain lists, and totals exclude X.
 
 **T14 Streaming.**
-- A stream with a final usage event (400/0/100) settles at 2 700 000.
-- A stream ending without usage gives `usage_unverified` at 6 000 000, blocked.
-- With `streamUsageInFinalEvent:false` and `stream:true`: `stream_unbounded`, 0 requests.
 
-**T15 Unbounded profile.** `extraBillableCategories:['request_fee']`, `enforcesMaxOutputTokens:false`, or cache semantics unknown: `unbounded_provider`, 0 requests.
+- A final usage event of 400/0/100 gives **2 700 000**.
+- A stream ending without usage gives `usage_unverified`: 6 000 000, blocked.
+- `stream: true` with `streamUsageInFinalEvent: false` gives `stream_unbounded`, 0 requests.
 
-**T16 Free and subscription positive.** A resolution with only `billing_kind:'subscription'` routes gives `unpaid`, with no consent required and no ledger opened. Free routes plus one paid pair admit exactly that one pin.
+**T14b Cache and reasoning.**
 
-**T17 Readiness.** `createImproveControlRoomLoopAdapterV1(...).providerRoutes.paidExecutionReady === false` still holds. That is existing behaviour, re-asserted to show this slice did not enable it.
+| Mode | Usage (input / cached / output) | Result |
+|---|---|---|
+| `subset` | 900 / 800 / 100 (inCeil 1000) | (900−800)·3000 + 800·3000 + 100·15000 = 300 000 + 2 400 000 + 1 500 000 = **4 200 000**; no violation |
+| `additive` | 400 / 300 / 100 | 1 200 000 + 900 000 + 1 500 000 = **3 600 000** |
+| `additive` | 900 / 800 / 100 | `bound_violated`; accounted 6 000 000; excess 2 700 000 + 2 400 000 + 1 500 000 − 6 000 000 = **600 000**; blocked |
+| `none` | cached 1 | `bound_violated` |
+| any | separate `reasoningTokens: 50` reported | `usage_unverified`: 6 000 000, blocked |
 
-### 7.3 Red-first evidence plan
+**T15 Unbounded profile.** `extraBillableCategories: ['request_fee']`, `enforcesMaxOutputTokens: false`, an unknown `cacheReporting`, or `inputOverheadTokens` 70 000 each give `unbounded_provider` with 0 requests.
 
-For each behavioural test, BUILD records a failing run on an executor stub that dispatches without reserving, or without revalidating. That run must fail on the intended assertion, not on a missing module. BUILD then runs green on the implementation.
+**T16 Free and subscription positive.**
 
-Guard-off probes are run only in a throwaway copy:
-- remove the cap check → T1, T3 and T4 fail;
-- remove the dispatch-before-send ordering → T5(b) fails;
-- remove the served-id check → T10 fails.
+- A resolution with only `billing_kind: 'subscription'` routes gives `unpaid`, with no consent and no ledger.
+- Free routes plus one paid pair admit exactly that pin.
 
-The guard is then restored and the tests pass again.
+**T17 Readiness.** `createImproveControlRoomLoopAdapterV1(...).providerRoutes.paidExecutionReady === false` is re-asserted. This is existing behaviour and must stay unchanged.
+
+### 7.3 Red-first and guard-off evidence
+
+Each behavioural test is first run red against a stub executor that dispatches without reserving or without revalidating. It must fail on the intended assertion, not on a missing module.
+
+Guard-off probes run in a throwaway copy only:
+
+| Guard removed | Tests that must fail |
+|---|---|
+| Cap check | T1, T3, T4 |
+| Dispatch-before-send ordering | T5(b) |
+| Dispatch-time stop/block re-check | T13b |
+| Served-id check | T10 |
+| Model filter | T8 isolation |
+
+After each probe the guard is restored and the tests are rerun green.
 
 ## 8. Safe integration packet (item 8)
 
-### 8.1 NEW files (BUILD, proposals pending Sol review)
+### 8.1 NEW files (BUILD proposals pending Sol review)
 
 | File | Exports / role | Consumer |
 |---|---|---|
 | `src/usage/v1/paid-run-bound.ts` | `PaidRunProviderProfileV1`, `assertBoundableProfileV1`, `rowsForIntervalV1`, `paidCallBoundV1` | executor |
-| `src/usage/v1/paid-run-admission.ts` | `admitPaidRunV1`, `PaidRunPinV1`, `PaidRunConsentV1`, `PaidRunAdmissionV1`, `isPaidRunAdmissionV1` (brand check), `PAID_RUN_CAP_CEILING_NANO_USD` | executor, ledger; later Start broker |
+| `src/usage/v1/paid-run-admission.ts` | `admitPaidRunV1`, `PaidRunConsentStoreV1`, `PaidRunConsentRecordV1`, `createPaidRunMemoryConsentStoreV1` (stand-in), `PaidRunPinV1`, `PaidRunAdmissionV1`, `isPaidRunAdmissionV1`, `PAID_RUN_CAP_CEILING_NANO_USD` | executor, ledger; later Start broker |
 | `src/usage/v1/paid-run-ledger.ts` | `PaidRunLedgerV1`, `PaidRunLedgerHandleV1`, `createPaidRunJournalLedgerV1`, `recoverPaidRunLeaseV1` | executor |
-| `src/usage/v1/paid-run-executor.ts` | `createPaidRunExecutorV1`, transport and result types, `PaidRunRefusalV1` union | tests and driver now; later per-call broker (§2.3) |
-| `tests/helpers/paid-run-fake-provider.ts` | scripted deterministic provider | tests |
-| `tests/helpers/paid-run-driver.ts` | child-process driver with kill hooks | T5 |
-| `tests/paid-run-bound.test.ts` | T7, T8, T12, T15 | — |
+| `src/usage/v1/paid-run-executor.ts` | `createPaidRunExecutorV1`, transport/result types, `PaidRunRefusalV1` | tests and driver now; later per-call broker (P1) |
+| `tests/helpers/paid-run-fake-provider.ts` | scripted provider | tests |
+| `tests/helpers/paid-run-driver.ts` | child-process driver with kill hooks and `--self-check` | T5; entry-point proof |
+| `tests/paid-run-bound.test.ts` | T7, T8, T12, T14b (bound side), T15 | — |
 | `tests/paid-run-admission.test.ts` | T9, T16, T17 | — |
-| `tests/paid-run-executor.test.ts` | T1–T4, T6, T10, T11, T13, T14 | — |
-| `tests/paid-run-ledger-restart.test.ts` | T5 and journal torn/tamper cases | — |
+| `tests/paid-run-executor.test.ts` | T1–T4, T6, T10, T11, T13, T13b, T14, T14b | — |
+| `tests/paid-run-ledger-restart.test.ts` | T5, torn-tail and tamper cases | — |
 
-### 8.2 Existing modules
+### 8.2 Existing modules: read-only imports, unchanged
 
-The following are imported read-only and **unchanged**: `src/usage/v1/usage-cost.ts`, `src/web/v1/loop-provider-prices.ts`, the type exports of `src/web/v1/improve-control-room-loop-adapter.ts`, and `src/security/digest.ts`.
+- `src/usage/v1/usage-cost.ts`
+- `src/web/v1/loop-provider-prices.ts`
+- type exports of `src/web/v1/improve-control-room-loop-adapter.ts`
+- `src/security/digest.ts`
 
-No provider settings, prices, policy, selection, engine, updater or migration file is modified.
+No provider settings, prices, choice, policy, selection, engine, updater or migration implementation is modified.
 
-### 8.3 Shared existing file (lead coordination required)
+### 8.3 Shared existing file (lead coordination; single writer is the BUILD lead)
 
-There is one shared file, `package.json`. Its single writer is the BUILD lead.
+The only shared file is `package.json`. BUILD appends the four new tests to the existing `test:product-shell` script, which already uses `--import tsx`. CI reaches the lane through `ci.yml:563`, Component lanes shard 1.
 
-The change appends the four new tests to the `test:product-shell` script, which already runs `--import tsx` and contains the `usage-cost` tests. That script is reachable from CI via `test:components` and `test:ci-component-shards`. Adding files to an existing lane needs no change to `ci.yml` or to the fixture `tests/fixtures/ci-component-steps-main.json`; the fixture pins lane invocation, not the test list.
+No `ci.yml` change is needed, and no change to `tests/fixtures/ci-component-steps-main.json`: the lane guard pins lane invocation, not the file list. No test is removed and no skip pattern is added.
 
-No test is removed and no skip pattern is added.
-
-### 8.4 Integration prerequisites (separate; not satisfied by this slice)
+### 8.4 Integration prerequisites (separate; none satisfied by this slice)
 
 - (P1) The per-call broker contract with the engine and harness CLIs (§2.3).
 - (P2) A lead-reserved migration and a PostgreSQL ledger, with native PG17 qualification (§9.2).
-- (P3) Start-path wiring that assembles `PaidRunTrustedContextV1` from the verified claim and a consent UI/API.
+- (P3) Start-path wiring, consisting of:
+  - assembly of `PaidRunTrustedContextV1` from the verified claim;
+  - an authenticated consent-issue endpoint and UI;
+  - a durable single-use consent table consumed in the claim transaction;
+  - a reviewed guarantee that the route resolver returns every route the engine may use.
 - (P4) A reviewed real-provider profile.
-- (P5) The separately authorized tiny billable probe, then full paid-run acceptance.
+- (P5) The separately authorized tiny billable probe, followed by full paid-run acceptance.
 
-Native paid readiness stays `false`, and `CAPPED-PAID-RUN-GREEN` is not awarded.
+Native paid readiness stays `false`. `CAPPED-PAID-RUN-GREEN` is not awarded.
 
 ## 9. Required commands
 
-### 9.1 Cloud BUILD (all scripts verified to exist in `package.json` on this base)
+### 9.1 Cloud BUILD
+
+All scripts named below were verified to exist on this base (evidence E5).
 
 ```bash
-pnpm install --frozen-lockfile
-# red then green, per file:
-node --import tsx --test tests/paid-run-bound.test.ts
+pnpm install --frozen-lockfile                     # repo lockfile is pnpm-lock.yaml (npm ci has no lockfile)
+node --import tsx --test tests/paid-run-bound.test.ts            # red first, then green
 node --import tsx --test tests/paid-run-admission.test.ts
 node --import tsx --test tests/paid-run-executor.test.ts
 node --import tsx --test --test-concurrency=1 tests/paid-run-ledger-restart.test.ts
-# bounded-call entry point (driver as a real child process, used by T5; also run directly):
-node --import tsx tests/helpers/paid-run-driver.ts --self-check
-# affected existing usage/provider tests:
+node --import tsx tests/helpers/paid-run-driver.ts --self-check  # bounded-call entry point, real process
 node --import tsx --test tests/usage-cost.test.ts tests/usage-price-table-loader.test.ts tests/usage-cost-authorization.test.ts
 node --import tsx --test tests/loop-provider-contract.test.ts tests/loop-providers.test.ts
-pnpm run test:product-shell          # lane containing the registration
-pnpm run check                       # tsc --project tsconfig.vps.json
-pnpm run check:demo                  # tsc --noEmit
-pnpm run build                       # node scripts/build-vps.mjs
-pnpm run check:test-loaders          # loader guard (registration changes)
+pnpm run test:product-shell                        # lane containing the registration
+pnpm run check                                     # tsc -p tsconfig.vps.json (adjacent production entries)
+pnpm run check:demo                                # tsc --noEmit: covering typecheck for src/usage/v1/paid-run-*
+pnpm run build                                     # node scripts/build-vps.mjs
+pnpm run check:test-loaders
 node scripts/check-test-lane-coverage.mjs
 pnpm run check:test-quarantine
-node scripts/check-private-names.mjs # with the lead-provided list; see evidence
+node scripts/check-private-names.mjs               # with the lead-provided list; unconfigured here
 git diff --check
 ```
 
-The applicable attack and CI probes are the guard-off probes in §7.3, run in a throwaway copy, and a check that `ci.yml` reaches `test:product-shell` through `test:components`.
+Probes:
 
-`tsconfig.vps.json` coverage of `src/usage/v1` must be confirmed during BUILD. If the new files are outside it, `check:demo` is the covering typecheck, and that must be recorded.
+- the guard-off probes in §7.3, in a throwaway copy;
+- confirm `ci.yml:563` still runs `test:product-shell`.
 
 ### 9.2 PG17-later (native Mac; pending; not satisfiable by PG16, PGlite or the journal)
 
-These checks run after the lead reserves a migration number and implements the PostgreSQL ledger. That would be a separate authorization, not this slice.
+This runs only after the lead reserves a migration and the PostgreSQL ledger and consent store are separately authorized and built.
 
 ```bash
 PG_BIN=/opt/homebrew/opt/postgresql@17/bin node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/paid-run-ledger-postgres.test.ts
@@ -523,22 +620,40 @@ pnpm run check:migrations
 
 Expected results:
 
-- Equivalents of T1–T6 against PostgreSQL 17.
-- 20 concurrent `reserve` transactions on separate pool connections: exactly 3 committed reservations and 17 refusals, with no serialization leak; the run-head row is locked `FOR UPDATE`.
-- Unique-violation on a duplicate callId maps to `replay` or `call_conflict`.
+- T1–T6 and T13b equivalents pass on PostgreSQL 17.
+- 20 concurrent `reserve` transactions on separate pool connections give exactly 3 committed and 17 refused, with the run head locked `FOR UPDATE`.
+- A duplicate callId maps to `replay` or `call_conflict` through the unique constraint.
 - A backend killed between dispatch and settle gives an uncertain charge at max after reconnect.
-- The production DB role has no `DELETE` or `UPDATE` grant on settled rows.
-- Migration up/down and catalog count pins are updated by the lead.
+- Consent is consumed exactly once across two concurrent Start claims: 1 consumed, 1 `consent_replayed`.
+- The production role has no `UPDATE`/`DELETE` on settled rows.
+- Migration up/down and catalog pins are updated by the lead.
 
-This qualification is pending. Release remains blocked.
+This qualification is pending, and release remains blocked.
 
 ## 10. Remaining limits
 
-- The cap holds only under the reviewed provider profile assumptions (§4.1). A provider that bills beyond its declared ceilings is detected (`bound_violated`) and blocked, not prevented.
-- The journal is single-host. Cross-process exclusion relies on the supervisor observing the holder's exit, which is suitable for the stand-in and the driver but not for production.
-- Owner questions Q1–Q2 parameterise constants. They do not block BUILD of the mechanism.
+- **Profile assumptions.** The hard cap holds only under the reviewed profile (§4.1, §5.1). Overbilling beyond the declared ceilings is detected and blocked (`excessNanoUsd`), not prevented.
+- **Single-host journal.** Lease takeover relies on supervisor-observed exit. That is suitable for the stand-in, not for production.
+- **Consent store.** The stand-in consent store is in-memory and tests-only. Durable consent is P3.
+- **Owner questions.** Q1–Q2 parameterise constants and do not block BUILD of the mechanism.
 
 ## Revision history
 
-- r1 (PLAN): initial specification.
-- r2 (PLAN): incorporated the Claude spec-review helper's findings; see evidence.
+- **r1 (PLAN):** initial specification.
+- **r2 (PLAN):** incorporated Claude spec-review findings 1–15:
+  - server-persisted single-use consent (HIGH);
+  - dispatch-time stop/block re-check and T13b (HIGH);
+  - cache reporting modes;
+  - strict usage mapping and valid synthetic ids;
+  - invariant with separate excess;
+  - deadline from `t0` plus skew;
+  - per-model row filtering;
+  - resolver-completeness prerequisite;
+  - citation fixes (prices :95 / :38-42, usage :30, staleness :79, CI :563);
+  - T5 table;
+  - digest deviation D10;
+  - integer bounds;
+  - reasoning refusal;
+  - formatter caching;
+  - single clock;
+  - T13 cap.

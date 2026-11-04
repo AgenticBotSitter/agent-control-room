@@ -4,3 +4,6 @@
 2026-11-04T14:22Z inputs read: task, playbook, usage-cost.ts, usage-price-table-loader.ts, loop-provider-prices.ts, loop-provider-service.ts, loop adapter, loop service; spec helper (Explore) mapped harness seams; key citations verified.
 2026-11-04T14:27Z spec r1, decisions, owner questions drafted; Claude spec-review helper running.
 2026-11-04T14:28Z evidence commands run (all exit 0 except intended grep count exit 1); private-name list not configured.
+2026-11-04T14:34:19Z spec-review helper (Claude, general-purpose) on spec r1 (uncommitted draft; first committed WIP 2538f57): HIGH 2, MEDIUM 6, LOW 7. All verified against code (ci.yml:563, prices :95/:38, usage strict schema, adapter :706-713) and resolved in spec r2; recomputed values all matched.
+2026-11-04T14:34:19Z decisions D4 amendment, D10-D12 added; evidence and status written.
+2026-11-04T14:34:59Z E21 bounded public-text scan (home/root/Users/tmp paths, session/URL trailers, key/secret/password/token patterns, PEM headers, ghp_/sk- tokens, email domains) over all result docs: 0 matches. Private-name full list unavailable (E18): lead gate required.

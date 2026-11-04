@@ -110,3 +110,46 @@ Each decision below is a technical choice inside approved scope. None is an owne
   - (c) Charge max and continue.
 - **Why:** Option (b) violates "never refund uncertain" because providers may bill failed requests. Option (a) makes the settled "retries counted cumulatively" requirement untestable. Option (c) is conservative and preserves retries.
 - **Affected spec item:** 5, 6.
+
+## D4 amendment (r2)
+
+- **Choice:** `cacheReporting` in the profile selects the settlement mode.
+  - `subset` maps to `harness:'codex'`, which nets cached tokens off input.
+  - `additive` maps to `harness:'other'`.
+  - `none` turns any cached tokens into a violation.
+- **Usage mapping:** reported usage is mapped exactly to `usageMeasurementSchemaV1`, with `totalTokens:null` and `wallTimeMs:null`.
+- **Synthetic table:** the one-entry table uses the ids `paid-run-bound` and `paid-run-entry`, which satisfy `catalogProjectIdSchema`.
+- **Why:** the spec reviewer showed that the r1 `other`-only mapping double-charges subset-reporting providers. It also showed that the r1 usage shape fails the strict schema.
+
+## D10 — Price digest over all window rows
+
+- **Choice:** The pin field `priceRowDigest` is computed over the sorted `providerPriceDigestV1` values of every row for the pinned served model. The executor recomputes each row digest itself.
+- **Options:**
+  - (a) Digest a single active row, as the contract's wording reads.
+  - (b) Digest the whole row set.
+- **Why:**
+  - The bound may draw rates from any window active during the call interval (D5). A single-row digest would let a change to another window go unnoticed.
+  - The field name is kept for contract compatibility, and this deviation is flagged for Sol review.
+- **Affected spec item:** 3, 4.
+
+## D11 — Consent is a server-persisted, single-use record
+
+- **Choice:** Consent is created by an authenticated owner request through `PaidRunConsentStoreV1.issue`. It is bound to the project, request, settings, the server-derived pin and the cap. It is consumed exactly once when the Start claim is inserted, and that consumption binds the claim's freshly generated `commandId` and `loopRunId`.
+- **Options:**
+  - (a) A caller-supplied consent object (r1).
+  - (b) A signed token.
+  - (c) A server-persisted record.
+- **Why:**
+  - Option (a) is self-asserted; the reviewer rated this HIGH. The owner also cannot know the claim ids in advance.
+  - Option (b) needs key management.
+  - Option (c) gives real owner authority and real single use. In the cloud it is backed by an in-memory store; the durable store is P3 and PG17-later.
+- **Affected spec item:** 3.
+
+## D12 — Stop and block are re-checked at dispatch
+
+- **Choice:** `ledger.dispatch` re-checks the stopped and blocked state under the handle mutex. If either is set, it releases the reservation and refuses.
+- **Options:**
+  - (a) Check only at call entry (r1).
+  - (b) Re-check at dispatch.
+- **Why:** With option (a), a call that already held a reservation could still send after Stop or after a block; the reviewer rated this HIGH. Option (b) closes that path, and test T13b proves it.
+- **Affected spec item:** 6.
