@@ -34,7 +34,7 @@ const idempotencyKey = /^[A-Za-z0-9:_-]{16,100}$/;
 
 type StateRow = { version: string | number; exported_version: string | number | null; exported_sha256: string | null;
   seeded_from: string; last_idempotency_key: string | null; last_request_digest: string | null };
-type ModelRow = { name: string; position: number; launcher: string; provider: string; family: string; model_class: string;
+type ModelRow = { name: string; position: string | number; launcher: string; provider: string; family: string; model_class: string;
   roles: string; efforts: string; default_effort: string; cost: string; on_off: string; note: string; nick: string;
   max_build_grade: string; updated_by: string; updated_at: string | Date };
 
@@ -318,7 +318,7 @@ export class LoopRosterServiceV1 {
       else await tx.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,
         efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-      [this.scope.tenantId, target.name, Math.max(0, ...models.map(model => model.position)) + 1, ...columnValues(target), actor.id, at]);
+      [this.scope.tenantId, target.name, Math.max(0, ...models.map(model => Number(model.position))) + 1, ...columnValues(target), actor.id, at]);
       await tx.query(`UPDATE control_loop_roster_state SET version=$2,last_idempotency_key=$3,last_request_digest=$4,updated_at=$5
         WHERE tenant_id=$1 AND version=$6`, [this.scope.tenantId, next, key, digest, at, expectedVersion]);
       return undefined;

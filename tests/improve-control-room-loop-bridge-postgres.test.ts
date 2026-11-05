@@ -1,4 +1,6 @@
 import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4ProviderServiceV1, seedS4ProviderV1 } from './helpers/improve-control-room-loop-recovery';
+import { LoopRosterServiceV1 } from "../src/web/v1/loop-roster-service";
+import { renderLoopRosterV1 } from "../src/web/v1/loop-roster-render";
 import { LoopPolicyServiceV1 } from "../src/web/v1/loop-policy-service";
 import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../src/persistence/database";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
@@ -93,6 +95,41 @@ async function confirmed(pg:Pg,e:ReturnType<typeof engine>){
   const c=await w.bridge.mutate(identity,project,receipt.requestId,"confirm",{expectedVersion:1,expectedRevision:s.engine.revision,requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},"b1b-pg-confirm-0001");
   assert.equal(c.state,"accepted");return {w,id:receipt.requestId,s:await w.bridge.status(identity,project,receipt.requestId)};
 }
+
+test("B6 PostgreSQL roster reads bigint positions as numbers and appends max plus one", async t => run(async pg => {
+  await seed(pg, pg.database, false);
+  const w = web(pg, engine().adapter);
+  const root = await mkdtemp(resolve('.test-tmp/b6-native-roster-'));
+  const row = { name: 'first', launcher: 'synthetic', provider: '', family: '', class: '', roles: '', efforts: '',
+    default_effort: '', cost: '', on: 'on', note: '', nick: '', max_build_grade: '' };
+  const service = new LoopRosterServiceV1(w.client, scope, { rosterRoot: root, toolsSeed: join(root, 'seed.tsv'),
+    check: async () => ({ exitCode: 0, lines: [] }) });
+  try {
+    await service.seedFromTsv(renderLoopRosterV1([row, { ...row, name: 'second' }]), 'tools-seed');
+    await sql(pg, "UPDATE control_loop_roster_models SET position=CASE name WHEN 'first' THEN 7 ELSE 41 END");
+    const positions = (await w.client.query<{ position: string }>(
+      'SELECT position FROM control_loop_roster_models ORDER BY position')).rows.map(r => r.position);
+    assert.deepEqual(positions, ['7', '41'], 'native pg returns bigint positions as strings');
+    // Observe the numeric arithmetic boundary: Math.max alone would silently coerce unconverted int8 strings.
+    const max = Math.max;
+    let numericReads = 0;
+    const spy = t.mock.method(Math, 'max', (...values: number[]) => {
+      if (values.length === 3 && values[0] === 0 && values.slice(1).map(Number).join(',') === '7,41') {
+        assert.deepEqual(values, [0, 7, 41], 'roster positions must be numbers before arithmetic');
+        numericReads++;
+      }
+      return max(...values);
+    });
+    try {
+      const { name: _name, ...fields } = row;
+      assert.equal((await service.upsert(identity, 'third', { expectedVersion: 1, row: fields }, 'b6-native-append-0001')).version, 2);
+    } finally { spy.mock.restore(); }
+    assert.equal(numericReads, 1, 'the append reads both existing positions numerically');
+    assert.deepEqual((await sql(pg, 'SELECT name,position FROM control_loop_roster_models ORDER BY position')).rows,
+      [{ name: 'first', position: '7' }, { name: 'second', position: '41' }, { name: 'third', position: '42' }]);
+    assert.deepEqual((await service.view(identity)).models.map(model => model.name), ['first', 'second', 'third']);
+  } finally { await w.close(); await rm(root, { recursive: true, force: true }); }
+}));
 
 test("B1b fresh production login, exact grants, journal and measured digests",async()=>run(async pg=>{
   await seed(pg);const e=engine(),{w,id,s}=await confirmed(pg,e);
@@ -502,7 +539,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
   }finally{await admin.end();await w.close();}
 }));
 
-test('P71 PostgreSQL empty down/re-up and injected migration failure preserve ledger',async()=>run(async pg=>{
+test('P71 PostgreSQL empty downgrade restores the merged down-chain schema and re-up preserves ledger after injected failure',async()=>run(async pg=>{
   const admin=new Client(pg.admin());await admin.connect();
   const stage=await mkdtemp(resolve('.test-tmp/p71-ledger-'));
   const validated=async()=>Boolean((await admin.query("SELECT convalidated FROM pg_constraint WHERE conrelid='control_loop_improvement_commands'::regclass AND conname='control_loop_improvement_commands_check1'")).rows[0].convalidated);
@@ -516,7 +553,7 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     assert.equal(await validated(),false,'validation down restores NOT VALID while preserving the predicate');
     await admin.query(await readFile('db/down/0310_control_loop_policy.sql','utf8'));
     assert.equal(await validated(),true,'0310 down restores the validated pre-P71 predicate');
-    // Combined main schema with only the renumbered B7 roster retained.
+    // The digest changed because the merged down-chain retains main's 0305/0307/0308 and B7's roster.
     assert.equal(await readPrivateWebSchemaDigest(admin),'2bdb25811bef31d5f9ee8e8a06b49ea2a2a31c476fed8214724d790b57b97386');
     await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;

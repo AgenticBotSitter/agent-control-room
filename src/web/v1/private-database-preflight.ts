@@ -83,11 +83,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // PostgreSQL 17 (scripts/cook-digest-real-pg.mts) both read the value below. The
 // previous value was `85dbdd9b...`.
 //
-// Re-derived for cook/10int10 after perf2's 0272/0273, r5bk's 0285 and r6proj's
-// production_table_grants.sql met int9's set: real PostgreSQL 17
-// (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
-// previous value was `0b983887...`.
-// Includes P72 locks, scoped waiver transitions and closed waiverId intake.
+// Re-derived for the merged main and B7 schema: main's 0303-0308 migrations
+// (update candidates, start authorization, unavailable sections, review identity
+// and constraint validation), plus B7's 0309-0315 roster, policy, providers,
+// prices, P72 locks/scoped waiver transitions/closed waiverId intake, and paid admission.
+// Previous pins: main `3448fa44...`, B7 `0d0e9128...`.
 // Web/updater digests measured equal in PGlite and native PostgreSQL 17.
 export const privateWebSchemaDigest = "4a6a7d6b379607ba88adff4798e0aa0fb267ca03894a13b9cf7c65c0db2aaf78";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist

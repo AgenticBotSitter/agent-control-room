@@ -174,7 +174,9 @@ test("P71 Linux CI excludes exactly three macOS host gates without skip-as-pass"
   assert.doesNotMatch(lane, /skip|\|\|/);
   assert.match(scripts['test:components'], /pnpm test:improve-control-room(?: &&|$)/);
   const reached = reachableTests(scripts, workflowCommands(await readFile('.github/workflows/ci.yml','utf8')));
-  for (const file of host.match(/tests\/[^\s]+\.tsx?/g) ?? []) assert.ok(reached.has(file), `CI reaches ${file}`);
+  const hostTests = host.match(/tests\/[^\s]+\.tsx?/g);
+  assert.ok(hostTests && hostTests.length > 0, 'host lane must name at least one test file');
+  for (const file of hostTests) assert.ok(reached.has(file), `CI reaches ${file}`);
   assert.equal(scripts['test:loop-policy:real'], 'node --import tsx tests/loop-policy.test.ts --host-gate settings');
   assert.doesNotMatch(scripts['test:loop-policy:real'], /skip|\|\|/);
   await mkdir(resolve('.test-tmp'), { recursive: true });
@@ -294,7 +296,7 @@ test("P71 downgrade refuses retained run-edit commands before changing the schem
   assert.equal((await f.db.query("SELECT relname FROM pg_class WHERE relname IN ('control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources')")).rows.length, 3);
 });
 
-test("P71 empty downgrade restores the validated pre-P71 release schema pin", async t => {
+test("P71 empty downgrade restores the merged down-chain schema", async t => {
   const f = await policyFixture(t);
   await f.db.exec(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));
   await f.db.exec(await readFile('db/down/0312_control_loop_providers.sql','utf8'));
@@ -303,7 +305,7 @@ test("P71 empty downgrade restores the validated pre-P71 release schema pin", as
   await f.db.exec(await readFile('db/down/0311_control_loop_policy_validate.sql','utf8'));
   await f.db.exec(await readFile('db/down/0310_control_loop_policy.sql','utf8'));
   assert.equal((await f.db.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conname='control_loop_improvement_commands_check1'")).rows[0]!.convalidated, true);
-  // The release pin shipped immediately before P71 (7cc303ebc).
+  // The digest changed because the merged down-chain retains main's 0305/0307/0308 and B7's roster.
   assert.equal(await readPrivateWebSchemaDigest(f.client), '2bdb25811bef31d5f9ee8e8a06b49ea2a2a31c476fed8214724d790b57b97386');
 });
 
