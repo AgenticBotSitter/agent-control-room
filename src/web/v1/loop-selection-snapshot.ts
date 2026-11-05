@@ -58,14 +58,18 @@ export function createLoopSelectionSourceFilesV1(input: { availabilityFile: stri
   input = Object.freeze({ ...input, readAvailability: input.readAvailability.bind(input),
     faults: input.faults && Object.freeze({ at: input.faults.at.bind(input.faults) }) });
   const root = join(dirname(input.availabilityFile), "selection-sources"), fence = join(root, "fence");
-  const active = new WeakMap<LoopSelectionSourceLeaseV1, { ino: number; dev: number }>(); let poisoned = false;
+  type Inode = { ino: number; dev: number };
+  const active = new WeakMap<LoopSelectionSourceLeaseV1, { root: Inode; fence: Inode; owner: string }>(); let poisoned = false;
   const checkRoot = () => { if (poisoned) throw unavailable(); return checked(root, true); };
   const syncDirectory = (path: string) => { const s = checked(path, true), fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try { if (!sameFile(s, fstatSync(fd))) throw unavailable(); fsyncSync(fd); } finally { closeSync(fd); } };
   const syncRoot = () => { checkRoot(); syncDirectory(root); };
   const requireLease = (lease: LoopSelectionSourceLeaseV1) => { const current = checkRoot(), owned = active.get(lease);
-    if (!owned || !sameFile(owned, current)) throw unavailable(); };
-  function atomic(name: "current.json" | "dirty.json", text: string) {
+    if (!owned || !sameFile(owned.root, current) || !sameFile(owned.fence, checked(fence, true))
+      || canonicalJson(parseStrictJsonV1(readOwned(join(fence, "owner.json")).toString("utf8"), { maxBytes: 256 })) !== owned.owner)
+      throw unavailable(); };
+  function atomic(lease: LoopSelectionSourceLeaseV1, name: "current.json" | "dirty.json", text: string) {
+    requireLease(lease);
     const before = checkRoot();
     try { checked(join(root, name)); } catch (e) { if (!missing(e)) throw e; }
     if (Buffer.byteLength(text) > selectionSourceMaxBytesV1) throw unavailable();
@@ -74,6 +78,7 @@ export function createLoopSelectionSourceFilesV1(input: { availabilityFile: stri
     try { writeFileSync(fd, text); input.faults?.at(name + ":write"); fsyncSync(fd); input.faults?.at(name + ":fsync"); }
     finally { closeSync(fd); }
     try {
+      requireLease(lease);
       if (!sameFile(before, checkRoot())) throw unavailable();
       renameSync(temp, join(root, name)); input.faults?.at(name + ":rename"); syncRoot(); input.faults?.at(name + ":directory-fsync");
     } finally { try { unlinkSync(temp); } catch (e) { if (!missing(e)) throw e; } }
@@ -103,19 +108,19 @@ export function createLoopSelectionSourceFilesV1(input: { availabilityFile: stri
       syncDirectory(fence); syncRoot();
       const lease: LoopSelectionSourceLeaseV1 = Object.freeze({ release() {
         requireLease(lease);
-        if (!sameFile(inode, checked(fence, true)) || canonicalJson(parseStrictJsonV1(readOwned(join(fence, "owner.json")).toString("utf8"), { maxBytes: 256 })) !== canonicalJson(owner))
-          throw unavailable();
         unlinkSync(join(fence, "owner.json")); syncDirectory(fence); rmdirSync(fence); syncRoot(); active.delete(lease);
       } });
-      active.set(lease, rootInode); return lease;
+      active.set(lease, { root: rootInode, fence: inode, owner: canonicalJson(owner) }); requireLease(lease); return lease;
     },
-    invalidate(lease) { requireLease(lease); atomic("dirty.json", canonicalJson({ schemaVersion: 1, nonce: nonce() }) + "\n");
+    invalidate(lease) { requireLease(lease); atomic(lease, "dirty.json", canonicalJson({ schemaVersion: 1, nonce: nonce() }) + "\n");
+      requireLease(lease);
       try { unlinkSync(join(root, "current.json")); } catch (e) { if (!missing(e)) throw e; }
       input.faults?.at("current:remove"); syncRoot(); },
     current,
     previous(lease, now) { requireLease(lease); if (dirty()) return undefined;
       try { return current(lease, now); } catch (e) { if (missing(e)) return undefined; throw e; } },
-    publish(lease, bundle) { requireLease(lease); atomic("current.json", encodeSelectionSourceBundleV1(bundle));
+    publish(lease, bundle) { requireLease(lease); atomic(lease, "current.json", encodeSelectionSourceBundleV1(bundle));
+      requireLease(lease);
       try { unlinkSync(join(root, "dirty.json")); } catch (e) { if (!missing(e)) throw e; }
       input.faults?.at("dirty:remove"); syncRoot(); },
     rosterText() { return new TextDecoder("utf-8", { fatal: true }).decode(readOwned(input.rosterFile)); },
@@ -145,7 +150,7 @@ export function bindLoopSelectionSourceDeadlineV1(tx: DatabaseSession, value: De
   const scope = scopeOf(tx);
   if (scope.deadline || !Number.isSafeInteger(value.frozenWall) || value.frozenWall < 0
     || !Number.isFinite(value.frozenMono) || value.frozenMono < 0 || !Number.isFinite(value.deadlineMono)
-    || value.deadlineMono <= value.frozenMono || value.deadlineMono - value.frozenMono > 5000) throw unavailable();
+    || value.deadlineMono <= value.frozenMono || value.deadlineMono > value.frozenMono + 5000) throw unavailable();
   scope.deadline = Object.freeze({ ...value });
 }
 export function withLoopSelectionSourceTransactionsV1(db: DatabaseClient, files: LoopSelectionSourceFilesV1): DatabaseClient {

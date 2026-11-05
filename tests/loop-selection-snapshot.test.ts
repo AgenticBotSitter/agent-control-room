@@ -210,3 +210,38 @@ test('T-SNAPSHOT source capability captures paths and validator and requires own
   await writeFile(file,JSON.stringify({...health(),entries:[{model:'fixture',route:'codex',available:false}]}));
   assert.throws(()=>files.availability(now),'raw JSON cannot bypass the authoritative health validator');
 });
+
+for (const operation of ['current', 'previous', 'invalidate', 'publish'] as const) {
+  test(`T-SNAPSHOT retained lease refuses ${operation} after fence owner changes`, async t => {
+    const f = await sourceFixture(t), lease = f.files.acquire();
+    const bundle = f.files.current(lease, now);
+    const currentPath = join(f.files.root, 'current.json');
+    const before = await readFile(currentPath);
+    const ownerPath = join(f.files.root, 'fence/owner.json');
+    const owner = await readFile(ownerPath);
+    try {
+      await writeFile(ownerPath, JSON.stringify({schemaVersion: 1, nonce: 'b'.repeat(32)}));
+      assert.throws(() => {
+        if (operation === 'current' || operation === 'previous') f.files[operation](lease, now);
+        else if (operation === 'invalidate') f.files.invalidate(lease);
+        else f.files.publish(lease, bundle);
+      }, /selection_source_unavailable/, 'foreign fence must refuse before reading or publishing');
+      assert.deepEqual(await readFile(currentPath), before);
+      assert.equal(existsSync(join(f.files.root, 'dirty.json')), false);
+    } finally { await writeFile(ownerPath, owner); lease.release(); }
+  });
+}
+
+test('T-SNAPSHOT fractional monotonic deadlines accept exactly five seconds and refuse longer windows',async t=>{
+  const f=await sourceFixture(t);
+  for(const frozenMono of [8191.999999999999,16383.999999999998]){
+    const deadlineMono=frozenMono+5000;
+    assert.ok(deadlineMono-frozenMono>5000,'vector reproduces subtraction rounding');
+    await f.db.transaction(async tx=>{
+      assert.doesNotThrow(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,deadlineMono,frozenWall:f.wall()}));
+    });
+    await f.db.transaction(async tx=>{
+      assert.throws(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,deadlineMono:deadlineMono+0.000001,frozenWall:f.wall()}),/selection_source_unavailable/);
+    });
+  }
+});

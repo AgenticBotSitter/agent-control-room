@@ -20,9 +20,18 @@ Built the physical reader/producer, source fence/transaction facade, selected tr
 Portable macOS and cached Linux checks have no failures; the broad legacy roster lane still reports seven optional real-tools skips and is not zero-skip qualification. Counted pair qualification and PG17 production-role contention remain blocked on lead-supplied pins/receipt, PG_BIN/isolated ports and a verified under-20 native shared-memory reading. No B1/B2 implementation, migrations or UI continuation is included. No SELECTION-TO-START-GREEN.
 
 
-Remaining implementation conformance blocker: the Node source capability checks ancestor symlinks, ownership/modes, file descriptors and retained root/fence inodes, but its directory mutations still use checked pathnames. It does not implement the specification's literal directory-relative no-follow traversal. Existing native sidecars expose narrower installer operations; extending that surface is outside this slice's physical allowed-file set. This candidate must not be approved as exact T-SNAPSHOT conformance until that issue is resolved.
+The round-1 blockers and uncommitted handoff above are historical; the round-2 continuation below supersedes that handoff.
 
+## T-SNAPSHOT round-2 continuation
 
-Final handoff: Git staging was refused when creating the worktree index lock (exit 128), so changes remain uncommitted with an empty index. The tools checkout still reports HEAD `dfb58d206bce494fbfcfaa8b370548926433ba84`, but seven files were modified at the final read-only audit; those external edits were left untouched. No exact-pair qualification is valid for a dirty candidate. Read-only source inspection also leaves a legacy compatibility concern: the required P71 real case uses the unchanged no-context adapter decoder, while tools legacy stdout is a rich lineup object. That real case was not executed and no legacy compatibility pass is claimed.
+The physical source producer/reader, transaction-lifetime fence and selected transport are implemented. M1 is resolved by the lead's explicit checked-pathname decision (D23); M2 is resolved by B7 and its passing real-tools cases. The retained fence nonce is now checked before every leased source operation, with red-first regressions and an independent guard-off proof.
 
-Status: BLOCKED: source I/O conformance, legacy host compatibility, qualification inputs and Git write refusal
+Native PG17 producer/admission contention and rollback/commit evidence now pass with 24 independent production connections and distinct authorized owners/projects. B7 portable and native S3 checks, B8 portable tests, nine mutations, registration, migration lint, ledger and typechecks pass; the B8 broad portable run reports one inherited B3b integration skip, never qualification.
+
+The mandatory complete counted macOS gate and Linux rerun are recorded against the final clean containing product commit in the external BUILD-B8-TSNAPSHOT-R2.md report. Consult that receipt for the final pair qualification outcome; a document-only assertion or product-only green cannot replace it. This delivery contains no B1/B2 implementation, migration, actual worker proof or SELECTION-TO-START-GREEN.
+
+Final cached Linux validation exits 0: migration/registration guards 117/117, broad B7/B8 tests 211 total / 202 pass / 0 fail / 9 inherited integration skips, all nine mutations caught/restored (10/10 Node tests), both standard typechecks pass. Snapshot tests include the fractional-clock fix. Linux host-only tools cases do not run; the inherited skips are not counted as qualification. The exact final native PG17/snapshot-mutation command passes 11/11 with zero skips and clean cluster teardown.
+
+Round-2 Git staging exits 128 (index.lock creation refused); the brief requires leaving changes uncommitted. The mandatory complete gate exits 1 on dirty qualification tree, with no PASS receipt. The lead must commit and rerun it on the resulting clean product SHA. Standalone diagnostic/portable results do not replace that qualification.
+
+Status: BLOCKED: staging refused; mandatory clean exact-SHA host qualification pending

@@ -21,6 +21,8 @@ const mutations:Mutation[]=[
     test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT precommit catches health expiry and wall/monotonic skew without resetting deadline',assertion:'Missing expected rejection'},
   {name:'snapshot comparison',file:'loop-selection-snapshot.ts',before:'|| canonicalJson(snapshot) !== canonicalJson(selectionSnapshotFromBundleV1(current))',after:'|| false',
     test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT producer reads real master, stable clean revision, missing and equal-byte version drift',assertion:'Missing expected rejection'},
+  {name:'retained fence nonce',file:'loop-selection-snapshot.ts',before:'|| canonicalJson(parseStrictJsonV1(readOwned(join(fence, "owner.json")).toString("utf8"), { maxBytes: 256 })) !== owned.owner',after:'|| false',
+    test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT retained lease refuses current after fence owner changes',assertion:'foreign fence must refuse before reading or publishing'},
   {name:'capsule binding',file:'improve-control-room-loop-adapter.ts',before:'|| selectionDispatch.bindingDigest !== sha256Digest(binding)',after:'|| false',
     test:'loop-policy.test.ts',title:'T-SNAPSHOT dispatch capsule binds complete command before spawn callback',assertion:'capsule mismatch cannot reach the spawn boundary'},
 ];
@@ -56,5 +58,5 @@ test('T-SNAPSHOT independently caught source and transport guard mutations',asyn
     assert.match(mutant.output,new RegExp(escaped(m.assertion)));assert.doesNotMatch(mutant.output,/ERR_MODULE_NOT_FOUND|SyntaxError|test timed out/);
     await writeFile(join(staged,'web/v1',m.file),original);const restored=await run(m);assert.equal(restored.code,0,'restoration must pass: '+restored.output);caught++;
   });
-  assert.equal(caught,mutations.length);console.log('T-SNAPSHOT mutations expected=8 caught='+caught+' restored='+caught+' skips=0');
+  assert.equal(caught,mutations.length);console.log('T-SNAPSHOT mutations expected=9 caught='+caught+' restored='+caught+' skips=0');
 });

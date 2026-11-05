@@ -14,7 +14,7 @@ import { pgSocketOptionV1, pgConninfoValueV1, pgCtlInvocationV1 } from "../../..
 // call the helper and fail rather than reporting a green skip.
 
 import { execFile, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -642,8 +642,14 @@ export const shortSocketRoot = (): string => process.env.ATTACK_KIT_SOCKET_ROOT?
 /** Longest socket path this will create, including a 5-digit port. */
 const MAX_SOCKET_PATH_BYTES = 100;
 
-function shortSocketDirectory(run: string, port: number): string {
-  const candidate = join(shortSocketRoot(), `ak${process.pid}-${basename(run)}`);
+export function shortSocketDirectory(run: string, port: number): string {
+  let candidate = join(shortSocketRoot(), `ak${process.pid}-${basename(run)}`);
+  // A long caller-owned scratch root can still fit a socket. Shorten only the
+  // generated child name; never move sockets outside the configured root.
+  if (Buffer.byteLength(candidate) + 16 > MAX_SOCKET_PATH_BYTES) {
+    const suffix = createHash("sha256").update(JSON.stringify([process.pid, run, port])).digest("hex").slice(0, 16);
+    candidate = join(shortSocketRoot(), `ak${suffix}`);
+  }
   // `.s.PGSQL.` plus the port is 13-14 bytes; leave headroom under the cap.
   if (Buffer.byteLength(candidate) + 16 > MAX_SOCKET_PATH_BYTES) {
     throw new Error(`attack_kit_socket_path_too_long:${candidate}`);

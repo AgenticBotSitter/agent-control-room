@@ -156,9 +156,16 @@ All participating roster and monitor publications invalidate current before muta
 This is a build candidate against the new T-TOOLS candidate, not a released pair. Counted macOS and production-role PG17 evidence remain required. B1/B2 and U81-C remain separate continuations.
 
 
-Remaining implementation conformance blocker: the Node source capability checks ancestor symlinks, ownership/modes, file descriptors and retained root/fence inodes, but its directory mutations still use checked pathnames. It does not implement the specification's literal directory-relative no-follow traversal. Existing native sidecars expose narrower installer operations; extending that surface is outside this slice's physical allowed-file set. This candidate must not be approved as exact T-SNAPSHOT conformance until that issue is resolved.
+The round-1 blockers and uncommitted handoff above are historical; the round-2 continuation below supersedes that handoff.
 
+## D23 — T-SNAPSHOT round-2 lead decision and qualification boundary
 
-Final handoff: Git staging was refused when creating the worktree index lock (exit 128), so changes remain uncommitted with an empty index. The tools checkout still reports HEAD `dfb58d206bce494fbfcfaa8b370548926433ba84`, but seven files were modified at the final read-only audit; those external edits were left untouched. No exact-pair qualification is valid for a dirty candidate. Read-only source inspection also leaves a legacy compatibility concern: the required P71 real case uses the unchanged no-context adapter decoder, while tools legacy stdout is a rich lineup object. That real case was not executed and no legacy compatibility pass is claimed.
+The lead accepts checked pathname mkdir/rename/unlink in Node, together with no-follow descriptor reads, ownership/mode/link/ancestor validation and retained root/fence inode and nonce checks, as the implementation of the directory-relative I/O clause. M1 is resolved by this explicit lead decision; no native addon is introduced. Retained leases now recheck the fence inode and exact owner nonce before source reads/publication as well as release.
 
-Status: BLOCKED: source I/O conformance, legacy host compatibility, qualification inputs and Git write refusal
+The B7 merge resolves M2: the three real-tools P71/provider/Start cases and the complete B7 portable suites pass against tools `064eb462f3a055da9d3487502108a5292e21eeb0`. The required complete counted macOS gate must bind the containing clean product commit to that tools SHA and the lead receipt. Its final receipt and exact command results belong in BUILD-B8-TSNAPSHOT-R2.md, an external build output; this document does not substitute for that receipt.
+
+T-SNAPSHOT adds zero tables/migrations. B1/B2 remain separate and unbuilt; no selection-to-start admission or worker readiness is claimed.
+
+Round-2 Git staging exits 128 (index.lock creation refused); the brief requires leaving changes uncommitted. The mandatory complete gate exits 1 on dirty qualification tree, with no PASS receipt. The lead must commit and rerun it on the resulting clean product SHA. Standalone diagnostic/portable results do not replace that qualification.
+
+Status: BLOCKED: staging refused; mandatory clean exact-SHA host qualification pending
