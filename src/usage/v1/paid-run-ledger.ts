@@ -215,7 +215,9 @@ function apply(state: State, r: RecordV1) {
     case 'late': if (!call?.settlement || r.servedModelId !== null && typeof r.servedModelId !== 'string') fail('journal_corrupt'); break;
     case 'block': if (typeof r.reason !== 'string' || !r.reason) fail('journal_corrupt'); state.blocked = r.reason as string; break;
     case 'stop': state.stopped = true; break;
-    case 'recovered': state.spendingClosed = true; state.blocked ??= 'recovered'; break;
+    case 'recovered':
+      if (typeof r.tornTail !== 'boolean') fail('journal_corrupt');
+      state.spendingClosed = true; state.blocked ??= 'recovered'; break;
     default: fail('journal_corrupt');
   }
   state.head = r;
@@ -288,10 +290,14 @@ export function createPaidRunJournalLedgerV1(options: Readonly<{ root: string; a
         file = await open(journalPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
         await file.writeFile(canonicalJson(opening) + '\n'); await file.sync();
       } else {
-        const anchor = await readAnchor(dir);
+        const anchor = await readAnchor(dir).catch(error => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') fail('journal_corrupt');
+          throw error;
+        });
         try { file = await open(journalPath, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
         catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || anchor.seq !== 1 || anchor.type !== 'open') throw error;
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          if (anchor.seq !== 1 || anchor.type !== 'open') fail('journal_corrupt');
           file = await open(journalPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
         }
         await safeFile(file!);
@@ -311,8 +317,8 @@ export function createPaidRunJournalLedgerV1(options: Readonly<{ root: string; a
         if (restoreAnchor) { try { apply(state, anchor); } catch { fail('journal_corrupt'); } }
         else if (!state.head || sha256Digest(state.head) !== sha256Digest(anchor)) fail('journal_corrupt');
         if (!state.opening) fail('journal_corrupt');
-        if (state.opening!.runKey !== expected.runKey || state.opening!.pinDigest !== expected.pinDigest
-          || state.opening!.ledgerRootIdentity !== rootIdentity) fail('cross_run');
+        if (state.opening!.runKey !== expected.runKey || state.opening!.pinDigest !== expected.pinDigest) fail('cross_run');
+        if (state.opening!.ledgerRootIdentity !== rootIdentity) fail('ledger_root_mismatch');
         if (tornTail) { await file!.truncate(goodBytes); await file!.sync(); }
         if (restoreAnchor) { await file!.writeFile(canonicalJson(anchor) + '\n'); await file!.sync(); tornTail = true; }
       }

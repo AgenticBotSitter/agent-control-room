@@ -19,7 +19,8 @@ async function main() {
     return;
   }
   const [rootArg, point] = process.argv.slice(2);
-  if (!rootArg || !['reserve', 'dispatch', 'settle', 'lock-window', 'journal-created', 'anchor-open', 'anchor-dispatch', 'anchor-settle', 'recovery-window'].includes(point!)) throw new Error('driver_arguments');
+  const recoveryCheckpoint = /^recovery-(anchor|journal)-(recovered|release|settle|block)$/.exec(point ?? '');
+  if (!rootArg || !recoveryCheckpoint && !['reserve', 'dispatch', 'settle', 'lock-window', 'journal-created', 'anchor-open', 'anchor-dispatch', 'anchor-settle', 'recovery-window', 'recovery-seed'].includes(point!)) throw new Error('driver_arguments');
   // Keep the IPC channel referenced while parked at a kill checkpoint.
   process.on('message', () => {});
   const root = resolve(rootArg), context = paidRunContext({ ledgerRootIdentity: await paidRunLedgerRootIdentityV1(root) }), admission = await paidRunAdmission(context);
@@ -28,6 +29,30 @@ async function main() {
     process.send?.({ phase, requests, generation: lease.generation, runKey: admission.runKey, pinDigest: admission.pinDigest });
   }
   const hold = () => new Promise<void>(() => {});
+  if (recoveryCheckpoint) {
+    const boundary = recoveryCheckpoint[1], type = recoveryCheckpoint[2];
+    const realRename = fsPromises.rename, realOpen = fsPromises.open;
+    fsPromises.rename = async (...args: Parameters<typeof realRename>) => {
+      await realRename(...args);
+      if (boundary === 'anchor' && String(args[1]) === join(root, admission.runKey, 'head.json')) {
+        const record = JSON.parse(await readFile(args[1], 'utf8'));
+        if (record.type === type) { await notify(point!, 0); await hold(); }
+      }
+    };
+    fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
+      const file = await realOpen(...args);
+      if (boundary === 'journal' && String(args[0]) === join(root, admission.runKey, 'journal.jsonl')) {
+        const realSync = file.sync.bind(file);
+        file.sync = async () => {
+          await realSync();
+          const lines = (await readFile(args[0], 'utf8')).trim().split('\n');
+          if (JSON.parse(lines.at(-1)!).type === type) { await notify(point!, 0); await hold(); }
+        };
+      }
+      return file;
+    }) as typeof realOpen;
+    syncBuiltinESMExports();
+  }
   if (point === 'lock-window' || point === 'journal-created' || point === 'recovery-window') {
     const realOpen = fsPromises.open;
     fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
@@ -58,8 +83,20 @@ async function main() {
   const store = createPaidRunJournalLedgerV1({ root, afterReserve: async () => {
     if (point === 'reserve') { await notify('reserve', 0); await hold(); }
   } });
-  if (point === 'recovery-window') { await store.reopenForSettlementV1(admission); throw new Error('missed recovery checkpoint'); }
+  if (point === 'recovery-window' || recoveryCheckpoint) { await store.reopenForSettlementV1(admission); throw new Error('missed recovery checkpoint'); }
   const ledger = await store.open(admission);
+  if (point === 'recovery-seed') {
+    // Independent literal reservations total 18M. Dispatch intent alone is enough
+    // to require a full charge, even though this fixture never enters transport.
+    for (const [n, maxNanoUsd] of [[1, '1000000'], [2, '2000000'], [3, '6000000'], [4, '6000000'], [5, '3000000']] as const) {
+      const callId = paidRunInput(n).callId;
+      assert.equal((await ledger.reserve({ callId, maxNanoUsd, requestDigest: admission.pinDigest,
+        priceRowDigest: admission.pin.priceRowDigest, check: () => {} })).kind, 'reserved');
+      if (n >= 3) assert.equal((await ledger.dispatch(callId)).kind, 'dispatched');
+    }
+    await ledger.settle(paidRunInput(5).callId, { accountedNanoUsd: '2700000', excessNanoUsd: '0', outcome: 'completed', servedModelId: 'served/one' });
+    await notify(point, 0); await hold();
+  }
   const fake = createPaidRunFakeProviderV1(point === 'dispatch' ? [{ failure: 'hang' }] : []);
   const transport = { async send(...args: Parameters<typeof fake.transport.send>) {
     // Independent observation happens at send entry, while the child still owns the lease.
@@ -76,4 +113,8 @@ async function main() {
     await executor.call(paidRunInput(1)); await notify('settle', fake.requests.length); await hold();
   } finally { await executor.stop('run_ended'); await ledger.close(); }
 }
-void main().catch(error => { console.error(error); process.exitCode = 1; });
+void main().catch(error => {
+  console.error(error); process.exitCode = 1;
+  // Park only at intentional kill checkpoints, never after a failed setup/replay.
+  if (process.connected) process.disconnect();
+});

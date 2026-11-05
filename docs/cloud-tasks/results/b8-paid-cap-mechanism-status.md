@@ -23,3 +23,15 @@ Real SIGKILL tests preserve D17's settlement-only boundary and independently lit
 Git staging of exactly the ten allowed files exited 128: index.lock creation was refused (Operation not permitted). The per-commit identity command was not reached. No retry, escalation, git configuration change or push. New commit SHA: none. Retained HEAD: `c837b423919bd3e5a43116c256559cb069cefe20`. The lead must commit the verified uncommitted changes.
 
 Status: BLOCKED: git index.lock refused; local FIX verified; independent FIX review and pinned Linux parity pending
+
+
+## CAP-B FIX2 — local validation complete
+
+Verified every supplied finding. The recovery double-application and gate spin/identity defect claims do not reproduce; D20 PID conservatism remains deliberate. Fixed three LOW schema/diagnostic gaps with red-before-fix tests and added real SIGKILL coverage inside the recovery append loop, exact initial-open journal assertions, late/close and driver error-exit tests. D24 records the choices; D17 and reviewed specification text are unchanged.
+
+Final paid-run suite: 170/170 pass, zero skips/cancellations. Guard-off: all 34 mutants detected, all 36 baseline/restores green (CAP-A 71/71, CAP-B 97/97). Affected usage/provider: 63/63; both final typechecks and driver self-check pass. Recovery preserves literal 2700000 settled plus 12000000 uncertain, zero reserved and closed spending across all eight interrupted-recovery cases. No production readiness or independent-review claim. Commit custody and exact commands/counts are in the assigned FIX2 report. Dependency symlink excluded; no push or external launch.
+
+
+Commit custody: staging the eight allowed files exited 128 because index.lock creation was refused (Operation not permitted). No retry/escalation or commit command reached. New SHA: none; retained HEAD bd20e7c9f08df342b08cf8d06534dcb143b12126. The lead must commit the verified changes.
+
+Status: BLOCKED: git index.lock creation refused; local FIX2 validation complete

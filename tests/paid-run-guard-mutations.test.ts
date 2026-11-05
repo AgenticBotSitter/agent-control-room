@@ -154,7 +154,26 @@ const capBMutations: { name: string; target: 'ledger' | 'executor'; changes: [st
     ['const r = await Promise.race([response, aborted]);', 'void aborted.catch(() => {}); const r = await response;'],
   ] },
   { name: 'recovery-close', target: 'ledger', expected: 'T5 D17 SIGKILL after reserve', changes: [
-    ["case 'recovered': state.spendingClosed = true;", "case 'recovered': state.spendingClosed = false;"],
+    ["state.spendingClosed = true; state.blocked ??= 'recovered';", "state.spendingClosed = false; state.blocked ??= 'recovered';"],
+  ] },
+  { name: 'recovered-tail-shape', target: 'ledger', expected: 'FIX2 recovered tornTail undefined', changes: [
+    ["      if (typeof r.tornTail !== 'boolean') fail('journal_corrupt');\n", ''],
+  ] },
+  { name: 'missing-anchor-diagnostic', target: 'ledger', expected: 'FIX2 missing recovery files head.json', changes: [
+    ["          if ((error as NodeJS.ErrnoException).code === 'ENOENT') fail('journal_corrupt');\n", ''],
+  ] },
+  { name: 'missing-journal-diagnostic', target: 'ledger', expected: 'FIX2 missing recovery files journal.jsonl', changes: [
+    ["if (anchor.seq !== 1 || anchor.type !== 'open') fail('journal_corrupt');", "if (anchor.seq !== 1 || anchor.type !== 'open') throw error;"],
+  ] },
+  { name: 'recovery-root-diagnostic', target: 'ledger', expected: 'FIX2 recovery distinguishes root custody', changes: [
+    ["if (state.opening!.ledgerRootIdentity !== rootIdentity) fail('ledger_root_mismatch');", "if (state.opening!.ledgerRootIdentity !== rootIdentity) fail('cross_run');"],
+  ] },
+  { name: 'recovery-phase', target: 'ledger', expected: 'FIX2 recovery journal release', changes: [
+    ["          if (call.phase === 'reserved') await append({ type: 'release', callId: call.callId });",
+      "          if (call.phase === 'reserved' || call.phase === 'released') await append({ type: 'release', callId: call.callId });"],
+  ] },
+  { name: 'gate-token-identity', target: 'ledger', expected: 'FIX2 mismatched symlink token identity', changes: [
+    ['entry !== `opener-${peer!.pid}-${peer!.generation}.lock`', 'false'],
   ] },
 ];
 
@@ -178,14 +197,20 @@ test('CAP-B guard-off mutations fail the independent behavioral assertions', asy
       await writeFile(copies[path]!, relocate(source, path, copies));
     }
     const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+    // A mutant must fail its named independent assertion; the baseline and every
+    // restoration still run the complete executor/restart suite. Running unrelated
+    // crash checkpoints under a broken dispatch guard only adds setup failures.
+    const selection = mutation ? ['--test-name-pattern=^' + mutation.expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')] : [];
     const command = ['scripts/run-tests-with-quarantine.mjs', '--import', 'tsx', '--test', '--test-concurrency=1',
-      '--test-timeout=600000', ...(mutation?.name === 'abort-race' ? ['--test-name-pattern=^FIX stop deadline bounds abort-ignoring'] : []), copies[original.tests]!, copies[original.restart]!];
+      '--test-timeout=600000', ...selection, copies[original.tests]!, copies[original.restart]!];
     const result = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 600000, maxBuffer: 8 * 1024 * 1024,
       env: { ...env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' } });
     assert.ifError(result.error); assert.equal(result.signal, null);
     const output = result.stdout + result.stderr;
     const count = (label: string) => Number(output.match(new RegExp(`^# ${label} (\\d+)$`, 'm'))?.[1] ?? NaN);
-    assert.ok(count('tests') >= (mutation?.name === 'abort-race' ? 1 : 50), output); assert.equal(count('skipped'), 0, output); assert.equal(count('cancelled'), 0, output);
+    if (mutation) assert.ok(count('tests') >= 1, output);
+    else assert.equal(count('tests'), 97, output);
+    assert.equal(count('skipped'), 0, output); assert.equal(count('cancelled'), 0, output);
     t.diagnostic(`COMMAND node ${command.map(x => x.startsWith(root) ? relative(process.cwd(), x) : x).join(' ')}`);
     t.diagnostic(`MUTATION ${mutation?.name ?? 'restored'} exit=${result.status} tests=${count('tests')} pass=${count('pass')} fail=${count('fail')} skipped=${count('skipped')}`);
     if (mutation) {

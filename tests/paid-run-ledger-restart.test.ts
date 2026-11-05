@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, readFile, appendFile, writeFile, chmod, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readFile, appendFile, writeFile, chmod, symlink, rename, readdir } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createPaidRunJournalLedgerV1, recoverPaidRunLeaseV1, paidRunLedgerRootIdentityV1 } from '../src/usage/v1/paid-run-ledger';
 import { createPaidRunExecutorV1 } from '../src/usage/v1/paid-run-executor';
@@ -10,6 +11,7 @@ import { paidRunAdmission, paidRunContext, paidRunFixture, paidRunInput, paidRun
 import { derivePaidRunPinV1, createPaidRunMemoryConsentStoreV1, admitPaidRunV1 } from '../src/usage/v1/paid-run-admission';
 import { canonicalJson, sha256Digest } from '../src/security/digest';
 type Checkpoint = { phase: string; requests: number; generation: string; runKey: string; pinDigest: string };
+const driver = resolve('tests/helpers/paid-run-driver.ts');
 async function crash(point: string, beforeKill?: (root: string, checkpoint: Checkpoint) => Promise<void>, existingRoot?: string) {
   await mkdir(resolve('.test-tmp'), { recursive: true });
   const root = existingRoot ?? await mkdtemp(resolve('.test-tmp/paid-run-restart-'));
@@ -18,7 +20,7 @@ async function crash(point: string, beforeKill?: (root: string, checkpoint: Chec
   assert.equal(pin.kind, 'paid'); if (pin.kind !== 'paid') throw new Error('trusted_pin');
   const expected = { runKey: sha256Digest([context.tenantId, context.loopRunId]), pinDigest: pin.pinDigest };
   const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
-  const child = fork(resolve('tests/helpers/paid-run-driver.ts'), [root, point], {
+  const child = fork(driver, [root, point], {
     execArgv: ['--import', 'tsx'], env: { ...env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   let output = ''; child.stdout?.on('data', b => { output += b; }); child.stderr?.on('data', b => { output += b; });
@@ -74,6 +76,27 @@ for (const [point, settled, uncertain, requests] of [
     try { assert.equal(reopened.totals().settled, settled); assert.equal(reopened.totals().uncertain, uncertain); }
     finally { await reopened.close(); }
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('FIX2 driver exits on recovery error without parking its IPC channel', { timeout: 10000 }, async () => {
+  await mkdir(resolve('.test-tmp'), { recursive: true });
+  const root = await mkdtemp(resolve('.test-tmp/paid-run-driver-error-'));
+  const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+  const child = fork(driver, [root, 'recovery-journal-recovered'], {
+    execArgv: ['--import', 'tsx'], env: { ...env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: '1' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  let output = ''; child.stderr?.on('data', b => { output += b; });
+  const exit = once(child, 'exit');
+  const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
+  try {
+    const [code, signal] = await exit;
+    assert.equal(signal, null, 'failed driver must exit before the cleanup kill');
+    assert.equal(code, 1); assert.match(output, /Error: ENOENT/);
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exit; }
+    await rm(root, { recursive: true, force: true });
+  }
 });
 test('T5 recovery rejects mismatched pin/run without changing journal', async () => {
   const f = await crash('dispatch');
@@ -163,6 +186,9 @@ for (const point of ['lock-window', 'journal-created']) test(`FIX ${point}: real
       assert.equal(h.totals().reserved, '0'); assert.equal(h.totals().spendingClosed, true);
       assert.deepEqual(await h.call!(), { kind: 'refused', reason: 'run_recovered_closed' });
       assert.equal('reserve' in h, false); assert.equal(f.checkpoint.requests, 0);
+      const rows = (await readFile(f.journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(rows.map(r => r.type), ['open', 'recovered']);
+      assert.equal(rows.at(-1).tornTail, true);
     } finally { await h.close(); }
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
@@ -282,4 +308,146 @@ test('FIX consent snapshots root custody and refuses a changed consume or admit 
   assert.deepEqual(admitPaidRunV1(changed, consumed.capability), { kind: 'refused', reason: 'consent_mismatch' });
   const admitted = admitPaidRunV1(context, consumed.capability);
   assert.equal(admitted.kind, 'paid'); if (admitted.kind === 'paid') assert.equal(admitted.admission.ledgerRootIdentity, context.ledgerRootIdentity);
+});
+
+for (const boundary of ['anchor', 'journal']) for (const type of ['recovered', 'release', 'settle', 'block'])
+  test(`FIX2 recovery ${boundary} ${type}: SIGKILL midway is accounting-idempotent`, async () => {
+    const initial = await crash('recovery-seed');
+    try {
+      await recoverPaidRunLeaseV1(initial.root, initial.checkpoint.runKey, initial.checkpoint.generation);
+      const interrupted = await crash(`recovery-${boundary}-${type}`, undefined, initial.root);
+      const before = (await readFile(initial.journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      const anchor = JSON.parse(await readFile(join(initial.root, initial.expected.runKey, 'head.json'), 'utf8'));
+      // Prove this checkpoint is inside the recovery append loop, not journal open.
+      assert.equal(anchor.type, type);
+      if (boundary === 'journal') assert.equal(before.at(-1).type, type);
+      else assert.equal(anchor.seq, before.at(-1).seq + 1);
+      await recoverPaidRunLeaseV1(initial.root, initial.checkpoint.runKey, interrupted.checkpoint.generation);
+      const store = createPaidRunJournalLedgerV1({ root: initial.root });
+      for (let retry = 0; retry < 2; retry++) {
+        const h = await store.reopenForSettlementV1(initial.expected)
+          .catch(error => assert.fail('interrupted recovery must finish: ' + error.message));
+        try {
+          // 6M + 6M dispatched intent remains charged; 1M + 2M unsent is
+          // released; the prior literal 2.7M completed charge is preserved.
+          assert.deepEqual(h.totals(), { settled: '2700000', uncertain: '12000000', reserved: '0', excess: '0',
+            cap: '18000000', blocked: 'recovered_uncertain', stopped: false, spendingClosed: true });
+          assert.equal('reserve' in h, false); assert.equal('dispatch' in h, false);
+          assert.deepEqual(await h.call!(), { kind: 'refused', reason: 'run_recovered_closed' });
+        } finally { await h.close(); }
+      }
+      const rows = (await readFile(initial.journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(rows.filter(r => r.type === 'release').map(r => r.callId).sort(), [paidRunInput(1).callId, paidRunInput(2).callId]);
+      assert.deepEqual(rows.filter(r => r.type === 'settle').map(r => r.callId).sort(), [paidRunInput(3).callId, paidRunInput(4).callId, paidRunInput(5).callId]);
+      assert.equal(rows.slice(rows.findIndex(r => r.type === 'recovered')).some(r => ['reserve', 'dispatch'].includes(r.type)), false);
+      assert.equal(initial.checkpoint.requests + interrupted.checkpoint.requests, 0);
+    } finally { await rm(initial.root, { recursive: true, force: true }); }
+  });
+
+for (const missing of [['head.json'], ['journal.jsonl'], ['head.json', 'journal.jsonl']])
+  test(`FIX2 missing recovery files ${missing.join('+')} refuse journal_corrupt`, async () => {
+    const f = await crash('dispatch');
+    try {
+      await recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation);
+      const dir = join(f.root, f.expected.runKey);
+      for (const name of missing) await rm(join(dir, name));
+      const names = await readdir(dir), bytes = await Promise.all(names.map(name => readFile(join(dir, name))));
+      await assert.rejects(createPaidRunJournalLedgerV1({ root: f.root }).reopenForSettlementV1(f.expected), /^Error: journal_corrupt$/);
+      assert.deepEqual(await readdir(dir), names);
+      assert.deepEqual(await Promise.all(names.map(name => readFile(join(dir, name)))), bytes);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+test('FIX2 recovery distinguishes root custody change from run mismatch', async () => {
+  const f = await crash('dispatch'), moved = f.root + '-moved';
+  try {
+    await recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation);
+    const bytes = await readFile(f.journal);
+    await rename(f.root, moved);
+    await assert.rejects(createPaidRunJournalLedgerV1({ root: moved }).reopenForSettlementV1(f.expected), /^Error: ledger_root_mismatch$/);
+    assert.deepEqual(await readFile(join(moved, f.expected.runKey, 'journal.jsonl')), bytes);
+  } finally { await rm(f.root, { recursive: true, force: true }); await rm(moved, { recursive: true, force: true }); }
+});
+
+for (const invalid of [undefined, null, 'false', 0]) test(`FIX2 recovered tornTail ${String(invalid)} is invalid`, async () => {
+  const f = await crash('settle');
+  try {
+    await recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation);
+    const store = createPaidRunJournalLedgerV1({ root: f.root });
+    const h = await store.reopenForSettlementV1(f.expected); await h.close();
+    const rows = (await readFile(f.journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(rows.at(-1).type, 'recovered');
+    if (invalid === undefined) delete rows.at(-1).tornTail;
+    else rows.at(-1).tornTail = invalid;
+    const text = rows.map(canonicalJson).join('\n') + '\n';
+    // Match the anchor deliberately to isolate semantic replay validation.
+    await writeFile(f.journal, text);
+    await writeFile(join(f.root, f.expected.runKey, 'head.json'), canonicalJson(rows.at(-1)) + '\n');
+    await assert.rejects(async () => { const unexpected = await store.reopenForSettlementV1(f.expected); await unexpected.close(); }, /^Error: journal_corrupt$/);
+    assert.equal(await readFile(f.journal, 'utf8'), text);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('FIX2 live PID in a gate token or stale lease refuses promptly without changing accounting', { timeout: 5000 }, async () => {
+  const f = await crash('dispatch');
+  try {
+    const dir = join(f.root, f.expected.runKey), bytes = await readFile(f.journal);
+    const generation = randomUUID(), token = join(dir, `opener-${process.pid}-${generation}.lock`);
+    await symlink(canonicalJson({ pid: process.pid, generation, ticket: 0 }), token);
+    await assert.rejects(recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation), /lease_held/);
+    await rm(token);
+    const leasePath = join(dir, 'lease.json'), saved = await readFile(leasePath, 'utf8');
+    // Simulate PID reuse with an unrelated live process; no age-based takeover.
+    await writeFile(leasePath, canonicalJson({ ...JSON.parse(saved), pid: process.pid }) + '\n');
+    await assert.rejects(recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation), /lease_owner_alive/);
+    assert.deepEqual(await readFile(f.journal), bytes);
+    assert.equal(JSON.parse(await readFile(leasePath, 'utf8')).pid, process.pid);
+    await writeFile(leasePath, saved);
+    await recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation);
+    const h = await createPaidRunJournalLedgerV1({ root: f.root }).reopenForSettlementV1(f.expected);
+    try { assert.equal(h.totals().uncertain, '6000000'); assert.equal(h.totals().spendingClosed, true); }
+    finally { await h.close(); }
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('FIX2 mismatched symlink token identity refuses promptly without following its target', { timeout: 5000 }, async () => {
+  const f = await crash('dispatch');
+  try {
+    const dir = join(f.root, f.expected.runKey), bytes = await readFile(f.journal), generation = randomUUID();
+    const token = join(dir, `opener-${process.pid}-${generation}.lock`);
+    await symlink(canonicalJson({ pid: process.pid, generation: randomUUID(), ticket: 1 }), token);
+    await assert.rejects(recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation), /lease_owner_invalid/);
+    assert.deepEqual(await readFile(f.journal), bytes);
+    await rm(token);
+    // The target is raw metadata, never a followed file (including a real journal path).
+    await symlink(f.journal, token);
+    await assert.rejects(recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation), /lease_owner_invalid/);
+    assert.deepEqual(await readFile(f.journal), bytes);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+for (const unsafe of ['mode', 'symlink']) test(`FIX2 existing anchor ${unsafe} refuses before replacement`, async () => {
+  const f = await crash('settle');
+  try {
+    await recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation);
+    const anchorPath = join(f.root, f.expected.runKey, 'head.json'), anchor = await readFile(anchorPath), journal = await readFile(f.journal);
+    if (unsafe === 'mode') await chmod(anchorPath, 0o644);
+    else { await rm(anchorPath); await symlink(f.journal, anchorPath); }
+    const context = paidRunContext({ ledgerRootIdentity: await paidRunLedgerRootIdentityV1(f.root) });
+    await assert.rejects(createPaidRunJournalLedgerV1({ root: f.root }).open(await paidRunAdmission(context)), /cross_run/);
+    await assert.rejects(createPaidRunJournalLedgerV1({ root: f.root }).reopenForSettlementV1(f.expected), unsafe === 'mode' ? /journal_unsafe/ : /ELOOP/);
+    assert.deepEqual(await readFile(f.journal), journal);
+    if (unsafe === 'mode') assert.deepEqual(await readFile(anchorPath), anchor);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('FIX2 torn multiline interior refuses without losing a dispatched charge', async () => {
+  const f = await crash('dispatch');
+  try {
+    await recoverPaidRunLeaseV1(f.root, f.checkpoint.runKey, f.checkpoint.generation);
+    await appendFile(f.journal, '{"seq":\npartial\n');
+    const bytes = await readFile(f.journal);
+    await assert.rejects(createPaidRunJournalLedgerV1({ root: f.root }).reopenForSettlementV1(f.expected), /journal_corrupt/);
+    assert.deepEqual(await readFile(f.journal), bytes);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
 });

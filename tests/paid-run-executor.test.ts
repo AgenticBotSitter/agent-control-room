@@ -168,6 +168,27 @@ test('T13 late response is information only after stop uncertainty', async () =>
     assert.equal((await records(f.journal)).some(r => r.type === 'late'), true);
   } finally { hold.release(); await f.close(); }
 });
+test('FIX2 late response after ledger close is best-effort and cannot change charges', async () => {
+  const hold = paidRunBarrier(), reached = paidRunBarrier();
+  const f = await paidRunFixture({ scripts: [{ hold: hold.promise, ignoreAbort: true }], onRequest: () => reached.release() });
+  const job = f.executor.call(paidRunInput(1));
+  try {
+    await reached.promise; await f.executor.stop('owner_stop'); await job;
+    const pending = f.ledger.recordLate(paidRunInput(1).callId, { servedModelId: 'queued-before-close' });
+    // close drains work already accepted into the queue.
+    await Promise.all([pending, f.ledger.close()]);
+    assert.equal((await records(f.journal)).at(-1).servedModelId, 'queued-before-close');
+    const bytes = await readFile(f.journal);
+    await assert.rejects(f.ledger.recordLate(paidRunInput(1).callId, { servedModelId: 'after-close' }), /ledger_closed/);
+    hold.release(); await new Promise<void>(r => setImmediate(r));
+    assert.equal(f.fake.active(), 0);
+    assert.deepEqual(await readFile(f.journal), bytes);
+    assert.equal(f.executor.snapshot().uncertain, '6000000'); assert.equal(f.executor.snapshot().settled, '0');
+    const recovered = await f.store.reopenForSettlementV1(f.admission);
+    try { assert.equal(recovered.totals().uncertain, '6000000'); assert.equal(recovered.totals().spendingClosed, true); }
+    finally { await recovered.close(); }
+  } finally { hold.release(); await job; await f.close(); }
+});
 test('T14 final stream usage settles 2700000', async () => {
   const f = await paidRunFixture({ scripts: [{ failure: 'stream' }] });
   try { await f.executor.call({ ...paidRunInput(1), stream: true }); assert.equal(f.executor.snapshot().settled, '2700000'); }

@@ -380,3 +380,20 @@ Final CAP-B guard counts:
 The abort-race mutation is deliberately restricted to the bounded deadline regression (the second TAP test is the empty filtered restart-file wrapper); each normal/restored run executes all 74 behavior tests. No behavior is skipped or quarantined. Full product-shell, bundler and Linux parity were not rerun in this focused FIX; no new BUILD-READY claim.
 
 Final FIX commit custody: Git staging of exactly the ten allowed files exited 128: index.lock creation was refused (Operation not permitted). The per-commit identity command was not reached. No retry, escalation, git configuration change or push. New commit SHA: none. Retained HEAD: `c837b423919bd3e5a43116c256559cb069cefe20`. The lead must commit the verified uncommitted changes.
+
+
+## CAP-B FIX2 — verified recovery review findings
+
+The double-application claim does not reproduce: eight real child SIGKILL cases pass against the pre-FIX2 ledger, interrupting anchor publication and journal fsync for recovered/release/settle/block. Two unsent reservations are released exactly once, two dispatch intents retain 12000000 uncertain, one completed call retains 2700000 settled, reserved is zero and spending stays closed across retries. Gate/PID/token, unsafe-anchor, multiline-tail and late-after-close claims also retain fail-closed behavior. D24 records findings and choices without changing D17 or reviewed specification text.
+
+Three confirmed LOW diagnostic/schema gaps were red before fixes: missing recovery files surfaced ENOENT, changed root custody surfaced cross_run, and malformed recovered.tornTail replayed. Recovery now refuses missing anchor/non-initial journal as journal_corrupt, reports ledger_root_mismatch and requires boolean tornTail. Initial-open anchor repair remains valid. Coverage also asserts exact initial-open journal contents and handles driver error-exit IPC cleanup. Initial red fixture/harness mistakes and all interrupted/failed command results are retained in the assigned FIX2 report.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=1800000 tests/paid-run-*.test.ts` | 0 | 170/170 pass; 0 fail/skipped/cancelled; 546.57 s |
+| `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/usage-cost.test.ts tests/usage-price-table-loader.test.ts tests/usage-cost-authorization.test.ts tests/loop-provider-contract.test.ts tests/loop-providers.test.ts` | 0 | 63/63 pass; 0 fail/skipped/cancelled |
+| `node node_modules/typescript/bin/tsc --project tsconfig.vps.json --incremental false` | 0 | Typecheck pass |
+| `node node_modules/typescript/bin/tsc --noEmit --incremental false` | 0 | Typecheck pass |
+| `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx tests/helpers/paid-run-driver.ts --self-check` | 0 | 2 assertions, 0 sends |
+
+Guard totals: 34 detected mutants (14 CAP-A, 20 CAP-B), 36 green baseline/restores (15 at 71/71, 21 at 97/97), zero skips/cancellations. CAP-B mutants select their named independent behavioral assertion; every restoration runs all 97 executor/restart tests. All 20 mutation definitions have unique anchors (22 replacements). The assigned report contains every expanded command and child count. node_modules remains an excluded symlink. No network, downloads, real provider/model, live services, production DB, identity configuration changes or push. Commit custody is recorded in the assigned report.
