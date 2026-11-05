@@ -686,9 +686,9 @@ async function realS4Routes(t:TestContext, snapshot:import('../src/web/v1/improv
  seen.length=0;
  return {settingsText,routes:adapter.providerRoutes!,seen};
 }
-async function admissionFixture(t:TestContext,options:{billing?:'subscription'|'token';ready?:boolean;capability?:boolean;additional?:{providerId:string;model:string}[];real?:boolean;presence?:{availability:(id:string)=>Promise<'available'|'unavailable'>}}={}){
+async function admissionFixture(t:TestContext,options:{billing?:'subscription'|'token';ready?:boolean;capability?:boolean;additional?:{providerId:string;model:string}[];real?:boolean;storedSettings?:Record<string,unknown>;presence?:{availability:(id:string)=>Promise<'available'|'unavailable'>}}={}){
  const f=await fixture(t,options.presence),integrityKey=new Uint8Array(32).fill(64),calls:LoopBridgeBindingV1[]=[],resolutions:string[]=[];
- let settingsText=JSON.stringify({providerRoute:S4_ROUTE,lineup:{build:{model:'synthetic/model',effort:'high'},review:[{model:'synthetic/model',effort:'low'}]}});
+ let settingsText=JSON.stringify({...options.storedSettings,providerRoute:S4_ROUTE,lineup:{build:{model:'synthetic/model',effort:'high'},review:[{model:'synthetic/model',effort:'low'}]}});
  for(const [i,id] of ['provider-one','provider-two','provider-extra'].entries())await f.service.upsert(f.identity,id,{expectedVersion:i,provider:provider({provider_id:id,billing_kind:id==='provider-two'?(options.billing??'subscription'):'subscription',models:[{...provider().models[0]!,served_model_id:`served/${id}`}]})},key());
  let real:Awaited<ReturnType<typeof realS4Routes>>|undefined;
  if(options.real){
@@ -743,6 +743,24 @@ test('S4 subscription distinct free reviewers start without token prices or paid
  const f=await admissionFixture(t,{additional:[{providerId:'provider-extra',model:'synthetic/model'}]});
  assert.equal((await f.start()).status,202);assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0]!,'paidPin'),false);
  assert.equal((await f.commands()).length,2);assert.deepEqual(f.resolutions,[f.settingsText]);
+});
+test('S4 stored paid keys never substitute for per-run Start consent', async t => {
+  for (const billing of ['subscription', 'token'] as const) await t.test(billing, async t => {
+    const f = await admissionFixture(t, { billing, ready: true, storedSettings: {
+      paid: { optIn: true, capNanoUsd: '100' }, nested: { paidPin: null }, array: [{ paid: false }],
+    } });
+    await f.price();
+    assert.equal((await f.start()).status, billing === 'token' ? 409 : 202,
+      'stored keys neither brick subscription Start nor authorize token Start');
+    if (billing === 'token') {
+      assert.deepEqual(await f.commands(), []);
+      assert.deepEqual(f.calls, []);
+    } else {
+      assert.equal(f.calls.length, 1);
+      assert.equal(Object.hasOwn(f.calls[0]!, 'paidPin'), false);
+      assert.equal(Object.hasOwn(f.calls[0]!.body, 'paid'), false);
+    }
+  });
 });
 test('S4 token consent price and readiness guards leave no claims',async t=>{
  for(const kind of ['no-consent','subscription-paid','unknown','stale','non-usd','disabled'] as const)await t.test(kind,async t=>{

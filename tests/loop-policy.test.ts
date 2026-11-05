@@ -121,6 +121,45 @@ test('S4 real policy PUT and intake refuse consent without any writes or checker
  assert.deepEqual(await rows(),before);assert.equal(f.checks.length,0);assert.equal(recorded.signedText(),undefined);
 });
 
+test('S4 stored reserved keys remain readable composable and replaceable through both PUTs', async t => {
+  const f = await policyFixture(t);
+  const historical = '{"paid":false,"nested":{"paidPin":null},"array":[{"paid":true}]}';
+  for (const layer of ['project', 'selection'])
+    assert.equal((await f.put(layer, { expectedVersion: 0, settings: '{}' })).status, 201);
+  for (const layer of ['project', 'selection']) {
+    await f.db.query(`UPDATE control_loop_policy_layers SET settings_text=$1,settings_sha256=$2
+      WHERE layer=$3`, [historical, sha(historical), layer]);
+  }
+  const view = await f.handler(request(f.path));
+  assert.equal(view.status, 200, 'pre-S4 stored keys must not brick the policy view');
+  const layers = await view.json();
+  assert.equal(layers.project.settingsText, historical);
+  assert.equal(layers.selection.settingsText, historical);
+  for (const layer of ['project', 'selection'])
+    assert.equal((await f.put(layer, { expectedVersion: 1, settings: historical })).status, 400,
+      'retained keys remain forbidden in a newly supplied replacement');
+  assert.equal(await f.count(), 2, 'refused replacements append no event');
+  const snapshot = await f.client.transaction(tx => f.service.snapshot(tx, f.project.projectId));
+  assert.equal(JSON.parse(snapshot.text).paid, false);
+  assert.deepEqual(JSON.parse(snapshot.text).nested, { paidPin: null });
+  const { ImproveControlRoomLoopServiceV1 } = await import('../src/web/v1/improve-control-room-loop-service');
+  const recorded = recordedIntakeAdapter(f.tools);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, scope, {
+    integrityKey: new Uint8Array(32).fill(65), adapter: recorded.adapter, policy: f.service,
+  }, () => now);
+  const intake = await bridge.mutate(f.identity, f.project.projectId, null, 'intake', { description: 'Historical policy recovery' }, key());
+  assert.equal(intake.state, 'accepted');
+  assert.equal(recorded.signedText(), snapshot.text, 'historical settings retain their exact composed copy');
+  for (const layer of ['project', 'selection']) {
+    assert.equal((await f.put(layer, { expectedVersion: 1, settings: '{"replaced":true}' })).status, 201,
+      'normal PUT replaces a historical layer even while another retained layer has reserved keys');
+  }
+  assert.equal(await f.count(), 4);
+  const repaired = await f.service.view(f.identity, f.project.projectId);
+  assert.equal(repaired.project.settingsText, '{"replaced":true}');
+  assert.equal(repaired.selection.settingsText, '{"replaced":true}');
+});
+
 test("P71 Linux CI excludes exactly three macOS host gates without skip-as-pass", async t => {
   const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
   const name = 'test:improve-control-room:linux-without-macos-host-gates';

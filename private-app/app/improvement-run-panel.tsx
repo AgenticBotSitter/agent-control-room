@@ -114,11 +114,16 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       if (!mounted.current) return;
       setNotices(value => ({ ...value, [operation]: receipt.state === "refused" ? "The command was refused. Check status."
         : operation === "stop" ? "Stop requested" : "Start requested; check saved progress." }));
+      if (operation === "start" && receipt.state === "refused") delete actions.current.start;
       setRetry(value => ({ ...value, [operation]: receipt.state === "uncertain" }));
     } catch (error) {
       if (!mounted.current) return;
       if (clearsLoopAuthority(error)) { clearProtected(); read.clear(); writeEpoch.current += 1; setEpoch(writeEpoch.current); }
-      else {
+      else if (operation === "start" && error instanceof LoopReadError && [400, 409, 422].includes(error.status)) {
+        delete actions.current.start;
+        setRetry(value => ({ ...value, start: false }));
+        setNotices(value => ({ ...value, start: "The command was refused. Check status." }));
+      } else {
         setNotices(value => ({ ...value, [operation]: operation === "start"
           ? "Start could not be confirmed; check status" : "Stop could not be confirmed; check status" }));
         setRetry(value => ({ ...value, [operation]: true }));

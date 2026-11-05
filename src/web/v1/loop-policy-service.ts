@@ -4,7 +4,7 @@ import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } fr
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
-import { composeLoopSettingsV1, parseLoopSettingsV1, normalizeLoopLockedPathsV1, validateLoopLockedPathsV1, differingLoopLockedPathsV1 } from "./loop-policy-compose";
+import { composeLoopSettingsV1, parseLoopSettingsV1, parseSuppliedLoopSettingsV1, normalizeLoopLockedPathsV1, validateLoopLockedPathsV1, differingLoopLockedPathsV1 } from "./loop-policy-compose";
 
 export type LoopPolicyCheckV1 = { eligible: boolean; reasons: { code: string; explanation: string }[] };
 export class LoopPolicyRefusedV1 extends Error {
@@ -65,8 +65,9 @@ export class LoopPolicyServiceV1 {
   #compose(rows: Partial<Record<Layer, LayerRow>>, runEdits?: string, replacement?: { layer: Layer; settings: string }): LoopPolicySnapshotV1 {
     const defaultsText = this.tools.settingsText;
     const composed = composeLoopSettingsV1({ defaultsText,
-      project: replacement?.layer === "project" ? replacement.settings : rows.project?.settings_text,
-      selection: replacement?.layer === "selection" ? replacement.settings : rows.selection?.settings_text, runEdits });
+      storedLayers: { project: rows.project?.settings_text, selection: rows.selection?.settings_text },
+      project: replacement?.layer === "project" ? replacement.settings : undefined,
+      selection: replacement?.layer === "selection" ? replacement.settings : undefined, runEdits });
     return { ...composed, defaultsSha256: createHash("sha256").update(defaultsText).digest("hex"),
       layerVersions: { project: Number(rows.project?.version ?? 0), selection: Number(rows.selection?.version ?? 0) } };
   }
@@ -110,7 +111,7 @@ export class LoopPolicyServiceV1 {
     if (!id.test(projectId) || !["project", "selection"].includes(layerInput) || !keySyntax.test(key) || !parsed.success)
       throw new WebAccessError("invalid_request");
     const layer = layerInput as Layer, body = parsed.data;
-    parseLoopSettingsV1(body.settings, true);
+    parseSuppliedLoopSettingsV1(body.settings, true);
     const lockedPaths = 'lockedPaths' in body ? normalizeLoopLockedPathsV1(body.lockedPaths) : [];
     if ('lockedPaths' in body) body.lockedPaths = lockedPaths;
     const waiverId = 'waiverId' in body ? body.waiverId : undefined;
@@ -166,7 +167,7 @@ export class LoopPolicyServiceV1 {
       WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`, [this.scope.tenantId,projectId,waiverId])).rows[0];
   }
   async #locks(tx: DatabaseSession, projectId: string, rows: Partial<Record<Layer, LayerRow>>, text: string, waiverId?: string) {
-    const base = composeLoopSettingsV1({defaultsText:this.tools.settingsText,project:rows.project?.settings_text}).text;
+    const base = composeLoopSettingsV1({defaultsText:this.tools.settingsText,storedLayers:{project:rows.project?.settings_text}}).text;
     const violations = differingLoopLockedPathsV1(base,text,rows.project?.locked_paths ?? []);
     if (!waiverId) { if (violations.length) throw policyLocked(violations[0]); return undefined; }
     const waiver = await this.#waiver(tx,projectId,waiverId);

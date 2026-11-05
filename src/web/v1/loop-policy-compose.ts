@@ -18,7 +18,7 @@ export function parseLoopSettingsV1(text: string, layer = false): ObjectValue {
       if (typeof child === "number" && !Number.isFinite(child)) throw invalid();
       if (Array.isArray(child)) { for (const item of child) visit(item); }
       else if (object(child)) for (const key of Object.keys(child)) {
-        if (forbidden.has(key) || key === "paid" || key === "paidPin") throw invalid();
+        if (forbidden.has(key)) throw invalid();
         visit(child[key]);
       }
     };
@@ -26,6 +26,19 @@ export function parseLoopSettingsV1(text: string, layer = false): ObjectValue {
     if (Object.hasOwn(value, "providerRoute") && !loopProviderRouteSchemaV1.safeParse(value.providerRoute).success) throw invalid();
     return value;
   } catch { throw invalid(); }
+}
+/** Reserved consent names are refused only on newly supplied policy values. */
+export function parseSuppliedLoopSettingsV1(text: string, layer = false): ObjectValue {
+  const value = parseLoopSettingsV1(text, layer);
+  const visit = (child: unknown) => {
+    if (Array.isArray(child)) { for (const item of child) visit(item); }
+    else if (object(child)) for (const key of Object.keys(child)) {
+      if (key === "paid" || key === "paidPin") throw invalid();
+      visit(child[key]);
+    }
+  };
+  visit(value);
+  return value;
 }
 function merge(base: unknown, edit: unknown): unknown {
   if (!object(edit)) return edit;
@@ -40,15 +53,20 @@ function encode(value: unknown): string {
   if (object(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${encode(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
 }
-export function composeLoopSettingsV1(input: { defaultsText: string; project?: string; selection?: string; runEdits?: string }) {
-  let value: unknown = parseLoopSettingsV1(input.defaultsText);
+export function composeLoopSettingsV1(input: { defaultsText: string; project?: string; selection?: string; runEdits?: string;
+  /** Previously persisted layers retain their bytes and never supply per-run authority. */
+  storedLayers?: { project?: string; selection?: string } }) {
+  let value: unknown = parseSuppliedLoopSettingsV1(input.defaultsText);
   for (const [key, layer] of [["project", true], ["selection", true], ["runEdits", false]] as const) {
-    const text = input[key];
-    if (text !== undefined) value = merge(value, parseLoopSettingsV1(text, layer));
+    const supplied = input[key];
+    const stored = key === "runEdits" ? undefined : input.storedLayers?.[key];
+    if (supplied !== undefined) value = merge(value, parseSuppliedLoopSettingsV1(supplied, layer));
+    else if (stored !== undefined) value = merge(value, parseLoopSettingsV1(stored, layer));
   }
   // Validate the resulting object as well as every independently supplied route.
   parseLoopSettingsV1(encode(value));
   const text = input.project === undefined && input.selection === undefined && input.runEdits === undefined
+    && input.storedLayers?.project === undefined && input.storedLayers?.selection === undefined
     ? input.defaultsText : `${encode(value)}\n`;
   if (Buffer.byteLength(text, "utf8") > 65536) throw invalid();
   return { text, sha256: createHash("sha256").update(text).digest("hex") };

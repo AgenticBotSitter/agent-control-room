@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { createRoot } from "react-dom/client";
 import { PrivateImproveControlRoomWorkspace } from "../private-app/app/improve-control-room-workspace";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
@@ -135,6 +135,74 @@ test("B2a lost Start reply replays frozen action after revision increases and in
     assert.equal(wire.posts.length, 2); assert.deepEqual(wire.posts[1], wire.posts[0], "revision increase preserves exact Start body/key");
     assert.equal(f.calls.filter(x => x === "start").length, 1);
     await act(async () => m.button("Stop this run").click()); await settle(); assert.match(m.text(), /Stopped/);
+  } finally { await m.close(); await f.close(); }
+});
+
+async function enterPaidCap(m: Awaited<ReturnType<typeof mount>>, value: string) {
+  const input = m.dom.window.document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!;
+  // Match the established JSDOM controlled-input helper in the attention tests.
+  const props = (input as unknown as Record<string, { onChange: (event: unknown) => void }>)[
+    Object.keys(input).find(key => key.startsWith('__reactProps'))!];
+  await act(async () => props!.onChange({ target: { value } }));
+}
+
+for (const status of [400, 409, 422, 'receipt'] as const) test(`S4 definite Start refusal ${status} releases frozen paid consent`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const attempts: { body: string; key: string }[] = [];
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (String(path).endsWith('/start')) {
+      attempts.push({ body: String(options?.body), key: new Headers(options?.headers).get('idempotency-key')! });
+      return status === 'receipt' ? Response.json({ schemaVersion: 1,
+        requestId: decodeURIComponent(String(path).split('/').at(-2)!), localVersion: 1,
+        commandId: 'loop-command:synthetic-refusal', state: 'refused', replayed: false,
+        engineRevision: 4, error: 'REFUSED',
+      }) : Response.json({ error: 'synthetic_refusal' }, { status });
+    }
+    return wire.fetcher(path, options);
+  }) as typeof fetch);
+  try {
+    await settle();
+    const checkbox = m.dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => checkbox.click());
+    await enterPaidCap(m, '100');
+    assert.equal(m.button('Start confirmed work').disabled, false, 'explicit opt-in and cap enable Start');
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.deepEqual(JSON.parse(attempts[0]!.body).paid, { optIn: true, capNanoUsd: '100' });
+    assert.equal(Boolean(m.button('Retry this exact Start')), false, 'a definite refusal is not an uncertain retry');
+    assert.equal(checkbox.closest('fieldset')!.disabled, false, 'refusal lets the owner change consent');
+    await enterPaidCap(m, '200');
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.deepEqual(JSON.parse(attempts[1]!.body).paid, { optIn: true, capNanoUsd: '200' });
+    assert.notEqual(attempts[1]!.key, attempts[0]!.key);
+    await act(async () => checkbox.click());
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.equal(Object.hasOwn(JSON.parse(attempts[2]!.body), 'paid'), false, 'unchecking revokes consent for the next command');
+    assert.notEqual(attempts[2]!.key, attempts[1]!.key);
+    assert.equal(f.calls.filter(x => x === 'start').length, 0);
+  } finally { await m.close(); await f.close(); }
+});
+
+test('S4 uncertain Start keeps the exact paid body cap and key', async () => {
+  const f = await fixture(), wire = transport(f);
+  const attempts: { body: string; key: string }[] = [];
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (String(path).endsWith('/start')) {
+      attempts.push({ body: String(options?.body), key: new Headers(options?.headers).get('idempotency-key')! });
+      throw new TypeError('SYNTHETIC uncertain command');
+    }
+    return wire.fetcher(path, options);
+  }) as typeof fetch);
+  try {
+    await settle();
+    const checkbox = m.dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => checkbox.click()); await enterPaidCap(m, '100');
+    assert.equal(m.button('Start confirmed work').disabled, false);
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.equal(checkbox.closest('fieldset')!.disabled, true);
+    await act(async () => m.button('Retry this exact Start').click()); await settle();
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[1], attempts[0]);
+    assert.deepEqual(JSON.parse(attempts[0]!.body).paid, { optIn: true, capNanoUsd: '100' });
   } finally { await m.close(); await f.close(); }
 });
 
