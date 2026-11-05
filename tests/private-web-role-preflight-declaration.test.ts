@@ -452,8 +452,9 @@ test("every task-coordinator grant is exactly declared by its startup preflight"
 test("the web DELETE declaration is read from the preflight, not restated here", () => {
   // A restatement of the DELETE set would pass while describing a value the
   // preflight no longer holds, so the read is asserted against the source it
-  // parses, and the single grant it returns is the one the role files give.
-  assert.deepEqual(declaredDeletes(), ["owner_web_push_subscriptions"]);
+  // parses, including the B7 provider catalog deletion grants in the role files.
+  assert.deepEqual(declaredDeletes(), ["owner_web_push_subscriptions", "control_loop_providers",
+    "control_loop_provider_models", "control_loop_provider_prices", "control_loop_provider_fetches"]);
 });
 
 test("the fleet read tables come only from the fleet role file, and the preflight gates them on that role", async () => {

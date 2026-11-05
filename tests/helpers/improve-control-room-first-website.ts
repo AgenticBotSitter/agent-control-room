@@ -1298,19 +1298,39 @@ export async function syntheticFirstWebsiteFixtureV1(options: { dataDir?: string
   const { taskFixture, taskFixtureOnDisk } = await import("./web-task");
   const { now, origin, trust } = await import("./web-foundation");
   const { createPrivateWebProcess } = await import("../../src/web/v1/private-process");
-  const f = options.dataDir ? await taskFixtureOnDisk(options.dataDir) : await s4TaskFixture();
+  const f = options.dataDir ? await taskFixtureOnDisk(options.dataDir) : await taskFixture();
+  // The composed HTTP host enables provider validation through the B6 roster
+  // capability. Seed and export this fixture's one synthetic model through the
+  // real service, so browser requests exercise the same composition as Start.
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { LoopRosterServiceV1 } = await import("../../src/web/v1/loop-roster-service");
+  const { renderLoopRosterV1 } = await import("../../src/web/v1/loop-roster-render");
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const rosterRoot = await mkdtemp(resolve(".test-tmp/b5-roster-"));
+  const rosterText = renderLoopRosterV1([{ name:"fixture-model", launcher:"codex", provider:"fixture", family:"fixture",
+    class:"frontier", roles:"build", efforts:"high", default_effort:"high", cost:"sub", on:"on", note:"", nick:"", max_build_grade:"" }]);
+  const roster = { rosterRoot, toolsSeed:join(rosterRoot,"models.tsv"), check:async(file:string)=>{
+    if (await readFile(file,"utf8") !== rosterText) throw new Error("SYNTHETIC unexpected roster");
+    return { exitCode:0, lines:[] };
+  } };
+  await writeFile(roster.toolsSeed, rosterText, { mode:0o600 });
+  try {
+    const result = await new LoopRosterServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},roster,()=>now).start();
+    if (!result.seeded || !result.exported) throw new Error("SYNTHETIC roster export unavailable");
+  } catch (error) { await f.db.close(); await rm(rosterRoot,{recursive:true,force:true}); throw error; }
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };
   const e = await syntheticFirstWebsiteEngineV1({ client: f.client, scope, projectId: f.project.projectId, clock: () => now, heads: options.heads });
   const open = () => ({ bridge: e.openBridge(), app: createPrivateWebProcess({ origin, ...trust, ...scope, loadKeys: async () => trust.keys, clock: () => now,
-    database: { client: f.client, close: async () => {} }, loopBridge: { integrityKey: e.KEY, adapter: e.adapter, loopCandidates: e.config } }) });
+    database: { client: f.client, close: async () => {} }, loopBridge: { integrityKey: e.KEY, adapter: { ...e.adapter, roster }, loopCandidates: e.config } }) });
   let service = open(), restarts = 0;
   return { ...f, ...e, get bridge() { return service.bridge; }, get app() { return service.app; },
     handle: (r: Request) => service.app.handle(r, () => new Response("unused", { status: 404 })), restarts: () => restarts,
     /** Restart only this owned service host; the database and saved engine state remain. */
     restart: async () => { await service.app.close(); await service.bridge.close(); service = open(); restarts++; },
-    close: async () => { await service.app.close(); await service.bridge.close(); await f.db.close(); } };
+    close: async () => { try { await service.app.close(); await service.bridge.close(); await f.db.close(); }
+      finally { await rm(rosterRoot,{recursive:true,force:true}); } } };
 }
 
 /** Re-hashes the private assembly module immediately before import and requires the

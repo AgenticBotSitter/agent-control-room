@@ -561,11 +561,11 @@ test('B3a Stop uses its verified result without a status preflight',async t=>{
 
 // Report-only intake has its own owned advancement, before Confirm and Start.
 test('B5 completed intake advances once to the desk Confirm gate across service restart', async t => {
-  const f=await taskFixture();t.after(()=>f.db.close());
+  const f=await s4TaskFixture();t.after(()=>f.db.close());
   const e=await syntheticRecoveryEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
   await seedRecoveryRun({...f,db:f.client,scope},e,projectId,()=>now);
   const originalBindings:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1[]=[];
-  const owner=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:{...e.adapter,intakeDriver:{enabled:()=>false,inspect:async()=>{throw Error('not used');},advance:async()=>{throw Error('not used');}},intake:async(id,b,text,fence)=>{originalBindings.push(b);return e.adapter.intake(id,b,text,fence);}}},()=>now);
+  const owner=new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>now),integrityKey:recoveryKey,adapter:{...e.adapter,intakeDriver:{enabled:()=>false,inspect:async()=>{throw Error('not used');},advance:async()=>{throw Error('not used');}},intake:async(id,b,text,fence)=>{originalBindings.push(b);return e.adapter.intake(id,b,text,fence);}}},()=>now);
   const intake=await owner.mutate(f.identity,projectId,null,'intake',{description:'SYNTHETIC report-only intake'},'b5-completed-intake-0001');
   const local=await owner.status(f.identity,projectId,intake.requestId),run=local.request.runLink!.loopRunId;
   const claim=(await f.client.query<{command_id:string;binding:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1}>(`SELECT command_id,binding FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='claim'`,[intake.commandId])).rows[0]!;
@@ -579,7 +579,7 @@ test('B5 completed intake advances once to the desk Confirm gate across service 
       await writeFile(receiptFile,JSON.stringify(receipt));await e.edit(run,{revision:receipt.revision});return{kind:'advanced',receipt,observation:await capability.inspect(run)};}};
   const target={projectId,requestId:intake.requestId,ownerIdentityId:'identity:web'};
   const reopen=()=>{const adapter=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,intakeDriver:capability}});t.after(()=>adapter.close());
-    return new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:{...adapter,status:async id=>({...await adapter.status(id),decisions:{gate:await savedReceipt()?{kind:'confirm'}:null,observedAt:new Date(now).toISOString()}})}},()=>now);};
+    return new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>now),integrityKey:recoveryKey,adapter:{...adapter,status:async id=>({...await adapter.status(id),decisions:{gate:await savedReceipt()?{kind:'confirm'}:null,observedAt:new Date(now).toISOString()}})}},()=>now);};
   let bridge=reopen();
   await bridge.status(f.identity,projectId,intake.requestId);await bridge.viewDesk(f.identity,projectId);assert.equal(advances,0,'GETs remain observational');
   assert.ok((await bridge.recoveryPort().scan(null,8)).targets.some(v=>v.requestId===intake.requestId),'accepted linked intake is scanned before Start');
