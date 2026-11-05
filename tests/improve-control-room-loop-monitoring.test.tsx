@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createLoopSelectionSourceFilesV1 } from '../src/web/v1/loop-selection-snapshot';
 import test from 'node:test';
 import { createPrivateTaskBootstrap } from '../src/web/v1/private-task-startup';
 import { taskStartupFixture } from './helpers/task-startup';
@@ -458,4 +459,30 @@ if(ordinary)test('B3b reviewed A2 monitoring contract',{
     assert.equal(proof.serviceRestarts,2);assert.equal(proof.staleRefusals,0);
     assert.equal(proof.dispatchesThroughRefreshed,1);assert.equal(proof.overdueFacts,1);assert.equal(proof.countersChanged,false);
   }
+});
+
+test('T-SNAPSHOT monitor source fence preserves availability and schedule while busy',async t=>{
+  const f=await fixture(t);await f.tick();f.advance(3000000);
+  const root=join(f.root,'selection-sources');await mkdir(root,{mode:0o700});
+  await mkdir(join(root,'fence'),{mode:0o700});
+  await writeFile(join(root,'fence/owner.json'),JSON.stringify({schemaVersion:1,nonce:'a'.repeat(32)}),{mode:0o600});
+  const before=await readFile(f.file),schedule=await readFile(f.file+'.schedule.json');
+  const selectionSources=createLoopSelectionSourceFilesV1({availabilityFile:f.file,rosterFile:join(f.root,'unused-roster.tsv'),readAvailability:()=>f.monitor.readAvailability()});
+  selectionSources.initialize();f.available(false);
+  const m=createImproveControlRoomLoopMonitorV1({...f.configuration,selectionSources} as Parameters<typeof createImproveControlRoomLoopMonitorV1>[0]);
+  t.after(()=>m.close());await f.tick(m);
+  assert.deepEqual(await readFile(f.file),before,'busy source fence must prevent health publication');
+  assert.deepEqual(await readFile(f.file+'.schedule.json'),schedule,'busy source fence must prevent schedule publication');
+  await rm(join(root,'fence'),{recursive:true});
+  await f.tick(m);assert.notDeepEqual(await readFile(f.file),before,'next existing attempt publishes after fence release');
+  assert.equal(JSON.parse(await readFile(f.file,'utf8')).entries[0].available,false);
+});
+
+test('T-SNAPSHOT monitor invalidates current before health publication',async t=>{
+  const f=await fixture(t);
+  const selectionSources=createLoopSelectionSourceFilesV1({availabilityFile:f.file,rosterFile:join(f.root,'unused-roster.tsv'),readAvailability:()=>f.monitor.readAvailability()});
+  selectionSources.initialize();await writeFile(join(selectionSources.root,'current.json'),'SYNTHETIC previous snapshot',{mode:0o600});
+  const m=createImproveControlRoomLoopMonitorV1({...f.configuration,selectionSources});t.after(()=>m.close());
+  await f.tick(m);assert.equal(existsSync(join(selectionSources.root,'current.json')),false,'publication must invalidate old current');
+  assert.equal(existsSync(join(selectionSources.root,'dirty.json')),true);
 });

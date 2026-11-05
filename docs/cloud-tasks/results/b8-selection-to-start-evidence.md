@@ -119,4 +119,22 @@ Final documentary checks: `git diff --check` exit 0. Python document audit exit 
 
 Commit attempt: `git add -- docs/cloud-tasks/results/b8-selection-to-start-decisions.md docs/cloud-tasks/results/b8-selection-to-start-evidence.md docs/cloud-tasks/results/b8-selection-to-start-status.md` failed with `RESULT git_add exit=128`: index.lock creation was refused (Operation not permitted). Per the lead's explicit fallback, leave these documents uncommitted for the lead; no escalation/retry or commit command after failed staging. Product HEAD remains `7105bd85159e3273cb692135ececa84f0ab379cb`; new commit SHAs: none; no push.
 
-Status: BLOCKED: U81-B requires released T-TOOLS/T-SNAPSHOT and physical reader allowed-file amendment
+## T-SNAPSHOT candidate evidence
+
+Base product: `37efe4975ce588f42806c17be65cbadfbfc5189e`. Read-only T-TOOLS candidate: `dfb58d206bce494fbfcfaa8b370548926433ba84`.
+
+Red-first existing-entry tests failed on the base: monitor published while the source fence was held; roster seed ignored source-busy before its first write. Tests 2, passed 0, failed 2, skipped 0, exit 1. Both pass after implementation. Additional tests exercise the actual DB roster reader and source files, outer COMMIT custody, rollback/uncertain outcomes, revisions, freshness, publication faults and selected transport.
+
+Portable required command: tests 149, passed 142, failed/cancelled 0, skipped 7 existing optional real-roster cases, exit 0. This is not zero-skip qualification. Eight independent source/transport guard mutations were caught and restored (9 Node tests including parent, all passed, skipped 0). Registration/host-wrapper fixtures: 68 tests passed, failed/skipped 0; includes actual fixture CLI nonzero results and independent exact-name guard-off proof. Both process constructors now have real-source startup/preview composition tests.
+
+Cached network-disabled Linux image with Node 22 and nproc=2 ran the portable command, registration fixtures and eight mutations: same 149/142/7, 68/68/0 and 9/9/0 counts; exit 0. Dependencies prepared offline from the existing cache. Final follow-up checks and candidate commit are recorded in the external build report.
+
+The counted host wrapper failed closed before qualification children because required lead-supplied product SHA/pins/receipt were absent. PG17 failed closed before cluster creation because PG_BIN and an isolated port range were absent; the native shared-memory inspection was denied, so its downstream zero was not used. No native cluster/model/real worker was launched. No host or PG pass is claimed.
+
+
+Remaining implementation conformance blocker: the Node source capability checks ancestor symlinks, ownership/modes, file descriptors and retained root/fence inodes, but its directory mutations still use checked pathnames. It does not implement the specification's literal directory-relative no-follow traversal. Existing native sidecars expose narrower installer operations; extending that surface is outside this slice's physical allowed-file set. This candidate must not be approved as exact T-SNAPSHOT conformance until that issue is resolved.
+
+
+Final handoff: Git staging was refused when creating the worktree index lock (exit 128), so changes remain uncommitted with an empty index. The tools checkout still reports HEAD `dfb58d206bce494fbfcfaa8b370548926433ba84`, but seven files were modified at the final read-only audit; those external edits were left untouched. No exact-pair qualification is valid for a dirty candidate. Read-only source inspection also leaves a legacy compatibility concern: the required P71 real case uses the unchanged no-context adapter decoder, while tools legacy stdout is a rich lineup object. That real case was not executed and no legacy compatibility pass is claimed.
+
+Status: BLOCKED: source I/O conformance, legacy host compatibility, qualification inputs and Git write refusal

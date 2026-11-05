@@ -1,6 +1,6 @@
 import { assertNoSecretMaterial } from "../../security";
 import { parseLoopSettingsV1 } from "./loop-policy-compose";
-import type { LoopPolicyCheckV1 } from "./loop-policy-service";
+import type { LoopPolicyCheckV1, LoopPolicyCheckWithV1, LoopSelectionCheckContextV1, LoopSelectionCheckExecutionV1 } from "./loop-policy-service";
 import { captureLoopFinalizationCapabilityV1, type LoopFinalizationCapabilityV1 } from "./improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopMonitorV1, loopMonitoringStatusSchemaV1, unavailableLoopMonitoringV1,
   loopMonitoringClockV1, type LoopMonitoringStatusV1, type LoopMonitoringClockV1 } from "./improve-control-room-loop-monitoring";
@@ -19,6 +19,12 @@ import { loopApprovalDescriptorSchemaV1, loopImprovementDecisionsSchemaV1, loopP
   type LoopImprovementDecisionsV1 } from "./improve-control-room-loop-attention-wire";
 import { canonicalJson, sha256Digest } from "../../security";
 import { runLoopModelsCheckV1, type LoopRosterToolsV1 } from "./loop-roster-check";
+
+import { createLoopSelectionSourceFilesV1, type LoopSelectionSourceFilesV1 } from "./loop-selection-snapshot";
+import { encodeSelectionSourceBundleV1, selectionSnapshotFromBundleV1, selectionSnapshotSchemaV1 } from "./loop-selection-snapshot-wire";
+import type { LoopSelectionDispatchV1 } from "./loop-selection-service";
+import { loopSelectionProjectionSchemaV1 } from "./loop-selection-wire";
+import { decodeLoopHealthV1 } from "./improve-control-room-loop-monitoring";
 
 export const loopByteHashV1 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -206,7 +212,12 @@ export function captureLoopRecoveryCapabilityV1(value: LoopRecoveryCapabilityV1 
     || Object.keys(value).some(key => !["enabled", "inspect", "claimDriver"].includes(key))) throw unavailable();
   return Object.freeze({ enabled: value.enabled.bind(value), inspect: value.inspect.bind(value), claimDriver: value.claimDriver.bind(value) });
 }
+export type LoopSelectionProjectionCapabilityV1 = Readonly<{ schemaVersion: 1; revision: "b8-selection-review-only/1"; schemaDigest: string;
+  encodeContext(context: LoopSelectionCheckContextV1): string;
+  decodeResult(output: unknown, pins: { settingsSha256: string }): LoopPolicyCheckWithV1;
+}>;
 export type LoopAdapterContractV1 = {
+  selectionProjection?: LoopSelectionProjectionCapabilityV1;
   lineage: LoopImprovementContractV1; schemaDigest: string;
   /** Installation interpreter captures one immutable, trusted tenant snapshot per call. */
   providerRoutes?: { schemaVersion: 1; resolveStartRoute(settingsText: string): Promise<unknown> };
@@ -225,7 +236,7 @@ export type LoopAdapterContractV1 = {
   /** Builds A2's lock-checked expectation from the exact cached observation.
    * No refresh or invocation belongs in this installation-owned callback. */
   admissionExpectation?: (binding: Readonly<LoopBridgeBindingV1>, context: Readonly<{
-    operation: "intake" | "confirm" | "start" | "approve" | "answer"; commandId: string;
+    operation: "intake" | "confirm" | "start" | "approve" | "answer"; commandId: string; selectionDispatch?: LoopSelectionDispatchV1;
   }>) => unknown | Promise<unknown>;
   qualifiedOperations: readonly LoopBridgeOperationV1[];
 };
@@ -247,11 +258,12 @@ export interface LoopAdapterV1 {
   inspectRecovery?(run: string, command?: { commandId: string; bindingDigest: string }): Promise<LoopRecoveryObservationV1>;
   recover?(binding: LoopRecoveryBindingV1): Promise<LoopRecoveryClaimV1>;
   monitoringTick?(): void;
-  checkSettings?(text: string): Promise<LoopPolicyCheckV1>;
+  readonly selectionSources?: LoopSelectionSourceFilesV1;
+  checkSettings?(text: string, context?: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1>;
   reserveRun(): string; available(operation: LoopBridgeOperationV1): boolean;
-  intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
-  confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
-  start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
+  intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string, selectionDispatch?: LoopSelectionDispatchV1): Promise<LoopEngineStatusV1>;
+  confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string, selectionDispatch?: LoopSelectionDispatchV1): Promise<LoopEngineStatusV1>;
+  start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string, selectionDispatch?: LoopSelectionDispatchV1): Promise<LoopEngineStatusV1>;
   status(run: string): Promise<LoopEngineStatusV1>;
   readApprovalDocument?(run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>): Promise<string>;
   stop(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
@@ -284,6 +296,21 @@ function checkedPath(path: string, root?: string, directory = false) {
 export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigurationV1): LoopAdapterV1 {
   const c = { ...input, executionIdentity: { ...input.executionIdentity }, contract: Object.freeze({ ...input.contract,
     lineage: Object.freeze({ ...input.contract.lineage }), qualifiedOperations: Object.freeze([...input.contract.qualifiedOperations]) }) };
+  const suppliedSelection = c.contract.selectionProjection;
+  if (suppliedSelection && (suppliedSelection.schemaVersion !== 1 || suppliedSelection.revision !== "b8-selection-review-only/1"
+    || !digest.safeParse(suppliedSelection.schemaDigest).success || typeof suppliedSelection.encodeContext !== "function"
+    || typeof suppliedSelection.decodeResult !== "function" || Reflect.ownKeys(suppliedSelection).length !== 5)) throw unavailable();
+  const selectionProjection = suppliedSelection && Object.freeze({ schemaVersion: suppliedSelection.schemaVersion,
+    revision: suppliedSelection.revision, schemaDigest: suppliedSelection.schemaDigest,
+    encodeContext: suppliedSelection.encodeContext.bind(suppliedSelection), decodeResult: suppliedSelection.decodeResult.bind(suppliedSelection) });
+  const selectionSources = selectionProjection ? createLoopSelectionSourceFilesV1({ availabilityFile: c.availabilityFile,
+    rosterFile: join(c.configRoot, "roster/roster-export.tsv"), readAvailability() {
+      validate(false);
+      if (monitor) return monitor.readAvailability();
+      const bytes = readFileSync(checkedPath(c.availabilityFile, c.configRoot));
+      if (loopByteHashV1(bytes) !== c.availabilitySha256) throw unavailable();
+      return decodeLoopHealthV1(bytes, 0);
+    } }) : undefined;
   const recovery = captureLoopRecoveryCapabilityV1(c.contract.recovery);
   const finalization = captureLoopFinalizationCapabilityV1(c.contract.finalization);
   const suppliedRoutes = c.contract.providerRoutes;
@@ -478,16 +505,22 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return !closing && c.contract.qualifiedOperations.includes(operation)
       && (operation === "stop" || typeof c.contract.admissionExpectation === "function");
   };
-  async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string, signedSettingsText?: string) {
+  async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string, signedSettingsText?: string, selectionDispatch?: LoopSelectionDispatchV1) {
     if (!available(operation) || binding.adapterId !== c.adapterId || binding.toolingRevision !== c.toolingRevision
       || binding.schemaDigest !== c.contract.schemaDigest || operation !== "stop" && (typeof signedSettingsText !== "string" || loopByteHashV1(signedSettingsText) !== binding.settingsSha256)) throw unavailable();
+    if (selectionDispatch && (!selectionProjection || !["intake", "confirm", "start"].includes(operation)
+      || selectionDispatch.commandId !== commandId || selectionDispatch.bindingDigest !== sha256Digest(binding))) throw unavailable();
+    if (selectionDispatch) {
+      if (!/^[a-f0-9]{64}$/.test(selectionDispatch.lineupDigest)) throw unavailable();
+      selectionSnapshotSchemaV1.parse(selectionDispatch.snapshot); validateSelectionPins();
+    }
     validate(operation !== "stop"); beforeSpawn();
     const run = runId(binding.loopRunId);
     const apply = async () => {
       let expectation: string | undefined;
       if (operation !== "stop") {
         const expected = await c.contract.admissionExpectation!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }),
-          Object.freeze({ operation, commandId }));
+          Object.freeze({ operation, commandId, ...(selectionDispatch ? { selectionDispatch } : {}) }));
         beforeSpawn();
         expectation = await commandFile(commandId, "expect.json", canonicalJson(expected));
       }
@@ -607,7 +640,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   }
   if (monitoring) monitor = createImproveControlRoomLoopMonitorV1({ availabilityFile: c.availabilityFile,
     bootstrapHash: c.availabilitySha256, binding: loopByteHashV1(JSON.stringify({adapterId:c.adapterId,toolingRevision:c.toolingRevision,
-      interpreterSha256:c.interpreterSha256,entrypointSha256:c.entrypointSha256,availabilityFile:c.availabilityFile})), clock,
+      interpreterSha256:c.interpreterSha256,entrypointSha256:c.entrypointSha256,availabilityFile:c.availabilityFile})), clock, selectionSources,
     enabled: () => recoveryEnabled() && monitoring.enabled() === true,
     collect: async (signal, onChild) => {
       if (closing || signal.aborted || !recoveryEnabled() || monitoring.enabled() !== true) throw unavailable();
@@ -647,47 +680,93 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       pending.add(operation);
       try { return await operation; } finally { pending.delete(operation); }
     } });
-  /** Direct cr.py entry point; its temporary copy never enters the command sweep. */
-  function checkSettings(text: string): Promise<LoopPolicyCheckV1> {
+  function validateSelectionPins() {
+    if (!selectionProjection || !selectionSources) throw unavailable();
+    validate(false);
+    const pins = new Map<string, string>();
+    const manifest = readFileSync(c.toolingManifest, "utf8");
+    for (const line of manifest.trimEnd().split("\n")) {
+      const row = /^([a-f0-9]{64})  ([^\r\n]+)$/.exec(line);
+      if (!row || isAbsolute(row[2]!) || row[2]!.split("/").some(p => !p || p === "." || p === "..") || pins.has(row[2]!)) throw unavailable();
+      pins.set(row[2]!, row[1]!);
+    }
+    for (const file of ["cr.py", "lineup.py", "run_settings.py", "selection_contract.py", "bridge/a2-contract.mjs", "bridge/selection-schema.json", "bridge/cr-entry.py"]) {
+      const path = checkedPath(join(toolsLoop, file), c.configRoot), rel = relative(c.configRoot, path).split(sep).join("/");
+      const actual = loopByteHashV1(readFileSync(path));
+      if (pins.get(rel) !== actual || file === "bridge/selection-schema.json" && selectionProjection.schemaDigest !== `sha256:${actual}`) throw unavailable();
+    }
+  }
+  /** Selected checks copy the clean producer bundle and use the pinned entrypoint.
+   * Omitted context preserves the legacy direct checker. */
+  function checkSettings(text: string, context?: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> {
     if (closing) return Promise.reject(unavailable());
     parseLoopSettingsV1(text); validate(false);
     const crScript = checkedPath(join(toolsLoop, "cr.py"), c.configRoot);
+    const selected = context !== undefined;
     const operation = (async () => {
+      if (execution && (!Number.isFinite(execution.timeoutMs) || execution.timeoutMs <= 0 || execution.signal.aborted)) throw unavailable();
+      const started = performance.now(), allowance = execution?.timeoutMs ?? timeoutMs;
+      const remaining = () => allowance - (performance.now() - started);
+      let encodedContext: string | undefined, bundleText: string | undefined, healthText: string | undefined;
+      let attested: ReturnType<typeof selectionSnapshotFromBundleV1> | undefined;
+      if (selected) {
+        validateSelectionPins();
+        encodedContext = selectionProjection!.encodeContext(context!);
+        if (typeof encodedContext !== "string" || Buffer.byteLength(encodedContext) > 131072) throw unavailable();
+        if (context!.mode === "admission" && (context!.binding.toolingRevision !== c.toolingRevision
+          || context!.binding.settingsSha256 !== loopByteHashV1(text))) throw unavailable();
+        const lease = selectionSources!.acquire();
+        try {
+          const bundle = selectionSources!.current(lease, clock.wallNow());
+          if (bundle.roster.text !== selectionSources!.rosterText()
+            || canonicalJson(bundle.availability) !== canonicalJson(selectionSources!.availability(clock.wallNow()))) throw unavailable();
+          bundleText = encodeSelectionSourceBundleV1(bundle); healthText = canonicalJson(bundle.availability); attested = selectionSnapshotFromBundleV1(bundle);
+        } finally { lease.release(); }
+      }
       const directory = await mkdtemp(join(c.workRoot, "policy-check-"));
       try {
         checkedPath(directory, c.workRoot, true);
         if ((lstatSync(directory).mode & 0o777) !== 0o700) throw unavailable();
-        const file = join(directory, "settings.json"), handle = await open(file, "wx", 0o600);
-        try { await handle.writeFile(text, "utf8"); } finally { await handle.close(); }
-        if (closing) throw unavailable();
-        validate(false);
-        return await new Promise<LoopPolicyCheckV1>((fulfill, reject) => {
-          const child = spawn(c.interpreter, ["-B", crScript, "check", "lineup", "--settings", file,
-            "--availability", c.availabilityFile, "--json"], { cwd: c.cwd, shell: false,
+        const write = async (name: string, value: string) => { const file = join(directory, name), handle = await open(file, "wx", 0o600);
+          try { await handle.writeFile(value, "utf8"); } finally { await handle.close(); } return file; };
+        const file = await write("settings.json", text);
+        const args = ["-B", selected ? c.entrypoint : crScript, "check", "lineup", "--settings", file,
+          "--availability", selected ? await write("availability.json", healthText!) : c.availabilityFile, "--json"];
+        if (selected) args.push("--selection-context", await write("context.json", encodedContext!), "--selection-snapshot", await write("snapshot.json", bundleText!));
+        if (closing || execution?.signal.aborted || remaining() <= 0) throw unavailable();
+        validate(false); if (selected) validateSelectionPins();
+        return await new Promise<LoopPolicyCheckWithV1>((fulfill, reject) => {
+          const child = spawn(c.interpreter, args, { cwd: c.cwd, shell: false,
             env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
           children.add(child);
           const output: Buffer[] = [];
           let bytes = 0, failed = false, killTimer: ReturnType<typeof setTimeout> | undefined;
           const stop = () => { failed = true; child.kill("SIGTERM"); killTimer ??= setTimeout(() => child.kill("SIGKILL"), 1000); };
-          const timer = setTimeout(stop, timeoutMs);
+          const timer = setTimeout(stop, Math.max(1, remaining()));
+          execution?.signal.addEventListener("abort", stop, { once: true }); if (execution?.signal.aborted) stop();
           child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); else output.push(Buffer.from(chunk)); });
           child.stderr.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); });
           child.on("error", () => { failed = true; });
           child.once("close", (code, signal) => {
-            clearTimeout(timer); clearTimeout(killTimer); children.delete(child);
+            clearTimeout(timer); clearTimeout(killTimer); children.delete(child); execution?.signal.removeEventListener("abort", stop);
             try {
               if (failed || signal || ![0, 3].includes(code ?? -1)) throw unavailable();
+              const raw = parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), { maxBytes: 65536 });
+              const decoded = selected ? selectionProjection!.decodeResult(raw, { settingsSha256: loopByteHashV1(text) }) : raw;
               const result = z.object({ eligible: z.boolean(), reasons: z.array(z.object({
-                code: z.string().min(1).max(100), explanation: z.string().min(1).max(1000) }).strict()).max(100) }).strict()
-                .parse(parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(output)), { maxBytes: 65536 }));
+                code: z.string().min(1).max(100), explanation: z.string().min(1).max(1000) }).strict()).max(100),
+                ...(selected ? { projection: loopSelectionProjectionSchemaV1, snapshot: selectionSnapshotSchemaV1 } : {}) }).strict().parse(decoded) as LoopPolicyCheckWithV1;
+              if (selected && canonicalJson(result.snapshot) !== canonicalJson(attested)) throw unavailable();
               if (result.eligible !== (code === 0) || result.eligible && result.reasons.length || !result.eligible && !result.reasons.length) throw unavailable();
               assertNoSecretMaterial(result);
-              for (const reason of result.reasons) {
-                // Expose only human explanations, never private paths or raw diagnostics.
-                if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(reason.code) || /[\x00-\x1f]/.test(reason.explanation)
-                  || /(?:^|[\s"'(=])(?:[/\\]|[A-Za-z]:[/\\])|\.\.[/\\]/.test(reason.explanation)
-                  || [c.workRoot, c.runRoot, c.configRoot, c.cwd].some(root => reason.explanation.includes(root))) throw unavailable();
-              }
+              const inspect = (value: unknown): void => {
+                if (typeof value === "string" && (/[\x00-\x1f\x7f-\x9f]/.test(value)
+                  || /(?:^|[\s"'(=])(?:[/\\]|[A-Za-z]:[/\\])|\.\.[/\\]/.test(value)
+                  || [c.workRoot, c.runRoot, c.configRoot, c.cwd].some(root => value.includes(root)))) throw unavailable();
+                if (value && typeof value === "object") for (const child of Object.values(value)) inspect(child);
+              };
+              inspect(result);
+              if (result.reasons.some(reason => !/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(reason.code))) throw unavailable();
               fulfill(result);
             } catch { reject(unavailable()); }
           });
@@ -726,15 +805,15 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       return operation;
     } }) : undefined;
   return Object.freeze({ roster, adapterId: c.adapterId, toolingRevision: c.toolingRevision, schemaDigest: c.contract.schemaDigest,
-    settingsText, checkSettings, contract: c.contract.lineage,
+    settingsText, checkSettings, selectionSources, contract: c.contract.lineage,
     ...(providerRoutes ? { providerRoutes } : {}),
     reserveRun: () => runId(c.contract.generateRunId()), available,
     ...(recovery ? { inspectRecovery, recover } : {}),
     ...(finalization ? { finalization } : {}),
     ...(monitor ? { monitoringTick: monitor.tick } : {}),
-    intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText) => invoke("intake", id, b, fence, text, settings),
-    confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("confirm", id, b, fence, undefined, settings),
-    start: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("start", id, b, fence, undefined, settings), status, readApprovalDocument,
+    intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText, selectionDispatch?: LoopSelectionDispatchV1) => invoke("intake", id, b, fence, text, settings, selectionDispatch),
+    confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText, selectionDispatch?: LoopSelectionDispatchV1) => invoke("confirm", id, b, fence, undefined, settings, selectionDispatch),
+    start: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText, selectionDispatch?: LoopSelectionDispatchV1) => invoke("start", id, b, fence, undefined, settings, selectionDispatch), status, readApprovalDocument,
     stop: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("stop", id, b, fence),
     approve: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("approve", id, b, fence, undefined, settings),
     answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText) => invoke("answer", id, b, fence, text, settings),

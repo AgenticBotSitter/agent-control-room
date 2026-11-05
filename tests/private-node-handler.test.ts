@@ -161,3 +161,59 @@ for (const mode of ['private', 'Mac-local'] as const) {
     } finally { await transport.close(); }
   });
 }
+
+import { mkdir,mkdtemp,writeFile,rm } from 'node:fs/promises';
+import { join,resolve } from 'node:path';
+import { createLoopSelectionSourceFilesV1 } from '../src/web/v1/loop-selection-snapshot';
+import { selectionSnapshotFromBundleV1 } from '../src/web/v1/loop-selection-snapshot-wire';
+import { createMacLocalWebProcessV1 } from '../src/web/v1/mac-local-web-process';
+import { createPrivateWebProcess } from '../src/web/v1/private-process';
+import type { LoopAdapterV1 } from '../src/web/v1/improve-control-room-loop-adapter';
+import { loopImprovementRunIdentitySchemaV1,loopImprovementObservationSchemaV1 } from '../src/improve-control-room/v1/schemas';
+
+for(const mode of ['private','Mac-local'] as const)test(`T-SNAPSHOT ${mode} process keeps synchronous construction and awaits real source startup`,async t=>{
+  const f=await taskFixture();t.after(()=>f.db.close());
+  await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"templateId":"control-room"}'::jsonb) WHERE id=$1`,[f.project.projectId]);
+  await mkdir(resolve('.test-tmp'),{recursive:true});const root=await mkdtemp(resolve('.test-tmp/snapshot-process-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  await mkdir(join(root,'config'),{mode:0o700});await mkdir(join(root,'roster'),{mode:0o700});
+  const roster='name\tlauncher\tprovider\tfamily\tclass\troles\tefforts\tdefault_effort\tcost\ton\tnote\tnick\tmax_build_grade\n'
+    +'fixture\tfixture\tfixture\tfixture\tfrontier\tbuild,final\tmedium\tmedium\tsub\ton\tfixture\tF\tHard\n';
+  const exportPath=join(root,'roster/roster-export.tsv');await writeFile(exportPath,roster,{mode:0o600});
+  const health={schema_version:1 as const,checked_at:new Date(now).toISOString(),entries:[{model:'fixture',route:'fixture',available:true}]};
+  await writeFile(join(root,'config/availability.json'),JSON.stringify(health),{mode:0o600});
+  const sources=createLoopSelectionSourceFilesV1({availabilityFile:join(root,'config/availability.json'),rosterFile:exportPath,readAvailability:()=>health});
+  let entered!:()=>void,release!:()=>void,checks=0;
+  const reached=new Promise<void>(r=>{entered=r;}),barrier=new Promise<void>(r=>{release=r;});
+  const toolingRevision='sha256:'+'a'.repeat(64),unexpected=async():Promise<never>=>{throw Error('unexpected dispatch');};
+  const adapter:LoopAdapterV1={adapterId:'adapter:fixture',toolingRevision,schemaDigest:'sha256:'+'b'.repeat(64),settingsText:'{}',selectionSources:sources,
+    available:()=>false,reserveRun:()=>{throw Error('unexpected reserve');},
+    contract:{toolingRevision,decodeRunIdentity:v=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:v=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:()=>false},
+    roster:{rosterRoot:join(root,'roster'),toolsSeed:exportPath,check:async()=>{entered();await barrier;return {exitCode:0,lines:[]};}},
+    checkSettings:async(text)=>{
+      checks++;const lease=sources.acquire();let snapshot;try{snapshot=selectionSnapshotFromBundleV1(sources.current(lease,now));}finally{lease.release();}
+      const roles=JSON.parse(text).roles,lineup=(['plan','spec','build','code_reviews','final'] as const).map(role=>{
+        const v=role==='code_reviews'?roles[role][0]:roles[role];
+        const requested={model:v.model,route:v.route,effort:v.effort,family:'fixture',class:'frontier',cost:'subscription' as const};
+        return {role,index:0,requested,effective:requested,refusals:[],fallback:false};});
+      return {eligible:true,reasons:[],snapshot,projection:{family_policy:'review-only',lineup,reservedFinal:lineup[4]!.effective,waivedReasons:[],
+        rosterDigest:snapshot.rosterDigest,availabilityDigest:snapshot.availabilityDigest,lineupDigest:'c'.repeat(64)}};
+    },intake:unexpected,confirmRequest:unexpected,start:unexpected,status:unexpected,stop:unexpected,approve:unexpected,answer:unexpected,close:async()=>{}};
+  const origin=mode==='private'?privateOrigin:'http://127.0.0.1:54321',ownerCode='snapshot-owner-code-0001';
+  const app=mode==='private'?createPrivateWebProcess({origin,issuer:trust.issuer,audience:trust.audience,...{tenantId:'tenant:web',workspaceId:'workspace:web'},
+    maxSessionSeconds:trust.maxSessionSeconds,loadKeys:async()=>trust.keys,database:{client:f.client,close:async()=>{}},clock:()=>now,loopBridge:{integrityKey:new Uint8Array(32).fill(65),adapter}})
+    :createMacLocalWebProcessV1({origin,workspaceId:'workspace:web',database:{client:f.client,close:async()=>{},isAvailable:()=>true},clock:()=>now,
+      localOwnerSession:{schema:LOCAL_OWNER_SESSION_PROFILE_V1,origin,tenantId:'tenant:web',provider:trust.issuer,subject:'test-owner',ownerCodeDigest:sha256Digest({ownerCode}),sessionSeconds:900},
+      loopBridge:{integrityKey:new Uint8Array(32).fill(65),adapter}});
+  assert.equal(typeof app.handle,'function','constructors remain synchronous');t.after(async()=>{release();await app.close();});
+  let cookie:string|undefined;
+  if(mode==='Mac-local'){
+    const response=await app.handle(new Request(origin+'/api/v1/local-owner-session',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({ownerCode})}),()=>new Response('shell'));
+    cookie=response.headers.get('set-cookie')?.split(';')[0];assert.ok(cookie);
+  }
+  await reached;
+  const slot={model:'fixture',route:'fixture',effort:'medium'},selection={roles:{plan:slot,spec:slot,build:slot,code_reviews:[slot],final:slot,plan_reviews:[],spec_reviews:[]},plan_review_count:0,spec_review_count:0,code_review_count:1};
+  let finished=false;
+  const response=app.handle(new Request(`${origin}/api/v1/projects/${f.project.projectId}/loop-selection/preview`,{method:'POST',headers:{origin,'content-type':'application/json',...(cookie?{cookie}:{'cf-access-jwt-assertion':token()})},body:JSON.stringify({selection})}),()=>new Response('shell')).then(r=>{finished=true;return r;});
+  await new Promise(r=>setTimeout(r,20));assert.equal(finished,false);assert.equal(checks,0);release();
+  const result=await response;assert.equal(result.status,200);assert.equal((await result.json()).available,true);assert.equal(checks,1);
+});

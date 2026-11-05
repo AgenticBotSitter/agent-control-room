@@ -1,3 +1,7 @@
+import { LoopSelectionSnapshotCoordinatorV1, withLoopSelectionSourceTransactionsV1 } from "./loop-selection-snapshot";
+import { readLoopRosterSnapshotSourceV1 } from "./loop-roster-service";
+import { LoopSelectionServiceV1 } from "./loop-selection-service";
+import { createLoopSelectionHttpHandlerV1, isLoopSelectionRouteV1 } from "./loop-selection-http";
 import { LoopProviderServiceV1 } from "./loop-provider-service";
 import { createLoopProviderHttpHandlerV1, isLoopProviderRouteV1 } from "./loop-provider-http";
 import { LoopPolicyServiceV1 } from "./loop-policy-service";
@@ -369,15 +373,31 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
     candidateConfiguration.contract, candidateConfiguration) : undefined;
-  const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
+  const loopSourceFiles = options.loopBridge?.adapter.selectionSources;
+  const loopDatabase = loopSourceFiles ? withLoopSelectionSourceTransactionsV1(options.database.client, loopSourceFiles) : options.database.client;
+  const loopSources = loopSourceFiles ? new LoopSelectionSnapshotCoordinatorV1({ db: loopDatabase,
+    tenantId: options.tenantId, workspaceId: options.workspaceId, sourceFiles: loopSourceFiles,
+    readRoster: readLoopRosterSnapshotSourceV1, clock: { wallNow: clock, monotonicNow: () => performance.now() } }) : undefined;
+  const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(loopDatabase,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
-  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
+  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(loopDatabase,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
   // B6: the roster master and its export. Start seeds or reconciles once; requests wait for it.
   const loopRosterTools = options.loopBridge?.adapter.roster;
-  const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock) : undefined;
-  const loopRosterStarted = loopRoster?.start().catch(() => undefined);
+  const loopRoster = loopRosterTools ? new LoopRosterServiceV1(loopDatabase,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock, {}, loopSources) : undefined;
+  const loopRosterStarted = (async () => {
+    await loopSources?.start();
+    const result = await loopRoster?.start();
+    if (loopSources && (!result?.seeded || !result.exported)) throw new Error("selection_source_unavailable");
+    if (loopSources) await loopSources.capture();
+    return result;
+  })().catch(() => undefined);
+  const loopSelection = loopPolicy && loopSources ? new LoopSelectionServiceV1(loopDatabase,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, loopPolicy, {
+      async capture() { if (!await loopRosterStarted) throw new Error("selection_source_unavailable"); return loopSources.capture(); },
+      assertCurrent: loopSources.assertCurrent.bind(loopSources),
+    }, clock) : undefined;
   const loopProviders = loopRosterTools ? new LoopProviderServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
@@ -968,6 +988,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
+          if (isLoopSelectionRouteV1(url.pathname)) {
+            if (!loopSelection) throw new WebAccessError("not_found");
+            return createLoopSelectionHttpHandlerV1({ origin: site.origin, trust, gatewayAssertionProfile, service: loopSelection, clock })(request);
+          }
           if (isLoopPolicyRouteV1(url.pathname)) {
             if (!loopPolicy) throw new WebAccessError("not_found");
             return createLoopPolicyHttpHandlerV1({ origin: site.origin, trust,
@@ -1128,7 +1152,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             new Promise<void>(resolve => { timer = setTimeout(() => { timedOut = true; force(); resolve(); }, drainMs); })]);
         } finally { clearTimeout(timer); keys.close(); }
         // The bounded production pool terminates all remaining work. Never retry an uncertain write.
-        await loopBridge?.close();
+        await loopRosterStarted; await loopBridge?.close();
         await options.database.close();
         if (timedOut) throw new Error("private_app_drain_uncertain");
       })();

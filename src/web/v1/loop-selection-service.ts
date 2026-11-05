@@ -65,7 +65,8 @@ export class LoopSelectionServiceV1 {
       const checked = { ...await this.guard.capture() };
       if (!validSnapshot(checked)) throw new Error("snapshot_unavailable");
       const raw = await this.policy.checkWith(before.snapshot.text, { mode: "preview", sameFamilyIntent: before.body.overrides.reviewFamily });
-      const { projection: rawProjection, ...rawCheck } = raw;
+      const { projection: rawProjection, snapshot: attested, ...rawCheck } = raw;
+      if (!attested || !validSnapshot(attested) || !sameSnapshot(checked, attested)) throw new Error("selection_snapshot_changed");
       const check = loopSelectionCheckSchemaV1.safeParse(rawCheck), projection = loopSelectionProjectionSchemaV1.safeParse(rawProjection);
       if (!check.success || !projection.success) throw new Error("selection_projection_unavailable");
       assertNoSecretMaterial(projection.data); assertNoSecretMaterial(check.data);

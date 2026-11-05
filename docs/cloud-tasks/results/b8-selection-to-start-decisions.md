@@ -147,4 +147,18 @@ LOW-2 split, preserving the reviewed contract: **U81-B1 admission/cancellation**
 
 LOW-1 remains resolved by D20: T10 is A preview/readiness only; T13-project is A and T13-saved/real transport is C. No invented T10 admission case. Next continuation must name the exact tools projection/context/expectation/settings mapping and measured latency, physical producer/current reader/serialization lock protocol, and their allowed files. The supplied tools commit alone does not satisfy these releases.
 
-Status: BLOCKED: U81-B requires released T-TOOLS/T-SNAPSHOT and physical reader allowed-file amendment
+## D22 — T-SNAPSHOT prerequisite build candidate
+
+The revision-4 physical amendment supplies the current roster/availability bundle producer, closed codec, shared nonblocking filesystem fence and transaction-lifetime facade. The snapshot remains exactly rosterDigest, availabilityDigest and revision. P71 saved-input/default lineage stays separate; no provider data, new policy store or migration is added.
+
+All participating roster and monitor publications invalidate current before mutation. A dirty marker takes precedence across incomplete current publication. Source directory custody is private/service-owned and is the one writable addition in the configured config subtree. Transaction aliases share the outer lease; uncertain database outcomes retain poisoned custody. No automatic fence takeover is permitted.
+
+This is a build candidate against the new T-TOOLS candidate, not a released pair. Counted macOS and production-role PG17 evidence remain required. B1/B2 and U81-C remain separate continuations.
+
+
+Remaining implementation conformance blocker: the Node source capability checks ancestor symlinks, ownership/modes, file descriptors and retained root/fence inodes, but its directory mutations still use checked pathnames. It does not implement the specification's literal directory-relative no-follow traversal. Existing native sidecars expose narrower installer operations; extending that surface is outside this slice's physical allowed-file set. This candidate must not be approved as exact T-SNAPSHOT conformance until that issue is resolved.
+
+
+Final handoff: Git staging was refused when creating the worktree index lock (exit 128), so changes remain uncommitted with an empty index. The tools checkout still reports HEAD `dfb58d206bce494fbfcfaa8b370548926433ba84`, but seven files were modified at the final read-only audit; those external edits were left untouched. No exact-pair qualification is valid for a dirty candidate. Read-only source inspection also leaves a legacy compatibility concern: the required P71 real case uses the unchanged no-context adapter decoder, while tools legacy stdout is a rich lineup object. That real case was not executed and no legacy compatibility pass is claimed.
+
+Status: BLOCKED: source I/O conformance, legacy host compatibility, qualification inputs and Git write refusal

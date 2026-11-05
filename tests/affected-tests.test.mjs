@@ -672,3 +672,43 @@ test("the Linux affected job defers exact macOS updater files even on the ALL Po
     assert.deepEqual(macCalls, [mac], "a Mac fast job may run the selected updater test directly");
   } finally { rmSync(root, { recursive: true }); }
 });
+
+import { b8ExternalHostInventoryV1,b8HostOnlyFileV1,b8MixedFileV1,b8P71SkipV1 } from '../scripts/check-test-lane-coverage.mjs';
+import { partitionB8ExternalHostV1 } from '../scripts/ci/affected-tests.mjs';
+
+test('B8 explicit external partition agrees in direct ALL PG metadata and argv paths',()=>{
+  const portable='tests/portable.test.ts',files=[b8HostOnlyFileV1,b8MixedFileV1,portable];
+  const root=fixture({[b8HostOnlyFileV1]:'requiresRealPostgres();',
+    [b8MixedFileV1]:'test("P71 real settings check",()=>{});\ntest("portable mixed case",()=>{});',
+    [portable]:'test("portable",()=>{});'});
+  const messages=[],calls=[],old=console.log;console.log=(...v)=>messages.push(v.join(' '));
+  try{
+    assert.deepEqual(partitionB8ExternalHostV1(files,files),{result:[b8MixedFileV1,portable],tests:[b8MixedFileV1,portable]});
+    for(const result of [files,'ALL']){
+      assert.equal(requiresPostgres(result,files,root),false);
+      const plan=affectedTestCommands(result,files,root);
+      assert.ok(plan.every(([,args])=>!args.includes(b8HostOnlyFileV1)));
+      const mixed=plan.find(([,args])=>args.includes(b8MixedFileV1));assert.ok(mixed);assert.equal(mixed[1].filter(a=>a===b8P71SkipV1).length,1);
+      assert.ok(mixed[1].indexOf(b8P71SkipV1)<mixed[1].indexOf(b8MixedFileV1));
+      assert.ok(!plan.find(([,args])=>args.includes(portable))[1].includes(b8P71SkipV1));
+      assert.equal(runAffectedTests(result,files,root,()=>0,()=>false,(_c,args)=>{calls.push(args);return {status:0,output:'# skipped 0\n'};}),0);
+    }
+    assert.ok(calls.every(args=>!args.includes(b8HostOnlyFileV1)));assert.equal(calls.length,4);
+    assert.equal(runAffectedTests([b8HostOnlyFileV1],[b8HostOnlyFileV1],root,()=>{assert.fail('no host preparations');},()=>{assert.fail('no host PG');}),0);
+    assert.deepEqual(affectedTestCommands('ALL',[b8HostOnlyFileV1],root),[]);
+    assert.equal(runSelectedTests('ALL',files,root,()=>0,()=>false,()=>{assert.fail('no portable full-suite duplication');},'linux'),0);
+    for(const entry of b8ExternalHostInventoryV1)assert.ok(messages.includes(`REQUIRED EXTERNAL HOST: ${entry}; gate=macOS; executed-in-linux=false`));
+    assert.ok(messages.some(l=>l.includes(b8P71SkipV1)));assert.ok(messages.some(l=>l.includes('exclusion=file')));
+  }finally{console.log=old;rmSync(root,{recursive:true,force:true});}
+});
+
+test('B8 mixed-file native exclusion still executes neighboring portable case and ordinary skips fail',()=>{
+  const root=fixture({[b8MixedFileV1]:`import test from 'node:test';\ntest('P71 real settings check',()=>{throw Error('host must not run');});\ntest('portable mixed case',()=>{});\n`});
+  try{
+    const plan=affectedTestCommands([b8MixedFileV1],[b8MixedFileV1],root);assert.equal(plan.length,1);
+    const [command,args]=plan[0],env={...process.env};delete env.NODE_TEST_CONTEXT;
+    const run=spawnSync(command,args.filter(a=>a!=='--import'&&a!=='tsx'),{cwd:root,env,encoding:'utf8',timeout:10000});
+    assert.equal(run.status,0,run.stdout+run.stderr);assert.match(run.stdout,/ok 1 - portable mixed case/);assert.doesNotMatch(run.stdout,/# Subtest: P71 real settings check/);assert.match(run.stdout,/# tests 1/);
+    const result=runAffectedTests([b8MixedFileV1],[b8MixedFileV1],root,()=>0,()=>false,()=>({status:0,output:'# skipped 1\n'}));assert.equal(result,1);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});

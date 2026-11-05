@@ -12,7 +12,8 @@ export type LoopPolicyCheckV1 = { eligible: boolean; reasons: { code: string; ex
 export type LoopSelectionCheckContextV1 = Readonly<{ mode: "preview"; sameFamilyIntent: boolean }>
   | Readonly<{ mode: "admission"; binding: LoopBridgeBindingV1; commandId: string }>;
 export type LoopSelectionCheckExecutionV1 = Readonly<{ signal: AbortSignal; timeoutMs: number }>;
-export type LoopPolicyCheckWithV1 = LoopPolicyCheckV1 & { projection?: LoopSelectionProjectionV1 };
+import type { SelectionSnapshotV1 } from "./loop-selection-service";
+export type LoopPolicyCheckWithV1 = LoopPolicyCheckV1 & { projection?: LoopSelectionProjectionV1; snapshot?: SelectionSnapshotV1 };
 export class LoopPolicyRefusedV1 extends Error {
   constructor(readonly reasons: LoopPolicyCheckV1["reasons"]) { super("loop_policy_refused"); }
 }

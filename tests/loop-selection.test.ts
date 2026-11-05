@@ -165,7 +165,7 @@ async function selectionFixture(t: TestContext, defaults = '{}') {
     transactionWithPreCommitCheck: (op, check) => f.client.transactionWithPreCommitCheck(async tx => {
       inTransaction = true; try { return await op(session(tx)); } finally { inTransaction = false; }
     }, check) };
-  let check: (text: string, context?: LoopSelectionCheckContextV1) => Promise<LoopPolicyCheckWithV1> = async () => ({ eligible: true, reasons: [], projection: projection() });
+  let check: (text: string, context?: LoopSelectionCheckContextV1) => Promise<LoopPolicyCheckWithV1> = async () => ({ eligible: true, reasons: [], projection: projection(), snapshot: { ...snapshot } });
   const tools = { settingsText: defaults, checkSettings: async (text: string, context?: LoopSelectionCheckContextV1) => {
     assert.equal(inTransaction, false, 'checker must run outside every transaction');
     checks.push({ text, context }); return check(text, context);
@@ -230,7 +230,7 @@ test('U81 T5 preview passes checker-only family, fallback, duplicate, Trial, off
     projected.lineup[4]!.fallback = item.code === 'REVIEWER_FALLBACK';
     projected.lineup[1]!.refusals = [{ code: item.code, explanation: `Checker candidate ${index}` }];
     const expected = { eligible: item.eligible, reasons: item.eligible ? [] : [{ code: item.code, explanation: `Checker decision ${index}` }] };
-    f.setCheck(async () => ({ ...expected, projection: projected }));
+    f.setCheck(async () => ({ ...expected, projection: projected, snapshot: { ...snapshot } }));
     const value = await f.preview({ selection: selection(), overrides: { reviewFamily: true, standardFinal: true } });
     assert.equal(value.available, true, item.code);
     if (value.available) { assert.deepEqual(value.check, expected); assert.deepEqual(value.projection, projected); assert.deepEqual(value.blockers, []); }
@@ -240,7 +240,7 @@ test('U81 T5 preview passes checker-only family, fallback, duplicate, Trial, off
 
 test('U81 T10 paid projection has separate product blocker and false readiness without changing checker eligibility', async t => {
   const f = await selectionFixture(t), projected = projection(); projected.lineup[1]!.requested.cost = 'paid'; projected.lineup[1]!.fallback = true;
-  f.setCheck(async () => ({ eligible: true, reasons: [], projection: projected }));
+  f.setCheck(async () => ({ eligible: true, reasons: [], projection: projected, snapshot: { ...snapshot } }));
   const value = await f.preview(); assert.equal(value.available, true);
   if (value.available) { assert.deepEqual(value.check, { eligible: true, reasons: [] });
     assert.deepEqual(value.blockers, [{ code: 'paid_execution_unavailable', explanation: 'Paid execution is unavailable.' }]); assert.equal(value.paidExecutionReady, false); }
@@ -250,12 +250,13 @@ test('U81 T10 paid projection has separate product blocker and false readiness w
 test('U81 T12-P missing checker/projection, malformed check and unattested snapshots fail unavailable', async t => {
   const f = await selectionFixture(t);
   const failures = [async () => { throw new Error('private diagnostic never exposed'); },
-    async () => ({ eligible: true, reasons: [] }), async () => ({ eligible: false, reasons: [], projection: projection() }),
-    async () => ({ eligible: false, reasons: [{ code: 'FIXTURE', explanation: 'bad\nreason' }], projection: projection() }),
-    async () => { const p = projection(); p.family_policy = 'wrong' as 'review-only'; return { eligible: true, reasons: [], projection: p }; },
-    async () => { const p = projection(); p.lineup[0]!.requested.model = 'different'; return { eligible: true, reasons: [], projection: p }; },
-    async () => { const p = projection(); p.lineup[1] = p.lineup[0]!; return { eligible: true, reasons: [], projection: p }; },
-    async () => { const p = projection(); p.rosterDigest = 'd'.repeat(64); return { eligible: true, reasons: [], projection: p }; },
+    async () => ({ eligible: true, reasons: [] }),
+    async () => ({ eligible: true, reasons: [], projection: projection() }), async () => ({ eligible: false, reasons: [], projection: projection(), snapshot: { ...snapshot } }),
+    async () => ({ eligible: false, reasons: [{ code: 'FIXTURE', explanation: 'bad\nreason' }], projection: projection(), snapshot: { ...snapshot } }),
+    async () => { const p = projection(); p.family_policy = 'wrong' as 'review-only'; return { eligible: true, reasons: [], projection: p, snapshot: { ...snapshot } }; },
+    async () => { const p = projection(); p.lineup[0]!.requested.model = 'different'; return { eligible: true, reasons: [], projection: p, snapshot: { ...snapshot } }; },
+    async () => { const p = projection(); p.lineup[1] = p.lineup[0]!; return { eligible: true, reasons: [], projection: p, snapshot: { ...snapshot } }; },
+    async () => { const p = projection(); p.rosterDigest = 'd'.repeat(64); return { eligible: true, reasons: [], projection: p, snapshot: { ...snapshot } }; },
   ];
   for (const fail of failures) { f.setCheck(fail); const value = await f.preview(); assert.equal(value.available, false); assert.doesNotMatch(JSON.stringify(value), /private diagnostic|different|bad\\nreason/); }
   const noChecker = new LoopPolicyServiceV1(f.db, scope, { settingsText: '{}' }, () => now);
@@ -268,7 +269,7 @@ test('U81 T12-P missing checker/projection, malformed check and unattested snaps
 
 test('U81 T12-P a 6000 ms preview retains legacy checker timeout and never creates authority', async t => {
   const f = await selectionFixture(t);
-  f.setCheck(async () => { await new Promise(resolve => setTimeout(resolve, 6000)); f.advance(6000); return { eligible: true, reasons: [], projection: projection() }; });
+  f.setCheck(async () => { await new Promise(resolve => setTimeout(resolve, 6000)); f.advance(6000); return { eligible: true, reasons: [], projection: projection(), snapshot: { ...snapshot } }; });
   const value = await f.preview({ selection: selection(), overrides: { reviewFamily: true } });
   assert.equal(value.available, true); assert.equal(f.checks.length, 1); await f.noWrites();
   assert.doesNotMatch(JSON.stringify(value), /accepted_at|sameFamilyAcknowledgement|commandId|auth_tag/);
@@ -276,7 +277,7 @@ test('U81 T12-P a 6000 ms preview retains legacy checker timeout and never creat
 
 test('U81 T12-P snapshot drift during checker refuses preview without asserting admission serialization', async t => {
   const f = await selectionFixture(t);
-  f.setCheck(async () => { f.setSnapshot({ ...snapshot, revision: 'fixture-2' }); return { eligible: true, reasons: [], projection: projection() }; });
+  f.setCheck(async () => { f.setSnapshot({ ...snapshot, revision: 'fixture-2' }); return { eligible: true, reasons: [], projection: projection(), snapshot: { ...snapshot } }; });
   assert.deepEqual(await f.preview(), { available: false, reason: { code: 'selection_snapshot_changed', explanation: 'The selection snapshot changed. Preview again.' } });
   await f.noWrites();
 });
@@ -306,7 +307,7 @@ for (const denied of ['tasks-only', 'operator', 'wrong-project', 'expired-grant'
 
 test('U81 T14 checker-time owner revocation and high-risk manage recheck refuse before mutation', async t => {
   const f = await selectionFixture(t);
-  f.setCheck(async () => { await f.db.query('UPDATE control_role_grants SET revoked_at=$1', [new Date(now).toISOString()]); return { eligible: true, reasons: [], projection: projection() }; });
+  f.setCheck(async () => { await f.db.query('UPDATE control_role_grants SET revoked_at=$1', [new Date(now).toISOString()]); return { eligible: true, reasons: [], projection: projection(), snapshot: { ...snapshot } }; });
   await assert.rejects(f.preview(), { code: 'access_denied' });
   await f.db.query(`UPDATE control_role_grants SET revoked_at=NULL,allowed_actions='["loop_selection.manage"]'::jsonb,risk_ceiling='low'`);
   let mutations = 0; await assert.rejects(f.service.manage(async () => { mutations++; }), { code: 'access_denied' });
@@ -321,6 +322,14 @@ test('U81 registration includes the deciding test without altering P71 real-tool
   const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
   assert.match(scripts['test:improve-control-room'], /tests\/loop-selection\.test\.ts/);
   assert.match(scripts['test:improve-control-room'], /--test-skip-pattern='\^P71 real settings check\$'/);
+  assert.equal(scripts['test:loop-selection:real'], 'CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/loop-selection-native.test.ts');
+  assert.equal(scripts['test:loop-selection:host'], 'node scripts/check-loop-selection-host-gate.mjs');
+  for (const [name, body] of Object.entries(scripts)) if (name !== 'test:loop-selection:real')
+    assert.ok(!(body as string).includes('tests/loop-selection-native.test.ts'), 'host-only test excluded from '+name);
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  assert.match(workflow, /node scripts\/check-loop-selection-host-gate\.mjs/);
+  assert.ok(!workflow.includes('tests/loop-selection-native.test.ts'));
+
 });
 
 test('U81 project preview browser client is a bounded same-origin POST with no authority or idempotency key', async t => {
