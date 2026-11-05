@@ -72,7 +72,7 @@ import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
-import { sessionWatchIdSchema } from "./session-watch-wire";
+import { sessionWatchCursorSchemaV1 } from "./session-watch-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
@@ -378,10 +378,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const loopSources = loopSourceFiles ? new LoopSelectionSnapshotCoordinatorV1({ db: loopDatabase,
     tenantId: options.tenantId, workspaceId: options.workspaceId, sourceFiles: loopSourceFiles,
     readRoster: readLoopRosterSnapshotSourceV1, clock: { wallNow: clock, monotonicNow: () => performance.now() } }) : undefined;
+  const loopProviders = options.loopBridge?.adapter.roster ? new LoopProviderServiceV1(loopDatabase,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(loopDatabase,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(loopDatabase,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders }, clock) : undefined;
   // B6: the roster master and its export. Start seeds or reconciles once; requests wait for it.
   const loopRosterTools = options.loopBridge?.adapter.roster;
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(loopDatabase,
@@ -398,8 +400,6 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
       async capture() { if (!await loopRosterStarted) throw new Error("selection_source_unavailable"); return loopSources.capture(); },
       assertCurrent: loopSources.assertCurrent.bind(loopSources),
     }, clock) : undefined;
-  const loopProviders = loopRosterTools ? new LoopProviderServiceV1(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
   const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
@@ -1104,7 +1104,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           await tasks.authorizeAttentionPage(identity);
         } else if (url.pathname === "/session-watch") {
           if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
-            || url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+            || url.searchParams.has("after") && !sessionWatchCursorSchemaV1.safeParse(url.searchParams.get("after")).success)
             throw new WebAccessError("invalid_request");
           await sessionWatch.authorize(identity);
         } else if (url.pathname === "/connections" || url.pathname === "/workers") {

@@ -1,4 +1,5 @@
 import { LoopPolicyRefusedV1 } from "./loop-policy-service";
+import { LoopProviderRefusedV1 } from "./loop-provider-service";
 import { privateRequestBudgets } from "./private-request-budgets";
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust,
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
@@ -48,7 +49,14 @@ export function createImproveControlRoomHttpHandlerV1(options: { origin: string;
           throw new WebAccessError("invalid_request");
         const result = await options.loopBridge.mutate(identity, projectId, requestId,
           (loop[4] ?? "intake") as "intake" | "confirm" | "start" | "stop" | "approve" | "answer",
-          await readBoundedJson(request.body, privateRequestBudgets.improvement), request.headers.get("idempotency-key") ?? "");
+          await readBoundedJson(request.body, privateRequestBudgets.improvement), request.headers.get("idempotency-key") ?? "")
+          .catch(error => {
+            if (loop[4] === "start" && error instanceof LoopProviderRefusedV1)
+              return Response.json({ error: "provider_refused", reason: error.reason, message: error.message },
+                { status: 422, headers: privateResponseHeaders });
+            throw error;
+          });
+        if (result instanceof Response) return result;
         return Response.json(result, { status: result.replayed && result.state !== "uncertain" ? 200 : 202, headers: privateResponseHeaders });
       }
       if (!options.service) throw new WebAccessError("not_found");

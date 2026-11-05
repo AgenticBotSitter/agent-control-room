@@ -40,8 +40,11 @@ for (const mode of ['private', 'Mac-local'] as const) {
     };
     const base = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/loop-policy`;
     try {
+      assert.equal((await exchange(`${base}/project`, { expectedVersion: 0, settings: '{}' }, 'p72-node-missing-locks-0001')).status, 400);
+      assert.equal(checks, 0, 'missing lockedPaths refuses before check or persistence');
+      assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length, 0);
       for (const layer of ['project', 'selection'] as const) {
-        const body = { expectedVersion: 0, settings: JSON.stringify({ fixture: layer }) }, key = `p71-node-${layer}-key-0001`;
+        const body = { expectedVersion: 0, settings: JSON.stringify({ fixture: layer }), ...(layer === 'project' ? { lockedPaths: [] } : {}) }, key = `p71-node-${layer}-key-0001`;
         const first = await exchange(`${base}/${layer}`, body, key);
         assert.equal(first.status, 201, `${mode} ${layer} PUT reaches actual policy handler`);
         assert.deepEqual(JSON.parse(first.body), { replayed: false, version: 1 });
@@ -49,7 +52,7 @@ for (const mode of ['private', 'Mac-local'] as const) {
         assert.deepEqual(JSON.parse(replay.body), { replayed: true, version: 1 });
       }
       const identity = local ? local.verify(new Request(origin, { headers: { cookie: cookie! } }), now) : f.identity;
-      assert.deepEqual(await service.view(identity, f.project.projectId), { project: { version: 1, settingsText: '{"fixture":"project"}' }, selection: { version: 1, settingsText: '{"fixture":"selection"}' } });
+      assert.deepEqual(await service.view(identity, f.project.projectId), { project: { version: 1, settingsText: '{"fixture":"project"}', lockedPaths: [] }, selection: { version: 1, settingsText: '{"fixture":"selection"}' } });
       const rows = async () => ({ layers: (await f.db.query('SELECT * FROM control_loop_policy_layers ORDER BY layer')).rows,
         events: (await f.db.query('SELECT * FROM control_loop_policy_events ORDER BY layer')).rows });
       const saved = await rows(); assert.equal(saved.layers.length, 2); assert.equal(saved.events.length, 2); assert.equal(checks, 2);
@@ -67,13 +70,13 @@ for (const mode of ['private', 'Mac-local'] as const) {
         const before = calls;
         assert.equal((await exchange(path, {}, 'p71-node-neighbour-0001')).status, 405, path); assert.equal(calls, before);
       }
-      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: '{}' }, 'p71-node-anonymous-0001', { anonymous: true })).status, 401);
-      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: '{}' }, 'p71-node-foreign-0001', { foreign: true })).status, 403);
+      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: '{}', lockedPaths: [] }, 'p71-node-anonymous-0001', { anonymous: true })).status, 401);
+      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: '{}', lockedPaths: [] }, 'p71-node-foreign-0001', { foreign: true })).status, 403);
       await f.db.query("UPDATE control_role_grants SET role_key='operator'");
-      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: '{}' }, 'p71-node-operator-0001')).status, 403);
+      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: '{}', lockedPaths: [] }, 'p71-node-operator-0001')).status, 403);
       await f.db.query("UPDATE control_role_grants SET role_key='owner'");
       const before = calls;
-      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: 'x'.repeat(8200) }, 'p71-node-oversize-0001')).status, 413);
+      assert.equal((await exchange(`${base}/project`, { expectedVersion: 1, settings: 'x'.repeat(8200), lockedPaths: [] }, 'p71-node-oversize-0001')).status, 413);
       assert.equal(calls, before); assert.equal(checks, 2); assert.deepEqual(await rows(), saved);
     } finally { await transport.close(); }
   });

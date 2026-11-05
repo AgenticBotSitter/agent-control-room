@@ -15,6 +15,7 @@ const check = z.object({ id, required: z.boolean(), commandLabel: label, receipt
   candidateRevision: revision, status, exitCode: z.number().int().min(-2147483648).max(2147483647).nullable(),
   completed: count, passed: count, failed: count, skipped: count, durationMs: count, startedAt: utc, endedAt: utc }).strict();
 const review = z.object({ current: z.boolean(), stepId: id, role: label, attempt: positive,
+  selectedModel: label.refine(v => v.trim().length > 0).optional(), identityBasis: z.enum(["selected", "observed"]).optional(),
   requestedModel: label.nullable(), observedModel: label.nullable(), identityVerified: z.boolean(), family: label.nullable(),
   verdict: z.enum(["CLEAN", "NEEDS-FIX"]), candidateRevision: revision, inputVersion: loopCandidateInputVersionV1,
   reportDigest: digest, sidecarDigest: digest, startedAt: utc, endedAt: utc }).strict();
@@ -55,7 +56,11 @@ export const loopCandidateEvidenceSchemaV1 = z.object({ schemaVersion: z.literal
     if (r.current && (r.verdict !== "CLEAN" || r.candidateRevision !== v.binding.candidateRevision
       || r.inputVersion !== v.binding.a2InputVersion)) bad("current review binding mismatch");
   }
-  if (current.some(r => !r.identityVerified || !r.family)) bad("current review independence unverified");
+  // Older retained records have no basis and must still satisfy the observed identity gate.
+  // Selection never turns identityVerified into an observation claim.
+  if (current.some(r => r.identityBasis === "selected"
+    ? !r.selectedModel || !r.family?.trim()
+    : !r.identityVerified || !r.family)) bad("current review independence unverified");
   if (v.findings.some(f => f.disposition === "OPEN" && f.severity !== "LOW")) bad("open blocking finding");
   if ((v.assumptions ?? []).some(a => a.status === "validated" && a.evidenceDigest === null)
     || (v.validations ?? []).some(a => a.status === "PASS" && a.evidenceDigest === null)) bad("validation evidence absent");

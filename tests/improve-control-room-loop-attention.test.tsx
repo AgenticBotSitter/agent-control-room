@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import { Buffer as NodeBuffer } from "node:buffer";
 import test from "node:test";
@@ -9,7 +10,7 @@ import { now, origin, request, trust } from "./helpers/web-foundation";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
 import { loopImprovementDraftSchemaV1, loopBridgeBindingSchemaV1, loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1, type LoopBridgeBindingV1 } from "../src/improve-control-room/v1/schemas";
-import { loopByteHashV1, type LoopEngineStatusV1, type LoopAdapterV1 } from "../src/web/v1/improve-control-room-loop-adapter";
+import { LoopIntakeRefusalV1, loopIntakeRefusalEvidenceV1, loopByteHashV1, type LoopEngineStatusV1, type LoopAdapterV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { type LoopImprovementDecisionsV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { loopDecisionsBrowserClient as decisionClient } from "../src/web/v1/improve-control-room-loop-decisions-browser-client";
 import { LoopReadError } from "../src/web/v1/improve-control-room-loop-browser-client";
@@ -21,7 +22,7 @@ import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import { loopAttentionItemSchemaV1, loopAttentionKey, loopDecisionStatusSchemaV1, loopAttentionComplete, loopAttentionUnknown } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { buildActionInbox } from "../src/web/v1/action-inbox";
 import { readFile } from "node:fs/promises";
-import { reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
+import { assertMutationLaneCoverage, reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
 import { sha256Digest, hmacSha256Tag } from "../src/security";
 import { taskFixture } from "./helpers/web-task";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
@@ -70,10 +71,10 @@ test("B2b browser schemas preserve UTF-8 byte limits without Buffer", () => {
     }
   }
 });
-const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC B2b"}';
+const settingsText = JSON.stringify({project:{host_adapter:'local-loop'},fixture:'SYNTHETIC B2b',providerRoute:S4_FIXTURE_ROUTE});
 const exact = "  Draft with café 🧭\r\nKeep every byte.  ";
-async function fixture() {
-  const f = await taskFixture();
+async function fixture(intakeRefused = false) {
+  const f = await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B2b" });
@@ -85,6 +86,8 @@ async function fixture() {
   const calls: string[] = [];
   const complete = async (op: string, id: string, b: LoopBridgeBindingV1, text?: string) => {
     calls.push(op);
+    if (op === "intake" && intakeRefused) throw new LoopIntakeRefusalV1(id, sha256Digest(b), "SETTINGS_REPOSITORY",
+      loopIntakeRefusalEvidenceV1(id, b, "SETTINGS_REPOSITORY"));
     if (op === "intake") saved = { run: { adapterId:"adapter:synthetic", loopRunId:b.loopRunId, toolingRevision, a2SchemaVersion:1 },
       revision:1, inputVersion:"SYNTHETIC:1", state:"draft", description:text!, settingsSha256:loopByteHashV1(settingsText), settingsDigest:loopByteHashV1(settingsText),
       confirmation:null, approval:null, question:null, progress:{step:"intake",completed:0,attention:"none"}, receipts:[] };
@@ -104,7 +107,7 @@ async function fixture() {
     override !== undefined ? override : ["stopped","finished"].includes(saved.state) ? null : saved.question ? {kind:"question",text:"Choose the saved scope.\r\nKeep café?"}
       : saved.approval ? {kind:"approve"} : !saved.confirmation ? {kind:"confirm"} : null } });
   let documentText = "Sealed complete plan.\n".repeat(4000), documentCalls = 0;
-  const adapter: LoopAdapterV1 = { adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
+  const adapter: LoopAdapterV1 = {providerRoutes:s4FixtureRoutes, adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
     // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
     checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     available:()=>true,reserveRun:()=>`synthetic-run:${++sequence}`,
@@ -112,7 +115,7 @@ async function fixture() {
     approve:(id,b)=>complete("approve",id,b),answer:(id,b,text)=>complete("answer",id,b,text),status:async()=>snapshot(),
     readApprovalDocument:async()=>{documentCalls++;return documentText;},close:async()=>{} };
   const desk = new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,contract);
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
   const handler = createImproveControlRoomHttpHandlerV1({origin,trust,service:desk,loopBridge:bridge,clock:()=>now});
   const posts: {path:string;body:string;key:string}[] = [];
   const transport: typeof fetch = async (input, options) => {
@@ -332,15 +335,16 @@ test("B2b strict same-response gate evidence and current bindings",async()=>{
 
 test("B2b CI registrations stay unconditional and separate",async()=>{
   const manifest=JSON.parse(await readFile("package.json","utf8")),workflow=await readFile(".github/workflows/ci.yml","utf8");
-  const mutation=workflow.slice(workflow.indexOf("  mutation-checks:"),workflow.indexOf("\n  pr-claims:"));
+  const jobs=assertMutationLaneCoverage(manifest.scripts,workflow);
   const browser=workflow.slice(workflow.indexOf("  owner-browser-journey:"),workflow.indexOf("\n  full-gate:"));
-  for(const lane of [mutation,mutation.replace(/steps\.manifest\.outputs\.exists == 'true'/g,"false")]){
-    const reached=reachableTests(manifest.scripts,workflowCommands(lane));
-    assert.ok(reached.has("tests/improve-control-room-loop-attention-mutations.test.ts"));
-    const step=lane.slice(lane.indexOf("      - name: Prove saved loop owner decision guards"),lane.indexOf("      - name: Validate every declared mutation anchor"));
-    assert.doesNotMatch(step,/\n\s+if:/);assert.match(step,/timeout-minutes: 10/);
-    assert.match(lane,/timeout-minutes: 45/);assert.ok(lane.indexOf("test:improve-control-room-loop-ui-mutations")<lane.indexOf("test:improve-control-room-loop-attention-mutations"));
+  for(const key of Object.keys(jobs)){
+    const conditional=key==="mutation-checks"
+      ? workflow.replace("    if: ${{ always() }}", "    if: false")
+      : workflow.replace(`  ${key}:`, `  ${key}:\n    if: false`);
+    assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,conditional),{name:"AssertionError"});
   }
+  const conditionalStep=workflow.replace("      - name: Prove saved loop owner decision guards", "      - if: false\n        name: Prove saved loop owner decision guards");
+  assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,conditionalStep),{name:"AssertionError"});
   assert.ok(reachableTests(manifest.scripts,workflowCommands(workflow)).has("tests/improve-control-room-loop-attention.test.tsx"));
   assert.ok(!reachableTests(manifest.scripts,["pnpm run test:components"]).has("tests/improve-control-room-loop-attention-mutations.test.ts"));
   assert.match(manifest.scripts["test:improve-control-room-loop-attention-browser"],/playwright test tests\/browser\/improve-control-room-loop-attention\.spec\.ts$/);
@@ -383,7 +387,7 @@ test("B2b discovery creator predicate",async()=>{
 
 test("B2b Stop synchronously invalidates a waiting answer",async()=>{
   const f=await fixture(),id=await f.intake();await f.confirm(id);const saved=await f.bridge.status(f.identity,f.project.projectId,id);
-  await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{expectedVersion:1,expectedRevision:saved.engine.revision,runLinkId:saved.display.runLinkId},"b2b-start-before-stop-0001");
+  await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:saved.engine.revision,runLinkId:saved.display.runLinkId},"b2b-start-before-stop-0001");
   f.edit({state:"waiting",question});const m=await mount(f.project.projectId,f.transport);
   try{
     await settle();const field=m.dom.window.document.querySelector("#loop-owner-answer")!;
@@ -541,4 +545,28 @@ test("UI fix attention refresh during an in-flight read is coalesced and kept",a
     assert.equal(m.dom.window.document.querySelector('[data-field="attention-count"]')?.textContent,"1","a pending refresh cannot swallow the new decision");
     assert.equal(reads,3,"one initial read, one held read and one coalesced fresh read");
   }finally{release();await m.close();}
+});
+
+
+test("B5 refused intake shows its plain repository reason immediately and after reopen", async () => {
+  const f = await fixture(true);
+  let m = await mount(f.project.projectId, f.transport);
+  try {
+    await settle();
+    await type(m, "#loop-intake-description", exact);
+    const field = m.dom.window.document.querySelector("#loop-intake-description")!;
+    const props = (field as unknown as Record<string, { onChange?: (event: unknown) => void }>)[Object.keys(field).find(key => key.startsWith("__reactProps"))!];
+    await act(async () => props!.onChange!({ target: { value: exact } }));
+    await act(async () => m.button("Prepare request").click()); await settle();
+    assert.match(m.text(), /repository settings were refused/i);
+    assert.match(m.text(), /No work was started/);
+    assert.equal(m.dom.window.document.querySelector<HTMLTextAreaElement>("#loop-intake-description")!.value, exact.replace(/\r\n/g, "\n"));
+    assert.equal(m.button("Start confirmed work"), undefined);
+    assert.equal(m.button("Stop this run"), undefined);
+    await m.close();
+    m = await mount(f.project.projectId, f.transport); await settle();
+    assert.match(m.text(), /repository settings were refused/i);
+    assert.match(m.text(), /No work was started/);
+    assert.deepEqual(f.calls, ["intake"]);
+  } finally { await m.close(); await f.close(); }
 });

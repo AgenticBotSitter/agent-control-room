@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from 'node:assert/strict';
 import { createLoopSelectionSourceFilesV1 } from '../src/web/v1/loop-selection-snapshot';
 import test from 'node:test';
@@ -24,7 +25,7 @@ if(process.env.CONTROL_ROOM_B3B_LOAD!=='1')test('B3b refresh without browser',as
 
 import { mkdir,mkdtemp,writeFile,readFile,rm,chmod,symlink,stat } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { fork,type ChildProcess } from 'node:child_process';
 import type { TestContext } from 'node:test';
 import { createImproveControlRoomLoopMonitorV1,decodeLoopHealthV1,loopMonitoringStatusSchemaV1,loopMonitoringAttentionV1,
@@ -36,17 +37,34 @@ const payload=(now:number,available=true)=>Buffer.from(JSON.stringify({schema_ve
 async function fixture(t:TestContext,existingRoot?:string,fileName='health.json'){
   await mkdir(resolve('.test-tmp'),{recursive:true});const root=existingRoot??await mkdtemp(resolve('.test-tmp/b3b-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
-  let wall=Date.parse('2026-10-01T00:00:00.000Z'),mono=0,calls=0,available=true,fail=false,latency=0;
+  let wall=Date.parse('2026-10-01T00:00:00.000Z'),mono=0,calls=0,enabledCalls=0,available=true,fail=false,latency=0;
   const file=join(root,fileName);
   const clock:LoopMonitoringClockV1={wallNow:()=>wall,monotonicNow:()=>mono,setTimeout,clearTimeout};
-  const configuration={availabilityFile:file,bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),enabled:()=>true,clock,
+  const configuration={availabilityFile:file,bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),enabled:()=>{enabledCalls++;return true;},clock,
     collect:async(_signal:AbortSignal,onChild:(pid:number)=>Promise<void>)=>{calls++;await onChild(process.pid);wall+=latency;mono+=latency;if(fail)throw Error('SYNTHETIC failure');return{exitCode:available?0:5,bytes:payload(wall,available)};}};
   const monitor=createImproveControlRoomLoopMonitorV1(configuration);t.after(()=>monitor.close());
   const schedule=async()=>JSON.parse(await readFile(file+'.schedule.json','utf8'));
   async function idle(){await until(async()=>!existsSync(file+'.monitor.lock'));await new Promise<void>(r=>setImmediate(r));}
-  async function tick(m=monitor){m.tick();await new Promise<void>(r=>setTimeout(r,20));await idle();}
+  // A refresh reads the schedule before it creates the lock and only clears its pending flag after it removes
+  // the lock, so idle() alone can return early and the next tick can be dropped. A due tick therefore re-ticks
+  // until its refresh shows evidence (lock created, or enabled() consulted beyond the ticks issued here) and
+  // then waits for idle(); a tick that is plainly not due returns synchronously and has nothing to wait for.
+  let skewed=false;
+  function plainlyNotDue(){
+    if(skewed||!Number.isFinite(wall))return !Number.isFinite(wall);
+    try{const s=JSON.parse(readFileSync(file+'.schedule.json','utf8'));
+      return wall<Date.parse(s.nextAttemptAt)&&!(s.checkedAt&&Date.parse(s.checkedAt)>wall)&&!(s.lastAttemptAt&&Date.parse(s.lastAttemptAt)>wall)&&Date.parse(s.nextAttemptAt)<=wall+3031000;
+    }catch{return false;}
+  }
+  let ticks=0;
+  async function tick(m=monitor){
+    const skip=plainlyNotDue(),before=enabledCalls-ticks;ticks++;m.tick();
+    if(!skip){const end=Date.now()+5000;
+      while(Date.now()<end&&enabledCalls-ticks<=before&&!existsSync(file+'.monitor.lock')){await new Promise<void>(r=>setTimeout(r,2));ticks++;m.tick();}}
+    await idle();
+  }
   return{root,file,configuration,monitor,clock,schedule,tick,idle,calls:()=>calls,wall:()=>wall,mono:()=>mono,
-    advance(ms:number){wall+=ms;mono+=ms;},rewind(ms:number){wall-=ms;},setWall(ms:number){wall=ms;},fail(v:boolean){fail=v;},available(v:boolean){available=v;},latency(ms:number){latency=ms;}};
+    advance(ms:number){wall+=ms;mono+=ms;},rewind(ms:number){skewed=true;wall-=ms;},setWall(ms:number){skewed=true;wall=ms;},fail(v:boolean){fail=v;},available(v:boolean){available=v;},latency(ms:number){latency=ms;}};
 }
 const ordinary=process.env.CONTROL_ROOM_B3B_LOAD!=='1';
 if(ordinary){
@@ -86,11 +104,18 @@ if(ordinary){
   });
   test('B3b normal cadence and one bounded retry',async t=>{
     const f=await fixture(t);await f.tick();assert.equal(f.calls(),1);f.monitor.assertAvailability();
-    f.advance(2999999);await f.tick();assert.equal(f.calls(),1,'B3b premature collection count remains one');
+    // tick() admits work asynchronously. An absent lock at this instant does
+    // not prove that a premature collector will not be admitted just afterwards.
+    const assertNoCollection=async(count:number,message:string)=>{
+      const deadline=Date.now()+500;
+      do{await new Promise<void>(r=>setTimeout(r,10));assert.equal(f.calls(),count,message);}while(Date.now()<deadline);
+      await f.idle();assert.equal(f.calls(),count,message);
+    };
+    f.advance(2999999);await f.tick();await assertNoCollection(1,'B3b premature collection count remains one');
     f.advance(1);f.fail(true);const old=await readFile(f.file);await f.tick();assert.equal(f.calls(),2);assert.deepEqual(await readFile(f.file),old);
-    assert.equal((await f.schedule()).nextKind,'retry');f.advance(299999);await f.tick();assert.equal(f.calls(),2);
+    assert.equal((await f.schedule()).nextKind,'retry');f.advance(299999);await f.tick();await assertNoCollection(2,'B3b retry waits for its due time');
     f.advance(1);await f.tick();assert.equal(f.calls(),3);assert.equal((await f.schedule()).nextKind,'normal');
-    f.advance(2999999);await f.tick();assert.equal(f.calls(),3);f.fail(false);f.advance(1);await f.tick();assert.equal(f.calls(),4);f.monitor.assertAvailability();
+    f.advance(2999999);await f.tick();await assertNoCollection(3,'B3b exhausted retry waits for normal cadence');f.fail(false);f.advance(1);await f.tick();assert.equal(f.calls(),4);f.monitor.assertAvailability();
   });
   test('B3b three hours retain the freshness margin and recovery retry',async t=>{
     const f=await fixture(t);f.latency(31000);await f.tick();
@@ -225,9 +250,9 @@ if(ordinary){
   });
 }
 if(!ordinary)test('B3b product collector contention',async t=>{
-  const db=await taskFixture();t.after(()=>db.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const db=await s4TaskFixture();t.after(()=>db.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const saved=await seedRecoveryRun({...db,db:db.client,scope},e,db.project.projectId,()=>webNow,'b3b-load-stop');
-  const bridge=new ImproveControlRoomLoopServiceV1(db.client,scope,{integrityKey:recoveryKey,adapter:e.adapter},()=>webNow);
+  const bridge=new ImproveControlRoomLoopServiceV1(db.client,scope,{providers:s4ProviderServiceV1(db.client,scope,()=>webNow),integrityKey:recoveryKey,adapter:e.adapter},()=>webNow);
   const f=await fixture(t,e.root,'availability.json');let calls=0,winner=-1,release!:()=>void,entered!:()=>void;
   const reached=new Promise<void>(r=>{entered=r;});
   const config={...f.configuration,collect:async(signal:AbortSignal,onChild:(pid:number)=>Promise<void>)=>{calls++;await onChild(process.pid);entered();await new Promise<void>(r=>{release=r;signal.addEventListener('abort',()=>r(),{once:true});});return{exitCode:0,bytes:payload(f.wall())};}};
@@ -262,13 +287,13 @@ import {useSharedTaskAttention,refreshSharedTaskAttention} from '../private-app/
 import {ImprovementRunPanel} from '../private-app/app/improvement-run-panel';
 function Surfaces(){const attention=useSharedTaskAttention(true);return <LocalRuntimeContextV1.Provider value={{mode:'hosted'}}><PrivateHeader/><HomeDashboard data={{activity:{state:'unavailable'},projects:{state:'unavailable'},connections:{state:'ready',value:{source:'local',value:{taskWorkersStarted:true,workers:[],projectSections:[]}}},attention}}/></LocalRuntimeContextV1.Provider>;}
 if(ordinary)test('B3b actual adapter service and rendered attention remain one lower bound',async t=>{
-  const f=await taskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const seeded=await seedRecoveryRun({...f,db:f.client,scope},e,f.project.projectId,()=>webNow,'b3b-render');
   let reason:unknown={reasonCode:'LOGIN_REQUIRED',deadline:null,workerState:'none'},gate:LoopImprovementDecisionsV1['gate']=null,decodes=0;
   const a=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,
     decisionProjection:{questionTextPath:['counters','questionText'],decodeGate:()=>gate},
     monitoring:{enabled:()=>true,decodeStatus:(_raw,status)=>{decodes++;assert.equal(status.run.loopRunId,seeded.run);return reason;}}}});t.after(()=>a.close());
-  const service=()=>new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:a},()=>webNow);
+  const service=()=>new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>webNow),integrityKey:recoveryKey,adapter:a},()=>webNow);
   let bridge=service();
   const attention=async()=>{const source=await bridge.readAttention(f.identity);assert.ok(source.state==='available');return source;};
   const before=await readFile(e.configuration.availabilityFile);
@@ -326,12 +351,12 @@ if(ordinary)test('B3b aggregate timeout TERM grace KILL and no timers after reap
 });
 
 if(ordinary)test('B3b status and Stop stay responsive during collection and disable drains',async t=>{
-  const f=await taskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const saved=await seedRecoveryRun({...f,db:f.client,scope},e,f.project.projectId,()=>webNow,'b3b-stop-held');
   await e.behavior({hold:true,ignoreTerm:true});let enabled=true;
   const recovery={enabled:()=>true,inspect:async()=>{throw Error('SYNTHETIC unavailable');},claimDriver:async()=>({kind:'busy' as const,evidenceDigest:sha256Digest('SYNTHETIC')})};
   const a=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,recovery,monitoring:{enabled:()=>enabled,decodeStatus:()=>({reasonCode:'PROVIDER_UNAVAILABLE',deadline:null,workerState:'live'})}}});t.after(()=>a.close());
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:a},()=>webNow);
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>webNow),integrityKey:recoveryKey,adapter:a},()=>webNow);
   a.monitoringTick!();await until(async()=>(await e.healthTraces()).length===1);
   const at=performance.now();const s=await bridge.status(f.identity,f.project.projectId,saved.id);assert.equal(s.display.canStop,true);
   const stopped=await bridge.mutate(f.identity,f.project.projectId,saved.id,'stop',{runLinkId:saved.link},'b3b-stop-held-0001');assert.ok(['accepted','uncertain'].includes(stopped.state));

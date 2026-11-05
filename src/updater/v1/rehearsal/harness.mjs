@@ -1,3 +1,4 @@
+import { shellArgumentV1 } from "../../../pg-runtime/v1/pg-path-quoting.mjs";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
@@ -21,11 +22,11 @@ async function installFakeCommands(root) {
   const directory = join(root, "runtime/rehearsal-fakes"), log = join(root, "evidence/fake-commands.jsonl");
   await mkdir(directory, { recursive: true }); await mkdir(join(root, "evidence"), { recursive: true });
   const bodies = {
-    launchctl: `printf '{"command":"launchctl","arguments":"%s"}\\n' "$*" >> '${log}'`,
-    sudo: `printf '{"command":"sudo","arguments":"%s"}\\n' "$*" >> '${log}'`,
-    tailscale: `printf '{"command":"tailscale","arguments":"%s"}\\n' "$*" >> '${log}'`,
-    pbcopy: `cat >/dev/null; printf '{"command":"pbcopy","arguments":"%s"}\\n' "$*" >> '${log}'`,
-    pbpaste: `printf '{"command":"pbpaste","arguments":"%s"}\\n' "$*" >> '${log}'`,
+    launchctl: `printf '{"command":"launchctl","arguments":"%s"}\\n' "$*" >> ${shellArgumentV1(log)}`,
+    sudo: `printf '{"command":"sudo","arguments":"%s"}\\n' "$*" >> ${shellArgumentV1(log)}`,
+    tailscale: `printf '{"command":"tailscale","arguments":"%s"}\\n' "$*" >> ${shellArgumentV1(log)}`,
+    pbcopy: `cat >/dev/null; printf '{"command":"pbcopy","arguments":"%s"}\\n' "$*" >> ${shellArgumentV1(log)}`,
+    pbpaste: `printf '{"command":"pbpaste","arguments":"%s"}\\n' "$*" >> ${shellArgumentV1(log)}`,
     diskutil: "echo '   Owners: Enabled'",
   };
   for (const [name, body] of Object.entries(bodies)) {

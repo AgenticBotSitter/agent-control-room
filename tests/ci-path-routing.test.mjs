@@ -309,6 +309,25 @@ test("the affected-test lane gives selected PostgreSQL tests a disposable, gated
   assert.match(job, /Stop disposable PostgreSQL for selected database tests/u);
 });
 
+test("component jobs retain history for immutable database upgrade fixtures", () => {
+  for (const name of ["test-components", "full-gate"]) {
+    const job = workflow.match(new RegExp(`^  ${name}:[\\s\\S]*?(?=^  [a-z][a-z-]+:|$(?![\\s\\S]))`, "mu"))?.[0];
+    assert.ok(job, `${name} must exist`);
+    const checkout = job.match(/      - uses: actions\/checkout[^]*?(?=      - )/u)?.[0];
+    assert.match(checkout, /fetch-depth: 0/u,
+      `${name} must supply the historical migration commits used by its upgrade tests`);
+  }
+});
+
+test("split mutation jobs prepare the protected macOS scratch directory", () => {
+  const job = workflow.match(/^  mutation-checks:[\s\S]*?(?=^  [a-z][a-z-]+:|$(?![\s\S]))/mu)?.[0];
+  assert.ok(job, "the finalization and website mutation job must exist");
+  const setup = job.indexOf("sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp");
+  const checks = job.indexOf("run: pnpm run test:");
+  assert.ok(setup >= 0 && setup < checks,
+    "protected updater mutation baselines need a real sticky /private/tmp before checks run");
+});
+
 test("the affected-test automation has the required budget and security review", () => {
   assert.match(budgetSecurityReview, /## Amendment: affected tests \(fast\)/u);
   assert.match(budgetSecurityReview, /45-minute timeout/u);

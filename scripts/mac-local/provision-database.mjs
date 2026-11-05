@@ -1,3 +1,4 @@
+import { shellArgumentV1 } from "../../src/pg-runtime/v1/pg-path-quoting.mjs";
 import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /**
  * Owner-authorized Mac-local database provisioner.
@@ -378,9 +379,9 @@ try {
   const sourceBase64 = Buffer.from(source, "utf8").toString("base64");
   const remoteBody = String.raw`set -eu
 printf 'provision_stage:fetch\\n' >&2
-git -C ${JSON.stringify(remoteWorktree)} fetch --quiet origin main
+git -C ${shellArgumentV1(remoteWorktree)} fetch --quiet origin main
 printf 'provision_stage:worktree\\n' >&2
-git -C ${JSON.stringify(remoteWorktree)} worktree add --quiet --detach "$stage" origin/main
+git -C ${shellArgumentV1(remoteWorktree)} worktree add --quiet --detach "$stage" origin/main
 cd "$stage"
 printf 'provision_stage:dependencies\\n' >&2
 CI=true pnpm install --frozen-lockfile --offline --ignore-scripts >/dev/null
@@ -398,7 +399,7 @@ export stage
 body=""
 cleanup() {
   rm -f "$body"
-  git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
+  git -C ${shellArgumentV1(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT

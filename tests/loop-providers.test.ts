@@ -22,7 +22,7 @@ const provider = (changes: Partial<LoopProviderDataV1> = {}): LoopProviderDataV1
   credit_amount_nano_usd: '123000', credit_expires_on: '2027-01-31', credit_note: 'Synthetic credit',
   price_source_url: null, price_source_format: null, ...changes,
 });
-async function fixture(t: TestContext, presence = { availability: async (_id: string) => 'available' as const }) {
+async function fixture(t: TestContext, presence: import('../src/web/v1/loop-provider-service').ProviderSecretPresenceV1 = { availability: async (_id: string) => 'available' as const }) {
   const f = await taskFixture(); t.after(() => f.db.close());
   await f.db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,
     default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
@@ -140,13 +140,13 @@ test('S1 roster change invalidates mappings',async t=>{
  await assert.rejects(f.service.revalidate(f.identity,{providerId:'provider-one',model:'synthetic/model'}),{reason:'roster_mismatch'});
 });
 test('S1 down is empty-only and retained provider model or state rolls back atomically',async t=>{
- const f=await fixture(t);const down=await readFile('db/down/0308_control_loop_providers.sql','utf8');
+ const f=await fixture(t);const down=await readFile('db/down/0312_control_loop_providers.sql','utf8');
  assert.equal((await f.put(0)).status,201);const saved=await f.rows();
  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');assert.deepEqual(await f.rows(),saved);
  await f.db.query('DELETE FROM control_loop_provider_models');await f.db.query('DELETE FROM control_loop_providers');
  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');
  await f.db.query('DELETE FROM control_loop_provider_state');
- await f.db.exec(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));await f.db.exec(down);
+ await f.db.exec(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));await f.db.exec(down);
  assert.equal((await f.db.query("SELECT * FROM pg_tables WHERE tablename LIKE 'control_loop_provider%'")).rows.length,0);
 });
 for(const mode of ['private','Mac-local'] as const)test(`S1 ${mode} Node actual provider and policy PUT persistence and refusal`,async t=>{
@@ -170,7 +170,9 @@ for(const mode of ['private','Mac-local'] as const)test(`S1 ${mode} Node actual 
   assert.equal(await send(path,body,k),201,'S1 provider Node PUT must persist');assert.equal(await send(path,body,k),200);
   assert.equal(await send(path,{expectedVersion:1,provider:provider({display_name:'Replacement'})}),201);
   assert.equal((await f.rows())[0].length,1);assert.equal((await f.rows())[2][0]!.version,2);
-  for(const layer of ['project','selection'])assert.equal(await send(`/api/v1/projects/${f.project.projectId}/loop-policy/${layer}`,{expectedVersion:0,settings:'{}'}),201,'S1 policy Node PUT must persist');
+  assert.equal(await send(`/api/v1/projects/${f.project.projectId}/loop-policy/project`,{expectedVersion:0,settings:'{}'}),400,'P72 project PUT requires lockedPaths');
+  assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,0);
+  for(const layer of ['project','selection'])assert.equal(await send(`/api/v1/projects/${f.project.projectId}/loop-policy/${layer}`,{expectedVersion:0,settings:'{}',...(layer==='project'?{lockedPaths:[]}: {})}),201,'S1 policy Node PUT must persist');
   assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,2);
   const saved=await f.rows();
   for(const bad of [path+'/extra',path+'/',path+'?x=1','/api/v1/loop-providers/UPPER',`/api/v1/projects/${f.project.projectId}/loop-policy/other`,'/api/v1/neighbour']){const n=calls;assert.equal(await send(bad,{}),405);assert.equal(calls,n);}
@@ -413,7 +415,7 @@ test('S2 refresh rejects operator non-human malformed content and CSRF without t
 test('S2 price down refuses retained price or fetch atomically and accepts empty',async t=>{
   const f=await priceFixture(t,{fetch:async()=>Response.json(priceDocument())});
   await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());await f.refresh(1);
-  const down=await readFile('db/down/0309_control_loop_provider_prices.sql','utf8');
+  const down=await readFile('db/down/0313_control_loop_provider_prices.sql','utf8');
   const before=await f.service.view(f.identity);
   await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');assert.deepEqual(await f.service.view(f.identity),before);
   await f.db.query('DELETE FROM control_loop_provider_prices');await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');
@@ -484,4 +486,417 @@ test('S2 clock crossing exactly 24 hours keeps checked-at and exposes a stale re
   view=await (await send('/api/v1/loop-providers')).json() as typeof view;
   assert.equal(view.prices[0]!.stale,true);assert.equal(view.prices[0]!.checkedAt,new Date(now).toISOString());
   assert.deepEqual(view.fetches,[{providerId:'provider-one',outcome:'failed',reason:'http_status',fetchedAt:new Date(at).toISOString()}]);
+});
+
+test('S3 offers decode one segment, keep every mapping and mark all fresh USD minima',async t=>{
+ const f=await fixture(t,{availability:async()=>{throw new Error('view must not probe credentials');}});
+ for(const [i,id] of ['provider-one','provider-two','provider-three','provider-four','provider-five','provider-six'].entries()){
+  const p=provider({provider_id:id,display_name:id,credit_expires_on:'2020-01-01',...(id==='provider-six'?{secret_ref:{kind:'bitwarden' as const,item:'opaque-item'}}:{})});
+  await f.service.upsert(f.identity,id,{expectedVersion:i,provider:p},key());
+ }
+ const price=async(id:string,input:string,output:string,currency='USD',age=0)=>f.db.query(`INSERT INTO control_loop_provider_prices(tenant_id,provider_id,model,window_key,"window",input_nano_usd_per_token,output_nano_usd_per_token,currency,status,reason,checked_at)
+ VALUES($1,$2,'served/one','all',NULL,$3,$4,$5,$6,'',$7) ON CONFLICT (tenant_id,provider_id,model,window_key) DO UPDATE SET input_nano_usd_per_token=$3,output_nano_usd_per_token=$4`,[scope.tenantId,id,currency==='USD'?input:null,currency==='USD'?output:null,currency,currency==='USD'?'known':'not_comparable',new Date(now-age).toISOString()]);
+ await price('provider-one','10','20');await price('provider-two','10','20');await price('provider-three','1','1','EUR');await price('provider-four','1','1','USD',86400001);
+ await f.db.query(`INSERT INTO control_loop_provider_fetches VALUES('tenant:web','provider-four','failed','http_status',$1)`,[new Date(now).toISOString()]);
+ const get=()=>f.handler(request('/api/v1/loop-providers/offers/synthetic%2Fmodel'));
+ let response=await get();assert.equal(response.status,200,'S3 offers must reach the real service');
+ let body=await response.json();assert.equal(body.offers.length,6);assert.equal(body.cheapestStatus,'minimum');
+ assert.deepEqual(body.offers.filter((o:any)=>o.cheapest).map((o:any)=>o.providerId),['provider-one','provider-two']);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-one').servedModelId,'served/one');assert.equal(body.offers.find((o:any)=>o.providerId==='provider-one').credit.expired,true);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-one').price.input,'10','credit is never deducted');assert.equal(body.offers.find((o:any)=>o.providerId==='provider-four').price.stale,true);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-four').latestFetch.outcome,'failed');assert.equal(body.offers.find((o:any)=>o.providerId==='provider-five').price,null);
+ assert.equal(body.offers.find((o:any)=>o.providerId==='provider-six').available,false);assert.equal(body.offers.find((o:any)=>o.providerId==='provider-six').availabilityReason,'Secret unavailable');
+ await price('provider-two','5','30');body=await (await get()).json();assert.equal(body.cheapestStatus,'no_single_cheapest');assert.ok(body.offers.every((o:any)=>!o.cheapest));
+ await f.db.query("UPDATE control_loop_roster_models SET launcher='changed'");body=await (await get()).json();assert.ok(body.offers.every((o:any)=>!o.available));
+ for(const path of ['/api/v1/loop-providers/offers/synthetic/model','/api/v1/loop-providers/offers/synthetic%252Fmodel']){
+  response=await f.handler(request(path));if(path.includes('%252F')){assert.equal(response.status,200);assert.equal((await response.json()).offers.length,0);}else assert.equal(response.status,404);
+ }
+ assert.equal((await f.handler(request('/api/v1/loop-providers/offers/%ZZ'))).status,400);
+ for(const role of ['operator','lead']){await f.db.query('UPDATE control_role_grants SET role_key=$1',[role]);assert.equal((await get()).status,403);}
+ await f.db.query("UPDATE control_role_grants SET role_key='owner'");
+ await f.db.query("UPDATE control_identities SET actor_type='agent'");assert.equal((await get()).status,403);
+ await f.db.query("UPDATE control_identities SET actor_type='human'");
+ await f.service.remove(f.identity,'provider-one',{expectedVersion:6},key());body=await (await get()).json();assert.equal(body.offers.length,5);
+});
+
+// Explicit native lane: ordinary unit runs do not start a cluster.
+test('S3 PostgreSQL 20 provider selection writers contend as production logins', {skip:process.env.CONTROL_ROOM_S3_NATIVE!=='1'}, async()=>{
+ const {withRealPostgres}=await import('./support/attack-kit/index');
+ const {Client,Pool}=await import('pg');
+ const {bindPrivatePgPool}=await import('../src/web/v1/private-pg-database');
+ const {privatePgOptions}=await import('../src/web/v1/private-pg-options');
+ type Pg=Parameters<Parameters<typeof withRealPostgres>[0]>[0];
+ const scope={tenantId:'tenant:s3',workspaceId:'workspace:s3'},project='project:s3',owner='identity:s3';
+ const at=new Date(now-60000).toISOString(),expires=new Date(now+3600000).toISOString();
+ const identity={provider:'test',subject:owner,tokenDigest:sha256Digest({session:'s3'}),issuedAt:at,expiresAt:expires,verificationExpiresAt:expires};
+ async function sql(pg:Pg,query:string,params:unknown[]=[],role='admin',database=pg.database){
+  const client=new Client(role==='admin'?pg.admin({database}):pg.connection(role,{database}));await client.connect();
+  try{return await client.query(query,params);}finally{await client.end();}
+ }
+async function seed(pg:Pg,database=pg.database){
+  await sql(pg,"INSERT INTO tenants(id,display_name) VALUES($1,'Fixture tenant')",[scope.tenantId],"admin",database);
+  await sql(pg,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Fixture workspace')",[scope.workspaceId,scope.tenantId],"admin",database);
+  await sql(pg,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+    VALUES('adapter:b1b',$1,'control-room-manual','1.0.0','control_room_native','disabled','v1',30)`,[scope.tenantId],"admin",database);
+  await sql(pg,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    VALUES($1,$2,$3,'adapter:b1b',$1,'1','Control Room','planned','manual_project_active','healthy','control_room_native',now(),
+    '{"presentation":{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}}',now())`,[project,scope.tenantId,scope.workspaceId],"admin",database);
+  await sql(pg,"INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at) VALUES($1,$2,'active',1,now(),now())",[scope.tenantId,project],"admin",database);
+  await sql(pg,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES($1,$2,'human','Fixture identity','test',$3,'active',$4,$4)`,[owner,scope.tenantId,sha256Digest({provider:"test",subject:owner}),at],"admin",database);
+  await sql(pg,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:b1b',$1,$2,'owner','["*"]','["*"]','critical',true,false,$3,$3)`,[scope.tenantId,owner,at],"admin",database);
+  await sql(pg,"INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)",[scope.tenantId,identity.tokenDigest,owner,at,expires],"admin",database);
+}
+ const result=await withRealPostgres(async pg=>{
+  await seed(pg);
+  await sql(pg,`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+   VALUES($1,'synthetic/model',1,'synthetic-api','','','','','','','','on','','','',$2,$3)`,[scope.tenantId,owner,at]);
+  const writer=()=>{
+   const login=pg.connection('web');
+   const bound=bindPrivatePgPool(new Pool({...privatePgOptions({host:'127.0.0.1',port:pg.port,database:pg.database,username:login.user,password:login.password!,majorVersion:17}),host:login.host,max:1}));
+   return {...bound,providers:new LoopProviderServiceV1(bound.client,scope,{availability:async()=>{throw new Error('no secret probe');}},()=>now)};
+  };
+  const initial=writer();
+  try{
+   for(const [i,id] of ['provider-one','provider-two'].entries())await initial.providers.upsert(identity,id,{expectedVersion:i,provider:provider({provider_id:id,billing_kind:'subscription'})},key());
+   let reached=0,release!:()=>void;
+   const gate=new Promise<void>(r=>{release=r;});let barrierTimedOut=false;
+   const timer=setTimeout(()=>{barrierTimedOut=true;release();},20000);
+   const tools={settingsText:'{}',checkSettings:async()=>{if(++reached===20)release();await gate;return{eligible:true,reasons:[]};}};
+   const clients=Array.from({length:20},()=>writer());
+   try{
+    const route={providerId:'provider-two',model:'synthetic/model'},settings=JSON.stringify({providerRoute:route});
+    const results=await Promise.allSettled(clients.map((w,i)=>new LoopPolicyServiceV1(w.client,scope,tools,()=>now,w.providers).put(identity,project,'selection',{expectedVersion:0,settings},`s3-native-policy-${String(i).padStart(4,'0')}`)));
+    assert.equal(barrierTimedOut,false,'all 20 callers reach the barrier before its safety timeout');
+    assert.equal(reached,20,'all separate production callers checked before final compare-and-commit');
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    for(const r of results)if(r.status==='rejected')assert.equal(r.reason.code,'conflict');
+    const rows=await sql(pg,'SELECT version,settings_text FROM control_loop_policy_layers');assert.equal(rows.rows.length,1);assert.deepEqual(JSON.parse(rows.rows[0].settings_text).providerRoute,route);
+    assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,1);
+    console.log('S3 PostgreSQL callers=20 checked=20 winners=1 losers=19 layers=1 events=1 barrier_timed_out='+barrierTimedOut);
+   }finally{clearTimeout(timer);release();await Promise.all(clients.map(w=>w.close()));}
+   // Final compare catches a withdrawal while the slow checker holds no DB lock.
+   const slow={settingsText:'{}',checkSettings:async()=>{await initial.providers.remove(identity,'provider-two',{expectedVersion:2},key());return{eligible:true,reasons:[]};}};
+   const policy=new LoopPolicyServiceV1(initial.client,scope,slow,()=>now,initial.providers);
+   await assert.rejects(policy.put(identity,project,'selection',{expectedVersion:1,settings:JSON.stringify({providerRoute:{providerId:'provider-two',model:'synthetic/model'}})},key()),/loop_policy_refused/);
+   assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,1);
+  }finally{await initial.close();}
+ },{port:60580,allowedPorts:[60580],database:'s3_provider_choice',boundMs:180000});
+ assert.equal(result.cleanedUp,true);assert.deepEqual(result.leftovers,[]);
+ console.log('S3 PostgreSQL cleanedUp=true leftovers=0');
+});
+
+test('S3 offers namespace preserves offers as a provider ID for PUT and removal',async t=>{
+ const f=await fixture(t),p=provider({provider_id:'offers'});
+ assert.equal((await f.handler(request('/api/v1/loop-providers/offers','PUT',{expectedVersion:0,provider:p},key()))).status,201);
+ const offers=await f.handler(request('/api/v1/loop-providers/offers/synthetic%2Fmodel'));
+ assert.equal(offers.status,200);assert.equal((await offers.json()).offers[0].providerId,'offers');
+ const removed=await f.handler(request('/api/v1/loop-providers/offers/remove','POST',{expectedVersion:1},key()));
+ assert.equal(removed.status,201,'S3 provider offers must remain removable');
+ assert.equal((await f.service.view(f.identity)).providers.length,0);
+ // GET is still the offers endpoint for the literal roster name "remove".
+ const read=await f.handler(request('/api/v1/loop-providers/offers/remove'));
+ assert.equal(read.status,200);assert.equal((await read.json()).offers.length,0);
+});
+
+test('S3 offers refuses secret-marked model text without reflecting it or writing',async t=>{
+ const f=await fixture(t),marker='Bearer CRMARKER-'+'c'.repeat(32),before=await f.rows();
+ const response=await f.handler(request('/api/v1/loop-providers/offers/'+encodeURIComponent(marker)));
+ assert.equal(response.status,400,'S3 offer model text must use the shared secret boundary');
+ assert.deepEqual(await response.json(),{error:'invalid_request'});
+ assert.deepEqual(await f.rows(),before);
+});
+
+
+test('S4 Start wire admits explicit route and positive cap; legacy body stays readable',async()=>{
+ const {loopBridgeBodiesV1,loopBridgeBindingSchemaV1}=await import('../src/improve-control-room/v1/schemas');
+ const legacy={expectedVersion:1,expectedRevision:0,runLinkId:'link:fixture'};
+ const route={providerId:'provider-one',model:'synthetic/model'};
+ assert.equal(loopBridgeBodiesV1.start.safeParse(legacy).success,true);
+ assert.equal(loopBridgeBodiesV1.start.safeParse({...legacy,route}).success,true,'new subscription Start has its own route');
+ assert.equal(loopBridgeBodiesV1.start.safeParse({...legacy,route,paid:{optIn:true,capNanoUsd:'1'}}).success,true);
+ for(const bad of [{route:null},{paid:{optIn:true,capNanoUsd:'1'}},{route,paid:null},...['0','01','-1','1.5','1e3','1'.repeat(31)].map(capNanoUsd=>({route,paid:{optIn:true,capNanoUsd}})),{route,paid:{optIn:false,capNanoUsd:'1'}},{route:{...route,servedModelId:'forged'}}])
+  assert.equal(loopBridgeBodiesV1.start.safeParse({...legacy,...bad}).success,false,JSON.stringify(bad));
+ const binding={schemaVersion:1,body:legacy,localVersion:1,adapterId:'adapter:test',loopRunId:'run:test',toolingRevision:'sha256:'+'a'.repeat(64),a2SchemaVersion:1,schemaDigest:'sha256:'+'b'.repeat(64),requestSha256:'c'.repeat(64),settingsSha256:'d'.repeat(64),runLinkId:'link:fixture',authorizationId:null,inputVersion:null,expectedRevision:0,evidence:null};
+ assert.equal(loopBridgeBindingSchemaV1.safeParse(binding).success,true);
+ assert.equal(loopBridgeBindingSchemaV1.safeParse({...binding,paidPin:null}).success,false);
+});
+
+import { ImproveControlRoomDeskServiceV1 } from '../src/improve-control-room/v1/service';
+import { ImproveControlRoomLoopServiceV1 } from '../src/web/v1/improve-control-room-loop-service';
+import { createImproveControlRoomHttpHandlerV1 } from '../src/web/v1/improve-control-room-http';
+import { loopImprovementRunIdentitySchemaV1,loopImprovementObservationSchemaV1,type LoopBridgeBindingV1 } from '../src/improve-control-room/v1/schemas';
+import { loopByteHashV1,type LoopAdapterV1,type LoopEngineStatusV1,type LoopProviderRouteResolutionV1 } from '../src/web/v1/improve-control-room-loop-adapter';
+const S4_ROUTE={providerId:'provider-two',model:'synthetic/model'};
+async function realS4Routes(t:TestContext, snapshot:import('../src/web/v1/improve-control-room-loop-adapter').LoopProviderSnapshotV1) {
+ const {mkdir,mkdtemp,copyFile,writeFile,rm}=await import('node:fs/promises');
+ const {realpathSync}=await import('node:fs');
+ const {resolve,join,dirname}=await import('node:path');
+ const {pathToFileURL}=await import('node:url');
+ const {createImproveControlRoomLoopAdapterV1}=await import('../src/web/v1/improve-control-room-loop-adapter');
+ const loop=process.env.CONTROL_ROOM_A2_TEST_LOOP;
+ assert.ok(loop,'real S4 resolver requires the pinned tools checkout');
+ const root=await mkdtemp(resolve('.test-tmp/s4-real-'));
+ t.after(()=>rm(root,{recursive:true,force:true}));
+ for(const dir of ['tools/loop/bridge','config','runs','work','product'])await mkdir(join(root,dir),{recursive:true});
+ const files=['bridge/selection-schema.json','bridge/a2-contract.mjs','bridge/cr-entry.py','bridge/provider-routes.py','run_settings.py','lineup.py','selection_contract.py'];
+ for(const file of files)await copyFile(join(loop,file),join(root,'tools/loop',file));
+ const shim=await readFile(join(dirname(loop),'bin/lib/python.sh'),'utf8');
+ const pinned=/CR_PYTHON=(\S+)/.exec(shim);assert.ok(pinned);
+ const interpreter=realpathSync(pinned[1]!.replace(/^["']|["']$/g,''));
+ const manifest=(await Promise.all(files.map(async file=>`${loopByteHashV1(await readFile(join(root,'tools/loop',file)))}  tools/loop/${file}\n`))).join('');
+ await writeFile(join(root,'config/manifest.sha256'),manifest);
+ const toolingRevision=`sha256:${loopByteHashV1(manifest)}`;
+ const slot=(model:string,effort='high')=>({model,route:'codex',effort});
+ const settingsText=JSON.stringify({schema_version:1,plan_review_count:3,spec_review_count:3,code_review_count:3,project:{repository:join(root,'product'),base:'main',host_adapter:'local-loop'},
+  roles:{plan:slot(S4_ROUTE.model),spec:slot(S4_ROUTE.model),build:slot(S4_ROUTE.model),final:slot(S4_ROUTE.model),orchestrator:slot(S4_ROUTE.model),
+   plan_reviews:[slot('reviewer','low'),slot('reviewer','medium'),slot('reviewer','high')],
+   spec_reviews:[slot('reviewer','low'),slot('reviewer','medium'),slot('reviewer','high')],
+   code_reviews:[slot('reviewer','low'),slot('reviewer','medium'),slot('reviewer','high')],
+   risk_reviews:[{...slot('reviewer'),role:'attack-review'},{...slot('reviewer'),role:'ui-review'},{...slot('reviewer'),role:'ci-review'}]},providerRoute:S4_ROUTE});
+ await writeFile(join(root,'config/settings.json'),settingsText);await writeFile(join(root,'config/availability.json'),'{}');
+ const rosterText='name\tlauncher\tprovider\tfamily\tclass\troles\tefforts\tdefault_effort\tcost\ton\tnote\n'+
+  [[S4_ROUTE.model,'execution-two'],['reviewer','execution-extra']].map(([model,execution])=>[model,'codex',execution,'fixture-family','frontier',
+   'plan,spec,build,final,plan-review,spec-review,code-review,attack-review,ui-review,ci-review','low,medium,high','medium','sub','on','SYNTHETIC'].join('\t')).join('\n')+'\n';
+ // Independent executable identity bindings, never taken from saved providerRoute.
+ const bindings=[{model:S4_ROUTE.model,route:'codex',provider:'execution-two',providerId:'provider-two'},
+  {model:'reviewer',route:'codex',provider:'execution-extra',providerId:'provider-extra'}];
+ const seen:unknown[]=[],captured=structuredClone(snapshot);
+ const configuration={adapterId:'adapter:s4-real',interpreter,interpreterSha256:loopByteHashV1(await readFile(interpreter)),
+  entrypoint:join(root,'tools/loop/bridge/cr-entry.py'),entrypointSha256:loopByteHashV1(await readFile(join(root,'tools/loop/bridge/cr-entry.py'))),
+  toolingManifest:join(root,'config/manifest.sha256'),toolingRevision,configRoot:root,runRoot:join(root,'runs'),workRoot:join(root,'work'),cwd:join(root,'product'),
+  settingsFile:join(root,'config/settings.json'),settingsSha256:loopByteHashV1(settingsText),availabilityFile:join(root,'config/availability.json'),availabilitySha256:loopByteHashV1('{}'),
+  executionIdentity:{uid:process.getuid!(),isolationEvidenceDigest:'sha256:'+'b'.repeat(64)}};
+ const module=await import(pathToFileURL(join(root,'tools/loop/bridge/a2-contract.mjs')).href);
+ const lineage={toolingRevision,decodeRunIdentity:(v:unknown)=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:(v:unknown)=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:()=>false};
+ const contract=module.a2BridgeContractV1(lineage,{providerRoutes:{configuration,expectedTenantId:scope.tenantId,capture:async()=>({
+  tenantId:captured.tenantId,rosterText,repositoryRoot:join(root,'product'),outputRoot:join(root,'work'),skillsRoot:join(root,'work'),
+  resolvePair:async(identity:{model:string;route:string;provider:string})=>{
+   seen.push(identity);assert.deepEqual(Object.keys(identity).sort(),['model','provider','route']);
+   const matches=bindings.filter(row=>row.model===identity.model&&row.route===identity.route&&row.provider===identity.provider);
+   assert.equal(matches.length,1);const binding=matches[0]!;
+   const provider=captured.providers.find(p=>p.provider_id===binding.providerId);
+   assert.ok(provider?.models.some(m=>m.roster_name===identity.model&&m.launcher===identity.route));
+   return {providerId:binding.providerId,model:identity.model};
+  }})}});
+ const adapter=createImproveControlRoomLoopAdapterV1({...configuration,contract});t.after(()=>adapter.close());
+ assert.equal(adapter.providerRoutes?.paidExecutionReady,false);
+ assert.deepEqual(await adapter.providerRoutes!.resolveStartRoute(settingsText),{...S4_ROUTE,additionalRoutes:[{providerId:'provider-extra',model:'reviewer'}]},'actual resolver must succeed before admission refusal probes');
+ seen.length=0;
+ return {settingsText,routes:adapter.providerRoutes!,seen};
+}
+async function admissionFixture(t:TestContext,options:{billing?:'subscription'|'token';ready?:boolean;capability?:boolean;additional?:{providerId:string;model:string}[];real?:boolean;storedSettings?:Record<string,unknown>;presence?:{availability:(id:string)=>Promise<'available'|'unavailable'>}}={}){
+ const f=await fixture(t,options.presence),integrityKey=new Uint8Array(32).fill(64),calls:LoopBridgeBindingV1[]=[],resolutions:string[]=[];
+ let settingsText=JSON.stringify({...options.storedSettings,providerRoute:S4_ROUTE,lineup:{build:{model:'synthetic/model',effort:'high'},review:[{model:'synthetic/model',effort:'low'}]}});
+ for(const [i,id] of ['provider-one','provider-two','provider-extra'].entries())await f.service.upsert(f.identity,id,{expectedVersion:i,provider:provider({provider_id:id,billing_kind:id==='provider-two'?(options.billing??'subscription'):'subscription',models:[{...provider().models[0]!,served_model_id:`served/${id}`}]})},key());
+ let real:Awaited<ReturnType<typeof realS4Routes>>|undefined;
+ if(options.real){
+  await f.db.query("UPDATE control_loop_roster_models SET launcher='codex'");
+  await f.db.query(`INSERT INTO control_loop_roster_models SELECT tenant_id,'reviewer',2,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at FROM control_loop_roster_models WHERE name=$1`,[S4_ROUTE.model]);
+  await f.db.query("UPDATE control_loop_provider_models SET launcher='codex'");
+  await f.db.query(`UPDATE control_loop_providers SET secret_ref='{"kind":"launcher","launcher":"codex"}'::jsonb`);
+  await f.db.query("INSERT INTO control_loop_provider_models SELECT tenant_id,provider_id,'reviewer',launcher,'served/reviewer' FROM control_loop_provider_models WHERE provider_id='provider-extra'");
+  real=await realS4Routes(t,await f.service.view(f.identity));settingsText=real.settingsText;
+ }
+ const toolingRevision=sha256Digest({fixture:'S4 recorded'}),run={adapterId:'adapter:s4',loopRunId:'run:s4',toolingRevision,a2SchemaVersion:1 as const},description='Recorded provider admission';
+ const contract={toolingRevision,decodeRunIdentity:(v:unknown)=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:(v:unknown)=>loopImprovementObservationSchemaV1.parse(v),
+  matchesSavedInput:(_run:unknown,observation:{settingsDigest:string},input:{settingsText:string})=>observation.settingsDigest===loopByteHashV1(input.settingsText)};
+ let status:LoopEngineStatusV1={run,revision:4,inputVersion:1,state:'ready',description,settingsSha256:loopByteHashV1(settingsText),settingsDigest:loopByteHashV1(settingsText),
+  confirmation:{path:'request.md',sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:'owner',input_version:1},approval:null,question:null,progress:{step:'plan',completed:0,attention:'none'},receipts:[]};
+ let resolution:LoopProviderRouteResolutionV1={...S4_ROUTE,additionalRoutes:options.additional??[]};
+ let resolverHook:()=>Promise<void>=async()=>{};
+ const unused=async():Promise<never>=>{throw new Error('unexpected recorded operation');};
+ const adapter:LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest:sha256Digest({fixture:'S4 schema'}),settingsText,contract,reserveRun:()=>run.loopRunId,available:()=>true,
+  ...(options.capability===false?{}:{providerRoutes:{paidExecutionReady:options.ready??false,resolveStartRoute:async text=>{resolutions.push(text);await resolverHook();if(real)resolution=await real.routes.resolveStartRoute(text);return structuredClone(resolution);}}}),
+  status:async()=>structuredClone(status),start:async(id,b,fence,settings,admitted)=>{
+   fence();assert.equal(settings,settingsText);assert.deepEqual(admitted,{settingsSha256:loopByteHashV1(settingsText),routes:resolution,...(b.paidPin?{paidPin:b.paidPin}:{})});calls.push(b);
+   status={...status,state:'running',revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:'accepted',evidenceDigest:sha256Digest({id}),error:null}]};return structuredClone(status);
+  },intake:unused,confirmRequest:unused,stop:unused,approve:unused,answer:unused,close:async()=>{}};
+ await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"templateId":"control-room"}'::jsonb) WHERE id=$1`,[f.project.projectId]);
+ const desk=new ImproveControlRoomDeskServiceV1(f.client,scope,integrityKey,undefined,()=>now,contract);
+ const draft=await desk.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},key());
+ const linked=await desk.recordLoopRunLink({projectId:f.project.projectId,requestId:draft.request.requestId,initialInputVersion:1,run});
+ await desk.authorizeLoopStart(f.identity,f.project.projectId,{requestId:draft.request.requestId,expectedVersion:1,runLinkId:linked.runLink.runLinkId,requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},key(),{inputVersion:1,settingsDigest:status.settingsDigest,revision:4,confirmation:status.confirmation!});
+ const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey,adapter,providers:f.service},()=>now);
+ const handler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
+ const body={expectedVersion:1,expectedRevision:4,runLinkId:linked.runLink.runLinkId,route:S4_ROUTE};
+ const start=(input:unknown=body,k=key())=>handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/${encodeURIComponent(draft.request.requestId)}/start`,'POST',input,k));
+ const commands=async()=>(await f.db.query<{binding:LoopBridgeBindingV1;entry_kind:string}>('SELECT * FROM control_loop_improvement_commands ORDER BY entry_kind')).rows;
+ const price=()=>f.db.query(`INSERT INTO control_loop_provider_prices(tenant_id,provider_id,model,window_key,"window",input_nano_usd_per_token,output_nano_usd_per_token,currency,status,reason,checked_at)
+  VALUES('tenant:web','provider-two','served/provider-two','all',NULL,'2','3','USD','known','',$1)`,[new Date(now).toISOString()]);
+ return {...f,adapter,body,start,commands,calls,resolutions,price,settingsText,real,setResolution:(r:LoopProviderRouteResolutionV1)=>{resolution=r;},setResolverHook:(hook:()=>Promise<void>)=>{resolverHook=hook;}};
+}
+test('S4 new route-less Start is refused before claim and dispatch',async t=>{
+ const f=await admissionFixture(t);const {route,...legacy}=f.body;
+ assert.equal((await f.start(legacy)).status,400);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+});
+test('S4 resolved and saved route mismatches and missing capability refuse before claim',async t=>{
+ for(const kind of ['body','resolved','missing'] as const){await t.test(kind,async t=>{
+  const f=await admissionFixture(t,{capability:kind!=='missing'});
+  if(kind==='resolved')f.setResolution({providerId:'provider-one',model:'synthetic/model',additionalRoutes:[]});
+  const response=await f.start(kind==='body'?{...f.body,route:{providerId:'provider-one',model:'synthetic/model'}}:f.body);
+  assert.equal(response.status,kind==='missing'?503:409);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+ });}
+});
+test('S4 subscription distinct free reviewers start without token prices or paid readiness',async t=>{
+ const f=await admissionFixture(t,{additional:[{providerId:'provider-extra',model:'synthetic/model'}]});
+ assert.equal((await f.start()).status,202);assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0]!,'paidPin'),false);
+ assert.equal((await f.commands()).length,2);assert.deepEqual(f.resolutions,[f.settingsText]);
+});
+test('S4 stored paid keys never substitute for per-run Start consent', async t => {
+  for (const billing of ['subscription', 'token'] as const) await t.test(billing, async t => {
+    const f = await admissionFixture(t, { billing, ready: true, storedSettings: {
+      paid: { optIn: true, capNanoUsd: '100' }, nested: { paidPin: null }, array: [{ paid: false }],
+    } });
+    await f.price();
+    assert.equal((await f.start()).status, billing === 'token' ? 409 : 202,
+      'stored keys neither brick subscription Start nor authorize token Start');
+    if (billing === 'token') {
+      assert.deepEqual(await f.commands(), []);
+      assert.deepEqual(f.calls, []);
+    } else {
+      assert.equal(f.calls.length, 1);
+      assert.equal(Object.hasOwn(f.calls[0]!, 'paidPin'), false);
+      assert.equal(Object.hasOwn(f.calls[0]!.body, 'paid'), false);
+    }
+  });
+});
+test('S4 token consent price and readiness guards leave no claims',async t=>{
+ for(const kind of ['no-consent','subscription-paid','unknown','stale','non-usd','disabled'] as const)await t.test(kind,async t=>{
+  const f=await admissionFixture(t,{billing:kind==='subscription-paid'?'subscription':'token',ready:kind!=='disabled'});
+  if(!['unknown','subscription-paid'].includes(kind))await f.price();
+  if(kind==='stale')await f.db.query("UPDATE control_loop_provider_prices SET checked_at=$1",[new Date(now-25*3600_000).toISOString()]);
+  if(kind==='non-usd')await f.db.query("UPDATE control_loop_provider_prices SET status='not_comparable',currency='EUR',input_nano_usd_per_token=NULL,output_nano_usd_per_token=NULL");
+  const input=kind==='no-consent'?f.body:{...f.body,paid:{optIn:true,capNanoUsd:'100'}};
+  assert.equal((await f.start(input)).status,kind==='disabled'?503:409);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+ });
+});
+test('S4 additional token mapping refuses both free and paid routed lineups',async t=>{
+ for(const billing of ['subscription','token'] as const)await t.test(billing,async t=>{
+  const f=await admissionFixture(t,{billing,ready:true,additional:[{providerId:'provider-extra',model:'synthetic/model'}]});
+  await f.db.query("UPDATE control_loop_providers SET billing_kind='token' WHERE provider_id='provider-extra'");await f.price();
+  assert.equal((await f.start(billing==='token'?{...f.body,paid:{optIn:true,capNanoUsd:'100'}}:f.body)).status,503);
+  assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+ });
+});
+test('S4 stand-in paid claim pins chosen served model and exact cap replay',async t=>{
+ const f=await admissionFixture(t,{billing:'token',ready:true,additional:[{providerId:'provider-extra',model:'synthetic/model'}]});await f.price();
+ const input={...f.body,paid:{optIn:true,capNanoUsd:'100'}},k=key();
+ const first=await f.start(input,k);assert.equal(first.status,202);assert.equal((await first.json()).state,'accepted');
+ const rows=await f.commands();assert.equal(rows.length,2);
+ const {providerPriceDigestV1}=await import('../src/web/v1/loop-provider-prices');
+ const expected={...S4_ROUTE,servedModelId:'served/provider-two',providerVersion:3,capNanoUsd:'100',priceRowDigest:providerPriceDigestV1({providerId:'provider-two',model:'served/provider-two',windowKey:'all',window:null,input:'2',output:'3',currency:'USD',status:'known',reason:'',checkedAt:new Date(now).toISOString()})};
+ for(const row of rows)assert.deepEqual(row.binding.paidPin,expected);
+ assert.equal((await f.start(input,k)).status,200);assert.equal(f.calls.length,1);
+ assert.equal((await f.start({...input,paid:{optIn:true,capNanoUsd:'101'}},k)).status,409);assert.deepEqual(await f.commands(),rows);
+});
+
+
+test('S4 admission route normalization uses the real resolver ordinal ordering',async()=>{
+ const {normalizeLoopProviderRoutesV1}=await import('../src/web/v1/improve-control-room-loop-adapter');
+ const result=normalizeLoopProviderRoutesV1({...S4_ROUTE,additionalRoutes:[
+  {providerId:'alpha_one',model:'reviewer'}, {providerId:'alpha0one',model:'reviewer'},
+  {providerId:'alpha_one',model:'reviewer'}, S4_ROUTE,
+ ]});
+ assert.deepEqual(result.additionalRoutes,[{providerId:'alpha0one',model:'reviewer'},{providerId:'alpha_one',model:'reviewer'}],
+  'service admission copy must retain F10c ordinal ordering');
+});
+
+
+test('S4 real F10c whole lineup reaches subscription Start with all reviewer roles and no paid pin',async t=>{
+ if(!process.env.CONTROL_ROOM_A2_TEST_LOOP){t.skip('counted real-tools gate requires pinned checkout');return;}
+ const f=await admissionFixture(t,{real:true});
+ assert.equal((await f.start()).status,202,'real whole-lineup resolver must admit the actual saved chosen provider');
+ assert.equal(f.calls.length,1);assert.equal(Object.hasOwn(f.calls[0]!,'paidPin'),false);
+ assert.equal(f.adapter.providerRoutes?.paidExecutionReady,false);
+ assert.deepEqual(f.real!.seen,[{model:S4_ROUTE.model,route:'codex',provider:'execution-two'},{model:'reviewer',route:'codex',provider:'execution-extra'}]);
+ const saved=JSON.parse(f.settingsText);
+ for(const role of ['plan_reviews','spec_reviews','code_reviews'])assert.equal(saved.roles[role].length,3);
+ assert.deepEqual(saved.roles.code_reviews.map((slot:{effort:string})=>slot.effort),['low','medium','high']);
+ assert.equal((await f.commands()).length,2);
+});
+
+test('S4 real F10c hidden token reviewer refuses before claim',async t=>{
+ if(!process.env.CONTROL_ROOM_A2_TEST_LOOP){t.skip('counted real-tools gate requires pinned checkout');return;}
+ const f=await admissionFixture(t,{real:true});
+ await f.db.query("UPDATE control_loop_providers SET billing_kind='token' WHERE provider_id='provider-extra'");
+ assert.equal((await f.start()).status,503);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+});
+
+
+test('S4 missing token-route secret returns the shared 422 secret_missing refusal before claim',async t=>{
+ let probes=0;
+ const f=await admissionFixture(t,{billing:'token',presence:{availability:async()=>{probes++;return 'unavailable';}}});
+ await f.price();
+ await f.db.query(`UPDATE control_loop_providers SET secret_ref='{"kind":"macos_keychain","service":"control-room.provider","account":"provider-two"}'::jsonb WHERE provider_id='provider-two'`);
+ const response=await f.start({...f.body,paid:{optIn:true,capNanoUsd:'100'}});
+ assert.equal(probes,1,'only recorded presence is checked; no credential bytes are read');
+ assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+ assert.equal(response.status,422,'new token Start must preserve the shared secret_missing refusal contract');
+ assert.deepEqual(await response.json(),{error:'provider_refused',reason:'secret_missing',message:'Secret unavailable'});
+});
+
+test('S4 Start handler exposes a typed missing-secret refusal as 422',async()=>{
+ const {LoopProviderRefusedV1}=await import('../src/web/v1/loop-provider-service');
+ const unused=async():Promise<never>=>{throw new Error('unused fixture operation');};
+ const handler=createImproveControlRoomHttpHandlerV1({origin,trust,clock:()=>now,loopBridge:{
+  mutate:async()=>{throw new LoopProviderRefusedV1('secret_missing');},status:unused,viewDesk:unused,readApprovalDocument:unused,
+ }});
+ const response=await handler(request('/api/v1/projects/project:fixture/improvements/loop/request:fixture/start','POST',
+  {expectedVersion:1,expectedRevision:1,runLinkId:'link:fixture',route:S4_ROUTE},key()));
+ assert.equal(response.status,422,'the real Start handler must preserve the existing provider refusal');
+ assert.deepEqual(await response.json(),{error:'provider_refused',reason:'secret_missing',message:'Secret unavailable'});
+});
+
+for(const reason of ['base_url','price_source_url','roster_mismatch'] as const)test(`S4 Start handler preserves typed provider refusal ${reason}`,async()=>{
+ const {LoopProviderRefusedV1}=await import('../src/web/v1/loop-provider-service');
+ const unused=async():Promise<never>=>{throw new Error('unused fixture operation');};
+ const handler=createImproveControlRoomHttpHandlerV1({origin,trust,clock:()=>now,loopBridge:{
+  mutate:async()=>{throw new LoopProviderRefusedV1(reason);},status:unused,viewDesk:unused,readApprovalDocument:unused,
+ }});
+ const response=await handler(request('/api/v1/projects/project:fixture/improvements/loop/request:fixture/start','POST',
+  {expectedVersion:1,expectedRevision:1,runLinkId:'link:fixture',route:S4_ROUTE},key()));
+ assert.equal(response.status,422);
+ assert.deepEqual(await response.json(),{error:'provider_refused',reason,message:'Provider unavailable'});
+ // The lead allowance is Start only: an unrelated operation retains its existing failure mapping.
+ const other=await handler(request('/api/v1/projects/project:fixture/improvements/loop/request:fixture/confirm','POST',{},key()));
+ assert.equal(other.status,503);
+ assert.deepEqual(await other.json(),{error:'service_unavailable'});
+});
+test('S4 unresolved Bitwarden Start secret is the same neutral refusal without a probe or claim',async t=>{
+ let probes=0;
+ const f=await admissionFixture(t,{billing:'token',presence:{availability:async()=>{probes++;return 'available';}}});
+ await f.price();
+ await f.db.query(`UPDATE control_loop_providers SET secret_ref='{"kind":"bitwarden","item":"recorded-unresolved-reference"}'::jsonb WHERE provider_id='provider-two'`);
+ const response=await f.start({...f.body,paid:{optIn:true,capNanoUsd:'100'}});
+ assert.equal(probes,0);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+ assert.equal(response.status,422);
+ assert.deepEqual(await response.json(),{error:'provider_refused',reason:'secret_missing',message:'Secret unavailable'});
+});
+
+test('S4 Start rechecks the probed reference and provider version before claiming',async t=>{
+ let changed=false,probes=0;
+ const f=await admissionFixture(t,{billing:'token',ready:true,presence:{availability:async()=>{
+  probes++;
+  await f.db.query(`UPDATE control_loop_providers SET secret_ref='{"kind":"launcher","launcher":"synthetic-api"}'::jsonb WHERE provider_id='provider-two'`);
+  await f.db.query('UPDATE control_loop_provider_state SET version=version+1');changed=true;return 'available';
+ }}});
+ await f.price();
+ await f.db.query(`UPDATE control_loop_providers SET secret_ref='{"kind":"macos_keychain","service":"control-room.provider","account":"provider-two"}'::jsonb WHERE provider_id='provider-two'`);
+ assert.equal((await f.start({...f.body,paid:{optIn:true,capNanoUsd:'100'}})).status,409);
+ assert.equal(probes,1);assert.equal(changed,true);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+});
+test('S4 a browser cannot submit a served-model pin as paid authority',async t=>{
+ const f=await admissionFixture(t,{billing:'token',ready:true});await f.price();
+ const response=await f.start({...f.body,paid:{optIn:true,capNanoUsd:'100'},paidPin:{...S4_ROUTE,servedModelId:'served/forged',providerVersion:3,priceRowDigest:'sha256:'+'a'.repeat(64),capNanoUsd:'100'}});
+ assert.equal(response.status,400);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
+});
+
+test('S4 forged served-model snapshot refuses against the admission mapping before claim',async t=>{
+ const f=await admissionFixture(t,{billing:'token',ready:true});await f.price();
+ const preflight=f.service.preflightStartMappingV1.bind(f.service);
+ t.mock.method(f.service,'preflightStartMappingV1',async(...args:Parameters<typeof preflight>)=>({...await preflight(...args),servedModelId:'served/forged'}));
+ const response=await f.start({...f.body,paid:{optIn:true,capNanoUsd:'100'}});
+ assert.equal(response.status,409);assert.deepEqual(await f.commands(),[]);assert.deepEqual(f.calls,[]);
 });

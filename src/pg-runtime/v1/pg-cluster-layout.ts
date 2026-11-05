@@ -1,3 +1,4 @@
+import { pgSocketConfigV1 } from "./pg-path-quoting.mjs";
 // The `_crdb` cluster: layout, socket-only reachability, peer maps, the pinned
 // environment (updater safety design item 3b, R9b; §3, §4, §9.1).
 //
@@ -297,7 +298,7 @@ export function planPgClusterLayoutV1(input: Readonly<{
     `ssl = off`,
     `# 9.1: the Unix socket is the only reachable endpoint. Empty means no TCP listener.`,
     `listen_addresses = ''`,
-    `unix_socket_directories = '${socketDirectory}'`,
+    `unix_socket_directories = ${pgSocketConfigV1(socketDirectory)}`,
     `unix_socket_permissions = 0770`,
     `# MEASURED: without a valid locale the postmaster refuses to start at all.`,
     `lc_messages = 'C'`,

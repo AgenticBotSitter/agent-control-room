@@ -48,12 +48,29 @@ test("component shard fixture records the independently pinned main workflow", (
   assert.equal(setup.length, 8);
 });
 
-test("five component shards run independently without cancelling their peers", () => {
-  assert.deepEqual(shards, ["1", "2", "3", "4", "5"]);
+test("six component shards run independently without cancelling their peers", () => {
+  assert.deepEqual(shards, ["1", "2", "3", "4", "5", "6"]);
   assert.deepEqual(Object.keys(components.strategy.matrix), ["shard"]);
   assert.equal(components.strategy["fail-fast"], false);
   assert.equal(components["continue-on-error"], undefined);
   assert.equal(components.strategy["max-parallel"], undefined);
+});
+
+test("the growing improvement lane runs alone without extending the component timeout", () => {
+  const isolated = components.steps.filter(step =>
+    step.if === "${{ !cancelled() && matrix.shard == '6' }}");
+  assert.equal(isolated.length, 1);
+  assert.equal(isolated[0].run, "node scripts/ci/run-scripts-keep-going.mjs test:improve-control-room");
+  assert.deepEqual(isolated[0].env, { PG_BIN: "/usr/lib/postgresql/17/bin" });
+  assert.equal(components["timeout-minutes"], 90);
+});
+
+test("the affected PGlite lanes run one file at a time with process isolation", () => {
+  for (const lane of ["test:results", "test:improve-control-room"]) {
+    assert.match(scripts[lane], /(?:^|\s)--test-concurrency=1(?:\s|$)/u, `${lane}: bound simultaneous WASM heaps`);
+    assert.doesNotMatch(scripts[lane], /--test-isolation=none/u, `${lane}: release each file's WASM heap on exit`);
+    assert.doesNotMatch(scripts[lane], /--test-(?:skip|name)-pattern/u, `${lane}: retain the full test selection`);
+  }
 });
 
 test("component shards cover every baseline command and environment exactly once", () => {
@@ -92,11 +109,15 @@ test("component shard commands are not duplicated", () => {
 });
 
 test("every shard preserves setup and continues its selected checks after a failure", () => {
-  assert.deepEqual(components.steps.filter(step => !step.if), setup);
+  // Preserve the independently captured setup, with full history now required
+  // by the immutable database-upgrade fixtures invoked by these lanes.
+  const expectedSetup = structuredClone(setup);
+  expectedSetup.find(step => step.uses?.startsWith("actions/checkout@")).with["fetch-depth"] = 0;
+  assert.deepEqual(components.steps.filter(step => !step.if), expectedSetup);
   assert.equal(components["runs-on"], baseline.job["runs-on"]);
   assert.deepEqual(components.env, baseline.job.env);
   for (const step of components.steps.filter(step => step.if)) {
-    assert.match(step.if, /^\$\{\{ !cancelled\(\) && matrix\.shard == '[1-5]' \}\}$/u);
+    assert.match(step.if, /^\$\{\{ !cancelled\(\) && matrix\.shard == '[1-6]' \}\}$/u);
     assert.equal(step["continue-on-error"], undefined);
   }
   const guard = components.steps.filter(step => step.name === "Component shard workflow guard");

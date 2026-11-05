@@ -320,7 +320,7 @@ GRANT UPDATE (version, exported_version, exported_sha256, last_idempotency_key, 
 
 -- P71: policy copies and audit are append only; only the two layer heads change.
 GRANT SELECT, INSERT ON control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources TO control_room_private_web;
-GRANT UPDATE (version, settings_text, settings_sha256, updated_by, updated_at, last_idempotency_key, last_request_digest)
+GRANT UPDATE (version, settings_text, settings_sha256, updated_by, updated_at, last_idempotency_key, last_request_digest, locked_paths)
   ON control_loop_policy_layers TO control_room_private_web;
 
 -- S1 owner-managed provider routes, never credential values.
@@ -332,5 +332,9 @@ GRANT DELETE ON control_loop_providers,control_loop_provider_models TO control_r
 -- S2 observations replace rows; only fetch outcome columns are mutable.
 GRANT SELECT, INSERT, DELETE ON control_loop_provider_prices, control_loop_provider_fetches TO control_room_private_web;
 GRANT UPDATE (outcome,reason,fetched_at) ON control_loop_provider_fetches TO control_room_private_web;
+
+-- P72 waiver lifecycle has exactly two nullable transitions.
+GRANT SELECT, INSERT ON control_loop_policy_waivers TO control_room_private_web;
+GRANT UPDATE (revoked_at,consumed_by_request_id) ON control_loop_policy_waivers TO control_room_private_web;
 
 COMMIT;

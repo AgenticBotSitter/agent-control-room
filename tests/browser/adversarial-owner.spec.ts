@@ -90,7 +90,14 @@ const OPTIONAL_CAPABILITY_PROBES: ReadonlySet<string> = new Set([
   // `options.actionInboxSource` is configured; the inbox panel renders its own
   // unavailable state when it is not.
   "/api/v1/needs-me/action-items",
+  // improvement-finish-card.tsx probes this once per page load and, on 404,
+  // treats loop candidates as absent without polling. Bounded below.
+  "/api/v1/loop-update-candidates",
 ]);
+
+/** Unlike the probes above, this one is bounded: at most one 404 per page load.
+ * A second request in the same load (polling, a retry) is a regression. */
+const ONCE_PER_PAGE_LOAD_PROBES: ReadonlySet<string> = new Set(["/api/v1/loop-update-candidates"]);
 
 async function expectHealthy(page: Page) {
   await expect(page.locator("main")).toBeVisible();
@@ -112,10 +119,16 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
   // error behind rendered controls. A 404 on an OPTIONAL capability is a
   // legitimate answer on this connector-only host (see the set above), so those
   // are exempted here rather than by loosening the assertion below.
+  const probed = new Set<string>();
+  if (observeHttpFailures) page.on("framenavigated", frame => { if (frame === page.mainFrame()) probed.clear(); });
   if (observeHttpFailures) page.on("response", response => {
     if (response.status() < 400) return;
     const path = new URL(response.url()).pathname;
-    if (response.status() === 404 && OPTIONAL_CAPABILITY_PROBES.has(path)) return;
+    if (response.status() === 404 && OPTIONAL_CAPABILITY_PROBES.has(path)) {
+      if (!ONCE_PER_PAGE_LOAD_PROBES.has(path)) return;
+      if (!probed.has(path)) { probed.add(path); return; }
+      errors.push(`HTTP 404 ${path} requested more than once in one page load`); return;
+    }
     errors.push(`HTTP ${response.status()} ${path}`);
   });
 }

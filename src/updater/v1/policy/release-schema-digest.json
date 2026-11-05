@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f",
-  "note": "Measured on native PostgreSQL 17 through 0309 provider prices; web and updater query digests match."
+  "digest": "4a6a7d6b379607ba88adff4798e0aa0fb267ca03894a13b9cf7c65c0db2aaf78",
+  "note": "Through 0315 paid admission, including main candidate review identity. Web and updater queries agree in PGlite and native PostgreSQL 17."
 }

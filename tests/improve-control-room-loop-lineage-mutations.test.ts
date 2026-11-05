@@ -11,6 +11,8 @@ import { assertGuardBites, reapKitClusters, resolvePgBin, ROLE_LOGINS, withRealP
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 
+import { assertMutationLaneCoverage } from "../scripts/check-test-lane-coverage.mjs";
+
 const root = resolve("."), service = "src/improve-control-room/v1/service.ts";
 const migration = "db/migrations/0301_control_loop_improvement_lineage.sql";
 const tables = ["control_loop_improvement_requests", "control_loop_improvement_inputs",
@@ -340,10 +342,11 @@ test("B1a mutation lane is unconditional and isolated from components", async ()
     assert.ok(![...visit(ordinary)].some(name => scripts[name]?.includes("tests/improve-control-room-loop-lineage-mutations.test.ts")));
   }
   const workflow = await readFile(join(root, ".github/workflows/ci.yml"), "utf8");
-  const job = workflow.slice(workflow.indexOf("  mutation-checks:"), workflow.indexOf("\n  pr-claims:"));
-  assert.ok(job.includes(`run: pnpm run ${dedicated}`));
-  const unconditional = job.slice(job.indexOf("      - uses: pnpm/action-setup"), job.indexOf("      - name: Validate every declared mutation anchor"));
-  assert.ok(unconditional.includes("pnpm install --frozen-lockfile --ignore-scripts"));
-  assert.ok(unconditional.includes("Install PostgreSQL 17 from PGDG")); assert.doesNotMatch(unconditional, /\n\s+if:/u);
-  assert.ok(job.includes("timeout-minutes: 45")); assert.ok(job.includes("if: steps.manifest.outputs.exists == 'true'"));
+  assertMutationLaneCoverage(scripts, workflow);
+  for (const part of [1, 2]) {
+    const removed = workflow.replace(`        run: pnpm run test:improve-control-room-first-website-mutations:part-${part}\n`, "");
+    assert.notEqual(removed, workflow);
+    assert.throws(() => assertMutationLaneCoverage(scripts, removed), { name: "AssertionError" },
+      `website partition ${part} cannot silently disappear`);
+  }
 });

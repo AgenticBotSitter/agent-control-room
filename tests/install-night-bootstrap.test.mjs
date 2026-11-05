@@ -93,8 +93,8 @@ case "$command" in
   fetch)
     [ "\${FAKE_FAIL_POINT-}" != fetch ] || exit 97
     if [ "\${FAKE_CHECK_CREDENTIAL_HOST-}" = 1 ]; then
-      [ -z "$(printf 'protocol=https\nhost=evil.example\n\n' | "$helper" get)" ] || exit 101
-      printf 'protocol=https\nhost=github.com\n\n' | "$helper" get | /usr/bin/grep -q '^username=x-access-token$' || exit 102
+      [ -z "$(printf 'protocol=https\nhost=evil.example\n\n' | /bin/sh -c "\${helper#!} get")" ] || exit 101
+      printf 'protocol=https\nhost=github.com\n\n' | /bin/sh -c "\${helper#!} get" | /usr/bin/grep -q '^username=x-access-token$' || exit 102
     fi
     if [ "\${FAKE_PLANT_REPO-}" = 1 ]; then
       /bin/mkdir -p "$mirror/hooks" "$mirror/info" "$mirror/refs/replace"

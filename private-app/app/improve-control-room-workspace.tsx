@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { improvementRequestDraftSchemaV1,
   type ImprovementDeskViewV1 } from "../../src/improve-control-room/v1/schemas";
 import { clearsLoopAuthority, loopImprovementBrowserClient } from "../../src/web/v1/improve-control-room-loop-browser-client";
 import { usePolledRead } from "./use-polled-read";
 import { ImprovementIntakeForm } from "./improvement-intake-form";
-import { ImprovementRunPanel } from "./improvement-run-panel";
+import { ImprovementRunPanel, useFirstGatePolling } from "./improvement-run-panel";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
@@ -63,14 +63,33 @@ export function PrivateImproveControlRoomWorkspace({ projectId }: { projectId: s
 function BoundImproveWorkspace({ projectId }: { projectId: string }) {
   const [pending, setPending] = useState(false);
   const [safeDesk, setSafeDesk] = useState<DeskRead>();
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [notice, setNotice] = useState<"saved" | "failed" | "uncertain">(), [generation, setGeneration] = useState(0);
   const retained = useRef<{ body: string; key: string } | undefined>(undefined);
-  const read = usePolledRead({ key: `loop-desk:${projectId}:${generation}`, baseIntervalMs: 30_000,
+  const [selection, setSelection] = useState<string>();
+  useEffect(() => {
+    const select = () => {
+      try { setSelection(window.location.hash.startsWith("#request=") ? decodeURIComponent(window.location.hash.slice(9)) : undefined); }
+      catch { setSelection(""); }
+    };
+    select(); window.addEventListener("hashchange", select);
+    return () => window.removeEventListener("hashchange", select);
+  }, []);
+  const requests = safeDesk?.kind === "loop" ? safeDesk.desk.loopRequests : [];
+  const selected = selection === undefined ? requests[0] : requests.find(row => row.requestId === selection);
+  const fast = useFirstGatePolling(selected?.createdAt, !!selected && !selected.runLink);
+  const read = usePolledRead({ key: `loop-desk:${projectId}:${generation}`, baseIntervalMs: fast ? 2_500 : 30_000,
+    unchanged: fast ? () => false : undefined,
     dropValueOnError: true, read: signal => loopImprovementBrowserClient.readDesk(projectId, signal),
     onAccept: setSafeDesk, onFailure: error => { if (clearsLoopAuthority(error)) { setSafeDesk(undefined); retained.current = undefined; } } });
   const desk = read.value ?? safeDesk;
   const legacy = desk?.kind === "loop" ? desk.desk.legacy : desk?.legacy;
-  const data: ReadState = legacy ? { state: "ready" as const, value: legacy } : { state: read.loading ? "loading" as const : "unavailable" as const };
+  useEffect(() => {
+    if (!read.loading || legacy) { setLoadTimedOut(false); return; }
+    const timer = setTimeout(() => setLoadTimedOut(true), 15_000);
+    return () => clearTimeout(timer);
+  }, [read.loading, legacy, generation]);
+  const data: ReadState = legacy ? { state: "ready" as const, value: legacy } : { state: read.loading && !loadTimedOut ? "loading" as const : "unavailable" as const };
   const deskFresh = !!read.value && !read.loading && !read.checking && !read.error;
   async function submit(draft?: unknown) {
     if (pending || data.state !== "ready") return;
@@ -99,14 +118,16 @@ function BoundImproveWorkspace({ projectId }: { projectId: string }) {
     {desk?.kind === "legacy" && <p className="private-notice">Loop work is not configured.</p>}
     {!!read.error && <p role="alert">Could not refresh the saved desk.</p>}
     {desk?.kind === "loop" && <ImprovementIntakeForm key={projectId} projectId={projectId} enabled={!!read.value && !read.error} onSaved={requestId => {
-      window.location.hash = `request=${encodeURIComponent(requestId)}`; setGeneration(value => value + 1);
+      window.location.hash = `request=${encodeURIComponent(requestId)}`; setSelection(requestId); setGeneration(value => value + 1);
     }} />}
     {desk?.kind === "loop" && <LoopRosterSection />}
     {desk?.kind === "loop" && <LoopProviderSection />}
     <h2>Legacy pipelines</h2>
     {data.state === "loading" ? <p role="status">Loading saved improvement desk…</p>
       : data.state === "unavailable" ? <section className="private-panel"><h2>Desk unavailable</h2>
-        <p role="alert">The saved project, pipeline templates or request history could not be checked. No empty desk is inferred.</p></section>
+        <p role="alert">{loadTimedOut ? "Loading the saved desk is taking too long. Your saved requests have not been changed."
+          : "The saved project, pipeline templates or request history could not be checked. Your saved requests have not been changed."}</p>
+        <button type="button" onClick={() => { setLoadTimedOut(false); setGeneration(value => value + 1); }}>Retry loading desk</button></section>
         : <div className="private-columns"><ImprovementRequestForm view={data.value} pending={pending}
           onSubmit={draft => { void submit(draft); }} /><section className="private-panel"><h2>Improvement requests</h2>
           {data.value.requests.length ? <ul className="private-dashboard-list">{data.value.requests.map(request => <li key={request.requestId}>

@@ -1,3 +1,4 @@
+import { pgConninfoValueV1 } from "../../src/pg-runtime/v1/pg-path-quoting.mjs";
 import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** The isolated half of `cr-db-upgrade --rehearse`. It selects the newest
  * intact bound backup, restores it into a fresh socket-only PostgreSQL cluster,
@@ -75,7 +76,7 @@ export async function runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, p
     afterRestore: async ({ target, root }) => {
       const rehearsalBackupRoot = join(root, "upgrade-backup");
       await mkdir(rehearsalBackupRoot, { mode: 0o700 });
-      const targetText = `host=${target.host} port=${target.port} dbname=${target.database} user=${target.user}`;
+      const targetText = `host=${pgConninfoValueV1(target.host)} port=${target.port} dbname=${pgConninfoValueV1(target.database)} user=${pgConninfoValueV1(target.user)}`;
       const common = [commit, targetText, rehearsalBackupRoot, pgBin, String(diskFactor)];
       const plan = await runMacDatabaseUpgradeVpsStepV1({ args: ["plan", ...common], write, onStage });
       if (plan.nothingToDo) {

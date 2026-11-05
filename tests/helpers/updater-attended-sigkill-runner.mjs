@@ -22,6 +22,8 @@ if (!await lstat(remote).then(() => true, () => false)) {
   await mkdir(join(repository, "src/pg-runtime/v1"), { recursive: true });
   await copyFile(join(process.cwd(), "src/pg-runtime/v1/pg-cluster-layout.ts"),
     join(repository, "src/pg-runtime/v1/pg-cluster-layout.ts"));
+  await copyFile(join(process.cwd(), "src/pg-runtime/v1/pg-path-quoting.mjs"),
+    join(repository, "src/pg-runtime/v1/pg-path-quoting.mjs"));
   // The shared entry guard, the SECOND file `FIXED_BUNDLE_INPUTS` stages from
   // outside `src/updater/v1`. MEASURED: without it this runner fails at the staging
   // step with `updater_bundle_input_refused` and never reaches the SIGKILL window

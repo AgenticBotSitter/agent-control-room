@@ -8,8 +8,16 @@ const iso = (value: string | Date | null) => value === null ? null : new Date(va
 export class PostgresOwnerPushStoreV1 implements OwnerPushStoreV1 {
   constructor(private readonly db: DatabaseClient) {}
   async subscribe(input: OwnerPushSubscriptionRecordV1) {
-    await this.db.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,expires_at,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,now(),now()) ON CONFLICT(tenant_id,endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh,
+    // The endpoint arbiter does not cover the independent (tenant,id) primary
+    // key: concurrent speculative inserts can raise 23505 on that other index.
+    // Serialize this endpoint before either index is touched, keeping the lock
+    // and upsert in one statement/transaction even on an autocommit client.
+    await this.db.query(`WITH subscription_lock AS MATERIALIZED (
+        SELECT pg_advisory_xact_lock(hashtextextended(
+          jsonb_build_array('owner-web-push-subscribe',$2::text,$3::text)::text,0)))
+      INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,expires_at,created_at,updated_at)
+      SELECT $1,$2,$3,$4,$5,$6,now(),now() FROM subscription_lock
+      ON CONFLICT(tenant_id,endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh,
       auth=EXCLUDED.auth,expires_at=EXCLUDED.expires_at,updated_at=now()`, [endpointId(input.endpoint), input.tenantId,
       input.endpoint, input.p256dh, input.auth, input.expiresAt]);
   }

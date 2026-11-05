@@ -108,14 +108,14 @@ test("B6 product source holds no copy of the roster rules", async () => {
   }
 });
 
-test("B6 0305 has a working rollback that refuses retained roster rows", async t => {
+test("B6 0309 has a working rollback that refuses retained roster rows", async t => {
   const f = await rosterFixture(t);
   await writeFile(f.exportPath, synthetic, { mode: 0o600 });
   assert.equal((await f.service.start()).seeded, true);
-  await assert.rejects(f.db.exec(await readFile("db/down/0305_control_loop_roster.sql", "utf8")), /loop roster retained/u);
+  await assert.rejects(f.db.exec(await readFile("db/down/0309_control_loop_roster.sql", "utf8")), /loop roster retained/u);
   await f.db.exec("ROLLBACK").catch(() => {});
   await f.db.query("DELETE FROM control_loop_roster_models"); await f.db.query("DELETE FROM control_loop_roster_state");
-  await f.db.exec(await readFile("db/down/0305_control_loop_roster.sql", "utf8"));
+  await f.db.exec(await readFile("db/down/0309_control_loop_roster.sql", "utf8"));
   assert.equal((await f.db.query("SELECT 1 FROM pg_class WHERE relname LIKE 'control_loop_roster%'")).rows.length, 0);
 });
 

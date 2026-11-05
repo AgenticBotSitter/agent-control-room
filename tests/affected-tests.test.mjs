@@ -302,14 +302,32 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
 });
 
 test("every skipped-test exemption names an existing file and non-empty reason", () => {
-  assert.equal(skippedTestExemptions.size, 29, "the documented exemption list must stay deliberately bounded");
+  assert.equal(skippedTestExemptions.size, 34, "the documented exemption list must stay deliberately bounded");
   assert.ok(skippedTestExemptions.has("tests/gateway-rollback-reboot.test.mjs"),
     "the gateway rollback/reboot exemption must remain explicitly accounted for");
+  assert.ok(skippedTestExemptions.has("tests/improve-control-room-loop-publication-reproduction.test.ts"),
+    "the publication reproduction exemption must remain explicitly accounted for");
   for (const [file, reason] of skippedTestExemptions) {
     assert.ok(existsSync(join(process.cwd(), file)), `exemption file must exist: ${file}`);
     assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);
     assert.ok(reason.trim().length > 0, `exemption reason must not be empty: ${file}`);
   }
+});
+
+test("B5 preparation skips are explicit lead-gated exemptions and failures still fail", () => {
+  const file = "tests/improve-control-room-first-website-a2.test.ts";
+  const reason = skippedTestExemptions.get(file);
+  for (const name of ["CONTROL_ROOM_B5_PREP_REQUIRE_REAL", "CONTROL_ROOM_B5_PREP_TOOLS", "CONTROL_ROOM_B5_PREP_TOOLS_PIN", "CONTROL_ROOM_B5_PREP_PYTHON"]) {
+    assert.ok(reason?.includes(name), `the exemption must name its qualification input: ${name}`);
+  }
+  const root = fixture({ [file]: "", "tests/capability.test.mjs": "import test from 'node:test'; test('lead gate', { skip: true }, () => {});" });
+  try {
+    assert.equal(runAffectedTests([file], [file], root, () => 0, () => true,
+      (command, args, cwd, env) => executePlainFixture(command, [...args.slice(0, -1), "tests/capability.test.mjs"], cwd, env)), 0);
+    assert.equal(runAffectedTests([file], [file], root, () => 0, () => true,
+      () => ({ status: 1, output: "# skipped 1\n" })), 1,
+      "an explicit skip exemption must never excuse a test failure");
+  } finally { rmSync(root, { recursive: true }); }
 });
 
 test("native plist validation has a macOS CI home before PostgreSQL installation", () => {
@@ -703,12 +721,12 @@ test('B8 explicit external partition agrees in direct ALL PG metadata and argv p
 });
 
 test('B8 mixed-file native exclusion still executes neighboring portable case and ordinary skips fail',()=>{
-  const root=fixture({[b8MixedFileV1]:`import test from 'node:test';\ntest('P71 real settings check',()=>{throw Error('host must not run');});\ntest('portable mixed case',()=>{});\n`});
+  const root=fixture({[b8MixedFileV1]:`import test from 'node:test';\ntest('P71 real settings check',()=>{throw Error('host must not run');});\ntest('P71 real provider settings check',()=>{throw Error('provider host must not run');});\ntest('P72 real Start final policy admission',()=>{throw Error('Start host must not run');});\ntest('portable mixed case',()=>{});\n`});
   try{
     const plan=affectedTestCommands([b8MixedFileV1],[b8MixedFileV1],root);assert.equal(plan.length,1);
     const [command,args]=plan[0],env={...process.env};delete env.NODE_TEST_CONTEXT;
     const run=spawnSync(command,args.filter(a=>a!=='--import'&&a!=='tsx'),{cwd:root,env,encoding:'utf8',timeout:10000});
-    assert.equal(run.status,0,run.stdout+run.stderr);assert.match(run.stdout,/ok 1 - portable mixed case/);assert.doesNotMatch(run.stdout,/# Subtest: P71 real settings check/);assert.match(run.stdout,/# tests 1/);
+    assert.equal(run.status,0,run.stdout+run.stderr);assert.match(run.stdout,/ok 1 - portable mixed case/);assert.doesNotMatch(run.stdout,/# Subtest: (?:P71 real (?:provider )?settings check|P72 real Start final policy admission)/);assert.match(run.stdout,/# tests 1/);
     const result=runAffectedTests([b8MixedFileV1],[b8MixedFileV1],root,()=>0,()=>false,()=>({status:0,output:'# skipped 1\n'}));assert.equal(result,1);
   }finally{rmSync(root,{recursive:true,force:true});}
 });

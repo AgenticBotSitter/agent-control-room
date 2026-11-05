@@ -1,3 +1,5 @@
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -267,6 +269,18 @@ class FakePgClient {
 }
 
 test("the daemon reads updater.json at the production-default path and ignores ambient PG settings", async t => {
+  if (process.platform === "linux") {
+    // This configuration proof still takes a real kernel lock on Linux. The
+    // macOS updater lane exercises lockf itself; Linux supplies flock instead.
+    const nativeSpawn = childProcess.spawn;
+    const lockSpawn = t.mock.method(childProcess, "spawn", (command, args, options) => {
+      if (command !== "/usr/bin/lockf") return nativeSpawn(command, args, options);
+      assert.deepEqual(args.slice(0, 5), ["-k", "-s", "-t", "0", "/dev/fd/3"]);
+      return nativeSpawn("/usr/bin/flock", ["-E", "75", "-w", args[3], ...args.slice(4)], options);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { lockSpawn.mock.restore(); syncBuiltinESMExports(); });
+  }
   const f = await fixture(t, "daemon", true), resources = composeProtectedConfigV1(f.input);
   const updater = resources.find(resource => resource.path.endsWith("/updater-state/updater.json"));
   await writeFile(updater.path, updater.contents, { mode: 0o600 }); await chmod(updater.path, 0o600);

@@ -154,10 +154,10 @@
     "why": "CR-E075 installed upgrade must fail 'a failed installed-cluster setup removes its data and run directory' when the failure path leaves the scratch directories behind."
   },
   {
-    "file": "tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "file": "tests/owner-web-push-subscribe-grant-postgres-concurrency.test.ts",
     "find": "  const privateKey = Buffer.concat([Buffer.alloc(32 - scalar.byteLength), scalar]);",
     "replace": "  const privateKey = scalar;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 VAPID test key keeps a leading zero byte$\" tests/owner-web-push-subscribe-grant-postgres.test.ts",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern=\"CR-E075 VAPID test key keeps a leading zero byte$\" tests/owner-web-push-subscribe-grant-postgres-concurrency.test.ts",
     "why": "CR-E075 VAPID test key must fail 'the test key is the fixed 32-byte VAPID scalar' when the test key drops its leading zero byte as Node's getPrivateKey does."
   },
   {

@@ -62,6 +62,8 @@ async function fixture(t) {
   await mkdir(join(repository, "src/pg-runtime/v1"), { recursive: true });
   await copyFile(join(process.cwd(), "src/pg-runtime/v1/pg-cluster-layout.ts"),
     join(repository, "src/pg-runtime/v1/pg-cluster-layout.ts"));
+  await copyFile(join(process.cwd(), "src/pg-runtime/v1/pg-path-quoting.mjs"),
+    join(repository, "src/pg-runtime/v1/pg-path-quoting.mjs"));
   // The SECOND file `FIXED_BUNDLE_INPUTS` stages from outside `src/updater/v1`, and
   // it needs the same treatment for the same reason: the builder reads it from the
   // source tree by path, so a fixture repository without it refuses every test in
@@ -287,6 +289,7 @@ test("the default tools path completes with generated outputs and simulated sepa
     // name is an input the assertion cannot vouch for, and these two exist precisely
     // to prove the scratch tree holds only reviewed fixed-step inputs.
     expected.push("src/pg-runtime/v1/pg-cluster-layout.ts");
+    expected.push("src/pg-runtime/v1/pg-path-quoting.mjs");
     expected.push("src/installer/shared/is-main-module.mjs", "src/installer/shared/strict-json.mjs",
       "src/installer/shared/rehearsal-hostname.mjs",
       "src/installer/shared/file-custody.mjs");

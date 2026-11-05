@@ -6,6 +6,7 @@ import { join,resolve } from 'node:path';
 import { Pool,Client } from 'pg';
 import { existsSync } from 'node:fs';
 import { withRealPostgres,requiresRealPostgres } from './support/attack-kit/index';
+import { privatePgOptions } from '../src/web/v1/private-pg-options';
 import { bindPrivatePgPool } from '../src/web/v1/private-pg-database';
 import { createLoopSelectionSourceFilesV1,withLoopSelectionSourceTransactionsV1,LoopSelectionSnapshotCoordinatorV1,
   bindLoopSelectionSourceDeadlineV1 } from '../src/web/v1/loop-selection-snapshot';
@@ -38,7 +39,7 @@ test('T-SNAPSHOT PostgreSQL17 production-role source contention and COMMIT lifet
       monitor=createImproveControlRoomLoopMonitorV1({availabilityFile:file,bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),selectionSources:files,
         enabled:()=>true,clock:{wallNow:()=>wall,monotonicNow:()=>mono,setTimeout,clearTimeout},
         collect:async()=>({bytes:Buffer.from(JSON.stringify(health)),exitCode:0})});
-      const web=()=>{const p=bindPrivatePgPool(new Pool({...pg.connection('web'),max:1}));pools.push(p);return withLoopSelectionSourceTransactionsV1(p.client,files);};
+      const web=()=>{const login=pg.connection('web');const p=bindPrivatePgPool(new Pool({...privatePgOptions({host:'127.0.0.1',port:pg.port,database:pg.database,username:login.user,password:login.password!,majorVersion:17}),host:login.host,max:1}));pools.push(p);return withLoopSelectionSourceTransactionsV1(p.client,files);};
       const db=web(),coordinator=new LoopSelectionSnapshotCoordinatorV1({db,...scope,sourceFiles:files,readRoster:readLoopRosterSnapshotSourceV1,
         clock:{wallNow:()=>wall,monotonicNow:()=>mono}});
       await coordinator.start();

@@ -15,6 +15,11 @@ const squawkTestMarker = /\bsquawk\b/iu;
 // This list is deliberately small and each entry has an execution reason.
 // Exemptions run separately and their allowed skips are logged below.
 export const skippedTestExemptions = new Map([
+  ["tests/improve-control-room-first-website-a2.test.ts", "its pinned-tool fixture requires lead-gated CONTROL_ROOM_B5_PREP_REQUIRE_REAL, CONTROL_ROOM_B5_PREP_TOOLS, CONTROL_ROOM_B5_PREP_TOOLS_PIN and CONTROL_ROOM_B5_PREP_PYTHON; deterministic B5 preparation cases still run in ordinary CI"],
+  ["tests/improve-control-room-first-website-device-postgres.test.ts", "its actual-device and SIGTERM qualifications require lead-gated CONTROL_ROOM_B5_DEVICE_REQUIRE_A2 with an owner-approved device/transport packet, or CONTROL_ROOM_B5_SIGNAL_REQUIRE_PG with a disposable signal root; deterministic refusal cases still run in ordinary CI"],
+  ["tests/improve-control-room-first-website-host-postgres.test.ts", "its real host and acquisition-abort qualifications require a lead-frozen F03-0 packet and strict B5 config (CONTROL_ROOM_B5_CONFIG / CONTROL_ROOM_B5_HOST_REQUIRE_A2), or CONTROL_ROOM_B5_ASSEMBLY_PG; deterministic host refusal cases still run in ordinary CI"],
+  ["tests/improve-control-room-loop-publication-reproduction.test.ts", "its retained-evidence reproduction requires lead-supplied CONTROL_ROOM_B5_REPRO_MAPPED, CONTROL_ROOM_B5_REPRO_REQUEST, CONTROL_ROOM_B5_REPRO_SETTINGS and CONTROL_ROOM_B5_REPRO_SCHEMA; ordinary CI has no retained run evidence packet"],
+  ["tests/improve-control-room-first-website-session.test.ts", "its real web-role session qualification requires lead-gated CONTROL_ROOM_B5_ASSEMBLY_PG with disposable PG17; deterministic controller-session cases still run in ordinary CI"],
   ["tests/gateway-rollback-reboot.test.mjs", "R1 body is lead-run on the practice Mac VM via the reviewed rehearsal controller; portable capability coverage is tests/gateway-local-capability.test.mjs"],
   ["tests/automatic-claim-controller.test.mjs", "requires ACR_MAIN_CHECKOUT pointing at a current main checkout"],
   ["tests/codex-owner-trusted-local-exec.test.ts", "requires CONTROL_ROOM_REAL_CODEX_SANDBOX_EXECUTABLE; CI has no qualified real Codex sandbox binary"],

@@ -31,6 +31,8 @@ async function fixtureV1(t) {
   await mkdir(join(source, "src/pg-runtime/v1"), { recursive: true });
   await cp(join(process.cwd(), "src/pg-runtime/v1/pg-cluster-layout.ts"),
     join(source, "src/pg-runtime/v1/pg-cluster-layout.ts"));
+  await cp(join(process.cwd(), "src/pg-runtime/v1/pg-path-quoting.mjs"),
+    join(source, "src/pg-runtime/v1/pg-path-quoting.mjs"));
   await mkdir(join(source, "src/installer/shared"), { recursive: true });
   for (const name of ["is-main-module", "strict-json", "rehearsal-hostname", "file-custody", "private-process-lock", "jsonl-prefix", "vapid"])
     await cp(join(process.cwd(), `src/installer/shared/${name}.mjs`),

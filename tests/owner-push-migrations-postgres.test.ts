@@ -382,13 +382,25 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
    assert.equal(tags.length,2,'old producer sent both synthetic provider requests');
    const upgrade=await applyMigrations({target:undefined,rootDir:currentRoot,ledgerPath:join(currentRoot,'deploy/postgres/migration-ledger.json'),
     bootstrapTarget:target,migrateTarget:postgres.connection('migrator',{database:previous}),env});
-   // The released 14bb migrations end at 0298; loop lineage and its journal are
-   // also new in this tree. Keep the ordered expectation independent of the applier.
+   // The released 14bb migrations end at 0298; loop lineage, its journal and
+   // retained candidates are also new. Keep the ordered expectation independent of the applier.
    assert.deepEqual(upgrade.applied?.map((r:{file:string})=>r.file),[
     'db/migrations/0299_owner_web_push_subscription_update_grant.sql',
     'db/migrations/0300_owner_push_durable_completion.sql',
     'db/migrations/0301_control_loop_improvement_lineage.sql',
-    'db/migrations/0302_control_loop_improvement_commands.sql'],
+    'db/migrations/0302_control_loop_improvement_commands.sql',
+    'db/migrations/0303_control_loop_update_candidates.sql',
+    'db/migrations/0304_control_loop_candidate_start_authorization.sql',
+    'db/migrations/0305_control_loop_candidate_unavailable_sections.sql',
+    'db/migrations/0307_control_loop_candidate_review_identity.sql',
+    'db/migrations/0308_validate_control_loop_update_candidates_check.sql',
+    'db/migrations/0309_control_loop_roster.sql',
+    'db/migrations/0310_control_loop_policy.sql',
+    'db/migrations/0311_control_loop_policy_validate.sql',
+    'db/migrations/0312_control_loop_providers.sql',
+    'db/migrations/0313_control_loop_provider_prices.sql',
+    'db/migrations/0314_control_loop_policy_enforcement.sql',
+    'db/migrations/0315_control_loop_paid_admission.sql'],
     'upgrade appends exactly the migrations added since the real earlier ledger, in order');
    assert.deepEqual(await rows(),[
     {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},

@@ -196,10 +196,10 @@ export async function buildFixedUpdaterBundleV1(input) {
     //     module being duplicated as JavaScript: a hand-maintained second copy of
     //     a layout that decides the peer map would be a second source of truth for
     //     the one thing a wrong copy makes reachable.
-    //   - the layout is the ONLY file crossed in from outside `src/updater/v1`.
-    //     Anything else would have to be listed here too, which is the point: the
-    //     updater's dependency on the rest of the repository is exactly this file
-    //     and the manifest's role attributes, both reviewable in one place.
+    //   - the layout and its shared `pg-path-quoting.mjs` helper are copied into
+    //     `pg-runtime/v1`. Other dependencies crossed in from outside
+    //     `src/updater/v1` are listed below, so the dependencies and the manifest's
+    //     role attributes remain reviewable in one place.
     //
     // It is placed BESIDE the workspace, inside the staging tree, and it is
     // removed with the staging tree's own cleanup on the failure path — a
@@ -223,6 +223,9 @@ export async function buildFixedUpdaterBundleV1(input) {
     const layoutTarget = join(layoutRoot, "v1", "pg-cluster-layout.ts");
     await mkdir(dirname(layoutTarget), { recursive: true, mode: 0o700 });
     await copyFile(layoutSource, layoutTarget);
+    // Both the layout and updater postmaster custody import this shared helper.
+    await copyFile(join(source, "src/pg-runtime/v1/pg-path-quoting.mjs"),
+      join(dirname(layoutTarget), "pg-path-quoting.mjs"));
     // THE BACKUP-RECENCY READER, crossed in exactly the way the layout is, and
     // for the same reason: it is a zero-dependency module `updater.mjs` reaches
     // across a directory boundary for.

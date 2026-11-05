@@ -399,7 +399,7 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
       "B1a bigint schema version projects as a number");
     assert.deepEqual(await web.desk.recordLoopRunLink({ projectId: ids.project, requestId: f.saved.request.requestId,
       initialInputVersion: 1, run: loopRun() }), { runLink: f.linked.runLink, replayed: true }, "bigint run link exact replay");
-    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 264);
+    assert.equal((await b1aSql(pg, "SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n, 265, "P72 adds exactly the retained owner waiver table");
     const observed = loopObservation();
     await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed);
     assert.equal((await web.desk.authorizeLoopStart(identity, ids.project, f.start, "b1a-fresh-start-0001", observed)).replayed, true);
@@ -409,7 +409,7 @@ test("B1a fresh: shipped migrations, exact production preflight and inert signed
     for (const table of ["pipeline_runs", "work_items", "control_native_task_queue"])
       assert.equal((await b1aSql(pg, `SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0);
     assert.deepEqual((await b1aSql(pg, "SELECT roleid,member,admin_option,inherit_option,set_option FROM pg_auth_members ORDER BY 1,2")).rows, roles.rows);
-    console.log(`B1a fresh web_digest=${digest} updater_equal=true public_count=264`);
+    console.log(`B1a fresh web_digest=${digest} updater_equal=true public_count=265`);
   } finally { await web.close(); }
 }));
 
@@ -488,7 +488,7 @@ for (const table of LOOP_TABLES) for (const operation of ["UPDATE", "DELETE", "T
     // TRUNCATE includes FK children; disable only the other tables' truncate
     // triggers, so no second trigger can mask the target's refusal.
     const companions = ["control_loop_update_candidates", "control_loop_update_candidate_decisions"];
-    const others = [...LOOP_TABLES.filter(name => name !== table), "control_loop_improvement_commands", "control_loop_policy_input_sources", ...companions];
+    const others = [...LOOP_TABLES.filter(name => name !== table), "control_loop_improvement_commands", "control_loop_policy_input_sources", "control_loop_policy_waivers", ...companions];
     const truncateTrigger = (name: string) => name === "control_loop_policy_input_sources" ? "control_loop_policy_sources_no_truncate"
       : name === "control_loop_improvement_commands" ? "control_loop_commands_append_only"
       : companions.includes(name) ? `${name}_append_only` : `${name}_no_truncate`;
@@ -627,7 +627,7 @@ async function prepareB1aFixture(pg: Pg, database: string) {
 async function transformB1aFixture(pg: Pg, database: string) {
   assert.match(database, /^cr14b_rehearsal_[a-z0-9_]{1,40}$/u);
   const beforeCatalog = (await b1aSql(pg, catalogSql, [], database)).rows as Array<{ name: string }>;
-  assert.equal(beforeCatalog.length, 264);
+  assert.equal(beforeCatalog.length, 265);
   const beforeLedger = (await b1aSql(pg, "SELECT * FROM control_room_schema_migrations ORDER BY ledger_order", [], database)).rows;
   const ledgerOwner = (await b1aSql(pg, "SELECT pg_get_userbyid(relowner) AS owner,relacl::text AS acl FROM pg_class WHERE oid='public.control_room_schema_migrations'::regclass", [], database)).rows;
   const beforeAuthority = await fixtureAuthoritySnapshot(pg, database);
@@ -672,7 +672,7 @@ for (const mode of ["shipped ownership", "prepared", "wrong owner", "nonempty"] 
     if (mode === "nonempty") await b1aSql(pg, "INSERT INTO tenants(id,display_name) VALUES('tenant:retained','Fixture retained')", [], database);
     const f = await prepareB1aFixture(pg, database);
     if (mode === "prepared") {
-      assert.equal(f.metadata, true); assert.equal(f.catalogCount, 263);
+      assert.equal(f.metadata, true); assert.equal(f.catalogCount, 264);
       const preparationSource = await readFile("src/web/v1/private-fixture-preparation.ts", "utf8");
       const countPin = /tables\.length === (\d+)/u.exec(preparationSource);
       assert.ok(countPin, "fixture preparation declares its catalog count pin");
@@ -854,11 +854,15 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     try { baselineDigest = await readPrivateWebSchemaDigest(reference); baselineGrants = [...await readMacGrantCatalogV1(reference)].sort(); }
     finally { await reference.end(); }
     // Remove empty dependents in reverse ledger order before proving the older down.
-    await b1aSql(pg, await readFile("db/down/0309_control_loop_provider_prices.sql", "utf8"), [], pg.database, "migrator");
-    await b1aSql(pg, await readFile("db/down/0308_control_loop_providers.sql", "utf8"), [], pg.database, "migrator");
-    await b1aSql(pg, await readFile("db/down/0307_control_loop_policy_validate.sql", "utf8"), [], pg.database, "migrator");
-    await b1aSql(pg, await readFile("db/down/0306_control_loop_policy.sql", "utf8"), [], pg.database, "migrator");
-    await b1aSql(pg, await readFile("db/down/0305_control_loop_roster.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0315_control_loop_paid_admission.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0314_control_loop_policy_enforcement.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0313_control_loop_provider_prices.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0312_control_loop_providers.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0311_control_loop_policy_validate.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0310_control_loop_policy.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0309_control_loop_roster.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0307_control_loop_candidate_review_identity.sql", "utf8"), [], pg.database, "migrator");
+    await b1aSql(pg, await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0304_control_loop_candidate_start_authorization.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0303_control_loop_update_candidates.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0302_control_loop_improvement_commands.sql", "utf8"), [], pg.database, "migrator");
@@ -873,11 +877,16 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0302_control_loop_improvement_commands.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0303_control_loop_update_candidates.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0304_control_loop_candidate_start_authorization.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
-    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0305_control_loop_roster.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
-    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0306_control_loop_policy.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
-    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0307_control_loop_policy_validate.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
-    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0308_control_loop_providers.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
-    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0309_control_loop_provider_prices.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0305_control_loop_candidate_unavailable_sections.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0307_control_loop_candidate_review_identity.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0308_validate_control_loop_update_candidates_check.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0309_control_loop_roster.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0310_control_loop_policy.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0311_control_loop_policy_validate.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0312_control_loop_providers.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0313_control_loop_provider_prices.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0314_control_loop_policy_enforcement.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0315_control_loop_paid_admission.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/roles/production_table_grants.sql", "utf8"), [], pg.database, "migrator");
     await applyB1aRoles(pg, resolve("."), pg.database);
     const f = await b1aLinked(pg), web = b1aWeb(pg);
@@ -1160,5 +1169,25 @@ test("B5 retained website lineage uses the web login", async () => b1aRun(async 
     assert.equal(JSON.stringify(await readMacGrantCatalogV1(web.client)), grants); assert.equal(await readPrivateWebSchemaDigest(web.client), digest);
     assert.deepEqual(web.errors.filter(error => error.sqlState === "42501"), [], "B5 web login needs no privilege it lacks");
     console.log("B5 retained website lineage production_login=control_room_web commands=12 legacy_unchanged=true grants_unchanged=true publication=recorded");
+    // Projection hashes do not authenticate rows. Mutate through the isolated
+    // test administrator, then rehash only the permitted web-role projection.
+    const projection = async () => {
+      const rows = (await web.client.query("SELECT id,request_id,run_link_id,candidate_revision,record_digest FROM control_loop_update_candidates")).rows;
+      return rows.map(row => ({row,sha256:sha256Digest(row)}));
+    };
+    const original = (await b1aSql(pg,"SELECT record_digest,auth_tag FROM control_loop_update_candidates WHERE request_id=$1",[requestId])).rows[0];
+    for (const column of ["record_digest","auth_tag"] as const) {
+      await b1aSql(pg,"ALTER TABLE control_loop_update_candidates DISABLE TRIGGER USER");
+      try { await b1aSql(pg,`UPDATE control_loop_update_candidates SET ${column}=$1 WHERE request_id=$2`,[column === "record_digest" ? sha256Digest({tampered:"candidate"}) : TAG,requestId]); }
+      finally { await b1aSql(pg,"ALTER TABLE control_loop_update_candidates ENABLE TRIGGER USER"); }
+      const rehashed = await projection();
+      assert.ok(rehashed.every(e => e.sha256 === sha256Digest(e.row)),"F04b unauthenticated projection can be rehashed after tamper");
+      await assert.rejects(e.desk.readLoopCandidate(identity,ids.project,requestId),"F04b cold signed service refuses tamper despite fresh projection hashes");
+      await b1aSql(pg,"ALTER TABLE control_loop_update_candidates DISABLE TRIGGER USER");
+      try { await b1aSql(pg,`UPDATE control_loop_update_candidates SET ${column}=$1 WHERE request_id=$2`,[original[column],requestId]); }
+      finally { await b1aSql(pg,"ALTER TABLE control_loop_update_candidates ENABLE TRIGGER USER"); }
+    }
+    assert.equal((await e.desk.readLoopCandidate(identity,ids.project,requestId)).candidate?.recordDigest,recorded.candidate.recordDigest);
+    console.log("RESULT: PASS F04b cold service rejects candidate/tag tamper with recomputed projection hashes production_login=control_room_web");
   } finally { await bridge.close(); await web.close(); }
 }));

@@ -321,7 +321,8 @@ test('U81 T14 checker-time owner revocation and high-risk manage recheck refuse 
 test('U81 registration includes the deciding test without altering P71 real-tools exclusion', async () => {
   const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
   assert.match(scripts['test:improve-control-room'], /tests\/loop-selection\.test\.ts/);
-  assert.match(scripts['test:improve-control-room'], /--test-skip-pattern='\^P71 real settings check\$'/);
+  assert.ok(scripts['test:improve-control-room'].includes('pnpm run test:improve-control-room:linux-without-macos-host-gates'));
+  assert.ok(scripts['test:improve-control-room:linux-without-macos-host-gates'].includes("--test-name-pattern='^(?!(?:<root>|P71 real (?:provider )?settings check|P72 real Start final policy admission)$).+'"));
   assert.equal(scripts['test:loop-selection:real'], 'CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/loop-selection-native.test.ts');
   assert.equal(scripts['test:loop-selection:host'], 'node scripts/check-loop-selection-host-gate.mjs');
   for (const [name, body] of Object.entries(scripts)) if (name !== 'test:loop-selection:real')
@@ -384,13 +385,22 @@ test('U81 T3 existing intake applies the new-run false reset before checker, ret
 
 test('U81 T4 current expectedVersion P71 save reloads the whole merged layer; stale writes cannot overwrite it', async t => {
   const f = await selectionFixture(t);
-  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["loop_policy.manage","loop_policy.read","loop_selection.read"]'::jsonb`);
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["loop_policy.manage","loop_policy.read","loop_selection.read","providers.manage"]'::jsonb,project_ids='["*"]'::jsonb`);
+  const { LoopProviderServiceV1 } = await import('../src/web/v1/loop-provider-service');
+  await f.db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+    VALUES('tenant:web','fixture-model',1,'fixture','','','','','','','','on','','','','identity:web',$1)`, [new Date(now).toISOString()]);
+  const providers = new LoopProviderServiceV1(f.db, scope, {availability: async () => { throw Error('no secret probe'); }}, () => now);
+  await providers.upsert(f.identity, 'fixture-provider', {expectedVersion:0,provider:{provider_id:'fixture-provider',display_name:'Synthetic U81',
+    base_url:'https://example.com/api',billing_kind:'subscription',secret_ref:{kind:'launcher',launcher:'fixture'},
+    models:[{roster_name:'fixture-model',launcher:'fixture',served_model_id:'served/fixture'}],credit_amount_nano_usd:null,credit_expires_on:null,
+    credit_note:'',price_source_url:null,price_source_format:null}}, 'u81-provider-create-0001');
+  const policy = new LoopPolicyServiceV1(f.db, scope, f.tools, () => now, providers);
   const current = '{"providerRoute":{"providerId":"fixture-provider","model":"fixture-model"},"roles":{"other":{"kept":true}},"kept":[1,2]}';
-  await f.policy.put(f.identity, f.project.projectId, 'selection', { expectedVersion: 0, settings: current }, 'u81-layer-initial-0001');
+  await policy.put(f.identity, f.project.projectId, 'selection', { expectedVersion: 0, settings: current }, 'u81-layer-initial-0001');
   const whole = mergeSelectionLayerV1(current, selection());
-  assert.deepEqual(await f.policy.put(f.identity, f.project.projectId, 'selection', { expectedVersion: 1, settings: whole }, 'u81-layer-replace-0001'), { replayed: false, version: 2 });
-  await assert.rejects(f.policy.put(f.identity, f.project.projectId, 'selection', { expectedVersion: 1, settings: '{}' }, 'u81-layer-stale-000001'), { code: 'conflict' });
-  const reloaded = await f.policy.view(f.identity, f.project.projectId);
+  assert.deepEqual(await policy.put(f.identity, f.project.projectId, 'selection', { expectedVersion: 1, settings: whole }, 'u81-layer-replace-0001'), { replayed: false, version: 2 });
+  await assert.rejects(policy.put(f.identity, f.project.projectId, 'selection', { expectedVersion: 1, settings: '{}' }, 'u81-layer-stale-000001'), { code: 'conflict' });
+  const reloaded = await policy.view(f.identity, f.project.projectId);
   assert.equal(reloaded.selection.version, 2); assert.equal(reloaded.selection.settingsText, whole);
   assert.deepEqual(JSON.parse(whole).providerRoute, JSON.parse(current).providerRoute);
   assert.deepEqual(JSON.parse(whole).roles.other, { kept: true });

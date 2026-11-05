@@ -1,9 +1,10 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { createRoot } from "react-dom/client";
 import { PrivateImproveControlRoomWorkspace } from "../private-app/app/improve-control-room-workspace";
 import { ImproveControlRoomDeskServiceV1 } from "../src/improve-control-room/v1/service";
 import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
@@ -16,10 +17,10 @@ import { now, origin, request, trust } from "./helpers/web-foundation";
 import { loopImprovementBrowserClient as client } from "../src/web/v1/improve-control-room-loop-browser-client";
 
 const KEY = new Uint8Array(32).fill(64);
-const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC"}';
+const settingsText = JSON.stringify({project:{host_adapter:'local-loop'},fixture:'SYNTHETIC',providerRoute:S4_FIXTURE_ROUTE});
 const description = "  Improve the saved request.\nKeep exact text.  ";
 async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missing" = "accepted", startError: "REFUSED" | "INELIGIBLE" | "LAUNCH_UNCERTAIN" | null = null) {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B2a", scalar: "string" });
@@ -45,7 +46,7 @@ async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missi
       receipts: saved.receipts.map(receipt => ({ ...receipt, error: "LAUNCH_UNCERTAIN" })) }) as unknown as LoopEngineStatusV1;
     return structuredClone(saved);
   };
-  const adapter: LoopAdapterV1 = { adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
+  const adapter: LoopAdapterV1 = {providerRoutes:s4FixtureRoutes, adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
     settingsText, contract, reserveRun: () => run.loopRunId, available: () => true,
     status: async () => { calls.push("status"); return structuredClone(saved); },
     start: (id, b, fence) => apply("start", id, b, fence), stop: (id, b, fence) => apply("stop", id, b, fence),
@@ -56,7 +57,7 @@ async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missi
   await desk.authorizeLoopStart(f.identity, f.project.projectId, { requestId: draft.request.requestId, expectedVersion: 1,
     runLinkId: linked.runLink.runLinkId, requestSha256: loopByteHashV1(description), settingsSha256: loopByteHashV1(settingsText) },
     "b2a-synthetic-authority-0001", { inputVersion: saved.inputVersion, settingsDigest: saved.settingsDigest, revision: saved.revision, confirmation: saved.confirmation! });
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, {providers:s4ProviderServiceV1(f.client,{ tenantId: "tenant:web", workspaceId: "workspace:web" },() => now), integrityKey: KEY, adapter }, () => now);
   const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, loopBridge: bridge, service: desk, clock: () => now });
   return { ...f, desk, bridge, handler, calls, requestId: draft.request.requestId, link: linked.runLink.runLinkId,
     snapshot: () => structuredClone(saved),
@@ -111,12 +112,54 @@ test("B2a confirmed run Start progress Stop", async () => {
     await act(async () => m.button("Start confirmed work").click()); await settle();
     assert.match(m.text(), /Work is running/); assert.match(m.text(), /Requested model: Not reported yet/); assert.match(m.text(), /Observed model: Not verified yet/);
     assert.match(m.text(), /Repairs: Not reported yet/); assert.ok(m.text().includes(description));
-    assert.deepEqual(JSON.parse(wire.posts[0]!.body), { expectedVersion: 1, runLinkId: f.link, expectedRevision: 4 });
+    assert.deepEqual(JSON.parse(wire.posts[0]!.body), {route:S4_FIXTURE_ROUTE, expectedVersion: 1, runLinkId: f.link, expectedRevision: 4 });
     assert.match(wire.posts[0]!.key, /^loop-start:/);
     await act(async () => m.button("Stop this run").click()); await settle();
     assert.match(m.text(), /Stopped/); assert.deepEqual(JSON.parse(wire.posts[1]!.body), { runLinkId: f.link });
     assert.deepEqual(f.calls.filter(x => x !== "status"), ["start", "stop"]);
     assert.equal(wire.gets.filter(path => path.endsWith("/improvements")).length, 0, "one loop desk read supplies legacy");
+  } finally { await m.close(); await f.close(); }
+});
+
+test("B5 phone ready distinguishes pre-Start from started check work", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), /Ready to start/);
+    assert.equal(m.button("Start confirmed work").disabled, false);
+    await act(async () => m.button("Start confirmed work").click()); await settle();
+    f.edit({ state: "ready", revision: f.snapshot().revision + 1,
+      progress: { step: "site-smoke", completed: 3, attention: "none" } });
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.match(m.text(), /Working - checks running/);
+    assert.doesNotMatch(m.text(), /Ready to start/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.equal(m.button("Stop this run").disabled, false);
+  } finally { await m.close(); await f.close(); }
+});
+
+for (const reason of [
+  "TEST_INCOMPLETE: The required check did not produce a complete result.",
+  "The approved plan no longer matches the saved request. Review the request again.",
+]) test(`B5 phone blocked work preserves the engine reason: ${reason}`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    await act(async () => m.button("Start confirmed work").click()); await settle();
+    f.edit({ state: "ready", revision: f.snapshot().revision + 1,
+      progress: { step: "site-smoke", completed: 3, attention: "blocked" },
+      decisions: { gate: { kind: "blocked", code: "UNAVAILABLE", message: reason }, observedAt: new Date(now).toISOString() } });
+    const display = (await f.bridge.status(f.identity, f.project.projectId, f.requestId)).display;
+    assert.equal(display.state, "blocked");
+    assert.equal(display.attention?.code, "UNAVAILABLE");
+    assert.equal(display.attention?.message, reason);
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.match(m.text(), /Work needs attention/);
+    assert.ok(m.text().includes(reason));
+    assert.match(m.text(), /UNAVAILABLE/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
   } finally { await m.close(); await f.close(); }
 });
 
@@ -134,6 +177,74 @@ test("B2a lost Start reply replays frozen action after revision increases and in
     assert.equal(wire.posts.length, 2); assert.deepEqual(wire.posts[1], wire.posts[0], "revision increase preserves exact Start body/key");
     assert.equal(f.calls.filter(x => x === "start").length, 1);
     await act(async () => m.button("Stop this run").click()); await settle(); assert.match(m.text(), /Stopped/);
+  } finally { await m.close(); await f.close(); }
+});
+
+async function enterPaidCap(m: Awaited<ReturnType<typeof mount>>, value: string) {
+  const input = m.dom.window.document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!;
+  // Match the established JSDOM controlled-input helper in the attention tests.
+  const props = (input as unknown as Record<string, { onChange: (event: unknown) => void }>)[
+    Object.keys(input).find(key => key.startsWith('__reactProps'))!];
+  await act(async () => props!.onChange({ target: { value } }));
+}
+
+for (const status of [400, 409, 422, 'receipt'] as const) test(`S4 definite Start refusal ${status} releases frozen paid consent`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const attempts: { body: string; key: string }[] = [];
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (String(path).endsWith('/start')) {
+      attempts.push({ body: String(options?.body), key: new Headers(options?.headers).get('idempotency-key')! });
+      return status === 'receipt' ? Response.json({ schemaVersion: 1,
+        requestId: decodeURIComponent(String(path).split('/').at(-2)!), localVersion: 1,
+        commandId: 'loop-command:synthetic-refusal', state: 'refused', replayed: false,
+        engineRevision: 4, error: 'REFUSED',
+      }) : Response.json({ error: 'synthetic_refusal' }, { status });
+    }
+    return wire.fetcher(path, options);
+  }) as typeof fetch);
+  try {
+    await settle();
+    const checkbox = m.dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => checkbox.click());
+    await enterPaidCap(m, '100');
+    assert.equal(m.button('Start confirmed work').disabled, false, 'explicit opt-in and cap enable Start');
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.deepEqual(JSON.parse(attempts[0]!.body).paid, { optIn: true, capNanoUsd: '100' });
+    assert.equal(Boolean(m.button('Retry this exact Start')), false, 'a definite refusal is not an uncertain retry');
+    assert.equal(checkbox.closest('fieldset')!.disabled, false, 'refusal lets the owner change consent');
+    await enterPaidCap(m, '200');
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.deepEqual(JSON.parse(attempts[1]!.body).paid, { optIn: true, capNanoUsd: '200' });
+    assert.notEqual(attempts[1]!.key, attempts[0]!.key);
+    await act(async () => checkbox.click());
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.equal(Object.hasOwn(JSON.parse(attempts[2]!.body), 'paid'), false, 'unchecking revokes consent for the next command');
+    assert.notEqual(attempts[2]!.key, attempts[1]!.key);
+    assert.equal(f.calls.filter(x => x === 'start').length, 0);
+  } finally { await m.close(); await f.close(); }
+});
+
+test('S4 uncertain Start keeps the exact paid body cap and key', async () => {
+  const f = await fixture(), wire = transport(f);
+  const attempts: { body: string; key: string }[] = [];
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (String(path).endsWith('/start')) {
+      attempts.push({ body: String(options?.body), key: new Headers(options?.headers).get('idempotency-key')! });
+      throw new TypeError('SYNTHETIC uncertain command');
+    }
+    return wire.fetcher(path, options);
+  }) as typeof fetch);
+  try {
+    await settle();
+    const checkbox = m.dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => checkbox.click()); await enterPaidCap(m, '100');
+    assert.equal(m.button('Start confirmed work').disabled, false);
+    await act(async () => m.button('Start confirmed work').click()); await settle();
+    assert.equal(checkbox.closest('fieldset')!.disabled, true);
+    await act(async () => m.button('Retry this exact Start').click()); await settle();
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[1], attempts[0]);
+    assert.deepEqual(JSON.parse(attempts[0]!.body).paid, { optIn: true, capNanoUsd: '100' });
   } finally { await m.close(); await f.close(); }
 });
 
@@ -251,7 +362,7 @@ test("B2a missing confirmation and changed A2 scalar refuse Start with zero writ
       try { await settle(); await act(async () => m.button("Start confirmed work").click()); assert.equal(wire.posts.length, 0); }
       finally { await m.close(); }
       const response = await f.handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/${encodeURIComponent(f.requestId)}/start`, "POST",
-        { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "b2a-refused-start-0001"));
+        {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "b2a-refused-start-0001"));
       assert.equal(response.status, 409); assert.deepEqual((await f.db.query("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0], before);
     }
     assert.equal(f.calls.filter(x => x !== "status").length, 0);
@@ -307,7 +418,7 @@ test("B2a dropped-before-admission and uncertain Stop retain separate replay key
 test("B2a two independently frozen browser Starts contend on the one journal", async () => {
   const f = await fixture(), wire = transport(f), previous = globalThis.fetch; globalThis.fetch = wire.fetcher;
   try {
-    const body = JSON.stringify({ expectedVersion: 1, expectedRevision: 4, runLinkId: f.link });
+    const body = JSON.stringify({route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link });
     const results = await Promise.allSettled([client.start(f.project.projectId, f.requestId, { body, key: "loop-start:browser-one-0001" }),
       client.start(f.project.projectId, f.requestId, { body, key: "loop-start:browser-two-0001" })]);
     assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
@@ -377,7 +488,7 @@ for (const error of ["REFUSED", "INELIGIBLE"] as const) test(`B2a F1 refused Sta
   const f = await fixture("refused", error), wire = transport(f);
   try {
     const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:refused-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:refused-0001");
     assert.equal(receipt.state, "refused");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.startState, "not_started", "B2a refused Start is not dispatched");
@@ -392,7 +503,7 @@ for (const error of ["REFUSED", "INELIGIBLE"] as const) test(`B2a F1 refused Sta
       assert.equal(wire.posts.length, 0);
     } finally { await m.close(); }
     await assert.rejects(f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 5, runLinkId: f.link }, "loop-start:refused-new-key"));
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 5, runLinkId: f.link }, "loop-start:refused-new-key"));
     assert.equal(f.calls.filter(x => x === "start").length, 1, "B2a refusal never permits redispatch");
   } finally { await f.close(); }
 });
@@ -401,7 +512,7 @@ for (const outcome of ["waiting", "missing"] as const) test(`B2a F1 ${outcome} S
   const f = await fixture(outcome), wire = transport(f);
   try {
     const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:waiting-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:waiting-0001");
     assert.equal(receipt.state, outcome === "waiting" ? "waiting" : "uncertain");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.startState, outcome === "waiting" ? "dispatched" : "uncertain");
@@ -422,7 +533,7 @@ test("B2a F2 stopped run retains exact saved confirmation", async () => {
   const f = await fixture(), wire = transport(f);
   try {
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:confirmation-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:confirmation-0001");
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "stop", { runLinkId: f.link }, "loop-stop:confirmation-0001");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.confirmationCurrent, true, "B2a stopped exact confirmation remains current");
@@ -518,7 +629,7 @@ test("B2a R3 stopped run refuses fresh Start and confirm", async () => {
   const f = await fixture();
   try {
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-0001");
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "stop", { runLinkId: f.link }, "loop-stop:stopped-0001");
     // Fresh local version has no prior authorization/confirmation claim that could mask the stopped guard.
     const revised = await f.desk.reviseLoopDraft(f.identity, f.project.projectId, { requestId: f.requestId, expectedVersion: 1,
@@ -531,7 +642,7 @@ test("B2a R3 stopped run refuses fresh Start and confirm", async () => {
       requestSha256: loopByteHashV1(description), settingsSha256: loopByteHashV1(settingsText) };
     assert.equal((await f.handler(request(`${base}/confirm`, "POST", confirm, "loop-confirm:stopped-0001"))).status,
       409, "B2a stopped confirmation refuses before dispatch");
-    assert.equal((await f.handler(request(`${base}/start`, "POST", { expectedVersion: 2,
+    assert.equal((await f.handler(request(`${base}/start`, "POST", {route:S4_FIXTURE_ROUTE, expectedVersion: 2,
       expectedRevision: saved.revision, runLinkId: f.link }, "loop-start:stopped-fresh-0001"))).status,
       409, "B2a stopped Start refuses before dispatch");
     assert.deepEqual(f.calls.filter(x => x !== "status"), ["start", "stop"]);
@@ -543,7 +654,7 @@ test("B2a R3 LAUNCH_UNCERTAIN outcome never says refused", async () => {
   const f = await fixture("refused", "LAUNCH_UNCERTAIN");
   try {
     const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:uncertain-wording-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:uncertain-wording-0001");
     assert.equal(receipt.state, "uncertain"); assert.equal(receipt.error, "LAUNCH_UNCERTAIN");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.startState, "uncertain");
@@ -567,7 +678,7 @@ test("B2a R3 offline panel sends zero mutations", async () => {
     await act(async () => m.button("Start confirmed work").click());
     assert.equal(wire.posts.length, 0, "B2a offline Start sends no POST");
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:offline-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:offline-0001");
     await act(async () => m.button("Refresh status").click()); await settle();
     assert.equal(m.button("Stop this run").disabled, false);
     await act(async () => m.button("Stop this run").click());
@@ -584,9 +695,192 @@ test("B2a R3 stopped engine cannot admit its first website Start", async () => {
     const status = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(status.display.confirmationCurrent, true);
     const response = await f.handler(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/start`,
-      "POST", { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-engine-0001"));
+      "POST", {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-engine-0001"));
     assert.equal(response.status, 409, "B2a stopped engine refuses Start despite current confirmation");
     assert.deepEqual(f.calls.filter(x => x !== "status"), []);
     assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);
   } finally { await f.close(); }
+});
+
+
+test("B5 failed desk load gives an actionable retry and no endless loading", async () => {
+  const f = await fixture(), wire = transport(f); let fail = true;
+  const m = await mount(f.project.projectId, ((input, options) => fail
+    ? Promise.resolve(Response.json({}, { status: 503 })) : wire.fetcher(input, options)) as typeof fetch);
+  try {
+    await settle();
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+    assert.match(m.text(), /could not be checked/i);
+    assert.ok(m.button("Retry loading desk"));
+    fail = false;
+    await act(async () => m.button("Retry loading desk").click()); await settle();
+    assert.ok(m.button("Start confirmed work"));
+  } finally { await m.close(); await f.close(); }
+});
+
+test("B5 desk loading watchdog bounds a stuck read and recovers on retry", async t => {
+  const f = await fixture(), wire = transport(f);
+  const original = client.readDesk;
+  client.readDesk = async () => new Promise<never>(() => {});
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    assert.match(m.text(), /Loading saved improvement desk/);
+    await act(async () => { t.mock.timers.tick(15_000); });
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+    assert.match(m.text(), /taking too long/i);
+    assert.ok(m.button("Retry loading desk"));
+    client.readDesk = original; t.mock.timers.reset();
+    await act(async () => m.button("Retry loading desk").click()); await settle();
+    assert.ok(m.button("Start confirmed work"));
+  } finally { await m.close(); await f.close(); client.readDesk = original; t.mock.timers.reset(); }
+});
+
+test("B5 refused first planning step renders reason and recovery without Start authority", async () => {
+  const f = await fixture(), wire = transport(f);
+  f.edit({ state: "refused", confirmation: null, progress: { step: "orchestrator", completed: 0, attention: "blocked" },
+    decisions: { observedAt: new Date(now).toISOString(), gate: { kind: "blocked", code: "UNAVAILABLE",
+      message: "The first planning step could not start because the launch checks rejected the request." } } });
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), /first planning step could not start/);
+    assert.match(m.text(), /Check the project settings, then use Prepare request to retry/);
+    assert.match(m.text(), /Prepare request/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+  } finally { await m.close(); await f.close(); }
+});
+
+for (const pending of [true, false]) test(`B5 unlinked intake renders ${pending ? "progress" : "timeout"} without owner command authority`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const attention = pending ? { code: "INTAKE_IN_PROGRESS", message: "Intake in progress.",
+    nextAction: "Wait while the saved request is linked. This status is limited to two minutes from intake." }
+    : { code: "INTAKE_TIMEOUT", message: "Intake could not be confirmed within two minutes.",
+      nextAction: "Reload this page to check whether your request is ready. If it is still not linked, use Prepare request to try again." };
+  const local = { ...saved, request: { ...saved.request, runLink: null, savedAuthorization: false },
+    display: { ...saved.display, runLinkId: null, state: pending ? null : "blocked", startState: "not_started",
+      confirmationCurrent: false, canStart: false, canStop: false, attention },
+    engine: { ...saved.engine, state: pending ? "draft" : "refused", confirmation: null },
+    decisions: { gate: pending ? null : { kind: "blocked", code: "UNAVAILABLE", message: attention.message }, observedAt: saved.display.observedAt } };
+  const fetcher = (async (input, options) => {
+    const path = String(input);
+    if (path.endsWith(`/${encodeURIComponent(f.requestId)}/status`)) return Response.json(local);
+    const response = await wire.fetcher(input, options);
+    if (path.endsWith("/loop/desk")) {
+      const desk = await response.json();
+      return Response.json({ ...desk, loopRequests: desk.loopRequests.map((row: typeof saved.request) => ({ ...row, runLink: null, savedAuthorization: false })) });
+    }
+    return response;
+  }) as typeof fetch;
+  const m = await mount(f.project.projectId, fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), pending ? /Intake in progress\./ : /Intake could not be confirmed within two minutes\./);
+    assert.ok(m.text().includes(attention.nextAction));
+    if (!pending) assert.ok(m.button("Prepare request"), "the suggested phone control is present");
+    assert.ok([...m.dom.window.document.querySelectorAll(pending ? '[role="status"]' : '[role="alert"]')]
+      .some(node => node.textContent?.includes(attention.message)));
+    assert.equal(m.button("Start confirmed work"), undefined); assert.equal(m.button("Stop this run"), undefined);
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); await f.close(); }
+});
+
+// Drive the real workspace and polling hook with an intake snapshot, without
+// waiting two wall-clock minutes or starting an engine/controller process.
+for (const scenario of ["gate", "cap", "unlinked", "link", "settled", "old"] as const) test(`B5 first-gate polling ${scenario}`, async t => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const desk = await (await wire.fetcher(`/api/v1/projects/${f.project.projectId}/improvements/loop/desk`)).json();
+  const start = now;
+  const unlinked = scenario === "unlinked" || scenario === "link";
+  desk.loopRequests = desk.loopRequests.map((row: typeof saved.request) => ({ ...row,
+    createdAt: new Date(start - (scenario === "old" ? 120_001 : 0)).toISOString(),
+    savedAuthorization: scenario === "settled", ...(unlinked ? { runLink: null } : {}) }));
+  let gate = false;
+  const reads: { status: number[]; desk: number[] } = { status: [], desk: [] };
+  const fetcher = (async (input, options) => {
+    assert.equal(options?.method ?? "GET", "GET", "polling never issues a command");
+    const path = String(input);
+    if (path.endsWith("/loop/desk")) { reads.desk.push(Date.now()); return Response.json(desk); }
+    if (path.endsWith("/status")) {
+      reads.status.push(Date.now());
+      return Response.json({ ...saved, request: desk.loopRequests[0],
+        display: { ...saved.display, ...(!desk.loopRequests[0].runLink ? { runLinkId: null } : {}),
+          state: scenario === "settled" ? "ready" : null, confirmationCurrent: scenario === "settled", canStart: false, canStop: false },
+        engine: { ...saved.engine, state: scenario === "settled" ? "ready" : "draft", confirmation: null },
+        decisions: { observedAt: saved.display.observedAt, gate: gate ? { kind: "confirm" } : null } });
+    }
+    return Response.json({}, { status: 404 });
+  }) as typeof fetch;
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: start });
+  const flush = async () => { await act(async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); }); };
+  const tick = async (ms: number) => { await act(async () => { t.mock.timers.tick(ms); }); await flush(); };
+  const m = await mount(f.project.projectId, fetcher, `#request=${encodeURIComponent(f.requestId)}`);
+  try {
+    await flush();
+    assert.ok(reads.status.length > 0, "initial status read accepted");
+    if (scenario === "settled" || scenario === "old") {
+      const before = reads.status.length;
+      await tick(5_000);
+      assert.equal(reads.status.length, before, "settled and old work keep ordinary cadence");
+    } else {
+      const before = reads.status.length;
+      await tick(2_500); await tick(2_500);
+      assert.ok(reads.status.length >= before + 2, "unchanged first-gate status polls every 2.5 seconds");
+      if (scenario === "gate") {
+        gate = true; await tick(2_500);
+        assert.ok(m.button("Confirm this exact request"), "gate appears promptly from status polling");
+        const afterGate = reads.status.length;
+        gate = false; // Later snapshots cannot reopen the first-gate window.
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.status.length, afterGate, "first gate restores ordinary cadence");
+      } else if (scenario === "link") {
+        desk.loopRequests[0].runLink = saved.request.runLink;
+        await tick(2_500);
+        const afterLink = reads.desk.length;
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.desk.length, afterLink, "linked request restores ordinary desk cadence");
+      } else {
+        if (unlinked) assert.ok(reads.desk.length >= 3, "missing link refreshes desk promptly");
+        for (let i = 0; i < 46; i++) await tick(2_500);
+        const afterCap = { status: reads.status.length, desk: reads.desk.length };
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.status.length, afterCap.status, "two-minute cap restores status cadence");
+        assert.equal(reads.desk.length, afterCap.desk, "two-minute cap restores desk cadence");
+        await tick(25_000);
+        assert.ok(reads.status.length > afterCap.status, "ordinary polling continues after cap");
+      }
+    }
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); t.mock.timers.reset(); await f.close(); }
+});
+
+for (const state of ["draft", "failed"] as const) test(`B5 prepared request status text: ${state}`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (!String(path).endsWith("/status")) return wire.fetcher(path, options);
+    if (state === "failed") return Response.json({}, { status: 503 });
+    return Response.json({ ...saved,
+      display: { ...saved.display, state: null, confirmationCurrent: false, canStart: false, canStop: false },
+      engine: { ...saved.engine, state: "draft", confirmation: null },
+      decisions: { observedAt: saved.display.observedAt, gate: { kind: "confirm" } } });
+  }) as typeof fetch);
+  try {
+    await settle();
+    if (state === "draft") {
+      assert.match(m.text(), /Request prepared; awaiting your confirmation/);
+      assert.doesNotMatch(m.text(), /Saved progress could not be checked/);
+      assert.equal(m.button("Confirm this exact request").disabled, false);
+    } else {
+      assert.match(m.text(), /Saved progress could not be checked/);
+      assert.doesNotMatch(m.text(), /Request prepared; awaiting your confirmation/);
+      assert.equal(m.button("Confirm this exact request"), undefined);
+    }
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.equal(m.button("Stop this run").disabled, true);
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); await f.close(); }
 });

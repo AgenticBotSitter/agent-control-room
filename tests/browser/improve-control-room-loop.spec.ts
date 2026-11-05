@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from '../helpers/improve-control-room-loop-recovery';
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { build } from "esbuild";
 import { readFile } from "node:fs/promises";
@@ -11,10 +12,10 @@ import { taskFixture } from "../helpers/web-task";
 import { now, origin, request, trust } from "../helpers/web-foundation";
 
 const KEY = new Uint8Array(32).fill(64);
-const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC"}';
+const settingsText = JSON.stringify({project:{host_adapter:'local-loop'},fixture:'SYNTHETIC',providerRoute:S4_FIXTURE_ROUTE});
 const description = "  Improve the saved request.\nKeep exact text.  ";
 async function fixture() {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B2a", scalar: "string" });
@@ -36,7 +37,7 @@ async function fixture() {
       receipts: [...saved.receipts, { commandId, bindingDigest: sha256Digest(binding), state: "accepted", evidenceDigest: sha256Digest({ op, commandId }), error: null }] };
     return structuredClone(saved);
   };
-  const adapter: LoopAdapterV1 = { adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
+  const adapter: LoopAdapterV1 = {providerRoutes:s4FixtureRoutes, adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
     settingsText, contract, reserveRun: () => run.loopRunId, available: () => true,
     status: async () => { calls.push("status"); return structuredClone(saved); },
     start: (id, b, fence) => apply("start", id, b, fence), stop: (id, b, fence) => apply("stop", id, b, fence),
@@ -47,7 +48,7 @@ async function fixture() {
   await desk.authorizeLoopStart(f.identity, f.project.projectId, { requestId: draft.request.requestId, expectedVersion: 1,
     runLinkId: linked.runLink.runLinkId, requestSha256: loopByteHashV1(description), settingsSha256: loopByteHashV1(settingsText) },
     "b2a-synthetic-authority-0001", { inputVersion: saved.inputVersion, settingsDigest: saved.settingsDigest, revision: saved.revision, confirmation: saved.confirmation! });
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, {providers:s4ProviderServiceV1(f.client,{ tenantId: "tenant:web", workspaceId: "workspace:web" },() => now), integrityKey: KEY, adapter }, () => now);
   const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, loopBridge: bridge, service: desk, clock: () => now });
   return { ...f, desk, bridge, handler, calls, requestId: draft.request.requestId, link: linked.runLink.runLinkId,
     edit: (change: Partial<LoopEngineStatusV1>) => { saved = { ...saved, ...change }; },
@@ -109,7 +110,7 @@ for (const width of [360, 1280]) test(`B2a browser closes and reopens the saved 
     f.edit({ state: "waiting", revision: 8 }); await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.getByText("Waiting for your decision", { exact: true })).toBeVisible();
     f.edit({ state: "refused", revision: 9, progress: { step: "build", completed: 1, attention: "blocked" } });
-    await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("The saved run is blocked.", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("BLOCKED: The saved run is blocked.", { exact: true })).toBeVisible();
     await context!.close(); context = undefined;
     // Progress changes independently while no browser is open. No execution driver is claimed.
     f.edit({ state: "running", revision: 10, progress: { step: "final", completed: 2, attention: "none" } });
@@ -126,4 +127,52 @@ for (const width of [360, 1280]) test(`B2a browser closes and reopens the saved 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(unexpected).toEqual([]);
   } finally { await context?.close(); await f.close(); }
+});
+
+for(const width of [390,1280])test(`S4 next request starts with fresh unchecked consent and empty cap at ${width}px`,async({browser})=>{
+ const fixtures=[await fixture(),await fixture()];let context:BrowserContext|undefined,index=0;
+ const unexpected:string[]=[],posts:unknown[]=[];
+ try{
+  const bundles=await Promise.all(fixtures.map(async f=>{
+   const rows=(await f.desk.viewLoopDesk(f.identity,f.project.projectId)).loopRequests;
+   const result=await build({write:false,bundle:true,platform:'browser',format:'iife',jsx:'automatic',stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+    import React from 'react';import {createRoot} from 'react-dom/client';
+    import {ImprovementRunPanel} from './private-app/app/improvement-run-panel';
+    createRoot(document.getElementById('root')).render(<ImprovementRunPanel projectId={${JSON.stringify(f.project.projectId)}} requests={${JSON.stringify(rows)}} fresh={true}/>);
+   `},plugins:[{name:'unexercised-legacy-crypto',setup(builder){
+    builder.onResolve({filter:/^node:crypto$/},()=>({path:'node:crypto',namespace:'unexercised'}));
+    builder.onLoad({filter:/.*/,namespace:'unexercised'},()=>({contents:'export function createHash(){throw new Error("unexercised_legacy_crypto")}',loader:'js'}));
+   }}]});return result.outputFiles[0]!.text;
+  }));
+  context=await browser.newContext({viewport:{width,height:850},isMobile:width<500,hasTouch:width<500});
+  await context.route('**/*',async route=>{
+   const req=route.request(),url=new URL(req.url()),f=fixtures[index]!;
+   if(url.origin!=='https://product.invalid'){unexpected.push(req.url());await route.abort();return;}
+   if(url.pathname==='/bundle.js'){await route.fulfill({contentType:'application/javascript',body:bundles[index]});return;}
+   if(req.isNavigationRequest()){await route.fulfill({contentType:'text/html',body:'<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script src="/bundle.js"></script>'});return;}
+   if(url.pathname.includes('/improvements/loop/')){
+    const body=req.postData()?JSON.parse(req.postData()!):undefined;
+    if(req.method()==='POST')posts.push(body);
+    const response=await f.handler(request(url.pathname,req.method(),body,req.headers()['idempotency-key']??'s4-browser-read-0001'));
+    await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:await response.text()});return;
+   }
+   if(url.pathname.startsWith('/api/')){await route.fulfill({status:404,json:{}});return;}
+   unexpected.push(req.url());await route.abort();
+  });
+  const page=await context.newPage();await page.goto('https://product.invalid/first');
+  expect(await page.evaluate(()=>navigator.onLine),'the isolated browser fixture needs an online interface').toBe(true);
+  const consent=()=>page.getByRole('checkbox',{name:'Allow a paid route for this run'}),cap=()=>page.getByLabel('Cap in nano-USD');
+  await expect(consent()).not.toBeChecked();await expect(cap()).toHaveValue('');
+  await consent().check();await cap().fill('123');
+  await expect(consent()).toBeChecked();await expect(cap()).toHaveValue('123');
+  index=1;await page.goto('https://product.invalid/second');
+  await expect(consent()).not.toBeChecked();await expect(cap()).toHaveValue('');
+  await expect(page.getByRole('button',{name:'Start confirmed work',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Start confirmed work',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Start confirmed work',exact:true})).toBeDisabled();
+  await expect.poll(()=>posts.length).toBe(1);
+  expect(posts[0]).toEqual({route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:4,runLinkId:fixtures[1]!.link});
+  expect(unexpected).toEqual([]);expect(fixtures[0]!.calls.filter(x=>x==='start')).toEqual([]);
+  expect(fixtures[1]!.calls.filter(x=>x==='start')).toEqual(['start']);
+ }finally{await context?.close();for(const f of fixtures)await f.close();}
 });

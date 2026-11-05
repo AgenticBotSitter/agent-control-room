@@ -48,7 +48,7 @@ import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEven
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
 import { catalogProjectIdSchema } from "./project-wire";
-import { sessionWatchIdSchema } from "./session-watch-wire";
+import { sessionWatchCursorSchemaV1 } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
@@ -336,10 +336,12 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopSources = loopSourceFiles ? new LoopSelectionSnapshotCoordinatorV1({ db: loopDatabase,
     tenantId: profile.tenantId, workspaceId: options.workspaceId, sourceFiles: loopSourceFiles,
     readRoster: readLoopRosterSnapshotSourceV1, clock: { wallNow: clock, monotonicNow: () => performance.now() } }) : undefined;
+  const loopProviders = options.loopBridge?.adapter.roster ? new LoopProviderServiceV1(loopDatabase,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(loopDatabase,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(loopDatabase,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders }, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
@@ -360,8 +362,6 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       async capture() { if (!await loopRosterStarted) throw new Error("selection_source_unavailable"); return loopSources.capture(); },
       assertCurrent: loopSources.assertCurrent.bind(loopSources),
     }, clock) : undefined;
-  const loopProviders = loopRosterTools ? new LoopProviderServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopRosterHttp = loopRoster ? createLoopRosterHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: loopRoster, clock }) : undefined;
   const loopPolicyHttp = loopPolicy ? createLoopPolicyHttpHandlerV1({ origin: options.origin,
@@ -492,7 +492,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     if (url.pathname === "/session-watch") {
       if ([...url.searchParams.keys()].some(name => name !== "after") || url.searchParams.getAll("after").length > 1)
         throw new WebAccessError("invalid_request");
-      if (url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+      if (url.searchParams.has("after") && !sessionWatchCursorSchemaV1.safeParse(url.searchParams.get("after")).success)
         throw new WebAccessError("invalid_request");
       await sessionWatch.authorize(identity);
       return render();

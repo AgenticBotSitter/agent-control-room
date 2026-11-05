@@ -9,7 +9,7 @@ SET LOCAL statement_timeout = '5s';
 CREATE TABLE control_loop_roster_models (
   tenant_id text NOT NULL REFERENCES tenants(id) CHECK (tenant_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'),
   name text NOT NULL CHECK (name <> '' AND translate(name, E'\t\r\n', '') = name AND name !~ '^[[:space:]]*(#|$)'),
-  position integer NOT NULL CHECK (position BETWEEN 1 AND 10000),
+  position bigint NOT NULL CHECK (position BETWEEN 1 AND 10000),
   launcher text NOT NULL CHECK (translate(launcher, E'\t\r\n', '') = launcher),
   provider text NOT NULL CHECK (translate(provider, E'\t\r\n', '') = provider),
   family text NOT NULL CHECK (translate(family, E'\t\r\n', '') = family),

@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './improve-control-room-loop-recovery';
 import { createPrivateWebProcess } from "../../src/web/v1/private-process";
 import { taskFixture } from "./web-task";
 import { now, origin, request, trust } from "./web-foundation";
@@ -7,7 +8,7 @@ export const KEY=new Uint8Array(32).fill(64);
 const toolingRevision=sha256Digest({fixture:"SYNTHETIC B4 tooling"}),schemaDigest=sha256Digest({fixture:"SYNTHETIC B4 schema"});
 const contract={toolingRevision,decodeRunIdentity:(v:unknown)=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:(v:unknown)=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:()=>true};
 export async function syntheticCandidateFixture() {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   const { ImproveControlRoomDeskServiceV1 } = await import("../../src/improve-control-room/v1/service");
   const { ImproveControlRoomLoopServiceV1 } = await import("../../src/web/v1/improve-control-room-loop-service");
   const { LoopCandidatePublisherV1, LoopCandidateStaleCompletionV1 } = await import("../../src/improve-control-room/v1/loop-candidate-publisher");
@@ -16,7 +17,7 @@ export async function syntheticCandidateFixture() {
   const { canonicalJson, hmacSha256Tag } = await import("../../src/security");
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`,[f.project.projectId]);
-  const settingsText='{"fixture":"SYNTHETIC B4"}', description="SYNTHETIC finished improvement";
+  const settingsText=JSON.stringify({fixture:'SYNTHETIC B4',providerRoute:S4_FIXTURE_ROUTE}), description="SYNTHETIC finished improvement";
   const run={adapterId:"adapter:synthetic",loopRunId:"synthetic-run:b4",toolingRevision,a2SchemaVersion:1 as const};
   const confirmedContract={...contract,matchesSavedInput:(_run:unknown,o:{settingsDigest:string;confirmation:{sha256:string}},i:{description:string;settingsText:string}) =>
     o.settingsDigest===loopByteHashV1(i.settingsText) && o.confirmation.sha256===loopByteHashV1(i.description)};
@@ -25,7 +26,7 @@ export async function syntheticCandidateFixture() {
     confirmation:{path:"request.md",sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:"owner",input_version:"SYNTHETIC:1"},
     approval:null,question:null,progress:{step:"final",completed:1,attention:"none"},receipts:[]};
   const forbidden:string[]=[], unexpected=async()=>{forbidden.push("unexpected operation");throw new Error("SYNTHETIC forbidden");};
-  const adapter:import("../../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,
+  const adapter:import("../../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={providerRoutes:s4FixtureRoutes,adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,
     reserveRun:()=>run.loopRunId,available:()=>true,status:async()=>structuredClone(status),intake:unexpected,confirmRequest:unexpected,approve:unexpected,answer:unexpected,
     start:async(id,b,fence)=>{fence();status={...status,state:"running",revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC Start"})}]};return structuredClone(status);},
     stop:unexpected,close:async()=>{}};
@@ -35,8 +36,8 @@ export async function syntheticCandidateFixture() {
   await lineage.authorizeLoopStart(f.identity,f.project.projectId,{requestId:draft.request.requestId,expectedVersion:1,runLinkId:link.runLink.runLinkId,
     requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},"b4-synthetic-start-0001",{
     inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,revision:status.revision,confirmation:status.confirmation!});
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
-  await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-synthetic-start-0001");
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
+  await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-synthetic-start-0001");
   const head="b".repeat(40),base="a".repeat(40),d=sha256Digest({fixture:"SYNTHETIC B4 custody"});
   const startedAt=new Date(now-1000).toISOString(),endedAt=new Date(now).toISOString();
   let evidence:import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateEvidenceV1=loopCandidateEvidenceSchemaV1.parse({schemaVersion:1,
@@ -136,11 +137,14 @@ import { open, readFile, writeFile, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { canonicalJson, hmacSha256Tag } from "../../src/security";
-import { createImproveControlRoomLoopFinalizerV1, verifyFinalizationRecordV1, type LoopFinalizationBindingV1,
+import { createImproveControlRoomLoopFinalizerV1, verifyFinalizationRecordV1, LoopFinalizationFailureV1, type LoopFinalizationBindingV1,
   type LoopFinalizationCapabilityV1, type LoopFinalizationTargetV1, type LoopFinalizationObservationV1, type LoopFinalizationRecordV1 } from "../../src/web/v1/improve-control-room-loop-finalization";
 export type FixtureState = {target:LoopFinalizationTargetV1;observation:LoopFinalizationObservationV1;ended:boolean;
   retentionDigest:string;corpus:Record<string,string>};
 const fixturePurpose="SYNTHETIC B3c finalization record";
+class FixtureFenceBusyError extends Error {
+  constructor(){super("SYNTHETIC fence busy");}
+}
 async function durable(path:string,value:unknown){
   const f=await open(path+".next","w");try{await f.writeFile(JSON.stringify(value));await f.sync();}finally{await f.close();}
   await rename(path+".next",path);
@@ -161,7 +165,7 @@ export async function persistentFinalizationCapability(root:string,dependencies:
     },
     withFence:async(_binding,work)=>{
       const db=new DatabaseSync(fencePath);try{
-        try{db.exec("BEGIN IMMEDIATE");}catch{throw new Error("SYNTHETIC fence busy");}
+        try{db.exec("BEGIN IMMEDIATE");}catch{throw new FixtureFenceBusyError();}
         await hooks.acquired?.();return await work();
       }finally{try{db.exec("ROLLBACK");}catch{/* acquisition did not succeed */}db.close();}
     },
@@ -258,7 +262,12 @@ async function host(mode:string,root:string){
       authorize:async()=>(JSON.parse(await readFile(join(root,"finalization-state.json"),"utf8")) as FixtureState).target,
       publishCompletion:async input=>{const reply=wait("publication");process.send?.({kind:"publish",input});return (await reply as {receipt:import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCompletionReceiptV1}).receipt;}}).finalize(state.target);
     process.send?.({kind:"done",digest:record?.recordDigest});
-  }catch(error){process.send?.({kind:error instanceof Error&&error.message==="SYNTHETIC fence busy"?"busy":"error"});}
+  }catch(error){
+    // The finalizer reports its bounded stage and preserves the fence refusal
+    // as its cause. Only our fixture's own refusal counts as a losing host.
+    const cause=error instanceof LoopFinalizationFailureV1?error.cause:error;
+    process.send?.({kind:cause instanceof FixtureFenceBusyError?"busy":"error"});
+  }
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href&&process.argv[2]==="--fixture-host"){
   await host(process.argv[3]!,process.argv[4]!);
@@ -374,7 +383,7 @@ export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
   const f=await setupModule.openI1ProductGate({gate,configuration}) as I1Setup;
   let cleanupProduct=async()=>{};t.after(async()=>{try{await cleanupProduct();}finally{await f.close();}});
   assert.equal(f.monitorMutations?.toolingRevision,configuration.toolingRevision,"R6 requires monitor mutation evidence at R's pinned tooling revision");
-  assert.deepEqual(f.monitorMutations.argv,["/usr/bin/python3","-B","loop/mutate_a2.py","all"]);
+  assert.deepEqual(f.monitorMutations.argv,[configuration.interpreter,"-B","loop/mutate_a2.py","all"]);
   const mutations=await readFile(await i1Regular(f.monitorMutations.outputFile,root),"utf8");
   assert.match(mutations,/(?:^|\n)RESULT: PASS \(all slices\)\s*$/,"R6 requires A2M-3 mutate_a2.py all PASS output");
   const target=loopFinalizationTargetSchemaV1.parse(f.target);
@@ -456,7 +465,7 @@ export async function installedI1Gate(t:Pick<TestContext,"after">,gate:I1Gate){
   };
   console.log(`I-1 gate=${gate} run=${target.run.loopRunId} tooling=${configuration.toolingRevision} isolation=R272`);
   return {f,root,carrier,configuration,target,state,stateFile,adapter:()=>adapter,reopen,card,cr,nativeRead,count,snapshot,finalize,publisher,rehash,
-    bridge:()=>bridge??=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:f.integrityKey,adapter},f.clock)};
+    bridge:()=>bridge??=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{providers:s4ProviderServiceV1(f.client,f.scope,f.clock),integrityKey:f.integrityKey,adapter},f.clock)};
 }
 
 export async function i1IsolatedCommand(configuration:LoopAdapterConfigurationV1,argv:string[],path="/usr/bin:/bin"){

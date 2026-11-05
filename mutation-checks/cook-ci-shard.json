@@ -22,10 +22,10 @@
   },
   {
     "file": ".github/workflows/ci.yml",
-    "find": "fail-fast: false\n      matrix:\n        shard: ['1', '2', '3', '4', '5']",
-    "replace": "fail-fast: true\n      matrix:\n        shard: ['1', '2', '3', '4', '5']",
+    "find": "fail-fast: false\n      matrix:\n        shard: ['1', '2', '3', '4', '5', '6']",
+    "replace": "fail-fast: true\n      matrix:\n        shard: ['1', '2', '3', '4', '5', '6']",
     "test": "node --test tests/ci-component-shards.test.mjs",
-    "why": "cancel peers on failure: five component shards run independently without cancelling their peers"
+    "why": "cancel peers on failure: six component shards run independently without cancelling their peers"
   },
   {
     "file": ".github/workflows/ci.yml",
